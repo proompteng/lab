@@ -93,9 +93,9 @@ export interface TemporalInterceptor<A = unknown> {
   readonly inbound?: (context: InterceptorContext, next: InterceptorNext<A>) => Effect.Effect<A, unknown, never>
 }
 
-const byOrder = (a: TemporalInterceptor, b: TemporalInterceptor) => (a.order ?? 0) - (b.order ?? 0)
+const byOrder = <A>(a: TemporalInterceptor<A>, b: TemporalInterceptor<A>) => (a.order ?? 0) - (b.order ?? 0)
 
-const matchesKind = (interceptor: TemporalInterceptor, kind: InterceptorKind): boolean => {
+const matchesKind = <A>(interceptor: TemporalInterceptor<A>, kind: InterceptorKind): boolean => {
   if (!interceptor.kinds || interceptor.kinds.length === 0) {
     return true
   }
@@ -115,10 +115,11 @@ export const runInterceptors = <A>(
   })
 
   const outboundPipeline = applicable.reduceRight<InterceptorNext<A>>((next, interceptor) => {
-    if (!interceptor.outbound) {
+    const outbound = interceptor.outbound
+    if (!outbound) {
       return next
     }
-    return () => interceptor.outbound(outboundContext, next)
+    return () => outbound(outboundContext, next)
   }, run)
 
   const runInbound = (result: A | undefined, error: unknown): Effect.Effect<A, unknown, never> => {
@@ -133,10 +134,11 @@ export const runInterceptors = <A>(
       (error ? Effect.fail(error) : Effect.succeed(result as A)) as Effect.Effect<A, unknown, never>
 
     const inboundPipeline = applicable.reduceRight<InterceptorNext<A>>((next, interceptor) => {
-      if (!interceptor.inbound) {
+      const inbound = interceptor.inbound
+      if (!inbound) {
         return next
       }
-      return () => interceptor.inbound(inboundContext, next)
+      return () => inbound(inboundContext, next)
     }, terminal)
     return inboundPipeline()
   }

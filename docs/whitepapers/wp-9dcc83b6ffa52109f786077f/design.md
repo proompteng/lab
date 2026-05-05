@@ -11,6 +11,7 @@
 ## 1) Executive Summary
 
 The paper proposes a two-stage quant pipeline:
+
 1. Generate 50 formulaic alpha expressions with a prompt-based LLM (`deepseek-r1-distill-llama-70b`).
 2. Use PPO to dynamically reweight those alphas for trading decisions per stock (Sec. 3.2.1-3.2.2, Eq. 2-8).
 
@@ -49,47 +50,58 @@ Implementation value is moderate for an internal research prototype focused on a
 
 - Metrics: IC, MI, LightGBM gain importance, cumulative return, Sharpe ratio, max drawdown (Sec. 3.3, Eq. 9-14).
 - Benchmarks:
+
 1. Market indices (S&P 500, Hang Seng, Nikkei 225 depending on stock).
 2. Equal-weight alpha strategy.
+
 - Stochastic evaluation: 10 non-deterministic runs per stock, reporting mean (std) (Sec. 4.3, Table 7).
 
 ## 3) Key Findings
 
 1. PPO-adjusted strategy beats market benchmark on 4/5 stocks, but not Toyota.
+
 - Evidence: Table 7.
 - Data points:
+
 1. Apple cumulative return 1.6817 vs S&P 500 0.3476.
 2. HSBC 0.4657 vs Hang Seng 0.0033.
 3. Pepsi 0.6272 vs S&P 500 0.3476.
 4. Tencent 0.6245 vs Hang Seng 0.0033.
 5. Toyota 0.0299 vs Nikkei 225 0.4081 (underperforming).
 
-2. PPO weighting strongly dominates the equal-weight alpha portfolio for 4/5 stocks.
+6. PPO weighting strongly dominates the equal-weight alpha portfolio for 4/5 stocks.
+
 - Evidence: Table 7 vs Table 8.
 - Equal-weight cumulative returns are negative for Apple (-0.3200), HSBC (-0.9059), Pepsi (-0.1726), Tencent (-0.7074).
 
 3. Alpha reduction strategies have mixed per-stock effects but do not change headline direction.
+
 - Evidence: Tables 9-12 and Sec. 5.1.
 - Low-correlation and high-contribution subsets help some stocks (for example HSBC), hurt others (for example Apple/Tencent).
 
 4. Sentiment treatment changes outcomes, but no single sentiment setting is uniformly dominant.
+
 - Evidence: Tables 14-18 and Sec. 5.3.
 - For Pepsi and Tencent, "all sentiments" or "no sentiment" perform similarly; for HSBC, target-only sentiment is stronger.
 
 5. Full prompt information performs best in Apple ablation, but reduced prompts still outperform market benchmark.
+
 - Evidence: Table 13 and Sec. 5.2.
 
 ## 4) Novelty Claims Assessment
 
 1. Claim: combining LLM-generated alpha discovery with PPO weight adaptation is novel and beneficial.
+
 - Assessment: `partially_supported`.
 - Why: integration is useful and results are favorable in-sample, but similar LLM+RL motifs already exist in recent quant literature; novelty is mostly in packaging and empirical comparison set (Sec. 2, Sec. 5.1).
 
 2. Claim: dynamic alpha weighting provides clear advantage over static equal weighting.
+
 - Assessment: `supported_in_scope`.
 - Why: strongly supported by Table 7 vs Table 8 for 4/5 stocks.
 
 3. Claim: framework is robust across settings (alpha selection, prompt information, sentiment variants).
+
 - Assessment: `partially_supported`.
 - Why: robustness is demonstrated only on one period and five names; external validity remains unproven.
 
@@ -105,21 +117,27 @@ Implementation value is moderate for an internal research prototype focused on a
 ## 5.2 High-Impact Risks
 
 1. Information leakage risk (high).
+
 - Prompt is described as receiving feature data in JSON (Sec. 3.2.1) while the paper also uses one train/test split (Sec. 3.1); procedure is not explicit on preventing test-period information from influencing generated formulas.
 
 2. External validity risk (high).
+
 - Universe is only five large names across mixed markets; results may not transfer to broader universes, smaller caps, or different regimes.
 
 3. Statistical rigor risk (high).
+
 - Ten stochastic runs are reported with mean/std, but no confidence intervals, no significance tests, and no walk-forward protocol.
 
 4. Reproducibility risk (medium-high).
+
 - Tables are detailed, but no artifact manifest (exact seeds, data snapshots, code release hash) is provided in paper text.
 
 5. Benchmark fairness risk (medium-high).
+
 - Equal-weight baseline is very weak and may be under-regularized versus PPO setup; comparisons to alternative adaptive baselines are absent.
 
 6. Objective consistency risk (medium).
+
 - Eq. 4 defines normalized weights `w_norm`, but Eq. 6 uses `w_t[i]` in the composite alpha; paper does not clearly state which vector is actually used in execution.
 
 ## 5.3 Unresolved Questions
@@ -135,39 +153,42 @@ Implementation value is moderate for an internal research prototype focused on a
 
 1. A reproducible alpha-combination environment where RL optimizes factor weights under explicit risk controls.
 2. A standardized experiment harness for testing:
-1. `all alphas`,
-2. `low-correlation subset`,
-3. `high-contribution subset`,
-4. `random subset`.
-3. A fixed evaluation matrix using cumulative return, Sharpe, max drawdown, IC/MI diagnostics.
+3. `all alphas`,
+4. `low-correlation subset`,
+5. `high-contribution subset`,
+6. `random subset`.
+7. A fixed evaluation matrix using cumulative return, Sharpe, max drawdown, IC/MI diagnostics.
 
 ## 6.2 Required Guardrails Before Any Production Consideration
 
 1. Strict no-leak alpha generation protocol:
 1. generate formulas from training-period metadata only,
-2. freeze formulas before test period.
-2. Walk-forward multi-period evaluation (rolling train/validation/test windows).
-3. Wider universe tests (>=50 symbols across sectors and regions).
-4. Robust statistics:
+1. freeze formulas before test period.
+1. Walk-forward multi-period evaluation (rolling train/validation/test windows).
+1. Wider universe tests (>=50 symbols across sectors and regions).
+1. Robust statistics:
 1. confidence intervals,
-2. significance tests against strong adaptive baselines.
-5. Execution realism:
+1. significance tests against strong adaptive baselines.
+1. Execution realism:
 1. spread/slippage/impact,
-2. market-hours and liquidity constraints.
+1. market-hours and liquidity constraints.
 
 ## 6.3 Concrete Incremental Plan
 
 Phase 1 (1-2 weeks): deterministic replication
+
 1. Re-implement Eq. 2-8 with explicit seed control and config snapshots.
 2. Reproduce Table 7 on the same five stocks with immutable data artifacts.
 3. Resolve implementation ambiguity (`w_t` vs `w_norm`) and document chosen behavior.
 
 Phase 2 (2-4 weeks): anti-leak and robustness hardening
+
 1. Add train-only alpha-generation gating in pipeline.
 2. Run rolling walk-forward tests over multiple market regimes.
 3. Add adaptive non-LLM baselines (risk parity, rolling IC weighting, ridge/risk-adjusted stacking).
 
 Phase 3 (ongoing): controlled internal deployment
+
 1. Use as research decision-support, not autonomous execution.
 2. Add risk limits and kill-switches for abnormal drawdown/drift.
 3. Promote only after robustness thresholds pass on expanded universe.
@@ -178,6 +199,7 @@ Phase 3 (ongoing): controlled internal deployment
 - Score: **0.47 / 1.00**
 - Confidence: **0.84 / 1.00**
 - Rejection reasons (for immediate production deployment):
+
 1. Potential leakage path in alpha-generation protocol.
 2. Limited universe and single-split backtest design.
 3. Lack of statistical significance and walk-forward evidence.

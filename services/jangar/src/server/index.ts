@@ -2,7 +2,7 @@ import { bootRuntimeProfile } from './runtime-boot'
 import { JANGAR_RUNTIME_PROFILES } from './runtime-profile'
 import { resolveHttpServerListenConfig } from './runtime-entry-config'
 
-const { port, hostname } = resolveHttpServerListenConfig()
+const { port, hostname, idleTimeoutSeconds } = resolveHttpServerListenConfig()
 const runtimeProfile = JANGAR_RUNTIME_PROFILES.httpServer
 
 bootRuntimeProfile(runtimeProfile)
@@ -13,6 +13,7 @@ const runtime = await createJangarRuntime({ serveClient: runtimeProfile.serveCli
 const server = Bun.serve({
   port,
   hostname,
+  idleTimeout: idleTimeoutSeconds,
   websocket: runtime.websocket,
   async fetch(request, bunServer) {
     const upgrade = await runtime.handleUpgrade(request, bunServer)

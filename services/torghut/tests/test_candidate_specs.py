@@ -20,12 +20,18 @@ from app.trading.discovery.whitepaper_candidate_compiler import (
 
 
 _CHIP_UNIVERSE_SYMBOLS = {
-    "AMAT",
-    "AMD",
-    "AVGO",
-    "INTC",
-    "MU",
     "NVDA",
+    "AVGO",
+    "AMD",
+    "TSM",
+    "ASML",
+    "AMAT",
+    "LRCX",
+    "KLAC",
+    "MU",
+    "INTC",
+    "QCOM",
+    "MRVL",
 }
 
 
@@ -55,7 +61,7 @@ class TestCandidateSpecs(TestCase):
                 self.assertEqual(
                     sorted(set(symbols) - _CHIP_UNIVERSE_SYMBOLS),
                     [],
-                    f"{family} profile {index} contains symbols without live chip TA signal coverage",
+                    f"{family} profile {index} contains symbols outside the researched chip/AI infrastructure universe",
                 )
                 seen_profiles += 1
 
@@ -171,13 +177,13 @@ class TestCandidateSpecs(TestCase):
         for spec in specs:
             self.assertEqual(
                 spec.strategy_overrides["universe_symbols"],
-                ["NVDA", "AMD", "MU"],
+                ["NVDA", "AMD", "QCOM", "MU"],
             )
             self.assertEqual(
                 spec.to_vnext_experiment_payload()["template_overrides"][
                     "universe_symbols"
                 ],
-                ["NVDA", "AMD", "MU"],
+                ["NVDA", "AMD", "QCOM", "MU"],
             )
 
     def test_microbar_whitepaper_profiles_include_runtime_risk_controls(self) -> None:

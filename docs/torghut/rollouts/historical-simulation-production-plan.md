@@ -180,17 +180,20 @@ Outputs under `artifacts/torghut/simulations/<run_token>/report/`:
 Metrics to compute:
 
 1. Data integrity and replay
+
 - dump/replay counts by topic
 - partition/offset continuity checks
 - out-of-window record rate
 
 2. Signal -> decision -> execution funnel
+
 - signals consumed
 - decisions created/submitted/executed
 - conversion rates and suppression reasons
 - per-symbol and per-strategy funnel
 
 3. Execution quality
+
 - fill rate, cancel/reject rate
 - expected vs actual adapter mismatch
 - fallback ratio/reasons
@@ -198,6 +201,7 @@ Metrics to compute:
 - latency: signal->decision, decision->submit, submit->first update
 
 4. P&L and cost
+
 - TCA proxy (`realized_pnl_proxy_notional`)
 - trade-level realized P&L (FIFO lot matching by symbol)
 - end-of-window unrealized P&L using final simulation price snapshot
@@ -205,6 +209,7 @@ Metrics to compute:
 - per-trade and per-symbol contribution tables
 
 5. LLM behavior and evals
+
 - reviews by model and prompt version
 - verdict distribution (approve/veto/adjust/abstain/escalate/error)
 - confidence/calibration summary
@@ -213,6 +218,7 @@ Metrics to compute:
 - relation between LLM verdict type and execution outcomes
 
 6. Stability and safety snapshot
+
 - feature-quality gate failures
 - no-signal streak and continuity alerts
 - scheduler/runtime errors
@@ -220,6 +226,7 @@ Metrics to compute:
 - route provenance coverage and mismatch ratios
 
 7. Governance verdict
+
 - PASS/WARN/FAIL with reason codes
 - reasons include low sample size, missing execution telemetry, insufficient coverage, high fallback/error rates, etc.
 

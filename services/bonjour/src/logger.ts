@@ -14,8 +14,9 @@ if (lokiEndpoint && !lokiDisabled) {
   try {
     const lokiStream = pinoLoki({
       host: lokiEndpoint,
-      batching: true,
-      interval: 5,
+      batching: {
+        interval: 5,
+      },
       timeout: 5000,
       replaceTimestamp: true,
       labels: {

@@ -18,6 +18,8 @@ spec:
       labels:
         app: proompteng
     spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
       containers:
         - name: proompteng
           image: registry.ide-newton.ts.net/lab/proompteng

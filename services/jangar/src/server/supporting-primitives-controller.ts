@@ -49,6 +49,7 @@ import {
   SWARM_REQUIREMENT_MAX_ATTEMPTS,
   SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT,
   SWARM_SCHEDULE_ANNOTATION_IDENTITY,
+  SWARM_SCHEDULE_ANNOTATION_NATS_URL,
   type StageName,
   type StageTargetRef,
 } from '~/server/supporting-primitives-swarm-config'
@@ -151,6 +152,8 @@ const SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS = 30_000
 const SCHEDULE_RUNNER_NAMESPACE_ENV = 'JANGAR_POD_NAMESPACE'
 const KUBERNETES_SERVICE_HOST_ENV = 'KUBERNETES_SERVICE_HOST'
 const KUBERNETES_SERVICE_PORT_ENV = 'KUBERNETES_SERVICE_PORT'
+const SWARM_STAGE_LABEL = 'swarm.proompteng.ai/stage'
+const SWARM_NAME_LABEL = 'swarm.proompteng.ai/name'
 
 const nowIso = () => new Date().toISOString()
 
@@ -286,6 +289,43 @@ const admissionStatusForStage = (admission: SwarmLaunchAdmission) => ({
   recoveryCaseSetDigest: admission.passport?.recovery_case_set_digest ?? null,
   requiredRuntimeKits: admission.passport?.required_runtime_kits ?? [],
 })
+
+const resolveSwarmScheduleStage = (schedule: Record<string, unknown>): StageName | null => {
+  const labels = asRecord(readNested(schedule, ['metadata', 'labels'])) ?? {}
+  if (!asString(labels[SWARM_NAME_LABEL])) return null
+  const stage = asString(labels[SWARM_STAGE_LABEL])?.trim().toLowerCase()
+  if (!stage) return null
+  return STAGE_NAMES.find((candidate) => candidate === stage) ?? null
+}
+
+const resolveScheduleLaunchAdmission = (schedule: Record<string, unknown>): SwarmLaunchAdmission | null => {
+  const stage = resolveSwarmScheduleStage(schedule)
+  if (!stage) return null
+  const enforced = shouldEnforceSwarmRuntimeAdmission()
+  const annotations = asRecord(readNested(schedule, ['metadata', 'annotations'])) ?? {}
+  const natsUrl = asString(annotations[SWARM_SCHEDULE_ANNOTATION_NATS_URL]) ?? undefined
+  const snapshot = enforced ? buildRuntimeAdmissionSnapshot({ now: new Date(Date.now()), natsUrl }) : null
+  return resolveLaunchAdmission({ stage, snapshot, enforced })
+}
+
+const withScheduleAdmissionTrace = (
+  schedule: Record<string, unknown>,
+  admission: SwarmLaunchAdmission | null,
+): Record<string, unknown> => {
+  if (!admission?.admitted || Object.keys(admission.annotations).length === 0) return schedule
+  const metadata = asRecord(schedule.metadata) ?? {}
+  const annotations = asRecord(metadata.annotations) ?? {}
+  return {
+    ...schedule,
+    metadata: {
+      ...metadata,
+      annotations: {
+        ...annotations,
+        ...admission.annotations,
+      },
+    },
+  }
+}
 
 const shouldStart = () => {
   if (isRuntimeTestEnv()) return false
@@ -652,6 +692,32 @@ const setStatus = async (
 const listItems = (payload: Record<string, unknown>) => {
   const items = Array.isArray(payload.items) ? payload.items : []
   return items.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+}
+
+const TERMINAL_REQUIREMENT_SIGNAL_PHASES = new Set(['rejected', 'completed', 'done'])
+
+const isTerminalRequirementSignal = (signal: Record<string, unknown>) => {
+  const phase = (asString(readNested(signal, ['status', 'phase'])) ?? '').toLowerCase()
+  return TERMINAL_REQUIREMENT_SIGNAL_PHASES.has(phase)
+}
+
+const rejectRequirementSignal = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  signal: Record<string, unknown>,
+  reason: string,
+  message: string,
+) => {
+  const status = asRecord(signal.status) ?? {}
+  const conditions = upsertCondition(
+    normalizeConditions(status.conditions),
+    buildReadyCondition(false, reason, message),
+  )
+  await setStatus(kube, signal, {
+    observedGeneration: asRecord(signal.metadata)?.generation ?? 0,
+    phase: 'Rejected',
+    lastDeliveryAt: asString(status.lastDeliveryAt) ?? undefined,
+    conditions,
+  })
 }
 
 const stableStringify = (value: unknown): string => {
@@ -1077,29 +1143,29 @@ const resolveScheduleTarget = async (
 
 const buildScheduleRunnerCommand = (): string =>
   [
-    "import { randomUUID } from 'node:crypto'",
-    "import { readFileSync } from 'node:fs'",
-    "import { request } from 'node:https'",
-    '',
-    "const manifest = JSON.parse(readFileSync('/config/run.json', 'utf8').replaceAll('__JANGAR_DELIVERY_ID__', randomUUID()))",
-    'const targetByKind = {',
+    'void (async () => {',
+    "  const { randomUUID } = await import('node:crypto');",
+    "  const { readFileSync } = await import('node:fs');",
+    "  const { request } = await import('node:https');",
+    "  const manifest = JSON.parse(readFileSync('/config/run.json', 'utf8').replaceAll('__JANGAR_DELIVERY_ID__', randomUUID()));",
+    '  const targetByKind = {',
     "  AgentRun: { group: 'agents.proompteng.ai', version: 'v1alpha1', plural: 'agentruns' },",
     "  OrchestrationRun: { group: 'orchestration.proompteng.ai', version: 'v1alpha1', plural: 'orchestrationruns' },",
-    '}',
-    'const target = targetByKind[String(manifest.kind)]',
-    "if (!target) throw new Error(`unsupported schedule target kind: ${String(manifest.kind) || 'unknown'}`)",
-    "const readEnv = (name) => process.env[name]?.trim() ?? ''",
-    `const namespace = String(manifest?.metadata?.namespace ?? (readEnv(${JSON.stringify(SCHEDULE_RUNNER_NAMESPACE_ENV)}) || 'agents'))`,
-    "const token = readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8').trim()",
-    "const ca = readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt', 'utf8')",
-    `const serviceHost = readEnv(${JSON.stringify(KUBERNETES_SERVICE_HOST_ENV)})`,
-    `const servicePort = readEnv(${JSON.stringify(KUBERNETES_SERVICE_PORT_ENV)})`,
-    "if (!serviceHost || !servicePort) throw new Error('missing kubernetes service environment')",
-    'const apiBase = `https://${serviceHost}:${servicePort}`',
-    'const url = new URL(`/apis/${target.group}/${target.version}/namespaces/${namespace}/${target.plural}`, apiBase)',
-    'const body = JSON.stringify(manifest)',
-    'await new Promise((resolve, reject) => {',
-    '  const req = request(',
+    '  };',
+    '  const target = targetByKind[String(manifest.kind)];',
+    "  if (!target) throw new Error(`unsupported schedule target kind: ${String(manifest.kind) || 'unknown'}`);",
+    "  const readEnv = (name) => process.env[name]?.trim() ?? '';",
+    `  const namespace = String((manifest?.metadata?.namespace ?? readEnv(${JSON.stringify(SCHEDULE_RUNNER_NAMESPACE_ENV)})) || 'agents');`,
+    "  const token = readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8').trim();",
+    "  const ca = readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt', 'utf8');",
+    `  const serviceHost = readEnv(${JSON.stringify(KUBERNETES_SERVICE_HOST_ENV)});`,
+    `  const servicePort = readEnv(${JSON.stringify(KUBERNETES_SERVICE_PORT_ENV)});`,
+    "  if (!serviceHost || !servicePort) throw new Error('missing kubernetes service environment');",
+    '  const apiBase = `https://${serviceHost}:${servicePort}`;',
+    '  const url = new URL(`/apis/${target.group}/${target.version}/namespaces/${namespace}/${target.plural}`, apiBase);',
+    '  const body = JSON.stringify(manifest);',
+    '  await new Promise((resolve, reject) => {',
+    '    const req = request(',
     '    url,',
     '    {',
     "      method: 'POST',",
@@ -1112,23 +1178,53 @@ const buildScheduleRunnerCommand = (): string =>
     '      },',
     '    },',
     '    (res) => {',
-    "      let responseBody = ''",
-    "      res.setEncoding('utf8')",
-    "      res.on('data', (chunk) => { responseBody += chunk })",
+    "      let responseBody = '';",
+    "      res.setEncoding('utf8');",
+    "      res.on('data', (chunk) => { responseBody += chunk; });",
     "      res.on('end', () => {",
     '        if ((res.statusCode ?? 500) >= 200 && (res.statusCode ?? 500) < 300) {',
-    '          resolve(undefined)',
-    '          return',
+    '          resolve(undefined);',
+    '          return;',
     '        }',
-    '        reject(new Error(`schedule runner create failed: ${res.statusCode ?? 500} ${responseBody}`))',
-    '      })',
+    '        reject(new Error(`schedule runner create failed: ${res.statusCode ?? 500} ${responseBody}`));',
+    '      });',
     '    },',
-    '  )',
-    "  req.on('error', reject)",
-    '  req.write(body)',
-    '  req.end()',
-    '})',
+    '    );',
+    "    req.on('error', reject);",
+    '    req.write(body);',
+    '    req.end();',
+    '  });',
+    '})();',
   ].join('\n')
+
+const deleteScheduleRunnerResources = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  scheduleName: string,
+  namespace: string,
+) => {
+  await Promise.allSettled([
+    kube.delete('configmap', makeName(scheduleName, 'template'), namespace, { wait: false }),
+    kube.delete('cronjob', makeName(scheduleName, 'cron'), namespace, { wait: false }),
+  ])
+}
+
+const setScheduleAdmissionBlockedStatus = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  schedule: Record<string, unknown>,
+  admission: SwarmLaunchAdmission,
+) => {
+  const status = asRecord(schedule.status) ?? {}
+  const conditions = upsertCondition(
+    normalizeConditions(status.conditions),
+    buildReadyCondition(false, admission.reason, admission.message),
+  )
+  await setStatus(kube, schedule, {
+    observedGeneration: asRecord(schedule.metadata)?.generation ?? 0,
+    phase: 'AdmissionBlocked',
+    lastRunTime: asString(status.lastRunTime) ?? undefined,
+    conditions,
+  })
+}
 
 const reconcileScheduleRunnerStatus = async (
   kube: ReturnType<typeof createKubernetesClient>,
@@ -1137,6 +1233,12 @@ const reconcileScheduleRunnerStatus = async (
 ) => {
   const status = asRecord(schedule.status) ?? {}
   const scheduleName = asString(readNested(schedule, ['metadata', 'name'])) ?? 'schedule'
+  const admission = resolveScheduleLaunchAdmission(schedule)
+  if (admission && !admission.admitted) {
+    await deleteScheduleRunnerResources(kube, scheduleName, namespace)
+    await setScheduleAdmissionBlockedStatus(kube, schedule, admission)
+    return
+  }
   const cronJobName = makeName(scheduleName, 'cron')
   const cronResource = await kube.get('cronjob', cronJobName, namespace)
   const lastRunTime = asString(readNested(cronResource ?? {}, ['status', 'lastScheduleTime'])) ?? undefined
@@ -1176,9 +1278,19 @@ const reconcileSchedule = async (
   }
 
   try {
+    const admission = resolveScheduleLaunchAdmission(schedule)
+    if (admission && !admission.admitted) {
+      await deleteScheduleRunnerResources(kube, scheduleName, namespace)
+      await setScheduleAdmissionBlockedStatus(kube, schedule, admission)
+      return
+    }
     const target = await resolveScheduleTarget(kube, schedule)
     const deliveryPlaceholder = '__JANGAR_DELIVERY_ID__'
-    const template = buildScheduleRunTemplate(schedule, target, deliveryPlaceholder)
+    const template = buildScheduleRunTemplate(
+      withScheduleAdmissionTrace(schedule, admission),
+      target,
+      deliveryPlaceholder,
+    )
     const configName = makeName(scheduleName, 'template')
     const ownerReferences = buildOwnerRefs(schedule)
     const labels = { 'schedules.proompteng.ai/schedule': scheduleName }
@@ -1199,6 +1311,7 @@ const reconcileSchedule = async (
 
     const supportingConfig = resolveSupportingPrimitivesConfig(process.env)
     const image = supportingConfig.scheduleRunnerImage
+    const nodeSelector = supportingConfig.scheduleRunnerNodeSelector
     const podNamespace = supportingConfig.podNamespace
     const scheduleServiceAccount = supportingConfig.scheduleServiceAccount ?? supportingConfig.serviceAccountName
     const serviceAccountName =
@@ -1228,6 +1341,7 @@ const reconcileSchedule = async (
               spec: {
                 serviceAccountName,
                 restartPolicy: 'Never',
+                ...(nodeSelector && Object.keys(nodeSelector).length > 0 ? { nodeSelector } : {}),
                 containers: [
                   {
                     name: 'schedule-runner',
@@ -1581,7 +1695,9 @@ const reconcileSwarm = async (
   )
   const requirementSelector = `${SWARM_REQUIREMENT_LABEL_TYPE}=requirement,${SWARM_REQUIREMENT_LABEL_TO}=${swarmLabel}`
   const requirementSignals = sortRequirementSignalsForDispatch(
-    listItems(await kube.list(RESOURCE_MAP.Signal, swarmNamespace, requirementSelector)),
+    listItems(await kube.list(RESOURCE_MAP.Signal, swarmNamespace, requirementSelector)).filter(
+      (signal) => !isTerminalRequirementSignal(signal),
+    ),
   )
   const requirementRunStates = new Map<
     string,
@@ -1625,6 +1741,7 @@ const reconcileSwarm = async (
     admissionBlocked: 0,
     completed: 0,
     invalidChannel: 0,
+    rejected: 0,
     duplicates: countIdempotencyDuplicates(implementRuns),
     paused: requirementDispatchPauseAssessment !== null,
     pauseReason: requirementDispatchPauseAssessment ? 'AgentRunIngestionDegraded' : null,
@@ -1641,9 +1758,14 @@ const reconcileSwarm = async (
     const signalChannel = asString(signalSpec.channel)
 
     if (!isNatsChannel(signalChannel)) {
-      requirementStats.pending += 1
-      requirementStats.blocked += 1
       requirementStats.invalidChannel += 1
+      requirementStats.rejected += 1
+      await rejectRequirementSignal(
+        kube,
+        signal,
+        'InvalidRequirementChannel',
+        'requirement signal rejected because channel is not NATS',
+      )
       continue
     }
 
@@ -1999,6 +2121,7 @@ const reconcileSwarm = async (
       admissionBlocked: requirementStats.admissionBlocked,
       completed: requirementStats.completed,
       invalidChannel: requirementStats.invalidChannel,
+      rejected: requirementStats.rejected,
       duplicates: requirementStats.duplicates,
       paused: requirementStats.paused,
       admission: admissionStatusForStage(requirementAdmission),
@@ -2011,8 +2134,12 @@ const reconcileSwarm = async (
   for (const stage of STAGE_NAMES) {
     const stageState = asRecord(stageStates[stage])
     const stageLastRun = asString(stageState?.lastRunTime)
-    if (stageLastRun) {
-      nextStatus[STAGE_LAST_RUN_KEY[stage]] = stageLastRun
+    const stageRecentSuccess = asString(stageState?.recentSuccessAt)
+    const stageActivityMs = [parseTimeOrNull(stageLastRun), parseTimeOrNull(stageRecentSuccess)]
+      .filter((value): value is number => value !== null)
+      .reduce((latest, value) => Math.max(latest, value), Number.NEGATIVE_INFINITY)
+    if (Number.isFinite(stageActivityMs)) {
+      nextStatus[STAGE_LAST_RUN_KEY[stage]] = new Date(stageActivityMs).toISOString()
     } else {
       const existing = asString(status[STAGE_LAST_RUN_KEY[stage]])
       if (existing) nextStatus[STAGE_LAST_RUN_KEY[stage]] = existing
@@ -2029,7 +2156,6 @@ const reconcileSwarm = async (
   const verifyStageState = asRecord(stageStates.verify) ?? {}
   const verifyFailures = Number(verifyStageState.consecutiveFailures ?? 0)
   const requirementsHealthy =
-    requirementStats.invalidChannel === 0 &&
     requirementStats.blocked === 0 &&
     requirementStats.duplicates === 0 &&
     !requirementStats.paused &&
@@ -2132,9 +2258,9 @@ const reconcileSwarm = async (
   if (requirementStats.invalidChannel > 0) {
     conditions = upsertCondition(conditions, {
       type: 'RequirementsBridge',
-      status: 'False',
-      reason: 'InvalidRequirementChannel',
-      message: `${requirementStats.invalidChannel} requirement signal(s) were rejected because channel is not NATS`,
+      status: 'True',
+      reason: 'InvalidRequirementChannelRejected',
+      message: `${requirementStats.invalidChannel} requirement signal(s) rejected and ignored because channel is not NATS`,
     })
   } else if (requirementStats.paused) {
     conditions = upsertCondition(conditions, {
@@ -2648,6 +2774,7 @@ export const __test__ = {
   cadenceToCron,
   deriveStageStaggerMinute,
   isSwarmStatusOnlyEvent,
+  reconcileSchedule,
   reconcileScheduleRunnerStatus,
   reconcileTool,
   reconcileSwarm,

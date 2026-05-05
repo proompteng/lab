@@ -1,5 +1,5 @@
 import { App } from 'cdk8s'
-import { ServerChart } from './server-chart'
+import { ServerChart } from './server-chart.js'
 
 const image = process.env.IMAGE ?? process.env.ARGOCD_ENV_IMAGE ?? 'registry.ide-newton.ts.net/lab/bonjour:latest'
 const namespace = process.env.NAMESPACE ?? process.env.ARGOCD_ENV_NAMESPACE ?? 'bonjour'

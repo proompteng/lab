@@ -13,6 +13,7 @@ from app.trading.empirical_manifest import (
     validate_empirical_promotion_manifest,
 )
 from scripts.build_empirical_promotion_manifest import (
+    _build_foundation_router_payload,
     build_empirical_promotion_manifest,
 )
 
@@ -161,3 +162,11 @@ class TestEmpiricalPromotionManifest(TestCase):
         self.assertEqual(manifest["candidate_id"], "legacy_macd_rsi@prod")
         self.assertTrue(manifest["promotion_authority_eligible"])
         self.assertEqual(validate_empirical_promotion_manifest(manifest), [])
+
+    def test_foundation_router_fallback_symbol_is_live_chip_covered(self) -> None:
+        payload = _build_foundation_router_payload(report={})
+
+        self.assertEqual(
+            list(payload["slice_metrics"]["by_symbol"].keys()),
+            ["NVDA"],
+        )

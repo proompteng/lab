@@ -10,8 +10,8 @@ metadata:
     argocd.argoproj.io/hook: PreSync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
 spec:
-  backoffLimit: 3
-  activeDeadlineSeconds: 300
+  backoffLimit: 6
+  activeDeadlineSeconds: 900
   ttlSecondsAfterFinished: 600
   template:
     metadata:
@@ -25,14 +25,266 @@ spec:
       containers:
         - name: migrate
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:22f8ef16231113f2ef151559bc8e124ebc6fa9e28691fc51ef11b5dcc74dd885
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:5b1685a25cd2d708373d928b095a641b0fe65d0887820f70f32f4e6147bd9bb0
           command:
             - /bin/sh
             - -ec
           args:
             - |
+              wait_for_database() {
+                label="$1"
+                dsn="$2"
+                timeout_seconds="$3"
+                database="${4:-}"
+                DB_WAIT_LABEL="${label}" DB_WAIT_DSN="${dsn}" DB_WAIT_TIMEOUT_SECONDS="${timeout_seconds}" DB_WAIT_DATABASE="${database}" /opt/venv/bin/python - <<'PY'
+              import os
+              import time
+              from urllib.parse import urlsplit
+
+              from sqlalchemy import create_engine, text
+
+              def database_url(url: str, database: str) -> str:
+                  parsed = urlsplit(url)
+                  return parsed._replace(path=f'/{database}', query='', fragment='').geturl()
+
+              def sqlalchemy_dsn(raw: str) -> str:
+                  if raw.startswith('postgresql+'):
+                      return raw
+                  if raw.startswith('postgresql://'):
+                      return 'postgresql+psycopg://' + raw[len('postgresql://'):]
+                  if raw.startswith('postgres://'):
+                      return 'postgresql+psycopg://' + raw[len('postgres://'):]
+                  return raw
+
+              label = os.environ['DB_WAIT_LABEL']
+              dsn = os.environ['DB_WAIT_DSN']
+              database = os.environ['DB_WAIT_DATABASE']
+              if database:
+                  dsn = database_url(dsn, database)
+              timeout_seconds = int(os.environ['DB_WAIT_TIMEOUT_SECONDS'])
+              deadline = time.monotonic() + timeout_seconds
+              attempt = 0
+              while True:
+                  attempt += 1
+                  try:
+                      engine = create_engine(sqlalchemy_dsn(dsn), pool_pre_ping=True)
+                      with engine.connect() as connection:
+                          connection.execute(text('select 1'))
+                      print(f'{label} ready after {attempt} attempt(s)')
+                      break
+                  except Exception as error:
+                      remaining = deadline - time.monotonic()
+                      if remaining <= 0:
+                          raise SystemExit(
+                              f'{label} did not become ready within {timeout_seconds}s '
+                              f'after {attempt} attempt(s): {type(error).__name__}'
+                          ) from error
+                      print(f'waiting for {label}: attempt={attempt} last_error={type(error).__name__}')
+                      time.sleep(min(5, max(1, remaining)))
+              PY
+              }
+
+              wait_for_database "torghut app database" "${DB_DSN}" 300
               /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
-              DB_DSN="${TORGHUT_SIM_DB_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
+              wait_for_database "postgres superuser database" "${TORGHUT_POSTGRES_ADMIN_URI}" 300 postgres
+              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/python - <<'PY'
+              import os
+              from urllib.parse import urlsplit
+
+              from sqlalchemy import create_engine, text
+
+              revision_before_context = '0023_simulation_run_progress'
+              context_revision = '0024_simulation_runtime_context'
+              simulation_database = 'torghut_sim_default'
+
+              def sqlalchemy_dsn(raw: str) -> str:
+                  if raw.startswith('postgresql+'):
+                      return raw
+                  if raw.startswith('postgresql://'):
+                      return 'postgresql+psycopg://' + raw[len('postgresql://'):]
+                  if raw.startswith('postgres://'):
+                      return 'postgresql+psycopg://' + raw[len('postgres://'):]
+                  return raw
+
+              def database_url(url: str, database: str) -> str:
+                  parsed = urlsplit(url)
+                  return parsed._replace(path=f'/{database}', query='', fragment='').geturl()
+
+              admin_uri = os.environ['TORGHUT_POSTGRES_ADMIN_URI']
+              admin_engine = create_engine(
+                  sqlalchemy_dsn(database_url(admin_uri, 'postgres')),
+                  isolation_level='AUTOCOMMIT',
+              )
+              with admin_engine.connect() as connection:
+                  owner = connection.execute(
+                      text('select quote_ident(:owner)'),
+                      {'owner': os.environ['TORGHUT_SIM_DB_USER']},
+                  ).scalar_one()
+                  exists = connection.execute(
+                      text('select 1 from pg_database where datname = :database'),
+                      {'database': simulation_database},
+                  ).first()
+                  if exists is None:
+                      connection.execute(text(f'CREATE DATABASE {simulation_database} OWNER {owner}'))
+                  connection.execute(text(f'GRANT ALL PRIVILEGES ON DATABASE {simulation_database} TO {owner}'))
+
+              admin_sim_engine = create_engine(
+                  sqlalchemy_dsn(database_url(admin_uri, simulation_database)),
+                  isolation_level='AUTOCOMMIT',
+              )
+              with admin_sim_engine.connect() as connection:
+                  connection.execute(text('CREATE EXTENSION IF NOT EXISTS vector'))
+                  runtime_role = os.environ['TORGHUT_SIM_DB_USER']
+                  quoted_role = connection.execute(
+                      text('select quote_ident(:role_name)'),
+                      {'role_name': runtime_role},
+                  ).scalar_one()
+                  owned_relations = connection.execute(
+                      text(
+                          """
+                          SELECT
+                            c.oid::regclass::text AS object_name,
+                            CASE c.relkind
+                              WHEN 'r' THEN 'TABLE'
+                              WHEN 'p' THEN 'TABLE'
+                              WHEN 'S' THEN 'SEQUENCE'
+                              WHEN 'v' THEN 'VIEW'
+                              WHEN 'm' THEN 'MATERIALIZED VIEW'
+                              WHEN 'f' THEN 'FOREIGN TABLE'
+                            END AS object_type
+                          FROM pg_class c
+                          JOIN pg_namespace n ON n.oid = c.relnamespace
+                          WHERE n.nspname = 'public'
+                            AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
+                            AND pg_get_userbyid(c.relowner) <> :runtime_role
+                          ORDER BY c.relkind, c.relname
+                          """
+                      ),
+                      {'runtime_role': runtime_role},
+                  ).mappings().all()
+                  for owned_relation in owned_relations:
+                      owner_statement = (
+                          f"ALTER {owned_relation['object_type']} "
+                          f"{owned_relation['object_name']} OWNER TO {quoted_role}"
+                      )
+                      connection.exec_driver_sql(owner_statement)
+                  if owned_relations:
+                      print(f'transferred {len(owned_relations)} simulation objects to {runtime_role}')
+
+              engine = create_engine(sqlalchemy_dsn(os.environ['DB_DSN']))
+              with engine.begin() as connection:
+                  has_version_table = connection.execute(
+                      text("select to_regclass('public.alembic_version') is not null"),
+                  ).scalar()
+                  has_context_table = connection.execute(
+                      text("select to_regclass('public.simulation_runtime_context') is not null"),
+                  ).scalar()
+                  versions = []
+                  if has_version_table:
+                      versions = [
+                          row[0]
+                          for row in connection.execute(text('select version_num from alembic_version')).all()
+                      ]
+
+                  if versions == [revision_before_context] and bool(has_context_table):
+                      connection.execute(
+                          text('update alembic_version set version_num = :revision'),
+                          {'revision': context_revision},
+                      )
+                      print(f'stamped existing simulation runtime context as {context_revision}')
+              PY
+              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade 0026_strategy_factory_research_objects
+              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/python - <<'PY'
+              import os
+
+              from sqlalchemy import create_engine, text
+
+              target_revision = '0028_autoresearch_epoch_ledgers'
+              stamp_source_revisions = {
+                  '0026_strategy_factory_research_objects',
+                  '0027_whitepaper_claim_graph',
+              }
+              preexisting_tables = [
+                  'whitepaper_claims',
+                  'whitepaper_claim_relations',
+                  'whitepaper_strategy_templates',
+                  'whitepaper_experiment_specs',
+                  'whitepaper_contradiction_events',
+                  'autoresearch_epochs',
+                  'autoresearch_candidate_specs',
+                  'autoresearch_proposal_scores',
+                  'autoresearch_portfolio_candidates',
+              ]
+
+              def sqlalchemy_dsn(raw: str) -> str:
+                  if raw.startswith('postgresql+'):
+                      return raw
+                  if raw.startswith('postgresql://'):
+                      return 'postgresql+psycopg://' + raw[len('postgresql://'):]
+                  if raw.startswith('postgres://'):
+                      return 'postgresql+psycopg://' + raw[len('postgres://'):]
+                  return raw
+
+              def public_table_exists(connection, table_name: str) -> bool:
+                  return bool(
+                      connection.execute(
+                          text('select to_regclass(:table_name) is not null'),
+                          {'table_name': f'public.{table_name}'},
+                      ).scalar()
+                  )
+
+              engine = create_engine(sqlalchemy_dsn(os.environ['DB_DSN']))
+              with engine.begin() as connection:
+                  versions = [
+                      row[0]
+                      for row in connection.execute(text('select version_num from alembic_version')).all()
+                  ]
+                  if (
+                      len(versions) == 1
+                      and versions[0] in stamp_source_revisions
+                      and all(public_table_exists(connection, table_name) for table_name in preexisting_tables)
+                  ):
+                      connection.execute(
+                          text('update alembic_version set version_num = :revision'),
+                          {'revision': target_revision},
+                      )
+                      print(f'stamped existing whitepaper/autoresearch ledger objects as {target_revision}')
+              PY
+              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
+              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/python - <<'PY'
+              import os
+
+              from sqlalchemy import create_engine, text
+
+              def sqlalchemy_dsn(raw: str) -> str:
+                  if raw.startswith('postgresql+'):
+                      return raw
+                  if raw.startswith('postgresql://'):
+                      return 'postgresql+psycopg://' + raw[len('postgresql://'):]
+                  if raw.startswith('postgres://'):
+                      return 'postgresql+psycopg://' + raw[len('postgres://'):]
+                  return raw
+
+              runtime_role = os.environ['TORGHUT_SIM_DB_USER']
+              engine = create_engine(sqlalchemy_dsn(os.environ['DB_DSN']))
+              with engine.begin() as connection:
+                  quoted_role = connection.execute(
+                      text('select quote_ident(:role)'),
+                      {'role': runtime_role},
+                  ).scalar_one()
+                  statements = [
+                      f'GRANT USAGE, CREATE ON SCHEMA public TO {quoted_role}',
+                      f'GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO {quoted_role}',
+                      f'GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO {quoted_role}',
+                      f'GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO {quoted_role}',
+                      f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO {quoted_role}',
+                      f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO {quoted_role}',
+                      f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO {quoted_role}',
+                  ]
+                  for statement in statements:
+                      connection.execute(text(statement))
+                  print(f'granted simulation runtime privileges to {runtime_role}')
+              PY
           env:
             - name: DB_DSN
               valueFrom:
@@ -59,8 +311,32 @@ spec:
                 secretKeyRef:
                   name: torghut-db-app
                   key: password
+            - name: TORGHUT_SIM_ADMIN_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-superuser
+                  key: host
+            - name: TORGHUT_SIM_ADMIN_DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-superuser
+                  key: port
+            - name: TORGHUT_SIM_ADMIN_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-superuser
+                  key: username
+            - name: TORGHUT_SIM_ADMIN_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-superuser
+                  key: password
+            - name: TORGHUT_POSTGRES_ADMIN_URI
+              value: postgresql://$(TORGHUT_SIM_ADMIN_DB_USER):$(TORGHUT_SIM_ADMIN_DB_PASSWORD)@$(TORGHUT_SIM_ADMIN_DB_HOST):$(TORGHUT_SIM_ADMIN_DB_PORT)/postgres
             - name: TORGHUT_SIM_DB_DSN
               value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
+            - name: TORGHUT_SIM_ADMIN_DSN
+              value: postgresql://$(TORGHUT_SIM_ADMIN_DB_USER):$(TORGHUT_SIM_ADMIN_DB_PASSWORD)@$(TORGHUT_SIM_ADMIN_DB_HOST):$(TORGHUT_SIM_ADMIN_DB_PORT)/torghut_sim_default
           resources:
             requests:
               cpu: 50m

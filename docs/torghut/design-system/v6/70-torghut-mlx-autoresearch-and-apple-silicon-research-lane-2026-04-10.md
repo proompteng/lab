@@ -372,7 +372,8 @@ Required semantics:
 9. `promotion_policy`
    - hardcodes `research_only` until promotion-contract evidence exists.
 10. `ledger_policy`
-   - requires append-only writes and forbids row rewrites.
+
+- requires append-only writes and forbids row rewrites.
 
 ## Snapshot manifest contract
 

@@ -188,12 +188,12 @@ surface as the primary lane.
 
 The hardening wave introduces four explicit operating components:
 
-| Component | Type | Responsibility |
-| --- | --- | --- |
-| `torghut-options-ta-schema-bootstrap` | `Job` or Argo CD PreSync hook | Create/verify options ClickHouse tables and Karapace subjects before Flink starts |
-| `torghut-options-open-validation` | script plus on-demand `Job` | Capture market-open proof artifacts for quotes, trades, snapshots, derived rows, and provider-cap pressure |
-| `torghut-options-opra-shadow` | temporary GitOps application | Run the same options topology on `opra` with isolated topics, tables, and credentials during promotion |
-| `torghut-clickhouse-guardrails-exporter` extension | config plus exporter update | Add options table freshness, shadow-table freshness, and session-aware labels to the existing guardrail surface |
+| Component                                          | Type                          | Responsibility                                                                                                  |
+| -------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `torghut-options-ta-schema-bootstrap`              | `Job` or Argo CD PreSync hook | Create/verify options ClickHouse tables and Karapace subjects before Flink starts                               |
+| `torghut-options-open-validation`                  | script plus on-demand `Job`   | Capture market-open proof artifacts for quotes, trades, snapshots, derived rows, and provider-cap pressure      |
+| `torghut-options-opra-shadow`                      | temporary GitOps application  | Run the same options topology on `opra` with isolated topics, tables, and credentials during promotion          |
+| `torghut-clickhouse-guardrails-exporter` extension | config plus exporter update   | Add options table freshness, shadow-table freshness, and session-aware labels to the existing guardrail surface |
 
 ### Promotion topology
 
@@ -298,37 +298,37 @@ Postgres becomes the authority for promotion evidence via two new tables:
 
 #### `public.torghut_options_rollout_sessions`
 
-| Column | Type | Notes |
-| --- | --- | --- |
-| `session_date` | `date` | US market session date |
-| `lane` | `text` | `primary` or `shadow` |
-| `feed` | `text` | `indicative` or `opra` |
-| `phase` | `text` | `soak`, `shadow`, `promotion`, `post-cutover` |
-| `status` | `text` | `running`, `passed`, `failed`, `aborted` |
-| `started_at` | `timestamptz` | validator start |
-| `finished_at` | `timestamptz` | validator finish |
-| `first_quote_ts` | `timestamptz` | first quote event observed |
-| `first_trade_ts` | `timestamptz` | first trade event observed |
-| `first_snapshot_ts` | `timestamptz` | first snapshot publish observed |
-| `first_contract_bar_ts` | `timestamptz` | first TA contract bar |
-| `first_clickhouse_bar_ts` | `timestamptz` | first ClickHouse contract bar |
-| `first_clickhouse_feature_ts` | `timestamptz` | first ClickHouse contract feature |
-| `first_clickhouse_surface_ts` | `timestamptz` | first ClickHouse surface feature |
-| `summary_json` | `jsonb` | compact validator report |
+| Column                        | Type          | Notes                                         |
+| ----------------------------- | ------------- | --------------------------------------------- |
+| `session_date`                | `date`        | US market session date                        |
+| `lane`                        | `text`        | `primary` or `shadow`                         |
+| `feed`                        | `text`        | `indicative` or `opra`                        |
+| `phase`                       | `text`        | `soak`, `shadow`, `promotion`, `post-cutover` |
+| `status`                      | `text`        | `running`, `passed`, `failed`, `aborted`      |
+| `started_at`                  | `timestamptz` | validator start                               |
+| `finished_at`                 | `timestamptz` | validator finish                              |
+| `first_quote_ts`              | `timestamptz` | first quote event observed                    |
+| `first_trade_ts`              | `timestamptz` | first trade event observed                    |
+| `first_snapshot_ts`           | `timestamptz` | first snapshot publish observed               |
+| `first_contract_bar_ts`       | `timestamptz` | first TA contract bar                         |
+| `first_clickhouse_bar_ts`     | `timestamptz` | first ClickHouse contract bar                 |
+| `first_clickhouse_feature_ts` | `timestamptz` | first ClickHouse contract feature             |
+| `first_clickhouse_surface_ts` | `timestamptz` | first ClickHouse surface feature              |
+| `summary_json`                | `jsonb`       | compact validator report                      |
 
 #### `public.torghut_options_provider_cap_observations`
 
-| Column | Type | Notes |
-| --- | --- | --- |
-| `observed_at` | `timestamptz` | observation time |
-| `lane` | `text` | `primary` or `shadow` |
-| `feed` | `text` | `indicative` or `opra` |
-| `requested_hot_contracts` | `int` | target hot set size |
-| `accepted_hot_contracts` | `int` | confirmed live breadth |
-| `rejected_hot_contracts` | `int` | contracts rejected or dropped |
-| `error_code` | `text` | provider code such as `405` |
-| `detail` | `text` | operator-readable detail |
-| `generation` | `int` | provider-cap generation at the time |
+| Column                    | Type          | Notes                               |
+| ------------------------- | ------------- | ----------------------------------- |
+| `observed_at`             | `timestamptz` | observation time                    |
+| `lane`                    | `text`        | `primary` or `shadow`               |
+| `feed`                    | `text`        | `indicative` or `opra`              |
+| `requested_hot_contracts` | `int`         | target hot set size                 |
+| `accepted_hot_contracts`  | `int`         | confirmed live breadth              |
+| `rejected_hot_contracts`  | `int`         | contracts rejected or dropped       |
+| `error_code`              | `text`        | provider code such as `405`         |
+| `detail`                  | `text`        | operator-readable detail            |
+| `generation`              | `int`         | provider-cap generation at the time |
 
 ### Guardrail contract
 

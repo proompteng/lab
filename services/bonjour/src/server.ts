@@ -1,9 +1,9 @@
-import './instrumentation'
+import './instrumentation.js'
 
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 
-import { logger } from './logger'
+import { logger } from './logger.js'
 
 const port = Number.parseInt(process.env.PORT ?? '3000', 10)
 

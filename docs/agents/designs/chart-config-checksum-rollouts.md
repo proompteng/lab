@@ -140,10 +140,10 @@ For externally managed resources, compute hashes from source-of-truth manifests 
 
 ## Config Mapping
 
-| Helm value                                                                               | Rendered annotation                                                | Intended behavior                                    |
-| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------- |
-| `rolloutChecksums.enabled=true`                                                          | `agents.proompteng.ai/checksum-*` annotations                      | Any change triggers a Deployment rollout.            |
-| `rolloutChecksums.secrets=[{\"name\":\"agents-github-token-env\",\"checksum\":\"...\"}]` | `agents.proompteng.ai/checksum-secret-<hash(namespace/name)>`      | Restart when the referenced Secret checksum changes. |
+| Helm value                                                                               | Rendered annotation                                           | Intended behavior                                    |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------- |
+| `rolloutChecksums.enabled=true`                                                          | `agents.proompteng.ai/checksum-*` annotations                 | Any change triggers a Deployment rollout.            |
+| `rolloutChecksums.secrets=[{\"name\":\"agents-github-token-env\",\"checksum\":\"...\"}]` | `agents.proompteng.ai/checksum-secret-<hash(namespace/name)>` | Restart when the referenced Secret checksum changes. |
 
 ## Rollout Plan
 

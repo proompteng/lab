@@ -170,6 +170,8 @@ describe('supporting primitives controller', () => {
         }) as unknown as KubernetesClient,
     )
     process.env.JANGAR_AGENT_RUNNER_IMAGE = TEST_RUNNER_IMAGE
+    delete process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR
+    delete process.env.JANGAR_SCHEDULE_RUNNER_NODE_SELECTOR
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY
     delete process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT
@@ -181,6 +183,8 @@ describe('supporting primitives controller', () => {
     agentsControllerModule.stopAgentsController()
     vi.useRealTimers()
     delete process.env.JANGAR_AGENT_RUNNER_IMAGE
+    delete process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR
+    delete process.env.JANGAR_SCHEDULE_RUNNER_NODE_SELECTOR
     delete process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT
   })
 
@@ -216,23 +220,23 @@ describe('supporting primitives controller', () => {
   it('builds schedule runner command with runtime delivery id substitution', async () => {
     const command = __test__.buildScheduleRunnerCommand()
 
-    expect(command).toContain("import { randomUUID } from 'node:crypto'\nimport { readFileSync } from 'node:fs'")
+    expect(command).toContain("const { randomUUID } = await import('node:crypto');")
+    expect(command).toContain("const { readFileSync } = await import('node:fs');")
+    expect(command).toContain("const { request } = await import('node:https');")
     expect(command).not.toContain("node:crypto' import")
-    expect(command.split('\n').slice(0, 3)).toEqual([
-      "import { randomUUID } from 'node:crypto'",
-      "import { readFileSync } from 'node:fs'",
-      "import { request } from 'node:https'",
+    expect(command.split('\n').slice(0, 4)).toEqual([
+      'void (async () => {',
+      "  const { randomUUID } = await import('node:crypto');",
+      "  const { readFileSync } = await import('node:fs');",
+      "  const { request } = await import('node:https');",
     ])
     expect(command).toContain("replaceAll('__JANGAR_DELIVERY_ID__', randomUUID())")
     expect(command).toContain('const targetByKind = {')
-    expect(command).toContain(
-      'const namespace = String(manifest?.metadata?.namespace ?? (readEnv("JANGAR_POD_NAMESPACE") || \'agents\'))',
-    )
     expect(command).toContain("method: 'POST'")
     expect(command).toContain(
-      'const namespace = String(manifest?.metadata?.namespace ?? (readEnv("JANGAR_POD_NAMESPACE") || \'agents\'))',
+      'const namespace = String((manifest?.metadata?.namespace ?? readEnv("JANGAR_POD_NAMESPACE")) || \'agents\');',
     )
-    expect(command).toContain("from 'node:crypto'\nimport")
+    expect(command).not.toContain("from 'node:crypto'\nimport")
     expect(command).not.toContain("from 'node:crypto' import")
     expect(command).not.toContain('?? readEnv("JANGAR_POD_NAMESPACE") ||')
     expect(command).not.toContain('kubectl create -f -')
@@ -242,6 +246,8 @@ describe('supporting primitives controller', () => {
     const stderr = syntaxCheck.stderr.toString()
     expect(stderr).not.toContain('Unexpected ||')
     expect(stderr).toContain('/config/run.json')
+    expect(() => new Function(command)).not.toThrow()
+    expect(() => new Function(command.replace(/\s+/g, ' '))).not.toThrow()
   })
 
   it('staggers hourly stage cadence deterministically per stage', () => {
@@ -347,6 +353,179 @@ describe('supporting primitives controller', () => {
       swarmRequiredRuntimeKits: 'runtime-kit:swarm_plan:test',
       swarmAdmissionProducerRevision: 'test-producer-revision',
     })
+  })
+
+  it('blocks swarm schedule runners when the current stage passport is not allowed', async () => {
+    process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT = '1'
+    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(
+      buildAdmissionSnapshot({
+        swarm_plan: {
+          decision: 'hold',
+          reason_codes: ['runtime_kit_component_missing:nats_cli'],
+        },
+      }),
+    )
+
+    const apply = vi.fn().mockResolvedValue({})
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue(null)
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { apply, applyStatus, get, delete: deleteFn } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-plan-sched',
+        namespace: 'agents',
+        generation: 4,
+        labels: {
+          'swarm.proompteng.ai/name': 'jangar-control-plane',
+          'swarm.proompteng.ai/stage': 'plan',
+        },
+        annotations: {
+          'swarm.proompteng.ai/nats-url': 'nats://nats.nats.svc.cluster.local:4222',
+        },
+      },
+      spec: {
+        cron: '*/10 * * * *',
+        targetRef: { kind: 'AgentRun', name: 'agentrun-plan-template', namespace: 'agents' },
+      },
+    }
+
+    await __test__.reconcileSchedule(kube, schedule, 'agents')
+
+    expect(apply).not.toHaveBeenCalled()
+    expect(deleteFn).toHaveBeenCalledWith('configmap', 'jangar-control-plane-plan-sched-template', 'agents', {
+      wait: false,
+    })
+    expect(deleteFn).toHaveBeenCalledWith('cronjob', 'jangar-control-plane-plan-sched-cron', 'agents', {
+      wait: false,
+    })
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(status.phase).toBe('AdmissionBlocked')
+    const ready = (Array.isArray(status.conditions) ? status.conditions : []).find(
+      (condition) => condition.type === 'Ready',
+    )
+    expect(ready?.reason).toBe('RuntimeAdmissionBlocked')
+    expect(String(ready?.message)).toContain('runtime_kit_component_missing:nats_cli')
+  })
+
+  it('refreshes swarm schedule run templates with the current stage passport', async () => {
+    process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT = '1'
+    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(
+      buildAdmissionSnapshot({
+        swarm_plan: {
+          admission_passport_id: 'passport:swarm_plan:current',
+          runtime_kit_set_digest: 'runtime-digest:current',
+          required_runtime_kits: ['runtime-kit:collaboration:current'],
+        },
+      }),
+    )
+
+    const target = {
+      kind: 'AgentRun',
+      metadata: { name: 'agentrun-plan-template', namespace: 'agents' },
+      spec: {
+        agentRef: { name: 'codex-spark-agent' },
+        runtime: { type: 'job' },
+      },
+    }
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) return target
+      return null
+    })
+    const apply = vi.fn().mockResolvedValue({})
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const kube = { get, apply, applyStatus, delete: vi.fn() } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-plan-sched',
+        namespace: 'agents',
+        generation: 5,
+        labels: {
+          'swarm.proompteng.ai/name': 'jangar-control-plane',
+          'swarm.proompteng.ai/stage': 'plan',
+        },
+        annotations: {
+          'swarm.proompteng.ai/nats-url': 'nats://nats.nats.svc.cluster.local:4222',
+          'swarm.proompteng.ai/admission-passport-id': 'passport:swarm_plan:stale',
+          'swarm.proompteng.ai/admission-decision': 'allow',
+        },
+      },
+      spec: {
+        cron: '*/10 * * * *',
+        targetRef: { kind: 'AgentRun', name: 'agentrun-plan-template', namespace: 'agents' },
+      },
+    }
+
+    await __test__.reconcileSchedule(kube, schedule, 'agents')
+
+    const configMap = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((payload) => payload.kind === 'ConfigMap') as { data?: Record<string, string> } | undefined
+    const runTemplate = JSON.parse(configMap?.data?.['run.json'] ?? '{}') as {
+      metadata?: Record<string, unknown>
+      spec?: Record<string, unknown>
+    }
+
+    expect(runTemplate.metadata?.annotations).toMatchObject({
+      'swarm.proompteng.ai/admission-passport-id': 'passport:swarm_plan:current',
+      'swarm.proompteng.ai/admission-decision': 'allow',
+      'swarm.proompteng.ai/runtime-kit-set-digest': 'runtime-digest:current',
+    })
+    expect(runTemplate.spec?.parameters).toMatchObject({
+      swarmAdmissionPassportId: 'passport:swarm_plan:current',
+      swarmRuntimeKitSetDigest: 'runtime-digest:current',
+      swarmRequiredRuntimeKits: 'runtime-kit:collaboration:current',
+    })
+  })
+
+  it('pins schedule runner cronjobs to the configured workload node selector', async () => {
+    process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR = JSON.stringify({ 'kubernetes.io/arch': 'arm64' })
+
+    const target = {
+      kind: 'AgentRun',
+      metadata: { name: 'agentrun-plan-template', namespace: 'agents' },
+      spec: {
+        agentRef: { name: 'codex-spark-agent' },
+        runtime: { type: 'job' },
+      },
+    }
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) return target
+      return null
+    })
+    const apply = vi.fn().mockResolvedValue({})
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const kube = { get, apply, applyStatus } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-plan-sched',
+        namespace: 'agents',
+        generation: 5,
+      },
+      spec: {
+        cron: '*/10 * * * *',
+        targetRef: { kind: 'AgentRun', name: 'agentrun-plan-template', namespace: 'agents' },
+      },
+    }
+
+    await __test__.reconcileSchedule(kube, schedule, 'agents')
+
+    const cronJob = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((payload) => payload.kind === 'CronJob') as { spec?: Record<string, unknown> } | undefined
+    const podSpec = (
+      ((cronJob?.spec?.jobTemplate as Record<string, unknown> | undefined)?.spec as Record<string, unknown> | undefined)
+        ?.template as Record<string, unknown> | undefined
+    )?.spec as Record<string, unknown> | undefined
+
+    expect(podSpec?.nodeSelector).toEqual({ 'kubernetes.io/arch': 'arm64' })
   })
 
   it('skips apply for equivalent schedule resources', async () => {
@@ -1468,6 +1647,8 @@ describe('supporting primitives controller', () => {
         return {
           items: [
             {
+              apiVersion: 'signals.proompteng.ai/v1alpha1',
+              kind: 'Signal',
               metadata: {
                 name: 'torghut-risk-handoff-2',
                 namespace: 'agents',
@@ -1868,6 +2049,8 @@ describe('supporting primitives controller', () => {
         return {
           items: [
             {
+              apiVersion: 'signals.proompteng.ai/v1alpha1',
+              kind: 'Signal',
               metadata: {
                 name: 'torghut-risk-handoff-2',
                 namespace: 'agents',
@@ -1922,13 +2105,96 @@ describe('supporting primitives controller', () => {
     const statusCall = applyStatus.mock.calls.at(-1)
     const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     const requirements = (status.requirements ?? {}) as Record<string, unknown>
-    expect(requirements.pending).toBe(1)
+    expect(requirements.pending).toBe(0)
     expect(requirements.dispatched).toBe(0)
     expect(requirements.invalidChannel).toBe(1)
+    expect(requirements.rejected).toBe(1)
     const conditions = Array.isArray(status.conditions) ? status.conditions : []
     const bridge = conditions.find((condition) => condition.type === 'RequirementsBridge')
-    expect(bridge?.status).toBe('False')
-    expect((bridge as { reason?: string } | undefined)?.reason).toBe('InvalidRequirementChannel')
+    expect(bridge?.status).toBe('True')
+    expect((bridge as { reason?: string } | undefined)?.reason).toBe('InvalidRequirementChannelRejected')
+
+    const signalStatusCall = applyStatus.mock.calls.find((call) => {
+      const payload = call[0] as Record<string, unknown>
+      return payload.kind === 'Signal'
+    })
+    const signalStatus = (signalStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(signalStatus.phase).toBe('Rejected')
+  })
+
+  it('does not count terminal rejected requirement signals as pending debt', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' },
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              apiVersion: 'signals.proompteng.ai/v1alpha1',
+              kind: 'Signal',
+              metadata: {
+                name: 'torghut-risk-handoff-rejected',
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'slack://swarm-bridge/TOR-456',
+              },
+              status: {
+                phase: 'Rejected',
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    const requirements = (status.requirements ?? {}) as Record<string, unknown>
+    expect(requirements.pending).toBe(0)
+    expect(requirements.dispatched).toBe(0)
+    expect(requirements.invalidChannel).toBe(0)
+    expect(requirements.rejected).toBe(0)
   })
 
   it('does not re-dispatch requirement signals that already completed', async () => {

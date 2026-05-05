@@ -58,7 +58,7 @@ Add component-scoped PDBs:
 | ---------------------------------------------- | ---------------------------------------- | --------------------------------------------------------------- |
 | `podDisruptionBudget.*`                        | `PodDisruptionBudget/agents`             | Backward compatible control plane PDB.                          |
 | `controllers.podDisruptionBudget.enabled=true` | `PodDisruptionBudget/agents-controllers` | Prevents full controller eviction during voluntary disruptions. |
-| `controllers.deploymentStrategy`                | `Deployment/agents-controllers.spec`      | Optional rollout strategy controls when configured.               |
+| `controllers.deploymentStrategy`               | `Deployment/agents-controllers.spec`     | Optional rollout strategy controls when configured.             |
 
 ## Rollout Plan
 

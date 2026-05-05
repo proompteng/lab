@@ -16,7 +16,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-05-05T11:19:48Z"
+        client.knative.dev/updateTimestamp: "2026-05-05T16:53:02Z"
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
@@ -28,7 +28,7 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:22f8ef16231113f2ef151559bc8e124ebc6fa9e28691fc51ef11b5dcc74dd885
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:5b1685a25cd2d708373d928b095a641b0fe65d0887820f70f32f4e6147bd9bb0
           ports:
             - name: http1
               containerPort: 8181
@@ -86,7 +86,7 @@ spec:
             - name: TRADING_PIPELINE_MODE
               value: simple
             - name: TRADING_SIMPLE_SUBMIT_ENABLED
-              value: "true"
+              value: "false"
             - name: TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED
               value: "false"
             - name: TRADING_KILL_SWITCH_ENABLED
@@ -169,7 +169,7 @@ spec:
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED
               value: "true"
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS
-              value: AMAT,AMD,AVGO,INTC,MU,NVDA
+              value: NVDA,AMD,INTC
             - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
               value: "900"
             - name: JANGAR_SYMBOLS_URL
@@ -300,9 +300,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.568.2-66-g40f8ad141
+              value: v0.568.5-9-gd73020e67
             - name: TORGHUT_COMMIT
-              value: 40f8ad1416fdb82135f39991dae963f7484d2dd0
+              value: d73020e67ff5409786f2c1c9984d03575c648088
           livenessProbe:
             httpGet:
               path: /healthz

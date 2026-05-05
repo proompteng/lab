@@ -12,11 +12,15 @@ on:
       - 'apps/reestr/**'
       - '.github/workflows/reestr-ci.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      install-command: bun install --frozen-lockfile --ignore-scripts
+      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter reestr --filter @proompteng/design
       lint-command: bun run --filter reestr lint
       oxlint-command: bun run --cwd apps/reestr lint:oxlint
       oxlint-type-command: bun run --cwd apps/reestr lint:oxlint:type

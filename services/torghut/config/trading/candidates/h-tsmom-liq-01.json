@@ -18,15 +18,12 @@
   ],
   "candidate_strategy": {
     "strategy_name": "intraday-tsmom-profit-v3",
-    "strategy_id": "intraday_tsmom_v1@prod",
-    "enabled": true,
+    "strategy_id": "intraday_tsmom_v1@paper",
+    "enabled": false,
     "universe_symbols": [
-      "AMAT",
+      "NVDA",
       "AMD",
-      "AVGO",
-      "INTC",
-      "MU",
-      "NVDA"
+      "INTC"
     ],
     "max_notional_per_trade": "50000",
     "max_position_pct_equity": "3.0",
@@ -60,7 +57,7 @@
   },
   "blocking_risks": [
     "March 30 through April 2 replay evidence was generated on a previous mixed universe and is not profitability proof for the live-signal-covered chip universe.",
-    "Fresh empirical promotion evidence is required before treating this executable chip-only candidate as profitable or live-promotable.",
+    "Fresh empirical promotion evidence is required before treating this executable chip-core candidate as profitable or live-promotable.",
     "Close-to-close account equity on 2026-04-02 was negative despite positive regular-session equity delta."
   ]
 }

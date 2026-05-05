@@ -34,6 +34,7 @@ kubectl -n agents wait --for=condition=Succeeded "agentrun/${RUN_NAME}" --timeou
 ```
 
 Required per-run inputs:
+
 - `parameters.repository` (example: `proompteng/lab`)
 - `parameters.base` (default example: `main`)
 - `parameters.head` (example: `codex/<branch>`)
@@ -63,6 +64,7 @@ kubectl -n agents get cm -l agents.proompteng.ai/agent-run=<run-name> -o name
 ```
 
 Where to inspect outputs:
+
 - Review file: `/agentworkspace/.agentrun/codex-spark-review/review-notes.md` (on the shared PVC used by both steps).
 - Runtime artifacts (controller-generated): `agent-runner` logs/status in run artifacts and controller-generated ConfigMap
   (`run.json.*` keys).

@@ -16,6 +16,10 @@ on:
       - 'scripts/karapace/**'
       - '.github/workflows/karapace-schema-sync.yaml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   sync:
     runs-on: arc-arm64
@@ -40,7 +44,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y make g++
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source
 
       - name: Validate protos compile
         run: buf build proto
@@ -49,6 +53,18 @@ jobs:
         if: ${{ github.event_name == 'pull_request' }}
         run: bun run scripts/karapace/sync-protos.ts --dry-run
 
-      - name: Sync schemas to Karapace
+      - name: Check Karapace configuration
         if: ${{ github.event_name != 'pull_request' }}
+        id: karapace-config
+        shell: bash
+        run: |
+          if [[ -z "${KARAPACE_URL}" ]]; then
+            echo "configured=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::Skipping Karapace schema sync because KARAPACE_URL is not configured."
+          else
+            echo "configured=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Sync schemas to Karapace
+        if: ${{ github.event_name != 'pull_request' && steps.karapace-config.outputs.configured == 'true' }}
         run: bun run scripts/karapace/sync-protos.ts

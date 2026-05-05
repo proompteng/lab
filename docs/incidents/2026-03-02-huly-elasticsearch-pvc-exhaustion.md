@@ -19,14 +19,14 @@
 
 ## Timeline (UTC)
 
-| Time | Event |
-| --- | --- |
-| 2026-03-02 02:25 | `huly` resources deployed; `elastic` pod starts with PVC `elastic` size `100Mi`. |
-| 2026-03-02 02:25 - 07:01 | `elastic` repeatedly restarts (`CrashLoopBackOff`), deployment remains unavailable (`0/1`). |
-| 2026-03-02 07:01 | Elasticsearch logs show `net usable_space [0b]` and `java.io.IOException: No space left on device`. |
-| 2026-03-02 07:01 | Startup aborts with `Failed to load persistent cache`; pod exits with code `1`. |
-| 2026-03-02 ~07:05 | PVC request increased to `5Gi`, deployment restarted, pod becomes `1/1 Running`. |
-| 2026-03-02 ~07:06 | PVC reflects `request=5Gi capacity=5Gi`; `Application/huly` health turns `Healthy`. |
+| Time                     | Event                                                                                               |
+| ------------------------ | --------------------------------------------------------------------------------------------------- |
+| 2026-03-02 02:25         | `huly` resources deployed; `elastic` pod starts with PVC `elastic` size `100Mi`.                    |
+| 2026-03-02 02:25 - 07:01 | `elastic` repeatedly restarts (`CrashLoopBackOff`), deployment remains unavailable (`0/1`).         |
+| 2026-03-02 07:01         | Elasticsearch logs show `net usable_space [0b]` and `java.io.IOException: No space left on device`. |
+| 2026-03-02 07:01         | Startup aborts with `Failed to load persistent cache`; pod exits with code `1`.                     |
+| 2026-03-02 ~07:05        | PVC request increased to `5Gi`, deployment restarted, pod becomes `1/1 Running`.                    |
+| 2026-03-02 ~07:06        | PVC reflects `request=5Gi capacity=5Gi`; `Application/huly` health turns `Healthy`.                 |
 
 ## Root Cause
 
@@ -70,4 +70,3 @@ Manifest source:
 2. Add an operational check that flags `Application` states that remain `Progressing` for longer than expected.
 3. Add runbook guidance for PVC expansion + restart procedure for stateful workloads in `huly`.
 4. Consider resource requests/limits and JVM tuning review for this Elasticsearch deployment.
-

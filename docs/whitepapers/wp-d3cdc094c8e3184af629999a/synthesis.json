@@ -17,9 +17,7 @@
     {
       "id": "KF-2",
       "finding": "Primary artifact URL is unreachable.",
-      "evidence": [
-        "`https://github.com/user-attachments/files/12345/sample-paper.pdf` download returns HTTP 404"
-      ]
+      "evidence": ["`https://github.com/user-attachments/files/12345/sample-paper.pdf` download returns HTTP 404"]
     },
     {
       "id": "KF-3",

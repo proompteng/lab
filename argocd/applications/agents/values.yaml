@@ -1,24 +1,26 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: eba3d511
-  digest: sha256:16c30acaabe7690511601c81533744e44e3f810cbfc53adeb75f114a420be0e2
+  tag: e48d29c9
+  digest: sha256:f0bec7dfbeea4bbe99c36d9f5a9e327c95bc36e57c0d021bc502e7a603d671aa
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
+nodeSelector:
+  kubernetes.io/arch: arm64
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: eba3d511
-    digest: sha256:6ef56161aef095d608a3b3e9a7d4436197b89fc3e8c31a3c2121db35ac095353
+    tag: e48d29c9
+    digest: sha256:65a524641f04d35524cfd86bc035592b5b8696cc0577c33feee8ed62cc5ef39e
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: eba3d511
-    digest: sha256:16c30acaabe7690511601c81533744e44e3f810cbfc53adeb75f114a420be0e2
+    tag: e48d29c9
+    digest: sha256:f0bec7dfbeea4bbe99c36d9f5a9e327c95bc36e57c0d021bc502e7a603d671aa
 argocdHooks:
   enabled: true
   image:
@@ -82,7 +84,12 @@ resources:
   requests:
     cpu: 200m
     memory: 512Mi
+readinessProbe:
+  timeoutSeconds: 5
 controller:
+  defaultWorkload:
+    nodeSelector:
+      kubernetes.io/arch: arm64
   namespaces:
     - agents
   concurrency:

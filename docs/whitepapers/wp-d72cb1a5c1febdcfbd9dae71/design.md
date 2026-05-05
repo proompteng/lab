@@ -46,29 +46,36 @@ Implementation relevance is high for research pipelines that need event-aware de
 ## 3) Key Findings
 
 1. Event-driven formulation outperforms reported baselines on risk-adjusted return in this setup.
+
 - Janus-Q SR = 1.3088 vs runner-up QwQ-32B SR = 0.6481 (about +102.0% relative), with DA = 0.5869 and ETA = 0.8009 (Sec. 4.5, Table 2).
 
 2. SFT is a critical base layer; RL adds incremental gains.
+
 - Removing SFT collapses SR from 1.3088 to -5.2848 and DA from 0.5869 to 0.4429.
 - Removing GRPO reduces SR from 1.3088 to 1.1330 (Sec. 4.6.1, Table 3).
 
 3. Diversified reward components are complementary.
+
 - Removing direction, event-type, magnitude, or PnL objectives lowers full-model SR (Sec. 4.6.2, Table 4).
 
 4. Appendix sensitivity tests support short-horizon event effects.
+
 - Performance degrades at longer holding horizons; moderate position limits improve the trade-off between capital efficiency and stale-signal risk (App. A.4, Fig. 9-10).
 
 ## 4) Novelty Claims Assessment
 
 1. Claim: first end-to-end event-driven framework mapping financial events directly to trading actions.
+
 - Assessment: moderately novel systems integration claim.
 - Basis: explicit event-first dataset + decision-oriented HGRM training pipeline (Sec. 1, Sec. 3, Fig. 2).
 
 2. Claim: HGRM aligns semantic reasoning with financially valid behavior.
+
 - Assessment: technically plausible and reasonably supported by ablations.
 - Basis: hierarchical gating and reward decomposition; full model beats ablations in Table 4 (Sec. 3.2, Sec. 4.6.2).
 
 3. Claim: strong outperformance over broad baselines.
+
 - Assessment: directionally supported in reported window, but external validity is limited.
 - Basis: Table 2 gains exist, but one market (CN A-share), one main test interval, and limited significance analysis (Sec. 4.3-4.5).
 
@@ -100,30 +107,36 @@ Implementation relevance is high for research pipelines that need event-aware de
 ## 6.1 What Can Be Adopted Now
 
 1. Adopt the HGRM structure as a policy-shaping template:
+
 - hard gate for wrong direction,
 - soft gate for semantic mismatch,
 - cost-aware reward,
 - magnitude/process shaping.
 
 2. Adopt event-centric sample schema for training records:
+
 - `news`, `event_time`, `stock_id`, `event_type`, `direction`, `strength`, `car`, plus provenance metadata.
 
 3. Adopt staged training flow:
+
 - SFT for structured reasoning reliability,
 - RL for objective alignment after SFT convergence.
 
 ## 6.2 Guardrails Required Before Any Production Trading Use
 
 1. Add deterministic reproducibility controls:
+
 - fixed seeds, frozen data snapshots, versioned prompts/reward configs, and immutable run manifests.
 
 2. Add robust evaluation gates:
+
 - rolling walk-forward splits,
 - regime-segmented evaluation,
 - bootstrap significance for SR/DA/ETA deltas,
 - realistic slippage/impact and turnover constraints.
 
 3. Add failure controls:
+
 - directional calibration checks,
 - stale-event suppression,
 - max gross/net exposure and concentration limits,
@@ -132,16 +145,19 @@ Implementation relevance is high for research pipelines that need event-aware de
 ## 6.3 Suggested Incremental Implementation Plan
 
 Phase 1 (2-3 weeks): research replica
+
 1. Implement event schema + CAR pipeline + baseline reward functions.
 2. Reproduce Table 3/4 style ablations on internal infra.
 3. Emit per-run JSON artifacts (data hash, config hash, metrics, error bars).
 
 Phase 2 (2-4 weeks): robustness hardening
+
 1. Expand evaluation to multi-period and multi-market slices.
 2. Add significance testing and calibration diagnostics.
 3. Introduce cost/slippage and turnover-aware policy constraints.
 
 Phase 3 (ongoing): controlled pilot only
+
 1. Paper-trading deployment with strict risk limits.
 2. Promotion gate requires stability across regimes and reproducible replay.
 3. Human sign-off required for any live capital transition.

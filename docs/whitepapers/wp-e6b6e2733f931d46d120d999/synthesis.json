@@ -14,11 +14,7 @@
   "full_paper_reviewed": true,
   "review_scope": {
     "pages_reviewed": 58,
-    "included_sections": [
-      "main_text",
-      "references",
-      "supplementary_S1_to_S6"
-    ]
+    "included_sections": ["main_text", "references", "supplementary_S1_to_S6"]
   },
   "executive_summary": "Trading-R1 introduces a staged finance-reasoning training recipe (structure, evidence, decision) over a 4B model with SFT plus GRPO-based RFT, using a 100k multi-modal corpus and volatility-normalized five-class labels. Reported backtests are directionally strong against listed baselines, but production viability is constrained by split/reproducibility ambiguity, missing statistical rigor, and limited regime diversity.",
   "problem_statement": "General LLMs and existing reasoning models are not reliably aligned to structured, auditable, and market-grounded trading decisions under noisy multi-source financial inputs.",
@@ -27,12 +23,7 @@
     {
       "id": "KF-1",
       "finding": "Trading-R1 is reported as best or near-best on most Sharpe/return cells among compared model categories.",
-      "evidence": [
-        "Section 5",
-        "Table 3",
-        "Table 4",
-        "Figure 5"
-      ],
+      "evidence": ["Section 5", "Table 3", "Table 4", "Figure 5"],
       "details": {
         "sample_points": {
           "nvda": {
@@ -59,30 +50,17 @@
     {
       "id": "KF-2",
       "finding": "Interleaving SFT and RFT outperforms one-stage variants in the authors' setup.",
-      "evidence": [
-        "Section 3.3",
-        "Section 5",
-        "Table 1",
-        "Table 3",
-        "Table 4"
-      ]
+      "evidence": ["Section 3.3", "Section 5", "Table 1", "Table 3", "Table 4"]
     },
     {
       "id": "KF-3",
       "finding": "Explicit evidence-format rewards are used to mitigate hallucination and enforce traceable claims.",
-      "evidence": [
-        "Section 3.3",
-        "Section 3.7",
-        "Supplement S4",
-        "Supplement S5"
-      ]
+      "evidence": ["Section 3.3", "Section 3.7", "Supplement S4", "Supplement S5"]
     },
     {
       "id": "KF-4",
       "finding": "Authors explicitly position Trading-R1 for analyst support and high-throughput research workflows rather than high-stakes autonomous trading.",
-      "evidence": [
-        "Industrial Applications and Future Work (pages 17-18)"
-      ]
+      "evidence": ["Industrial Applications and Future Work (pages 17-18)"]
     }
   ],
   "novelty_claims": [

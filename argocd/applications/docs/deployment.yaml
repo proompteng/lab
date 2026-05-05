@@ -18,6 +18,8 @@ spec:
       labels:
         app: docs
     spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
       containers:
         - name: docs
           image: registry.ide-newton.ts.net/lab/docs

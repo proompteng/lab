@@ -38,10 +38,7 @@
     {
       "id": "KF-1",
       "finding": "FinPos reports best aggregate performance among listed baselines on TSLA/AAPL/AMZN/NFLX/COIN.",
-      "evidence": [
-        "Section 5.2",
-        "Table 1"
-      ],
+      "evidence": ["Section 5.2", "Table 1"],
       "details": {
         "sample_points": {
           "tsla": {
@@ -65,38 +62,22 @@
     {
       "id": "KF-2",
       "finding": "Multi-timescale reward is the strongest ablation contributor for cumulative return and strategic consistency.",
-      "evidence": [
-        "Section 5.3.1",
-        "Table 2",
-        "Figure 3"
-      ]
+      "evidence": ["Section 5.3.1", "Table 2", "Figure 3"]
     },
     {
       "id": "KF-3",
       "finding": "Separating quantity/risk sizing from direction materially improves drawdown control.",
-      "evidence": [
-        "Section 5.3.2",
-        "Table 2",
-        "Section 4.2.2"
-      ]
+      "evidence": ["Section 5.3.2", "Table 2", "Section 4.2.2"]
     },
     {
       "id": "KF-4",
       "finding": "Prompt construction and signal curation quality are performance-critical but introduce brittleness.",
-      "evidence": [
-        "Section 5.3.3",
-        "Appendix D.3.1",
-        "Table 6",
-        "Table 7",
-        "Figure 5"
-      ]
+      "evidence": ["Section 5.3.3", "Appendix D.3.1", "Table 6", "Table 7", "Figure 5"]
     },
     {
       "id": "KF-5",
       "finding": "Authors explicitly constrain claims to research context and caution against unsupervised deployment.",
-      "evidence": [
-        "Limitations (page 9)"
-      ]
+      "evidence": ["Limitations (page 9)"]
     }
   ],
   "novelty_claims": [

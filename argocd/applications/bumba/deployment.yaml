@@ -22,8 +22,10 @@ spec:
         app.kubernetes.io/name: bumba
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-04-19T03:05:32.057Z"
+        kubectl.kubernetes.io/restartedAt: "2026-05-05T11:10:50Z"
     spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
       initContainers:
         - name: bootstrap-workspace
           image: registry.ide-newton.ts.net/lab/bumba

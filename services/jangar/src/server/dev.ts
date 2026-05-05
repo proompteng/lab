@@ -6,7 +6,7 @@ import { resolveHttpServerListenConfig } from './runtime-entry-config'
 
 type JangarRuntime = Awaited<ReturnType<typeof import('./app').createJangarRuntime>>
 
-const { port, hostname } = resolveHttpServerListenConfig(process.env, { dev: true })
+const { port, hostname, idleTimeoutSeconds } = resolveHttpServerListenConfig(process.env, { dev: true })
 const runtimeProfile = JANGAR_RUNTIME_PROFILES.viteDevApi
 
 bootRuntimeProfile(runtimeProfile)
@@ -37,6 +37,7 @@ vite.watcher.on('change', () => {
 const server = Bun.serve({
   port,
   hostname,
+  idleTimeout: idleTimeoutSeconds,
   websocket: {
     close(ws, code, reason) {
       currentRuntime?.websocket.close?.(ws, code, reason)

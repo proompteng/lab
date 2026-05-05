@@ -243,7 +243,8 @@ class DecisionEngine:
 
         strategies_by_id = {str(strategy.id): strategy for strategy in strategies}
         raw_runtime_by_strategy_id = {
-            item.intent.strategy_id: item.metadata() for item in runtime_eval.raw_intents
+            item.intent.strategy_id: item.metadata()
+            for item in runtime_eval.raw_intents
         }
         isolated_strategy_ids = {
             str(strategy.id)
@@ -251,7 +252,9 @@ class DecisionEngine:
             if _strategy_uses_position_isolation(strategy)
         }
         non_isolated_strategy_ids = {
-            str(strategy.id) for strategy in strategies if str(strategy.id) not in isolated_strategy_ids
+            str(strategy.id)
+            for strategy in strategies
+            if str(strategy.id) not in isolated_strategy_ids
         }
         aggregated_intents, _ = self.strategy_runtime.aggregator.aggregate(
             [
@@ -301,12 +304,22 @@ class DecisionEngine:
                 capacity_positions=positions,
                 runtime_target_notional=runtime_target_notional,
             )
+
+            def _record_suppression(reason: str) -> None:
+                for strategy_id in source_strategy_ids or [primary_strategy_id]:
+                    runtime_eval.observation.record_intent_suppression(
+                        strategy_id,
+                        reason,
+                    )
+
             if _skip_non_executable_decision_qty(qty=qty, sizing_meta=sizing_meta):
+                reason = str(sizing_meta.get("reason") or "non_executable_qty")
+                _record_suppression(reason)
                 logger.debug(
                     "Skipping non-executable runtime decision symbol=%s action=%s reason=%s",
                     symbol,
                     direction,
-                    sizing_meta.get("reason"),
+                    reason,
                 )
                 return
             forecast_contract: dict[str, Any] | None = None
@@ -340,6 +353,7 @@ class DecisionEngine:
                 policy=trade_policy,
                 state_scope_key=position_state_scope_key,
             ):
+                _record_suppression("runtime_trade_policy_blocked")
                 return
             if not _passes_signal_exit_policy(
                 strategies=source_strategies,
@@ -349,80 +363,81 @@ class DecisionEngine:
                 signal=signal,
                 positions=positions_scope,
             ):
+                _record_suppression("signal_exit_policy_blocked")
                 return
             decision = StrategyDecision(
-                    strategy_id=primary_strategy_id,
-                    symbol=symbol,
-                    event_ts=signal.event_ts,
-                    timeframe=timeframe,
-                    action=cast(Literal["buy", "sell"], direction),
-                    qty=qty,
-                    order_type="market",
-                    time_in_force=cast(
-                        Literal["day", "gtc", "ioc", "fok"],
-                        _resolve_strategy_time_in_force(
-                            strategies=source_strategies,
-                            action=direction,
-                        ),
+                strategy_id=primary_strategy_id,
+                symbol=symbol,
+                event_ts=signal.event_ts,
+                timeframe=timeframe,
+                action=cast(Literal["buy", "sell"], direction),
+                qty=qty,
+                order_type="market",
+                time_in_force=cast(
+                    Literal["day", "gtc", "ioc", "fok"],
+                    _resolve_strategy_time_in_force(
+                        strategies=source_strategies,
+                        action=direction,
                     ),
-                    rationale=",".join(explain),
-                    params=_build_params(
-                        signal=normalized_signal,
-                        macd=features.macd,
-                        macd_signal=features.macd_signal,
-                        rsi=features.rsi,
-                        price=price,
-                        volatility=features.volatility,
-                        snapshot=snapshot,
-                        runtime_metadata={
-                            "mode": settings.trading_strategy_runtime_mode,
-                            "aggregated": aggregated,
-                            "position_isolation_mode": position_isolation_mode,
-                            "primary_strategy_row_id": primary_strategy_id,
-                            "primary_declared_strategy_id": primary_runtime_metadata.get(
-                                "declared_strategy_id"
-                            ),
-                            "source_strategy_ids": source_strategy_ids,
-                            "source_declared_strategy_ids": [
-                                str(item.get("declared_strategy_id"))
+                ),
+                rationale=",".join(explain),
+                params=_build_params(
+                    signal=normalized_signal,
+                    macd=features.macd,
+                    macd_signal=features.macd_signal,
+                    rsi=features.rsi,
+                    price=price,
+                    volatility=features.volatility,
+                    snapshot=snapshot,
+                    runtime_metadata={
+                        "mode": settings.trading_strategy_runtime_mode,
+                        "aggregated": aggregated,
+                        "position_isolation_mode": position_isolation_mode,
+                        "primary_strategy_row_id": primary_strategy_id,
+                        "primary_declared_strategy_id": primary_runtime_metadata.get(
+                            "declared_strategy_id"
+                        ),
+                        "source_strategy_ids": source_strategy_ids,
+                        "source_declared_strategy_ids": [
+                            str(item.get("declared_strategy_id"))
+                            for item in source_runtime_metadata
+                            if str(item.get("declared_strategy_id") or "").strip()
+                        ],
+                        "compiler_sources": sorted(
+                            {
+                                str(item.get("compiler_source") or "").strip()
                                 for item in source_runtime_metadata
-                                if str(item.get("declared_strategy_id") or "").strip()
-                            ],
-                            "compiler_sources": sorted(
-                                {
-                                    str(item.get("compiler_source") or "").strip()
-                                    for item in source_runtime_metadata
-                                    if str(item.get("compiler_source") or "").strip()
-                                }
-                            ),
-                            "aggregated_target_notional": (
-                                str(runtime_target_notional)
-                                if runtime_target_notional is not None
-                                else None
-                            ),
-                            "source_strategy_runtime": source_runtime_metadata,
-                            "feature_snapshot_hashes": feature_snapshot_hashes,
-                            "intent_conflicts_total": runtime_eval.observation.intent_conflicts_total,
-                            "strategy_errors": [
-                                {
-                                    "strategy_id": error.strategy_id,
-                                    "strategy_type": error.strategy_type,
-                                    "plugin_id": error.plugin_id,
-                                    "reason": error.reason,
-                                }
-                                for error in runtime_eval.errors
-                            ],
-                            "forecast_route_key": (
-                                str(forecast_contract.get("route_key"))
-                                if isinstance(forecast_contract, dict)
-                                else None
-                            ),
-                        },
-                        forecast_contract=forecast_contract,
-                        forecast_audit=forecast_audit,
-                    )
-                    | {"sizing": sizing_meta},
+                                if str(item.get("compiler_source") or "").strip()
+                            }
+                        ),
+                        "aggregated_target_notional": (
+                            str(runtime_target_notional)
+                            if runtime_target_notional is not None
+                            else None
+                        ),
+                        "source_strategy_runtime": source_runtime_metadata,
+                        "feature_snapshot_hashes": feature_snapshot_hashes,
+                        "intent_conflicts_total": runtime_eval.observation.intent_conflicts_total,
+                        "strategy_errors": [
+                            {
+                                "strategy_id": error.strategy_id,
+                                "strategy_type": error.strategy_type,
+                                "plugin_id": error.plugin_id,
+                                "reason": error.reason,
+                            }
+                            for error in runtime_eval.errors
+                        ],
+                        "forecast_route_key": (
+                            str(forecast_contract.get("route_key"))
+                            if isinstance(forecast_contract, dict)
+                            else None
+                        ),
+                    },
+                    forecast_contract=forecast_contract,
+                    forecast_audit=forecast_audit,
                 )
+                | {"sizing": sizing_meta},
+            )
             decisions.append(decision)
             self._last_emitted_action_at[
                 _runtime_trade_policy_key(
@@ -474,7 +489,9 @@ class DecisionEngine:
 
         for intent in aggregated_intents:
             source_strategy_ids = list(intent.source_strategy_ids)
-            primary_strategy_id = source_strategy_ids[0] if source_strategy_ids else None
+            primary_strategy_id = (
+                source_strategy_ids[0] if source_strategy_ids else None
+            )
             if primary_strategy_id is None:
                 logger.warning(
                     "Skipping aggregated intent without source strategy symbol=%s horizon=%s",
@@ -490,9 +507,7 @@ class DecisionEngine:
                 explain=intent.explain,
                 feature_snapshot_hashes=list(intent.feature_snapshot_hashes),
                 positions_scope=(
-                    actual_positions
-                    if intent.direction == "sell"
-                    else positions
+                    actual_positions if intent.direction == "sell" else positions
                 ),
                 aggregated=True,
                 runtime_target_notional=intent.target_notional,
@@ -522,7 +537,8 @@ class DecisionEngine:
                 decisions=[
                     decision
                     for decision in decisions
-                    if decision.symbol == signal.symbol and decision.strategy_id == isolated_strategy_id
+                    if decision.symbol == signal.symbol
+                    and decision.strategy_id == isolated_strategy_id
                 ],
                 positions=isolated_positions,
                 equity=equity,
@@ -603,7 +619,8 @@ class DecisionEngine:
             decisions=[
                 decision
                 for decision in decisions
-                if decision.symbol == signal.symbol and decision.strategy_id in non_isolated_strategy_ids
+                if decision.symbol == signal.symbol
+                and decision.strategy_id in non_isolated_strategy_ids
             ],
             positions=actual_positions,
             equity=equity,
@@ -672,11 +689,15 @@ class DecisionEngine:
             for position in (positions or [])
             if (_position_qty_from_payload(position) or Decimal("0")) > 0
         }
-        for tracked_symbol, tracked_scope_key in list(self._position_peak_price_by_scope):
+        for tracked_symbol, tracked_scope_key in list(
+            self._position_peak_price_by_scope
+        ):
             if tracked_scope_key != state_scope_key:
                 continue
             if tracked_symbol not in active_symbols:
-                self._position_peak_price_by_scope.pop((tracked_symbol, tracked_scope_key), None)
+                self._position_peak_price_by_scope.pop(
+                    (tracked_symbol, tracked_scope_key), None
+                )
 
         normalized_symbol = symbol.strip().upper()
         peak_price_key = (normalized_symbol, state_scope_key)
@@ -685,7 +706,9 @@ class DecisionEngine:
             self._position_peak_price_by_scope.pop(peak_price_key, None)
             return None
 
-        avg_entry_price = _position_avg_entry_price_for_symbol(positions, normalized_symbol)
+        avg_entry_price = _position_avg_entry_price_for_symbol(
+            positions, normalized_symbol
+        )
         candidates = [
             candidate
             for candidate in (
@@ -1088,9 +1111,7 @@ def _resolve_execution_feature_payload(
         "spread_bps",
     )
     execution_features = {
-        key: payload.get(key)
-        for key in feature_keys
-        if payload.get(key) is not None
+        key: payload.get(key) for key in feature_keys if payload.get(key) is not None
     }
     if not execution_features:
         return None
@@ -1230,9 +1251,7 @@ def _resolve_qty(
             "reason": _SAME_DIRECTION_REENTRY_REASON,
             "notional_budget": str(notional_budget),
             "price": str(price),
-            "position_qty": (
-                str(position_qty) if position_qty is not None else None
-            ),
+            "position_qty": (str(position_qty) if position_qty is not None else None),
         }
 
     requested_qty = notional_budget / price
@@ -1247,7 +1266,9 @@ def _resolve_qty(
         position_qty=position_qty,
         symbol_notional_cap=symbol_notional_cap,
     )
-    cap_applied = capped_requested_qty is not None and capped_requested_qty < requested_qty
+    cap_applied = (
+        capped_requested_qty is not None and capped_requested_qty < requested_qty
+    )
     if capped_requested_qty is not None:
         requested_qty = capped_requested_qty
     capped_by_portfolio_qty = _cap_requested_qty_by_portfolio_gross_cap(
@@ -1265,7 +1286,8 @@ def _resolve_qty(
     if requested_qty <= 0:
         capacity_reason = (
             "portfolio_gross_capacity_exhausted"
-            if portfolio_cap_applied or (
+            if portfolio_cap_applied
+            or (
                 normalized_action == "buy"
                 and portfolio_gross_cap is not None
                 and portfolio_gross_cap > 0
@@ -1281,13 +1303,9 @@ def _resolve_qty(
             "requested_qty": str(notional_budget / price),
             "current_value": str(current_value) if current_value is not None else None,
             "current_gross": str(current_gross),
-            "position_qty": (
-                str(position_qty) if position_qty is not None else None
-            ),
+            "position_qty": (str(position_qty) if position_qty is not None else None),
             "symbol_notional_cap": (
-                str(symbol_notional_cap)
-                if symbol_notional_cap is not None
-                else None
+                str(symbol_notional_cap) if symbol_notional_cap is not None else None
             ),
             "portfolio_gross_cap": (
                 str(portfolio_gross_cap) if portfolio_gross_cap is not None else None
@@ -1336,7 +1354,9 @@ def _resolve_qty(
                     else None
                 ),
                 "portfolio_gross_cap": (
-                    str(portfolio_gross_cap) if portfolio_gross_cap is not None else None
+                    str(portfolio_gross_cap)
+                    if portfolio_gross_cap is not None
+                    else None
                 ),
                 "quantity_resolution": resolution.to_payload(),
             }
@@ -1412,7 +1432,10 @@ def _resolve_qty_for_aggregated(
     )
 
     symbol_notional_cap = _resolve_symbol_notional_cap(
-        strategy_pcts=[optional_decimal(strategy.max_position_pct_equity) for strategy in strategies],
+        strategy_pcts=[
+            optional_decimal(strategy.max_position_pct_equity)
+            for strategy in strategies
+        ],
         equity=equity,
     )
     portfolio_gross_cap = _resolve_portfolio_gross_cap(
@@ -1445,7 +1468,9 @@ def _resolve_qty_for_aggregated(
             "price": str(price),
             "position_qty": str(position_qty),
         }
-    if _blocks_same_direction_reentry_any(strategies) and _same_direction_reentry_exists(
+    if _blocks_same_direction_reentry_any(
+        strategies
+    ) and _same_direction_reentry_exists(
         action=normalized_action,
         position_qty=position_qty,
     ):
@@ -1454,9 +1479,7 @@ def _resolve_qty_for_aggregated(
             "reason": _SAME_DIRECTION_REENTRY_REASON,
             "notional_budget": str(total_budget),
             "price": str(price),
-            "position_qty": (
-                str(position_qty) if position_qty is not None else None
-            ),
+            "position_qty": (str(position_qty) if position_qty is not None else None),
         }
 
     requested_qty = total_budget / price
@@ -1471,7 +1494,9 @@ def _resolve_qty_for_aggregated(
         position_qty=position_qty,
         symbol_notional_cap=symbol_notional_cap,
     )
-    cap_applied = capped_requested_qty is not None and capped_requested_qty < requested_qty
+    cap_applied = (
+        capped_requested_qty is not None and capped_requested_qty < requested_qty
+    )
     if capped_requested_qty is not None:
         requested_qty = capped_requested_qty
     capped_by_portfolio_qty = _cap_requested_qty_by_portfolio_gross_cap(
@@ -1489,7 +1514,8 @@ def _resolve_qty_for_aggregated(
     if requested_qty <= 0:
         capacity_reason = (
             "portfolio_gross_capacity_exhausted"
-            if portfolio_cap_applied or (
+            if portfolio_cap_applied
+            or (
                 normalized_action == "buy"
                 and portfolio_gross_cap is not None
                 and portfolio_gross_cap > 0
@@ -1505,13 +1531,9 @@ def _resolve_qty_for_aggregated(
             "requested_qty": str(total_budget / price),
             "current_value": str(current_value) if current_value is not None else None,
             "current_gross": str(current_gross),
-            "position_qty": (
-                str(position_qty) if position_qty is not None else None
-            ),
+            "position_qty": (str(position_qty) if position_qty is not None else None),
             "symbol_notional_cap": (
-                str(symbol_notional_cap)
-                if symbol_notional_cap is not None
-                else None
+                str(symbol_notional_cap) if symbol_notional_cap is not None else None
             ),
             "portfolio_gross_cap": (
                 str(portfolio_gross_cap) if portfolio_gross_cap is not None else None
@@ -1560,7 +1582,9 @@ def _resolve_qty_for_aggregated(
                     else None
                 ),
                 "portfolio_gross_cap": (
-                    str(portfolio_gross_cap) if portfolio_gross_cap is not None else None
+                    str(portfolio_gross_cap)
+                    if portfolio_gross_cap is not None
+                    else None
                 ),
                 "quantity_resolution": resolution.to_payload(),
             }
@@ -1686,9 +1710,13 @@ def _build_runtime_position_exit_overlay(
     )
     entry_drawdown_bps = Decimal("0")
     if position_side == "long" and price < avg_entry_price:
-        entry_drawdown_bps = ((avg_entry_price - price) / avg_entry_price) * Decimal("10000")
+        entry_drawdown_bps = ((avg_entry_price - price) / avg_entry_price) * Decimal(
+            "10000"
+        )
     elif position_side == "short" and price > avg_entry_price:
-        entry_drawdown_bps = ((price - avg_entry_price) / avg_entry_price) * Decimal("10000")
+        entry_drawdown_bps = ((price - avg_entry_price) / avg_entry_price) * Decimal(
+            "10000"
+        )
 
     trailing_activation_profit_bps: Decimal | None = None
     trailing_stop_threshold_bps: Decimal | None = None
@@ -1735,7 +1763,10 @@ def _build_runtime_position_exit_overlay(
         key="max_hold_seconds",
     )
     minute_of_day_utc = Decimal(
-        str(signal.event_ts.astimezone(timezone.utc).hour * 60 + signal.event_ts.astimezone(timezone.utc).minute)
+        str(
+            signal.event_ts.astimezone(timezone.utc).hour * 60
+            + signal.event_ts.astimezone(timezone.utc).minute
+        )
     )
 
     if (
@@ -1745,15 +1776,19 @@ def _build_runtime_position_exit_overlay(
         and trailing_stop_threshold_bps is not None
         and trailing_stop_threshold_bps > 0
     ):
-        peak_profit_bps = ((position_peak_price - avg_entry_price) / avg_entry_price) * Decimal("10000")
-        if peak_profit_bps >= trailing_activation_profit_bps and price < position_peak_price:
-            peak_drawdown_bps = ((position_peak_price - price) / position_peak_price) * Decimal("10000")
-            if (
-                peak_drawdown_bps >= trailing_stop_threshold_bps
-                and (
-                    not trailing_stop_requires_structure_loss
-                    or trailing_stop_structure_loss_confirmed
-                )
+        peak_profit_bps = (
+            (position_peak_price - avg_entry_price) / avg_entry_price
+        ) * Decimal("10000")
+        if (
+            peak_profit_bps >= trailing_activation_profit_bps
+            and price < position_peak_price
+        ):
+            peak_drawdown_bps = (
+                (position_peak_price - price) / position_peak_price
+            ) * Decimal("10000")
+            if peak_drawdown_bps >= trailing_stop_threshold_bps and (
+                not trailing_stop_requires_structure_loss
+                or trailing_stop_structure_loss_confirmed
             ):
                 exit_candidates.append(
                     (
@@ -1824,18 +1859,14 @@ def _build_runtime_position_exit_overlay(
         candidate_threshold_bps,
         candidate_drawdown_bps,
     ) in exit_candidates:
-        if (
-            candidate_exit_type
-            not in {
-                "long_stop_loss_bps",
-                "short_stop_loss_bps",
-                "max_hold_seconds",
-                "session_flatten_minute_utc",
-            }
-            and not _passes_exit_profit_policy(
-                strategies=eligible_strategies,
-                realized_bps=realized_bps,
-            )
+        if candidate_exit_type not in {
+            "long_stop_loss_bps",
+            "short_stop_loss_bps",
+            "max_hold_seconds",
+            "session_flatten_minute_utc",
+        } and not _passes_exit_profit_policy(
+            strategies=eligible_strategies,
+            realized_bps=realized_bps,
         ):
             continue
         exit_type = candidate_exit_type
@@ -2293,7 +2324,9 @@ def _position_avg_entry_price_for_symbol(
     for position in positions:
         if str(position.get("symbol") or "").strip().upper() != normalized_symbol:
             continue
-        raw_value = position.get("avg_entry_price") or position.get("average_entry_price")
+        raw_value = position.get("avg_entry_price") or position.get(
+            "average_entry_price"
+        )
         if raw_value is None:
             continue
         try:
@@ -2432,11 +2465,14 @@ def _passes_exit_profit_policy(
     strategies: list[Strategy],
     realized_bps: Decimal,
 ) -> bool:
-    if _resolve_bool_strategy_param(
-        strategies=strategies,
-        key="require_positive_price_for_signal_exit",
-        default=True,
-    ) and realized_bps <= 0:
+    if (
+        _resolve_bool_strategy_param(
+            strategies=strategies,
+            key="require_positive_price_for_signal_exit",
+            default=True,
+        )
+        and realized_bps <= 0
+    ):
         return False
 
     min_profit_bps = _resolve_max_nonnegative_strategy_param(
@@ -2495,7 +2531,9 @@ def _resolve_portfolio_gross_cap(
     if absolute_cap is not None and absolute_cap > 0:
         caps.append(absolute_cap)
     if equity is not None and equity > 0:
-        global_pct = optional_decimal(settings.trading_portfolio_max_gross_exposure_pct_equity)
+        global_pct = optional_decimal(
+            settings.trading_portfolio_max_gross_exposure_pct_equity
+        )
         if global_pct is not None and global_pct > 0:
             caps.append(equity * global_pct)
         strategy_pct = _resolve_min_positive_strategy_param(
@@ -2563,7 +2601,9 @@ def _resolve_aggregated_notional_budget(
     return Decimal("0")
 
 
-def _resolve_runtime_trade_policy(strategies: list[Strategy]) -> dict[str, int | Decimal]:
+def _resolve_runtime_trade_policy(
+    strategies: list[Strategy],
+) -> dict[str, int | Decimal]:
     entry_cooldown = 0
     exit_cooldown = 0
     min_hold = 0
@@ -2619,8 +2659,13 @@ def _resolve_runtime_trade_policy(strategies: list[Strategy]) -> dict[str, int |
         max_session_negative_exit_bps = optional_decimal(
             params.get("max_session_negative_exit_bps")
         )
-        if max_session_negative_exit_bps is not None and max_session_negative_exit_bps > 0:
-            max_session_negative_exit_bps_candidates.append(max_session_negative_exit_bps)
+        if (
+            max_session_negative_exit_bps is not None
+            and max_session_negative_exit_bps > 0
+        ):
+            max_session_negative_exit_bps_candidates.append(
+                max_session_negative_exit_bps
+            )
     return {
         "entry_cooldown_seconds": entry_cooldown,
         "exit_cooldown_seconds": exit_cooldown,
@@ -2635,14 +2680,10 @@ def _resolve_runtime_trade_policy(strategies: list[Strategy]) -> dict[str, int |
             else 0
         ),
         "max_stop_loss_exits_per_session": (
-            min(max_stop_loss_exits_candidates)
-            if max_stop_loss_exits_candidates
-            else 0
+            min(max_stop_loss_exits_candidates) if max_stop_loss_exits_candidates else 0
         ),
         "max_negative_exits_per_session": (
-            min(max_negative_exits_candidates)
-            if max_negative_exits_candidates
-            else 0
+            min(max_negative_exits_candidates) if max_negative_exits_candidates else 0
         ),
         "stop_loss_lockout_seconds": stop_loss_lockout,
         "negative_exit_lockout_seconds": negative_exit_lockout,
@@ -2689,31 +2730,37 @@ def _passes_runtime_trade_policy(
         action=normalized_action,
     )
     if entry_action:
-        max_concurrent_positions = max(0, int(policy.get("max_concurrent_positions", 0)))
-        if (
-            max_concurrent_positions > 0
-            and (
-                (
-                    normalized_action == "buy"
-                    and _count_open_long_positions(positions) >= max_concurrent_positions
-                )
-                or (
-                    normalized_action == "sell"
-                    and _count_open_short_positions(positions) >= max_concurrent_positions
-                )
+        max_concurrent_positions = max(
+            0, int(policy.get("max_concurrent_positions", 0))
+        )
+        if max_concurrent_positions > 0 and (
+            (
+                normalized_action == "buy"
+                and _count_open_long_positions(positions) >= max_concurrent_positions
+            )
+            or (
+                normalized_action == "sell"
+                and _count_open_short_positions(positions) >= max_concurrent_positions
             )
         ):
             return False
         max_entries_per_session = max(0, int(policy.get("max_entries_per_session", 0)))
-        if max_entries_per_session > 0 and session_state.entry_count >= max_entries_per_session:
+        if (
+            max_entries_per_session > 0
+            and session_state.entry_count >= max_entries_per_session
+        ):
             return False
-        max_stop_loss_exits = max(0, int(policy.get("max_stop_loss_exits_per_session", 0)))
+        max_stop_loss_exits = max(
+            0, int(policy.get("max_stop_loss_exits_per_session", 0))
+        )
         if (
             max_stop_loss_exits > 0
             and session_state.stop_loss_exit_count >= max_stop_loss_exits
         ):
             return False
-        max_negative_exits = max(0, int(policy.get("max_negative_exits_per_session", 0)))
+        max_negative_exits = max(
+            0, int(policy.get("max_negative_exits_per_session", 0))
+        )
         if (
             max_negative_exits > 0
             and session_state.negative_exit_count >= max_negative_exits
@@ -2725,10 +2772,13 @@ def _passes_runtime_trade_policy(
         if (
             max_session_negative_exit_bps is not None
             and max_session_negative_exit_bps > 0
-            and session_state.cumulative_negative_exit_bps >= max_session_negative_exit_bps
+            and session_state.cumulative_negative_exit_bps
+            >= max_session_negative_exit_bps
         ):
             return False
-        stop_loss_lockout_seconds = max(0, int(policy.get("stop_loss_lockout_seconds", 0)))
+        stop_loss_lockout_seconds = max(
+            0, int(policy.get("stop_loss_lockout_seconds", 0))
+        )
         if (
             stop_loss_lockout_seconds > 0
             and session_state.last_stop_loss_exit_at is not None
@@ -2753,9 +2803,7 @@ def _passes_runtime_trade_policy(
         ):
             return False
 
-    cooldown_key = (
-        "entry_cooldown_seconds" if entry_action else "exit_cooldown_seconds"
-    )
+    cooldown_key = "entry_cooldown_seconds" if entry_action else "exit_cooldown_seconds"
     cooldown_seconds = max(0, int(policy.get(cooldown_key, 0)))
     last_emitted = last_emitted_action_at.get(
         _runtime_trade_policy_key(
@@ -2767,7 +2815,9 @@ def _passes_runtime_trade_policy(
     if (
         cooldown_seconds > 0
         and last_emitted is not None
-        and (signal_ts.astimezone(timezone.utc) - last_emitted.astimezone(timezone.utc)).total_seconds()
+        and (
+            signal_ts.astimezone(timezone.utc) - last_emitted.astimezone(timezone.utc)
+        ).total_seconds()
         < cooldown_seconds
     ):
         return False
@@ -2785,8 +2835,7 @@ def _passes_runtime_trade_policy(
     if position_opened_at is None:
         return True
     age_seconds = (
-        signal_ts.astimezone(timezone.utc)
-        - position_opened_at.astimezone(timezone.utc)
+        signal_ts.astimezone(timezone.utc) - position_opened_at.astimezone(timezone.utc)
     ).total_seconds()
     return age_seconds >= min_hold_seconds
 
@@ -2817,7 +2866,9 @@ def _resolve_strategy_time_in_force(
     normalized_action = str(action or "").strip().lower()
     param_key = (
         "entry_time_in_force"
-        if _is_entry_action_for_strategies(strategies=strategies, action=normalized_action)
+        if _is_entry_action_for_strategies(
+            strategies=strategies, action=normalized_action
+        )
         else "exit_time_in_force"
     )
     supported_values = {"day", "gtc", "ioc", "fok"}
@@ -2858,7 +2909,10 @@ def _resolve_runtime_trade_policy_session_state(
     position_owner: str,
 ) -> _RuntimeTradePolicySessionState:
     session_day = signal_ts.astimezone(timezone.utc).date()
-    key = (symbol.strip().upper(), position_owner.strip() or _RUNTIME_TRADE_POLICY_SHARED_OWNER)
+    key = (
+        symbol.strip().upper(),
+        position_owner.strip() or _RUNTIME_TRADE_POLICY_SHARED_OWNER,
+    )
     state = runtime_trade_policy_state.get(key)
     if state is None or state.session_day != session_day:
         state = _RuntimeTradePolicySessionState(session_day=session_day)
@@ -2928,7 +2982,11 @@ def _record_runtime_trade_policy_decision(
 
     negative_exit_loss_bps = optional_decimal(policy.get("negative_exit_loss_bps"))
     loss_bps = abs(realized_bps)
-    if negative_exit_loss_bps is not None and negative_exit_loss_bps > 0 and loss_bps < negative_exit_loss_bps:
+    if (
+        negative_exit_loss_bps is not None
+        and negative_exit_loss_bps > 0
+        and loss_bps < negative_exit_loss_bps
+    ):
         return
     state.negative_exit_count += 1
     state.last_negative_exit_at = signal_ts
@@ -2953,9 +3011,8 @@ def _passes_signal_exit_policy(
         return True
 
     position_qty = _position_qty_for_symbol(positions, symbol)
-    if (
-        (exit_side == "long" and (position_qty is None or position_qty <= 0))
-        or (exit_side == "short" and (position_qty is None or position_qty >= 0))
+    if (exit_side == "long" and (position_qty is None or position_qty <= 0)) or (
+        exit_side == "short" and (position_qty is None or position_qty >= 0)
     ):
         return True
 
@@ -3033,16 +3090,13 @@ def _trailing_stop_structure_loss_confirmed(
         payload.get("price_position_in_session_range")
     )
     return (
-        (
-            price_vs_opening_range_high_bps is not None
-            and price_vs_opening_range_high_bps <= opening_range_high_threshold
-        )
-        or (
-            price_vs_vwap_w5m_bps is not None
-            and price_vs_vwap_w5m_bps <= vwap_threshold
-            and price_position_in_session_range is not None
-            and price_position_in_session_range <= session_range_position_max
-        )
+        price_vs_opening_range_high_bps is not None
+        and price_vs_opening_range_high_bps <= opening_range_high_threshold
+    ) or (
+        price_vs_vwap_w5m_bps is not None
+        and price_vs_vwap_w5m_bps <= vwap_threshold
+        and price_position_in_session_range is not None
+        and price_position_in_session_range <= session_range_position_max
     )
 
 
@@ -3101,7 +3155,9 @@ def _near_touch_exit_price(
 
 
 def _normalize_exit_price(price: Decimal) -> Decimal:
-    tick_size = Decimal("0.0001") if price.copy_abs() < Decimal("1") else Decimal("0.01")
+    tick_size = (
+        Decimal("0.0001") if price.copy_abs() < Decimal("1") else Decimal("0.01")
+    )
     return price.quantize(tick_size, rounding=ROUND_HALF_UP)
 
 

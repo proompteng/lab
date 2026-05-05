@@ -1,7 +1,7 @@
 import { fromBinary } from '@bufbuild/protobuf'
 import { Effect, Layer } from 'effect'
 import { make as makeManagedRuntime } from 'effect/ManagedRuntime'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mocked } from 'vitest'
 
 import { type AppConfig, AppConfigService } from '@/effect/config'
 import type { AppRuntime } from '@/effect/runtime'
@@ -10,6 +10,7 @@ import { CommandEventSchema as FacteurCommandEventSchema } from '@/proto/proompt
 import { CodexTaskSchema, CodexTaskStage } from '@/proto/proompteng/froussard/v1/codex_task_pb'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
 import { GithubService } from '@/services/github/service'
+import type { GithubServiceDefinition } from '@/services/github/service.types'
 import { type KafkaMessage, KafkaProducer } from '@/services/kafka'
 
 const { mockVerifyDiscordRequest, mockBuildPlanModalResponse, mockToPlanModalEvent, mockBuildCodexPrompt } = vi.hoisted(
@@ -107,18 +108,7 @@ describe('createWebhookHandler', () => {
   let runtime: AppRuntime
   let publishedMessages: KafkaMessage[]
   let fetchMock: ReturnType<typeof vi.fn>
-  let githubServiceMock: {
-    postIssueReaction: ReturnType<typeof vi.fn>
-    postIssueCommentReaction: ReturnType<typeof vi.fn>
-    issueHasReaction: ReturnType<typeof vi.fn>
-    findLatestPlanComment: ReturnType<typeof vi.fn>
-    fetchPullRequest: ReturnType<typeof vi.fn>
-    markPullRequestReadyForReview: ReturnType<typeof vi.fn>
-    createIssueComment: ReturnType<typeof vi.fn>
-    createPullRequestComment: ReturnType<typeof vi.fn>
-    listPullRequestReviewThreads: ReturnType<typeof vi.fn>
-    listPullRequestCheckFailures: ReturnType<typeof vi.fn>
-  }
+  let githubServiceMock: Mocked<GithubServiceDefinition>
 
   const webhooks = {
     verify: vi.fn(async () => true),
@@ -278,16 +268,32 @@ describe('createWebhookHandler', () => {
     mockBuildCodexPrompt.mockReset()
     mockBuildCodexPrompt.mockReturnValue('PROMPT')
     githubServiceMock = {
-      postIssueReaction: vi.fn(() => Effect.succeed({ ok: true })),
-      postIssueCommentReaction: vi.fn(() => Effect.succeed({ ok: true })),
-      issueHasReaction: vi.fn(() => Effect.succeed({ ok: true as const, hasReaction: true })),
-      findLatestPlanComment: vi.fn(() => Effect.succeed({ ok: false, reason: 'not-found' })),
-      fetchPullRequest: vi.fn(() => Effect.succeed({ ok: false as const, reason: 'not-found' as const })),
-      markPullRequestReadyForReview: vi.fn(() => Effect.succeed({ ok: true })),
-      createIssueComment: vi.fn(() => Effect.succeed({ ok: true })),
-      createPullRequestComment: vi.fn(() => Effect.succeed({ ok: true })),
-      listPullRequestReviewThreads: vi.fn(() => Effect.succeed({ ok: true as const, threads: [] })),
-      listPullRequestCheckFailures: vi.fn(() => Effect.succeed({ ok: true as const, checks: [] })),
+      postIssueReaction: vi.fn<GithubServiceDefinition['postIssueReaction']>(() => Effect.succeed({ ok: true })),
+      postIssueCommentReaction: vi.fn<GithubServiceDefinition['postIssueCommentReaction']>(() =>
+        Effect.succeed({ ok: true }),
+      ),
+      issueHasReaction: vi.fn<GithubServiceDefinition['issueHasReaction']>(() =>
+        Effect.succeed({ ok: true as const, hasReaction: true }),
+      ),
+      findLatestPlanComment: vi.fn<GithubServiceDefinition['findLatestPlanComment']>(() =>
+        Effect.succeed({ ok: false, reason: 'not-found' }),
+      ),
+      fetchPullRequest: vi.fn<GithubServiceDefinition['fetchPullRequest']>(() =>
+        Effect.succeed({ ok: false as const, reason: 'not-found' as const }),
+      ),
+      markPullRequestReadyForReview: vi.fn<GithubServiceDefinition['markPullRequestReadyForReview']>(() =>
+        Effect.succeed({ ok: true }),
+      ),
+      createIssueComment: vi.fn<GithubServiceDefinition['createIssueComment']>(() => Effect.succeed({ ok: true })),
+      createPullRequestComment: vi.fn<GithubServiceDefinition['createPullRequestComment']>(() =>
+        Effect.succeed({ ok: true }),
+      ),
+      listPullRequestReviewThreads: vi.fn<GithubServiceDefinition['listPullRequestReviewThreads']>(() =>
+        Effect.succeed({ ok: true as const, threads: [] }),
+      ),
+      listPullRequestCheckFailures: vi.fn<GithubServiceDefinition['listPullRequestCheckFailures']>(() =>
+        Effect.succeed({ ok: true as const, checks: [] }),
+      ),
     }
     provideRuntime()
   })

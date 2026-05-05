@@ -52,19 +52,12 @@
     {
       "id": "KF-3",
       "finding": "Interaction findings span tool use and environment control, including browsing/search/calc pipelines and command-line task execution, with mixed robustness.",
-      "evidence": [
-        "Sections 5.1, 5.2",
-        "interact_appendix",
-        "Section 5"
-      ]
+      "evidence": ["Sections 5.1, 5.2", "interact_appendix", "Section 5"]
     },
     {
       "id": "KF-4",
       "finding": "Reasoning limitations section provides concrete counterexamples for architecture-level constraints (planning and counting), showing strong performance does not imply general problem-solving coverage.",
-      "evidence": [
-        "reasoninglimitations",
-        "Section 4.2 and 4.4 arithmetic/counterexamples"
-      ],
+      "evidence": ["reasoninglimitations", "Section 4.2 and 4.4 arithmetic/counterexamples"],
       "details": {
         "counter_examples": "Prime counting and arithmetic templates with explicit instruction to step-by-step behavior still fail at higher complexity or range shifts; counting accuracy drops sharply with longer sequences.",
         "interpretation": "Authors attribute this to weak forward planning/scratchpad capabilities in a pure next-word generation paradigm"
@@ -73,19 +66,12 @@
     {
       "id": "KF-5",
       "finding": "Interpretability experiments separate output consistency from process consistency, indicating explanations can be coherent but unfaithful to generation process changes.",
-      "evidence": [
-        "Section on Explainability",
-        "interpretibility_appendix"
-      ]
+      "evidence": ["Section on Explainability", "interpretibility_appendix"]
     },
     {
       "id": "KF-6",
       "finding": "Societal, discrimination, and misuse sections are core to the paper and constrain direct production framing of these capabilities.",
-      "evidence": [
-        "Section on Discrimination",
-        "Section on Societal influences",
-        "Conclusion"
-      ]
+      "evidence": ["Section on Discrimination", "Section on Societal influences", "Conclusion"]
     }
   ],
   "novelty_claims": [

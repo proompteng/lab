@@ -71,28 +71,35 @@ Implementation relevance is moderate for research tooling and structured thesis 
 ## 3) Key Findings
 
 1. Trading-R1 is reported as strongest overall variant among compared groups.
+
 - Evidence: Table 3-4 + Fig. 5 show Trading-R1 leading or near-leading SR/CR on most assets.
 
 2. Combining SFT and RFT outperforms one-stage variants in aggregate.
+
 - Evidence: Table 3-4 and text discussion in Sec. 5.
 
 3. Structured reasoning and evidence formatting are central to model usability.
+
 - Evidence: curriculum and reward definitions (Table 1, Sec. 3.3, S4), plus R0 failure analysis (S5.3).
 
 4. The paper positions the model for analyst support rather than fully autonomous live trading.
+
 - Evidence: explicit recommendations and limitations section (pp. 17-18).
 
 ## 4) Novelty Claims Assessment
 
 1. Claim: reverse reasoning distillation can recover useful reasoning traces from black-box strong models.
+
 - Assessment: moderately novel workflow contribution.
 - Basis: Sec. 3.4 + Fig. 2 define a concrete multi-model reconstruction pipeline.
 
 2. Claim: staged structure/evidence/decision curriculum materially improves trading reasoning quality.
+
 - Assessment: plausible and partially supported.
 - Basis: Sec. 3.3, Table 1, Sec. 5; but no statistical tests or confidence intervals are reported.
 
 3. Claim: robust market-aligned performance versus open and proprietary baselines.
+
 - Assessment: directionally supported in provided setup, externally under-validated.
 - Basis: Table 3-4 and Fig. 5 are positive; robustness depth is limited.
 
@@ -107,21 +114,27 @@ Implementation relevance is moderate for research tooling and structured thesis 
 ## 5.2 High-Impact Risks
 
 1. Data leakage/split ambiguity risk (high).
+
 - The paper claims a held-out Jun-Aug 2024 test (Sec. 4.3), but dataset window description spans Jan 2024-May 2025 for training corpus generation (Sec. 1, S1.3) without a fully explicit leakage-proof split procedure.
 
 2. Statistical rigor risk (high).
+
 - No confidence intervals, repeated-seed variance, or significance testing for metric deltas.
 
 3. Benchmark comparability risk (medium-high).
+
 - Prompting/format compliance and adaptation parity across heterogeneous closed/open baselines is not fully specified.
 
 4. Regime/generalization risk (high).
+
 - Universe is concentrated in mega-cap/blue-chip names during a strong 2024-2025 cycle; authors acknowledge structural long bias (p. 17).
 
 5. Execution realism risk (medium-high).
+
 - Paper discusses decision labels and backtesting, but does not provide a full production-grade transaction-cost/slippage/market-impact framework.
 
 6. Hallucination and faithfulness risk (medium-high).
+
 - Explicitly acknowledged for long noisy contexts and small model size (p. 17).
 
 ## 5.3 Internal Consistency Signals to Verify
@@ -135,6 +148,7 @@ Implementation relevance is moderate for research tooling and structured thesis 
 ## 6.1 What Can Be Adopted Now
 
 1. Staged reasoning curriculum template:
+
 - enforce structure first,
 - then evidence grounding,
 - then decision calibration.
@@ -142,6 +156,7 @@ Implementation relevance is moderate for research tooling and structured thesis 
 2. Volatility-normalized multi-horizon labeler (Algorithm S1) as a reproducible baseline label policy.
 
 3. Explicit reward decomposition:
+
 - formatting quality,
 - claim-grounding quality,
 - decision correctness with asymmetric penalties.
@@ -159,16 +174,19 @@ Implementation relevance is moderate for research tooling and structured thesis 
 ## 6.3 Concrete Incremental Plan
 
 Phase 1 (2-3 weeks): reproducible research replica
+
 1. Rebuild S1 ingestion schema and Algorithm S1 labels with immutable artifacts.
 2. Implement stage-specific reward calculators from S4.
 3. Reproduce key table metrics on a fixed seed and publish run manifests.
 
 Phase 2 (2-4 weeks): robustness and anti-leak hardening
+
 1. Enforce strict temporal train/val/test boundaries with CI assertions.
 2. Add repeated-seed and bootstrap significance tests.
 3. Run cross-universe tests (small/mid-cap, non-tech-heavy slices).
 
 Phase 3 (ongoing): controlled pilot
+
 1. Deploy as analyst-assist thesis engine in paper-trading/shadow mode only.
 2. Promote only if robustness gates pass for multiple regimes.
 3. Keep human sign-off mandatory for any live action pathway.

@@ -15,6 +15,7 @@ Use this checklist for the Torghut/Jangar production recovery rollout that targe
 Evaluate gates on active market sessions only.
 
 1. Gate A: Runtime stability (must hold for 1 full session)
+
 - `torghut_trading_execution_clean_ratio >= 0.75`
 - `sum(increase(torghut_trading_decisions_total[1h])) > 25`
 - No firing alerts:
@@ -22,12 +23,14 @@ Evaluate gates on active market sessions only.
   - `TorghutQuantLLMErrorRateHigh`
 
 2. Gate B: Rejection quality (must hold for 3 consecutive sessions)
+
 - `qty_below_min` reject share <= `0.03`:
   - `increase(torghut_trading_decision_reject_reason_total{reason="qty_below_min"}[1h]) / clamp_min(increase(torghut_trading_decisions_total[1h]), 1) <= 0.03`
 - `llm_unavailable_*` reject share <= `0.02`:
   - `sum(increase(torghut_trading_decision_reject_reason_total{reason=~"llm_unavailable_.*"}[1h])) / clamp_min(increase(torghut_trading_decisions_total[1h]), 1) <= 0.02`
 
 3. Gate C: Profitability readiness (rolling 20 sessions)
+
 - At least `15 / 20` sessions satisfy:
   - filled executions >= 1
   - reject ratio <= 0.25

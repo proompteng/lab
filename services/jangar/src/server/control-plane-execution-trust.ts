@@ -58,6 +58,11 @@ const parseDateMs = (value: unknown) => {
   return Number.isFinite(millis) ? millis : null
 }
 
+const latestDateMs = (...values: Array<number | null>) => {
+  const timestamps = values.filter((value): value is number => value !== null && Number.isFinite(value))
+  return timestamps.length > 0 ? Math.max(...timestamps) : null
+}
+
 const parseDurationToMs = (value: string | null) => {
   const normalized = (value ?? '').trim().toLowerCase()
   const match = /^(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)$/.exec(
@@ -140,22 +145,33 @@ const buildExecutionTrustStage = (input: {
   const configuredEveryMs = parseDurationToMs(configuredEveryRaw)
   const lastRunAt = asString(input.stageState['lastRunTime'])
   const lastRunMs = parseDateMs(lastRunAt)
-  const ageMs = lastRunMs === null ? null : input.nowMs - lastRunMs
+  const recentSuccessMs = parseDateMs(input.stageState['recentSuccessAt'])
+  const effectiveLastRunMs = latestDateMs(lastRunMs, recentSuccessMs)
+  const ageMs = effectiveLastRunMs === null ? null : input.nowMs - effectiveLastRunMs
   const staleAfterMs = configuredEveryMs === null ? null : configuredEveryMs * 2
+  const recentSuccessFresh =
+    recentSuccessMs !== null && (staleAfterMs === null || input.nowMs - recentSuccessMs <= staleAfterMs)
   const explicitFresh = readBooleanValue(input.stageState['fresh'])
   const inferredFresh =
     explicitFresh !== null
       ? explicitFresh
-      : staleAfterMs === null || lastRunMs === null
+      : staleAfterMs === null || effectiveLastRunMs === null
         ? null
         : ageMs !== null && ageMs <= staleAfterMs
-  const stale = staleAfterMs !== null && (explicitFresh === false || (inferredFresh !== null && !inferredFresh))
+  const stale =
+    staleAfterMs !== null &&
+    !recentSuccessFresh &&
+    (explicitFresh === false || (inferredFresh !== null && !inferredFresh))
   const latestFailureCount = readConsecutiveFailures(input.stageState['consecutiveFailures'])
   const healthy = readBooleanValue(input.stageState['healthy'])
+  const staleScheduleButRecentlySucceeded = healthy === false && recentSuccessFresh && latestFailureCount === 0
+  const stageUnhealthy = healthy === false && !staleScheduleButRecentlySucceeded
   const dataConfidence: ExecutionTrustStage['data_confidence'] =
-    latestFailureCount > 0 || stale || healthy === false
+    latestFailureCount > 0 || stale || stageUnhealthy
       ? 'degraded'
-      : input.stageState['healthy'] === undefined && input.stageState['fresh'] === undefined && lastRunMs === null
+      : input.stageState['healthy'] === undefined &&
+          input.stageState['fresh'] === undefined &&
+          effectiveLastRunMs === null
         ? 'unknown'
         : 'high'
 
@@ -187,7 +203,7 @@ const buildExecutionTrustStage = (input: {
         ? 'degraded'
         : frozen || stale
           ? 'degraded'
-          : latestFailureCount > 0 || healthy === false
+          : latestFailureCount > 0 || stageUnhealthy
             ? 'degraded'
             : healthy === null
               ? 'unknown'
@@ -199,8 +215,11 @@ const buildExecutionTrustStage = (input: {
       namespace: input.namespace,
       stage: input.stage,
       phase,
-      last_run_at: toIso(lastRunMs),
-      next_expected_at: configuredEveryMs === null || lastRunMs === null ? null : toIso(lastRunMs + configuredEveryMs),
+      last_run_at: toIso(effectiveLastRunMs),
+      next_expected_at:
+        configuredEveryMs === null || effectiveLastRunMs === null
+          ? null
+          : toIso(effectiveLastRunMs + configuredEveryMs),
       configured_every_ms: configuredEveryMs,
       age_ms: ageMs,
       stale_after_ms: staleAfterMs,
@@ -288,11 +307,18 @@ export const buildExecutionTrust = async ({
     const lastPlanAt = asString(status[SWARM_STAGE_LAST_RUN_KEY.plan])
     const lastImplementAt = asString(status[SWARM_STAGE_LAST_RUN_KEY.implement])
     const lastVerifyAt = asString(status[SWARM_STAGE_LAST_RUN_KEY.verify])
-    const latestRequirementTimestampMs = Math.max(
-      parseDateMs(lastDiscoveredAt) ?? -1,
-      parseDateMs(lastPlanAt) ?? -1,
-      parseDateMs(lastImplementAt) ?? -1,
-      parseDateMs(lastVerifyAt) ?? -1,
+    const latestStageActivityMs = latestDateMs(
+      ...SWARM_STAGE_NAMES.flatMap((stage) => {
+        const stageState = asRecord(stageStates[stage]) ?? {}
+        return [parseDateMs(stageState.lastRunTime), parseDateMs(stageState.recentSuccessAt)]
+      }),
+    )
+    const latestRequirementTimestampMs = latestDateMs(
+      parseDateMs(lastDiscoveredAt),
+      parseDateMs(lastPlanAt),
+      parseDateMs(lastImplementAt),
+      parseDateMs(lastVerifyAt),
+      latestStageActivityMs,
     )
     const phase = asString(status.phase) ?? 'Unknown'
     const freezeRaw = asRecord(status.freeze) ?? {}
@@ -317,7 +343,7 @@ export const buildExecutionTrust = async ({
     const requirementsPending = readRequirementsPending(requirementsRaw.pending)
     const requirementsPendingClass = evaluateRequirementsPendingClass({
       pending: requirementsPending,
-      latestRequirementTimestampMs: latestRequirementTimestampMs < 0 ? null : latestRequirementTimestampMs,
+      latestRequirementTimestampMs,
       nowMs,
       frozen: freezeBlocking,
     })

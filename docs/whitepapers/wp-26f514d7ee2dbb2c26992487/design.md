@@ -26,11 +26,13 @@ The paper targets the core limitation of older pre-training methods: directional
 ## 3) Methodology Synthesis
 
 ### 3.1 Architecture and Representation
+
 - Uses a bidirectional Transformer encoder with token, segment, and positional embeddings, plus a `[CLS]` pooled vector for classification and token vectors for token-level tasks (Section `BERT`, `sec:bert`).
 - Two pre-trained checkpoints are emphasized: `bert-base` (12 layers, H=768, 12 heads, 110M) and `bert-large` (24, 1024, 16, 340M).
 - Input format unifies single-sentence and sentence-pair tasks in one sequence format.
 
 ### 3.2 Pre-training
+
 - Pre-training dataset: BooksCorpus (800M words) + English Wikipedia (2,500M words).
 - Pre-training objectives:
   - Masked LM (15% token masking; 80% `[MASK]`, 10% random token, 10% unchanged to reduce pretrain/fine-tune mismatch), with MLM loss over masked positions.
@@ -40,11 +42,13 @@ The paper targets the core limitation of older pre-training methods: directional
   - Pretraining compute: 16 TPU chips for `bert-base`, 64 for `bert-large` (4 days each, as reported).
 
 ### 3.3 Fine-tuning protocol
+
 - Uniform pattern: initialize task models from shared pre-trained backbone and fine-tune all parameters with minimal additional layers.
 - GLUE tasks use `[CLS]` + task head; token tasks (e.g., SQuAD) use start/end token vectors.
 - Reported fine-tuning budgets: small grids of batch size, learning rate, epochs to pick best dev performance.
 
 ### 3.4 Experimental coverage
+
 - 11 tasks in the main paper body:
   - GLUE benchmark subtasks (MNLI, QQP, QNLI, SST-2, CoLA, STS-B, MRPC, RTE, WNLI excluded from score due known issue).
   - SQuAD v1.1 and v2.0.
@@ -93,32 +97,38 @@ The paper targets the core limitation of older pre-training methods: directional
 ## 6) Repository Viability Analysis
 
 ### 6.1 What already exists in this repo
+
 - Whitepaper ingestion, review orchestration, and artifact persistence are already implemented under `services/torghut/app/whitepapers/workflow.py` (run tracking, dispatch/finalize, step logging, PR metadata ingestion).
 - Semantic chunking and vector-backed retrieval for whitepaper synthesis are in place (`services/torghut/migrations/versions/0017_whitepaper_semantic_indexing.py` and `index_synthesis_semantic_content` in `workflow.py`).
 - LLM serving/inference platform primitives are present at infra level (`services/saigak/README.md` and install script), including model management via Ollama and OTEL-proxied serving.
 
 ### 6.2 Missing pieces for full BERT reproduction
+
 - No repo-local evidence of a large-scale transformer pretraining/fine-tuning training loop, benchmarking harness for GLUE/SQuAD/SWAG, or corpus build pipelines for BooksCorpus + Wikipedia in `services`, `packages`, or `apps`.
 - Missing deterministic artifact contracts for the training stack (dataset manifests, random seeds, exact tokenizer versions, training-time runtime environment) required for strict reproducibility beyond paper-level parameters.
 - No explicit compute abstraction for multi-week TPU-scale pretraining in this repo’s current paths.
 
 ### 6.3 Viability interpretation
+
 - **High-level design extraction is implemented successfully** as a whitepaper document+policy artifact.
 - **Production-grade implementation is not immediately viable** because this codebase currently optimizes for whitepaper governance, orchestration, and LLM serving rather than full NLP foundation-model training.
 
 ## 7) Implementation Plan (repo-grounded)
 
 ### Phase 1 — Scope control and policy-safe implementation design
+
 1. Land this design and a policy decision doc in `docs/whitepapers/wp-26f514d7ee2dbb2c26992487/` only (done in this change).
 2. Gate implementation status as `conditional_implement`; do not promote to autonomous production.
 3. Define deployment target: deterministic research lane under whitepaper design tracking, not live traffic.
 
 ### Phase 2 — Data + training stack (required before any implementation claim)
+
 1. Add explicit corpus manifests for BooksCorpus/Wikipedia snapshots with versioned source hashes.
 2. Add training pipeline skeleton (not present today) with: pretrain config, tokenizer artifact pinning, seed/version controls, checkpoints, and metric logging schema.
 3. Add task-specific fine-tuning/eval runners for GLUE/SQuAD/SWAG to verify all headline claims.
 
 ### Phase 3 — Deployment hardening
+
 1. Implement compute and governance controls:
    - deterministic experiment IDs,
    - cost/cap guardrails,
@@ -127,6 +137,7 @@ The paper targets the core limitation of older pre-training methods: directional
 2. Add deterministic quality gates before internal adoption (no live external callouts without explicit waiver).
 
 ### Phase 4 — Safety/compliance and deprecation handling
+
 1. Mark this implementation as research-only baseline in this repo context.
 2. Document replacement and retirement criteria as newer model families supersede this 2019-era setup.
 3. Require manual approval path for any production promotion tied to `whitepaper` workflow trigger metadata.

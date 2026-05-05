@@ -10,6 +10,18 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `84-torghut-capital-warrant-adoption-and-profitability-experiment-ladder-2026-05-05.md`
+  - `docs/agents/designs/80-jangar-settlement-adoption-ladder-and-cutover-governance-2026-05-05.md`
+  - `83-torghut-profit-runway-consumer-and-hypothesis-capital-auction-2026-05-05.md`
+  - `docs/agents/designs/79-jangar-control-plane-proof-runway-and-consumer-gated-rollout-2026-05-05.md`
+  - `82-torghut-order-admission-warrants-and-replay-capital-auction-2026-05-05.md`
+  - `docs/agents/designs/78-jangar-capital-warrant-issuer-and-route-independent-order-admission-2026-05-05.md`
+  - `81-torghut-capital-proof-reconciliation-and-jangar-settlement-consumer-2026-05-05.md`
+  - `docs/agents/designs/77-jangar-evidence-settlement-authority-and-data-proof-handoff-2026-05-05.md`
+  - `80-torghut-capital-proof-reclocking-and-live-submission-fuses-2026-05-05.md`
+  - `docs/agents/designs/76-jangar-rollout-settlement-fuses-and-proof-reclocking-2026-05-05.md`
+  - `79-torghut-capital-holdbacks-and-profit-repair-ledger-2026-05-05.md`
+  - `docs/agents/designs/75-jangar-failure-domain-leases-and-database-routability-holdbacks-2026-05-05.md`
   - `78-torghut-quant-evidence-settlement-and-capital-routing-2026-05-05.md`
   - `docs/agents/designs/73-jangar-evidence-settlement-and-runtime-freshness-leases-2026-05-05.md`
   - `77-torghut-profit-admission-cells-and-materialized-evidence-contract-2026-05-05.md`
@@ -74,7 +86,25 @@
 - `77-torghut-profit-admission-cells-and-materialized-evidence-contract-2026-05-05.md`
 - `77-torghut-hot-path-proof-projections-and-profit-cell-settlement-2026-05-05.md`
 - `78-torghut-quant-evidence-settlement-and-capital-routing-2026-05-05.md`
+- `79-torghut-capital-holdbacks-and-profit-repair-ledger-2026-05-05.md`
+- `80-torghut-capital-proof-reclocking-and-live-submission-fuses-2026-05-05.md`
+- `81-torghut-capital-proof-reconciliation-and-jangar-settlement-consumer-2026-05-05.md`
+- `82-torghut-order-admission-warrants-and-replay-capital-auction-2026-05-05.md`
+- `83-torghut-profit-runway-consumer-and-hypothesis-capital-auction-2026-05-05.md`
+- `84-torghut-capital-warrant-adoption-and-profitability-experiment-ladder-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/80-jangar-settlement-adoption-ladder-and-cutover-governance-2026-05-05.md`
+  - `84-torghut-capital-warrant-adoption-and-profitability-experiment-ladder-2026-05-05.md`
+  - `docs/agents/designs/79-jangar-control-plane-proof-runway-and-consumer-gated-rollout-2026-05-05.md`
+  - `83-torghut-profit-runway-consumer-and-hypothesis-capital-auction-2026-05-05.md`
+  - `docs/agents/designs/78-jangar-capital-warrant-issuer-and-route-independent-order-admission-2026-05-05.md`
+  - `82-torghut-order-admission-warrants-and-replay-capital-auction-2026-05-05.md`
+  - `docs/agents/designs/77-jangar-evidence-settlement-authority-and-data-proof-handoff-2026-05-05.md`
+  - `81-torghut-capital-proof-reconciliation-and-jangar-settlement-consumer-2026-05-05.md`
+  - `docs/agents/designs/76-jangar-rollout-settlement-fuses-and-proof-reclocking-2026-05-05.md`
+  - `80-torghut-capital-proof-reclocking-and-live-submission-fuses-2026-05-05.md`
+  - `docs/agents/designs/75-jangar-failure-domain-leases-and-database-routability-holdbacks-2026-05-05.md`
+  - `79-torghut-capital-holdbacks-and-profit-repair-ledger-2026-05-05.md`
   - `docs/agents/designs/73-jangar-evidence-settlement-and-runtime-freshness-leases-2026-05-05.md`
   - `78-torghut-quant-evidence-settlement-and-capital-routing-2026-05-05.md`
   - `docs/agents/designs/72-jangar-materialized-run-proof-and-storage-backed-admission-contract-2026-05-05.md`
@@ -220,6 +250,12 @@ Current source-state priority is narrower:
 - `docs/agents/designs/68-jangar-evidence-clock-arbiter-and-rollout-veto-contract-2026-05-05.md` now separates Jangar
   serving readiness from promotion authority with evidence clocks and rollout vetoes for dispatch, schedule launch,
   deploy widening, and Torghut capital promotion.
+- `docs/agents/designs/77-jangar-evidence-settlement-authority-and-data-proof-handoff-2026-05-05.md` now turns the
+  evidence-clock and rollout-fuse stack into one action-class settlement authority, including data-proof adapters for
+  unprivileged database assessment and route-specific freshness failures.
+- `81-torghut-capital-proof-reconciliation-and-jangar-settlement-consumer-2026-05-05.md` now makes Torghut reconcile
+  live-submission liveness against Jangar settlement, profit clocks, empirical freshness, market context, signal
+  continuity, and rollback state before non-shadow capital can be treated as promotable.
 - `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md` now makes profitability promotion
   cell-scoped: every non-observe capital request must cite one profit cell and one fresh Jangar evidence escrow, with
   stale options, missing autoresearch evidence, failed simulation revisions, and blocked control-plane escrows recorded
@@ -274,6 +310,9 @@ Current source-state priority is narrower:
 - `78-torghut-quant-evidence-settlement-and-capital-routing-2026-05-05.md` now binds live and simulation capital
   routing to account/window settlements, profit verdict cells, and route-specific receipts so stale empirical jobs,
   degraded quant ingestion, sim schema drift, and TCA breaches cannot be mistaken for trade permission.
+- `79-torghut-capital-holdbacks-and-profit-repair-ledger-2026-05-05.md` now consumes Jangar failure-domain leases as
+  capital holdbacks and adds a Profit Repair Ledger so expired Jangar/database/route/proof leases block non-shadow
+  capital while observe/shadow evidence and high-value repair work continue under explicit guardrails.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.

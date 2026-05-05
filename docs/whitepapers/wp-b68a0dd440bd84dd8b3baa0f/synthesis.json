@@ -14,11 +14,7 @@
   "full_paper_reviewed": true,
   "review_scope": {
     "pages_reviewed": 20,
-    "included_sections": [
-      "main_text",
-      "references",
-      "appendix"
-    ]
+    "included_sections": ["main_text", "references", "appendix"]
   },
   "executive_summary": "AlphaPROBE reframes formulaic alpha mining as navigation over a factor-lineage DAG instead of isolated sampling or narrow parent-child chains. Its key contribution is a Bayesian parent retriever that mixes factor quality with topology-aware diversity signals, paired with a DAG-aware multi-agent generator that conditions on full ancestry traces. For this repository, the paper is implementable as a new research subsystem in Torghut, but not as a small extension of the existing alpha lane. Production viability remains limited by statistical, reproducibility, and execution-realism gaps.",
   "problem_statement": "Existing automated alpha mining approaches either generate factors independently or refine them through local chains, but neither family uses the global structure of the discovered factor pool to decide where to search next. AlphaPROBE targets this gap by representing factor evolution as a DAG and using topology-aware retrieval and generation to improve search efficiency and diversity.",
@@ -27,10 +23,7 @@
     {
       "id": "KF-1",
       "finding": "AlphaPROBE reports the strongest predictive metrics among all listed baselines on CSI 300, CSI 500, and CSI 1000.",
-      "evidence": [
-        "Section 5.2",
-        "Table 1"
-      ],
+      "evidence": ["Section 5.2", "Table 1"],
       "details": {
         "csi300": {
           "ic": 5.84,
@@ -55,15 +48,7 @@
     {
       "id": "KF-2",
       "finding": "Portfolio-level results also lead on reported annualized return and Sharpe across all three datasets while keeping drawdowns competitive.",
-      "evidence": [
-        "Section 5.2",
-        "Section 5.3",
-        "Table 1",
-        "Figure 3",
-        "Appendix A.1.3",
-        "Figure 6",
-        "Figure 7"
-      ],
+      "evidence": ["Section 5.2", "Section 5.3", "Table 1", "Figure 3", "Appendix A.1.3", "Figure 6", "Figure 7"],
       "details": {
         "csi300": {
           "ar": "7.50%",
@@ -85,28 +70,17 @@
     {
       "id": "KF-3",
       "finding": "Retriever ablations show that topology-aware retrieval matters; random, heuristic, and local-view replacements all degrade predictive performance.",
-      "evidence": [
-        "Section 5.4",
-        "Table 2"
-      ]
+      "evidence": ["Section 5.4", "Table 2"]
     },
     {
       "id": "KF-4",
       "finding": "The DAG-aware generator contributes materially; replacing it with a simpler chain-of-thought generator lowers IC-family metrics on every dataset.",
-      "evidence": [
-        "Section 5.4",
-        "Table 2"
-      ]
+      "evidence": ["Section 5.4", "Table 2"]
     },
     {
       "id": "KF-5",
       "finding": "Sensitivity and efficiency analyses suggest the framework is stable across moderate topology-penalty settings and reaches stronger results in fewer factor-evaluation iterations than the compared LLM methods.",
-      "evidence": [
-        "Section 5.5",
-        "Figure 4",
-        "Section 5.7",
-        "Figure 5"
-      ]
+      "evidence": ["Section 5.5", "Figure 4", "Section 5.7", "Figure 5"]
     }
   ],
   "novelty_claims": [

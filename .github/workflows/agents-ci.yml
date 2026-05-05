@@ -51,7 +51,7 @@ on:
       - '.github/workflows/jangar-build-push.yaml'
 
 concurrency:
-  group: agents-ci-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -113,7 +113,6 @@ jobs:
 
   integration:
     runs-on: arc-arm64
-    needs: validate
     env:
       # ARC runners run with hostNetwork=true; a shared "kind" docker bridge subnet can collide across pods.
       # Use a per-run docker network for kind to keep routing deterministic.
@@ -156,7 +155,19 @@ jobs:
           version: v3.14.4
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/agentctl
+          --filter @proompteng/bumba
+          --filter @proompteng/codex
+          --filter @proompteng/cx-tools
+          --filter @proompteng/design
+          --filter @proompteng/discord
+          --filter @proompteng/jangar
+          --filter @proompteng/otel
+          --filter @proompteng/scripts
+          --filter @proompteng/temporal-bun-sdk
 
       - name: Run Agents script unit tests
         run: |
@@ -182,7 +193,7 @@ jobs:
           if [ -z "${BASE_SHA}" ] || [ "${BASE_SHA}" = "0000000000000000000000000000000000000000" ]; then
             git ls-files > "${CHANGED_FILES}"
           else
-            git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" > "${CHANGED_FILES}"
+            git diff --name-only "${BASE_SHA}...${HEAD_SHA}" > "${CHANGED_FILES}"
           fi
 
           echo "Changed files for image classification:"

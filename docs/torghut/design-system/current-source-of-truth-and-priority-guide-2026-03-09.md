@@ -34,6 +34,10 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v1/historical-dataset-simulation.md`
    - `docs/torghut/design-system/v1/trading-day-simulation-automation.md`
 3. current autonomy/promotion contract source of truth:
+   - `docs/agents/designs/77-jangar-evidence-settlement-authority-and-data-proof-handoff-2026-05-05.md`
+   - `docs/torghut/design-system/v6/81-torghut-capital-proof-reconciliation-and-jangar-settlement-consumer-2026-05-05.md`
+   - `docs/agents/designs/76-jangar-rollout-settlement-fuses-and-proof-reclocking-2026-05-05.md`
+   - `docs/torghut/design-system/v6/80-torghut-capital-proof-reclocking-and-live-submission-fuses-2026-05-05.md`
    - `docs/agents/designs/67-jangar-runtime-evidence-epochs-and-artifact-parity-gates-2026-05-05.md`
    - `docs/torghut/design-system/v6/72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
    - `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
@@ -103,6 +107,18 @@ The current highest-priority work is:
 
 The May 5 cross-plane contracts are now the latest active architecture layer:
 
+- make Jangar the settlement authority for action classes by joining serving, execution, rollout, watch, workflow,
+  route, database, and downstream consumer clocks in
+  `docs/agents/designs/77-jangar-evidence-settlement-authority-and-data-proof-handoff-2026-05-05.md`;
+- reconcile Torghut live-submission liveness with Jangar settlement, profit clocks, stale empirical jobs,
+  market-context freshness, and rollback readiness before non-shadow capital in
+  `docs/torghut/design-system/v6/81-torghut-capital-proof-reconciliation-and-jangar-settlement-consumer-2026-05-05.md`;
+- reclock Jangar rollout safety from settled event, execution, database, route, watch, workflow-artifact, and empirical
+  proof before dispatch, rollout widening, or external capital in
+  `docs/agents/designs/76-jangar-rollout-settlement-fuses-and-proof-reclocking-2026-05-05.md`;
+- reclock Torghut live submission from capital proof clocks so route liveness cannot authorize non-shadow capital while
+  Jangar settlement, empirical proof, hypotheses, signal freshness, or rollback state is held in
+  `docs/torghut/design-system/v6/80-torghut-capital-proof-reclocking-and-live-submission-fuses-2026-05-05.md`;
 - make Torghut readiness, trading status, Jangar quant health, and capital promotion depend on bounded hot-path proof
   projections and settled profit cells in
   `docs/torghut/design-system/v6/77-torghut-hot-path-proof-projections-and-profit-cell-settlement-2026-05-05.md`;

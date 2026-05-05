@@ -51,12 +51,15 @@ kubectl -n jangar get backup.postgresql.cnpg.io -o wide
 Choose one:
 
 1. Latest state from archive + latest base backup:
+
 - Use `bootstrap.recovery.source` only.
 
 2. Specific backup object:
+
 - Add `bootstrap.recovery.backup.name: <backup-cr-name>`.
 
 3. Point-in-time recovery (PITR):
+
 - Add `bootstrap.recovery.recoveryTarget.targetTime: "<RFC3339-or-Postgres-time>"`.
 - Optionally include `backup.name` to force the base backup used for PITR.
 
@@ -166,6 +169,7 @@ kubectl -n jangar delete cluster.postgresql.cnpg.io jangar-db
 ```
 
 4. Apply a recovery manifest with `metadata.name: jangar-db` (same as production name), using:
+
 - `bootstrap.recovery.source`
 - `externalClusters[].barmanObjectStore` pointing to `s3://cnpg/jangar-db`
 - `serverName: jangar-db`
@@ -198,13 +202,16 @@ kubectl -n jangar delete cluster.postgresql.cnpg.io jangar-db-restore
 ## Fast Troubleshooting
 
 1. Restore cluster stuck before ready:
+
 - `kubectl -n jangar describe cluster.postgresql.cnpg.io jangar-db-restore`
 - `kubectl -n cnpg-system logs deploy/cnpg-controller-manager --since=30m`
 
 2. Missing backup objects in Kubernetes but data exists in object store:
+
 - Use `externalClusters` + `recoveryTarget` and restore from object store history.
 
 3. Access denied to object store:
+
 - Verify `cnpg-jangar-db` secret keys:
 
 ```bash

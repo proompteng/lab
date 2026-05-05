@@ -1,4 +1,4 @@
-import type { Interceptor, UnaryRequest, UnaryResponse } from '@connectrpc/connect'
+import type { Interceptor } from '@connectrpc/connect'
 import { Effect } from 'effect'
 import type { Logger } from '../observability/logger'
 import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from '../observability/metrics'
@@ -52,7 +52,7 @@ const createAuthInterceptor =
 const createLoggingInterceptor =
   (logger: Logger, namespace: string): TemporalInterceptor =>
   (next) =>
-  async (req: UnaryRequest) => {
+  async (req) => {
     const baseFields = {
       service: req.service.typeName,
       method: req.method.name,
@@ -64,7 +64,7 @@ const createLoggingInterceptor =
     )
     const start = Date.now()
     try {
-      const response = (await next(req)) as UnaryResponse
+      const response = await next(req)
       await Effect.runPromise(
         logger
           .log('debug', 'temporal rpc response', { ...baseFields, durationMs: Date.now() - start })

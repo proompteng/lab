@@ -99,6 +99,67 @@ test('worker poll RPCs send NORMAL task queue kind for workflow and activity pol
   expect(activityPoll.taskQueue?.normalName ?? '').toBe('')
 })
 
+test('worker task poll latency metrics ignore empty long-poll responses', async () => {
+  const config: TemporalConfig = createTestTemporalConfig({
+    taskQueue: 'queue-empty-poll-latency',
+    stickySchedulingEnabled: false,
+  })
+  const observability = createObservabilityStub()
+  let workflowPolls = 0
+  let activityPolls = 0
+
+  const workflowService: WorkflowServiceClient = {
+    pollWorkflowTaskQueue: async (_request, { signal }: { signal?: AbortSignal }) => {
+      workflowPolls += 1
+      if (workflowPolls === 1) {
+        return { taskToken: new Uint8Array() }
+      }
+      return await waitForAbort(signal)
+    },
+    pollActivityTaskQueue: async (_request, { signal }: { signal?: AbortSignal }) => {
+      activityPolls += 1
+      if (activityPolls === 1) {
+        return { taskToken: new Uint8Array() }
+      }
+      return await waitForAbort(signal)
+    },
+    getWorkflowExecutionHistory: async () => ({ history: { events: [] }, nextPageToken: new Uint8Array() }),
+    respondQueryTaskCompleted: async () => ({}),
+    respondWorkflowTaskCompleted: async () => ({}),
+    respondWorkflowTaskFailed: async () => ({}),
+    respondActivityTaskCompleted: async () => ({}),
+    respondActivityTaskFailed: async () => ({}),
+    respondActivityTaskCanceled: async () => ({}),
+    requestCancelWorkflowExecution: async () => ({}),
+    pollWorkflowExecutionUpdate: async () => ({ messages: [] }),
+  } as unknown as WorkflowServiceClient
+
+  const runtime = await WorkerRuntime.create({
+    config,
+    taskQueue: config.taskQueue,
+    namespace: config.namespace,
+    workflows: [defineWorkflow('emptyPollLatencyWorkflow', () => Effect.succeed('ok'))],
+    activities: {
+      noop: async () => undefined,
+    },
+    workflowService,
+    logger: observability.services.logger,
+    metrics: observability.services.metricsRegistry,
+    metricsExporter: observability.services.metricsExporter,
+    stickyScheduling: false,
+    pollers: { workflow: 1 },
+    concurrency: { workflow: 1, activity: 1 },
+  })
+
+  const runPromise = runtime.run()
+  await waitFor(() => workflowPolls >= 2 && activityPolls >= 2)
+  await runtime.shutdown()
+  await runPromise
+
+  expect(observability.getHistogramObservations('temporal_worker_poll_latency_ms')).toHaveLength(0)
+  expect(observability.getHistogramObservations('temporal_worker_activity_poll_latency_ms')).toHaveLength(0)
+})
+
 test('worker sticky poll RPCs send STICKY task queue kind with normalName', async () => {
   const config: TemporalConfig = createTestTemporalConfig({
     taskQueue: 'queue-kind-sticky',

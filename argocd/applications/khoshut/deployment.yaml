@@ -16,8 +16,10 @@ spec:
         app.kubernetes.io/name: khoshut
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-02-21T23:59:24Z"
+        kubectl.kubernetes.io/restartedAt: "2026-05-05T11:10:50Z"
     spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
       containers:
         - name: khoshut
           image: registry.ide-newton.ts.net/lab/khoshut

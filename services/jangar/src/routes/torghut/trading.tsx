@@ -26,6 +26,7 @@ import * as React from 'react'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
 
 import { TorghutStrategySelectValue } from '@/components/torghut-strategy-select-value'
+import { TorghutMetricTile as MetricTile } from '@/components/torghut-metric-tile'
 import {
   DEFAULT_TZ,
   fetchTradingSnapshot,
@@ -37,7 +38,6 @@ import {
   type TorghutTradingPageData,
   type TradingSummary,
 } from '@/data/torghut-trading'
-import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/torghut/trading')({
   loader: async (): Promise<TorghutTradingPageData> => loadTorghutTradingPageData(formatEtDayToday()),
@@ -298,7 +298,7 @@ function TorghutTrading() {
                 id="trading-day"
                 aria-label="Select trading day"
                 render={
-                  <Button variant="outline" className={cn('w-full justify-between px-3 text-left font-normal')}>
+                  <Button variant="outline" className="w-full justify-between px-3 text-left font-normal">
                     <span className="tabular-nums">{formatTradingDayLabel(day)}</span>
                     <CalendarIcon className="size-4 text-muted-foreground" />
                   </Button>
@@ -602,7 +602,10 @@ function TorghutTrading() {
                       tickMargin={8}
                       tickFormatter={(value: string) => truncateLabel(value)}
                     />
-                    <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                    <ChartTooltip
+                      cursor={false}
+                      content={({ content: _content, ...props }) => <ChartTooltipContent {...props} />}
+                    />
                     <Bar dataKey="count" fill="var(--color-count)" radius={4} />
                   </BarChart>
                 </ChartContainer>
@@ -769,7 +772,10 @@ function RealizedPnlChart({ series }: { series: { ts: string; realizedPnl: numbe
           tickFormatter={(value: string) => formatShortTime(value)}
         />
         <YAxis tickLine={false} axisLine={false} width={72} tickFormatter={(value: number) => currency.format(value)} />
-        <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+        <ChartTooltip
+          cursor={false}
+          content={({ content: _content, ...props }) => <ChartTooltipContent {...props} />}
+        />
         <Line dataKey="realizedPnl" type="monotone" stroke="var(--color-realizedPnl)" strokeWidth={2} dot={false} />
       </LineChart>
     </ChartContainer>
@@ -830,7 +836,10 @@ function EquityChart({
           tickFormatter={(value: string) => formatShortTime(value)}
         />
         <YAxis tickLine={false} axisLine={false} width={72} tickFormatter={(value: number) => currency.format(value)} />
-        <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+        <ChartTooltip
+          cursor={false}
+          content={({ content: _content, ...props }) => <ChartTooltipContent {...props} />}
+        />
         {seriesKeys.map((item) => (
           <Line
             key={item.key}
@@ -843,34 +852,6 @@ function EquityChart({
         ))}
       </LineChart>
     </ChartContainer>
-  )
-}
-
-function MetricTile({
-  label,
-  value,
-  tone = 'default',
-  compact = false,
-}: {
-  label: string
-  value: React.ReactNode
-  tone?: 'default' | 'success' | 'warning' | 'danger'
-  compact?: boolean
-}) {
-  let toneClass = 'text-foreground'
-  if (tone === 'success') {
-    toneClass = 'text-emerald-600'
-  } else if (tone === 'warning') {
-    toneClass = 'text-amber-600'
-  } else if (tone === 'danger') {
-    toneClass = 'text-rose-600'
-  }
-
-  return (
-    <div className="rounded-none border bg-card p-3">
-      <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">{label}</div>
-      <div className={cn('mt-2 font-medium tabular-nums', compact ? 'text-xl' : 'text-2xl', toneClass)}>{value}</div>
-    </div>
   )
 }
 

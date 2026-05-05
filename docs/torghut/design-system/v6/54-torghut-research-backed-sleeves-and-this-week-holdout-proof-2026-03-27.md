@@ -119,25 +119,25 @@ The current retained holdout week is `2026-03-23` through `2026-03-27`.
 
 Replay-grade `ta_signals` coverage (`source='ta'`, `window_size='PT1S'`):
 
-| Trading day | Rows | Symbols | First event (UTC) | Last event (UTC) |
-| --- | ---: | ---: | --- | --- |
-| `2026-03-23` | `72,069` | `12` | `2026-03-23 12:00:10` | `2026-03-23 20:58:53` |
-| `2026-03-24` | `68,020` | `12` | `2026-03-24 12:00:48` | `2026-03-24 20:59:26` |
-| `2026-03-25` | `74,969` | `12` | `2026-03-25 12:00:19` | `2026-03-25 20:59:48` |
-| `2026-03-26` | `82,841` | `12` | `2026-03-26 12:02:22` | `2026-03-26 20:59:56` |
-| `2026-03-27` | `71,369` | `12` | `2026-03-27 12:00:19` | `2026-03-27 20:57:16` |
-| **Total** | **`369,268`** | **`12`** | `2026-03-23 12:00:10` | `2026-03-27 20:57:16` |
+| Trading day  |          Rows |  Symbols | First event (UTC)     | Last event (UTC)      |
+| ------------ | ------------: | -------: | --------------------- | --------------------- |
+| `2026-03-23` |      `72,069` |     `12` | `2026-03-23 12:00:10` | `2026-03-23 20:58:53` |
+| `2026-03-24` |      `68,020` |     `12` | `2026-03-24 12:00:48` | `2026-03-24 20:59:26` |
+| `2026-03-25` |      `74,969` |     `12` | `2026-03-25 12:00:19` | `2026-03-25 20:59:48` |
+| `2026-03-26` |      `82,841` |     `12` | `2026-03-26 12:02:22` | `2026-03-26 20:59:56` |
+| `2026-03-27` |      `71,369` |     `12` | `2026-03-27 12:00:19` | `2026-03-27 20:57:16` |
+| **Total**    | **`369,268`** | **`12`** | `2026-03-23 12:00:10` | `2026-03-27 20:57:16` |
 
 Active parts by table for the same week:
 
-| Trading day | `ta_signals` active-part rows | `ta_microbars` active-part rows |
-| --- | ---: | ---: |
-| `2026-03-23` | `92,656` | `72,069` |
-| `2026-03-24` | `80,862` | `68,020` |
-| `2026-03-25` | `84,392` | `74,969` |
-| `2026-03-26` | `95,566` | `82,841` |
-| `2026-03-27` | `78,810` | `71,369` |
-| **Total** | **`432,286`** | **`369,268`** |
+| Trading day  | `ta_signals` active-part rows | `ta_microbars` active-part rows |
+| ------------ | ----------------------------: | ------------------------------: |
+| `2026-03-23` |                      `92,656` |                        `72,069` |
+| `2026-03-24` |                      `80,862` |                        `68,020` |
+| `2026-03-25` |                      `84,392` |                        `74,969` |
+| `2026-03-26` |                      `95,566` |                        `82,841` |
+| `2026-03-27` |                      `78,810` |                        `71,369` |
+| **Total**    |                 **`432,286`** |                   **`369,268`** |
 
 ### Retained-window inventory
 
@@ -149,8 +149,8 @@ The full currently retained replay-grade `ta_signals` window is:
 
 The currently retained active-part `ta_signals` partitions are:
 
-| Trading day | Rows |
-| --- | ---: |
+| Trading day  |     Rows |
+| ------------ | -------: |
 | `2026-03-16` | `89,039` |
 | `2026-03-17` | `73,678` |
 | `2026-03-18` | `76,304` |
@@ -576,7 +576,7 @@ This document is implemented only when all of the following are true:
    - `holdout_week_positive`,
    - `holdout_week_negative`, or
    - `holdout_week_inconclusive`,
-   and never upgrades it to `historical_proven` or `paper_proven`.
+     and never upgrades it to `historical_proven` or `paper_proven`.
 
 ## Appendix: exact queries used for the live inventory snapshot
 

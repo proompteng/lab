@@ -196,6 +196,10 @@ With `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=true` (the production default),
 `swarm_verify`. A blocked or held passport deletes the matching schedule and prevents requirement dispatch instead of
 allowing repeated opaque job retries.
 
+Schedule reconciliation also re-checks the current stage passport before it writes runner ConfigMaps or CronJobs.
+This keeps pre-existing schedules from launching with stale allowed passport annotations after the collaboration runtime
+kit moves to `hold` or `block`.
+
 Admitted schedules and requirement runs carry these trace fields in annotations and run parameters:
 
 - `swarmAdmissionPassportId`

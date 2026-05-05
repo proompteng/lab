@@ -13,15 +13,23 @@ from app.config import Settings
 from app.trading.llm.dspy_programs.runtime import DSPyReviewRuntime
 
 
-_LIVE_SIGNAL_COVERED_CHIP_UNIVERSE = (
-    "AMAT",
-    "AMD",
-    "AVGO",
-    "INTC",
-    "MU",
+_RESEARCHED_CHIP_TECH_UNIVERSE = (
     "NVDA",
+    "AVGO",
+    "AMD",
+    "TSM",
+    "ASML",
+    "AMAT",
+    "LRCX",
+    "KLAC",
+    "MU",
+    "INTC",
+    "QCOM",
+    "MRVL",
 )
-_CHIP_UNIVERSE_SYMBOLS = set(_LIVE_SIGNAL_COVERED_CHIP_UNIVERSE)
+_LIVE_EXECUTION_CHIP_TECH_UNIVERSE = ("NVDA", "AMD", "INTC")
+_CHIP_UNIVERSE_SYMBOLS = set(_RESEARCHED_CHIP_TECH_UNIVERSE)
+_LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS = set(_LIVE_EXECUTION_CHIP_TECH_UNIVERSE)
 
 
 def _repo_root() -> Path:
@@ -45,6 +53,12 @@ def _load_yaml_mapping(relative_path: str) -> dict[str, object]:
 
 def _load_torghut_knative_manifest() -> dict[str, object]:
     return _load_yaml_mapping("argocd/applications/torghut/knative-service.yaml")
+
+
+def _load_torghut_clickhouse_manifest() -> dict[str, object]:
+    return _load_yaml_mapping(
+        "argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml"
+    )
 
 
 def _load_knative_env(relative_path: str) -> dict[str, object]:
@@ -173,11 +187,11 @@ def _assert_chip_universe(
     test_case.assertEqual(
         sorted(set(normalized) - _CHIP_UNIVERSE_SYMBOLS),
         [],
-        f"{context} contains symbols without live chip TA signal coverage",
+        f"{context} contains symbols outside the researched chip/AI infrastructure universe",
     )
 
 
-def _assert_exact_live_signal_universe(
+def _assert_exact_chip_tech_universe(
     test_case: TestCase, symbols: Iterable[object], *, context: str
 ) -> None:
     normalized = [
@@ -186,8 +200,22 @@ def _assert_exact_live_signal_universe(
     _assert_chip_universe(test_case, normalized, context=context)
     test_case.assertEqual(
         tuple(normalized),
-        _LIVE_SIGNAL_COVERED_CHIP_UNIVERSE,
-        f"{context} does not match the live-signal-covered chip universe",
+        _RESEARCHED_CHIP_TECH_UNIVERSE,
+        f"{context} does not match the researched chip/AI infrastructure universe",
+    )
+
+
+def _assert_exact_live_execution_chip_universe(
+    test_case: TestCase, symbols: Iterable[object], *, context: str
+) -> None:
+    normalized = [
+        str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
+    ]
+    _assert_chip_universe(test_case, normalized, context=context)
+    test_case.assertEqual(
+        tuple(normalized),
+        _LIVE_EXECUTION_CHIP_TECH_UNIVERSE,
+        f"{context} does not match the live executable chip core",
     )
 
 
@@ -231,7 +259,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIsNone(settings.trading_market_context_url)
         self.assertEqual(
             set(settings.trading_universe_static_fallback_symbols),
-            _CHIP_UNIVERSE_SYMBOLS,
+            _LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS,
         )
         self.assertNotIn("TRADING_FEATURE_FLAGS_URL", env)
         self.assertNotIn("TRADING_FORECAST_SERVICE_URL", env)
@@ -267,11 +295,43 @@ class TestLiveConfigManifestContract(TestCase):
                 list,
                 f"{strategy.get('name')} missing explicit universe_symbols",
             )
-            _assert_exact_live_signal_universe(
+            _assert_exact_live_execution_chip_universe(
                 self,
                 cast(list[object], raw_symbols),
                 context=f"strategy {strategy.get('name')}",
             )
+
+    def test_late_day_paper_sleeve_keeps_remaining_entry_window(self) -> None:
+        strategies = _load_torghut_strategy_catalog()
+        late_day = next(
+            (
+                strategy
+                for strategy in strategies
+                if strategy.get("name") == "late-day-continuation-long-v1"
+            ),
+            None,
+        )
+        self.assertIsNotNone(late_day)
+        assert late_day is not None
+
+        description = str(late_day.get("description") or "").lower()
+        params = _params(late_day)
+        raw_symbols = late_day.get("universe_symbols")
+
+        self.assertTrue(_manifest_bool(late_day, "enabled"))
+        self.assertEqual(
+            late_day.get("strategy_id"), "late_day_continuation_long_v1@research"
+        )
+        self.assertIn("paper-only", description)
+        self.assertIn("$300/day", description)
+        self.assertIsInstance(raw_symbols, list)
+        _assert_exact_live_execution_chip_universe(
+            self,
+            cast(list[object], raw_symbols),
+            context="late-day paper sleeve universe",
+        )
+        self.assertEqual(params.get("entry_start_minute_utc"), "1080")
+        self.assertEqual(params.get("entry_end_minute_utc"), "1170")
 
     def test_runtime_symbol_sources_use_live_signal_universe(self) -> None:
         live_env = _load_torghut_knative_env()
@@ -282,20 +342,143 @@ class TestLiveConfigManifestContract(TestCase):
         ws_data = ws_config.get("data")
         self.assertIsInstance(ws_data, Mapping)
 
-        _assert_exact_live_signal_universe(
+        _assert_exact_live_execution_chip_universe(
             self,
             _csv_symbols(live_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS")),
             context="live static fallback symbols",
         )
-        _assert_exact_live_signal_universe(
+        _assert_exact_live_execution_chip_universe(
             self,
             _csv_symbols(sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS")),
             context="sim static fallback symbols",
         )
-        _assert_exact_live_signal_universe(
+        _assert_exact_live_execution_chip_universe(
             self,
             _csv_symbols(cast(Mapping[str, object], ws_data).get("SYMBOLS")),
             context="torghut-ws subscription symbols",
+        )
+
+    def test_sim_manifest_runs_paper_live_signal_profile(self) -> None:
+        sim_env = _load_knative_env(
+            "argocd/applications/torghut/knative-service-sim.yaml"
+        )
+
+        self.assertTrue(_manifest_bool(sim_env, "TRADING_ENABLED"))
+        self.assertEqual(sim_env.get("TRADING_MODE"), "paper")
+        self.assertEqual(sim_env.get("TRADING_PIPELINE_MODE"), "simple")
+        self.assertTrue(_manifest_bool(sim_env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
+        self.assertFalse(_manifest_bool(sim_env, "TRADING_SIMULATION_ENABLED"))
+        self.assertEqual(sim_env.get("CLICKHOUSE_DATABASE"), "torghut")
+        self.assertEqual(sim_env.get("TRADING_SIGNAL_TABLE"), "torghut.ta_signals")
+        self.assertEqual(sim_env.get("TRADING_PRICE_TABLE"), "torghut.ta_microbars")
+        self.assertEqual(
+            sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS"),
+            "NVDA,AMD,INTC",
+        )
+
+    def test_clickhouse_replicas_are_not_pinned_to_single_architecture(self) -> None:
+        manifest = _load_torghut_clickhouse_manifest()
+        pod_templates = (
+            manifest.get("spec", {}).get("templates", {}).get("podTemplates", [])
+        )
+        self.assertTrue(pod_templates)
+        for template in pod_templates:
+            self.assertIsInstance(template, Mapping)
+            spec = cast(Mapping[str, object], template).get("spec")
+            self.assertIsInstance(spec, Mapping)
+            node_selector = cast(Mapping[str, object], spec).get("nodeSelector")
+            self.assertNotEqual(
+                node_selector,
+                {"kubernetes.io/arch": "arm64"},
+                f"{template.get('name')} pins ClickHouse to one architecture",
+            )
+
+    def test_whitepaper_semantic_backfill_runs_on_arm_nodes(self) -> None:
+        manifest = _load_yaml_mapping(
+            "argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml"
+        )
+        pod_spec = manifest.get("spec", {}).get("template", {}).get("spec", {})
+        self.assertIsInstance(pod_spec, Mapping)
+        self.assertEqual(
+            cast(Mapping[str, object], pod_spec).get("nodeSelector"),
+            {"kubernetes.io/arch": "arm64"},
+        )
+
+    def test_migration_job_prepares_sim_database_before_sim_upgrade(self) -> None:
+        manifest = _load_yaml_mapping(
+            "argocd/applications/torghut/db-migrations-job.yaml"
+        )
+        containers = (
+            manifest.get("spec", {})
+            .get("template", {})
+            .get("spec", {})
+            .get("containers", [])
+        )
+        self.assertTrue(containers)
+        container = containers[0]
+        args = "\n".join(str(item) for item in container.get("args", []))
+        env = [item for item in container.get("env", []) if isinstance(item, Mapping)]
+        upgrade_to_research_objects = (
+            'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini '
+            "upgrade 0026_strategy_factory_research_objects"
+        )
+        upgrade_heads = 'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads'
+        env_names = {item.get("name") for item in env}
+        env_by_name = {item.get("name"): item for item in env}
+        env_order = [item.get("name") for item in env]
+
+        self.assertIn("TORGHUT_POSTGRES_ADMIN_URI", env_names)
+        self.assertIn("TORGHUT_SIM_ADMIN_DSN", env_names)
+        self.assertLess(
+            env_order.index("TORGHUT_SIM_ADMIN_DB_PASSWORD"),
+            env_order.index("TORGHUT_POSTGRES_ADMIN_URI"),
+        )
+        self.assertEqual(
+            env_by_name["TORGHUT_POSTGRES_ADMIN_URI"].get("value"),
+            "postgresql://$(TORGHUT_SIM_ADMIN_DB_USER):$(TORGHUT_SIM_ADMIN_DB_PASSWORD)@"
+            "$(TORGHUT_SIM_ADMIN_DB_HOST):$(TORGHUT_SIM_ADMIN_DB_PORT)/postgres",
+        )
+        self.assertNotIn("valueFrom", env_by_name["TORGHUT_POSTGRES_ADMIN_URI"])
+        self.assertIn("database_url(admin_uri, 'postgres')", args)
+        self.assertIn("CREATE DATABASE", args)
+        self.assertIn("GRANT ALL PRIVILEGES ON DATABASE", args)
+        self.assertIn("CREATE EXTENSION IF NOT EXISTS vector", args)
+        self.assertIn("postgresql+psycopg://", args)
+        self.assertIn("select quote_ident(:role_name)", args)
+        self.assertIn("c.oid::regclass::text AS object_name", args)
+        self.assertIn("pg_get_userbyid(c.relowner) <> :runtime_role", args)
+        self.assertIn("owner_statement = (", args)
+        self.assertIn("ALTER {owned_relation['object_type']}", args)
+        self.assertIn("{owned_relation['object_name']} OWNER TO {quoted_role}", args)
+        self.assertNotIn("DO $$", args)
+        self.assertNotIn("format(", args)
+        self.assertIn(upgrade_to_research_objects, args)
+        self.assertIn("0028_autoresearch_epoch_ledgers", args)
+        self.assertIn("whitepaper_claims", args)
+        self.assertIn("autoresearch_portfolio_candidates", args)
+        self.assertIn("public_table_exists", args)
+        self.assertIn(upgrade_heads, args)
+        self.assertIn("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public", args)
+        self.assertIn("granted simulation runtime privileges", args)
+        self.assertLess(
+            args.index("CREATE EXTENSION IF NOT EXISTS vector"),
+            args.index("c.oid::regclass::text AS object_name"),
+        )
+        self.assertLess(
+            args.index("owner_statement = ("),
+            args.index(upgrade_to_research_objects),
+        )
+        self.assertLess(
+            args.index(upgrade_to_research_objects),
+            args.index("stamped existing whitepaper/autoresearch ledger objects"),
+        )
+        self.assertLess(
+            args.index("stamped existing whitepaper/autoresearch ledger objects"),
+            args.index(upgrade_heads),
+        )
+        self.assertLess(
+            args.index(upgrade_heads),
+            args.index("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public"),
         )
 
     def test_profitability_sweep_universes_are_chip_only(self) -> None:
@@ -323,7 +506,7 @@ class TestLiveConfigManifestContract(TestCase):
                     list,
                     f"{path} universe_symbols[{index}] is not a list",
                 )
-                _assert_exact_live_signal_universe(
+                _assert_exact_live_execution_chip_universe(
                     self,
                     cast(list[object], raw_symbols),
                     context=f"{path.name} universe_symbols[{index}]",
@@ -352,7 +535,7 @@ class TestLiveConfigManifestContract(TestCase):
                 list,
                 f"{path} missing candidate_strategy.universe_symbols",
             )
-            _assert_exact_live_signal_universe(
+            _assert_exact_live_execution_chip_universe(
                 self,
                 cast(list[object], raw_symbols),
                 context=f"{path.name} candidate universe",
@@ -377,6 +560,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(env.get("TRADING_MODE"), "live")
         self.assertEqual(env.get("TRADING_PIPELINE_MODE"), "simple")
         self.assertEqual(env.get("TRADING_UNIVERSE_SOURCE"), "jangar")
+        self.assertFalse(_manifest_bool(env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ENABLED"))
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION"))
         self.assertFalse(_manifest_bool(env, "TRADING_KILL_SWITCH_ENABLED"))
@@ -412,16 +596,21 @@ class TestLiveConfigManifestContract(TestCase):
         _require_flag_enabled_false("torghut_llm_fail_open_live_approved")
         _require_flag_enabled_false("torghut_llm_shadow_mode")
 
-    def test_strict_daily_profit_strategies_require_executable_live_proof(self) -> None:
+    def test_profit_claim_strategies_require_executable_live_proof(self) -> None:
         strategies = _load_torghut_strategy_catalog()
-        strict_daily_profit_strategies = [
-            strategy
-            for strategy in strategies
-            if "strict-daily-profit" in str(strategy.get("description") or "").lower()
-        ]
-        self.assertTrue(strict_daily_profit_strategies)
+        proof_claim_strategies: list[dict[str, object]] = []
+        for strategy in strategies:
+            description = str(strategy.get("description") or "").lower()
+            strategy_id = str(strategy.get("strategy_id") or "").lower()
+            if (
+                "strict-daily-profit" in description
+                or "promoted" in description
+                or strategy_id.endswith("@prod")
+            ):
+                proof_claim_strategies.append(strategy)
+        self.assertTrue(proof_claim_strategies)
 
-        for strategy in strict_daily_profit_strategies:
+        for strategy in proof_claim_strategies:
             if not _manifest_bool(strategy, "enabled"):
                 continue
 
@@ -439,17 +628,17 @@ class TestLiveConfigManifestContract(TestCase):
 
             self.assertTrue(
                 evidence_ref,
-                f"{strategy.get('name')} is strict-daily-profit live-enabled without executable evidence ref",
+                f"{strategy.get('name')} is live-enabled with a proof/promotion claim but no executable evidence ref",
             )
             self.assertGreaterEqual(
                 Decimal(str(target_net_pnl or "0")),
                 Decimal("300"),
-                f"{strategy.get('name')} is strict-daily-profit live-enabled without $300/day target proof",
+                f"{strategy.get('name')} is live-enabled with a proof/promotion claim but no $300/day target proof",
             )
             self.assertGreaterEqual(
                 Decimal(str(min_daily_net_pnl or "0")),
                 Decimal("300"),
-                f"{strategy.get('name')} is strict-daily-profit live-enabled without every-day $300 proof",
+                f"{strategy.get('name')} is live-enabled with a proof/promotion claim but no every-day $300 proof",
             )
             self.assertIsNotNone(max_notional_per_trade)
             self.assertLessEqual(

@@ -312,7 +312,7 @@ def _build_foundation_router_payload(
             if len(symbols) >= 3:
                 break
     if not symbols:
-        symbols = ["AAPL"]
+        symbols = ["NVDA"]
 
     by_symbol = {
         symbol: {

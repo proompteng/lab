@@ -14,6 +14,7 @@
 The paper proposes an LLM-guided Monte Carlo Tree Search (MCTS) system for formulaic alpha mining. The system treats each candidate formula as a search node, uses multi-dimensional feedback from financial backtesting to guide refinements, and introduces Frequent Subtree Avoidance (FSA) to reduce structural homogenization.
 
 Core value for implementation is not a single new model, but a robust search architecture:
+
 1. MCTS-guided iterative refinement of symbolic formulas.
 2. Dimension-targeted improvement policy (effectiveness, stability, turnover, diversity, overfitting-risk).
 3. Structural anti-collapse mechanism via frequent subtree mining and avoidance constraints.
@@ -63,17 +64,21 @@ Reported experiments show strong relative gains against listed baselines on Chin
 ## 3) Key Findings
 
 1. Framework-level gains are consistent in the reported setup.
+
 - Main experimental section states superiority across IC, RankIC, AER, and IR versus listed methods (Sec. 4.2; Fig. “method_performance”).
 
 2. MCTS + multi-dimensional feedback + FSA appears additive.
+
 - In the ablation table (main paper, Table “Ablation study”), `MCTS+FSA` is best across both LightGBM and MLP columns:
   - LightGBM: IC 0.0549, RankIC 0.0512, AER 0.1107, IR 1.1792.
   - MLP: IC 0.0522, RankIC 0.0503, AER 0.1234, IR 1.2712.
 
 3. Cross-market transfer is directionally positive but narrower in metric scope.
+
 - S&P 500 appendix table shows strongest or near-strongest IC/RankIC for multiple alpha-set sizes (Appendix `sec:appendix_sp500`, Table `experimental_result_sp500`), but without the same breadth of live-like trading metrics as the main China evaluation.
 
 4. Cost-performance depends heavily on LLM backbone.
+
 - Appendix cost table reports:
   - Ours (GPT-4.1): total ~$74.4/run.
   - Ours (Gemini-2.0-flash-lite): total ~$7.5/run with strong IR.
@@ -82,14 +87,17 @@ Reported experiments show strong relative gains against listed baselines on Chin
 ## 4) Novelty Claims Assessment
 
 1. Claim: LLM-powered MCTS reframing of alpha mining.
+
 - Assessment: **supported and meaningful systems contribution**.
 - Evidence: explicit node/action/reward design, internal-node expansion, and empirical ablations (Sec. 3, Sec. 4.3).
 
 2. Claim: FSA improves search diversity and quality.
+
 - Assessment: **supported in-paper**.
 - Evidence: ablation row `MCTS+FSA` outperforms `MCTS` with same dimensions included (Table ablation in main section).
 
 3. Claim: superior interpretability.
+
 - Assessment: **partially supported**.
 - Evidence: LLM-based interpretability ranking and qualitative examples (Sec. 4.4; Appendix interpretability section), but no human-annotator study and potential evaluator bias remain.
 
@@ -105,18 +113,23 @@ Reported experiments show strong relative gains against listed baselines on Chin
 ## 5.2 Principal Risks
 
 1. Statistical rigor risk (high):
+
 - No confidence intervals, p-values, or multi-seed variance for primary leaderboard tables.
 
 2. Reproducibility risk (high):
+
 - Paper specifies many settings but does not provide an immutable full artifact bundle (exact prompts, seeds, data snapshot checksums, run manifests, commit hashes).
 
 3. Evaluation realism risk (medium-high):
+
 - Backtesting uses fixed transaction cost and constrained strategy template; detailed slippage/impact and market-friction sensitivity is limited.
 
 4. External validity risk (medium):
+
 - U.S. results exist but are narrower and do not establish robust multi-regime/live transfer.
 
 5. Evaluator circularity risk (medium):
+
 - Interpretability and overfitting components rely on LLM judgments, which can amplify model-specific bias.
 
 ## 5.3 Unresolved Questions
@@ -131,32 +144,39 @@ Reported experiments show strong relative gains against listed baselines on Chin
 ## 6.1 What To Adopt Immediately
 
 1. Search-controller architecture:
+
 - Node state = `{formula_ast, history, dim_scores, aggregate_score, visit_count}`.
 - Action = structured refinement operation.
 
 2. Dimension-targeted refinement policy:
+
 - Softmax over weakness vector with controllable temperature.
 
 3. FSA guard:
+
 - Mine top-k frequent closed root genes from effective formulas and inject as hard generation constraints.
 
 4. Deterministic artifact logging:
+
 - Persist formula AST, prompt hash, model ID, seed, eval metrics, and parent-child lineage for every expansion.
 
 ## 6.2 Minimum Production-Grade Build Plan
 
 Phase 1 (2-3 weeks): deterministic research replica
+
 1. Implement formula AST parser/validator + operator registry.
 2. Implement MCTS loop with virtual expansion action and Eq. 1/8 updates.
 3. Implement dimensional evaluators and aggregate scoring.
 4. Emit immutable run artifacts (`run.json`, prompt/config hashes, metric snapshots).
 
 Phase 2 (2-4 weeks): robustness and audit hardening
+
 1. Add repeated-run variance reports and confidence intervals.
 2. Add slippage/impact stress tests and turnover-constrained sensitivity.
 3. Add FSA mining diagnostics (coverage, rejected proposal ratio, diversity delta).
 
 Phase 3 (ongoing): constrained pilot only
+
 1. Shadow/paper-trading deployment with strict risk caps.
 2. Promotion gates require regime-stability and deterministic replay pass.
 3. Human review for policy promotions and kill-switch criteria.
@@ -164,15 +184,19 @@ Phase 3 (ongoing): constrained pilot only
 ## 6.3 Non-Negotiable Promotion Gates
 
 1. Reproducibility gate:
+
 - Same manifest + seed must replay materially identical rankings and portfolio metrics.
 
 2. Statistical gate:
+
 - Improvement over baseline must be significant across rolling windows and seeds.
 
 3. Risk gate:
+
 - Turnover, drawdown, concentration, and drift monitors must remain within policy bounds.
 
 4. Audit gate:
+
 - Every selected alpha has interpretable lineage and exact evidence pointers.
 
 ## 7) Viability Verdict

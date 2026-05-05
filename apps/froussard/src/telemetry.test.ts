@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const setLoggerMock = vi.fn()
-const diagConsoleLoggerMock = vi.fn()
+const diagConsoleLoggerMock = vi.fn(function () {})
 const diagErrorMock = vi.fn()
 const diagWarnMock = vi.fn()
 const traceStartSpanMock = vi.fn().mockReturnValue({ end: vi.fn() })
@@ -19,17 +19,23 @@ vi.mock('@proompteng/otel/auto-instrumentations-node', () => ({
   getNodeAutoInstrumentations: autoInstrumentationMock,
 }))
 
-const traceExporterMock = vi.fn().mockImplementation((config: unknown) => ({ config }))
+const traceExporterMock = vi.fn(function (config: unknown) {
+  return { config }
+})
 vi.mock('@proompteng/otel/exporter-trace-otlp-http', () => ({
   OTLPTraceExporter: traceExporterMock,
 }))
 
-const metricExporterMock = vi.fn().mockImplementation((config: unknown) => ({ config }))
+const metricExporterMock = vi.fn(function (config: unknown) {
+  return { config }
+})
 vi.mock('@proompteng/otel/exporter-metrics-otlp-http', () => ({
   OTLPMetricExporter: metricExporterMock,
 }))
 
-const metricReaderMock = vi.fn().mockImplementation((config: unknown) => ({ config }))
+const metricReaderMock = vi.fn(function (config: unknown) {
+  return { config }
+})
 vi.mock('@proompteng/otel/sdk-metrics', () => ({
   PeriodicExportingMetricReader: metricReaderMock,
   MetricReader: class {},
@@ -37,11 +43,13 @@ vi.mock('@proompteng/otel/sdk-metrics', () => ({
 
 const nodeSdkStartMock = vi.fn().mockResolvedValue(undefined)
 const nodeSdkShutdownMock = vi.fn().mockResolvedValue(undefined)
-const nodeSdkCtorMock = vi.fn().mockImplementation((config: unknown) => ({
-  config,
-  start: nodeSdkStartMock,
-  shutdown: nodeSdkShutdownMock,
-}))
+const nodeSdkCtorMock = vi.fn(function (config: unknown) {
+  return {
+    config,
+    start: nodeSdkStartMock,
+    shutdown: nodeSdkShutdownMock,
+  }
+})
 
 vi.mock('@proompteng/otel/sdk-node', () => ({
   NodeSDK: nodeSdkCtorMock,

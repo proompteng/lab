@@ -86,7 +86,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-1.3.13-
 
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter docs --filter @proompteng/design
 
       - name: Oxlint (non-blocking)
         continue-on-error: true
@@ -136,7 +136,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-1.3.13-
 
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
 
       - name: Oxlint (non-blocking)
         continue-on-error: true
@@ -185,7 +185,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-1.3.13-
 
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter cms
 
       - name: Oxlint (non-blocking)
         continue-on-error: true
@@ -224,7 +224,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-1.3.13-
 
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter app --filter @proompteng/design
 
       - name: Oxlint (non-blocking)
         continue-on-error: true
@@ -258,7 +258,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-1.3.13-
 
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bonjour --filter @proompteng/otel
 
       - run: bun run --filter @proompteng/otel build
 
@@ -294,7 +294,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-1.3.13-
 
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/discord
 
       - name: Oxlint (non-blocking)
         continue-on-error: true
@@ -325,8 +325,7 @@ jobs:
           sudo apt-get install -y build-essential
 
       - name: Install dependencies
-        working-directory: apps/kitty-krew
-        run: bun install --frozen-lockfile --ignore-scripts
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter tanstack-router-react-example-with-trpc-react-query
 
       - name: Oxlint (non-blocking)
         continue-on-error: true
@@ -375,8 +374,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-1.3.13-
 
-      - run: bun install --frozen-lockfile --ignore-scripts
-        working-directory: apps/reviseur
+      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter reviseur
 
       - name: Oxlint (non-blocking)
         continue-on-error: true

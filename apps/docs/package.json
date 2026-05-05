@@ -12,21 +12,21 @@
   },
   "dependencies": {
     "@proompteng/design": "workspace:*",
-    "fumadocs-core": "15.8.5",
-    "fumadocs-mdx": "12.0.3",
-    "fumadocs-ui": "15.8.5",
-    "next": "16.1.6",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "fumadocs-core": "16.8.7",
+    "fumadocs-mdx": "14.3.2",
+    "fumadocs-ui": "16.8.7",
+    "next": "16.2.4",
+    "react": "19.2.5",
+    "react-dom": "19.2.5"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.1.14",
+    "@tailwindcss/postcss": "^4.2.4",
     "@types/mdx": "^2.0.13",
-    "@types/node": "25.2.3",
+    "@types/node": "25.6.0",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
-    "postcss": "^8.5.6",
-    "tailwindcss": "^4.1.14",
-    "typescript": "^5.9.3"
+    "postcss": "^8.5.14",
+    "tailwindcss": "^4.2.4",
+    "typescript": "^6.0.3"
   }
 }

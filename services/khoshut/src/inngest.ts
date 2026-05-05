@@ -1,26 +1,22 @@
-import { EventSchemas, Inngest } from 'inngest'
+import { Inngest, eventType, staticSchema } from 'inngest'
 import { getConfig } from './config'
 
 const config = getConfig()
 
-const schemas = new EventSchemas().fromRecord<{
-  'khoshut/workflow.requested': {
-    data: {
-      message: string
-    }
-  }
-}>()
+export const workflowRequestedEvent = eventType('khoshut/workflow.requested', {
+  schema: staticSchema<{
+    message: string
+  }>(),
+})
 
 export const inngest = new Inngest({
   id: config.appId,
   eventKey: config.eventKey,
   baseUrl: config.baseUrl,
-  schemas,
 })
 
 export const khoshutWorkflow = inngest.createFunction(
-  { id: 'khoshut-example-workflow' },
-  { event: 'khoshut/workflow.requested' },
+  { id: 'khoshut-example-workflow', triggers: [workflowRequestedEvent] },
   async ({ event, step }) => {
     const normalizedMessage = await step.run('normalize-message', async () => {
       const trimmed = event.data.message.trim()
