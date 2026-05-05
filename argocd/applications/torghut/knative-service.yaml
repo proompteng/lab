@@ -167,7 +167,7 @@ spec:
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED
               value: "true"
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS
-              value: AMAT,AMD,ASML,AVGO,INTC,KLAC,LRCX,MU,NVDA,QCOM,TSM,TXN
+              value: AMAT,AMD,AVGO,INTC,MU,NVDA
             - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
               value: "900"
             - name: JANGAR_SYMBOLS_URL
