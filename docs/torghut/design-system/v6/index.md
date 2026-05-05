@@ -626,6 +626,7 @@ This pack is positioned as the next architecture layer above:
 50. `67-torghut-trading-engine-glossary-and-mechanics-2026-03-29.md`
 51. `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
 52. `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
+53. `89-torghut-hypothesis-warrant-ledger-and-profit-runway-2026-05-05.md`
 
 ## Why This Sequence
 
@@ -681,3 +682,6 @@ This pack is positioned as the next architecture layer above:
   contracts because the current bottleneck is no longer candidate generation alone. Portfolio proof must be bound to
   the exact Jangar runtime authority, Torghut health, data freshness, and artifact parity that were current when the
   candidate was evaluated.
+- `89-torghut-hypothesis-warrant-ledger-and-profit-runway-2026-05-05.md` is the current capital handoff contract. It
+  converts blocked paper/live authority into zero-notional replay and hypothesis warrants while keeping all capital
+  moves bound to fresh Jangar evidence epochs, empirical jobs, route proof, and measurable profit SLOs.
