@@ -470,8 +470,6 @@ spec:
               value: "20"
             - name: LLM_DSPY_RUNTIME_MODE
               value: disabled
-            - name: LLM_DSPY_ARTIFACT_HASH
-              value: ""
             - name: LLM_DSPY_LIVE_RUNTIME_BLOCK_FAIL_MODE
               value: pass_through_reduced_size
             - name: LLM_DSPY_LIVE_RUNTIME_BLOCK_QTY_MULTIPLIER
