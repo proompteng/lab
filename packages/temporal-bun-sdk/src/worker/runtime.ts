@@ -1069,10 +1069,10 @@ export class WorkerRuntime {
         timeoutMs: POLL_TIMEOUT_MS,
         signal,
       })
-      this.#observeHistogram(this.#metrics.workflowPollLatency, Date.now() - start)
       if (!response.taskToken || response.taskToken.length === 0) {
         return
       }
+      this.#observeHistogram(this.#metrics.workflowPollLatency, Date.now() - start)
       await this.#enqueueWorkflowTask(response)
     }).pipe(
       Effect.catchAll((error) =>
@@ -1112,10 +1112,10 @@ export class WorkerRuntime {
         timeoutMs: POLL_TIMEOUT_MS,
         signal,
       })
-      this.#observeHistogram(this.#metrics.activityPollLatency, Date.now() - start)
       if (!response.taskToken || response.taskToken.length === 0) {
         return
       }
+      this.#observeHistogram(this.#metrics.activityPollLatency, Date.now() - start)
       await this.#enqueueActivityTask(response)
     }).pipe(
       Effect.catchAll((error) => (this.#isRpcAbortError(error) ? Effect.void : this.#handleActivityPollerError(error))),
