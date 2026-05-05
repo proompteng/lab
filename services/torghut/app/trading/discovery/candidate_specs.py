@@ -60,59 +60,48 @@ _FAMILY_TIEBREAK = {
 _MAX_FAMILIES_PER_HYPOTHESIS = 3
 _DEFAULT_PROFILE_COUNT = 3
 
-_SEMICONDUCTOR_TECH_UNIVERSE_TOP_12: tuple[str, ...] = (
+_LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE: tuple[str, ...] = (
     "AMAT",
     "AMD",
-    "ASML",
     "AVGO",
     "INTC",
-    "KLAC",
-    "LRCX",
     "MU",
     "NVDA",
-    "QCOM",
-    "TSM",
-    "TXN",
 )
 _AI_ACCELERATOR_UNIVERSE_PROFILE: tuple[str, ...] = (
     "NVDA",
     "AVGO",
-    "TSM",
     "AMD",
-    "ASML",
     "MU",
 )
-_EQUIPMENT_FOUNDRY_UNIVERSE_PROFILE: tuple[str, ...] = (
-    "ASML",
+_EQUIPMENT_MEMORY_UNIVERSE_PROFILE: tuple[str, ...] = (
     "AMAT",
-    "KLAC",
-    "LRCX",
-    "TSM",
-    "TXN",
+    "MU",
+    "INTC",
 )
 _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE: tuple[str, ...] = (
-    _SEMICONDUCTOR_TECH_UNIVERSE_TOP_12
+    _LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE
 )
 
 _LARGE_CAP_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
     _AI_ACCELERATOR_UNIVERSE_PROFILE,
-    _EQUIPMENT_FOUNDRY_UNIVERSE_PROFILE,
+    _EQUIPMENT_MEMORY_UNIVERSE_PROFILE,
     _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _BREAKOUT_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
     _AI_ACCELERATOR_UNIVERSE_PROFILE,
-    ("NVDA", "AVGO", "TSM", "AMD", "ASML", "AMAT", "MU", "KLAC", "LRCX"),
+    ("NVDA", "AVGO", "AMD", "AMAT", "MU"),
     _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _REVERSAL_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
-    ("AMD", "INTC", "AMAT", "MU", "QCOM"),
-    ("AMD", "INTC", "AMAT", "MU", "QCOM", "TXN", "AVGO"),
-    ("AMD", "INTC", "AMAT", "MU", "NVDA", "QCOM", "TXN", "AVGO"),
+    ("AMD", "INTC", "AMAT", "MU"),
+    ("AMD", "INTC", "AMAT", "MU", "AVGO"),
+    _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _TSMOM_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
     ("NVDA",),
     ("NVDA", "AVGO", "AMD"),
-    ("NVDA", "AVGO", "TSM", "AMD", "ASML", "MU"),
+    ("NVDA", "AVGO", "AMD", "AMAT", "MU"),
 )
 
 _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
@@ -695,9 +684,10 @@ def _mapping(value: Any) -> dict[str, Any]:
 def _universe_symbol_override(symbols: Sequence[str]) -> tuple[str, ...]:
     cleaned: list[str] = []
     seen: set[str] = set()
+    allowed = set(_LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
     for symbol in symbols:
         normalized = str(symbol).strip().upper()
-        if not normalized or normalized in seen:
+        if not normalized or normalized in seen or normalized not in allowed:
             continue
         cleaned.append(normalized)
         seen.add(normalized)

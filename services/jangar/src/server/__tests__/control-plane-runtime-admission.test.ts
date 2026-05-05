@@ -90,4 +90,46 @@ describe('buildRuntimeAdmissionSnapshot', () => {
       ]),
     )
   })
+
+  it('blocks collaboration admission when the NATS CLI path is present but not executable', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'runtime-admission-'))
+    const binDir = join(tempDir, 'bin')
+    await mkdir(binDir, { recursive: true })
+    const natsPath = join(binDir, 'nats')
+    await writeFile(natsPath, '#!/usr/bin/env bash\nexit 0\n', 'utf8')
+    await chmod(natsPath, 0o644)
+    process.env.PATH = binDir
+    process.env.NATS_URL = 'nats://nats.nats.svc.cluster.local:4222'
+
+    const snapshot = buildRuntimeAdmissionSnapshot({
+      worktree: REPO_ROOT,
+      natsUrl: 'nats://nats.nats.svc.cluster.local:4222',
+    })
+
+    const collaborationKit = snapshot.runtimeKits.find((kit) => kit.kit_class === 'collaboration')
+    expect(collaborationKit).toMatchObject({
+      decision: 'blocked',
+      reason_codes: expect.arrayContaining(['runtime_kit_component_missing:nats_cli']),
+    })
+    expect(collaborationKit?.components).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          component_ref: 'nats',
+          present: false,
+          reason_code: 'runtime_kit_component_missing:nats_cli',
+          evidence_ref: 'nats',
+        }),
+      ]),
+    )
+
+    expect(snapshot.admissionPassports).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          consumer_class: 'swarm_implement',
+          decision: 'block',
+          reason_codes: expect.arrayContaining(['runtime_kit_component_missing:nats_cli']),
+        }),
+      ]),
+    )
+  })
 })

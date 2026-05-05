@@ -25,7 +25,7 @@ consistency_constraints:
   require_every_day_active: true
 strategy_overrides:
   universe_symbols:
-    - ['AMAT', 'AMD', 'ASML', 'AVGO', 'INTC', 'KLAC', 'LRCX', 'MU', 'NVDA', 'QCOM', 'TSM', 'TXN']
+    - ['AMAT', 'AMD', 'AVGO', 'INTC', 'MU', 'NVDA']
   max_position_pct_equity:
     - '10.0'
   max_notional_per_trade:

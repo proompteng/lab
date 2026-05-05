@@ -10,6 +10,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `78-torghut-quant-evidence-settlement-and-capital-routing-2026-05-05.md`
+  - `docs/agents/designs/73-jangar-evidence-settlement-and-runtime-freshness-leases-2026-05-05.md`
   - `77-torghut-profit-admission-cells-and-materialized-evidence-contract-2026-05-05.md`
   - `docs/agents/designs/72-jangar-materialized-run-proof-and-storage-backed-admission-contract-2026-05-05.md`
   - `77-torghut-hot-path-proof-projections-and-profit-cell-settlement-2026-05-05.md`
@@ -71,7 +73,10 @@
 - `76-torghut-profit-projection-consumer-and-route-parity-gates-2026-05-05.md`
 - `77-torghut-profit-admission-cells-and-materialized-evidence-contract-2026-05-05.md`
 - `77-torghut-hot-path-proof-projections-and-profit-cell-settlement-2026-05-05.md`
+- `78-torghut-quant-evidence-settlement-and-capital-routing-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/73-jangar-evidence-settlement-and-runtime-freshness-leases-2026-05-05.md`
+  - `78-torghut-quant-evidence-settlement-and-capital-routing-2026-05-05.md`
   - `docs/agents/designs/72-jangar-materialized-run-proof-and-storage-backed-admission-contract-2026-05-05.md`
   - `77-torghut-profit-admission-cells-and-materialized-evidence-contract-2026-05-05.md`
   - `docs/agents/designs/72-jangar-route-authority-fuses-and-deploy-quarantine-2026-05-05.md`
@@ -263,6 +268,12 @@ Current source-state priority is narrower:
 - `77-torghut-profit-admission-cells-and-materialized-evidence-contract-2026-05-05.md` now makes Torghut capital
   authority hypothesis-local: each account/window/lane consumes Jangar materialized proof plus schema, quant,
   market-context, empirical, signal, and TCA evidence before canary or scale decisions are allowed.
+- `docs/agents/designs/73-jangar-evidence-settlement-and-runtime-freshness-leases-2026-05-05.md` now turns the latest
+  discover evidence into an expiring Jangar lease model: serving can stay available while stale stages, degraded
+  execution trust, and stale Torghut proof hold or block action consumers.
+- `78-torghut-quant-evidence-settlement-and-capital-routing-2026-05-05.md` now binds live and simulation capital
+  routing to account/window settlements, profit verdict cells, and route-specific receipts so stale empirical jobs,
+  degraded quant ingestion, sim schema drift, and TCA breaches cannot be mistaken for trade permission.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.
