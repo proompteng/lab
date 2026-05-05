@@ -188,6 +188,30 @@ bun --cwd services/jangar run start:worker
 - Incident recovery command (includes unversioned running workflows):
   `bun run packages/scripts/src/jangar/sync-temporal-routing.ts --task-queue jangar --deployment-name jangar-deployment --migrate-stale-running --migrate-unversioned-running`
 
+## Swarm runtime admission
+
+The supporting-primitives controller enforces stage admission passports before it creates launch-capable swarm work.
+With `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=true` (the production default), discover/plan schedules use the
+`swarm_plan` passport, implement schedules and cross-swarm requirements use `swarm_implement`, and verify schedules use
+`swarm_verify`. A blocked or held passport deletes the matching schedule and prevents requirement dispatch instead of
+allowing repeated opaque job retries.
+
+Schedule reconciliation also re-checks the current stage passport before it writes runner ConfigMaps or CronJobs.
+This keeps pre-existing schedules from launching with stale allowed passport annotations after the collaboration runtime
+kit moves to `hold` or `block`.
+
+Admitted schedules and requirement runs carry these trace fields in annotations and run parameters:
+
+- `swarmAdmissionPassportId`
+- `swarmAdmissionDecision`
+- `swarmRecoveryCaseSetDigest`
+- `swarmRuntimeKitSetDigest`
+- `swarmRequiredRuntimeKits`
+- `swarmAdmissionProducerRevision`
+
+Rollback: set `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` on the control-plane runtime to return launch behavior
+to the previous advisory-only passport mode while keeping status and `/ready` passport projection visible for forensics.
+
 ## Deployment
 
 ```bash

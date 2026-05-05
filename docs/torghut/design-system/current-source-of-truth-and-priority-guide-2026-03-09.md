@@ -1,8 +1,8 @@
-# Torghut Design-System Current Source-of-Truth and Priority Guide (updated 2026-03-27)
+# Torghut Design-System Current Source-of-Truth and Priority Guide (updated 2026-05-05)
 
 ## Status
 
-- Date: `2026-03-27`
+- Date: `2026-05-05`
 - Purpose: distinguish live source-of-truth docs from historical milestone records and identify the current highest-priority work
 - Scope: `docs/torghut/design-system/**`, `docs/torghut/**`, `argocd/applications/torghut/**`, `services/torghut/**`, `services/jangar/**`
 
@@ -34,6 +34,8 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v1/historical-dataset-simulation.md`
    - `docs/torghut/design-system/v1/trading-day-simulation-automation.md`
 3. current autonomy/promotion contract source of truth:
+   - `docs/agents/designs/67-jangar-runtime-evidence-epochs-and-artifact-parity-gates-2026-05-05.md`
+   - `docs/torghut/design-system/v6/72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
    - `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
    - `docs/torghut/design-system/v6/64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`
    - `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
@@ -98,6 +100,25 @@ If the question is "what should I trust right now?", start here:
 ## Current priority, not historical priority
 
 The current highest-priority work is:
+
+The May 5 cross-plane contracts are now the latest active architecture layer:
+
+- make Torghut readiness, trading status, Jangar quant health, and capital promotion depend on bounded hot-path proof
+  projections and settled profit cells in
+  `docs/torghut/design-system/v6/77-torghut-hot-path-proof-projections-and-profit-cell-settlement-2026-05-05.md`;
+- make Jangar serving, dispatch, deploy widening, review ingest, and Torghut promotion consume route-authority fuses
+  and deploy quarantine in
+  `docs/agents/designs/72-jangar-route-authority-fuses-and-deploy-quarantine-2026-05-05.md`;
+- make Torghut consume Jangar least-privilege profit projections consistently across capital routes in
+  `docs/torghut/design-system/v6/76-torghut-profit-projection-consumer-and-route-parity-gates-2026-05-05.md`;
+- make Jangar publish least-privilege evidence projections for deploy and Torghut consumers in
+  `docs/agents/designs/71-jangar-least-privilege-evidence-projection-broker-and-deploy-gates-2026-05-05.md`;
+- make Jangar stage launch, deploy verification, and Torghut consumer authority depend on runtime evidence epochs and
+  artifact parity gates in
+  `docs/agents/designs/67-jangar-runtime-evidence-epochs-and-artifact-parity-gates-2026-05-05.md`;
+- make Torghut research, portfolio proof, and capital promotion depend on cross-plane evidence epochs that bind
+  Jangar authority, Torghut health, data freshness, artifact parity, and post-cost portfolio proof in
+  `docs/torghut/design-system/v6/72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`.
 
 The March 27 profitability-proof contracts are also active operator work for the retained internal-history window:
 

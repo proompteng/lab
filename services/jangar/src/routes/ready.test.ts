@@ -248,7 +248,7 @@ describe('getReadyHandler', () => {
     )
   })
 
-  it('returns 503 when AgentRun ingestion is degraded', async () => {
+  it('returns 200 with degraded status when AgentRun ingestion is degraded', async () => {
     agentsControllerMocks.assessAgentRunIngestion.mockReturnValue({
       namespace: 'agents',
       status: 'degraded',
@@ -264,9 +264,51 @@ describe('getReadyHandler', () => {
 
     const response = await getReadyHandler()
 
-    expect(response.status).toBe(503)
+    expect(response.status).toBe(200)
     const body = await response.json()
     expect(body.status).toBe('degraded')
+  })
+
+  it('returns 200 with degraded status when the active controller is still adopting backlog', async () => {
+    agentsControllerMocks.getAgentsControllerHealth.mockReturnValue({
+      enabled: true,
+      started: false,
+      namespaces: ['agents'],
+      crdsReady: true,
+      missingCrds: [],
+      lastCheckedAt: '2026-03-08T21:00:00Z',
+      agentRunIngestion: [
+        {
+          namespace: 'agents',
+          lastWatchEventAt: '2026-03-08T21:01:00Z',
+          lastResyncAt: '2026-03-08T21:00:00Z',
+          untouchedRunCount: 12,
+          oldestUntouchedAgeSeconds: 4_769_263,
+        },
+      ],
+    })
+    agentsControllerMocks.assessAgentRunIngestion.mockReturnValue({
+      namespace: 'agents',
+      status: 'unknown',
+      message: 'agents controller not started',
+      dispatchPaused: false,
+      lastWatchEventAt: '2026-03-08T21:01:00Z',
+      lastResyncAt: '2026-03-08T21:00:00Z',
+      untouchedRunCount: 12,
+      oldestUntouchedAgeSeconds: 4_769_263,
+    })
+
+    const { getReadyHandler } = await import('./ready')
+
+    const response = await getReadyHandler()
+
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body.status).toBe('degraded')
+    expect(body.agentsController).toMatchObject({
+      started: false,
+      crdsReady: true,
+    })
   })
 
   it('returns 200 when leader election is required but this instance is a healthy standby', async () => {

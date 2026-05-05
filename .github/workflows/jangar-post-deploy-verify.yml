@@ -133,7 +133,8 @@ jobs:
           bun run packages/scripts/src/jangar/sync-temporal-routing.ts \
             --task-queue jangar \
             --deployment-name jangar-deployment \
-            --migrate-stale-running
+            --migrate-stale-running \
+            --allow-no-versioned-pollers
 
       - name: Prepare rollback manifests
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'

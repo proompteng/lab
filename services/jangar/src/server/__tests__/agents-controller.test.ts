@@ -313,6 +313,42 @@ describe('agents controller startup', () => {
     expect(__test.getRuntimeMutableState().agentRunIngestionState.get('agents')?.untouchedRunCount).toBe(1)
   })
 
+  it('does not count Template AgentRuns as untouched during controller resync', async () => {
+    stopAgentsController()
+    const state = { namespaces: new Map() }
+    const kube = buildKube({
+      list: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.AgentRun) {
+          return {
+            items: [
+              buildAgentRun({
+                metadata: {
+                  name: 'run-template',
+                  namespace: 'agents',
+                  generation: 5,
+                  creationTimestamp: '2026-01-20T00:00:00Z',
+                  annotations: { 'agents.proompteng.ai/template': 'true' },
+                  finalizers: [],
+                },
+                status: {
+                  observedGeneration: 5,
+                  phase: 'Template',
+                },
+              }),
+            ],
+          }
+        }
+        return { items: [] }
+      }),
+    })
+
+    await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+
+    expect(kube.patch).not.toHaveBeenCalled()
+    expect(kube.applyStatus).not.toHaveBeenCalled()
+    expect(__test.getRuntimeMutableState().agentRunIngestionState.get('agents')?.untouchedRunCount).toBe(0)
+  })
+
   it('adopts missed AgentRuns on watch restart resync', async () => {
     stopAgentsController()
     const state = { namespaces: new Map() }
@@ -530,6 +566,8 @@ describe('agents controller startup', () => {
 
   it('dedupes repeated ingestion stall logs and emits recovery after two healthy resyncs', async () => {
     stopAgentsController()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-20T00:03:00Z'))
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     const state = { namespaces: new Map() }
@@ -557,6 +595,7 @@ describe('agents controller startup', () => {
 
     try {
       await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      vi.advanceTimersByTime(1500)
       await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
 
       let stallMessages = warnSpy.mock.calls
@@ -586,6 +625,7 @@ describe('agents controller startup', () => {
     } finally {
       warnSpy.mockRestore()
       infoSpy.mockRestore()
+      vi.useRealTimers()
     }
   })
 })

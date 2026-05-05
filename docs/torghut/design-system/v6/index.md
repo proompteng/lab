@@ -10,6 +10,32 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `79-torghut-capital-holdbacks-and-profit-repair-ledger-2026-05-05.md`
+  - `docs/agents/designs/75-jangar-failure-domain-leases-and-database-routability-holdbacks-2026-05-05.md`
+  - `78-torghut-quant-evidence-settlement-and-capital-routing-2026-05-05.md`
+  - `docs/agents/designs/73-jangar-evidence-settlement-and-runtime-freshness-leases-2026-05-05.md`
+  - `77-torghut-profit-admission-cells-and-materialized-evidence-contract-2026-05-05.md`
+  - `docs/agents/designs/72-jangar-materialized-run-proof-and-storage-backed-admission-contract-2026-05-05.md`
+  - `77-torghut-hot-path-proof-projections-and-profit-cell-settlement-2026-05-05.md`
+  - `docs/agents/designs/72-jangar-route-authority-fuses-and-deploy-quarantine-2026-05-05.md`
+  - `76-torghut-profit-projection-consumer-and-route-parity-gates-2026-05-05.md`
+  - `docs/agents/designs/71-jangar-least-privilege-evidence-projection-broker-and-deploy-gates-2026-05-05.md`
+  - `75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md`
+  - `docs/agents/designs/70-jangar-promotion-authority-ledger-and-rollout-rehearsal-cells-2026-05-05.md`
+  - `75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md`
+  - `docs/agents/designs/70-jangar-evidence-epoch-admission-and-rollout-quarantine-2026-05-05.md`
+  - `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
+  - `docs/agents/designs/67-jangar-runtime-evidence-epochs-and-artifact-parity-gates-2026-05-05.md`
+  - `75-torghut-profit-actuation-cells-and-capital-guardrail-marketplace-2026-05-05.md`
+  - `docs/agents/designs/70-jangar-actuation-escrow-and-deploy-proof-lanes-2026-05-05.md`
+  - `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
+  - `docs/agents/designs/69-jangar-evidence-escrow-and-repair-cell-contract-2026-05-05.md`
+  - `73-torghut-profit-evidence-clock-and-capital-veto-contract-2026-05-05.md`
+  - `docs/agents/designs/68-jangar-evidence-clock-arbiter-and-rollout-veto-contract-2026-05-05.md`
+  - `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
+  - `docs/agents/designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md`
+  - `72-torghut-profit-proof-exchange-and-query-firebreak-contract-2026-05-05.md`
+  - `docs/agents/designs/67-jangar-evidence-epochs-and-proof-cell-rollout-contract-2026-05-05.md`
   - `53-torghut-kafka-retention-bootstrap-and-archive-backed-profitability-proof-2026-03-27.md`
   - `54-torghut-research-backed-sleeves-and-this-week-holdout-proof-2026-03-27.md`
   - `64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`
@@ -42,7 +68,40 @@
 - `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
 - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 - `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
+- `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
+- `73-torghut-profit-evidence-clock-and-capital-veto-contract-2026-05-05.md`
+- `75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md`
+- `75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md`
+- `76-torghut-profit-projection-consumer-and-route-parity-gates-2026-05-05.md`
+- `77-torghut-profit-admission-cells-and-materialized-evidence-contract-2026-05-05.md`
+- `77-torghut-hot-path-proof-projections-and-profit-cell-settlement-2026-05-05.md`
+- `78-torghut-quant-evidence-settlement-and-capital-routing-2026-05-05.md`
+- `79-torghut-capital-holdbacks-and-profit-repair-ledger-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/75-jangar-failure-domain-leases-and-database-routability-holdbacks-2026-05-05.md`
+  - `79-torghut-capital-holdbacks-and-profit-repair-ledger-2026-05-05.md`
+  - `docs/agents/designs/73-jangar-evidence-settlement-and-runtime-freshness-leases-2026-05-05.md`
+  - `78-torghut-quant-evidence-settlement-and-capital-routing-2026-05-05.md`
+  - `docs/agents/designs/72-jangar-materialized-run-proof-and-storage-backed-admission-contract-2026-05-05.md`
+  - `77-torghut-profit-admission-cells-and-materialized-evidence-contract-2026-05-05.md`
+  - `docs/agents/designs/72-jangar-route-authority-fuses-and-deploy-quarantine-2026-05-05.md`
+  - `77-torghut-hot-path-proof-projections-and-profit-cell-settlement-2026-05-05.md`
+  - `docs/agents/designs/71-jangar-least-privilege-evidence-projection-broker-and-deploy-gates-2026-05-05.md`
+  - `76-torghut-profit-projection-consumer-and-route-parity-gates-2026-05-05.md`
+  - `docs/agents/designs/70-jangar-promotion-authority-ledger-and-rollout-rehearsal-cells-2026-05-05.md`
+  - `75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md`
+  - `docs/agents/designs/70-jangar-evidence-epoch-admission-and-rollout-quarantine-2026-05-05.md`
+  - `75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md`
+  - `docs/agents/designs/67-jangar-runtime-evidence-epochs-and-artifact-parity-gates-2026-05-05.md`
+  - `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
+  - `docs/agents/designs/70-jangar-actuation-escrow-and-deploy-proof-lanes-2026-05-05.md`
+  - `75-torghut-profit-actuation-cells-and-capital-guardrail-marketplace-2026-05-05.md`
+  - `docs/agents/designs/69-jangar-evidence-escrow-and-repair-cell-contract-2026-05-05.md`
+  - `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
+  - `docs/agents/designs/68-jangar-evidence-clock-arbiter-and-rollout-veto-contract-2026-05-05.md`
+  - `docs/agents/designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md`
+  - `docs/agents/designs/67-jangar-evidence-epochs-and-proof-cell-rollout-contract-2026-05-05.md`
+  - `72-torghut-profit-proof-exchange-and-query-firebreak-contract-2026-05-05.md`
   - `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
   - `64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`
   - `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
@@ -150,6 +209,79 @@ Current source-state priority is narrower:
 - `71-torghut-whitepaper-autoresearch-profit-target-strategy-factory-2026-04-21.md` now turns the whitepaper,
   strategy-factory, MLX, portfolio-sleeve, and runtime-closure pieces into one implementation contract for a
   production autoresearch epoch targeting a `$500/day` post-cost portfolio candidate.
+- `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md` now binds that profit target to
+  current cluster truth: Jangar runtime authority, Torghut service/data health, artifact platform parity, and portfolio
+  proof must share one evidence epoch before research or capital stages advance.
+- `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md` now turns the May 5 live assessment into the
+  next architecture contract: route-time proof compilation moves behind a bounded proof exchange, lane-local data
+  firebreaks block only the affected hypotheses, and non-shadow capital requires unexpired proof tied to Jangar
+  runtime-cell receipts.
+- `docs/agents/designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md` now binds Jangar
+  rollout safety to runtime cells, receipt digests, and proof-read backpressure so serving readiness, dispatch,
+  deploy verification, and Torghut promotion stop re-deriving authority from broad route-time status.
+- `73-torghut-profit-evidence-clock-and-capital-veto-contract-2026-05-05.md` now binds live capital to lane-local
+  evidence clocks: Jangar authority, market-context freshness, schema lineage, execution revision state, and
+  hypothesis promotion evidence must agree before non-observe capital can move.
+- `docs/agents/designs/68-jangar-evidence-clock-arbiter-and-rollout-veto-contract-2026-05-05.md` now separates Jangar
+  serving readiness from promotion authority with evidence clocks and rollout vetoes for dispatch, schedule launch,
+  deploy widening, and Torghut capital promotion.
+- `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md` now makes profitability promotion
+  cell-scoped: every non-observe capital request must cite one profit cell and one fresh Jangar evidence escrow, with
+  stale options, missing autoresearch evidence, failed simulation revisions, and blocked control-plane escrows recorded
+  as explicit vetoes.
+- `docs/agents/designs/69-jangar-evidence-escrow-and-repair-cell-contract-2026-05-05.md` now turns the latest
+  control-plane assessment into a concrete Jangar contract: compile durable evidence escrows, route degraded facts into
+  repair cells, keep serving readiness separate from promotion authority, and enforce read-budgeted database probes.
+- `72-torghut-profit-proof-exchange-and-query-firebreak-contract-2026-05-05.md` now turns the May 5 live-state
+  evidence into the active profitability safety contract: route-time proof scans move behind query firebreaks,
+  lane-local proof receipts become promotion authority, and Jangar consumes those receipts as evidence-epoch proof
+  cells before non-observe capital can advance.
+- `docs/agents/designs/67-jangar-evidence-epochs-and-proof-cell-rollout-contract-2026-05-05.md` now defines the
+  companion Jangar control-plane direction: serving, dispatch, deploy verification, and Torghut promotion project the
+  same durable evidence epoch rather than recomputing independent route-time truth.
+- `75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md` now records the May 5 discover
+  evidence and selects cross-plane evidence epochs plus hypothesis-local profit cells as the next architecture move:
+  Torghut promotion must prove runtime authority, data freshness, image portability, and post-cost contribution in one
+  receipt chain before any non-observe capital can advance.
+- `77-torghut-hot-path-proof-projections-and-profit-cell-settlement-2026-05-05.md` now records the latest May 5
+  discover evidence where liveness stayed green but Torghut `/readyz`, Torghut `/trading/status`, Jangar control-plane
+  status, and Jangar quant health breached route budgets; it makes bounded proof projections and settled profit cells
+  the active handoff contract for engineer and deployer stages.
+- `docs/agents/designs/72-jangar-route-authority-fuses-and-deploy-quarantine-2026-05-05.md` now defines the companion
+  Jangar layer: serving can stay available for repair while dispatch, deploy widening, review ingest, and Torghut
+  promotion fail closed on missing runtime kits, route-budget breaches, stale Torghut projections, or unresolved
+  deleted-ref review evidence.
+- `docs/agents/designs/70-jangar-actuation-escrow-and-deploy-proof-lanes-2026-05-05.md` now turns Jangar evidence
+  escrow into action-specific dispatch, schedule-launch, deploy-widening, repair-unblock, and Torghut platform promotion
+  decisions that work under partial deployer RBAC.
+- `75-torghut-profit-actuation-cells-and-capital-guardrail-marketplace-2026-05-05.md` now turns Torghut profit cells
+  into capital actuation candidates whose marketplace score consumes Jangar actuation, cell-local freshness, empirical
+  proof, simulation parity, post-cost edge, slippage, and rollback readiness.
+- `75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md` now turns the latest plan assessment into the
+  active Torghut implementation contract: non-observe capital requires one profit authority ledger entry, one Jangar
+  authority ledger id, and a successful rehearsal cell for the requested capital state.
+- `docs/agents/designs/70-jangar-promotion-authority-ledger-and-rollout-rehearsal-cells-2026-05-05.md` now defines
+  the companion Jangar contract: serving, dispatch, rollout, and Torghut promotion authority must project from a
+  durable promotion authority ledger with bounded read budgets and repair cells.
+- `76-torghut-profit-projection-consumer-and-route-parity-gates-2026-05-05.md` now extends the Jangar projection broker
+  direction into Torghut: non-observe capital consumes one Jangar `torghut_profit` projection, all trading routes cite
+  one profit receipt id, and stale market-context domains block only lanes that declare those dependencies.
+- `docs/agents/designs/72-jangar-materialized-run-proof-and-storage-backed-admission-contract-2026-05-05.md` now
+  closes the runnable-work gap after evidence projection: schedules, generated ConfigMaps, runtime kits, workspace
+  PVCs, and Torghut profit-read evidence must be sealed into one materialized proof before dispatch or promotion can
+  proceed.
+- `77-torghut-profit-admission-cells-and-materialized-evidence-contract-2026-05-05.md` now makes Torghut capital
+  authority hypothesis-local: each account/window/lane consumes Jangar materialized proof plus schema, quant,
+  market-context, empirical, signal, and TCA evidence before canary or scale decisions are allowed.
+- `docs/agents/designs/73-jangar-evidence-settlement-and-runtime-freshness-leases-2026-05-05.md` now turns the latest
+  discover evidence into an expiring Jangar lease model: serving can stay available while stale stages, degraded
+  execution trust, and stale Torghut proof hold or block action consumers.
+- `78-torghut-quant-evidence-settlement-and-capital-routing-2026-05-05.md` now binds live and simulation capital
+  routing to account/window settlements, profit verdict cells, and route-specific receipts so stale empirical jobs,
+  degraded quant ingestion, sim schema drift, and TCA breaches cannot be mistaken for trade permission.
+- `79-torghut-capital-holdbacks-and-profit-repair-ledger-2026-05-05.md` now consumes Jangar failure-domain leases as
+  capital holdbacks and adds a Profit Repair Ledger so expired Jangar/database/route/proof leases block non-shadow
+  capital while observe/shadow evidence and high-value repair work continue under explicit guardrails.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.
@@ -334,16 +466,18 @@ This pack is positioned as the next architecture layer above:
 52. `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
 53. `53-torghut-kafka-retention-bootstrap-and-archive-backed-profitability-proof-2026-03-27.md`
 54. `54-torghut-research-backed-sleeves-and-this-week-holdout-proof-2026-03-27.md`
-53. `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
-54. `54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md`
-55. `55-torghut-hypothesis-settlement-exchange-and-lane-capability-leases-2026-03-20.md`
-56. `56-torghut-capability-leases-and-profit-clocks-2026-03-20.md`
-57. `56-torghut-profit-clocks-and-lane-falsification-exchange-2026-03-20.md`
-58. `57-torghut-profit-reserves-forecast-calibration-escrow-and-probe-auction-contract-2026-03-20.md`
-59. `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
-60. `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
-61. `61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`
-62. `62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`
+55. `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
+56. `54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md`
+57. `55-torghut-hypothesis-settlement-exchange-and-lane-capability-leases-2026-03-20.md`
+58. `56-torghut-capability-leases-and-profit-clocks-2026-03-20.md`
+59. `56-torghut-profit-clocks-and-lane-falsification-exchange-2026-03-20.md`
+60. `57-torghut-profit-reserves-forecast-calibration-escrow-and-probe-auction-contract-2026-03-20.md`
+61. `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
+62. `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
+63. `61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`
+64. `62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`
+65. `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
+66. `72-torghut-profit-proof-exchange-and-query-firebreak-contract-2026-05-05.md`
 
 ## Recommended Build Order
 
@@ -397,6 +531,8 @@ This pack is positioned as the next architecture layer above:
 48. `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
 49. `66-torghut-property-based-testing-coverage-and-lint-hardening-2026-03-28.md`
 50. `67-torghut-trading-engine-glossary-and-mechanics-2026-03-29.md`
+51. `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
+52. `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
 
 ## Why This Sequence
 
@@ -448,3 +584,7 @@ This pack is positioned as the next architecture layer above:
   service's trading core.
 - `67-torghut-trading-engine-glossary-and-mechanics-2026-03-29.md` adds the missing onboarding layer: one current
   terminology and mechanics map for data flow, strategy flow, persistence, replay, and diagnostics.
+- `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md` comes after the research factory
+  contracts because the current bottleneck is no longer candidate generation alone. Portfolio proof must be bound to
+  the exact Jangar runtime authority, Torghut health, data freshness, and artifact parity that were current when the
+  candidate was evaluated.

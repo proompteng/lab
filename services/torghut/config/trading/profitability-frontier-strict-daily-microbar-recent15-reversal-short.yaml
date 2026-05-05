@@ -30,7 +30,7 @@ strategy_overrides:
   universe_type:
     - microbar_cross_sectional_short_v1
   universe_symbols:
-    - ['AAPL', 'AMAT', 'AMD', 'AVGO', 'GOOG', 'INTC', 'META', 'MSFT', 'MU', 'NVDA', 'PLTR', 'SHOP']
+    - ['AMAT', 'AMD', 'AVGO', 'INTC', 'MU', 'NVDA']
   normalization_regime:
     - market_neutral_gross_scaled
   max_position_pct_equity:

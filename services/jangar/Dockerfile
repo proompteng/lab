@@ -17,6 +17,7 @@ ARG ZOXIDE_VERSION=0.9.8
 ARG KUBECTL_VERSION=1.34.3
 ARG KN_VERSION=1.20.0
 ARG CNPG_VERSION=1.28.0
+ARG NATSCLI_VERSION=v0.4.0
 ARG NEOVIM_VERSION=stable
 ARG DOCKER_CLI_VERSION=29.1.2
 ARG BUILDX_VERSION=0.30.1
@@ -35,6 +36,7 @@ ARG ZOXIDE_VERSION
 ARG KUBECTL_VERSION
 ARG KN_VERSION
 ARG CNPG_VERSION
+ARG NATSCLI_VERSION
 ARG NEOVIM_VERSION
 ARG DOCKER_CLI_VERSION
 ARG BUILDX_VERSION
@@ -53,8 +55,8 @@ ENV CODEX_CWD=/workspace/lab \
 ENV BUN_INSTALL_CACHE_DIR=/root/.bun/install/cache
 
 # Tooling needed for builds and VS Code server
-RUN --mount=type=cache,target=/var/cache/apt \
-  --mount=type=cache,target=/var/lib/apt/lists \
+RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
+  --mount=type=cache,sharing=locked,target=/var/lib/apt/lists \
   set -eux; \
   export DEBIAN_FRONTEND=noninteractive; \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
@@ -328,6 +330,24 @@ RUN set -eux; \
   rm -f "${TARBALL}" "${CHECKSUMS}" /tmp/kubectl-cnpg; \
   command -v kubectl-cnpg >/dev/null
 
+# Install NATS CLI for swarm communication helpers.
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+  amd64|x86_64) NATS_ARCH=amd64 ;; \
+  arm64|aarch64) NATS_ARCH=arm64 ;; \
+  *) echo "Unsupported arch for nats cli: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  NATS_VERSION="${NATSCLI_VERSION#v}"; \
+  NATS_ARCHIVE="/tmp/nats-${NATS_VERSION}-linux-${NATS_ARCH}.zip"; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+    "https://github.com/nats-io/natscli/releases/download/${NATSCLI_VERSION}/nats-${NATS_VERSION}-linux-${NATS_ARCH}.zip" \
+    -o "${NATS_ARCHIVE}"; \
+  unzip -q "${NATS_ARCHIVE}" -d /tmp; \
+  install -o root -g root -m 0755 "/tmp/nats-${NATS_VERSION}-linux-${NATS_ARCH}/nats" /usr/local/bin/nats; \
+  rm -rf "${NATS_ARCHIVE}" "/tmp/nats-${NATS_VERSION}-linux-${NATS_ARCH}"; \
+  nats --version
+
 # Make `k` available for kubectl (VS Code terminals often prefer `k`).
 RUN set -eux; \
   ln -sf /usr/local/bin/kubectl /usr/local/bin/k; \
@@ -456,8 +476,8 @@ COPY full/packages/cx-tools ./packages/cx-tools
 RUN bun --cwd=packages/cx-tools run build
 
 FROM tools AS tools-pty
-RUN --mount=type=cache,target=/var/cache/apt \
-  --mount=type=cache,target=/var/lib/apt/lists \
+RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
+  --mount=type=cache,sharing=locked,target=/var/lib/apt/lists \
   set -eux; \
   export DEBIAN_FRONTEND=noninteractive; \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
@@ -532,12 +552,13 @@ RUN --mount=type=cache,id=bun-install-cache-jangar-deps-prod,target=/root/.bun/i
 
 # Control-plane-only runtime image.
 #
-# - No Codex CLI / skills / dev tooling.
+# - No Codex CLI / skills / dev tooling beyond the NATS helpers required for runtime admission.
 # - Defaults to controllers + agent comms disabled; can be overridden via env vars.
 # - Still includes `kubectl` because the control plane uses it for list/watch/logs.
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS control-plane
 
 COPY --from=tools /usr/local/bin/kubectl /usr/local/bin/kubectl
+COPY --from=tools /usr/local/bin/nats /usr/local/bin/nats
 
 WORKDIR /app
 COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
@@ -576,6 +597,10 @@ RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-r
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
   && chmod +x /usr/local/bin/cx-codex-run /usr/local/bin/cx-workflow-start /usr/local/bin/cx-workflow-query /usr/local/bin/cx-workflow-signal /usr/local/bin/cx-workflow-cancel
+
+COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
+COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-soak.ts /usr/local/bin/codex-nats-soak
+RUN chmod +x /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak
 
 ENV JANGAR_AGENTS_CONTROLLER_ENABLED=0 \
   JANGAR_ORCHESTRATION_CONTROLLER_ENABLED=0 \

@@ -19,9 +19,7 @@ consistency_constraints:
   require_every_day_active: true
 strategy_overrides:
   universe_symbols:
-    - ['NVDA']
-    - ['NVDA', 'AMAT']
-    - ['NVDA', 'AMAT', 'AMD']
+    - ['AMAT', 'AMD', 'AVGO', 'INTC', 'MU', 'NVDA']
   max_notional_per_trade:
     - '15000'
     - '25000'

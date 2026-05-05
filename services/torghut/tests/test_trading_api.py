@@ -23,8 +23,10 @@ from app.main import (
     _assert_dspy_cutover_migration_guard,
     _check_alpaca,
     _readiness_dependency_cache_key,
+    _readiness_dependency_checks,
     app,
 )
+from app.trading.hypotheses import JangarDependencyQuorumStatus
 from app.trading.scheduler import TradingScheduler
 from app.trading.completion import (
     DOC29_SIMULATION_FULL_DAY_GATE,
@@ -87,6 +89,9 @@ class TestTradingApi(TestCase):
         self.session_local = sessionmaker(
             bind=engine, expire_on_commit=False, future=True
         )
+        session_local_patch = patch("app.main.SessionLocal", self.session_local)
+        session_local_patch.start()
+        self.addCleanup(session_local_patch.stop)
 
         def _override_session() -> Session:
             with self.session_local() as session:
@@ -724,6 +729,123 @@ class TestTradingApi(TestCase):
             datetime.fromisoformat(payload["last_decision_at"]),
             latest_created_at,
         )
+
+    def test_trading_status_loads_dependency_quorum_before_db_reads(self) -> None:
+        call_order: list[str] = []
+
+        def _load_dependency_quorum() -> JangarDependencyQuorumStatus:
+            call_order.append("dependency_quorum")
+            return JangarDependencyQuorumStatus(
+                decision="unknown",
+                reasons=["not_configured"],
+                message="not configured",
+            )
+
+        def _load_llm_evaluation(_session: Session) -> dict[str, object]:
+            call_order.append("llm_evaluation")
+            return {"ok": True, "metrics": {"total_reviews": 1}}
+
+        def _load_tca(_session: Session) -> dict[str, object]:
+            call_order.append("tca")
+            return {}
+
+        with (
+            patch(
+                "app.main.load_jangar_dependency_quorum",
+                side_effect=_load_dependency_quorum,
+            ),
+            patch("app.main._load_llm_evaluation", side_effect=_load_llm_evaluation),
+            patch("app.main._load_tca_summary", side_effect=_load_tca),
+            patch("app.main.SessionLocal", self.session_local),
+        ):
+            response = self.client.get("/trading/status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLess(
+            call_order.index("dependency_quorum"),
+            call_order.index("llm_evaluation"),
+        )
+        self.assertLess(call_order.index("dependency_quorum"), call_order.index("tca"))
+
+    def test_trading_status_uses_isolated_db_sessions_for_late_reads(self) -> None:
+        observed_sessions: list[Session] = []
+
+        def _load_llm_evaluation(session: Session) -> dict[str, object]:
+            observed_sessions.append(session)
+            return {"ok": True, "metrics": {"total_reviews": 1}}
+
+        def _load_tca(session: Session) -> dict[str, object]:
+            observed_sessions.append(session)
+            return {}
+
+        def _load_last_decision_at(session: Session) -> None:
+            observed_sessions.append(session)
+            return None
+
+        def _build_live_submission_gate(
+            *args: object, **kwargs: object
+        ) -> dict[str, object]:
+            session = kwargs["session"]
+            assert isinstance(session, Session)
+            observed_sessions.append(session)
+            return {"allowed": True, "reason": "ready", "blocked_reasons": []}
+
+        with (
+            patch("app.main._load_llm_evaluation", side_effect=_load_llm_evaluation),
+            patch("app.main._load_tca_summary", side_effect=_load_tca),
+            patch(
+                "app.main._load_last_decision_at", side_effect=_load_last_decision_at
+            ),
+            patch(
+                "app.main._build_live_submission_gate_payload",
+                side_effect=_build_live_submission_gate,
+            ),
+            patch("app.main.SessionLocal", self.session_local),
+        ):
+            response = self.client.get("/trading/status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(len(observed_sessions), 4)
+        self.assertIs(observed_sessions[0], observed_sessions[1])
+        self.assertIsNot(observed_sessions[0], observed_sessions[2])
+        self.assertIsNot(observed_sessions[2], observed_sessions[3])
+
+    def test_readiness_checks_external_dependencies_before_postgres_session(
+        self,
+    ) -> None:
+        call_order: list[str] = []
+        original_trading_enabled = settings.trading_enabled
+        settings.trading_enabled = True
+        try:
+            with (
+                patch(
+                    "app.main._check_clickhouse",
+                    side_effect=lambda: (
+                        call_order.append("clickhouse") or {"ok": True, "detail": "ok"}
+                    ),
+                ),
+                patch(
+                    "app.main._check_alpaca",
+                    side_effect=lambda: (
+                        call_order.append("alpaca") or {"ok": True, "detail": "ok"}
+                    ),
+                ),
+                patch(
+                    "app.main._check_postgres",
+                    side_effect=lambda _session: (
+                        call_order.append("postgres") or {"ok": True, "detail": "ok"}
+                    ),
+                ),
+            ):
+                with self.session_local() as session:
+                    _readiness_dependency_checks(
+                        session,
+                        include_database_contract=False,
+                    )
+        finally:
+            settings.trading_enabled = original_trading_enabled
+
+        self.assertEqual(call_order, ["clickhouse", "alpaca", "postgres"])
 
     def test_trading_status_surfaces_simple_lane_fields(self) -> None:
         original_pipeline_mode = settings.trading_pipeline_mode

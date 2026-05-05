@@ -147,6 +147,52 @@ describe('verify-deployment', () => {
     expect(waitReason).toBeUndefined()
   })
 
+  it('fetches missing revisions before checking ancestry', async () => {
+    const expectedRevision = '0123456789abcdef0123456789abcdef01234567'
+    const statusRevision = 'abcdef0123456789abcdef0123456789abcdef01'
+    const availableRevisions = new Set([expectedRevision])
+    const calls: string[] = []
+
+    const runner = async (_command: string, args: string[]) => {
+      calls.push(args.join(' '))
+      if (args[0] === 'cat-file') {
+        const revision = args[2]?.replace(/\^\{commit\}$/, '')
+        return { stdout: '', stderr: '', exitCode: revision && availableRevisions.has(revision) ? 0 : 1 }
+      }
+      if (args[0] === 'fetch') {
+        availableRevisions.add(args[4])
+        return { stdout: '', stderr: '', exitCode: 0 }
+      }
+      if (args[0] === 'merge-base') {
+        return { stdout: '', stderr: '', exitCode: 0 }
+      }
+
+      return { stdout: '', stderr: `unexpected git command: ${args.join(' ')}`, exitCode: 1 }
+    }
+
+    const satisfied = await __private.isExpectedRevisionSatisfied(statusRevision, expectedRevision, 'ancestor', runner)
+
+    expect(satisfied).toBe(true)
+    expect(calls).toContain(`fetch --no-tags --depth=1 origin ${statusRevision}`)
+    expect(calls).toContain(`merge-base --is-ancestor ${expectedRevision} ${statusRevision}`)
+  })
+
+  it('keeps waiting instead of throwing when an unknown revision cannot be fetched', async () => {
+    const expectedRevision = '0123456789abcdef0123456789abcdef01234567'
+    const statusRevision = 'abcdef0123456789abcdef0123456789abcdef01'
+    const calls: string[] = []
+
+    const runner = async (_command: string, args: string[]) => {
+      calls.push(args.join(' '))
+      return { stdout: '', stderr: 'fatal: Not a valid commit name', exitCode: 128 }
+    }
+
+    const satisfied = await __private.isExpectedRevisionSatisfied(statusRevision, expectedRevision, 'ancestor', runner)
+
+    expect(satisfied).toBe(false)
+    expect(calls).not.toContain(`merge-base --is-ancestor ${expectedRevision} ${statusRevision}`)
+  })
+
   it('prefers the last deployed revision over the moving sync target', () => {
     const status = parseArgoApplicationStatus(
       JSON.stringify({
@@ -169,5 +215,29 @@ describe('verify-deployment', () => {
 
     expect(status.revision).toBe('de84c71d8719cd781fe63e53e80cacd2642ea9e3')
     expect(status.desiredRevision).toBe('d65e7094ab93b1a9a5ae002c1eccce2a0151fae8')
+  })
+
+  it('uses the current sync revision instead of stale history after a failed operation', () => {
+    const status = parseArgoApplicationStatus(
+      JSON.stringify({
+        status: {
+          health: { status: 'Healthy' },
+          history: [{ revision: '8958a06b34ee546e9869ce02a6d4cbc1f97c0a8a' }],
+          operationState: {
+            phase: 'Failed',
+            syncResult: {
+              revision: '400e20256b73e02a9dff60e0d2f238366b0e09a1',
+            },
+          },
+          sync: {
+            status: 'Synced',
+            revision: 'f27b9359a263201cb875633f29a1f36253d823ba',
+          },
+        },
+      }),
+    )
+
+    expect(status.revision).toBe('f27b9359a263201cb875633f29a1f36253d823ba')
+    expect(status.desiredRevision).toBe('f27b9359a263201cb875633f29a1f36253d823ba')
   })
 })

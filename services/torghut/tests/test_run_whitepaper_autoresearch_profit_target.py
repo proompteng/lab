@@ -259,8 +259,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertTrue(candidate_specs)
             self.assertTrue(
                 all(
-                    spec["strategy_overrides"]["universe_symbols"]
-                    == ["AAPL", "NVDA", "MSFT", "AMAT"]
+                    spec["strategy_overrides"]["universe_symbols"] == ["NVDA", "AMAT"]
                     for spec in candidate_specs
                 )
             )

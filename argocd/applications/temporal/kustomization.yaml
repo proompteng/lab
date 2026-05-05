@@ -9,7 +9,7 @@ resources:
 helmCharts:
   - name: cassandra
     repo: https://charts.helm.sh/incubator
-    version: 0.14.3
+    version: 0.15.4
     releaseName: temporal
     namespace: temporal
     valuesInline:
@@ -26,12 +26,22 @@ helmCharts:
         tag: 3.11.5
   - name: elasticsearch
     repo: https://helm.elastic.co
-    version: 7.17.3
+    version: 8.5.1
     releaseName: temporal
     namespace: temporal
     valuesInline:
       replicas: 3
       minimumMasterNodes: 2
+      protocol: http
+      createCert: false
+      secret:
+        enabled: true
+        password: temporal-elasticsearch-readiness
+      esConfig:
+        elasticsearch.yml: |
+          xpack.security.enabled: false
+          xpack.security.http.ssl.enabled: false
+          xpack.security.transport.ssl.enabled: false
       clusterHealthCheckParams: "wait_for_status=green&timeout=1s"
       persistence:
         enabled: true

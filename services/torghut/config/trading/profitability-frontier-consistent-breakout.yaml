@@ -24,8 +24,7 @@ consistency_constraints:
   require_every_day_active: false
 strategy_overrides:
   universe_symbols:
-    - ['AMAT', 'GOOG', 'INTC', 'META', 'MSFT', 'MU', 'NVDA', 'PLTR', 'SHOP']
-    - ['AMAT', 'GOOG', 'INTC', 'MSFT', 'MU', 'NVDA', 'SHOP']
+    - ['AMAT', 'AMD', 'AVGO', 'INTC', 'MU', 'NVDA']
   max_position_pct_equity:
     - '10.0'
   max_notional_per_trade:

@@ -4,6 +4,7 @@ metadata:
   name: knative-serving
   namespace: knative-serving
 spec:
+  version: 1.22.0
   ingress:
     istio:
       enabled: true
@@ -13,6 +14,8 @@ spec:
     gc:
       min-non-active-revisions: "2"
       max-non-active-revisions: "5"
+    features:
+      kubernetes.podspec-nodeselector: "enabled"
     certmanager:
       issuerRef: |
         kind: ClusterIssuer

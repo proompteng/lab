@@ -18,6 +18,10 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Fast Jangar/Torghut live analysis workflow: `designs/jangar-torghut-live-analysis-playbook.md`
 - Autonomous Jangar/Torghut production system design: `designs/autonomous-jangar-torghut-production-system.md`
 - Current Jangar/Torghut architecture contracts:
+  - `designs/70-jangar-evidence-epoch-admission-and-rollout-quarantine-2026-05-05.md`
+  - `../torghut/design-system/v6/75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md`
+  - `designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md`
+  - `../torghut/design-system/v6/72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
   - `designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
   - `../torghut/design-system/v6/64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`
   - `designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
@@ -189,6 +193,7 @@ For env and gRPC source-of-truth changes in this branch:
 - [designs/jangar-authoritative-controller-heartbeat-and-dependency-quorum-2026-03-08.md](designs/jangar-authoritative-controller-heartbeat-and-dependency-quorum-2026-03-08.md)
 - [designs/jangar-control-plane-admission-quorum-and-rollout-circuit-breaker-2026-03-06.md](designs/jangar-control-plane-admission-quorum-and-rollout-circuit-breaker-2026-03-06.md)
 - [designs/jangar-control-plane-provider-capacity-arbitration-and-template-run-truth-2026-03-14.md](designs/jangar-control-plane-provider-capacity-arbitration-and-template-run-truth-2026-03-14.md)
+- [designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md](designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md)
 - [designs/49-jangar-control-plane-authority-ledger-and-expiry-watchdog-2026-03-19.md](designs/49-jangar-control-plane-authority-ledger-and-expiry-watchdog-2026-03-19.md)
 - [designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md](designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md)
 - [designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md](designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md)

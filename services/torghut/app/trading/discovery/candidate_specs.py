@@ -60,25 +60,48 @@ _FAMILY_TIEBREAK = {
 _MAX_FAMILIES_PER_HYPOTHESIS = 3
 _DEFAULT_PROFILE_COUNT = 3
 
+_LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE: tuple[str, ...] = (
+    "AMAT",
+    "AMD",
+    "AVGO",
+    "INTC",
+    "MU",
+    "NVDA",
+)
+_AI_ACCELERATOR_UNIVERSE_PROFILE: tuple[str, ...] = (
+    "NVDA",
+    "AVGO",
+    "AMD",
+    "MU",
+)
+_EQUIPMENT_MEMORY_UNIVERSE_PROFILE: tuple[str, ...] = (
+    "AMAT",
+    "MU",
+    "INTC",
+)
+_BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE: tuple[str, ...] = (
+    _LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE
+)
+
 _LARGE_CAP_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
-    ("AAPL", "AMAT", "GOOG", "MSFT", "MU", "NVDA", "SHOP"),
-    ("AAPL", "AMAT", "AMD", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "SHOP"),
-    ("AAPL", "AMD", "GOOG", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"),
+    _AI_ACCELERATOR_UNIVERSE_PROFILE,
+    _EQUIPMENT_MEMORY_UNIVERSE_PROFILE,
+    _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _BREAKOUT_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
-    ("AMAT", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"),
-    ("AMAT", "GOOG", "INTC", "MSFT", "MU", "NVDA", "SHOP"),
-    ("AAPL", "AMAT", "AMD", "GOOG", "META", "MSFT", "MU", "NVDA", "SHOP"),
+    _AI_ACCELERATOR_UNIVERSE_PROFILE,
+    ("NVDA", "AVGO", "AMD", "AMAT", "MU"),
+    _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _REVERSAL_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
-    ("AMD", "INTC", "SHOP", "AMAT", "MU"),
-    ("AMD", "INTC", "SHOP", "AMAT", "MU", "GOOG", "MSFT"),
-    ("AAPL", "AMD", "AMAT", "INTC", "MSFT", "MU", "NVDA", "SHOP"),
+    ("AMD", "INTC", "AMAT", "MU"),
+    ("AMD", "INTC", "AMAT", "MU", "AVGO"),
+    _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _TSMOM_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
     ("NVDA",),
-    ("NVDA", "AMAT"),
-    ("NVDA", "AMAT", "AMD"),
+    ("NVDA", "AVGO", "AMD"),
+    ("NVDA", "AVGO", "AMD", "AMAT", "MU"),
 )
 
 _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
@@ -264,7 +287,7 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
     ),
     "mean_reversion_rebound_v1": (
         {
-            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[1]) + ["PLTR"],
+            "universe_symbols": list(_REVERSAL_UNIVERSE_PROFILES[1]),
             "max_position_pct_equity": "2.0",
             "max_notional_per_trade": "63180",
             "params": {
@@ -284,7 +307,7 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
             },
         },
         {
-            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[1]) + ["PLTR"],
+            "universe_symbols": list(_REVERSAL_UNIVERSE_PROFILES[2]),
             "max_position_pct_equity": "4.0",
             "max_notional_per_trade": "126360",
             "params": {
@@ -429,7 +452,7 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
     ),
     "momentum_pullback_v1": (
         {
-            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[1]) + ["AVGO", "PLTR"],
+            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[2]),
             "max_position_pct_equity": "2.0",
             "max_notional_per_trade": "63180",
             "params": {
@@ -453,7 +476,7 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
             },
         },
         {
-            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[1]) + ["AVGO", "PLTR"],
+            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[2]),
             "max_position_pct_equity": "4.0",
             "max_notional_per_trade": "126360",
             "params": {
@@ -477,7 +500,7 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
             },
         },
         {
-            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[2]) + ["AVGO"],
+            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[2]),
             "max_position_pct_equity": "4.0",
             "max_notional_per_trade": "63180",
             "params": {
@@ -503,7 +526,7 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
     ),
     "late_day_continuation_v1": (
         {
-            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[1]) + ["AVGO", "PLTR"],
+            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[2]),
             "max_position_pct_equity": "3.0",
             "max_notional_per_trade": "94770",
             "params": {
@@ -546,7 +569,7 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
             },
         },
         {
-            "universe_symbols": list(_BREAKOUT_UNIVERSE_PROFILES[0]) + ["AVGO"],
+            "universe_symbols": list(_BREAKOUT_UNIVERSE_PROFILES[0]),
             "max_position_pct_equity": "4.0",
             "max_notional_per_trade": "126360",
             "params": {
@@ -589,7 +612,7 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
             },
         },
         {
-            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[2]) + ["AVGO", "INTC"],
+            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[2]),
             "max_position_pct_equity": "3.0",
             "max_notional_per_trade": "94770",
             "params": {
@@ -661,9 +684,10 @@ def _mapping(value: Any) -> dict[str, Any]:
 def _universe_symbol_override(symbols: Sequence[str]) -> tuple[str, ...]:
     cleaned: list[str] = []
     seen: set[str] = set()
+    allowed = set(_LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
     for symbol in symbols:
         normalized = str(symbol).strip().upper()
-        if not normalized or normalized in seen:
+        if not normalized or normalized in seen or normalized not in allowed:
             continue
         cleaned.append(normalized)
         seen.add(normalized)
@@ -879,9 +903,7 @@ def _execution_profile_index(
     )
 
 
-def _execution_profile_id(
-    *, family_template_id: str, profile_index: int
-) -> str:
+def _execution_profile_id(*, family_template_id: str, profile_index: int) -> str:
     return f"{family_template_id}:profile-{profile_index + 1}"
 
 
