@@ -8,6 +8,7 @@ import { parseStringList } from './env-config'
 import { hashAgentRunImmutableSpec } from './immutable-spec'
 import { extractJobFailureDetail } from './job-status'
 import { resolveMemory } from './namespace-state'
+import { isAgentRunTemplate, reconcileAgentRunDeletion, reconcileAgentRunTemplate } from './agent-run-template'
 import { normalizeLabelMap, validateAuthSecretPolicy, validateImagePolicy, validateLabelPolicy } from './policy'
 import {
   buildQueueCounts,
@@ -32,7 +33,7 @@ import { cancelRuntime, parseRuntimeRef, type RuntimeRef } from './runtime-resou
 import { resolveSystemPrompt } from './system-prompt'
 import { collectBlockedSecrets, resolveAuthSecretConfig, resolveVcsContext } from './vcs-context'
 import { validateParameters } from './workflow'
-import { logAgentsControllerInfo, logAgentsControllerWarn, toLogError } from './operational-logging'
+import { logAgentsControllerInfo, logAgentsControllerWarn } from './operational-logging'
 
 type KubeClient = ReturnType<typeof createKubernetesClient>
 
@@ -192,8 +193,9 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     const storedSpecHash = asString(status.specHash)
     const acceptedCondition = conditions.find((condition) => condition.type === 'Accepted')
     const acceptedLocked = acceptedCondition?.status === 'True' || phase !== 'Pending'
+    const templateMode = isAgentRunTemplate(metadata)
 
-    if (acceptedLocked) {
+    if (!templateMode && acceptedLocked) {
       const currentHash = hashAgentRunImmutableSpec(agentRun)
       if (storedSpecHash && storedSpecHash !== currentHash) {
         const message = `immutable AgentRun spec fields changed after acceptance (expected ${storedSpecHash}, got ${currentHash})`
@@ -313,35 +315,31 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       decision: 'start',
       phase,
     })
+    const runtimeCleanupContext = {
+      kube,
+      namespace,
+      name,
+      status,
+      finalizer,
+      finalizers,
+      logContext,
+      isKubeNotFoundError,
+      getTemporalClient,
+    }
 
     if (deleting) {
-      if (hasFinalizer) {
-        const runtimeRef = parseRuntimeRef(status.runtimeRef)
-        if (runtimeRef) {
-          try {
-            await cancelRuntime({
-              runtimeRef,
-              namespace,
-              kube,
-              getTemporalClient: getTemporalClient as () => Promise<TemporalCancelClient>,
-            })
-          } catch (error) {
-            logAgentsControllerWarn('runtime_cleanup_failed', {
-              ...logContext,
-              ...toLogError(error),
-            })
-          }
-        }
-        try {
-          await kube.patch(RESOURCE_MAP.AgentRun, name, namespace, {
-            metadata: { finalizers: finalizers.filter((item) => item !== finalizer) },
-          })
-        } catch (error) {
-          if (!isKubeNotFoundError(error)) {
-            throw error
-          }
-        }
-      }
+      await reconcileAgentRunDeletion({ ...runtimeCleanupContext, hasFinalizer })
+      return
+    }
+
+    if (templateMode) {
+      await reconcileAgentRunTemplate({
+        ...runtimeCleanupContext,
+        agentRun,
+        hasFinalizer,
+        observedGeneration,
+        setStatus,
+      })
       return
     }
 

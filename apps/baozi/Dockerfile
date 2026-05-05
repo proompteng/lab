@@ -1,6 +1,8 @@
 # baozi: Bun S2I Builder
 FROM ubuntu:24.04
 
+ARG BUN_VERSION=1.3.13
+
 LABEL maintainer="Greg Konush <greg.konush@gmail.com>"
 
 # Environment variables
@@ -29,7 +31,7 @@ WORKDIR /opt/app-root
 
 # Install Bun as the application user
 # Explicitly set BUN_INSTALL for the install script to use the WORKDIR
-RUN BUN_INSTALL=/opt/app-root/.bun bash -c "curl -fsSL https://bun.sh/install | bash"
+RUN BUN_INSTALL=/opt/app-root/.bun bash -c "curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION}"
 
 # Copy the S2I scripts
 # The user is already 'bun', so ownership is implicitly correct, but --chown is kept for clarity.

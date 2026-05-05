@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-ARG BUN_VERSION=1.3.10
+ARG BUN_VERSION=1.3.13
 ARG NODE_VERSION=24.11.1
 ARG CODEX_VERSION=latest
 

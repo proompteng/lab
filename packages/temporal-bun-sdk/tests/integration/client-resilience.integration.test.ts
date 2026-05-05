@@ -197,8 +197,15 @@ describeIntegration('Temporal client resilience', () => {
       })
 
       const { client: tlsClient } = await createTemporalClient({ config: tlsConfig })
-      await expect(tlsClient.describeNamespace(CLI_CONFIG.namespace)).rejects.toThrow(
-        'Temporal endpoint rejected TLS/HTTP2 handshakes',
+      let thrown: unknown
+      try {
+        await tlsClient.describeNamespace(CLI_CONFIG.namespace)
+      } catch (error) {
+        thrown = error
+      }
+      expect(thrown).toBeInstanceOf(TemporalTlsHandshakeError)
+      expect((thrown as Error).message).toMatch(
+        /^(Temporal TLS handshake failed|Temporal endpoint rejected TLS\/HTTP2 handshakes)/,
       )
       await tlsClient.shutdown()
     })
