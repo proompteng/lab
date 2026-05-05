@@ -113,8 +113,6 @@ print(
     f"{package.get('version')} available_versions={','.join(v for v in versions if v)}"
 )
 PY
-  else
-    echo "Artifact Hub summary request returned HTTP ${summary_status}" >&2
   fi
   rm -f "${body}" "${summary_body}"
 
