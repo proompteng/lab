@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { __private } from '../db'
+import { attachPostgresClientErrorLogger } from '../postgres-client-errors'
 
 describe('db ssl config', () => {
   const previousEnv: Record<string, string | undefined> = {}
@@ -79,7 +80,7 @@ describe('db ssl config', () => {
     const warnings: [string, unknown][] = []
     const error = new Error('Connection terminated unexpectedly')
 
-    __private.attachPostgresClientErrorLogger(client as never, (message, observedError) => {
+    attachPostgresClientErrorLogger(client as never, (message, observedError) => {
       warnings.push([message, observedError])
     })
 

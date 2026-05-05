@@ -1,7 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs'
-
 import { type Generated, Kysely, PostgresDialect } from 'kysely'
 import { Pool } from 'pg'
+import { attachPostgresClientErrorLogger } from './postgres-client-errors'
+import { resolveEffectiveSslMode, resolveSslConfig } from './postgres-ssl'
 import { resolveDatabaseConfig } from './storage-config'
 
 export type Db = Kysely<Database>
@@ -13,9 +13,6 @@ export type StoreDbResolution = {
 
 type Timestamp = string | Date
 type JsonValue = Record<string, unknown>
-type PostgresErrorEmitter = {
-  on: (event: 'error', listener: (error: Error) => void) => unknown
-}
 
 type AtlasRepositories = {
   id: Generated<string>
@@ -891,7 +888,6 @@ export type Database = {
 
 let db: Db | null | undefined
 
-const DEFAULT_SSLMODE = 'require'
 const DEFAULT_CONNECT_TIMEOUT_MS = 5_000
 const DEFAULT_QUERY_TIMEOUT_MS = 20_000
 
@@ -902,58 +898,6 @@ const parsePositiveInt = (rawValue: string | undefined, field: string, fallback:
     throw new Error(`${field} must be a positive integer`)
   }
   return parsed
-}
-
-const loadCaCert = (rawValue: string) => {
-  if (rawValue.includes('BEGIN CERTIFICATE')) {
-    return rawValue
-  }
-  if (existsSync(rawValue)) {
-    return readFileSync(rawValue, 'utf8')
-  }
-  return rawValue
-}
-
-const resolveSslMode = (rawUrl: string) => {
-  try {
-    const url = new URL(rawUrl)
-    const mode = url.searchParams.get('sslmode')
-    return mode ? mode.trim().toLowerCase() : null
-  } catch {
-    return null
-  }
-}
-
-const resolveEffectiveSslMode = (rawUrl: string) => {
-  const urlMode = resolveSslMode(rawUrl)
-  if (urlMode) return urlMode
-
-  const envMode = resolveDatabaseConfig().sslMode
-  if (envMode) return envMode.toLowerCase()
-
-  return DEFAULT_SSLMODE
-}
-
-const resolveSslConfig = (sslmode: string | null, caCertPath?: string) => {
-  if (sslmode === 'disable') return undefined
-
-  const requiresVerification = sslmode === 'verify-ca' || sslmode === 'verify-full'
-  if (requiresVerification) {
-    const ca = caCertPath ? loadCaCert(caCertPath) : undefined
-    return ca ? { ca, rejectUnauthorized: true } : { rejectUnauthorized: true }
-  }
-
-  if (!sslmode && !caCertPath) return undefined
-  return { rejectUnauthorized: false }
-}
-
-const attachPostgresClientErrorLogger = (
-  client: PostgresErrorEmitter,
-  logWarning: (message: string, error: unknown) => void = console.warn,
-) => {
-  client.on('error', (error) => {
-    logWarning('[jangar] postgres client error', error)
-  })
 }
 
 const createDbClient = (rawUrl: string): Db => {
@@ -978,9 +922,7 @@ const createDbClient = (rawUrl: string): Db => {
   pool.on('error', (error) => {
     console.warn('[jangar] postgres pool error', error)
   })
-  pool.on('connect', (client) => {
-    attachPostgresClientErrorLogger(client)
-  })
+  pool.on('connect', attachPostgresClientErrorLogger)
   return new Kysely<Database>({
     dialect: new PostgresDialect({ pool }),
   })
@@ -1024,7 +966,6 @@ export const resolveStoreDb = (options: { url?: string; createDb?: (url: string)
 }
 
 export const __private = {
-  attachPostgresClientErrorLogger,
   normalizeDbUrl,
   resolveEffectiveSslMode,
   resolveSslConfig,
