@@ -103,6 +103,16 @@ The current highest-priority work is:
 
 The May 5 cross-plane contracts are now the latest active architecture layer:
 
+- make Torghut readiness, trading status, Jangar quant health, and capital promotion depend on bounded hot-path proof
+  projections and settled profit cells in
+  `docs/torghut/design-system/v6/77-torghut-hot-path-proof-projections-and-profit-cell-settlement-2026-05-05.md`;
+- make Jangar serving, dispatch, deploy widening, review ingest, and Torghut promotion consume route-authority fuses
+  and deploy quarantine in
+  `docs/agents/designs/72-jangar-route-authority-fuses-and-deploy-quarantine-2026-05-05.md`;
+- make Torghut consume Jangar least-privilege profit projections consistently across capital routes in
+  `docs/torghut/design-system/v6/76-torghut-profit-projection-consumer-and-route-parity-gates-2026-05-05.md`;
+- make Jangar publish least-privilege evidence projections for deploy and Torghut consumers in
+  `docs/agents/designs/71-jangar-least-privilege-evidence-projection-broker-and-deploy-gates-2026-05-05.md`;
 - make Jangar stage launch, deploy verification, and Torghut consumer authority depend on runtime evidence epochs and
   artifact parity gates in
   `docs/agents/designs/67-jangar-runtime-evidence-epochs-and-artifact-parity-gates-2026-05-05.md`;
