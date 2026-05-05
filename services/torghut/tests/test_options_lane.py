@@ -2,13 +2,26 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
+from typing import Iterator
 from unittest import TestCase
 from unittest.mock import patch
 
-from app.options_lane.alpaca import AlpacaOptionsClient, normalize_contract_record, normalize_snapshot_record
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.options_lane.alpaca import (
+    AlpacaOptionsClient,
+    normalize_contract_record,
+    normalize_snapshot_record,
+)
 from app.options_lane.options_status import build_status_payload
-from app.options_lane.repository import merge_top_ranked_contract_rows, ranked_contract_rows, top_ranked_contract_rows
+from app.options_lane.repository import (
+    OptionsRepository,
+    merge_top_ranked_contract_rows,
+    ranked_contract_rows,
+    top_ranked_contract_rows,
+)
 from app.options_lane.settings import OptionsLaneSettings
 from app.options_lane.session import session_state
 
@@ -26,6 +39,48 @@ class _FakeResponse:
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
         return False
+
+
+class _FakeScalarResult:
+    def __init__(self, value: int) -> None:
+        self._value = value
+
+    def scalar_one(self) -> int:
+        return self._value
+
+
+class _FakeBegin:
+    def __enter__(self) -> _FakeBegin:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        return False
+
+
+class _FakeCountSession:
+    def __init__(self, *, value: int = 0, fail_count: bool = False) -> None:
+        self.value = value
+        self.fail_count = fail_count
+        self.statements: list[str] = []
+
+    def begin(self) -> _FakeBegin:
+        return _FakeBegin()
+
+    def execute(self, statement: object) -> _FakeScalarResult:
+        sql = str(statement)
+        self.statements.append(sql)
+        if "SET LOCAL statement_timeout" not in sql and self.fail_count:
+            raise SQLAlchemyError("timeout")
+        return _FakeScalarResult(self.value)
+
+
+class _FakeCountRepository(OptionsRepository):
+    def __init__(self, session: _FakeCountSession) -> None:
+        self.fake_session = session
+
+    @contextmanager
+    def session(self) -> Iterator[_FakeCountSession]:  # type: ignore[override]
+        yield self.fake_session
 
 
 class TestOptionsLaneSession(TestCase):
@@ -53,10 +108,50 @@ class TestOptionsLaneSettings(TestCase):
     def test_settings_accept_blank_csv_lists(self) -> None:
         settings = OptionsLaneSettings()
 
-        self.assertEqual(settings.sqlalchemy_dsn, "postgresql+psycopg://torghut:torghut@localhost:5432/torghut")
+        self.assertEqual(
+            settings.sqlalchemy_dsn,
+            "postgresql+psycopg://torghut:torghut@localhost:5432/torghut",
+        )
         self.assertEqual(settings.options_contract_discovery_page_limit, 10000)
         self.assertEqual(settings.options_market_holidays, [])
         self.assertEqual(settings.options_underlying_priority_symbols, [])
+
+
+class TestOptionsRepositoryStatusCounts(TestCase):
+    def test_count_active_contracts_uses_bounded_statement_timeout(self) -> None:
+        session = _FakeCountSession(value=42)
+        repo = _FakeCountRepository(session)
+
+        self.assertEqual(repo.count_active_contracts(), 42)
+
+        self.assertTrue(
+            any(
+                "SET LOCAL statement_timeout = 500" in sql for sql in session.statements
+            )
+        )
+        self.assertTrue(
+            any("torghut_options_contract_catalog" in sql for sql in session.statements)
+        )
+
+    def test_count_hot_contracts_returns_none_when_telemetry_count_times_out(
+        self,
+    ) -> None:
+        session = _FakeCountSession(fail_count=True)
+        repo = _FakeCountRepository(session)
+
+        self.assertIsNone(repo.count_hot_contracts())
+
+        self.assertTrue(
+            any(
+                "SET LOCAL statement_timeout = 500" in sql for sql in session.statements
+            )
+        )
+        self.assertTrue(
+            any(
+                "torghut_options_subscription_state" in sql
+                for sql in session.statements
+            )
+        )
 
 
 class TestOptionsLaneNormalization(TestCase):
@@ -67,7 +162,9 @@ class TestOptionsLaneNormalization(TestCase):
             full_url = getattr(request, "full_url")
             requests.append(str(full_url))
             if "/v2/options/contracts" in str(full_url):
-                return _FakeResponse({"option_contracts": [{"symbol": "AA260313C00030000"}]})
+                return _FakeResponse(
+                    {"option_contracts": [{"symbol": "AA260313C00030000"}]}
+                )
             return _FakeResponse({"snapshots": {"AA260313C00030000": {}}})
 
         client = AlpacaOptionsClient(
@@ -88,8 +185,12 @@ class TestOptionsLaneNormalization(TestCase):
             snapshots = client.get_snapshots(["AA260313C00030000"])
 
         self.assertEqual(contracts[0]["symbol"], "AA260313C00030000")
-        self.assertIn("https://paper-api.alpaca.markets/v2/options/contracts", requests[0])
-        self.assertIn("https://data.alpaca.markets/v1beta1/options/snapshots", requests[1])
+        self.assertIn(
+            "https://paper-api.alpaca.markets/v2/options/contracts", requests[0]
+        )
+        self.assertIn(
+            "https://data.alpaca.markets/v1beta1/options/snapshots", requests[1]
+        )
         self.assertIn("feed=indicative", requests[1])
         self.assertIn("AA260313C00030000", snapshots)
 
@@ -99,7 +200,9 @@ class TestOptionsLaneNormalization(TestCase):
         def fake_urlopen(request: object, timeout: int = 30) -> _FakeResponse:
             full_url = getattr(request, "full_url")
             requests.append(str(full_url))
-            return _FakeResponse({"option_contracts": [{"symbol": "AA260313C00030000"}]})
+            return _FakeResponse(
+                {"option_contracts": [{"symbol": "AA260313C00030000"}]}
+            )
 
         client = AlpacaOptionsClient(
             key_id="key-id",
@@ -118,7 +221,10 @@ class TestOptionsLaneNormalization(TestCase):
             )
 
         self.assertEqual(contracts[0]["symbol"], "AA260313C00030000")
-        self.assertEqual(requests[0], "https://paper-api.alpaca.markets/v2/options/contracts?status=active&limit=1&expiration_date_gte=2026-03-08&expiration_date_lte=2026-03-15")
+        self.assertEqual(
+            requests[0],
+            "https://paper-api.alpaca.markets/v2/options/contracts?status=active&limit=1&expiration_date_gte=2026-03-08&expiration_date_lte=2026-03-15",
+        )
 
     def test_normalize_contract_record_maps_required_fields(self) -> None:
         observed_at = datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc)
@@ -150,7 +256,13 @@ class TestOptionsLaneNormalization(TestCase):
             "AAPL260320C00100000",
             {
                 "latestTrade": {"p": 2.15, "s": 5, "t": "2026-03-08T18:00:00Z"},
-                "latestQuote": {"bp": 2.1, "bs": 10, "ap": 2.2, "as": 8, "t": "2026-03-08T18:00:01Z"},
+                "latestQuote": {
+                    "bp": 2.1,
+                    "bs": 10,
+                    "ap": 2.2,
+                    "as": 8,
+                    "t": "2026-03-08T18:00:01Z",
+                },
                 "greeks": {"delta": 0.5, "gamma": 0.1, "theta": -0.02, "vega": 0.15},
                 "impliedVolatility": 0.34,
                 "openInterest": 81,
@@ -170,14 +282,25 @@ class TestOptionsLaneNormalization(TestCase):
             "AAPL260320C00100000",
             {
                 "latestTrade": {"p": 2.15, "s": 5, "t": "2026-03-08T13:00:00-05:00"},
-                "latestQuote": {"bp": 2.1, "bs": 10, "ap": 2.2, "as": 8, "t": "2026-03-08T13:00:01-05:00"},
+                "latestQuote": {
+                    "bp": 2.1,
+                    "bs": 10,
+                    "ap": 2.2,
+                    "as": 8,
+                    "t": "2026-03-08T13:00:01-05:00",
+                },
             },
             underlying_symbol="AAPL",
             snapshot_class="hot",
         )
 
-        self.assertEqual(payload["latest_trade_ts"], datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc))
-        self.assertEqual(payload["latest_quote_ts"], datetime(2026, 3, 8, 18, 0, 1, tzinfo=timezone.utc))
+        self.assertEqual(
+            payload["latest_trade_ts"], datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc)
+        )
+        self.assertEqual(
+            payload["latest_quote_ts"],
+            datetime(2026, 3, 8, 18, 0, 1, tzinfo=timezone.utc),
+        )
 
 
 class TestOptionsLaneRanking(TestCase):
@@ -230,7 +353,9 @@ class TestOptionsLaneRanking(TestCase):
         self.assertEqual(ranked[2]["tier"], "cold")
         self.assertGreater(ranked[0]["ranking_score"], ranked[2]["ranking_score"])
 
-    def test_top_ranked_contract_rows_returns_only_hot_and_warm_candidates(self) -> None:
+    def test_top_ranked_contract_rows_returns_only_hot_and_warm_candidates(
+        self,
+    ) -> None:
         observed_at = datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc)
         ranked = top_ranked_contract_rows(
             iter(
@@ -275,10 +400,15 @@ class TestOptionsLaneRanking(TestCase):
             underlying_priority={"AAPL"},
         )
 
-        self.assertEqual([row["contract_symbol"] for row in ranked], ["AAPL260320C00100000", "AAPL260320P00100000"])
+        self.assertEqual(
+            [row["contract_symbol"] for row in ranked],
+            ["AAPL260320C00100000", "AAPL260320P00100000"],
+        )
         self.assertEqual([row["tier"] for row in ranked], ["hot", "warm"])
 
-    def test_merge_top_ranked_contract_rows_promotes_better_later_page_candidates(self) -> None:
+    def test_merge_top_ranked_contract_rows_promotes_better_later_page_candidates(
+        self,
+    ) -> None:
         observed_at = datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc)
         first_page_ranked = top_ranked_contract_rows(
             iter(
@@ -324,7 +454,10 @@ class TestOptionsLaneRanking(TestCase):
             underlying_priority={"AAPL"},
         )
 
-        self.assertEqual([row["contract_symbol"] for row in ranked], ["AAPL260320C00100000", "AAPL260320P00100000"])
+        self.assertEqual(
+            [row["contract_symbol"] for row in ranked],
+            ["AAPL260320C00100000", "AAPL260320P00100000"],
+        )
         self.assertEqual([row["tier"] for row in ranked], ["hot", "warm"])
 
 

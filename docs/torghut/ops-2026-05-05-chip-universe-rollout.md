@@ -6,19 +6,19 @@ Constrain Torghut live strategy catalogs and autoresearch search space to a semi
 
 ## Selected Universe
 
-`AMAT, AMD, AVGO, INTC, MU, NVDA`
+`NVDA, TSM, AVGO, AMD, MU, TXN, ADI, LRCX, KLAC, QCOM, AMAT, ASML`
 
 ## Selection Basis
 
 - Nasdaq PHLX Semiconductor Sector Index describes SOX as covering companies primarily involved in semiconductor design, distribution, manufacture, and sale.
-- VanEck SMH daily holdings in April 2026 were led by NVDA, TSM, AVGO, AMD, and ASML, supporting the AI accelerator, foundry, and equipment core.
-- iShares SOXX holdings in April 2026 included AVGO, NVDA, MU, AMD, TXN, and QCOM among major semiconductor exposures.
-- Nasdaq SOX fact sheet constituents include semiconductor equipment and manufacturing names such as LRCX, ASML, AMAT, MU, and KLAC.
-- The production executable universe is narrowed to the semiconductor names with current `ta_signals` and `ta_microbars` coverage in the live ClickHouse pipeline. Do not advertise names such as `ASML`, `KLAC`, `LRCX`, `QCOM`, `TSM`, or `TXN` until the data path is verified for them.
+- VanEck SMH daily holdings as of 2026-05-04 were led by NVDA, TSM, AVGO, INTC, AMD, MU, TXN, ADI, LRCX, KLAC, QCOM, AMAT, and ASML.
+- The executable list applies an active-trading quality filter instead of copying the ETF mechanically: keep ASML for critical lithography exposure and remove INTC/MRVL from the live research universe.
+- iShares SOXX holdings in 2026 also supported AVGO, NVDA, MU, AMD, TXN, QCOM, and other semiconductor exposures as core liquid chip names.
+- The production executable universe is capped at 12 symbols and must remain aligned across Jangar, WebSocket subscriptions, static fallbacks, checked-in strategy catalogs, and autoresearch configs.
 
 ## Explicit Exclusions
 
-The strategy search and checked-in catalog should not include general mega-cap software, e-commerce, social, or SaaS tickers such as `AAPL`, `GOOG`, `META`, `MSFT`, `PLTR`, or `SHOP`.
+The strategy search and checked-in catalog should not include general mega-cap software, e-commerce, social, or SaaS tickers such as `AAPL`, `GOOG`, `META`, `MSFT`, `PLTR`, or `SHOP`. It should also exclude the removed lower-quality/tail chip names `INTC` and `MRVL` unless a future evidence review explicitly re-adds them.
 
 ## Production Constraint
 
