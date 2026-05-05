@@ -1,10 +1,10 @@
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
-import { asRecord, asString } from '~/server/primitives-http'
+import { asRecord } from '~/server/primitives-http'
 import type { EmpiricalDependencyStatus, EmpiricalServicesStatus } from './control-plane-status-types'
 
-const requestJson = async (url: string): Promise<Record<string, unknown> | null> => {
+const requestJson = async (url: string, timeoutMs: number): Promise<Record<string, unknown> | null> => {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 2000)
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const response = await fetch(url, {
       method: 'GET',
@@ -27,7 +27,8 @@ const readStatus = (payload: Record<string, unknown> | null): EmpiricalDependenc
   payload && typeof payload.status === 'string' ? (payload.status as EmpiricalDependencyStatus['status']) : 'degraded'
 
 export const resolveEmpiricalServices = async (): Promise<EmpiricalServicesStatus> => {
-  const statusUrl = resolveControlPlaneStatusConfig(process.env).torghutStatusUrl
+  const config = resolveControlPlaneStatusConfig(process.env)
+  const statusUrl = config.torghutStatusUrl
   if (!statusUrl) {
     return {
       forecast: {
@@ -51,7 +52,7 @@ export const resolveEmpiricalServices = async (): Promise<EmpiricalServicesStatu
     }
   }
 
-  const payload = await requestJson(statusUrl)
+  const payload = await requestJson(statusUrl, config.torghutStatusTimeoutMs)
   if (!payload) {
     const degraded = {
       status: 'degraded' as const,

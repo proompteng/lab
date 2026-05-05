@@ -23,6 +23,7 @@ const DEFAULT_WATCH_RELIABILITY_BLOCK_ERRORS = 6
 const DEFAULT_WATCH_RELIABILITY_BLOCK_RESTARTS = 3
 const DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD = 2
 const DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD = 3
+const DEFAULT_TORGHUT_STATUS_TIMEOUT_MS = 5000
 
 const normalizeNonEmpty = (value: string | undefined | null) => {
   const normalized = value?.trim()
@@ -102,6 +103,7 @@ export type ControlPlaneStatusConfig = {
   executionTrustSwarms: string[]
   executionTrustSummaryLimit: number
   torghutStatusUrl: string | null
+  torghutStatusTimeoutMs: number
   workflowsWindowMinutes: number
   workflowsSwarms: string[]
   watchReliabilityBlockErrors: number
@@ -235,6 +237,12 @@ export const resolveControlPlaneStatusConfig = (env: EnvSource = process.env): C
       100,
     ),
     torghutStatusUrl: normalizeUrl(env.JANGAR_TORGHUT_STATUS_URL),
+    torghutStatusTimeoutMs: parsePositiveInt(
+      env.JANGAR_TORGHUT_STATUS_TIMEOUT_MS,
+      DEFAULT_TORGHUT_STATUS_TIMEOUT_MS,
+      100,
+      30_000,
+    ),
     workflowsWindowMinutes: parsePositiveInt(
       env.JANGAR_WORKFLOWS_WINDOW_MINUTES ?? env.JANGAR_WORKFLOW_WINDOW_MINUTES,
       DEFAULT_WORKFLOWS_WINDOW_MINUTES,
