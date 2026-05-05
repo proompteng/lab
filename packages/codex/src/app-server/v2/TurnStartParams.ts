@@ -7,11 +7,26 @@ import type { ReasoningEffort } from "../ReasoningEffort";
 import type { ReasoningSummary } from "../ReasoningSummary";
 import type { ServiceTier } from "../ServiceTier";
 import type { JsonValue } from "../serde_json/JsonValue";
+import type { ApprovalsReviewer } from "./ApprovalsReviewer";
 import type { AskForApproval } from "./AskForApproval";
+import type { PermissionProfileSelectionParams } from "./PermissionProfileSelectionParams";
 import type { SandboxPolicy } from "./SandboxPolicy";
+import type { TurnEnvironmentParams } from "./TurnEnvironmentParams";
 import type { UserInput } from "./UserInput";
 
 export type TurnStartParams = { threadId: string, input: Array<UserInput>,
+/**
+ * Optional turn-scoped Responses API client metadata.
+ */
+responsesapiClientMetadata?: { [key in string]?: string } | null,
+/**
+ * Optional turn-scoped environments.
+ *
+ * Omitted uses the thread sticky environments. Empty disables
+ * environment access for this turn. Non-empty selects the first
+ * environment as the current turn environment for this turn.
+ */
+environments?: Array<TurnEnvironmentParams> | null,
 /**
  * Override the working directory for this turn and subsequent turns.
  */
@@ -21,9 +36,21 @@ cwd?: string | null,
  */
 approvalPolicy?: AskForApproval | null,
 /**
+ * Override where approval requests are routed for review on this turn and
+ * subsequent turns.
+ */
+approvalsReviewer?: ApprovalsReviewer | null,
+/**
  * Override the sandbox policy for this turn and subsequent turns.
  */
 sandboxPolicy?: SandboxPolicy | null,
+/**
+ * Select a named permissions profile for this turn and subsequent turns.
+ * Cannot be combined with `sandboxPolicy`. Use bounded `modifications`
+ * for supported turn adjustments instead of replacing the full
+ * permissions profile.
+ */
+permissions?: PermissionProfileSelectionParams | null,
 /**
  * Override the model for this turn and subsequent turns.
  */
@@ -45,7 +72,8 @@ summary?: ReasoningSummary | null,
  */
 personality?: Personality | null,
 /**
- * Optional JSON Schema used to constrain the final assistant message for this turn.
+ * Optional JSON Schema used to constrain the final assistant message for
+ * this turn.
  */
 outputSchema?: JsonValue | null,
 /**
