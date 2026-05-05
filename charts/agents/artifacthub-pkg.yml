@@ -1,4 +1,4 @@
-version: 0.9.9
+version: 0.9.10
 name: agents
 displayName: Agents Control Plane (Jangar)
 description: Minimal Agents control plane with CRDs and native workflow runtime.
