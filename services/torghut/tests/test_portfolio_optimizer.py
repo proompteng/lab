@@ -14,6 +14,16 @@ from app.trading.discovery.portfolio_candidates import (
 from app.trading.discovery.portfolio_optimizer import optimize_portfolio_candidate
 
 
+def _executable_scorecard_fields(index: int | str = 0) -> dict[str, object]:
+    return {
+        "executable_replay_passed": True,
+        "executable_replay_artifact_ref": f"/tmp/executable-replay-{index}.json",
+        "executable_replay_order_count": 5,
+        "executable_replay_account_buying_power": "20000",
+        "executable_replay_max_notional_per_trade": "10000",
+    }
+
+
 class TestPortfolioOptimizer(TestCase):
     def test_portfolio_candidate_round_trips_from_optimizer_payload(self) -> None:
         daily_profiles = [
@@ -47,6 +57,7 @@ class TestPortfolioOptimizer(TestCase):
                             "MSFT": "0.25",
                             "AMAT": "0.25",
                         },
+                        **_executable_scorecard_fields(index),
                     },
                     "full_window": {
                         "daily_net": {
@@ -133,6 +144,7 @@ class TestPortfolioOptimizer(TestCase):
                             "MSFT": "0.25",
                             "AMAT": "0.25",
                         },
+                        **_executable_scorecard_fields(index),
                     },
                     "full_window": {
                         "trading_day_count": 3,
@@ -218,6 +230,7 @@ class TestPortfolioOptimizer(TestCase):
                             "MSFT": "0.25",
                             "AMAT": "0.25",
                         },
+                        **_executable_scorecard_fields(index),
                     },
                     "full_window": {
                         "daily_net": {
@@ -264,3 +277,68 @@ class TestPortfolioOptimizer(TestCase):
             if item["reason"] == "invalid_evidence_bundle"
         ]
         self.assertEqual(len(invalid_rejections), 2)
+
+    def test_portfolio_candidate_rejects_pnl_only_replay_without_executable_proof(
+        self,
+    ) -> None:
+        bundles = [
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-pnl-only-{index}",
+                candidate={
+                    "candidate_id": f"cand-pnl-only-{index}",
+                    "runtime_family": "microbar_cross_sectional_pairs",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "family_template_id": "microbar_cross_sectional_pairs_v1",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "450",
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "best_day_share": "0.2",
+                        "avg_filled_notional_per_day": "350000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "correlation_cluster": f"pnl-only-{index}",
+                        "symbol_contribution_shares": {
+                            "AAPL": "0.25",
+                            "NVDA": "0.25",
+                            "MSFT": "0.25",
+                            "AMAT": "0.25",
+                        },
+                    },
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": "450",
+                            "2026-02-24": "450",
+                            "2026-02-25": "450",
+                        },
+                        "daily_filled_notional": {
+                            "2026-02-23": "350000",
+                            "2026-02-24": "350000",
+                            "2026-02-25": "350000",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-pnl-only",
+                result_path=f"/tmp/pnl-only-{index}.json",
+            )
+            for index in range(2)
+        ]
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=bundles,
+            target_net_pnl_per_day=Decimal("300"),
+            portfolio_size_min=2,
+            portfolio_size_max=2,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertTrue(portfolio.objective_scorecard["target_met"])
+        self.assertFalse(portfolio.objective_scorecard["oracle_passed"])
+        self.assertIn(
+            "executable_replay_passed_failed",
+            portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
+        )

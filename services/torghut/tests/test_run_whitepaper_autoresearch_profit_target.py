@@ -120,7 +120,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 self._args(output_dir)
             )
 
-            self.assertEqual(payload["status"], "ok")
+            self.assertEqual(payload["status"], "no_profit_target_candidate")
+            self.assertEqual(
+                payload["status_reason"],
+                "portfolio_candidate_failed_profit_target_oracle",
+            )
             self.assertGreaterEqual(payload["source_count"], 4)
             self.assertGreaterEqual(payload["candidate_spec_count"], 4)
             self.assertIsNotNone(payload["best_portfolio_candidate"])
@@ -248,9 +252,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
 
             portfolio = payload["best_portfolio_candidate"]
             self.assertTrue(portfolio["objective_scorecard"]["target_met"])
-            self.assertTrue(portfolio["objective_scorecard"]["oracle_passed"])
-            self.assertTrue(payload["oracle_candidate_found"])
-            self.assertEqual(payload["profit_target_oracle"]["blockers"], [])
+            self.assertFalse(portfolio["objective_scorecard"]["oracle_passed"])
+            self.assertFalse(payload["oracle_candidate_found"])
+            self.assertIn(
+                "executable_replay_passed_failed",
+                payload["profit_target_oracle"]["blockers"],
+            )
             self.assertGreaterEqual(
                 float(portfolio["objective_scorecard"]["net_pnl_per_day"]), 500.0
             )
@@ -302,7 +309,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 if line
             ]
 
-        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["status"], "no_profit_target_candidate")
         self.assertEqual(selection["budget"]["exploration_slots_requested"], 1)
         self.assertGreaterEqual(selection["budget"]["exploration_slots_effective"], 1)
         self.assertEqual(selection["budget"]["selected_count"], 3)
@@ -345,7 +352,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 )
             )
 
-        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["status"], "no_profit_target_candidate")
         exploitation_rows = [
             row
             for row in selection["rows"]
@@ -371,7 +378,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 )
             )
 
-        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["status"], "no_profit_target_candidate")
         selected_rows = [row for row in selection["rows"] if row["selected_for_replay"]]
         duplicate_rows = [
             row
@@ -463,11 +470,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 )
 
         self.assertEqual(epoch.epoch_id, payload["epoch_id"])
-        self.assertEqual(epoch.status, "ok")
+        self.assertEqual(epoch.status, "no_profit_target_candidate")
         self.assertEqual(len(specs), payload["candidate_spec_count"])
         self.assertEqual(len(proposals), payload["proposal_score_count"])
         self.assertEqual(len(portfolios), 1)
-        self.assertEqual(portfolios[0].status, "target_met")
+        self.assertEqual(portfolios[0].status, "blocked")
 
     def test_persistence_failure_preserves_artifacts_and_returns_infra_failure(
         self,
@@ -502,7 +509,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ).exists()
 
         self.assertEqual(payload["status"], "persistence_failed")
-        self.assertEqual(payload["pre_persistence_status"], "ok")
+        self.assertEqual(
+            payload["pre_persistence_status"], "no_profit_target_candidate"
+        )
         self.assertEqual(payload["persistence_status"], "failed")
         self.assertIn("db offline", payload["persistence_error"])
         self.assertEqual(summary["status"], "persistence_failed")
@@ -973,7 +982,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 .splitlines()
             ]
 
-        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["status"], "no_profit_target_candidate")
         self.assertEqual(payload["source_count"], 1)
         self.assertEqual(manifest["paper_sources"][0]["run_id"], "paper-jsonl-2026")
         self.assertEqual(sources[0]["run_id"], "paper-jsonl-2026")
