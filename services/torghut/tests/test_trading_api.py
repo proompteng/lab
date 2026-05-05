@@ -21,6 +21,7 @@ from app.main import (
     _ALPACA_HEALTH_STATE,
     _TRADING_DEPENDENCY_HEALTH_CACHE,
     _assert_dspy_cutover_migration_guard,
+    _build_live_submission_gate_payload,
     _check_alpaca,
     _readiness_dependency_cache_key,
     _readiness_dependency_checks,
@@ -855,6 +856,65 @@ class TestTradingApi(TestCase):
             settings.trading_mode = original_trading_mode
             settings.trading_simple_submit_enabled = original_simple_submit_enabled
             settings.trading_kill_switch_enabled = original_kill_switch_enabled
+
+    def test_simple_lane_shared_gate_applies_local_block_reason(self) -> None:
+        original = {
+            "trading_pipeline_mode": settings.trading_pipeline_mode,
+            "trading_enabled": settings.trading_enabled,
+            "trading_mode": settings.trading_mode,
+            "trading_simple_submit_enabled": settings.trading_simple_submit_enabled,
+            "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
+            "trading_emergency_stop_enabled": settings.trading_emergency_stop_enabled,
+        }
+        settings.trading_pipeline_mode = "simple"
+        settings.trading_enabled = False
+        settings.trading_mode = "live"
+        settings.trading_simple_submit_enabled = True
+        settings.trading_kill_switch_enabled = False
+        settings.trading_emergency_stop_enabled = False
+        try:
+            with patch(
+                "app.main.build_live_submission_gate_payload",
+                return_value={
+                    "allowed": True,
+                    "reason": "ready",
+                    "blocked_reasons": [],
+                    "capital_stage": "live",
+                    "capital_state": "live",
+                },
+            ):
+                gate = _build_live_submission_gate_payload(
+                    SimpleNamespace(emergency_stop_active=False),
+                    session=None,
+                    hypothesis_summary={},
+                )
+        finally:
+            settings.trading_pipeline_mode = original["trading_pipeline_mode"]
+            settings.trading_enabled = original["trading_enabled"]
+            settings.trading_mode = original["trading_mode"]
+            settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
+            ]
+            settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            settings.trading_emergency_stop_enabled = original[
+                "trading_emergency_stop_enabled"
+            ]
+
+        self.assertFalse(gate["allowed"])
+        self.assertEqual(gate["reason"], "trading_disabled")
+        self.assertEqual(gate["capital_stage"], "shadow")
+        self.assertEqual(gate["capital_state"], "observe")
+        self.assertEqual(gate["blocked_reasons"], ["trading_disabled"])
+        self.assertEqual(
+            gate["simple_lane"],
+            {
+                "submit_enabled": True,
+                "shared_gate_enforced": True,
+                "blocked_reasons": ["trading_disabled"],
+            },
+        )
 
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
