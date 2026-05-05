@@ -745,6 +745,78 @@ describe('supporting primitives controller', () => {
     expect(payload.status?.lastRunTime).toBe('2026-01-20T00:10:00Z')
   })
 
+  it('reconciles schedules that target an updated AgentRun template', async () => {
+    const template = {
+      apiVersion: 'agents.proompteng.ai/v1alpha1',
+      kind: 'AgentRun',
+      metadata: {
+        name: 'torghut-swarm-discover-template',
+        namespace: 'agents',
+        annotations: { 'agents.proompteng.ai/template': 'true' },
+      },
+      spec: {
+        agentRef: { name: 'codex-spark-agent' },
+        implementationSpecRef: { name: 'swarm-intelligence-cycle-v1' },
+        runtime: { type: 'workflow', config: { serviceAccountName: 'agents-sa' } },
+        workflow: {
+          steps: [
+            {
+              name: 'discover',
+              retries: 1,
+              retryBackoffSeconds: 30,
+              parameters: { stage: 'research' },
+            },
+          ],
+        },
+        parameters: { repository: 'proompteng/lab' },
+      },
+    }
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: { name: 'torghut-quant-discover-sched', namespace: 'agents', generation: 1 },
+      spec: {
+        cron: '7 * * * *',
+        timezone: 'UTC',
+        targetRef: { kind: 'AgentRun', name: 'torghut-swarm-discover-template', namespace: 'agents' },
+      },
+      status: { conditions: [] },
+    }
+    const applied: Record<string, unknown>[] = []
+    const kube = {
+      list: vi.fn(async (resource: string) =>
+        resource === RESOURCE_MAP.Schedule ? { items: [schedule] } : { items: [] },
+      ),
+      get: vi.fn(async (resource: string, name?: string) => {
+        if (resource === RESOURCE_MAP.AgentRun && name === 'torghut-swarm-discover-template') return template
+        return null
+      }),
+      apply: vi.fn(async (resource: Record<string, unknown>) => {
+        applied.push(resource)
+        return resource
+      }),
+      applyStatus: vi.fn().mockResolvedValue({}),
+    } as unknown as KubernetesClient
+
+    const reconciled = await __test__.reconcileSchedulesTargetingAgentRunTemplate(kube, template, 'agents')
+
+    expect(reconciled).toBe(1)
+    const configMap = applied.find((resource) => resource.kind === 'ConfigMap') as Record<string, unknown>
+    const data = configMap.data as Record<string, string>
+    const payload = JSON.parse(data['run.json'] ?? '{}') as Record<string, unknown>
+    expect(payload.spec).toMatchObject({
+      workflow: {
+        steps: [
+          {
+            name: 'discover',
+            retries: 1,
+            retryBackoffSeconds: 30,
+          },
+        ],
+      },
+    })
+  })
+
   it('resolves startup gate from feature flags with env fallback default', async () => {
     const previousNodeEnv = process.env.NODE_ENV
     const previousVitest = process.env.VITEST

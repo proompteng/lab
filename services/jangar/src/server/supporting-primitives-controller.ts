@@ -154,6 +154,7 @@ const KUBERNETES_SERVICE_HOST_ENV = 'KUBERNETES_SERVICE_HOST'
 const KUBERNETES_SERVICE_PORT_ENV = 'KUBERNETES_SERVICE_PORT'
 const SWARM_STAGE_LABEL = 'swarm.proompteng.ai/stage'
 const SWARM_NAME_LABEL = 'swarm.proompteng.ai/name'
+const AGENTRUN_TEMPLATE_ANNOTATION = 'agents.proompteng.ai/template'
 
 const nowIso = () => new Date().toISOString()
 
@@ -1380,6 +1381,58 @@ const reconcileSchedule = async (
   }
 }
 
+const isAgentRunTemplate = (resource: Record<string, unknown>) => {
+  const value = asString(readNested(resource, ['metadata', 'annotations', AGENTRUN_TEMPLATE_ANNOTATION]))
+  return value?.toLowerCase() === 'true'
+}
+
+const scheduleTargetsAgentRunTemplate = (
+  schedule: Record<string, unknown>,
+  templateName: string,
+  templateNamespace: string,
+) => {
+  const targetRef = asRecord(readNested(schedule, ['spec', 'targetRef'])) ?? {}
+  const targetKind = asString(targetRef.kind)
+  const targetName = asString(targetRef.name)
+  const targetNamespace = asString(targetRef.namespace) ?? resolveNamespace(schedule)
+  return targetKind === 'AgentRun' && targetName === templateName && targetNamespace === templateNamespace
+}
+
+const reconcileSchedulesTargetingAgentRunTemplate = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  agentRun: Record<string, unknown>,
+  namespace: string,
+) => {
+  if (!isAgentRunTemplate(agentRun)) return 0
+  const templateName = asString(readNested(agentRun, ['metadata', 'name']))
+  const templateNamespace = asString(readNested(agentRun, ['metadata', 'namespace'])) ?? namespace
+  if (!templateName) return 0
+
+  const schedules = listItems(await kube.list(RESOURCE_MAP.Schedule, namespace))
+  const matchingSchedules = schedules.filter((schedule) =>
+    scheduleTargetsAgentRunTemplate(schedule, templateName, templateNamespace),
+  )
+  for (const schedule of matchingSchedules) {
+    const scheduleNamespace = asString(readNested(schedule, ['metadata', 'namespace'])) ?? namespace
+    await reconcileSchedule(kube, schedule, scheduleNamespace)
+  }
+  return matchingSchedules.length
+}
+
+const reconcileSwarmForAgentRun = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  agentRun: Record<string, unknown>,
+  namespace: string,
+) => {
+  const swarmName = asString(readNested(agentRun, ['metadata', 'labels', SWARM_NAME_LABEL]))
+  if (!swarmName) return false
+  const swarmNamespace = asString(readNested(agentRun, ['metadata', 'namespace'])) ?? namespace
+  const swarm = await kube.get(RESOURCE_MAP.Swarm, swarmName, swarmNamespace)
+  if (!swarm) return false
+  await reconcileSwarm(kube, swarm, swarmNamespace)
+  return true
+}
+
 const reconcileSwarm = async (
   kube: ReturnType<typeof createKubernetesClient>,
   swarm: Record<string, unknown>,
@@ -2560,6 +2613,31 @@ const handleScheduleRunnerEvent = async (
   })
 }
 
+const handleAgentRunEvent = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  event: { type?: string; object?: Record<string, unknown> },
+) => {
+  if (event.type === 'DELETED') return
+  const resource = asRecord(event.object)
+  if (!resource) return
+  const resourceNamespace = asString(readNested(resource, ['metadata', 'namespace'])) ?? namespace
+  const resourceName = asString(readNested(resource, ['metadata', 'name'])) ?? 'unknown'
+  const swarmName = asString(readNested(resource, ['metadata', 'labels', SWARM_NAME_LABEL]))
+
+  if (swarmName) {
+    queueResourceTask(resourceNamespace, `${resourceNamespace}/Swarm/${swarmName}`, async () => {
+      await reconcileSwarmForAgentRun(kube, resource, resourceNamespace)
+    })
+  }
+
+  if (isAgentRunTemplate(resource) && resourceName !== 'unknown') {
+    queueResourceTask(resourceNamespace, `${resourceNamespace}/AgentRunTemplate/${resourceName}`, async () => {
+      await reconcileSchedulesTargetingAgentRunTemplate(kube, resource, resourceNamespace)
+    })
+  }
+}
+
 const handleWorkspaceVolumeEvent = async (
   kube: ReturnType<typeof createKubernetesClient>,
   namespace: string,
@@ -2681,6 +2759,14 @@ export const startSupportingPrimitivesController = async () => {
       }
       handles.push(
         startResourceWatch({
+          resource: RESOURCE_MAP.AgentRun,
+          namespace,
+          onEvent: (event) => void handleAgentRunEvent(kube, namespace, event),
+          onError: (error) => console.warn('[jangar] agentrun watch failed', error),
+        }),
+      )
+      handles.push(
+        startResourceWatch({
           resource: RESOURCE_MAP.Artifact,
           namespace,
           onEvent: (event) => handleResourceEvent(kube, namespace, event),
@@ -2773,6 +2859,8 @@ export const __test__ = {
   buildScheduleRunTemplate,
   cadenceToCron,
   deriveStageStaggerMinute,
+  reconcileSchedulesTargetingAgentRunTemplate,
+  reconcileSwarmForAgentRun,
   isSwarmStatusOnlyEvent,
   reconcileSchedule,
   reconcileScheduleRunnerStatus,
