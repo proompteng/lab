@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { existsSync, statSync } from 'node:fs'
+import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import process from 'node:process'
 
@@ -83,19 +83,28 @@ export const resolveCodexNatsHelperPathCandidates = ({
 
 const findExistingCandidate = (candidates: string[]) => candidates.find((candidate) => existsSync(candidate))
 
+const isExecutablePath = (path: string) => {
+  try {
+    accessSync(path, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
 const resolveCommandCandidate = (command: string) => {
   const trimmed = command.trim()
   if (trimmed.length === 0) {
     return undefined
   }
   if (trimmed.includes('/')) {
-    return existsSync(trimmed) ? trimmed : undefined
+    return existsSync(trimmed) && isExecutablePath(trimmed) ? trimmed : undefined
   }
 
   const pathEntries = resolveRuntimeAdmissionConfig(process.env).pathEntries
   for (const entry of pathEntries) {
     const candidate = join(entry, trimmed)
-    if (existsSync(candidate)) {
+    if (existsSync(candidate) && isExecutablePath(candidate)) {
       return candidate
     }
   }
