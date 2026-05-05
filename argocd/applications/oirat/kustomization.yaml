@@ -10,4 +10,4 @@ resources:
   - alloy-deployment.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/oirat
-    newTag: "c0fae0896"
+    newTag: "96d6ee0f3"
