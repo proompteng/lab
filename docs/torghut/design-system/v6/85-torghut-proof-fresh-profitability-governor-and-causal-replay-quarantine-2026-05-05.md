@@ -22,20 +22,26 @@ Quarantine**. The governor keeps capital in shadow when proof is stale, but it d
 planned decision that cannot reach the broker into replayable causal evidence, then requires fresh empirical jobs,
 runtime profitability samples, Jangar action-class authorization, and route parity before paper or live capital widens.
 
-I am choosing this direction because the current state is not a pure outage and not a profit-ready system:
+I am choosing this direction because the current state is not a pure outage and not a profit-ready system. The
+2026-05-05T18:20Z read-only evidence refresh shows:
 
-- `GET /healthz` on the current private Torghut revision returned `{"status":"ok","service":"torghut"}`.
-- `GET /db-check` returned `ok=true` and `schema_graph_lineage_ready=true`.
-- `GET /trading/health` returned `status="degraded"` with the scheduler running.
-- `/trading/status` showed mode `live`, active revision `torghut-00216`, build commit `d73020e67`, and
-  `live_submission_gate.allowed=false` because `simple_submit_disabled`.
+- `GET /healthz` on private revision `torghut-00217` returned HTTP 200 with `{"status":"ok","service":"torghut"}`.
+- `GET /db-check` returned `ok=true`, `schema_current=true`, `current_heads=["0029_whitepaper_embedding_dimension_4096"]`,
+  and `schema_graph_lineage_ready=true`, with warnings for historical migration parent forks.
+- `GET /readyz` and `GET /trading/health` returned HTTP 503 with the scheduler running, Postgres and ClickHouse
+  healthy, Alpaca broker checks healthy, and `live_submission_gate.ok=false`.
+- `/trading/status` showed mode `live`, active revision `torghut-00217`, build commit
+  `59511b6b6af8b160aaf00b9fb5f44b7a62c61c5c`, and `live_submission_gate.allowed=false` because
+  `simple_submit_disabled`.
 - The same status showed 3 hypotheses: 1 blocked, 2 shadow, 0 promotion eligible, 3 rollback required, and all capital
-  stage totals in `shadow`.
+  stage totals in `shadow`; signal continuity was alerting on `cursor_tail_stable`.
 - `/trading/empirical-jobs` reported all four proof jobs stale: `benchmark_parity`, `foundation_router_parity`,
-  `janus_event_car`, and `janus_hgrm_reward`.
-- `/trading/profitability/runtime` reported an observational 72-hour window with 8 decisions, 0 executions,
+  `janus_event_car`, and `janus_hgrm_reward`, all tied to the March dataset snapshot
+  `torghut-full-day-20260318-884bec35`.
+- `/trading/profitability/runtime` reported an observational 72-hour window with 8 rejected decisions, 0 executions,
   0 TCA samples, and a realized PnL proxy of 0.
-- The Jangar quant-health route timed out, while direct SQL into Torghut Postgres was blocked by service-account RBAC.
+- The Jangar quant-health route timed out after eight seconds, while direct SQL into Torghut Postgres and Jangar
+  Postgres was blocked by service-account RBAC.
 
 This evidence says the right capital decision is quarantine, not shutdown. Torghut should keep producing decisions,
 shadow fills, replay bundles, and repair evidence, but it should not treat those as paper or live authority until the
@@ -64,15 +70,17 @@ depend on current, executable proof.
 Read-only Kubernetes evidence showed Torghut serving with churn:
 
 - Torghut, Torghut simulation, Postgres, ClickHouse, Keeper, websocket forwarders, options services, TA services, and
-  exporters were running.
-- A `torghut-db-migrations` job was running during the assessment window.
-- Recent events showed startup and readiness probe timeouts on the current Torghut and Torghut simulation revisions
-  before they became ready.
+  exporters were running in namespace `torghut`.
+- The latest live and sim Knative revisions were `torghut-00217` and `torghut-sim-00297`; both pods were `2/2 Running`
+  during the refresh, after startup and readiness probe failures during rollout.
+- Recent `agents` namespace jobs still showed active and stale failures: older Jangar and Torghut swarm attempts were
+  `Failed`, three long-running attempts were stuck around old image pull failures, and current digest cron/manual jobs
+  were completing.
 - Events showed ClickHouse pods matching multiple PodDisruptionBudgets and Keeper PDB checks with no matching pods.
 - Flink technical analysis was running, but events included external status modification warnings.
 
 Interpretation: the platform is available enough for route checks and data repair. It is not stable enough to use pod
-readiness alone as a capital signal.
+readiness or a single successful revision as a capital signal.
 
 ### Source and Test Evidence
 
@@ -99,7 +107,10 @@ Database proof is mixed:
 - Direct SQL is unavailable from this runner because it lacks `pods/exec` in `torghut`.
 - Empirical proof rows exist, are truthful, and point at dataset snapshot `torghut-full-day-20260318-884bec35`, but the
   job timestamps are from March 21 and are stale under the 86400-second freshness policy.
-- Runtime profitability has decisions but no execution or TCA samples in the last 72 hours.
+- Runtime profitability has 8 decisions but no execution or TCA samples in the last 72 hours.
+- The latest route-exposed schema graph is current, but it still carries lineage warnings for two historical parent
+  forks. That is acceptable for current readiness and still useful as a reason to keep schema proof route-based rather
+  than shell-based.
 
 Interpretation: schema health and historical artifact truthfulness are necessary, but not sufficient. Capital widening
 needs fresh proof from the current runtime window or a replay quarantine that explicitly says it is counterfactual.
@@ -267,6 +278,9 @@ while preserving a hard boundary between counterfactual profit and executable pr
 
 Engineer acceptance:
 
+- Regression test the refreshed May 5 shape: `/healthz` OK, `/readyz` 503, `/trading/health` degraded, schema current,
+  stale empirical jobs, and runtime profitability with decisions but zero executions must compile to
+  `capital_stage_ceiling=shadow`.
 - Regression test `/trading/status`, `/trading/health`, and `/trading/profitability/runtime` agree that the sampled
   state is `shadow` or `quarantine` when empirical jobs are stale and runtime executions are zero.
 - Regression test `submission_council` rejects paper/live widening when Jangar action class is missing, held, timed out,
@@ -274,15 +288,20 @@ Engineer acceptance:
 - Unit test `ProfitProofCapsule` freshness: stale empirical jobs cannot produce `paper_eligible` or `live_eligible`.
 - Unit test causal replay output: counterfactual proof can rank hypotheses but cannot authorize live submission.
 - Route test `/trading/empirical-jobs` stale authority is reflected in the governor blocked reasons.
+- Route test that a Jangar quant-health timeout becomes typed negative proof within the route budget instead of hanging
+  the Torghut capital gate.
 
 Deployer acceptance:
 
 - Capture `/healthz`, `/db-check`, `/trading/health`, `/trading/status`, `/trading/empirical-jobs`, and
   `/trading/profitability/runtime` for the promoted digest.
-- Confirm current state produces `capital_stage_ceiling=shadow` and no paper/live widening.
+- Confirm current state produces `capital_stage_ceiling=shadow` and no paper/live widening while repair and replay stay
+  available.
 - Confirm blocked decisions are written to the causal replay quarantine before enabling any paper warmup.
 - Confirm fresh empirical jobs and replay capsules exist before enabling paper.
 - Confirm nonzero paper execution and TCA samples exist before enabling live.
+- Confirm the Jangar action-class decision digest used by Torghut is fresh and has `paper_submit=allow` before paper
+  warmup; `live_submit=allow` remains a separate live gate.
 
 ## Rollout Plan
 
@@ -322,7 +341,7 @@ the old path or record an explicit reason for not entering the proof governor.
 
 Engineer stage should implement the proof capsule builder first, then causal replay quarantine, then route parity, then
 submission enforcement. Deployer stage should not widen paper or live capital until the captured production state moves
-from the current quarantine result to fresh proof. The first acceptance sample is the current May 5 shape: healthy
-routes, healthy schema, stale empirical jobs, timed-out quant-health, 8 decisions, 0 executions, and 0 TCA samples.
-The expected output is a shadow capital ceiling with replay and repair allowed, paper/live held, and a clear next action
-to refresh empirical jobs and replay blocked decisions.
+from the current quarantine result to fresh proof. The acceptance sample is the current May 5 shape: healthy liveness,
+healthy schema, degraded readiness, stale empirical jobs, timed-out Jangar quant-health, 8 decisions, 0 executions, and
+0 TCA samples. The expected output is a shadow capital ceiling with replay and repair allowed, paper/live held, and a
+clear next action to refresh empirical jobs and replay blocked decisions.

@@ -25,18 +25,22 @@ must each receive an explicit decision tied to a proof epoch, route probe eviden
 freshness evidence.
 
 I am choosing this because the current system can be route-healthy and database-healthy while still being unfit for
-dispatch widening or external capital. The May 5 evidence is clear:
+dispatch widening or external capital. The 2026-05-05T18:21Z evidence refresh is clear:
 
-- `GET http://jangar.jangar.svc.cluster.local/ready` returned `status="ok"` with leader election healthy.
-- `GET /api/agents/control-plane/status?namespace=agents` reported the Jangar database `healthy`, migration
-  consistency `healthy`, 25 registered migrations, and 25 applied migrations.
-- The same status payload showed stage staleness for `jangar-control-plane` discover, plan, and verify.
-- `GET /api/torghut/trading/control-plane/quant/health?account=PA3SX7FYNUTF&window=15m` timed out after 12 seconds
-  with no bytes returned.
-- `kubectl get jobs -n agents` showed fresh running jobs mixed with failed jobs, stale scheduled work, and old
-  image-pull-blocked attempts.
-- `kubectl get events -n agents` showed `MissingJob`, `UnexpectedJob`, readiness timeouts, `ImagePullBackOff`, and
-  `BackoffLimitExceeded` around Jangar and Torghut swarm work.
+- `GET http://jangar.jangar.svc.cluster.local/ready` returned HTTP 200 with `status="ok"`, leader election healthy,
+  memory provider healthy, and collaboration runtime kit healthy.
+- The same `/ready` payload still returned a degraded serving passport because execution trust was degraded by
+  `jangar-control-plane:plan`, `jangar-control-plane:verify`, and `torghut-quant:verify`.
+- `GET /api/agents/control-plane/status?namespace=agents` reported Jangar database `healthy`, migration consistency
+  `healthy`, 25 registered migrations, 25 applied migrations, and rollout health healthy for `agents` and
+  `agents-controllers`.
+- The same status payload held swarm plan/implement/verify admission passports with `execution_trust_degraded` and
+  kept dependency quorum blocked on `empirical_jobs_degraded`.
+- `GET /api/torghut/trading/control-plane/quant/health` timed out after eight seconds with no bytes returned.
+- `kubectl get jobs -n agents` showed fresh cron/manual completions mixed with failed work and three long-running
+  image-pull-blocked attempts pinned to old Jangar image digests.
+- `kubectl get events -n agents` showed recent readiness probe failures on old controller pods plus
+  `ImagePullBackOff` for Jangar and Torghut scheduled work.
 - Direct SQL into both Jangar and Torghut databases was blocked by service-account RBAC because the runner cannot
   create `pods/exec`.
 
@@ -68,13 +72,16 @@ The current control plane needs a bounded decision object that states what is al
 
 The read-only cluster assessment showed mixed health:
 
-- Jangar application pods were running, including the promoted `jangar-75b8d8cdf-6pznq` pod.
-- Jangar events showed rollout churn and readiness probe failures during recent promoted-image turnovers.
-- The Jangar database pod was running, but events still recorded a recent `jangar-db-1` readiness probe HTTP 500.
-- Agents controller pods were running, but namespace events still recorded recent readiness probe timeouts on
-  `agents`, `agents-controllers`, and long-running swarm jobs.
-- Older scheduled jobs referenced digests that were no longer pullable, while newer manual jobs on the promoted digest
+- Jangar application pod `jangar-584d75f4f6-zt9b2` was `1/2 Running` shortly after the promoted `a1b55322` rollout,
+  while `/ready` was already answering through the application route.
+- Jangar events showed rollout churn and readiness probe failures during the promoted-image turnover, plus a recent
+  `jangar-db-1` readiness probe HTTP 500.
+- Agents controller pods were `2/2` ready on the latest replica set, but namespace events still recorded recent
+  readiness timeouts on old controller pods.
+- Older scheduled jobs referenced digests that were no longer pullable, while newer current-digest cron/manual jobs
   completed.
+- Current control-plane status saw `workflow` and `job` runtime adapters as configured and heartbeat-healthy, but
+  action authority remained degraded because plan had consecutive failures and verify had stale evidence.
 
 Interpretation: route serving has recovered enough for operators, but rollout-derived proof is inconsistent. A
 consumer must not collapse those signals into a single green bit.
@@ -103,7 +110,8 @@ design constraint. Promotion proof cannot depend on a privileged shell as its on
 - route-specific probes;
 - Kubernetes pod, job, and event evidence available to the runner;
 - Torghut application database evidence such as `/db-check`, `/trading/empirical-jobs`, and runtime profitability
-  payloads.
+  payloads;
+- explicit RBAC limitation evidence when an operator-grade probe is unavailable.
 
 The design treats missing privileged SQL as an explicit input limitation, not as a global outage.
 
@@ -259,6 +267,10 @@ Engineer acceptance:
 
 - Unit test a healthy `/ready` plus stale stages: `serve`, `observe`, and `repair` allowed; `dispatch` and
   `rollout_widen` held.
+- Unit test the refreshed May 5 shape: route OK, collaboration kit healthy, database healthy, execution trust degraded,
+  dependency quorum blocked, and old image-pull attempts present. Expected classes are `serve=allow`,
+  `observe=allow`, `repair=allow`, `dispatch=hold`, `rollout_widen=hold`, `paper_submit=hold`, and
+  `live_submit=block`.
 - Unit test quant-health timeout: typed negative evidence, no empty response, `live_submit=block`.
 - Unit test old image-pull failures: not allowed to block `serve`; allowed to block active-stage dispatch only when the
   digest or retry lineage is current.
@@ -274,6 +286,8 @@ Deployer acceptance:
 - Confirm no rollout widening occurs when `rollout_widen` is held.
 - Confirm repair jobs and diagnostics are still launchable when dispatch is held.
 - Confirm Torghut sees the same `decision_digest` before capital admission is widened.
+- Confirm old image-pull-blocked jobs are either quarantined as inactive audit evidence or tied to an active retry
+  lineage before any dispatch decision can widen.
 
 ## Rollout Plan
 
