@@ -2175,10 +2175,30 @@ def _build_current_evidence_epoch(
         )
     )
 
-    empirical_status = build_empirical_jobs_status(
-        session=session,
-        stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
-    )
+    empirical_status: dict[str, object]
+    try:
+        empirical_status = build_empirical_jobs_status(
+            session=session,
+            stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
+        )
+    except Exception as exc:
+        empirical_status = {
+            "ready": False,
+            "status": "unknown",
+            "authority": "blocked",
+            "stale_after_seconds": settings.trading_empirical_job_stale_after_seconds,
+            "message": "empirical jobs status unavailable",
+            "eligible_jobs": [],
+            "missing_jobs": [],
+            "stale_jobs": [],
+            "ineligible_jobs": [],
+            "candidate_ids": [],
+            "dataset_snapshot_refs": [],
+            "blocked_reasons": [
+                f"empirical_jobs_status_unavailable:{type(exc).__name__}"
+            ],
+            "jobs": {},
+        }
     receipts.append(
         build_empirical_jobs_receipt(
             empirical_status=empirical_status,

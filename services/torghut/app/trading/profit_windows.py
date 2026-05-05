@@ -113,16 +113,20 @@ def _quant_escrow(
     quant_evidence: Mapping[str, Any],
 ) -> dict[str, object]:
     blocking_reasons = _string_list(quant_evidence.get("blocking_reasons") or [])
+    informational_reasons = _string_list(
+        quant_evidence.get("informational_reasons") or []
+    )
+    health_reasons = sorted({*blocking_reasons, *informational_reasons})
     ok = bool(quant_evidence.get("ok"))
-    if ok:
+    if ok and not health_reasons:
         status = "funded"
         reason_codes: list[str] = []
-    elif set(blocking_reasons) & _CLICKHOUSE_FRESHNESS_REASONS:
+    elif set(health_reasons) & _CLICKHOUSE_FRESHNESS_REASONS:
         status = "expired"
-        reason_codes = blocking_reasons
+        reason_codes = health_reasons
     else:
         status = "underfunded"
-        reason_codes = blocking_reasons or [
+        reason_codes = health_reasons or [
             _safe_text(quant_evidence.get("reason")) or "quant_health_unavailable"
         ]
     return _escrow(
@@ -145,12 +149,13 @@ def _clickhouse_freshness_escrow(
     quant_evidence: Mapping[str, Any],
 ) -> dict[str, object]:
     blocking_reasons = _string_list(quant_evidence.get("blocking_reasons") or [])
-    freshness_reasons = sorted(set(blocking_reasons) & _CLICKHOUSE_FRESHNESS_REASONS)
-    status = (
-        "funded"
-        if bool(quant_evidence.get("ok")) and not freshness_reasons
-        else "expired"
+    informational_reasons = _string_list(
+        quant_evidence.get("informational_reasons") or []
     )
+    health_reasons = sorted({*blocking_reasons, *informational_reasons})
+    freshness_reasons = sorted(set(health_reasons) & _CLICKHOUSE_FRESHNESS_REASONS)
+    funded = bool(quant_evidence.get("ok")) and not health_reasons
+    status = "funded" if funded else "expired"
     return _escrow(
         account=account,
         window=window,
@@ -158,7 +163,7 @@ def _clickhouse_freshness_escrow(
         escrow_type="clickhouse_freshness",
         status=status,
         required=True,
-        reason_codes=freshness_reasons,
+        reason_codes=[] if funded else freshness_reasons or health_reasons,
         source_ref=quant_evidence.get("source_url"),
     )
 
@@ -231,6 +236,9 @@ def _market_context_escrow(
     segment = _as_mapping(segment_summary.get("market-context"))
     reason_codes = _string_list(segment.get("reason_codes") or [])
     domain_states = _as_mapping(market_context_ref.get("last_domain_states"))
+    source_ref = market_context_ref.get("last_as_of") or market_context_ref.get(
+        "last_checked_at"
+    )
     stale_domains = [
         f"market_context_domain_{name}_{state}"
         for name, state in sorted(
@@ -245,7 +253,16 @@ def _market_context_escrow(
             _safe_text(market_context_ref.get("alert_reason"))
             or "market_context_alert_active"
         )
-    status = "funded" if not reason_codes else "expired"
+    missing_required_evidence = required and source_ref is None and not domain_states
+    if missing_required_evidence and not reason_codes:
+        reason_codes.append("market_context_evidence_missing")
+    status = (
+        "underfunded"
+        if missing_required_evidence
+        else "funded"
+        if not reason_codes
+        else "expired"
+    )
     return _escrow(
         account=account,
         window=window,
@@ -254,8 +271,7 @@ def _market_context_escrow(
         status=status,
         required=required,
         reason_codes=reason_codes,
-        source_ref=market_context_ref.get("last_as_of")
-        or market_context_ref.get("last_checked_at"),
+        source_ref=source_ref,
     )
 
 
@@ -321,8 +337,6 @@ def _window_decision(
         return "underfunded"
     if "expired" in blocking_statuses:
         return "expired"
-    if any(escrow.get("status") != "funded" for escrow in escrows):
-        return "partially_funded"
     return "funded"
 
 

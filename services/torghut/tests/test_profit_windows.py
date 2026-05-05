@@ -68,6 +68,47 @@ class TestProfitWindowContracts(TestCase):
         self.assertEqual(window["capital_state"], "shadow")
         self.assertEqual(clickhouse_escrow["status"], "expired")
 
+    def test_contract_prices_informational_quant_alarms_before_funding(
+        self,
+    ) -> None:
+        contract = build_profit_window_contract(
+            runtime_items=[
+                {
+                    "hypothesis_id": "hyp-informational-quant",
+                    "lane_id": "lane-informational-quant",
+                    "capital_stage": "live",
+                }
+            ],
+            quant_evidence={
+                "ok": True,
+                "blocking_reasons": [],
+                "informational_reasons": [
+                    "quant_latest_metrics_empty",
+                    "quant_latest_store_alarm",
+                ],
+                "source_url": "http://jangar.test/quant/health",
+            },
+            empirical_jobs_status={
+                "ready": True,
+                "dataset_snapshot_refs": ["snap-1"],
+            },
+            market_context_ref={"last_domain_states": {}, "last_as_of": "fresh"},
+            segment_summary={"market-context": {"reason_codes": []}},
+            lineage_ref={"status": "ready", "dataset_snapshot_ref": "snap-1"},
+            now=datetime(2026, 5, 5, 12, 0, tzinfo=timezone.utc),
+        )
+
+        window = self._window_by_hypothesis(contract, "hyp-informational-quant")
+        quant_escrow = self._escrow_by_type(contract, "jangar_quant")
+        clickhouse_escrow = self._escrow_by_type(contract, "clickhouse_freshness")
+
+        self.assertEqual(window["decision"], "expired")
+        self.assertEqual(window["capital_state"], "shadow")
+        self.assertEqual(quant_escrow["status"], "expired")
+        self.assertEqual(clickhouse_escrow["status"], "expired")
+        self.assertIn("quant_latest_metrics_empty", quant_escrow["reason_codes"])
+        self.assertIn("quant_latest_store_alarm", clickhouse_escrow["reason_codes"])
+
     def test_contract_marks_missing_empirical_jobs_underfunded(self) -> None:
         contract = build_profit_window_contract(
             runtime_items=[
@@ -92,7 +133,44 @@ class TestProfitWindowContracts(TestCase):
         self.assertEqual(empirical_escrow["status"], "underfunded")
         self.assertIn("empirical_jobs_status_missing", empirical_escrow["reason_codes"])
 
-    def test_contract_surfaces_partial_funding_for_optional_market_context(
+    def test_contract_marks_required_missing_market_context_evidence_underfunded(
+        self,
+    ) -> None:
+        contract = build_profit_window_contract(
+            runtime_items=[
+                {
+                    "hypothesis_id": "hyp-missing-market-context",
+                    "lane_id": "lane-missing-market-context",
+                    "capital_stage": "live",
+                    "dependency_capabilities": {
+                        "required": ["market_context_freshness"],
+                    },
+                }
+            ],
+            quant_evidence={"ok": True, "blocking_reasons": []},
+            empirical_jobs_status={
+                "ready": True,
+                "dataset_snapshot_refs": ["snap-1"],
+            },
+            market_context_ref={},
+            segment_summary={"market-context": {"reason_codes": []}},
+            lineage_ref={"status": "ready", "dataset_snapshot_ref": "snap-1"},
+            now=datetime(2026, 5, 5, 12, 0, tzinfo=timezone.utc),
+        )
+
+        window = self._window_by_hypothesis(contract, "hyp-missing-market-context")
+        market_context_escrow = self._escrow_by_type(contract, "market_context")
+
+        self.assertEqual(window["decision"], "underfunded")
+        self.assertEqual(window["capital_state"], "shadow")
+        self.assertEqual(market_context_escrow["status"], "underfunded")
+        self.assertIsNone(market_context_escrow["source_ref"])
+        self.assertIn(
+            "market_context_evidence_missing",
+            market_context_escrow["reason_codes"],
+        )
+
+    def test_contract_keeps_optional_market_context_debt_from_shadowing_lane(
         self,
     ) -> None:
         contract = build_profit_window_contract(
@@ -123,8 +201,8 @@ class TestProfitWindowContracts(TestCase):
         window = self._window_by_hypothesis(contract, "hyp-partial")
         market_context_escrow = self._escrow_by_type(contract, "market_context")
 
-        self.assertEqual(window["decision"], "partially_funded")
-        self.assertEqual(window["capital_state"], "shadow")
+        self.assertEqual(window["decision"], "funded")
+        self.assertEqual(window["capital_state"], "live")
         self.assertFalse(market_context_escrow["required"])
         self.assertEqual(market_context_escrow["status"], "expired")
 

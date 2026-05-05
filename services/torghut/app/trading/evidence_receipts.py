@@ -183,7 +183,7 @@ def build_jangar_authority_receipt(
         state: ReceiptState = "pass"
         reasons.append("jangar_dependency_quorum_allow")
     elif decision == "delay":
-        state = "warn"
+        state = "fail"
         reasons.append("jangar_dependency_quorum_delay")
     elif decision == "block":
         state = "fail"
@@ -354,6 +354,7 @@ def build_empirical_jobs_receipt(
     stale_jobs = _string_list(empirical_status.get("stale_jobs"))
     missing_jobs = _string_list(empirical_status.get("missing_jobs"))
     ineligible_jobs = _string_list(empirical_status.get("ineligible_jobs"))
+    blocked_reasons = _string_list(empirical_status.get("blocked_reasons"))
     if bool(empirical_status.get("ready")):
         state: ReceiptState = "pass"
         reasons = ["empirical_jobs_fresh"]
@@ -374,6 +375,7 @@ def build_empirical_jobs_receipt(
         reasons = [
             "empirical_jobs_ineligible",
             *(f"empirical_job_ineligible:{job}" for job in ineligible_jobs),
+            *blocked_reasons,
         ]
 
     return _receipt(

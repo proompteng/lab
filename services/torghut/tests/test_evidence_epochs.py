@@ -81,7 +81,7 @@ class TestEvidenceEpochs(TestCase):
             quorum_payload={"decision": "block", "reasons": []},
             observed_at=observed_at,
         )
-        self.assertEqual(delay_receipt.state, "warn")
+        self.assertEqual(delay_receipt.state, "fail")
         self.assertEqual(block_receipt.state, "fail")
 
         naive_observed_at = datetime(2026, 5, 5, 12, 0)
@@ -221,6 +221,66 @@ class TestEvidenceEpochs(TestCase):
             epoch.reason_codes,
         )
         self.assertEqual(epoch.created_at.tzinfo, timezone.utc)
+
+    def test_paper_epoch_quarantines_jangar_delay_decision(self) -> None:
+        observed_at = datetime(2026, 5, 5, 12, 0, tzinfo=timezone.utc)
+        base_receipts = [
+            build_jangar_authority_receipt(
+                quorum_payload={"decision": "delay", "reasons": []},
+                observed_at=observed_at,
+            ),
+            build_service_health_receipt(
+                role="torghut-live",
+                liveness_ok=True,
+                readiness_ok=True,
+                db_check_ok=True,
+                trading_status_ok=True,
+                observed_at=observed_at,
+            ),
+            build_schema_receipt(
+                schema_current=True,
+                lineage_ready=True,
+                observed_at=observed_at,
+            ),
+            build_data_freshness_receipt(
+                source="clickhouse_guardrails",
+                fresh=True,
+                as_of=observed_at,
+                observed_at=observed_at,
+            ),
+            build_empirical_jobs_receipt(
+                empirical_status={"ready": True},
+                observed_at=observed_at,
+            ),
+            build_artifact_parity_receipt(
+                consumer_ref="torghut-sim",
+                image_ref="registry.example/torghut@sha256:abc",
+                required_platforms=("linux/amd64",),
+                observed_platforms=("linux/amd64",),
+                observed_at=observed_at,
+            ),
+            build_portfolio_proof_receipt(
+                portfolio_candidate_id="portfolio-1",
+                target_net_pnl_per_day=Decimal("500"),
+                post_cost_net_pnl_per_day=Decimal("525"),
+                holdout_result={"status": "pass"},
+                runtime_closure_artifact_refs=("runtime-closure/summary.json",),
+                observed_at=observed_at,
+            ),
+        ]
+
+        epoch = compile_evidence_epoch(
+            account_label="paper",
+            stage_scope="paper",
+            created_at=observed_at,
+            receipts=base_receipts,
+        )
+
+        self.assertEqual(epoch.decision, "quarantined")
+        self.assertIn(
+            "jangar_authority:jangar_dependency_quorum_delay",
+            epoch.reason_codes,
+        )
 
     def test_persistence_loaders_return_missing_and_fallback_payloads(self) -> None:
         engine = create_engine(
@@ -520,6 +580,26 @@ class TestEvidenceEpochs(TestCase):
             self.assertIn(
                 "database_contract_unavailable:RuntimeError",
                 degraded_schema_receipts[0]["reason_codes"],
+            )
+
+            with patch(
+                "app.main.build_empirical_jobs_status",
+                side_effect=SQLAlchemyError("empirical query failed"),
+            ):
+                empirical_error_response = client.get(
+                    "/trading/evidence-epochs/latest?stage_scope=paper&persist=false"
+                )
+            self.assertEqual(empirical_error_response.status_code, 200)
+            empirical_receipts = [
+                receipt
+                for receipt in empirical_error_response.json()["receipts"]
+                if receipt["receipt_type"] == "empirical_jobs"
+            ]
+            self.assertEqual(len(empirical_receipts), 1)
+            self.assertEqual(empirical_receipts[0]["state"], "fail")
+            self.assertIn(
+                "empirical_jobs_status_unavailable:SQLAlchemyError",
+                empirical_receipts[0]["reason_codes"],
             )
         finally:
             app.dependency_overrides.pop(get_session, None)
