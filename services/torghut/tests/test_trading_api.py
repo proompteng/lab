@@ -23,8 +23,10 @@ from app.main import (
     _assert_dspy_cutover_migration_guard,
     _check_alpaca,
     _readiness_dependency_cache_key,
+    _readiness_dependency_checks,
     app,
 )
+from app.trading.hypotheses import JangarDependencyQuorumStatus
 from app.trading.scheduler import TradingScheduler
 from app.trading.completion import (
     DOC29_SIMULATION_FULL_DAY_GATE,
@@ -724,6 +726,79 @@ class TestTradingApi(TestCase):
             datetime.fromisoformat(payload["last_decision_at"]),
             latest_created_at,
         )
+
+    def test_trading_status_loads_dependency_quorum_before_db_reads(self) -> None:
+        call_order: list[str] = []
+
+        def _load_dependency_quorum() -> JangarDependencyQuorumStatus:
+            call_order.append("dependency_quorum")
+            return JangarDependencyQuorumStatus(
+                decision="unknown",
+                reasons=["not_configured"],
+                message="not configured",
+            )
+
+        def _load_llm_evaluation(_session: Session) -> dict[str, object]:
+            call_order.append("llm_evaluation")
+            return {"ok": True, "metrics": {"total_reviews": 1}}
+
+        def _load_tca(_session: Session) -> dict[str, object]:
+            call_order.append("tca")
+            return {}
+
+        with (
+            patch(
+                "app.main.load_jangar_dependency_quorum",
+                side_effect=_load_dependency_quorum,
+            ),
+            patch("app.main._load_llm_evaluation", side_effect=_load_llm_evaluation),
+            patch("app.main._load_tca_summary", side_effect=_load_tca),
+        ):
+            response = self.client.get("/trading/status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLess(
+            call_order.index("dependency_quorum"),
+            call_order.index("llm_evaluation"),
+        )
+        self.assertLess(call_order.index("dependency_quorum"), call_order.index("tca"))
+
+    def test_readiness_checks_external_dependencies_before_postgres_session(
+        self,
+    ) -> None:
+        call_order: list[str] = []
+        original_trading_enabled = settings.trading_enabled
+        settings.trading_enabled = True
+        try:
+            with (
+                patch(
+                    "app.main._check_clickhouse",
+                    side_effect=lambda: (
+                        call_order.append("clickhouse") or {"ok": True, "detail": "ok"}
+                    ),
+                ),
+                patch(
+                    "app.main._check_alpaca",
+                    side_effect=lambda: (
+                        call_order.append("alpaca") or {"ok": True, "detail": "ok"}
+                    ),
+                ),
+                patch(
+                    "app.main._check_postgres",
+                    side_effect=lambda _session: (
+                        call_order.append("postgres") or {"ok": True, "detail": "ok"}
+                    ),
+                ),
+            ):
+                with self.session_local() as session:
+                    _readiness_dependency_checks(
+                        session,
+                        include_database_contract=False,
+                    )
+        finally:
+            settings.trading_enabled = original_trading_enabled
+
+        self.assertEqual(call_order, ["clickhouse", "alpaca", "postgres"])
 
     def test_trading_status_surfaces_simple_lane_fields(self) -> None:
         original_pipeline_mode = settings.trading_pipeline_mode
