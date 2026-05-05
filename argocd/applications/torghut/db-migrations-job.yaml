@@ -34,11 +34,41 @@ spec:
               /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
               DB_DSN="${TORGHUT_SIM_DB_DSN}" /opt/venv/bin/python - <<'PY'
               import os
+              from urllib.parse import urlsplit
 
               from sqlalchemy import create_engine, text
 
               revision_before_context = '0023_simulation_run_progress'
               context_revision = '0024_simulation_runtime_context'
+              simulation_database = 'torghut_sim_default'
+
+              def database_url(url: str, database: str) -> str:
+                  parsed = urlsplit(url)
+                  return parsed._replace(path=f'/{database}', query='', fragment='').geturl()
+
+              admin_engine = create_engine(
+                  os.environ['TORGHUT_POSTGRES_ADMIN_URI'],
+                  isolation_level='AUTOCOMMIT',
+              )
+              with admin_engine.connect() as connection:
+                  owner = connection.execute(
+                      text('select quote_ident(:owner)'),
+                      {'owner': os.environ['TORGHUT_SIM_DB_USER']},
+                  ).scalar_one()
+                  exists = connection.execute(
+                      text('select 1 from pg_database where datname = :database'),
+                      {'database': simulation_database},
+                  ).first()
+                  if exists is None:
+                      connection.execute(text(f'CREATE DATABASE {simulation_database} OWNER {owner}'))
+                  connection.execute(text(f'GRANT ALL PRIVILEGES ON DATABASE {simulation_database} TO {owner}'))
+
+              admin_sim_engine = create_engine(
+                  database_url(os.environ['TORGHUT_POSTGRES_ADMIN_URI'], simulation_database),
+                  isolation_level='AUTOCOMMIT',
+              )
+              with admin_sim_engine.connect() as connection:
+                  connection.execute(text('CREATE EXTENSION IF NOT EXISTS vector'))
 
               engine = create_engine(os.environ['DB_DSN'])
               with engine.begin() as connection:
@@ -89,6 +119,11 @@ spec:
                 secretKeyRef:
                   name: torghut-db-app
                   key: password
+            - name: TORGHUT_POSTGRES_ADMIN_URI
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-superuser
+                  key: uri
             - name: TORGHUT_SIM_DB_DSN
               value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
           resources:
