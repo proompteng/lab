@@ -313,6 +313,39 @@ describe('agents controller startup', () => {
     expect(__test.getRuntimeMutableState().agentRunIngestionState.get('agents')?.untouchedRunCount).toBe(1)
   })
 
+  it('does not count Template AgentRuns as untouched during controller resync', async () => {
+    stopAgentsController()
+    const state = { namespaces: new Map() }
+    const kube = buildKube({
+      list: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.AgentRun) {
+          return {
+            items: [
+              buildAgentRun({
+                metadata: {
+                  name: 'run-template',
+                  namespace: 'agents',
+                  generation: 5,
+                  creationTimestamp: '2026-01-20T00:00:00Z',
+                },
+                status: {
+                  phase: 'Template',
+                  observedGeneration: 5,
+                },
+              }),
+            ],
+          }
+        }
+        return { items: [] }
+      }),
+    })
+
+    await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+
+    expect(kube.applyStatus).not.toHaveBeenCalled()
+    expect(__test.getRuntimeMutableState().agentRunIngestionState.get('agents')?.untouchedRunCount).toBe(0)
+  })
+
   it('adopts missed AgentRuns on watch restart resync', async () => {
     stopAgentsController()
     const state = { namespaces: new Map() }
