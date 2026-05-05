@@ -34,7 +34,9 @@ cephClusterSpec:
   dataDirHostPath: /var/lib/rook
 
   mon:
-    count: 3
+    count: 2
+    # Temporary recovery posture while ampone/talos-192-168-1-203 is offline:
+    # run monitors only on the two surviving control-plane nodes.
     allowMultiplePerNode: false
 
   # Keep talos-192-168-1-194 as control-plane only (mon node, no OSDs).
