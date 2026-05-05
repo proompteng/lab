@@ -41,6 +41,10 @@ patches:
     target:
       kind: Deployment
       name: argocd-repo-server
+  - path: overlays/argocd-redis-ha-haproxy-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-redis-ha-haproxy
   - path: overlays/argocd-application-controller-statefulset.yaml
     target:
       kind: StatefulSet
