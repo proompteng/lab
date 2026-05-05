@@ -14,6 +14,8 @@
   - `docs/agents/designs/70-jangar-evidence-epoch-admission-and-rollout-quarantine-2026-05-05.md`
   - `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
   - `docs/agents/designs/67-jangar-runtime-evidence-epochs-and-artifact-parity-gates-2026-05-05.md`
+  - `75-torghut-profit-actuation-cells-and-capital-guardrail-marketplace-2026-05-05.md`
+  - `docs/agents/designs/70-jangar-actuation-escrow-and-deploy-proof-lanes-2026-05-05.md`
   - `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
   - `docs/agents/designs/69-jangar-evidence-escrow-and-repair-cell-contract-2026-05-05.md`
   - `73-torghut-profit-evidence-clock-and-capital-veto-contract-2026-05-05.md`
@@ -62,6 +64,8 @@
   - `75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md`
   - `docs/agents/designs/67-jangar-runtime-evidence-epochs-and-artifact-parity-gates-2026-05-05.md`
   - `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
+  - `docs/agents/designs/70-jangar-actuation-escrow-and-deploy-proof-lanes-2026-05-05.md`
+  - `75-torghut-profit-actuation-cells-and-capital-guardrail-marketplace-2026-05-05.md`
   - `docs/agents/designs/69-jangar-evidence-escrow-and-repair-cell-contract-2026-05-05.md`
   - `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
   - `docs/agents/designs/68-jangar-evidence-clock-arbiter-and-rollout-veto-contract-2026-05-05.md`
@@ -209,6 +213,12 @@ Current source-state priority is narrower:
   evidence and selects cross-plane evidence epochs plus hypothesis-local profit cells as the next architecture move:
   Torghut promotion must prove runtime authority, data freshness, image portability, and post-cost contribution in one
   receipt chain before any non-observe capital can advance.
+- `docs/agents/designs/70-jangar-actuation-escrow-and-deploy-proof-lanes-2026-05-05.md` now turns Jangar evidence
+  escrow into action-specific dispatch, schedule-launch, deploy-widening, repair-unblock, and Torghut platform promotion
+  decisions that work under partial deployer RBAC.
+- `75-torghut-profit-actuation-cells-and-capital-guardrail-marketplace-2026-05-05.md` now turns Torghut profit cells
+  into capital actuation candidates whose marketplace score consumes Jangar actuation, cell-local freshness, empirical
+  proof, simulation parity, post-cost edge, slippage, and rollback readiness.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.
