@@ -119,8 +119,6 @@ spec:
     podTemplates:
       - name: chi-default
         spec:
-          nodeSelector:
-            kubernetes.io/arch: arm64
           affinity:
             podAntiAffinity:
               requiredDuringSchedulingIgnoredDuringExecution:
@@ -137,7 +135,7 @@ spec:
               resources:
                 requests:
                   cpu: 1
-                  memory: 4Gi
+                  memory: 2Gi
                 limits:
                   cpu: 2
                   memory: 8Gi
