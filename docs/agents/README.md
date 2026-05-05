@@ -18,6 +18,8 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Fast Jangar/Torghut live analysis workflow: `designs/jangar-torghut-live-analysis-playbook.md`
 - Autonomous Jangar/Torghut production system design: `designs/autonomous-jangar-torghut-production-system.md`
 - Current Jangar/Torghut architecture contracts:
+  - `designs/77-jangar-evidence-settlement-authority-and-data-proof-handoff-2026-05-05.md`
+  - `../torghut/design-system/v6/81-torghut-capital-proof-reconciliation-and-jangar-settlement-consumer-2026-05-05.md`
   - `designs/76-jangar-rollout-settlement-fuses-and-proof-reclocking-2026-05-05.md`
   - `../torghut/design-system/v6/80-torghut-capital-proof-reclocking-and-live-submission-fuses-2026-05-05.md`
   - `designs/70-jangar-evidence-epoch-admission-and-rollout-quarantine-2026-05-05.md`
@@ -195,6 +197,7 @@ For env and gRPC source-of-truth changes in this branch:
 - [designs/jangar-authoritative-controller-heartbeat-and-dependency-quorum-2026-03-08.md](designs/jangar-authoritative-controller-heartbeat-and-dependency-quorum-2026-03-08.md)
 - [designs/jangar-control-plane-admission-quorum-and-rollout-circuit-breaker-2026-03-06.md](designs/jangar-control-plane-admission-quorum-and-rollout-circuit-breaker-2026-03-06.md)
 - [designs/jangar-control-plane-provider-capacity-arbitration-and-template-run-truth-2026-03-14.md](designs/jangar-control-plane-provider-capacity-arbitration-and-template-run-truth-2026-03-14.md)
+- [designs/77-jangar-evidence-settlement-authority-and-data-proof-handoff-2026-05-05.md](designs/77-jangar-evidence-settlement-authority-and-data-proof-handoff-2026-05-05.md)
 - [designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md](designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md)
 - [designs/49-jangar-control-plane-authority-ledger-and-expiry-watchdog-2026-03-19.md](designs/49-jangar-control-plane-authority-ledger-and-expiry-watchdog-2026-03-19.md)
 - [designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md](designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md)
