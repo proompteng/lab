@@ -4,8 +4,16 @@
 
 Start here:
 
-- `docs/torghut/design-system/v6/86-torghut-profit-debt-ledger-and-repair-sla-experiments-2026-05-05.md` (current
-  Torghut capital-hold repair and profit-debt contract)
+- `docs/torghut/design-system/v6/95-torghut-hypothesis-warrant-reclocking-and-profit-repair-contract-2026-05-05.md`
+  (current hypothesis-local warrant reclocking and profit repair contract)
+- `docs/agents/designs/91-jangar-evidence-warrants-and-lane-local-quorum-2026-05-05.md` (current Jangar lane-local
+  evidence warrant and dependency quorum contract)
+- `docs/torghut/design-system/v6/94-torghut-session-edge-ledger-and-cost-aware-capital-allocator-2026-05-05.md`
+  (session edge ledger and cost-aware capital allocator)
+- `docs/agents/designs/90-jangar-proof-capacity-leases-and-route-slo-governor-2026-05-05.md` (Jangar proof capacity
+  leases and route SLO governor)
+- `docs/torghut/design-system/v6/86-torghut-profit-debt-ledger-and-repair-sla-experiments-2026-05-05.md` (Torghut
+  capital-hold repair and profit-debt contract)
 - `docs/agents/designs/82-jangar-authority-clearance-cells-and-negative-evidence-slas-2026-05-05.md` (current Jangar
   authority-clearance and negative-evidence SLA contract)
 - `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md` (current authority map)
