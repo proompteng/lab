@@ -153,7 +153,13 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(settings.llm_dspy_runtime_mode, "disabled")
         self.assertFalse(settings.posthog_enabled)
         self.assertTrue(settings.trading_fractional_equities_enabled)
+        self.assertTrue(settings.trading_universe_require_non_empty_jangar)
         self.assertTrue(settings.trading_universe_static_fallback_enabled)
+        self.assertEqual(settings.trading_universe_max_stale_seconds, 900)
+        self.assertEqual(
+            settings.trading_jangar_symbols_url,
+            "http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity&format=compact",
+        )
         self.assertIsNone(settings.trading_jangar_control_plane_status_url)
         self.assertIsNone(settings.trading_jangar_quant_health_url)
         self.assertIsNone(settings.trading_market_context_url)
