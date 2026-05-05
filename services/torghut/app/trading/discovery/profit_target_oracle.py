@@ -24,6 +24,9 @@ class ProfitTargetOraclePolicy:
     min_regime_slice_pass_rate: Decimal = Decimal("0.45")
     min_posterior_edge_lower: Decimal = Decimal("0")
     require_shadow_parity_within_budget: bool = True
+    require_executable_replay: bool = True
+    min_executable_order_count: int = 1
+    require_executable_replay_notional_within_buying_power: bool = True
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -43,6 +46,9 @@ class ProfitTargetOraclePolicy:
             "min_regime_slice_pass_rate": str(self.min_regime_slice_pass_rate),
             "min_posterior_edge_lower": str(self.min_posterior_edge_lower),
             "require_shadow_parity_within_budget": self.require_shadow_parity_within_budget,
+            "require_executable_replay": self.require_executable_replay,
+            "min_executable_order_count": self.min_executable_order_count,
+            "require_executable_replay_notional_within_buying_power": self.require_executable_replay_notional_within_buying_power,
         }
 
 
@@ -58,6 +64,18 @@ def _nonnegative_int(value: Any, *, default: int = 0) -> int:
         return max(0, int(Decimal(str(value if value is not None else default))))
     except Exception:
         return default
+
+
+def _boolish(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value if value is not None else "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "passed",
+    }
 
 
 def _numeric_check(
@@ -218,6 +236,86 @@ def evaluate_profit_target_oracle(
             else True,
         }
     )
+    raw_executable_artifact_refs = scorecard.get("executable_replay_artifact_refs")
+    executable_artifact_refs: list[str] = []
+    if isinstance(raw_executable_artifact_refs, list):
+        for item in cast(list[Any], raw_executable_artifact_refs):
+            normalized_ref = str(item).strip()
+            if normalized_ref:
+                executable_artifact_refs.append(normalized_ref)
+    executable_artifact_ref = str(
+        scorecard.get("executable_replay_artifact_ref") or ""
+    ).strip()
+    executable_artifact_present = bool(executable_artifact_ref or executable_artifact_refs)
+    executable_passed = _boolish(scorecard.get("executable_replay_passed"))
+    executable_order_count = _nonnegative_int(
+        scorecard.get("executable_replay_order_count")
+        or scorecard.get("executable_replay_submitted_order_count")
+        or scorecard.get("executable_replay_orders_submitted_total")
+    )
+    executable_buying_power = _decimal(
+        scorecard.get("executable_replay_account_buying_power")
+        or scorecard.get("executable_replay_buying_power")
+    )
+    executable_max_notional = _decimal(
+        scorecard.get("executable_replay_max_notional_per_trade")
+        or scorecard.get("executable_replay_max_notional_per_order")
+    )
+    checks.append(
+        {
+            "metric": "executable_replay_passed",
+            "observed": str(executable_passed).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "passed": executable_passed if policy.require_executable_replay else True,
+        }
+    )
+    checks.append(
+        {
+            "metric": "executable_replay_artifact_present",
+            "observed": str(executable_artifact_present).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "passed": executable_artifact_present
+            if policy.require_executable_replay
+            else True,
+        }
+    )
+    checks.append(
+        _numeric_check(
+            metric="executable_replay_order_count",
+            observed=Decimal(executable_order_count),
+            operator="gte",
+            threshold=Decimal(max(0, policy.min_executable_order_count))
+            if policy.require_executable_replay
+            else Decimal("0"),
+        )
+    )
+    if policy.require_executable_replay_notional_within_buying_power:
+        checks.append(
+            _numeric_check(
+                metric="executable_replay_account_buying_power",
+                observed=executable_buying_power,
+                operator="gt",
+                threshold=Decimal("0"),
+            )
+        )
+        checks.append(
+            _numeric_check(
+                metric="executable_replay_max_notional_per_trade",
+                observed=executable_max_notional,
+                operator="gt",
+                threshold=Decimal("0"),
+            )
+        )
+        checks.append(
+            _numeric_check(
+                metric="executable_replay_notional_within_buying_power",
+                observed=executable_max_notional,
+                operator="lte",
+                threshold=executable_buying_power,
+            )
+        )
     blockers = [
         f"{item['metric']}_failed" for item in checks if not bool(item["passed"])
     ]

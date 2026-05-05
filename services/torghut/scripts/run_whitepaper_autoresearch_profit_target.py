@@ -543,8 +543,8 @@ def _persist_epoch_ledgers(
                     optimizer_report_json=dict(portfolio.optimizer_report),
                     payload_json=portfolio_payload,
                     status="target_met"
-                    if bool(portfolio.objective_scorecard.get("target_met"))
-                    else "target_missed",
+                    if bool(portfolio.objective_scorecard.get("oracle_passed"))
+                    else "blocked",
                 )
             )
         session.commit()
@@ -653,6 +653,37 @@ def _candidate_quality_gate_failures(
         failures.append("posterior_edge_lower_non_positive")
     if _string(scorecard.get("shadow_parity_status")) != "within_budget":
         failures.append("shadow_parity_status_not_within_budget")
+    if oracle_policy.require_executable_replay:
+        if str(scorecard.get("executable_replay_passed")).lower() != "true":
+            failures.append("executable_replay_not_passed")
+        if not _string(scorecard.get("executable_replay_artifact_ref")):
+            failures.append("executable_replay_artifact_missing")
+        executable_order_count = int(
+            _decimal(
+                scorecard.get("executable_replay_order_count")
+                or scorecard.get("executable_replay_submitted_order_count")
+                or scorecard.get("executable_replay_orders_submitted_total")
+            )
+        )
+        if executable_order_count < oracle_policy.min_executable_order_count:
+            failures.append("executable_replay_order_count_below_oracle")
+        replay_buying_power = _decimal(
+            scorecard.get("executable_replay_account_buying_power")
+            or scorecard.get("executable_replay_buying_power")
+        )
+        replay_max_notional = _decimal(
+            scorecard.get("executable_replay_max_notional_per_trade")
+            or scorecard.get("executable_replay_max_notional_per_order")
+        )
+        if replay_buying_power <= 0:
+            failures.append("executable_replay_account_buying_power_missing")
+        if replay_max_notional <= 0:
+            failures.append("executable_replay_max_notional_missing")
+        if (
+            oracle_policy.require_executable_replay_notional_within_buying_power
+            and replay_max_notional > replay_buying_power
+        ):
+            failures.append("executable_replay_notional_exceeds_buying_power")
     return failures
 
 

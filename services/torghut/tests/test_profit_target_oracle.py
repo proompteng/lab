@@ -6,6 +6,16 @@ from unittest import TestCase
 from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy, evaluate_profit_target_oracle
 
 
+def _executable_scorecard_fields() -> dict[str, object]:
+    return {
+        "executable_replay_passed": True,
+        "executable_replay_artifact_ref": "/tmp/executable-replay.json",
+        "executable_replay_order_count": 4,
+        "executable_replay_account_buying_power": "20000",
+        "executable_replay_max_notional_per_trade": "10000",
+    }
+
+
 class TestProfitTargetOracle(TestCase):
     def test_profit_target_oracle_accepts_full_doc71_contract(self) -> None:
         result = evaluate_profit_target_oracle(
@@ -23,6 +33,7 @@ class TestProfitTargetOracle(TestCase):
                 "regime_slice_pass_rate": "0.55",
                 "posterior_edge_lower": "0.01",
                 "shadow_parity_status": "within_budget",
+                **_executable_scorecard_fields(),
             },
             target_net_pnl_per_day=Decimal("500"),
         )
@@ -46,6 +57,7 @@ class TestProfitTargetOracle(TestCase):
                 "regime_slice_pass_rate": "0.55",
                 "posterior_edge_lower": "0.01",
                 "shadow_parity_status": "within_budget",
+                **_executable_scorecard_fields(),
                 "daily_net": {
                     "2026-04-01": "900",
                     "2026-04-02": "299.99",
@@ -82,6 +94,7 @@ class TestProfitTargetOracle(TestCase):
                 "regime_slice_pass_rate": "0.55",
                 "posterior_edge_lower": "0.01",
                 "shadow_parity_status": "within_budget",
+                **_executable_scorecard_fields(),
                 "trading_day_count": 3,
                 "daily_net": {
                     "2026-04-01": "900",
@@ -125,3 +138,38 @@ class TestProfitTargetOracle(TestCase):
         self.assertIn("max_cluster_contribution_share_failed", result["blockers"])
         self.assertIn("max_single_symbol_contribution_share_failed", result["blockers"])
         self.assertIn("shadow_parity_status_failed", result["blockers"])
+
+    def test_profit_target_oracle_rejects_pnl_only_replay_without_executable_proof(
+        self,
+    ) -> None:
+        result = evaluate_profit_target_oracle(
+            {
+                "net_pnl_per_day": "800",
+                "active_day_ratio": "1",
+                "positive_day_ratio": "1",
+                "best_day_share": "0.20",
+                "max_single_day_contribution_share": "0.20",
+                "max_cluster_contribution_share": "0.34",
+                "max_single_symbol_contribution_share": "0.25",
+                "worst_day_loss": "0",
+                "max_drawdown": "0",
+                "avg_filled_notional_per_day": "700000",
+                "regime_slice_pass_rate": "0.55",
+                "posterior_edge_lower": "0.01",
+                "shadow_parity_status": "within_budget",
+            },
+            target_net_pnl_per_day=Decimal("300"),
+            policy=ProfitTargetOraclePolicy(
+                min_active_day_ratio=Decimal("1"),
+                min_positive_day_ratio=Decimal("1"),
+                min_daily_net_pnl=Decimal("300"),
+                max_best_day_share=Decimal("0.60"),
+                max_worst_day_loss=Decimal("0"),
+                max_drawdown=Decimal("0"),
+            ),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("executable_replay_passed_failed", result["blockers"])
+        self.assertIn("executable_replay_artifact_present_failed", result["blockers"])
+        self.assertIn("executable_replay_order_count_failed", result["blockers"])

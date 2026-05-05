@@ -34,6 +34,12 @@ def _string(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _boolish(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return _string(value).lower() in {"1", "true", "yes", "y", "passed"}
+
+
 def _scorecard(bundle: CandidateEvidenceBundle) -> Mapping[str, Any]:
     return bundle.objective_scorecard
 
@@ -150,6 +156,48 @@ def _portfolio_daily_filled_notional(
         for day, value in _daily_filled_notional(bundle).items():
             daily_totals[day] = daily_totals.get(day, Decimal("0")) + value
     return daily_totals
+
+
+def _executable_replay_passed(bundle: CandidateEvidenceBundle) -> bool:
+    return _boolish(_scorecard(bundle).get("executable_replay_passed"))
+
+
+def _executable_replay_order_count(bundle: CandidateEvidenceBundle) -> int:
+    scorecard = _scorecard(bundle)
+    try:
+        return max(
+            0,
+            int(
+                _decimal(
+                    scorecard.get("executable_replay_order_count")
+                    or scorecard.get("executable_replay_submitted_order_count")
+                    or scorecard.get("executable_replay_orders_submitted_total")
+                )
+            ),
+        )
+    except Exception:
+        return 0
+
+
+def _executable_replay_artifact_ref(bundle: CandidateEvidenceBundle) -> str:
+    scorecard = _scorecard(bundle)
+    return _string(scorecard.get("executable_replay_artifact_ref"))
+
+
+def _executable_replay_buying_power(bundle: CandidateEvidenceBundle) -> Decimal:
+    scorecard = _scorecard(bundle)
+    return _decimal(
+        scorecard.get("executable_replay_account_buying_power")
+        or scorecard.get("executable_replay_buying_power")
+    )
+
+
+def _executable_replay_max_notional(bundle: CandidateEvidenceBundle) -> Decimal:
+    scorecard = _scorecard(bundle)
+    return _decimal(
+        scorecard.get("executable_replay_max_notional_per_trade")
+        or scorecard.get("executable_replay_max_notional_per_order")
+    )
 
 
 def _positive_net_contribution(bundle: CandidateEvidenceBundle) -> Decimal:
@@ -296,6 +344,18 @@ def _portfolio_scorecard(
     shadow_statuses = {
         _string(_scorecard(bundle).get("shadow_parity_status")) for bundle in selected
     }
+    executable_artifact_refs = [
+        ref for ref in (_executable_replay_artifact_ref(bundle) for bundle in selected) if ref
+    ]
+    executable_order_count = sum(
+        _executable_replay_order_count(bundle) for bundle in selected
+    )
+    executable_buying_powers = [
+        _executable_replay_buying_power(bundle) for bundle in selected
+    ]
+    executable_max_notionals = [
+        _executable_replay_max_notional(bundle) for bundle in selected
+    ]
     scorecard = {
         "net_pnl_per_day": str(net_per_day),
         "portfolio_post_cost_net_pnl_per_day": str(net_per_day),
@@ -324,6 +384,19 @@ def _portfolio_scorecard(
         "shadow_parity_status": "within_budget"
         if shadow_statuses == {"within_budget"}
         else "missing",
+        "executable_replay_passed": bool(selected)
+        and all(_executable_replay_passed(bundle) for bundle in selected),
+        "executable_replay_order_count": executable_order_count,
+        "executable_replay_artifact_refs": executable_artifact_refs,
+        "executable_replay_artifact_ref": executable_artifact_refs[0]
+        if executable_artifact_refs
+        else "",
+        "executable_replay_account_buying_power": str(
+            min(executable_buying_powers, default=Decimal("0"))
+        ),
+        "executable_replay_max_notional_per_trade": str(
+            max(executable_max_notionals, default=Decimal("0"))
+        ),
         "daily_net": {day: str(value) for day, value in sorted(daily_net.items())},
         "daily_filled_notional": {
             day: str(value) for day, value in sorted(daily_notional.items())
