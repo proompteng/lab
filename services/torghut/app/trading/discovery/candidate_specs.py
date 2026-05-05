@@ -62,22 +62,31 @@ _DEFAULT_PROFILE_COUNT = 3
 
 RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE: tuple[str, ...] = (
     "NVDA",
-    "AVGO",
-    "AMD",
     "TSM",
-    "ASML",
-    "AMAT",
+    "AVGO",
+    "INTC",
+    "AMD",
+    "MU",
     "LRCX",
     "KLAC",
-    "MU",
-    "INTC",
     "QCOM",
+    "AMAT",
+    "ASML",
     "MRVL",
 )
 LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE: tuple[str, ...] = (
     "NVDA",
-    "AMD",
+    "TSM",
+    "AVGO",
     "INTC",
+    "AMD",
+    "MU",
+    "LRCX",
+    "KLAC",
+    "QCOM",
+    "AMAT",
+    "ASML",
+    "MRVL",
 )
 _RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE = RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE
 _AI_ACCELERATOR_UNIVERSE_PROFILE: tuple[str, ...] = (
