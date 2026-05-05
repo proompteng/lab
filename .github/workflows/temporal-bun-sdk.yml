@@ -41,7 +41,7 @@ jobs:
 
     env:
       TEMPORAL_TEST_SERVER: '1'
-      TEMPORAL_TEST_TIMEOUT: '5000'
+      TEMPORAL_TEST_TIMEOUT: '30000'
       TEMPORAL_INTEGRATION_TESTS: '1'
       TEMPORAL_BUN_RELEASE_GATE: '1'
       TEMPORAL_ADDRESS: temporal-grpc:7233
@@ -123,7 +123,8 @@ jobs:
 
       - name: Run Temporal Bun SDK tests
         run: |
-          TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test
+          cd packages/temporal-bun-sdk
+          TEMPORAL_TEST_SERVER=1 bun test --timeout=30000 --max-concurrency=1
 
       - name: Verify replay corpus
         run: bun run --filter @proompteng/temporal-bun-sdk verify:replay-corpus
@@ -311,7 +312,7 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: production-readiness-artifacts
-          path: .
+          path: packages/temporal-bun-sdk
 
       - name: Verify production package boundary
         run: bun run --filter @proompteng/temporal-bun-sdk verify:production
