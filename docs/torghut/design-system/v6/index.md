@@ -11,6 +11,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `88-torghut-session-proof-budget-consumer-and-capital-reentry-contract-2026-05-05.md`
+  - `docs/agents/designs/84-jangar-material-action-settlement-and-proof-budget-cutover-2026-05-05.md`
   - `88-torghut-profit-slo-lanes-and-session-replay-governor-2026-05-05.md`
   - `docs/agents/designs/84-jangar-material-action-settlement-ledger-and-slo-arbiter-2026-05-05.md`
   - `88-torghut-session-proof-liquidity-and-hypothesis-market-maker-2026-05-05.md`
@@ -117,7 +119,10 @@
 - `87-torghut-capital-lease-consumer-and-profit-repair-marketplace-2026-05-05.md`
 - `88-torghut-profit-slo-lanes-and-session-replay-governor-2026-05-05.md`
 - `88-torghut-session-proof-liquidity-and-hypothesis-market-maker-2026-05-05.md`
+- `88-torghut-session-proof-budget-consumer-and-capital-reentry-contract-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/84-jangar-material-action-settlement-and-proof-budget-cutover-2026-05-05.md`
+  - `88-torghut-session-proof-budget-consumer-and-capital-reentry-contract-2026-05-05.md`
   - `docs/agents/designs/84-jangar-material-action-settlement-ledger-and-slo-arbiter-2026-05-05.md`
   - `88-torghut-profit-slo-lanes-and-session-replay-governor-2026-05-05.md`
   - `docs/agents/designs/84-jangar-evidence-liquidity-router-and-stale-digest-quarantine-2026-05-05.md`
@@ -217,10 +222,17 @@ Current source-state priority is narrower:
 
 The current source-of-truth pair for the Jangar control-plane plan lane and Torghut capital handoff is:
 
+- `docs/agents/designs/84-jangar-material-action-settlement-and-proof-budget-cutover-2026-05-05.md`
+- `88-torghut-session-proof-budget-consumer-and-capital-reentry-contract-2026-05-05.md`
+
+The supporting SLO-arbiter and session-liquidity pair remains part of the May 5 control-plane evidence chain:
+
 - `docs/agents/designs/84-jangar-material-action-settlement-ledger-and-slo-arbiter-2026-05-05.md`
 - `88-torghut-profit-slo-lanes-and-session-replay-governor-2026-05-05.md`
+- `docs/agents/designs/84-jangar-evidence-liquidity-router-and-stale-digest-quarantine-2026-05-05.md`
+- `88-torghut-session-proof-liquidity-and-hypothesis-market-maker-2026-05-05.md`
 
-The current source-of-truth pair for the Torghut quant discover lane is:
+The current source-of-truth references for the Torghut quant discover lane are:
 
 - `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
 - `docs/agents/designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md`
