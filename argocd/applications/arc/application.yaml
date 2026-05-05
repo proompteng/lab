@@ -25,6 +25,8 @@ spec:
           githubConfigUrl: https://github.com/proompteng/lab
           githubConfigSecret: github-token
           runnerScaleSetName: arc-arm64
+          scaleSetLabels:
+            - arc-arm64
           minRunners: 3
           maxRunners: 5
           containerMode:
