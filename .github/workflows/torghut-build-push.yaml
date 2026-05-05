@@ -41,7 +41,8 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
+        timeout-minutes: 10
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts
 
       - name: Build and push torghut image
         env:
