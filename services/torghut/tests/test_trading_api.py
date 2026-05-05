@@ -89,6 +89,9 @@ class TestTradingApi(TestCase):
         self.session_local = sessionmaker(
             bind=engine, expire_on_commit=False, future=True
         )
+        session_local_patch = patch("app.main.SessionLocal", self.session_local)
+        session_local_patch.start()
+        self.addCleanup(session_local_patch.stop)
 
         def _override_session() -> Session:
             with self.session_local() as session:
