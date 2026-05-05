@@ -373,7 +373,7 @@ describe('getReadyHandler', () => {
     })
   })
 
-  it('returns 503 when execution trust is blocked', async () => {
+  it('returns 200 with degraded status when execution trust is blocked', async () => {
     runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(
       buildRuntimeAdmissionSnapshot({
         admissionPassports: [
@@ -410,7 +410,7 @@ describe('getReadyHandler', () => {
 
     const response = await getReadyHandler()
 
-    expect(response.status).toBe(503)
+    expect(response.status).toBe(200)
     const body = await response.json()
     expect(body.status).toBe('degraded')
     expect(body.execution_trust).toMatchObject({
@@ -418,7 +418,7 @@ describe('getReadyHandler', () => {
     })
   })
 
-  it('returns 503 when the serving passport is blocked', async () => {
+  it('returns 200 with degraded status when the serving passport is blocked', async () => {
     runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(
       buildRuntimeAdmissionSnapshot({
         admissionPassports: [
@@ -436,13 +436,13 @@ describe('getReadyHandler', () => {
 
     const response = await getReadyHandler()
 
-    expect(response.status).toBe(503)
+    expect(response.status).toBe(200)
     const body = await response.json()
     expect(body.status).toBe('degraded')
     expect(body.serving_passport_id).toBe('passport:serving:2')
   })
 
-  it('returns 503 when any watched namespace reports blocked execution trust', async () => {
+  it('returns 200 with degraded status when any watched namespace reports blocked execution trust', async () => {
     runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(
       buildRuntimeAdmissionSnapshot({
         admissionPassports: [
@@ -500,7 +500,7 @@ describe('getReadyHandler', () => {
 
     const response = await getReadyHandler()
 
-    expect(response.status).toBe(503)
+    expect(response.status).toBe(200)
     expect(controlPlaneStatusMocks.buildExecutionTrust).toHaveBeenCalledTimes(2)
     expect(controlPlaneStatusMocks.buildExecutionTrust).toHaveBeenNthCalledWith(
       1,
@@ -528,7 +528,7 @@ describe('getReadyHandler', () => {
     ])
   })
 
-  it('returns 503 when execution trust evaluation fails', async () => {
+  it('returns 200 with degraded status when execution trust evaluation fails', async () => {
     runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(
       buildRuntimeAdmissionSnapshot({
         admissionPassports: [
@@ -546,7 +546,7 @@ describe('getReadyHandler', () => {
 
     const response = await getReadyHandler()
 
-    expect(response.status).toBe(503)
+    expect(response.status).toBe(200)
     const body = await response.json()
     expect(body.status).toBe('degraded')
     expect(body.execution_trust).toMatchObject({
