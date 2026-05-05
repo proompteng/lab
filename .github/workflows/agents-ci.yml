@@ -457,7 +457,8 @@ jobs:
           JANGAR_COMMIT="$(git -C "${WORKSPACE}" rev-parse HEAD)"
           IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 
-          # Use the mirrored Bun base image so local CI rebuilds do not fail on Docker Hub pull limits.
+          # Use the mirror.gcr.io Bun mirror in CI to avoid Docker Hub anonymous pull limits.
+          # Local image rebuilds are best-effort in CI; fall back to the public image on timeout.
           # ARC arm64 runners can spend well over 18 minutes in the pruned control-plane docker
           # build while still making forward progress, so give the local image build enough headroom
           # to complete instead of terminating a healthy build.
