@@ -409,6 +409,19 @@ Phase 0: shadow lease synthesis.
 - Build leases and publish them in status/NATS, but do not block admission.
 - Compare lease decisions against current operator decisions for at least one full rollout window.
 
+Implementation note:
+
+- Phase 0 is implemented additively through `/api/agents/control-plane/status` as
+  `failure_domain_leases.mode="shadow"`.
+- The status projector emits one typed lease set with `lease_set_digest`, per-domain leases, reason codes, evidence
+  refs, rollback targets, and per-action holdback decisions.
+- Current shadow domains are `database`, `route`, `rollout`, `registry`, `storage`, `workflow_artifact`, `nats`, and
+  `source_schema`.
+- The projector uses the existing database probe and migration consistency check, optional route probe, rollout
+  health, runtime-kit admission, workflow reliability, and read-only Kubernetes pod/event evidence.
+- No AgentRun admission or deploy widening enforcement is enabled by this Phase 0 surface. Operators and deployers use
+  the holdback decisions as evidence until a later enforcement phase consumes the lease set directly.
+
 Phase 1: hold back normal dispatch.
 
 - Enable holdbacks for `dispatch_normal` when database, route, storage, or rollout leases expire.

@@ -18,6 +18,14 @@ import {
 } from '~/server/control-plane-execution-trust'
 import { resolveEmpiricalServices } from '~/server/control-plane-empirical-services'
 import {
+  buildFailureDomainLeaseSet,
+  collectFailureDomainKubernetesEvidence,
+  emptyFailureDomainKubernetesEvidence,
+  resolveFailureDomainRouteProbe,
+  type FailureDomainKubernetesEvidence,
+  type FailureDomainRouteProbe,
+} from '~/server/control-plane-failure-domain-leases'
+import {
   buildRolloutHealth,
   maybeUseSplitTopologyControllerRollout,
   maybeUseSplitTopologyRuntimeRollout,
@@ -79,6 +87,13 @@ export type ControlPlaneStatusDeps = {
   resolveEmpiricalServices?: typeof resolveEmpiricalServices
   resolveExecutionTrust?: (input: ExecutionTrustInput) => Promise<ExecutionTrustSnapshot>
   resolveRuntimeAdmission?: (input: { now: Date; executionTrust: ExecutionTrustStatus }) => RuntimeAdmissionSnapshot
+  resolveRouteProbe?: (input: { now: Date; namespace: string; service: string }) => Promise<FailureDomainRouteProbe>
+  resolveFailureDomainKubernetesEvidence?: (input: {
+    now: Date
+    namespace: string
+    service: string
+    kube: KubeGateway
+  }) => Promise<FailureDomainKubernetesEvidence>
   kubeGateway?: KubeGateway
 }
 
@@ -471,6 +486,47 @@ export const buildControlPlaneStatus = async (
     now,
     executionTrust: executionTrust.executionTrust,
   })
+  const service = options.service ?? 'jangar'
+  const [routeProbe, failureDomainKubernetesEvidence] = await Promise.all([
+    (deps.resolveRouteProbe ?? resolveFailureDomainRouteProbe)({
+      now,
+      namespace: options.namespace,
+      service,
+    }).catch((error: unknown): FailureDomainRouteProbe => {
+      const observedAt = now.toISOString()
+      return {
+        status: 'unknown',
+        reachable: false,
+        url: null,
+        status_code: null,
+        latency_ms: 0,
+        message: `route probe failed: ${normalizeMessage(error)}`,
+        observed_at: observedAt,
+      }
+    }),
+    (deps.resolveFailureDomainKubernetesEvidence ?? collectFailureDomainKubernetesEvidence)({
+      now,
+      namespace: options.namespace,
+      service,
+      kube: kubeGateway,
+    }).catch(
+      (error: unknown): FailureDomainKubernetesEvidence => ({
+        ...emptyFailureDomainKubernetesEvidence(),
+        collection_errors: [`kubernetes evidence collection failed: ${normalizeMessage(error)}`],
+      }),
+    ),
+  ])
+  const failureDomainLeases = buildFailureDomainLeaseSet({
+    now,
+    namespace: options.namespace,
+    service,
+    database,
+    routeProbe,
+    rolloutHealth,
+    workflows,
+    runtimeKits: runtimeAdmission.runtimeKits,
+    kubernetesEvidence: failureDomainKubernetesEvidence,
+  })
 
   const isWorkflowsDataUnknown = workflows.data_confidence === 'unknown'
   const isWorkflowsDataDegraded = workflows.data_confidence === 'degraded'
@@ -523,7 +579,7 @@ export const buildControlPlaneStatus = async (
   ]
 
   return {
-    service: options.service ?? 'jangar',
+    service,
     generated_at: now.toISOString(),
     leader_election: {
       enabled: leaderElection.enabled,
@@ -560,6 +616,7 @@ export const buildControlPlaneStatus = async (
     stages: executionTrust.stages,
     workflows,
     dependency_quorum: dependencyQuorum,
+    failure_domain_leases: failureDomainLeases,
     empirical_services: empiricalServices,
     namespaces: [
       {

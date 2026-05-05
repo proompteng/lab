@@ -131,6 +131,7 @@ curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.execution_trust'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.runtime_kits'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.admission_passports'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.failure_domain_leases'
 curl -fsS http://localhost:8080/ready | jq '{status, serving_passport_id, runtime_kits, admission_passports}'
 kubectl api-resources --api-group=argoproj.io --no-headers || true
 kubectl -n agents get workflows.argoproj.io 2>/dev/null || true
@@ -150,10 +151,21 @@ Expected outcomes:
   `component_digest`, `decision`, and `reason_codes` fields.
 - `admission_passports` always includes `serving`, `swarm_plan`, `swarm_implement`, and `swarm_verify`
   consumers, and `/ready.serving_passport_id` matches the `serving` passport from control-plane status.
+- `failure_domain_leases.mode` is `shadow` during Phase 0 and includes a `lease_set_digest`, per-domain
+  lease `status`, `reason_codes`, and per-action holdback decisions for `dispatch_normal`,
+  `dispatch_repair`, `deploy_widen`, `merge_ready`, and Torghut action classes.
 - If collaboration is degraded or blocked because a runtime helper is missing, `/ready` stays `200` as
   long as the `serving` passport is still `allow` or `degrade`; the blocked `swarm_*` passport surfaces
   the missing component in `reason_codes`.
 - The Argo Workflows resource check returns empty output (no CRD or no workflows).
+
+During shadow lease synthesis, treat `failure_domain_leases.holdbacks[]` as deployer evidence, not an
+admission switch. A `hold` decision with `database.service_refused`, `database.pod_disruption_target`,
+`route.unreachable`, `registry.image_pull_timeout`, `storage.mount_conflict`, or
+`workflow_artifact.configmap_missing` means normal dispatch or rollout widening should stay manual-held
+until the next lease set supersedes it with fresh evidence. Rollback is to keep lease enforcement disabled
+and use the existing dependency quorum/runtime passport gates while preserving the lease digest in the PR or
+handoff notes.
 
 If a cross-swarm stage refuses launch before NATS collaboration initialization, verify the passport debt first:
 

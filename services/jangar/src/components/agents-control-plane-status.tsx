@@ -75,6 +75,16 @@ const formatScopeLabel = (value: string) =>
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ')
 
+const formatLeaseStatusSummary = (status: ControlPlaneStatus) => {
+  const counts = status.failure_domain_leases.leases.reduce<Record<string, number>>((acc, lease) => {
+    acc[lease.status] = (acc[lease.status] ?? 0) + 1
+    return acc
+  }, {})
+  return ['valid', 'degraded', 'expired', 'unknown', 'override']
+    .map((statusKey) => `${statusKey} ${counts[statusKey] ?? 0}`)
+    .join(' · ')
+}
+
 const formatAuthority = (authority: {
   mode: string
   source_deployment: string
@@ -246,6 +256,41 @@ export const ControlPlaneStatusPanel = ({
               </ul>
             ) : (
               <div className="text-xs text-muted-foreground">No segment detail available.</div>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Failure-domain leases
+          </div>
+          <div className="rounded-none border p-2 border-border/60 bg-muted/30 space-y-1">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-medium text-foreground">Shadow lease set</span>
+              <StatusBadge label={status.failure_domain_leases.mode} />
+            </div>
+            <div className="text-muted-foreground">Digest: {status.failure_domain_leases.lease_set_digest}</div>
+            <div className="text-muted-foreground">{formatLeaseStatusSummary(status)}</div>
+            <div className="text-muted-foreground">
+              Held actions:{' '}
+              {status.failure_domain_leases.holdbacks.filter((holdback) => holdback.decision !== 'allow').length > 0
+                ? status.failure_domain_leases.holdbacks
+                    .filter((holdback) => holdback.decision !== 'allow')
+                    .map((holdback) => holdback.action_class)
+                    .join(', ')
+                : 'None'}
+            </div>
+            {status.failure_domain_leases.leases.length > 0 ? (
+              <ul className="space-y-1 pt-1 text-muted-foreground">
+                {status.failure_domain_leases.leases.map((lease) => (
+                  <li key={lease.lease_id} className="text-[11px]">
+                    <span className="font-medium text-foreground">{lease.domain}</span> · {lease.status} · {lease.scope}
+                    {lease.reason_codes.length > 0 ? ` (${lease.reason_codes.join(', ')})` : ''}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-[11px] text-muted-foreground">No failure-domain leases available.</div>
             )}
           </div>
         </div>

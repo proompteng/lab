@@ -318,6 +318,67 @@ export type DependencyQuorumStatus = {
   degradation_scope?: DependencyQuorumSegmentScope
 }
 
+export type FailureDomainLeaseDomain =
+  | 'database'
+  | 'route'
+  | 'rollout'
+  | 'registry'
+  | 'storage'
+  | 'workflow_artifact'
+  | 'nats'
+  | 'source_schema'
+  | 'torghut_dependency'
+  | 'manual_override'
+
+export type FailureDomainLeaseStatus = 'valid' | 'degraded' | 'expired' | 'unknown' | 'override'
+
+export type FailureDomainActionClass =
+  | 'serve_readonly'
+  | 'dispatch_normal'
+  | 'dispatch_repair'
+  | 'deploy_widen'
+  | 'merge_ready'
+  | 'torghut_observe'
+  | 'torghut_capital'
+
+export type FailureDomainLeaseIssuer =
+  | 'controller'
+  | 'verifier_job'
+  | 'deployer'
+  | 'manual_operator'
+  | 'status_projector'
+
+export type FailureDomainLease = {
+  lease_id: string
+  domain: FailureDomainLeaseDomain
+  scope: string
+  status: FailureDomainLeaseStatus
+  action_classes: FailureDomainActionClass[]
+  observed_at: string
+  expires_at: string
+  evidence_refs: string[]
+  reason_codes: string[]
+  rollback_target: string | null
+  issuer: FailureDomainLeaseIssuer
+}
+
+export type FailureDomainHoldbackDecision = {
+  action_class: FailureDomainActionClass
+  decision: 'allow' | 'hold' | 'unknown'
+  lease_ids: string[]
+  reason_codes: string[]
+  message: string
+}
+
+export type FailureDomainLeaseSet = {
+  mode: 'shadow' | 'enforced'
+  design_artifact: string
+  lease_set_digest: string
+  generated_at: string
+  leases: FailureDomainLease[]
+  holdbacks: FailureDomainHoldbackDecision[]
+}
+
 export type DeploymentRolloutStatus = {
   name: string
   namespace: string
@@ -420,6 +481,7 @@ export type ControlPlaneStatus = {
    */
   workflows: WorkflowsReliabilityStatus
   dependency_quorum: DependencyQuorumStatus
+  failure_domain_leases: FailureDomainLeaseSet
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability

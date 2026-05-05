@@ -6,6 +6,7 @@ import type {
   ExecutionTrustStage,
   ExecutionTrustStatus,
   ExecutionTrustSwarm,
+  FailureDomainLeaseSet,
   RuntimeKitStatus,
   WorkflowsReliabilityStatus,
 } from '~/data/agents-control-plane'
@@ -148,6 +149,7 @@ export type ControlPlaneStatus = {
   serving_passport_id: string | null
   workflows: WorkflowsReliabilityStatus
   dependency_quorum: DependencyQuorumStatus
+  failure_domain_leases: FailureDomainLeaseSet
   execution_trust: ExecutionTrustStatus
   swarms: ExecutionTrustSwarm[]
   stages: ExecutionTrustStage[]

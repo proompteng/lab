@@ -367,6 +367,20 @@ Rollout safety now also uses gate thresholds for watch stability and empirical j
   - `status` is now a hard block when `/api/agents/control-plane/status` reports `empirical_services.jobs.status === degraded`.
   - Forecast and LEAN degradation remain observable but do not block rollout.
 
+Failure-domain lease shadow synthesis is exposed on `/api/agents/control-plane/status` as
+`failure_domain_leases`:
+
+- `mode` is `shadow`; the lease set is advisory and does not block AgentRun admission by itself.
+- `lease_set_digest` gives deployers one compact proof handle for the current database, route, rollout,
+  registry, storage, workflow artifact, NATS, and source-schema evidence.
+- `holdbacks[]` maps the leases to action classes such as `dispatch_normal`, `dispatch_repair`,
+  `deploy_widen`, `merge_ready`, `torghut_observe`, and `torghut_capital`.
+- Optional route probing can be enabled with `JANGAR_CONTROL_PLANE_ROUTE_PROBE_ENABLED=true` or an explicit
+  `JANGAR_CONTROL_PLANE_ROUTE_HEALTH_URL`; without that, the route lease records the current status response
+  path as its shadow evidence.
+- `JANGAR_FAILURE_DOMAIN_EVIDENCE_NAMESPACES` can add comma-separated namespaces to the read-only pod/event
+  evidence collector. The default evidence namespaces are the requested control-plane namespace and `jangar`.
+
 The status payload always includes:
 
 - `execution_trust`
