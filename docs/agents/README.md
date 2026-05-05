@@ -18,6 +18,8 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Fast Jangar/Torghut live analysis workflow: `designs/jangar-torghut-live-analysis-playbook.md`
 - Autonomous Jangar/Torghut production system design: `designs/autonomous-jangar-torghut-production-system.md`
 - Current Jangar/Torghut architecture contracts:
+  - `designs/84-jangar-material-action-settlement-ledger-and-slo-arbiter-2026-05-05.md`
+  - `../torghut/design-system/v6/88-torghut-profit-slo-lanes-and-session-replay-governor-2026-05-05.md`
   - `designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md`
   - `../torghut/design-system/v6/87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
   - `designs/83-jangar-lease-backed-proof-market-and-profit-aware-rollout-authority-2026-05-05.md`
@@ -211,6 +213,7 @@ For env and gRPC source-of-truth changes in this branch:
 - [designs/jangar-authoritative-controller-heartbeat-and-dependency-quorum-2026-03-08.md](designs/jangar-authoritative-controller-heartbeat-and-dependency-quorum-2026-03-08.md)
 - [designs/jangar-control-plane-admission-quorum-and-rollout-circuit-breaker-2026-03-06.md](designs/jangar-control-plane-admission-quorum-and-rollout-circuit-breaker-2026-03-06.md)
 - [designs/jangar-control-plane-provider-capacity-arbitration-and-template-run-truth-2026-03-14.md](designs/jangar-control-plane-provider-capacity-arbitration-and-template-run-truth-2026-03-14.md)
+- [designs/84-jangar-material-action-settlement-ledger-and-slo-arbiter-2026-05-05.md](designs/84-jangar-material-action-settlement-ledger-and-slo-arbiter-2026-05-05.md)
 - [designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md](designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md)
 - [designs/83-jangar-lease-backed-proof-market-and-profit-aware-rollout-authority-2026-05-05.md](designs/83-jangar-lease-backed-proof-market-and-profit-aware-rollout-authority-2026-05-05.md)
 - [designs/82-jangar-authority-clearance-cells-and-negative-evidence-slas-2026-05-05.md](designs/82-jangar-authority-clearance-cells-and-negative-evidence-slas-2026-05-05.md)
