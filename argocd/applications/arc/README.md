@@ -5,6 +5,7 @@ These runners are not pinned to any specific node by default.
 - Chart version pinned in `application.yaml` is `0.13.1` for both the controller and the runner scale set.
 - Upgrading from ≤0.9.x requires deleting the legacy `actions.github.com` CRDs and reinstalling the controller/runner charts before letting Argo CD reconcile.
 - Keep the custom template (init container + privileged `docker:dind` sidecar with `DOCKER_HOST=unix:///var/run/docker.sock`) when reapplying so Docker builds continue to work under Kubernetes mode.
+- The runner container intentionally waits for `docker version` before starting `run.sh`; without this guard, ARC can register a runner before the dind socket is ready.
 - Runner workspace storage uses dynamic PVCs (20Gi) and must target an existing RWO StorageClass (currently `local-path`).
 - Tailscale connectivity now comes from the node-level installation managed by OpenTofu (`tofu/harvester/main.tf`) and Ansible (`ansible/playbooks/install_tailscale.yml`); no sidecar or additional secret is required in the runner pods.
 - ARC runner and listener pods append the tailnet search suffix `ide-newton.ts.net` via `dnsConfig.searches`, so bare tailnet hosts such as `temporal-grpc` resolve from GitHub Actions jobs without hardcoding the full `*.ts.net` name.
