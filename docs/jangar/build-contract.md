@@ -66,7 +66,7 @@ bun run packages/scripts/src/jangar/verify-deployment.ts --help
 
 Checks:
 
-- deployment rollout success for `jangar` and `jangar-worker`
+- deployment rollout success for `jangar`
 - expected image digest matches the rendered manifest contract
 - Argo application reaches `Healthy`
 - optional Argo `Synced` and expected revision checks when requested

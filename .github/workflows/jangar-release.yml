@@ -180,7 +180,6 @@ jobs:
           if git diff --quiet -- \
             argocd/applications/jangar/kustomization.yaml \
             argocd/applications/jangar/deployment.yaml \
-            argocd/applications/jangar/jangar-worker-deployment.yaml \
             argocd/applications/agents/values.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
@@ -200,7 +199,6 @@ jobs:
           add-paths: |
             argocd/applications/jangar/kustomization.yaml
             argocd/applications/jangar/deployment.yaml
-            argocd/applications/jangar/jangar-worker-deployment.yaml
             argocd/applications/agents/values.yaml
           body: |
             ## Summary
@@ -209,7 +207,7 @@ jobs:
             - Source commit: `${{ steps.meta.outputs.source_sha }}`
             - Image tag: `${{ steps.meta.outputs.tag }}`
             - Image digest: `${{ steps.digest.outputs.digest }}`
-            - Updated API and worker rollout annotations
+            - Updated API rollout annotation
             - Updated `argocd/applications/agents/values.yaml` for automated sync to namespace `agents`
 
       - name: No manifest changes detected

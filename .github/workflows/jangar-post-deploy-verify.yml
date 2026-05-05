@@ -157,13 +157,11 @@ jobs:
 
           git checkout --quiet HEAD^ -- \
             argocd/applications/jangar/kustomization.yaml \
-            argocd/applications/jangar/deployment.yaml \
-            argocd/applications/jangar/jangar-worker-deployment.yaml
+            argocd/applications/jangar/deployment.yaml
 
           if git diff --quiet -- \
             argocd/applications/jangar/kustomization.yaml \
-            argocd/applications/jangar/deployment.yaml \
-            argocd/applications/jangar/jangar-worker-deployment.yaml; then
+            argocd/applications/jangar/deployment.yaml; then
             echo "No rollback diff detected"
             echo "should_rollback=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -184,7 +182,6 @@ jobs:
           add-paths: |
             argocd/applications/jangar/kustomization.yaml
             argocd/applications/jangar/deployment.yaml
-            argocd/applications/jangar/jangar-worker-deployment.yaml
           body: |
             ## Summary
             Automatic rollback created because `jangar-post-deploy-verify` failed on `main`.
