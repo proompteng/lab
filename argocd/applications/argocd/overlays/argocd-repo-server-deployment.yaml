@@ -3,11 +3,10 @@ kind: Deployment
 metadata:
   name: argocd-repo-server
 spec:
-  replicas: 3
+  replicas: 2
   strategy:
     rollingUpdate:
-      # With required pod anti-affinity and a 3-node cluster, allowing surge pods can deadlock rollouts:
-      # the new pod can't schedule until an old one is removed.
+      # During two-node recovery, delete first so old hard anti-affinity pods can be replaced in place.
       maxSurge: 0
       maxUnavailable: 1
     type: RollingUpdate
