@@ -56,13 +56,14 @@ const resolveLatestHistoryRevision = (history: ArgoApplication['status'] extends
 export const resolveArgoApplicationStatus = (application: ArgoApplication): ArgoApplicationStatus => {
   const syncStatus = normalizeString(application.status?.sync?.status) ?? unknownValue
   const healthStatus = normalizeString(application.status?.health?.status) ?? unknownValue
-  const desiredRevision = normalizeString(application.status?.sync?.revision) ?? unknownValue
+  const syncRevision = normalizeString(application.status?.sync?.revision)
+  const desiredRevision = syncRevision ?? unknownValue
   const syncResultRevision =
     normalizeString(application.status?.operationState?.phase) === 'Succeeded'
       ? normalizeString(application.status?.operationState?.syncResult?.revision)
       : undefined
   const historyRevision = resolveLatestHistoryRevision(application.status?.history)
-  const deployedRevision = syncResultRevision ?? historyRevision ?? desiredRevision
+  const deployedRevision = syncResultRevision ?? syncRevision ?? historyRevision ?? unknownValue
 
   return {
     syncStatus,

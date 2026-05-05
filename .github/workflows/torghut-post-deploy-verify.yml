@@ -116,7 +116,7 @@ jobs:
               REVISION="${DESIRED_REVISION}"
               if [ "${OPERATION_PHASE}" = 'Succeeded' ] && [ -n "${SYNC_RESULT_REVISION}" ]; then
                 REVISION="${SYNC_RESULT_REVISION}"
-              elif [ -n "${HISTORY_REVISION}" ]; then
+              elif [ -z "${REVISION}" ] && [ -n "${HISTORY_REVISION}" ]; then
                 REVISION="${HISTORY_REVISION}"
               fi
 
@@ -139,7 +139,7 @@ jobs:
                 echo "Argo application ${app} did not become Synced/Healthy with expected revision"
                 exit 1
               fi
-              echo "Attempt ${attempt}: ${app} sync=${SYNC_STATUS} health=${HEALTH_STATUS} revision=${REVISION} desired=${DESIRED_REVISION}"
+              echo "Attempt ${attempt}: ${app} sync=${SYNC_STATUS} health=${HEALTH_STATUS} revision=${REVISION} desired=${DESIRED_REVISION} operation=${OPERATION_PHASE} syncResult=${SYNC_RESULT_REVISION} history=${HISTORY_REVISION}"
               sleep 10
             done
           done
