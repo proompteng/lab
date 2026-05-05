@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   buildRunSpecContext,
@@ -6,6 +6,7 @@ import {
   makeName,
   normalizeLabelValue,
   resolveRunnerServiceAccount,
+  submitJobRun,
 } from '~/server/agents-controller/job-runtime'
 
 describe('agents controller job-runtime module', () => {
@@ -68,5 +69,88 @@ describe('agents controller job-runtime module', () => {
 
     expect(context.parameters).toEqual({ stage: 'plan', task: 'validation' })
     expect(context.inputs).toEqual({ stage: 'plan', task: 'validation' })
+  })
+
+  it('returns an existing deterministic job for the same AgentRun', async () => {
+    const existingJob = {
+      metadata: {
+        name: 'run-1-step-1-attempt-1',
+        namespace: 'agents',
+        uid: 'job-uid-1',
+        labels: { 'agents.proompteng.ai/agent-run': 'run-1' },
+      },
+    }
+    const kube = {
+      get: vi.fn(async (resource: string) => (resource === 'job' ? existingJob : null)),
+      apply: vi.fn(),
+    }
+
+    const runtimeRef = await submitJobRun(
+      kube as never,
+      { metadata: { name: 'run-1', uid: 'run-uid-1', namespace: 'agents' }, spec: {} },
+      { metadata: { name: 'agent-a' }, spec: {} },
+      { metadata: { name: 'provider-a' }, spec: {} },
+      { metadata: { name: 'impl-a' }, source: { provider: 'github' }, summary: 'Run summary' },
+      null,
+      'agents',
+      'registry.example/jangar:tag',
+      'workflow',
+      { nameSuffix: 'step-1-attempt-1' },
+    )
+
+    expect(runtimeRef).toEqual({
+      type: 'workflow',
+      name: 'run-1-step-1-attempt-1',
+      namespace: 'agents',
+      uid: 'job-uid-1',
+    })
+    expect(kube.apply).not.toHaveBeenCalled()
+  })
+
+  it('adopts an existing deterministic job after a stale apply replay hits immutable fields', async () => {
+    const existingJob = {
+      metadata: {
+        name: 'run-1-step-1-attempt-1',
+        namespace: 'agents',
+        uid: 'job-uid-1',
+        labels: { 'agents.proompteng.ai/agent-run': 'run-1' },
+      },
+    }
+    let jobLookupCount = 0
+    const kube = {
+      get: vi.fn(async (resource: string) => {
+        if (resource !== 'job') return null
+        jobLookupCount += 1
+        return jobLookupCount === 1 ? null : existingJob
+      }),
+      apply: vi.fn(async (resource: Record<string, unknown>) => {
+        if (resource.kind === 'Job') {
+          throw new Error('Job.batch "run-1-step-1-attempt-1" is invalid: spec.template: field is immutable')
+        }
+        return resource
+      }),
+    }
+
+    const runtimeRef = await submitJobRun(
+      kube as never,
+      { metadata: { name: 'run-1', uid: 'run-uid-1', namespace: 'agents' }, spec: {} },
+      { metadata: { name: 'agent-a' }, spec: {} },
+      { metadata: { name: 'provider-a' }, spec: {} },
+      { metadata: { name: 'impl-a' }, source: { provider: 'github' }, summary: 'Run summary' },
+      null,
+      'agents',
+      'registry.example/jangar:tag',
+      'workflow',
+      { nameSuffix: 'step-1-attempt-1' },
+    )
+
+    expect(runtimeRef).toEqual({
+      type: 'workflow',
+      name: 'run-1-step-1-attempt-1',
+      namespace: 'agents',
+      uid: 'job-uid-1',
+    })
+    expect(kube.apply).toHaveBeenCalledWith(expect.objectContaining({ kind: 'ConfigMap' }))
+    expect(kube.apply).toHaveBeenCalledWith(expect.objectContaining({ kind: 'Job' }))
   })
 })
