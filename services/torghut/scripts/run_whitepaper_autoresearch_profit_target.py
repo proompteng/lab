@@ -247,6 +247,21 @@ def _resolved_clickhouse_password(args: argparse.Namespace) -> str:
     return os.environ.get(password_env, "")
 
 
+def _candidate_universe_symbols_from_args(args: argparse.Namespace) -> tuple[str, ...]:
+    symbols_raw = str(getattr(args, "symbols", "") or "")
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for item in symbols_raw.split(","):
+        symbol = item.strip().upper()
+        if not symbol or symbol in seen:
+            continue
+        symbols.append(symbol)
+        seen.add(symbol)
+    if len(symbols) > 12:
+        raise ValueError(f"candidate_universe_too_large:{len(symbols)}")
+    return tuple(symbols)
+
+
 def _mapping(value: Any) -> dict[str, Any]:
     return (
         {str(key): item for key, item in value.items()}
@@ -1321,10 +1336,25 @@ def _synthetic_net_for_spec(spec: CandidateSpec, *, rank: int) -> Decimal:
     return family_bonus + Decimal(max(0, 12 - rank) * 5)
 
 
+def _synthetic_symbol_contribution_shares(spec: CandidateSpec) -> dict[str, str]:
+    symbols = [
+        str(symbol).strip().upper()
+        for symbol in cast(
+            Sequence[Any], spec.strategy_overrides.get("universe_symbols") or []
+        )
+        if str(symbol).strip()
+    ][:4]
+    if not symbols:
+        symbols = ["AAPL", "NVDA", "MSFT", "AMAT"]
+    share = Decimal("1") / Decimal(len(symbols))
+    return {symbol: str(share) for symbol in symbols}
+
+
 def _synthetic_candidate_payload(spec: CandidateSpec, *, rank: int) -> dict[str, Any]:
     net = _synthetic_net_for_spec(spec, rank=rank)
     active = Decimal("0.92") if rank <= 3 else Decimal("0.82")
     positive = Decimal("0.64") if rank <= 3 else Decimal("0.58")
+    symbol_contribution_shares = _synthetic_symbol_contribution_shares(spec)
     daily_net_profile = {
         1: (
             Decimal("0.80"),
@@ -1388,12 +1418,7 @@ def _synthetic_candidate_payload(spec: CandidateSpec, *, rank: int) -> dict[str,
             "regime_slice_pass_rate": "0.55",
             "posterior_edge_lower": "0.01",
             "shadow_parity_status": "within_budget",
-            "symbol_contribution_shares": {
-                "AAPL": "0.25",
-                "NVDA": "0.25",
-                "MSFT": "0.25",
-                "AMAT": "0.25",
-            },
+            "symbol_contribution_shares": symbol_contribution_shares,
             "daily_filled_notional": daily_filled_notional,
         },
         "full_window": {
@@ -1749,6 +1774,17 @@ def run_whitepaper_autoresearch_profit_target(
     output_dir.mkdir(parents=True, exist_ok=True)
     program = _load_epoch_program(args)
     objective = program.objective
+    try:
+        candidate_universe_symbols = _candidate_universe_symbols_from_args(args)
+    except ValueError as exc:
+        return _write_failure_summary(
+            output_dir=output_dir,
+            epoch_id=epoch_id,
+            status="invalid_universe",
+            reason=str(exc),
+            started_at=started_at,
+            extra={"symbols": str(getattr(args, "symbols", "") or "")},
+        )
     args = argparse.Namespace(
         **{
             **vars(args),
@@ -1809,6 +1845,7 @@ def run_whitepaper_autoresearch_profit_target(
         target_net_pnl_per_day=target,
         family_template_dir=args.family_template_dir.resolve(),
         seed_sweep_dir=args.seed_sweep_dir.resolve(),
+        universe_symbols=candidate_universe_symbols,
     )
     candidate_specs = list(compilation.executable_specs)
     candidate_specs = _candidate_specs_with_oracle_policy(

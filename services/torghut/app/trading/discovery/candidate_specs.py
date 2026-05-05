@@ -658,6 +658,18 @@ def _mapping(value: Any) -> dict[str, Any]:
     return {str(key): item for key, item in cast(Mapping[Any, Any], value).items()}
 
 
+def _universe_symbol_override(symbols: Sequence[str]) -> tuple[str, ...]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for symbol in symbols:
+        normalized = str(symbol).strip().upper()
+        if not normalized or normalized in seen:
+            continue
+        cleaned.append(normalized)
+        seen.add(normalized)
+    return tuple(cleaned)
+
+
 def _list_of_mappings(value: Any) -> tuple[dict[str, Any], ...]:
     if not isinstance(value, Sequence) or isinstance(value, str):
         return ()
@@ -958,8 +970,10 @@ def compile_candidate_specs(
     *,
     hypothesis_cards: Sequence[HypothesisCard],
     target_net_pnl_per_day: Decimal = Decimal("500"),
+    universe_symbols: Sequence[str] = (),
 ) -> list[CandidateSpec]:
     specs: list[CandidateSpec] = []
+    explicit_universe_symbols = _universe_symbol_override(universe_symbols)
     for card in hypothesis_cards:
         for family_rank, (
             family_template_id,
@@ -980,6 +994,11 @@ def compile_candidate_specs(
                 family_template_id=family_template_id,
                 profile_index=execution_profile_index,
             )
+            if explicit_universe_symbols:
+                strategy_overrides = {
+                    **strategy_overrides,
+                    "universe_symbols": list(explicit_universe_symbols),
+                }
             feature_contract: dict[str, Any] = {
                 "source_run_id": card.source_run_id,
                 "source_claim_ids": list(card.source_claim_ids),
