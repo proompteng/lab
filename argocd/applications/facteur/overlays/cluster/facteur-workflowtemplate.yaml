@@ -6,10 +6,10 @@ metadata:
 spec:
   serviceAccountName: facteur-workflow
   synchronization:
-    semaphore:
-      configMapKeyRef:
-        name: argo-workflows-implementation-semaphore
-        key: max-concurrency
+    semaphores:
+      - configMapKeyRef:
+          name: argo-workflows-implementation-semaphore
+          key: max-concurrency
   entrypoint: implementation
   arguments:
     parameters:

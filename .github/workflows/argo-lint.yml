@@ -24,7 +24,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          ARGO_VERSION="v3.5.9"
+          ARGO_VERSION="v4.0.5"
           ARGO_URL="https://github.com/argoproj/argo-workflows/releases/download/${ARGO_VERSION}/argo-linux-amd64.gz"
 
           curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o argo-linux-amd64.gz "${ARGO_URL}"
