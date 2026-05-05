@@ -4,53 +4,48 @@
 
 ### Bug Fixes
 
-* **temporal-bun-sdk:** gate default choice on semantic readiness evidence
+- **temporal-bun-sdk:** gate default choice on semantic readiness evidence
 
 ## [0.9.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.8.0...temporal-bun-sdk-v0.9.0) (2026-05-05)
 
-
 ### Features
 
-* **temporal-bun-sdk:** add production readiness gates ([9eac9df](https://github.com/proompteng/lab/commit/9eac9df1ad09bc600ab600b30a39c71da654ba18))
+- **temporal-bun-sdk:** add production readiness gates ([9eac9df](https://github.com/proompteng/lab/commit/9eac9df1ad09bc600ab600b30a39c71da654ba18))
 
 ## [0.8.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.7.1...temporal-bun-sdk-v0.8.0) (2026-03-20)
 
-
 ### Features
 
-* **temporal-bun-sdk:** simplify quickstart defaults ([#4654](https://github.com/proompteng/lab/issues/4654)) ([4c7ff3c](https://github.com/proompteng/lab/commit/4c7ff3cf0297ed388f0fe8f4f4675380fa50f272))
-
+- **temporal-bun-sdk:** simplify quickstart defaults ([#4654](https://github.com/proompteng/lab/issues/4654)) ([4c7ff3c](https://github.com/proompteng/lab/commit/4c7ff3cf0297ed388f0fe8f4f4675380fa50f272))
 
 ### Bug Fixes
 
-* **ci:** use Temporal FQDN for SDK ARC workflow ([#4376](https://github.com/proompteng/lab/issues/4376)) ([57dc3bf](https://github.com/proompteng/lab/commit/57dc3bf347c01f2b78c2f36dad86cd646c0d7df3))
-* **temporal-bun-sdk:** fix onboarding and scaffold ([#4646](https://github.com/proompteng/lab/issues/4646)) ([307b5e9](https://github.com/proompteng/lab/commit/307b5e991ded723ab51fbf699bf30a69534e3745))
-* **temporal-bun-sdk:** format scaffold template ([#4648](https://github.com/proompteng/lab/issues/4648)) ([a615d2e](https://github.com/proompteng/lab/commit/a615d2ef0b1cad4dfb4ab017fc2a4fdea5ea7ba2))
-* **temporal-bun-sdk:** harden ARC publish gate ([#4392](https://github.com/proompteng/lab/issues/4392)) ([dd06fac](https://github.com/proompteng/lab/commit/dd06facbd8a8f61a650d188aebe61b4cd5772251))
-* **temporal-bun-sdk:** isolate sticky integration task queues ([#4380](https://github.com/proompteng/lab/issues/4380)) ([6524f1c](https://github.com/proompteng/lab/commit/6524f1cc07fa7054f1a0cf51542ceb3900810eb5))
-* **temporal-bun-sdk:** repair scaffold and improve adoption docs ([#4612](https://github.com/proompteng/lab/issues/4612)) ([3926b09](https://github.com/proompteng/lab/commit/3926b095a6f8180e29fc2dc8d0df86eb144721c0))
-* **temporal-bun-sdk:** use arc tailscale short host ([#4386](https://github.com/proompteng/lab/issues/4386)) ([7082cff](https://github.com/proompteng/lab/commit/7082cffd96a109aff3dbbc24f6807d941323d881))
+- **ci:** use Temporal FQDN for SDK ARC workflow ([#4376](https://github.com/proompteng/lab/issues/4376)) ([57dc3bf](https://github.com/proompteng/lab/commit/57dc3bf347c01f2b78c2f36dad86cd646c0d7df3))
+- **temporal-bun-sdk:** fix onboarding and scaffold ([#4646](https://github.com/proompteng/lab/issues/4646)) ([307b5e9](https://github.com/proompteng/lab/commit/307b5e991ded723ab51fbf699bf30a69534e3745))
+- **temporal-bun-sdk:** format scaffold template ([#4648](https://github.com/proompteng/lab/issues/4648)) ([a615d2e](https://github.com/proompteng/lab/commit/a615d2ef0b1cad4dfb4ab017fc2a4fdea5ea7ba2))
+- **temporal-bun-sdk:** harden ARC publish gate ([#4392](https://github.com/proompteng/lab/issues/4392)) ([dd06fac](https://github.com/proompteng/lab/commit/dd06facbd8a8f61a650d188aebe61b4cd5772251))
+- **temporal-bun-sdk:** isolate sticky integration task queues ([#4380](https://github.com/proompteng/lab/issues/4380)) ([6524f1c](https://github.com/proompteng/lab/commit/6524f1cc07fa7054f1a0cf51542ceb3900810eb5))
+- **temporal-bun-sdk:** repair scaffold and improve adoption docs ([#4612](https://github.com/proompteng/lab/issues/4612)) ([3926b09](https://github.com/proompteng/lab/commit/3926b095a6f8180e29fc2dc8d0df86eb144721c0))
+- **temporal-bun-sdk:** use arc tailscale short host ([#4386](https://github.com/proompteng/lab/issues/4386)) ([7082cff](https://github.com/proompteng/lab/commit/7082cffd96a109aff3dbbc24f6807d941323d881))
 
 ## [0.7.1](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.7.0...temporal-bun-sdk-v0.7.1) (2026-03-19)
 
 ### Bug Fixes
 
-* **temporal-bun-sdk:** harden ARC publish gate ([#4392](https://github.com/proompteng/lab/issues/4392)) ([dd06fac](https://github.com/proompteng/lab/commit/dd06facbd4f7c50caef34f6530db27971f84c6d6))
-* **temporal-bun-sdk:** repair scaffold and improve adoption docs ([#4612](https://github.com/proompteng/lab/issues/4612)) ([3926b09](https://github.com/proompteng/lab/commit/3926b095a7f064ac7ab8397fb63bf39a180c084d))
-* **temporal-bun-sdk:** use arc tailscale short host ([#4386](https://github.com/proompteng/lab/issues/4386)) ([7082cff](https://github.com/proompteng/lab/commit/7082cffd9dd8932339ef2b8dc1c9d7076dcb5927))
+- **temporal-bun-sdk:** harden ARC publish gate ([#4392](https://github.com/proompteng/lab/issues/4392)) ([dd06fac](https://github.com/proompteng/lab/commit/dd06facbd4f7c50caef34f6530db27971f84c6d6))
+- **temporal-bun-sdk:** repair scaffold and improve adoption docs ([#4612](https://github.com/proompteng/lab/issues/4612)) ([3926b09](https://github.com/proompteng/lab/commit/3926b095a7f064ac7ab8397fb63bf39a180c084d))
+- **temporal-bun-sdk:** use arc tailscale short host ([#4386](https://github.com/proompteng/lab/issues/4386)) ([7082cff](https://github.com/proompteng/lab/commit/7082cffd9dd8932339ef2b8dc1c9d7076dcb5927))
 
 ## [0.7.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.6.1...temporal-bun-sdk-v0.7.0) (2026-03-13)
 
-
 ### Features
 
-* **agents:** harden huly swarm mission artifact workflow ([#3855](https://github.com/proompteng/lab/issues/3855)) ([12c7b00](https://github.com/proompteng/lab/commit/12c7b00a5ca8c2948fd8badcffb4a7533c4d4caa))
-
+- **agents:** harden huly swarm mission artifact workflow ([#3855](https://github.com/proompteng/lab/issues/3855)) ([12c7b00](https://github.com/proompteng/lab/commit/12c7b00a5ca8c2948fd8badcffb4a7533c4d4caa))
 
 ### Bug Fixes
 
-* **ci:** use Temporal FQDN for SDK ARC workflow ([#4376](https://github.com/proompteng/lab/issues/4376)) ([57dc3bf](https://github.com/proompteng/lab/commit/57dc3bf347c01f2b78c2f36dad86cd646c0d7df3))
-* **temporal-bun-sdk:** isolate sticky integration task queues ([#4380](https://github.com/proompteng/lab/issues/4380)) ([6524f1c](https://github.com/proompteng/lab/commit/6524f1cc07fa7054f1a0cf51542ceb3900810eb5))
+- **ci:** use Temporal FQDN for SDK ARC workflow ([#4376](https://github.com/proompteng/lab/issues/4376)) ([57dc3bf](https://github.com/proompteng/lab/commit/57dc3bf347c01f2b78c2f36dad86cd646c0d7df3))
+- **temporal-bun-sdk:** isolate sticky integration task queues ([#4380](https://github.com/proompteng/lab/issues/4380)) ([6524f1c](https://github.com/proompteng/lab/commit/6524f1cc07fa7054f1a0cf51542ceb3900810eb5))
 
 ## [0.6.1](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.6.0...temporal-bun-sdk-v0.6.1) (2026-02-10)
 

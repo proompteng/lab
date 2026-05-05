@@ -9,8 +9,8 @@
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
   "dependencies": {
-    "@grpc/grpc-js": "^1.12.6",
-    "@kubernetes/client-node": "^1.0.0",
-    "@temporalio/client": "^1.13.0"
+    "@grpc/grpc-js": "^1.14.3",
+    "@kubernetes/client-node": "^1.4.0",
+    "@temporalio/client": "^1.17.0"
   }
 }

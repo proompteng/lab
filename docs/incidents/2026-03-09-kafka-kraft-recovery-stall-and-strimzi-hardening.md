@@ -20,18 +20,18 @@ From the GitOps surface, Kafka looked partially healthy: Argo CD showed no drift
 
 ## Timeline (UTC)
 
-| Time | Event |
-| --- | --- |
-| 2026-03-09 07:30 | KafkaUsers observed `NotReady` with `ScramShaCredentialsCache is not ready!`; Argo CD app `kafka` reported `Degraded`. |
-| 2026-03-09 07:30-07:58 | Live broker/controller logs showed repeated KRaft instability: no active controller, broker registration timeouts, duplicate broker registration, and multi-second `writeNoOpRecord` controller stalls. |
-| 2026-03-09 07:58 | Initial emergency mitigation widened KRaft timeout headroom in the live Kafka CR and generated broker ConfigMaps, then brokers were restarted to break duplicate-registration deadlock. |
-| 2026-03-09 07:59-08:00 | All three brokers successfully registered again, but remained fenced and unreadable (`brokerState is 1`). |
-| 2026-03-09 08:00-08:10 | Brokers continued replaying hundreds of partitions (`412`, `413`, `424` logs respectively). Recovery progressed, but heartbeats still timed out during recovery windows and brokers never unfenced. |
-| 2026-03-09 08:10 | Controller performance evidence became explicit: `writeNoOpRecord` and `processBrokerHeartbeat` events reached ~20s; the last 60s average controller event time reached ~36s; the slowest controller event exceeded ~87s. |
-| 2026-03-09 08:13 | Strimzi operator logs confirmed at least one manually added config key, `controller.quorum.request.timeout.ms`, was forbidden and ignored. |
-| 2026-03-09 08:15 | Brokers on a fresh boot successfully caught up metadata high-water mark again before data log replay started, proving that `MetadataLoader ... don't know the high water mark yet` was a transient bootstrap stage rather than the lasting root cause. |
-| 2026-03-09 08:18 | Even after widening heartbeat timeout headroom to `120000ms` in the live broker config, broker heartbeats still timed out once recovery stalls exceeded two minutes on the active controller path. |
-| 2026-03-09 08:20-08:30 | Durable GitOps remediation was rewritten onto supported Strimzi fields: Kafka probe headroom, KafkaNodePool resource requests, and only allowed controller quorum timeout settings were kept in the repo manifest. |
+| Time                   | Event                                                                                                                                                                                                                                                  |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-03-09 07:30       | KafkaUsers observed `NotReady` with `ScramShaCredentialsCache is not ready!`; Argo CD app `kafka` reported `Degraded`.                                                                                                                                 |
+| 2026-03-09 07:30-07:58 | Live broker/controller logs showed repeated KRaft instability: no active controller, broker registration timeouts, duplicate broker registration, and multi-second `writeNoOpRecord` controller stalls.                                                |
+| 2026-03-09 07:58       | Initial emergency mitigation widened KRaft timeout headroom in the live Kafka CR and generated broker ConfigMaps, then brokers were restarted to break duplicate-registration deadlock.                                                                |
+| 2026-03-09 07:59-08:00 | All three brokers successfully registered again, but remained fenced and unreadable (`brokerState is 1`).                                                                                                                                              |
+| 2026-03-09 08:00-08:10 | Brokers continued replaying hundreds of partitions (`412`, `413`, `424` logs respectively). Recovery progressed, but heartbeats still timed out during recovery windows and brokers never unfenced.                                                    |
+| 2026-03-09 08:10       | Controller performance evidence became explicit: `writeNoOpRecord` and `processBrokerHeartbeat` events reached ~20s; the last 60s average controller event time reached ~36s; the slowest controller event exceeded ~87s.                              |
+| 2026-03-09 08:13       | Strimzi operator logs confirmed at least one manually added config key, `controller.quorum.request.timeout.ms`, was forbidden and ignored.                                                                                                             |
+| 2026-03-09 08:15       | Brokers on a fresh boot successfully caught up metadata high-water mark again before data log replay started, proving that `MetadataLoader ... don't know the high water mark yet` was a transient bootstrap stage rather than the lasting root cause. |
+| 2026-03-09 08:18       | Even after widening heartbeat timeout headroom to `120000ms` in the live broker config, broker heartbeats still timed out once recovery stalls exceeded two minutes on the active controller path.                                                     |
+| 2026-03-09 08:20-08:30 | Durable GitOps remediation was rewritten onto supported Strimzi fields: Kafka probe headroom, KafkaNodePool resource requests, and only allowed controller quorum timeout settings were kept in the repo manifest.                                     |
 
 ## Root Cause
 

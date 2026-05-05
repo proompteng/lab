@@ -62,7 +62,7 @@ spec:
           maxIterations: 8
           condition:
             type: cel
-            expression: "iteration.last.control.continue == true"
+            expression: 'iteration.last.control.continue == true'
             source:
               type: file
               path: /workspace/.agentrun/loop-control.json
@@ -79,17 +79,17 @@ spec:
 WorkflowStep:
   loop:
     maxIterations: int32 # required when loop is set; >= 1
-    condition:           # optional; if omitted => fixed-count
-      type: cel          # v1: cel only
+    condition: # optional; if omitted => fixed-count
+      type: cel # v1: cel only
       expression: string
       source:
-        type: file       # v1: file only
-        path: string     # absolute path in job filesystem
-        onMissing: stop|fail   # default: stop
-        onInvalid: stop|fail   # default: fail
+        type: file # v1: file only
+        path: string # absolute path in job filesystem
+        onMissing: stop|fail # default: stop
+        onInvalid: stop|fail # default: fail
     state:
-      required: bool     # default: false
-      volumeNames: []    # names from effective workload.volumes
+      required: bool # default: false
+      volumeNames: [] # names from effective workload.volumes
 ```
 
 ## Condition Input Contract
@@ -204,20 +204,20 @@ status:
           currentIteration: 2
           completedIterations: 1
           maxIterations: 8
-          stopReason: ""
+          stopReason: ''
           retainedIterations: 2
           prunedIterations: 0
           iterations:
             - index: 1
               phase: Succeeded
-              startedAt: "2026-02-28T05:00:00Z"
-              finishedAt: "2026-02-28T05:04:00Z"
+              startedAt: '2026-02-28T05:00:00Z'
+              finishedAt: '2026-02-28T05:04:00Z'
               attempts: 1
               jobRef:
                 name: run-step-1-iter-1-attempt-1
             - index: 2
               phase: Running
-              startedAt: "2026-02-28T05:04:10Z"
+              startedAt: '2026-02-28T05:04:10Z'
               attempts: 1
               jobRef:
                 name: run-step-1-iter-2-attempt-1

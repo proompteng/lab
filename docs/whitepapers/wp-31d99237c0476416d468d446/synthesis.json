@@ -7,10 +7,7 @@
   },
   "full_paper_reviewed": true,
   "review_scope": {
-    "sources": [
-      "ijcai26.tex",
-      "appendix.tex"
-    ],
+    "sources": ["ijcai26.tex", "appendix.tex"],
     "notes": "Reviewed from official arXiv source bundle to guarantee full-text coverage."
   },
   "executive_summary": "DiffLOB introduces a regime-conditioned diffusion model for counterfactual LOB trajectory generation. The paper demonstrates strong controllable realism and generally good counterfactual validity, with mixed robustness on trend interventions and limited external-validity evidence due short horizon and narrow universe. For Torghut, the method is research-relevant but not directly production-deployable because current runtime contracts do not include full-depth LOB trajectory tensors or diffusion training infrastructure.",
@@ -20,38 +17,25 @@
     {
       "id": "KF-1",
       "finding": "Under observed future regimes, DiffLOB is best or near-best across distributional realism metrics on AMZN/AAPL/GOOG.",
-      "evidence": [
-        "Section 5.1",
-        "Table 1",
-        "Figures 2-4"
-      ],
+      "evidence": ["Section 5.1", "Table 1", "Figures 2-4"],
       "notes": "Removing the control module degrades most realism metrics."
     },
     {
       "id": "KF-2",
       "finding": "Counterfactual validity is generally strong for volatility/liquidity/imbalance, but trend interventions are not uniformly best.",
-      "evidence": [
-        "Section 5.2",
-        "Table 2",
-        "Appendix Table 4"
-      ],
+      "evidence": ["Section 5.2", "Table 2", "Appendix Table 4"],
       "notes": "cGAN beats DiffLOB on AMZN high/low trend in reported table."
     },
     {
       "id": "KF-3",
       "finding": "Counterfactual data augmentation improves many extreme-regime downstream subsets versus real-only baselines.",
-      "evidence": [
-        "Section 5.3",
-        "Table 3"
-      ],
+      "evidence": ["Section 5.3", "Table 3"],
       "notes": "Absolute quality remains uneven; several regression slices still have weak or negative R^2."
     },
     {
       "id": "KF-4",
       "finding": "Paper setup is narrow: three stocks and a short February 2023 window.",
-      "evidence": [
-        "Section 4.1"
-      ],
+      "evidence": ["Section 4.1"],
       "notes": "Limits external validity for immediate production adoption."
     }
   ],
@@ -59,28 +43,17 @@
     {
       "claim": "Regime-conditioned counterfactual LOB generation with direct intervention controls.",
       "assessment": "moderately_novel",
-      "support": [
-        "Section 1",
-        "Section 3.1",
-        "Section 3.2"
-      ]
+      "support": ["Section 1", "Section 3.1", "Section 3.2"]
     },
     {
       "claim": "Dual-stage control module improves controllability while preserving base realism.",
       "assessment": "supported_in_scope",
-      "support": [
-        "Section 3.2",
-        "Section 5.1",
-        "Section 5.2"
-      ]
+      "support": ["Section 3.2", "Section 5.1", "Section 5.2"]
     },
     {
       "claim": "Synthetic counterfactual trajectories provide practical downstream gains.",
       "assessment": "partially_supported",
-      "support": [
-        "Section 5.3",
-        "Table 3"
-      ]
+      "support": ["Section 5.3", "Table 3"]
     }
   ],
   "risk_assessment": [

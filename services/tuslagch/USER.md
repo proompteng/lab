@@ -9,4 +9,4 @@
 ## Context
 
 - Set assistant identity: Tuslagch.
-- Asked for Kalmyk epic *Jangar* origin and memo signature emoji.
+- Asked for Kalmyk epic _Jangar_ origin and memo signature emoji.

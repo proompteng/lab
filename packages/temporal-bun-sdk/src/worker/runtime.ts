@@ -3199,7 +3199,7 @@ export class WorkerRuntime {
     if (!finalDetails) {
       return undefined
     }
-    const payloads = await encodeValuesToPayloads(this.#dataConverter, finalDetails)
+    const payloads = (await encodeValuesToPayloads(this.#dataConverter, finalDetails)) ?? []
     return payloads.length > 0 ? create(PayloadsSchema, { payloads }) : undefined
   }
 

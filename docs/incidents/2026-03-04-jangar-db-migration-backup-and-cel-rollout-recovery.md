@@ -15,17 +15,17 @@
 
 ## Timeline (UTC)
 
-| Time | Event |
-| --- | --- |
-| 2026-03-04 ~16:3x | Jangar DB migration state found inconsistent (`kysely_migration` ordering mismatch; missing migration row). |
-| 2026-03-04 ~16:3x-17:1x | Live DB repair executed (schema + migration ledger repair), pending migrations applied, memories recovered. |
-| 2026-03-04 22:50 | Fix PR `#4044` opened for durable infra/app changes. |
-| 2026-03-04 22:54 | `agents-ci / integration` fails: invalid CRD CEL rule using `has(self.parameters, 'prompt')`. |
-| 2026-03-04 23:00 | First CEL patch attempt fails again (`self.parameters.prompt` used at map-field scope). |
-| 2026-03-04 23:03-23:07 | Final CEL fix switched to map-safe key-membership rules; checks pass. |
-| 2026-03-04 23:07:49 | PR `#4044` merged to `main` (merge commit `95735e00630c4125ac2982d9313f5214504fd305`). |
-| 2026-03-04 23:09-23:18 | Argo CD refresh/reconcile; `jangar` app reaches `Synced Healthy` on merge revision. |
-| 2026-03-04 23:10:25-23:19:32 | Manual CNPG backup executed and completed (`jangar-db-manual-20260304231024`). |
+| Time                         | Event                                                                                                       |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| 2026-03-04 ~16:3x            | Jangar DB migration state found inconsistent (`kysely_migration` ordering mismatch; missing migration row). |
+| 2026-03-04 ~16:3x-17:1x      | Live DB repair executed (schema + migration ledger repair), pending migrations applied, memories recovered. |
+| 2026-03-04 22:50             | Fix PR `#4044` opened for durable infra/app changes.                                                        |
+| 2026-03-04 22:54             | `agents-ci / integration` fails: invalid CRD CEL rule using `has(self.parameters, 'prompt')`.               |
+| 2026-03-04 23:00             | First CEL patch attempt fails again (`self.parameters.prompt` used at map-field scope).                     |
+| 2026-03-04 23:03-23:07       | Final CEL fix switched to map-safe key-membership rules; checks pass.                                       |
+| 2026-03-04 23:07:49          | PR `#4044` merged to `main` (merge commit `95735e00630c4125ac2982d9313f5214504fd305`).                      |
+| 2026-03-04 23:09-23:18       | Argo CD refresh/reconcile; `jangar` app reaches `Synced Healthy` on merge revision.                         |
+| 2026-03-04 23:10:25-23:19:32 | Manual CNPG backup executed and completed (`jangar-db-manual-20260304231024`).                              |
 
 ## Root Cause
 

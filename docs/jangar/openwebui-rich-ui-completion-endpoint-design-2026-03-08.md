@@ -427,7 +427,14 @@ Normalized deltas:
 
 ```json
 [
-  { "type": "tool", "toolKind": "command", "id": "cmd-1", "title": "Run tests", "status": "in_progress", "detail": "bun test packages/codex" },
+  {
+    "type": "tool",
+    "toolKind": "command",
+    "id": "cmd-1",
+    "title": "Run tests",
+    "status": "in_progress",
+    "detail": "bun test packages/codex"
+  },
   { "type": "tool", "toolKind": "command", "id": "cmd-1", "delta": "1200 lines of stdout/stderr..." },
   { "type": "tool", "toolKind": "command", "id": "cmd-1", "status": "completed", "exitCode": 1 }
 ]
@@ -437,11 +444,13 @@ Rendered assistant transcript:
 
 ````md
 ### Run tests
+
 Status: completed with exit code 1
 
 Command: `bun test packages/codex`
 
 Preview:
+
 ```text
 packages/codex/src/foo.test.ts:
   expected 2, received 1
@@ -463,26 +472,34 @@ Normalized deltas:
 
 ```json
 [
-  { "type": "tool", "toolKind": "file", "id": "file-1", "title": "Update design doc", "detail": "docs/jangar/openwebui-rich-ui-completion-endpoint-design-2026-03-08.md" },
+  {
+    "type": "tool",
+    "toolKind": "file",
+    "id": "file-1",
+    "title": "Update design doc",
+    "detail": "docs/jangar/openwebui-rich-ui-completion-endpoint-design-2026-03-08.md"
+  },
   { "type": "tool", "toolKind": "file", "id": "file-1", "status": "completed", "diffStat": "+42 -8" }
 ]
 ```
 
 Rendered assistant transcript:
 
-````md
+```md
 ### Update design doc
+
 Status: completed
 Path: `docs/jangar/openwebui-rich-ui-completion-endpoint-design-2026-03-08.md`
 Change size: `+42 -8`
 
 Summary:
+
 - clarified supported vanilla OpenWebUI surfaces
 - aligned detail-link retention with transcript expectations
 - added concrete end-to-end examples
 
 [Open full diff](https://jangar.example/api/openwebui/rich-ui/render/RENDER_ID?e=UNIX_SECONDS&sig=SIGNATURE)
-````
+```
 
 Contract notes:
 
@@ -510,6 +527,7 @@ Rendered assistant transcript:
 
 ```md
 ### memories.retrieve_memory
+
 Status: failed
 Summary: Could not reach the memories service. The turn continued without stored context.
 ```

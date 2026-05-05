@@ -19,9 +19,11 @@ This audit covers `services/jangar` application code, its local tests, and the d
 `services/jangar/src/server/runtime-startup.ts` starts agent comms, the control-plane cache, Torghut quant runtime, and the gRPC server through one global singleton. `ensureRuntimeStartup()` mutates `globalThis` state and installs signal handlers from inside the app runtime bootstrap.
 
 Evidence:
+
 - `services/jangar/src/server/runtime-startup.ts:11-50`
 
 Why this matters:
+
 - Web serving, controller loops, background subscribers, and gRPC lifecycle are coupled.
 - Startup order, teardown, and partial failure handling are implicit.
 - It is hard to run a narrower profile for local development, tests, or production isolation.
@@ -31,6 +33,7 @@ Why this matters:
 The application’s primary Kubernetes gateway is a thin wrapper around `spawn('kubectl', ...)`. That pattern is used in the shared `KubernetesClient`, leader election, controller config, watches, and controller loops.
 
 Evidence:
+
 - `services/jangar/src/server/primitives-kube.ts:1-207`
 - `services/jangar/src/server/leader-election.ts:1-241`
 - `services/jangar/src/server/supporting-primitives-controller.ts:1-260`
@@ -38,6 +41,7 @@ Evidence:
 - `services/jangar/src/server/primitives-reconciler.ts`
 
 Why this matters:
+
 - Runtime correctness depends on the presence, version, flags, and stdout/stderr behavior of an external CLI.
 - It adds process-spawn overhead and makes retries/error handling string-based.
 - It makes controller behavior harder to test and reason about than a typed client boundary would.
@@ -47,6 +51,7 @@ Why this matters:
 The current `config.ts` only covers model selection for chat, while environment reads are scattered across the app. The source tree currently references 348 distinct environment variables across 77 non-test source files.
 
 Evidence:
+
 - `services/jangar/src/server/config.ts:1-28`
 - Config-heavy modules include:
   - `services/jangar/src/server/agents-controller/index.ts`
@@ -56,6 +61,7 @@ Evidence:
   - `services/jangar/src/server/torghut-whitepapers.ts`
 
 Why this matters:
+
 - Startup misconfiguration becomes runtime behavior instead of startup failure.
 - Operators do not have one canonical env contract.
 - Tests and docs drift because there is no authoritative schema.
@@ -65,6 +71,7 @@ Why this matters:
 Jangar has multiple server modules that are large enough to hide distinct domains and failure modes inside one file.
 
 Evidence:
+
 - `services/jangar/src/server/supporting-primitives-controller.ts` — 3,364 LOC
 - `services/jangar/src/server/codex-judge.ts` — 2,726 LOC
 - `services/jangar/src/server/control-plane-status.ts` — 2,265 LOC
@@ -73,6 +80,7 @@ Evidence:
 - `services/jangar/src/server/chat.ts` — 1,555 LOC
 
 Why this matters:
+
 - A single change often crosses parsing, orchestration, persistence, metrics, and transport concerns.
 - Review quality degrades because files are too broad to reason about locally.
 - Testing is forced toward giant integration-style unit tests instead of smaller contract tests.
@@ -82,11 +90,13 @@ Why this matters:
 The H3 server surface is built by scanning route source files with `import.meta.glob`, checking for `source.includes('server:')`, and extracting `createFileRoute(...)` with a regex.
 
 Evidence:
+
 - `services/jangar/src/server/app.ts:37-65`
 - `services/jangar/src/server/app.ts:171-197`
 - `services/jangar/src/types.d.ts:34-104`
 
 Why this matters:
+
 - Route discovery depends on source text shape, not an explicit typed manifest.
 - Refactors that preserve semantics can silently break registration.
 - The runtime cannot prove route coverage at build time.
@@ -96,6 +106,7 @@ Why this matters:
 There are no route loaders or `useLoaderData` usages anywhere in `services/jangar/src`. Most screens fetch data manually inside `useEffect` and manage request state locally.
 
 Evidence:
+
 - No `loader:` or `useLoaderData` usage in `services/jangar/src`
 - `services/jangar/src/routes/control-plane/implementation-specs/$name.tsx`
   - 882 LOC
@@ -112,6 +123,7 @@ Evidence:
   - repeated filter, refresh, pagination, and deletion state
 
 Why this matters:
+
 - Loading, refresh, error, polling, and invalidation logic are reimplemented per screen.
 - The app is not using the strongest primitives from its own router stack.
 - Large operator screens are hard to stabilize because view state and server state are intertwined.
@@ -121,6 +133,7 @@ Why this matters:
 The `control-plane` route tree contains 42 `.tsx` files, but 36 of them are redirect stubs that simply send the user back to the implementation-specs page.
 
 Evidence:
+
 - `services/jangar/src/components/agents-control-plane-redirect.tsx`
 - Redirect-backed routes include most of:
   - `services/jangar/src/routes/control-plane/agents/**`
@@ -134,6 +147,7 @@ Evidence:
   - `services/jangar/src/routes/control-plane/workspaces/**`
 
 Why this matters:
+
 - The route tree implies a broad product surface that does not actually exist.
 - It increases generated route noise and operator confusion.
 - It obscures which control-plane objects are truly supported workflows.
@@ -143,6 +157,7 @@ Why this matters:
 The app already has reusable control-plane fetchers and primitive views, but adoption is inconsistent. Some screens use `src/data/*` wrappers and shared primitives; others fetch directly in components or routes.
 
 Evidence:
+
 - Shared helpers:
   - `services/jangar/src/data/agents-control-plane.ts`
   - `services/jangar/src/data/github.ts`
@@ -155,6 +170,7 @@ Evidence:
   - `services/jangar/src/routes/torghut/trading.tsx:269-379`
 
 Why this matters:
+
 - There is no consistent boundary between API transport, normalization, and rendering.
 - Improvements to error handling, retries, or caching have to be done screen by screen.
 
@@ -163,10 +179,12 @@ Why this matters:
 `memory-provider.ts` silently generates fake embeddings when the OpenAI embedding endpoint is not configured or returns the wrong dimension. It also creates a fresh Postgres `Pool` per operation.
 
 Evidence:
+
 - `services/jangar/src/server/memory-provider.ts:63-105`
 - `services/jangar/src/server/memory-provider.ts:154-210`
 
 Why this matters:
+
 - Production can appear healthy while indexing/query quality is wrong.
 - Fallback embeddings hide misconfiguration instead of surfacing it.
 - Per-operation pool creation increases connection churn and latency.
@@ -176,6 +194,7 @@ Why this matters:
 The migration fixed the biggest CI hot path, but the build and release surfaces are still much larger and more tightly coupled than they should be for one application.
 
 Evidence:
+
 - `services/jangar/Dockerfile` — 626 LOC
 - `.github/workflows/jangar-build-push.yaml` — 178 LOC
 - `packages/scripts/src/jangar/verify-deployment.ts` — 445 LOC
@@ -183,6 +202,7 @@ Evidence:
 - `argocd/applications/jangar/jangar-worker-deployment.yaml` — 225 LOC
 
 Why this matters:
+
 - Application build logic, developer tooling, runtime packaging, and release verification are still encoded as Jangar-specific imperative code instead of smaller reusable contracts.
 - Runtime image concerns are mixed with operator tooling and workstation bootstrap concerns.
 - Rollout safety depends on bespoke scripts that parse manifests and shell out to cluster CLIs.
@@ -192,6 +212,7 @@ Why this matters:
 The server has strong unit coverage, but the browser coverage does not focus on the most stateful production screens. The generic UI route suite covers home, memories, atlas, API health/models, Torghut symbols, and GitHub pulls, but not control-plane spec execution or Torghut trading.
 
 Evidence:
+
 - Broad server test coverage under `services/jangar/src/server/__tests__`
 - Browser snapshot coverage in `services/jangar/tests/ui/ui-routes.spec.ts`
   - routes covered include `/`, `/memories`, `/atlas/*`, `/api/models`, `/api/health`, `/torghut/symbols`, `/github/pulls`, and PR detail
@@ -201,6 +222,7 @@ Evidence:
   - `/torghut/trading`
 
 Why this matters:
+
 - The screens with the most local state and the highest operational leverage are least protected.
 - Regressions in operator workflows are more likely to escape unit tests.
 
@@ -209,12 +231,14 @@ Why this matters:
 The public Jangar docs are no longer a reliable mental model. For example, the README describes both streaming and non-stream chat completions, the older current-state doc still says “streaming only,” and the chat module contains both code paths plus tests for non-stream conversion.
 
 Evidence:
+
 - `services/jangar/README.md:194-201`
 - `docs/jangar/current-state.md`
 - `services/jangar/src/server/chat.ts`
 - `services/jangar/src/server/__tests__/chat-completions.test.ts:528-610`
 
 Why this matters:
+
 - On-call and contributors cannot trust one authoritative application contract.
 - Cleanup work risks reintroducing drift unless the docs are tied to code ownership.
 
@@ -496,24 +520,28 @@ The cleanup should be considered successful only when these are true:
 ### Risk: Cleanup churn slows feature work
 
 Mitigation:
+
 - Use bounded workstreams with thin vertical slices.
 - Prefer extracting stable interfaces first, not moving every file at once.
 
 ### Risk: Controller isolation changes rollout behavior
 
 Mitigation:
+
 - Gate new runtime profiles behind deployment flags.
 - Run shadow mode for controller reads before controller writes move.
 
 ### Risk: Frontend refactors break operator workflows
 
 Mitigation:
+
 - Add flow-specific browser tests before major screen rewrites.
 - Migrate one page family at a time.
 
 ### Risk: Typed config exposes hidden production drift
 
 Mitigation:
+
 - Add warning-only startup reporting first.
 - Switch to fail-fast only after manifests and secrets are aligned.
 

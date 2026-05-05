@@ -49,17 +49,17 @@ Docs index: [README](../README.md)
 
 ## Alternatives and tradeoffs
 
-- A) Serve stale cache only (current behavior).  
-  - Pro: no extra DB/Kubernetes roundtrips.  
+- A) Serve stale cache only (current behavior).
+  - Pro: no extra DB/Kubernetes roundtrips.
   - Con: no freshness signal; stale drift remains invisible.
-- B) Always serve cache with explicit metadata (chosen).  
-  - Pro: preserves throughput, surfaces freshness risk, easy rollback via env toggle.  
+- B) Always serve cache with explicit metadata (chosen).
+  - Pro: preserves throughput, surfaces freshness risk, easy rollback via env toggle.
   - Con: stale data still possible when `ALLOW_STALE=true`; requires consumers to use metadata.
-- C) Always require live Kubernetes read when stale.  
-  - Pro: strongest freshness guarantee.  
+- C) Always require live Kubernetes read when stale.
+  - Pro: strongest freshness guarantee.
   - Con: higher control-plane API latency during watch lag/failures.
-- D) Add a separate "cache refresh required" endpoint and two-phase reads.  
-  - Pro: clear operator control.  
+- D) Add a separate "cache refresh required" endpoint and two-phase reads.
+  - Pro: clear operator control.
   - Con: extra API surface and client complexity.
 
 ## Source and migration considerations

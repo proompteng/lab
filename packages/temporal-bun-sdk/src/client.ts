@@ -232,6 +232,18 @@ type CloudServiceMethodName = keyof CloudServiceClient
 type CloudServiceRequest<T extends CloudServiceMethodName> = Parameters<CloudServiceClient[T]>[0]
 type CloudServiceResponse<T extends CloudServiceMethodName> = Awaited<ReturnType<CloudServiceClient[T]>>
 
+const omitProtoMetadata = <T extends object>(request: T | undefined): Omit<T, '$typeName' | '$unknown'> => {
+  const {
+    $typeName: _typeName,
+    $unknown: _unknown,
+    ...payload
+  } = (request ?? {}) as T & {
+    readonly $typeName?: unknown
+    readonly $unknown?: unknown
+  }
+  return payload
+}
+
 export interface TemporalClientCallOptions {
   readonly headers?: Record<string, string | ArrayBuffer | ArrayBufferView>
   readonly signal?: AbortSignal
@@ -1704,7 +1716,12 @@ class TemporalClientImpl implements TemporalClient {
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
         const scheduleId = ensureNonEmptyString(request.scheduleId, 'scheduleId')
         const requestId = ensureRequestId(request.requestId)
-        const payload = create(CreateScheduleRequestSchema, { ...request, namespace, scheduleId, requestId })
+        const payload = create(CreateScheduleRequestSchema, {
+          ...omitProtoMetadata(request),
+          namespace,
+          scheduleId,
+          requestId,
+        })
         return await this.executeRpc(
           'createSchedule',
           (rpcOptions) => this.workflowService.createSchedule(payload, rpcOptions),
@@ -1725,7 +1742,7 @@ class TemporalClientImpl implements TemporalClient {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
         const scheduleId = ensureNonEmptyString(request.scheduleId, 'scheduleId')
-        const payload = create(DescribeScheduleRequestSchema, { ...request, namespace, scheduleId })
+        const payload = create(DescribeScheduleRequestSchema, { ...omitProtoMetadata(request), namespace, scheduleId })
         return await this.executeRpc(
           'describeSchedule',
           (rpcOptions) => this.workflowService.describeSchedule(payload, rpcOptions),
@@ -1747,7 +1764,12 @@ class TemporalClientImpl implements TemporalClient {
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
         const scheduleId = ensureNonEmptyString(request.scheduleId, 'scheduleId')
         const requestId = ensureRequestId(request.requestId)
-        const payload = create(UpdateScheduleRequestSchema, { ...request, namespace, scheduleId, requestId })
+        const payload = create(UpdateScheduleRequestSchema, {
+          ...omitProtoMetadata(request),
+          namespace,
+          scheduleId,
+          requestId,
+        })
         return await this.executeRpc(
           'updateSchedule',
           (rpcOptions) => this.workflowService.updateSchedule(payload, rpcOptions),
@@ -1769,7 +1791,12 @@ class TemporalClientImpl implements TemporalClient {
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
         const scheduleId = ensureNonEmptyString(request.scheduleId, 'scheduleId')
         const requestId = ensureRequestId(request.requestId)
-        const payload = create(PatchScheduleRequestSchema, { ...request, namespace, scheduleId, requestId })
+        const payload = create(PatchScheduleRequestSchema, {
+          ...omitProtoMetadata(request),
+          namespace,
+          scheduleId,
+          requestId,
+        })
         return await this.executeRpc(
           'patchSchedule',
           (rpcOptions) => this.workflowService.patchSchedule(payload, rpcOptions),
@@ -1789,7 +1816,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request?.namespace ?? this.namespace, 'namespace')
-        const payload = create(ListSchedulesRequestSchema, { ...request, namespace })
+        const payload = create(ListSchedulesRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'listSchedules',
           (rpcOptions) => this.workflowService.listSchedules(payload, rpcOptions),
@@ -1810,7 +1837,11 @@ class TemporalClientImpl implements TemporalClient {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
         const scheduleId = ensureNonEmptyString(request.scheduleId, 'scheduleId')
-        const payload = create(ListScheduleMatchingTimesRequestSchema, { ...request, namespace, scheduleId })
+        const payload = create(ListScheduleMatchingTimesRequestSchema, {
+          ...omitProtoMetadata(request),
+          namespace,
+          scheduleId,
+        })
         return await this.executeRpc(
           'listScheduleMatchingTimes',
           (rpcOptions) => this.workflowService.listScheduleMatchingTimes(payload, rpcOptions),
@@ -1831,7 +1862,7 @@ class TemporalClientImpl implements TemporalClient {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
         const scheduleId = ensureNonEmptyString(request.scheduleId, 'scheduleId')
-        const payload = create(DeleteScheduleRequestSchema, { ...request, namespace, scheduleId })
+        const payload = create(DeleteScheduleRequestSchema, { ...omitProtoMetadata(request), namespace, scheduleId })
         return await this.executeRpc(
           'deleteSchedule',
           (rpcOptions) => this.workflowService.deleteSchedule(payload, rpcOptions),
@@ -1969,7 +2000,10 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(UpdateWorkflowExecutionOptionsRequestSchema, { ...request, namespace })
+        const payload = create(UpdateWorkflowExecutionOptionsRequestSchema, {
+          ...omitProtoMetadata(request),
+          namespace,
+        })
         return await this.executeRpc(
           'updateWorkflowExecutionOptions',
           (rpcOptions) => this.workflowService.updateWorkflowExecutionOptions(payload, rpcOptions),
@@ -1989,7 +2023,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(PauseWorkflowExecutionRequestSchema, { ...request, namespace })
+        const payload = create(PauseWorkflowExecutionRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'pauseWorkflowExecution',
           (rpcOptions) => this.workflowService.pauseWorkflowExecution(payload, rpcOptions),
@@ -2009,7 +2043,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(UnpauseWorkflowExecutionRequestSchema, { ...request, namespace })
+        const payload = create(UnpauseWorkflowExecutionRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'unpauseWorkflowExecution',
           (rpcOptions) => this.workflowService.unpauseWorkflowExecution(payload, rpcOptions),
@@ -2029,7 +2063,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(ResetStickyTaskQueueRequestSchema, { ...request, namespace })
+        const payload = create(ResetStickyTaskQueueRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'resetStickyTaskQueue',
           (rpcOptions) => this.workflowService.resetStickyTaskQueue(payload, rpcOptions),
@@ -2049,7 +2083,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request?.namespace ?? this.namespace, 'namespace')
-        const payload = create(ListWorkersRequestSchema, { ...request, namespace })
+        const payload = create(ListWorkersRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'listWorkers',
           (rpcOptions) => this.workflowService.listWorkers(payload, rpcOptions),
@@ -2069,7 +2103,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(DescribeWorkerRequestSchema, { ...request, namespace })
+        const payload = create(DescribeWorkerRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'describeWorker',
           (rpcOptions) => this.workflowService.describeWorker(payload, rpcOptions),
@@ -2089,7 +2123,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(FetchWorkerConfigRequestSchema, { ...request, namespace })
+        const payload = create(FetchWorkerConfigRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'fetchWorkerConfig',
           (rpcOptions) => this.workflowService.fetchWorkerConfig(payload, rpcOptions),
@@ -2109,7 +2143,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(UpdateWorkerConfigRequestSchema, { ...request, namespace })
+        const payload = create(UpdateWorkerConfigRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'updateWorkerConfig',
           (rpcOptions) => this.workflowService.updateWorkerConfig(payload, rpcOptions),
@@ -2129,7 +2163,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(UpdateTaskQueueConfigRequestSchema, { ...request, namespace })
+        const payload = create(UpdateTaskQueueConfigRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'updateTaskQueueConfig',
           (rpcOptions) => this.workflowService.updateTaskQueueConfig(payload, rpcOptions),
@@ -2149,7 +2183,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(GetWorkerVersioningRulesRequestSchema, { ...request, namespace })
+        const payload = create(GetWorkerVersioningRulesRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'getWorkerVersioningRules',
           (rpcOptions) => this.workflowService.getWorkerVersioningRules(payload, rpcOptions),
@@ -2169,7 +2203,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(UpdateWorkerVersioningRulesRequestSchema, { ...request, namespace })
+        const payload = create(UpdateWorkerVersioningRulesRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'updateWorkerVersioningRules',
           (rpcOptions) => this.workflowService.updateWorkerVersioningRules(payload, rpcOptions),
@@ -2189,7 +2223,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request?.namespace ?? this.namespace, 'namespace')
-        const payload = create(ListWorkerDeploymentsRequestSchema, { ...request, namespace })
+        const payload = create(ListWorkerDeploymentsRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'listWorkerDeployments',
           (rpcOptions) => this.workflowService.listWorkerDeployments(payload, rpcOptions),
@@ -2232,7 +2266,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request?.namespace ?? this.namespace, 'namespace')
-        const payload = create(ListDeploymentsRequestSchema, { ...request, namespace })
+        const payload = create(ListDeploymentsRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'listDeployments',
           (rpcOptions) => this.workflowService.listDeployments(payload, rpcOptions),
@@ -2252,7 +2286,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(DescribeDeploymentRequestSchema, { ...request, namespace })
+        const payload = create(DescribeDeploymentRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'describeDeployment',
           (rpcOptions) => this.workflowService.describeDeployment(payload, rpcOptions),
@@ -2272,7 +2306,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(GetCurrentDeploymentRequestSchema, { ...request, namespace })
+        const payload = create(GetCurrentDeploymentRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'getCurrentDeployment',
           (rpcOptions) => this.workflowService.getCurrentDeployment(payload, rpcOptions),
@@ -2292,7 +2326,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(SetCurrentDeploymentRequestSchema, { ...request, namespace })
+        const payload = create(SetCurrentDeploymentRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'setCurrentDeployment',
           (rpcOptions) => this.workflowService.setCurrentDeployment(payload, rpcOptions),
@@ -2312,7 +2346,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(GetDeploymentReachabilityRequestSchema, { ...request, namespace })
+        const payload = create(GetDeploymentReachabilityRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'getDeploymentReachability',
           (rpcOptions) => this.workflowService.getDeploymentReachability(payload, rpcOptions),
@@ -2391,7 +2425,10 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(UpdateWorkerDeploymentVersionMetadataRequestSchema, { ...request, namespace })
+        const payload = create(UpdateWorkerDeploymentVersionMetadataRequestSchema, {
+          ...omitProtoMetadata(request),
+          namespace,
+        })
         return await this.executeRpc(
           'updateWorkerDeploymentVersionMetadata',
           (rpcOptions) => this.workflowService.updateWorkerDeploymentVersionMetadata(payload, rpcOptions),
@@ -2411,7 +2448,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(DeleteWorkerDeploymentVersionRequestSchema, { ...request, namespace })
+        const payload = create(DeleteWorkerDeploymentVersionRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'deleteWorkerDeploymentVersion',
           (rpcOptions) => this.workflowService.deleteWorkerDeploymentVersion(payload, rpcOptions),
@@ -2431,7 +2468,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(DeleteWorkerDeploymentRequestSchema, { ...request, namespace })
+        const payload = create(DeleteWorkerDeploymentRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'deleteWorkerDeployment',
           (rpcOptions) => this.workflowService.deleteWorkerDeployment(payload, rpcOptions),
@@ -2451,7 +2488,7 @@ class TemporalClientImpl implements TemporalClient {
       async () => {
         this.ensureOpen()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(SetWorkerDeploymentManagerRequestSchema, { ...request, namespace })
+        const payload = create(SetWorkerDeploymentManagerRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'setWorkerDeploymentManager',
           (rpcOptions) => this.workflowService.setWorkerDeploymentManager(payload, rpcOptions),
@@ -2472,7 +2509,7 @@ class TemporalClientImpl implements TemporalClient {
         this.ensureOpen()
         const operator = this.#requireOperatorService()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(AddSearchAttributesRequestSchema, { ...request, namespace })
+        const payload = create(AddSearchAttributesRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'addSearchAttributes',
           (rpcOptions) => operator.addSearchAttributes(payload, rpcOptions),
@@ -2493,7 +2530,7 @@ class TemporalClientImpl implements TemporalClient {
         this.ensureOpen()
         const operator = this.#requireOperatorService()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(RemoveSearchAttributesRequestSchema, { ...request, namespace })
+        const payload = create(RemoveSearchAttributesRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'removeSearchAttributes',
           (rpcOptions) => operator.removeSearchAttributes(payload, rpcOptions),
@@ -2514,7 +2551,7 @@ class TemporalClientImpl implements TemporalClient {
         this.ensureOpen()
         const operator = this.#requireOperatorService()
         const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
-        const payload = create(ListSearchAttributesRequestSchema, { ...request, namespace })
+        const payload = create(ListSearchAttributesRequestSchema, { ...omitProtoMetadata(request), namespace })
         return await this.executeRpc(
           'listSearchAttributes',
           (rpcOptions) => operator.listSearchAttributes(payload, rpcOptions),
@@ -3397,7 +3434,9 @@ const ensureWorkflowUpdateStage = (stage?: WorkflowUpdateStage): WorkflowUpdateS
   return stage
 }
 
-const resolveHandle = (defaultNamespace: string, handle: WorkflowHandle): WorkflowHandle => {
+type ResolvedWorkflowHandle = Omit<WorkflowHandle, 'namespace'> & { namespace: string }
+
+const resolveHandle = (defaultNamespace: string, handle: WorkflowHandle): ResolvedWorkflowHandle => {
   const workflowId = ensureNonEmptyString(handle.workflowId, 'workflowId')
   const namespace = ensureOptionalTrimmedString(handle.namespace, 'namespace', 1) ?? defaultNamespace
   const runId = ensureOptionalTrimmedString(handle.runId, 'runId', 1)

@@ -211,8 +211,7 @@ families whose activity profile cannot support the desired daily notional.
 
 ### 5. Regime-aware portfolio construction should use structural state, not just raw performance splits
 
-[Correlation Structures and Regime Shifts in Nordic Stock Markets](https://arxiv.org/abs/2601.06090) (December 31,
-2025) uses correlation eigenstructure as a regime indicator and allocation guard. Torghut already has HMM and regime
+[Correlation Structures and Regime Shifts in Nordic Stock Markets](https://arxiv.org/abs/2601.06090) (December 31, 2025) uses correlation eigenstructure as a regime indicator and allocation guard. Torghut already has HMM and regime
 machinery, but the next harness should score candidates by regime-conditioned contribution and regime-conditioned
 failure, not just aggregate net PnL.
 

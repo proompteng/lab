@@ -64,11 +64,7 @@ fail_under = 70
 show_missing = true
 skip_covered = false
 precision = 2
-exclude_also = [
-  "pragma: no cover",
-  "if TYPE_CHECKING:",
-  "raise NotImplementedError",
-]
+exclude_also = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]
 
 [tool.coverage.xml]
 output = "coverage.xml"

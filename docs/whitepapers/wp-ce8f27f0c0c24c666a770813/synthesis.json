@@ -28,44 +28,27 @@
     {
       "id": "KF-1",
       "finding": "A sizable human-vs-model gap remains, most pronounced on quantitative reasoning and coding.",
-      "evidence": [
-        "Section 3.2",
-        "Table 2",
-        "Appendix D.1"
-      ]
+      "evidence": ["Section 3.2", "Table 2", "Appendix D.1"]
     },
     {
       "id": "KF-2",
       "finding": "Strategy coding is the hardest task; many open-source models produce 0% executable strategies under CTA constraints.",
-      "evidence": [
-        "Section 3.2",
-        "Table 2",
-        "Appendix B.2"
-      ]
+      "evidence": ["Section 3.2", "Table 2", "Appendix B.2"]
     },
     {
       "id": "KF-3",
       "finding": "CoT prompting materially improves strategy-code executability versus direct prompting.",
-      "evidence": [
-        "Appendix E.3",
-        "Table 11"
-      ]
+      "evidence": ["Appendix E.3", "Table 11"]
     },
     {
       "id": "KF-4",
       "finding": "Domain-aligned SFT+GRPO improves QuantEval scores in reported exploratory training, but does not close the human gap.",
-      "evidence": [
-        "Section 4.1",
-        "Table 3"
-      ]
+      "evidence": ["Section 4.1", "Table 3"]
     },
     {
       "id": "KF-5",
       "finding": "High scores on existing finance QA benchmarks do not directly transfer to QuantEval difficulty.",
-      "evidence": [
-        "Section 4.2",
-        "Table 4"
-      ]
+      "evidence": ["Section 4.2", "Table 4"]
     }
   ],
   "novelty_claims": [
@@ -90,35 +73,25 @@
       "risk": "external_validity_coding_subset",
       "severity": "high",
       "detail": "Only 60 coding samples are included, limiting representativeness for strategy diversity.",
-      "evidence": [
-        "Limitations"
-      ]
+      "evidence": ["Limitations"]
     },
     {
       "risk": "config_lock_in",
       "severity": "high",
       "detail": "Results depend on fixed CTA assumptions (asset universe, cost/slippage model, constraints).",
-      "evidence": [
-        "Limitations",
-        "Appendix B.1"
-      ]
+      "evidence": ["Limitations", "Appendix B.1"]
     },
     {
       "risk": "residual_training_leakage",
       "severity": "medium_high",
       "detail": "The paper states zero overlap with proprietary model training corpora cannot be strictly guaranteed.",
-      "evidence": [
-        "Appendix C.1"
-      ]
+      "evidence": ["Appendix C.1"]
     },
     {
       "risk": "evaluation_prompt_dependence",
       "severity": "medium",
       "detail": "Automated grading relies on prompt-based extraction and semantic matching; agreement sample is limited in size.",
-      "evidence": [
-        "Appendix E.1",
-        "Appendix E.2"
-      ]
+      "evidence": ["Appendix E.1", "Appendix E.2"]
     },
     {
       "risk": "repo_integration_gap",

@@ -13,6 +13,7 @@
 ### Task 1: Update Saigak Desired State
 
 **Files:**
+
 - Create: `services/saigak/config/models/qwen3-main-30b-a3b.modelfile`
 - Create: `services/saigak/config/models/qwen3-embedding-8b.modelfile`
 - Modify: `services/saigak/scripts/install.sh`
@@ -26,6 +27,7 @@
 ### Task 2: Refactor Bumba Model Boundary
 
 **Files:**
+
 - Modify: `services/bumba/src/activities/index.ts`
 - Modify: `services/bumba/src/activities/index.test.ts`
 - Modify: `services/bumba/README.md`
@@ -38,6 +40,7 @@
 ### Task 3: Hard-Cut Bumba Deployment
 
 **Files:**
+
 - Modify: `argocd/applications/bumba/deployment.yaml`
 
 - [ ] Update deployment env to pin only the new completion and embedding aliases.
@@ -47,6 +50,7 @@
 ### Task 4: Roll Out and Verify
 
 **Files:**
+
 - Modify: `services/saigak/README.md`
 
 - [ ] Apply the `saigak` desired-state changes and provision the new models on the live VM.

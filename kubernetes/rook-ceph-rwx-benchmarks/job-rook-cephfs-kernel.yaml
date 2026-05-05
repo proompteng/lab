@@ -10,7 +10,7 @@ spec:
     spec:
       restartPolicy: Never
       nodeSelector:
-        storage.proompteng.ai/cephfs-kernel-client: "true"
+        storage.proompteng.ai/cephfs-kernel-client: 'true'
       containers:
         - name: benchmark
           image: debian:bookworm-slim

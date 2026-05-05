@@ -606,6 +606,10 @@ export const makeCodexSessionLayer = (logger: Logger) =>
 
         const enqueuePendingTurnResolution = (turnId: string, resolution: PendingTurnResolution) =>
           Effect.sync(() => {
+            const existing = pendingTurnResolutions.get(turnId)
+            if (existing?.kind === 'error' && resolution.kind === 'outcome') {
+              return
+            }
             pendingTurnResolutions.set(turnId, resolution)
           })
 

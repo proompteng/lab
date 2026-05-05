@@ -147,14 +147,14 @@ Use bounded attributes; do not add order ids as span attributes unless sampled.
 
 ## Failure modes and recovery
 
-| Failure                  | Symptoms        | Observability action                           | Recovery               |
-| ------------------------ | --------------- | ---------------------------------------------- | ---------------------- |
-| WS readiness 503         | ingestion stops | alert on `torghut_ws_readyz_status==0` + no Kafka produce | run `v1/22` runbook    |
-| Flink job FAILED         | signals stale   | alert on job state + clickhouse freshness      | run `v1/21` runbook    |
-| ClickHouse disk pressure | inserts fail    | alert on disk free bytes                       | run `v1/08` guardrails |
-| Signal batch ordering fault | feature-quality rejects with `non_monotonic_progression` | page on `torghut_trading_signal_batch_order_violation_total` | halt promotion; inspect ingest ordering and cursor state |
-| Decision/execution contract mismatch | local rejects despite valid decisions | page on `torghut_trading_execution_validation_mismatch_total` | inspect quantity resolution across decision/pipeline/execution |
-| Replay preflight incomplete | runtime verify not ready | inspect `runtime-verify.json` for schema/image/restore reason | correct preflight class before replay |
+| Failure                              | Symptoms                                                 | Observability action                                          | Recovery                                                       |
+| ------------------------------------ | -------------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------- |
+| WS readiness 503                     | ingestion stops                                          | alert on `torghut_ws_readyz_status==0` + no Kafka produce     | run `v1/22` runbook                                            |
+| Flink job FAILED                     | signals stale                                            | alert on job state + clickhouse freshness                     | run `v1/21` runbook                                            |
+| ClickHouse disk pressure             | inserts fail                                             | alert on disk free bytes                                      | run `v1/08` guardrails                                         |
+| Signal batch ordering fault          | feature-quality rejects with `non_monotonic_progression` | page on `torghut_trading_signal_batch_order_violation_total`  | halt promotion; inspect ingest ordering and cursor state       |
+| Decision/execution contract mismatch | local rejects despite valid decisions                    | page on `torghut_trading_execution_validation_mismatch_total` | inspect quantity resolution across decision/pipeline/execution |
+| Replay preflight incomplete          | runtime verify not ready                                 | inspect `runtime-verify.json` for schema/image/restore reason | correct preflight class before replay                          |
 
 ## Security considerations
 

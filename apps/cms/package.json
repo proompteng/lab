@@ -16,23 +16,23 @@
     "format:check": "bunx oxfmt --check ."
   },
   "dependencies": {
-    "@payloadcms/db-postgres": "3.73.0",
-    "@payloadcms/next": "3.73.0",
-    "@payloadcms/richtext-lexical": "3.73.0",
-    "@payloadcms/ui": "3.73.0",
-    "dotenv": "^16.6.1",
-    "graphql": "^16.8.1",
-    "next": "16.1.6",
-    "payload": "3.73.0",
-    "pg": "^8.13.1",
-    "react": "19.2.4",
-    "react-dom": "19.2.4",
-    "sharp": "0.34.2"
+    "@payloadcms/db-postgres": "3.84.1",
+    "@payloadcms/next": "3.84.1",
+    "@payloadcms/richtext-lexical": "3.84.1",
+    "@payloadcms/ui": "3.84.1",
+    "dotenv": "^17.4.2",
+    "graphql": "^16.13.2",
+    "next": "16.2.4",
+    "payload": "3.84.1",
+    "pg": "^8.20.0",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "sharp": "0.34.5"
   },
   "devDependencies": {
-    "@types/node": "25.2.3",
+    "@types/node": "25.6.0",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
-    "typescript": "5.9.3"
+    "typescript": "6.0.3"
   }
 }

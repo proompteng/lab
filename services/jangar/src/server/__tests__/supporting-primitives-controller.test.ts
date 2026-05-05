@@ -216,12 +216,15 @@ describe('supporting primitives controller', () => {
   it('builds schedule runner command with runtime delivery id substitution', async () => {
     const command = __test__.buildScheduleRunnerCommand()
 
-    expect(command).toContain("import { randomUUID } from 'node:crypto'\nimport { readFileSync } from 'node:fs'")
+    expect(command).toContain("const { randomUUID } = await import('node:crypto');")
+    expect(command).toContain("const { readFileSync } = await import('node:fs');")
+    expect(command).toContain("const { request } = await import('node:https');")
     expect(command).not.toContain("node:crypto' import")
-    expect(command.split('\n').slice(0, 3)).toEqual([
-      "import { randomUUID } from 'node:crypto'",
-      "import { readFileSync } from 'node:fs'",
-      "import { request } from 'node:https'",
+    expect(command.split('\n').slice(0, 4)).toEqual([
+      'void (async () => {',
+      "  const { randomUUID } = await import('node:crypto');",
+      "  const { readFileSync } = await import('node:fs');",
+      "  const { request } = await import('node:https');",
     ])
     expect(command).toContain("replaceAll('__JANGAR_DELIVERY_ID__', randomUUID())")
     expect(command).toContain('const targetByKind = {')
@@ -230,9 +233,9 @@ describe('supporting primitives controller', () => {
     )
     expect(command).toContain("method: 'POST'")
     expect(command).toContain(
-      'const namespace = String(manifest?.metadata?.namespace ?? (readEnv("JANGAR_POD_NAMESPACE") || \'agents\'))',
+      'const namespace = String((manifest?.metadata?.namespace ?? readEnv("JANGAR_POD_NAMESPACE")) || \'agents\')',
     )
-    expect(command).toContain("from 'node:crypto'\nimport")
+    expect(command).not.toContain("from 'node:crypto'\nimport")
     expect(command).not.toContain("from 'node:crypto' import")
     expect(command).not.toContain('?? readEnv("JANGAR_POD_NAMESPACE") ||')
     expect(command).not.toContain('kubectl create -f -')
@@ -242,6 +245,8 @@ describe('supporting primitives controller', () => {
     const stderr = syntaxCheck.stderr.toString()
     expect(stderr).not.toContain('Unexpected ||')
     expect(stderr).toContain('/config/run.json')
+    expect(() => new Function(command)).not.toThrow()
+    expect(() => new Function(command.replace(/\s+/g, ' '))).not.toThrow()
   })
 
   it('staggers hourly stage cadence deterministically per stage', () => {

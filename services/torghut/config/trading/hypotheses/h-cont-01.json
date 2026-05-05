@@ -4,24 +4,10 @@
   "lane_id": "continuation",
   "strategy_family": "intraday_continuation",
   "initial_state": "shadow",
-  "market_regimes": [
-    "R2",
-    "R3"
-  ],
-  "required_feature_sets": [
-    "signal_feed",
-    "tca"
-  ],
-  "required_dependency_capabilities": [
-    "jangar_dependency_quorum",
-    "signal_continuity"
-  ],
-  "segment_dependencies": [
-    "execution",
-    "empirical",
-    "llm-review",
-    "ta-core"
-  ],
+  "market_regimes": ["R2", "R3"],
+  "required_feature_sets": ["signal_feed", "tca"],
+  "required_dependency_capabilities": ["jangar_dependency_quorum", "signal_continuity"],
+  "segment_dependencies": ["execution", "empirical", "llm-review", "ta-core"],
   "expected_gross_edge_bps": "6",
   "max_allowed_slippage_bps": "12",
   "min_sample_count_for_live_canary": 40,

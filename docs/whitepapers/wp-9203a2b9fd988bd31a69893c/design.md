@@ -32,10 +32,10 @@ Implementation value is meaningful for research infrastructure: the paper combin
 2. Controllable factor construction (`Af`): maps hypothesis -> symbolic expression -> AST -> executable code, with retry-based repair on compile failure (Sec. 4.1.2).
 3. Consistency verification: LLM verifier checks hypothesis/description/expression/code alignment before acceptance (Sec. 4.1.2).
 4. Complexity and redundancy control:
-1. complexity score `C(f)` (Eq. 4),
-2. AST-subtree similarity `s(fi,fj)` (Eq. 5),
-3. max similarity vs alpha zoo `S(f)` (Eq. 6).
-5. Backtest evaluation (`Ae`): predictive metrics + strategy metrics + evaluation history (Sec. 4.1.3).
+5. complexity score `C(f)` (Eq. 4),
+6. AST-subtree similarity `s(fi,fj)` (Eq. 5),
+7. max similarity vs alpha zoo `S(f)` (Eq. 6).
+8. Backtest evaluation (`Ae`): predictive metrics + strategy metrics + evaluation history (Sec. 4.1.3).
 
 ## 2.3 Evolutionary Optimization (Across Trajectories)
 
@@ -50,42 +50,51 @@ Implementation value is meaningful for research infrastructure: the paper combin
 - Split: train 2016-01-01 to 2020-12-31, validation 2021, test 2022-01-01 to 2025-12-26 (Sec. 5.1, Appendix A.2/Table 5).
 - Backtesting: Qlib with TopkDropout (`topk=50`, `n_drop=5`), transaction costs and next-open execution assumptions (Appendix A.2, B, Table 7).
 - Metrics:
+
 1. factor predictive power (IC, ICIR, Rank IC, Rank ICIR),
 2. strategy-level metrics (IR, ARR, MDD, CR) (Sec. 5.1, Appendix A.1).
 
 ## 3) Key Findings
 
 1. QuantaAlpha leads all reported baselines on CSI 300 headline metrics.
+
 - Evidence: Table 1, Sec. 5.2.
 - Notable point: QuantaAlpha (GPT-5.2) IC 0.1501, ARR 27.75%, MDD 7.98%.
 
 2. The evolutionary components are material, with mutation contributing the largest delta.
+
 - Evidence: Table 2, Sec. 5.3.
 - Removing mutation drops IC by 0.0292 and ARR by 9.81% vs full QuantaAlpha.
 
 3. Generation-stage controls (consistency, complexity, redundancy) are jointly necessary.
+
 - Evidence: Figure 4, Sec. 5.3.
 - Removing complexity has strongest strategy-level hit in that ablation (ARR -8.44%, MDD +2.57%).
 
 4. Cross-market transfer claims are strong in magnitude under the paper's setup.
+
 - Evidence: Figure 1, Sec. 5.4.
 - Reported cumulative excess return is approximately 160% on CSI 500 and 137% on S&P 500.
 
 5. Evolution efficiency and convergence behavior show early gains and later diminishing returns.
+
 - Evidence: Figure 6, Figure 8, Sec. 5.4 and Case Study.
 - Case study reports best return/drawdown trade-off around iterations 11-12 (about 350 factors).
 
 ## 4) Novelty Claims Assessment
 
 1. Claim: trajectory-level self-evolution (mutation + crossover) improves controllability and trustworthiness versus unconstrained re-generation.
+
 - Assessment: `supported_in_scope`.
 - Why: method is clearly defined and ablation supports contribution (Sec. 4.2, Table 2), though evidence remains within one primary market/time split.
 
 2. Claim: symbolic intermediate representation plus gating reduces semantic drift and crowding.
+
 - Assessment: `partially_supported`.
 - Why: mechanism is well-specified (Sec. 4.1.2, Eq. 4-6) and ablations are positive, but external reproducibility detail is not complete.
 
 3. Claim: strong robustness under market distribution shifts.
+
 - Assessment: `partially_supported`.
 - Why: transfer curves and 2023 regime narrative are promising (Sec. 5.4, Table 3-4), but uncertainty and alternative explanations are not fully ruled out.
 
@@ -101,22 +110,27 @@ Implementation value is meaningful for research infrastructure: the paper combin
 ## 5.2 High-Impact Risks
 
 1. Statistical rigor risk (high).
+
 - Main tables report point estimates without confidence intervals/significance tests over multiple randomized runs.
 - Impact: true effect size uncertainty is unclear.
 
 2. Reproducibility risk (high).
+
 - Method is detailed conceptually, but full deterministic artifact bundle (exact prompts, seeds, code hash, data snapshot hash per run) is not present in paper text.
 - Impact: difficult to independently reproduce headline numbers exactly.
 
 3. Benchmark fairness risk (medium-high).
+
 - Baseline breadth is broad, but tuning parity and operational details across all methods are not fully auditable from paper alone.
 - Impact: rank ordering may partially reflect setup differences.
 
 4. Execution realism risk (medium-high).
+
 - Transaction costs are modeled, but market impact/latency/borrow constraints are not deeply stress-tested.
 - Impact: live-trading performance may materially degrade from backtest ARR.
 
 5. Over-claim risk (medium).
+
 - Sec. 5.2 implies production readiness from backtests; evidence remains pre-deployment and regime-limited.
 - Impact: premature deployment decisions if claims are interpreted literally.
 
@@ -133,46 +147,49 @@ Implementation value is meaningful for research infrastructure: the paper combin
 
 1. Trajectory-first research architecture:
 1. persist each mining run as an auditable trajectory object,
-2. maintain lineage metadata for mutation/crossover.
-2. Constrained factor realization pipeline:
+1. maintain lineage metadata for mutation/crossover.
+1. Constrained factor realization pipeline:
 1. hypothesis -> symbolic expression -> AST -> code,
-2. enforce consistency and complexity/redundancy gates.
-3. Evolutionary search loop with explicit operator semantics:
+1. enforce consistency and complexity/redundancy gates.
+1. Evolutionary search loop with explicit operator semantics:
 1. localized mutation for targeted repairs,
-2. reward-driven crossover for reuse of validated trajectory segments.
+1. reward-driven crossover for reuse of validated trajectory segments.
 
 ## 6.2 Required Guardrails Before Any Production Consideration
 
 1. Deterministic reproducibility bundle for every experiment run:
 1. prompt/version manifests,
-2. code commit hash,
-3. data snapshot hashes,
-4. RNG seeds.
-2. Robustness protocol:
+1. code commit hash,
+1. data snapshot hashes,
+1. RNG seeds.
+1. Robustness protocol:
 1. repeated-seed confidence intervals,
-2. significance testing,
-3. rolling walk-forward windows.
-3. Execution realism:
+1. significance testing,
+1. rolling walk-forward windows.
+1. Execution realism:
 1. slippage and market-impact modeling,
-2. liquidity/turnover stress,
-3. scenario tests for abrupt regime shifts.
-4. Governance:
+1. liquidity/turnover stress,
+1. scenario tests for abrupt regime shifts.
+1. Governance:
 1. strict separation between research signals and live order execution,
-2. kill-switch and drift monitoring before any live use.
+1. kill-switch and drift monitoring before any live use.
 
 ## 6.3 Concrete Incremental Plan
 
 Phase 1 (1-2 weeks): deterministic replication
+
 1. Reproduce Table 1 and Table 2 with fixed seeds and immutable configs.
 2. Implement trajectory store with mutation/crossover lineage fields.
 3. Add AST-based similarity checker and complexity scorer aligned with Eq. 4-6.
 
 Phase 2 (2-4 weeks): robustness expansion
+
 1. Add repeated-seed evaluation and confidence interval reporting.
 2. Run rolling-window evaluations and sensitivity tests for TopkDropout parameters.
 3. Expand transfer tests beyond CSI500/S&P500 windows in paper.
 
 Phase 3 (ongoing): controlled deployment readiness
+
 1. Keep framework in research decision-support mode only.
 2. Integrate execution-friction simulations and stress scenarios.
 3. Define quantitative promotion gates (minimum robustness and drawdown criteria).
@@ -183,6 +200,7 @@ Phase 3 (ongoing): controlled deployment readiness
 - Score: **0.58 / 1.00**
 - Confidence: **0.82 / 1.00**
 - Rejection reasons (for immediate production deployment):
+
 1. Missing uncertainty quantification for key performance claims.
 2. Incomplete deterministic reproduction artifacts in paper text.
 3. Limited execution-friction realism relative to live trading constraints.

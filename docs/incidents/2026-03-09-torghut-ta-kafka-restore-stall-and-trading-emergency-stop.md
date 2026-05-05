@@ -22,17 +22,17 @@
 
 ## Timeline (UTC)
 
-| Time | Event |
-| --- | --- |
-| 2026-03-09 07:07:41 | `torghut-ta` Flink job reached terminal `FAILED` state after exhausting restart attempts. |
+| Time                | Event                                                                                                                   |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 2026-03-09 07:07:41 | `torghut-ta` Flink job reached terminal `FAILED` state after exhausting restart attempts.                               |
 | 2026-03-09 07:07:41 | Job logs recorded `Timeout expired after 60000ms while awaiting InitProducerId` during Kafka exactly-once sink restore. |
-| 2026-03-09 13:30:03 | Torghut trading latched emergency stop on `signal_lag_exceeded`. |
-| 2026-03-09 15:28 | Live diagnosis confirmed `torghut-ws` was still producing Kafka traffic while TA outputs in ClickHouse remained stale. |
-| 2026-03-09 15:30 | Emergency reconcile initiated on `FlinkDeployment/torghut-ta` by bumping `spec.restartNonce`. |
-| 2026-03-09 15:32:56 | Flink resubmitted `torghut-technical-analysis-flink` job `ab7064f6dd3a858abc138b5f8927c5cd`. |
-| 2026-03-09 15:33 | Job reached `RUNNING`; four taskmanagers came up and TA processing resumed. |
-| 2026-03-09 15:34:20 | Torghut cleared emergency stop automatically after fresh-signal recovery cycles completed. |
-| 2026-03-09 15:35:23 | Fresh `ta_signals` rows observed again in ClickHouse. |
+| 2026-03-09 13:30:03 | Torghut trading latched emergency stop on `signal_lag_exceeded`.                                                        |
+| 2026-03-09 15:28    | Live diagnosis confirmed `torghut-ws` was still producing Kafka traffic while TA outputs in ClickHouse remained stale.  |
+| 2026-03-09 15:30    | Emergency reconcile initiated on `FlinkDeployment/torghut-ta` by bumping `spec.restartNonce`.                           |
+| 2026-03-09 15:32:56 | Flink resubmitted `torghut-technical-analysis-flink` job `ab7064f6dd3a858abc138b5f8927c5cd`.                            |
+| 2026-03-09 15:33    | Job reached `RUNNING`; four taskmanagers came up and TA processing resumed.                                             |
+| 2026-03-09 15:34:20 | Torghut cleared emergency stop automatically after fresh-signal recovery cycles completed.                              |
+| 2026-03-09 15:35:23 | Fresh `ta_signals` rows observed again in ClickHouse.                                                                   |
 
 ## Root Cause
 

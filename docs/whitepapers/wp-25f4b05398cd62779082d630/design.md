@@ -31,15 +31,18 @@ Implementation implication: this is the core formulation shift. Without a persis
 ### 2.2 Architecture and Control Flow
 
 1. Market Signal Processing and Analysis (Sec. 4.1):
+
 - Filtering agents downweight noisy/weakly relevant inputs.
 - Analysis agents apply financially guided prompts for causal interpretation.
 - Outputs are stored in hierarchical memory (shallow/intermediate/deep) and updated through reflection.
 
 2. Dual Trading Decision (Sec. 4.2):
+
 - Direction Decision Agent chooses `buy/sell/hold` with strategy rationale.
 - Quantity and Risk Decision Agent selects order size with CVaR-constrained exposure control.
 
 3. Memory-to-decision contract:
+
 - Appendix A prompts require memory index references in outputs, which can support auditability if retained in logs.
 
 ### 2.3 Reward and Risk Formulation
@@ -60,43 +63,53 @@ Assumption boundary: future trend terms are used for training reward shaping onl
 ## 3) Key Findings
 
 1. Main benchmark outperformance is reported across five assets.
+
 - Evidence: Sec. 5.2, Table 1.
 - Examples: TSLA `CR 62.15%`, AAPL `CR 36.31%`, COIN `CR 54.36%`.
 
 2. Multi-timescale reward is the strongest contributor in ablations.
+
 - Evidence: Sec. 5.3.1, Table 2, Fig. 3.
 - Without MTR, reported CR falls below `20%` on TSLA/AAPL/AMZN.
 
 3. Quantity/risk stage materially improves drawdown control.
+
 - Evidence: Sec. 5.3.2, Table 2.
 - TSLA MDD worsens from `42.34%` to `62.65%` when QRA is removed.
 
 4. Signal filtering and financial prompting improve quality but are prompt-sensitive.
+
 - Evidence: Sec. 5.3.3, App. D.3.1, Fig. 5, Table 6-7.
 
 5. High-volatility stress evidence favors position-aware control in their setup.
+
 - Evidence: Sec. 5.4, Fig. 4, App. D.2, Table 8.
 
 6. Authors explicitly frame production deployment as unsafe without oversight.
+
 - Evidence: Limitations (p. 9).
 
 ## 4) Novelty Claims and Assessment
 
 1. Claim: position-aware task definition better approximates real trading.
+
 - Assessment: **supported in scope**.
 - Basis: Sec. 3.1-3.2 equations and persistent position semantics.
 
 2. Claim: dual decision decomposition improves risk-adjusted outcomes.
+
 - Assessment: **partially supported**.
 - Basis: Sec. 4.2 + Table 2 + App. C.
 - Caveat: limited asset breadth and test-horizon coverage.
 
 3. Claim: multi-timescale reward improves long-horizon decision quality.
+
 - Assessment: **supported in scope**.
 - Basis: Sec. 4.3 + Sec. 5.3.1 + Fig. 3.
 - Caveat: robustness under alternate regimes remains unproven.
 
 4. Claim: prompt-engineered market analysis enables professional-level reasoning.
+
 - Assessment: **plausible but prompt-fragile**.
 - Basis: Sec. 4.1 + App. A + App. D.3.1.
 
@@ -112,21 +125,27 @@ Assumption boundary: future trend terms are used for training reward shaping onl
 ### 5.2 High-Impact Risks
 
 1. Reproducibility risk (high):
+
 - Prompt-heavy architecture, but the paper does not provide full replay manifests (prompt hashes, data snapshots, full config lineage).
 
 2. Statistical rigor risk (high):
+
 - No confidence intervals or broad repeated-window significance reporting for headline metrics.
 
 3. Market-friction realism risk (high):
+
 - Headline results omit explicit fees/slippage/latency/impact constraints.
 
 4. Baseline comparability risk (medium-high):
+
 - Internal tension exists between Sec. 5.1.4 (`all LLM agents are deployed using GPT-4o`) and Table 3 (FinGPT listed as llama fine-tuned backbone).
 
 5. Scope and external validity risk (high):
+
 - Limitations explicitly acknowledge single-asset setup and prompt dependency.
 
 6. Prompt brittleness risk (medium-high):
+
 - App. D.3.1 reports sensitivity to prompt structure and information burden.
 
 ### 5.3 Unresolved Questions
@@ -141,35 +160,43 @@ Assumption boundary: future trend terms are used for training reward shaping onl
 ### 6.1 Adopt Immediately for Research Systems
 
 1. Position-aware simulator contract:
+
 - mandatory `position_state` transitions and exposure-based return accounting.
 
 2. Decision decomposition interface:
+
 - stage 1 direction intent, stage 2 size/risk decision with hard caps.
 
 3. Reward modularization:
+
 - implement short/mid/long components independently and version each reward policy.
 
 4. Auditable memory references:
+
 - require decision outputs to include cited memory IDs and persist them in run logs.
 
 ### 6.2 Required Guardrails Before Any Live Deployment
 
 1. Deterministic provenance:
+
 - dataset snapshots + checksums,
 - prompt/template hashes,
 - model/runtime version pinning,
 - run manifest storage.
 
 2. Robustness gates:
+
 - walk-forward multi-window evaluation,
 - uncertainty intervals,
 - regime-stratified metrics,
 - stress tests.
 
 3. Execution realism:
+
 - commissions, spread, slippage, latency, partial fills, and turnover penalties.
 
 4. Hard risk controls:
+
 - position limits,
 - daily/weekly loss limits,
 - concentration controls,
@@ -178,16 +205,19 @@ Assumption boundary: future trend terms are used for training reward shaping onl
 ### 6.3 Concrete Incremental Delivery Plan
 
 Phase 1 (1-2 weeks): reproducible research baseline
+
 1. Build position-aware environment + dual decision interfaces.
 2. Implement CVaR cap and multi-timescale reward as isolated modules.
 3. Emit deterministic run manifests (data/prompt/config hashes).
 
 Phase 2 (2-3 weeks): fairness + robustness hardening
+
 1. Re-run baselines under identical market-friction assumptions.
 2. Add repeated-window evaluation and confidence intervals.
 3. Standardize prompt budgets and output schemas across agent baselines.
 
 Phase 3 (2+ weeks): controlled pilot only
+
 1. Extend to constrained multi-asset portfolio simulation.
 2. Add pre-trade checks and post-trade attribution.
 3. Restrict usage to analyst-assist or paper trading until all gates pass.
@@ -198,6 +228,7 @@ Phase 3 (2+ weeks): controlled pilot only
 - Score: **0.66 / 1.00**
 - Confidence: **0.84 / 1.00**
 - Rejection reasons (for immediate autonomous production rollout):
+
 1. Insufficient statistical uncertainty reporting for high-stakes deployment.
 2. No production-grade execution-friction modeling in headline comparisons.
 3. Single-asset and prompt-sensitive setup limits external validity.

@@ -15,16 +15,16 @@
 
 ## Timeline (PST)
 
-| Time | Event |
-| --- | --- |
-| 22:36:51 | New `jangar-95d7b868d-*` pod starts failing readiness: `GET /health` connection refused, then probe timeouts. |
-| 22:36-23:03 | Pod remains `1/2` ready; service unavailable; worker rollout proceeds but does not fix API readiness. |
-| 23:03:59 | New rollout to image `c5ef6a3e` (`jangar-7c5b867bfb-*`) shows identical readiness failure pattern. |
-| 23:04+ | In-pod `/health` checks consistently time out (`code=000`, ~30s). |
-| 23:06+ | `kubectl top` shows Jangar app pinned near CPU limit (~2000m). |
-| 23:06+ | `agents/swarm/jangar-control-plane` status `resourceVersion` advances every few seconds while semantic status remains unchanged (only `updatedAt` churn). |
-| 00:06 (Mar 2) | Swarm throttling/image rollout lands; health endpoint recovers quickly, but CPU remains pinned. |
-| 00:12 (Mar 2) | `CronJob` watch-only sampling shows sustained event storm (`~21 MODIFIED/20s`) on schedule-runner cronjobs in `agents` namespace. |
+| Time          | Event                                                                                                                                                                                  |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 22:36:51      | New `jangar-95d7b868d-*` pod starts failing readiness: `GET /health` connection refused, then probe timeouts.                                                                          |
+| 22:36-23:03   | Pod remains `1/2` ready; service unavailable; worker rollout proceeds but does not fix API readiness.                                                                                  |
+| 23:03:59      | New rollout to image `c5ef6a3e` (`jangar-7c5b867bfb-*`) shows identical readiness failure pattern.                                                                                     |
+| 23:04+        | In-pod `/health` checks consistently time out (`code=000`, ~30s).                                                                                                                      |
+| 23:06+        | `kubectl top` shows Jangar app pinned near CPU limit (~2000m).                                                                                                                         |
+| 23:06+        | `agents/swarm/jangar-control-plane` status `resourceVersion` advances every few seconds while semantic status remains unchanged (only `updatedAt` churn).                              |
+| 00:06 (Mar 2) | Swarm throttling/image rollout lands; health endpoint recovers quickly, but CPU remains pinned.                                                                                        |
+| 00:12 (Mar 2) | `CronJob` watch-only sampling shows sustained event storm (`~21 MODIFIED/20s`) on schedule-runner cronjobs in `agents` namespace.                                                      |
 | 00:17 (Mar 2) | Confirmed second hot path: each cronjob MODIFIED event triggered full `reconcileSchedule` (target lookup + apply checks + status write), causing sustained `kubectl` subprocess churn. |
 
 ## Root Cause

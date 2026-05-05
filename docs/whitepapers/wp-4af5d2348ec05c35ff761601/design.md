@@ -57,22 +57,28 @@ Existing intraday trading pipelines can observe price momentum, but they often c
 ## 4) High-Signal Findings
 
 1. GTBR is the paper's core explanatory variable, not just short gamma.
+
 - In Table 2 column (4), the interaction on `r30_0 * D Short Gamma` is `0.71`, while `r30_0 * D GTBR hit360` is `0.96`, both statistically significant. The paper interprets this as GTBR breach adding more explanatory power than short gamma sign alone.
 
 2. Short gamma loses explanatory power when GTBR is not breached.
+
 - Table 3 shows the short-gamma interaction is insignificant when `D GTBR hit360 = 0` (`0.413`, `0.286`) and significant when `D GTBR hit360 = 1` (`0.900***`, `0.723**`).
 - This is the strongest evidence that the paper's useful implementation unit is "gamma plus GTBR state," not raw short-gamma exposure.
 
 3. The inflection point in the normalized-return view is around GTBR itself.
+
 - Figure 3 reports a visible jump in the momentum coefficient around normalized return `= 1`, which the paper maps to the 67.7th percentile of the normalized-return distribution.
 
 4. Long gamma acts as a reversion force when prices remain inside GTBR.
+
 - Table 4 first row (`Cumul Hit GTBR360 = 0`) shows no meaningful momentum in the strongest short-gamma bucket and a significant reversion coefficient of `-1.25**` in the strongest long-gamma bucket.
 
 5. Downside moves appear more sensitive than upside moves.
+
 - Table 7 shows the short-gamma and GTBR-hit interactions are insignificant in the "first 30 minutes up" subsample, but significant in the "first 30 minutes down" subsample.
 
 6. The paper contains an internal inconsistency in its predictive-evidence narrative.
+
 - Section 4.9 states that all OOS `R^2` values are positive and even the lowest underlying-level OOS `R^2` is positive.
 - Table 10 reports minimum OOS `R^2` values of `-1.21`, `-1.68`, `-1.31`, and `-1.71`.
 - That contradiction lowers confidence in the strength of the paper's forecasting claim and must be treated as a blocking validation task before code promotion.
@@ -80,12 +86,15 @@ Existing intraday trading pipelines can observe price momentum, but they often c
 ## 5) Novelty Assessment
 
 1. Novel contribution: GTBR as a practical trigger variable.
+
 - The paper's most implementable idea is not the general claim that short gamma matters; it is the explicit breakeven trigger linking option theta/gamma economics to a discrete market state.
 
 2. Moderate novelty: account-category-based MM gamma proxy.
+
 - Estimating MM positioning from ISE account categories is a concrete empirical design choice, but it relies on a proxy assumption rather than direct dealer inventory.
 
 3. Lower novelty: predictive regression framing.
+
 - The regression forms are standard extensions of prior intraday-momentum work. The novelty is mainly in the conditioning variable and the options-microstructure interpretation.
 
 ## 6) Repo Fit Assessment
@@ -133,29 +142,37 @@ This paper does not justify direct live-strategy implementation from the current
 ## 7.1 Paper Risks
 
 1. Data authority risk: high.
+
 - The paper depends on proprietary/licensed sources (TAQ, ISE, OptionMetrics). Reproducing or operationalizing the result requires data contracts the repo does not currently expose.
 
 2. Proxy risk: high.
+
 - MM open interest is inferred as `-(Firm + Customer)`. That is useful empirically, but it is not direct dealer inventory.
 
 3. GTBR simplification risk: medium-high.
+
 - Using a standardized ATM 30-day option as the underlying-level GTBR reference is a tractable approximation, not a full option-book calculation.
 
 4. Predictive-claim consistency risk: high.
+
 - Section 4.9 contradicts Table 10 on the sign of minimum OOS `R^2`.
 
 5. Causality / execution risk: high.
+
 - The paper documents explanatory associations in intraday returns; it does not supply a deployable execution policy, risk budget, or transaction-cost model for autonomous trading.
 
 ## 7.2 Repository Risks
 
 1. Data-model mismatch.
+
 - Current Torghut trading surfaces are built around signal, feature, evaluation, and safety pipelines, but not around dealer-inventory or options-book state.
 
 2. Licensing and provenance.
+
 - Even a research implementation needs reproducible manifests proving which licensed options feeds generated each GTBR and gamma-exposure series.
 
 3. Runtime overreach.
+
 - Promoting a GTBR feature into live decisioning without first establishing research reproducibility would bypass the strongest evidence threshold the paper actually supports.
 
 ## 8) Viability Verdict
@@ -167,9 +184,11 @@ This paper does not justify direct live-strategy implementation from the current
 Interpretation:
 
 1. Implementable now:
+
 - deterministic offline research feature engineering and empirical evidence generation inside `services/torghut/app/trading/`.
 
 2. Not implementable now:
+
 - direct production or autonomous deployment of a GTBR trading strategy from the current repo and evidence set.
 
 ## 9) Deterministic Implementation Plan

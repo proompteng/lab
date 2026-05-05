@@ -4,24 +4,10 @@
   "lane_id": "microstructure-breakout",
   "strategy_family": "microstructure_breakout",
   "initial_state": "blocked",
-  "market_regimes": [
-    "R3",
-    "R5"
-  ],
-  "required_feature_sets": [
-    "order_book_liquidity",
-    "microstructure"
-  ],
-  "required_dependency_capabilities": [
-    "jangar_dependency_quorum",
-    "drift_governance",
-    "feature_coverage"
-  ],
-  "segment_dependencies": [
-    "execution",
-    "empirical",
-    "ta-core"
-  ],
+  "market_regimes": ["R3", "R5"],
+  "required_feature_sets": ["order_book_liquidity", "microstructure"],
+  "required_dependency_capabilities": ["jangar_dependency_quorum", "drift_governance", "feature_coverage"],
+  "segment_dependencies": ["execution", "empirical", "ta-core"],
   "expected_gross_edge_bps": "10",
   "max_allowed_slippage_bps": "8",
   "min_sample_count_for_live_canary": 60,

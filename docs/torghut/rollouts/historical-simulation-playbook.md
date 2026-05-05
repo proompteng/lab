@@ -238,17 +238,17 @@ Expected values are `torghut.sim.*` topics and `TA_GROUP_ID=torghut-ta-sim-<run_
 
 `artifacts/torghut/simulations/<run_token>/run-manifest.json`:
 
- - `replay.records` > 0
- - `replay.records_by_topic` populated
- - `dump.sha256` present
-  - latest `RUN_STATE ...` lines visible in argo logs showing `subphase=replay` with non-zero records while waiting
- - `dump_coverage` present and passing
- - `window_policy` present
- - `ta_restore.mode` present
- - `ta_restore.effective_upgrade_mode` present
- - if fallback was used, `ta_restore.fallback_applied=true` with explicit `reason`
- - `rollouts.runtime_analysis_run` populated after runtime gate completes
- - `rollouts.activity_analysis_run` populated after activity gate completes
+- `replay.records` > 0
+- `replay.records_by_topic` populated
+- `dump.sha256` present
+- latest `RUN_STATE ...` lines visible in argo logs showing `subphase=replay` with non-zero records while waiting
+- `dump_coverage` present and passing
+- `window_policy` present
+- `ta_restore.mode` present
+- `ta_restore.effective_upgrade_mode` present
+- if fallback was used, `ta_restore.fallback_applied=true` with explicit `reason`
+- `rollouts.runtime_analysis_run` populated after runtime gate completes
+- `rollouts.activity_analysis_run` populated after activity gate completes
 
 `artifacts/torghut/simulations/<run_token>/runtime-verify.json`:
 

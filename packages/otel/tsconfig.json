@@ -6,10 +6,9 @@
     "declarationMap": true,
     "rootDir": "src",
     "moduleDetection": "force",
-    "baseUrl": "./",
     "paths": {
-      "@proompteng/otel": ["src/index.ts"],
-      "@proompteng/otel/*": ["src/*"]
+      "@proompteng/otel": ["./src/index.ts"],
+      "@proompteng/otel/*": ["./src/*"]
     }
   },
   "include": ["src"]

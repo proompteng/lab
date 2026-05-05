@@ -143,22 +143,22 @@ Service deploy/build/reseal workflows use the typed scripts under `packages/scri
 
 ## Repository Layout
 
-| Path | Purpose |
-| --- | --- |
-| `apps/` | Mixed product surfaces: web apps, desktop apps, some runtime services, and app-adjacent templates/config |
-| `packages/` | Shared TS libraries, Convex backend, SDKs, and deploy tooling |
-| `services/` | Backend services across TS, Go, Python, Ruby, and Kotlin |
-| `charts/agents/` | Agents Helm chart, CRDs, examples, and values |
-| `argocd/` | Desired GitOps state for applications and platform components |
-| `kubernetes/` | Cluster bootstrap, utilities, and supporting manifests |
-| `tofu/` | OpenTofu stacks for infrastructure provisioning |
-| `ansible/` | Playbooks and inventory |
-| `docs/` | Current-state docs, design docs, runbooks, and incident writeups |
-| `devices/` | Hardware/node-specific operational material |
-| `proto/` | Protobuf definitions |
-| `schemas/` | SQL and schema assets |
-| `scripts/` | Repository-level helpers |
-| `skills/` | Agent skill definitions |
+| Path             | Purpose                                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------------------------------- |
+| `apps/`          | Mixed product surfaces: web apps, desktop apps, some runtime services, and app-adjacent templates/config |
+| `packages/`      | Shared TS libraries, Convex backend, SDKs, and deploy tooling                                            |
+| `services/`      | Backend services across TS, Go, Python, Ruby, and Kotlin                                                 |
+| `charts/agents/` | Agents Helm chart, CRDs, examples, and values                                                            |
+| `argocd/`        | Desired GitOps state for applications and platform components                                            |
+| `kubernetes/`    | Cluster bootstrap, utilities, and supporting manifests                                                   |
+| `tofu/`          | OpenTofu stacks for infrastructure provisioning                                                          |
+| `ansible/`       | Playbooks and inventory                                                                                  |
+| `docs/`          | Current-state docs, design docs, runbooks, and incident writeups                                         |
+| `devices/`       | Hardware/node-specific operational material                                                              |
+| `proto/`         | Protobuf definitions                                                                                     |
+| `schemas/`       | SQL and schema assets                                                                                    |
+| `scripts/`       | Repository-level helpers                                                                                 |
+| `skills/`        | Agent skill definitions                                                                                  |
 
 ## Recommended Starting Points
 

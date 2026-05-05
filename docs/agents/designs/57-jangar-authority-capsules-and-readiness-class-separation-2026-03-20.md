@@ -31,7 +31,7 @@ The reason is visible in the live state on `2026-03-20`:
 
 - `kubectl describe pod -n agents agents-679c868658-n2gsn`
   - shows the new `agents` pod has been failing the `/ready` probe for about 12 hours with `HTTP probe failed with
-    statuscode: 503`
+statuscode: 503`
 - `kubectl describe pod -n agents agents-controllers-5c4b57cf57-mgwv8`
   - shows the new `agents-controllers` pod is failing the same readiness contract for the same period
 - `curl -sS http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents`

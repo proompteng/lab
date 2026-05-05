@@ -28,18 +28,18 @@ The control plane looked partially healthy from the outside: controllers were up
 
 ## Timeline (UTC)
 
-| Time | Event |
-| --- | --- |
-| 2026-03-08 07:39 | Operator asked whether the `agents` namespace control plane was working. |
+| Time                   | Event                                                                                                                                                                                   |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-03-08 07:39       | Operator asked whether the `agents` namespace control plane was working.                                                                                                                |
 | 2026-03-08 07:40-07:44 | Live checks confirmed healthy core deployments and recent successful `jangar-control-plane-*-sched-cron` Jobs, but large numbers of `Pending` AgentRuns remained in namespace `agents`. |
-| 2026-03-08 07:44 | Sample AgentRuns from both swarm families showed `Blocked=True`, `reason=QueueLimit`, message `Namespace agents reached queue limit`. |
-| 2026-03-08 07:46 | Verified the schedulers were not disabled: all eight Jangar/Torghut swarm cronjobs had `spec.suspend=false` and recent `lastScheduleTime` values. |
-| 2026-03-08 07:48 | Manual mitigation started by suspending all eight swarm cronjobs to stop new queue growth. |
-| 2026-03-08 07:49 | Counted `360` queued swarm AgentRuns matching the active Jangar/Torghut scheduler prefixes and issued delete requests. |
-| 2026-03-08 07:50 | Confirmed the delete path was stalled: queued AgentRuns had `deletionTimestamp` set but still carried finalizer `agents.proompteng.ai/runtime-cleanup`. |
-| 2026-03-08 07:50-07:53 | Removed the finalizer from `340` terminating queued swarm AgentRuns so deletion could complete. |
-| 2026-03-08 07:53 | Removed `9` additional non-swarm QueueLimit-blocked AgentRuns (`agents-chart` and `torghut-market-context` backlog) and cleared their finalizers as well. |
-| 2026-03-08 07:53 | Verified queue recovery: `0` AgentRuns remained with `Blocked=True` and `reason=QueueLimit`. |
+| 2026-03-08 07:44       | Sample AgentRuns from both swarm families showed `Blocked=True`, `reason=QueueLimit`, message `Namespace agents reached queue limit`.                                                   |
+| 2026-03-08 07:46       | Verified the schedulers were not disabled: all eight Jangar/Torghut swarm cronjobs had `spec.suspend=false` and recent `lastScheduleTime` values.                                       |
+| 2026-03-08 07:48       | Manual mitigation started by suspending all eight swarm cronjobs to stop new queue growth.                                                                                              |
+| 2026-03-08 07:49       | Counted `360` queued swarm AgentRuns matching the active Jangar/Torghut scheduler prefixes and issued delete requests.                                                                  |
+| 2026-03-08 07:50       | Confirmed the delete path was stalled: queued AgentRuns had `deletionTimestamp` set but still carried finalizer `agents.proompteng.ai/runtime-cleanup`.                                 |
+| 2026-03-08 07:50-07:53 | Removed the finalizer from `340` terminating queued swarm AgentRuns so deletion could complete.                                                                                         |
+| 2026-03-08 07:53       | Removed `9` additional non-swarm QueueLimit-blocked AgentRuns (`agents-chart` and `torghut-market-context` backlog) and cleared their finalizers as well.                               |
+| 2026-03-08 07:53       | Verified queue recovery: `0` AgentRuns remained with `Blocked=True` and `reason=QueueLimit`.                                                                                            |
 
 ## Root Cause
 

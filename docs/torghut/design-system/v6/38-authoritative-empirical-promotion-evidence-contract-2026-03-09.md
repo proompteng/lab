@@ -83,12 +83,12 @@ These surfaces may remain in-tree, but their direct outputs must not be treated 
 
 The empirical promotion path must treat these as the minimum authoritative artifact set:
 
-| Job family | Persisted `job_type` | Canonical artifact ref | Canonical builder |
-| --- | --- | --- | --- |
-| Benchmark parity | `benchmark_parity` | `gates/benchmark-parity-report-v1.json` | `build_empirical_benchmark_parity_report(...)` |
-| Foundation-router parity | `foundation_router_parity` | `router/foundation-router-parity-report-v1.json` | `build_empirical_foundation_router_parity_report(...)` |
-| Janus event/CAR | `janus_event_car` | `gates/janus-event-car-v1.json` | `build_janus_event_car_artifact_v1(...)` then `promote_janus_payload_to_empirical(...)` |
-| Janus HGRM reward | `janus_hgrm_reward` | `gates/janus-hgrm-reward-v1.json` | `build_janus_hgrm_reward_artifact_v1(...)` then `promote_janus_payload_to_empirical(...)` |
+| Job family               | Persisted `job_type`       | Canonical artifact ref                           | Canonical builder                                                                         |
+| ------------------------ | -------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| Benchmark parity         | `benchmark_parity`         | `gates/benchmark-parity-report-v1.json`          | `build_empirical_benchmark_parity_report(...)`                                            |
+| Foundation-router parity | `foundation_router_parity` | `router/foundation-router-parity-report-v1.json` | `build_empirical_foundation_router_parity_report(...)`                                    |
+| Janus event/CAR          | `janus_event_car`          | `gates/janus-event-car-v1.json`                  | `build_janus_event_car_artifact_v1(...)` then `promote_janus_payload_to_empirical(...)`   |
+| Janus HGRM reward        | `janus_hgrm_reward`        | `gates/janus-hgrm-reward-v1.json`                | `build_janus_hgrm_reward_artifact_v1(...)` then `promote_janus_payload_to_empirical(...)` |
 
 In addition, the run must emit:
 

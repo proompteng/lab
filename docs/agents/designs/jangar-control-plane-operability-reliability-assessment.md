@@ -40,7 +40,7 @@ The control-plane read surface is generally healthy for component-level observab
   - `services/jangar/src/server/__tests__/agents-control-plane-resources.test.ts`
 - Remaining gaps:
   - No system-level coverage for stream mode with stale cache and fallback path simultaneously.
-  - No dedicated rollout/job health contract in status endpoint in this PR (tracked as follow-up). 
+  - No dedicated rollout/job health contract in status endpoint in this PR (tracked as follow-up).
 
 ## Database/data assessment
 
@@ -68,10 +68,12 @@ Fallback reads were previously represented as cache-free response paths even whe
 ### Top design change (chosen)
 
 Emit structured fallback provenance on the existing cache-aware endpoints:
+
 - `GET /api/agents/control-plane/resource/{kind}/{name}`
 - `GET /api/agents/control-plane/resources?kind=...`
 
 When a stale cache row triggers live fallback (`allowStale=false`), include:
+
 - `cache.source = 'control-plane-cache'`
 - `cache.fresh`, `cache.stale`, `cache.age_seconds`, `cache.max_age_seconds`
 - `cache.cache_fallback` with `reason` and `replacement`

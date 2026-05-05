@@ -2,9 +2,11 @@ import { Effect } from 'effect'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const producerFactory = vi.fn()
-const kafkaConstructor = vi.fn(() => ({
-  producer: producerFactory,
-}))
+const kafkaConstructor = vi.fn(function () {
+  return {
+    producer: producerFactory,
+  }
+})
 
 vi.mock('kafkajs', () => ({
   Kafka: kafkaConstructor,

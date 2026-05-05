@@ -9,10 +9,10 @@
     "seed:models": "convex run models:seed"
   },
   "dependencies": {
-    "convex": "^1.27.0"
+    "convex": "^1.37.0"
   },
   "devDependencies": {
-    "@types/node": "^20.17.6",
-    "typescript": "^5.6.3"
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3"
   }
 }

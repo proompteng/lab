@@ -50,20 +50,20 @@ All raw options topics use the existing Torghut envelope defined in
 
 Required envelope fields:
 
-| Field | Type | Rule |
-| --- | --- | --- |
-| `ingestTs` | ISO-8601 instant | time the producer accepted the event |
-| `eventTs` | ISO-8601 instant | provider event time or normalized source event time |
-| `feed` | string | `opra` or `indicative` |
-| `channel` | string | topic-specific logical channel such as `trade`, `quote`, `contract`, `snapshot`, `status` |
-| `symbol` | string | contract symbol for contract-level topics, underlying symbol for surface topics, component name for status topics |
-| `seq` | long | producer-local monotonic sequence scoped to producer instance |
-| `payload` | object | topic payload contract from this document |
-| `accountLabel` | nullable string | copied only when the source truly has account scope; absent for public market data |
-| `isFinal` | boolean | `true` for immutable raw events, `false` only for interim status or partial windows |
-| `source` | string | `ws`, `rest`, `catalog`, or `flink` |
-| `window` | nullable object | required only for derived windowed outputs |
-| `version` | int | schema version, starts at `1` |
+| Field          | Type             | Rule                                                                                                              |
+| -------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `ingestTs`     | ISO-8601 instant | time the producer accepted the event                                                                              |
+| `eventTs`      | ISO-8601 instant | provider event time or normalized source event time                                                               |
+| `feed`         | string           | `opra` or `indicative`                                                                                            |
+| `channel`      | string           | topic-specific logical channel such as `trade`, `quote`, `contract`, `snapshot`, `status`                         |
+| `symbol`       | string           | contract symbol for contract-level topics, underlying symbol for surface topics, component name for status topics |
+| `seq`          | long             | producer-local monotonic sequence scoped to producer instance                                                     |
+| `payload`      | object           | topic payload contract from this document                                                                         |
+| `accountLabel` | nullable string  | copied only when the source truly has account scope; absent for public market data                                |
+| `isFinal`      | boolean          | `true` for immutable raw events, `false` only for interim status or partial windows                               |
+| `source`       | string           | `ws`, `rest`, `catalog`, or `flink`                                                                               |
+| `window`       | nullable object  | required only for derived windowed outputs                                                                        |
+| `version`      | int              | schema version, starts at `1`                                                                                     |
 
 Contract rule:
 
@@ -80,30 +80,30 @@ Key: `contract_symbol`
 
 Payload record: `options_contract_v1`
 
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `contract_id` | string | yes | Alpaca contract `id` |
-| `contract_symbol` | string | yes | Alpaca contract `symbol`; must equal envelope `symbol` |
-| `name` | string | no | provider display name |
-| `status` | string | yes | `active`, `inactive`, `expired`, `unknown` |
-| `tradable` | boolean | yes | copied from provider when available |
-| `expiration_date` | date | yes | UTC date |
-| `root_symbol` | string | yes | contract root |
-| `underlying_symbol` | string | yes | underlying equity symbol |
-| `underlying_asset_id` | nullable string | no | provider asset id |
-| `option_type` | string | yes | `call` or `put` |
-| `style` | string | yes | `american`, `european`, or `unknown` |
-| `strike_price` | decimal(18,6) | yes | canonical strike |
-| `contract_size` | int | yes | parsed from provider `size`, defaults to `100` if absent |
-| `open_interest` | nullable bigint | no | most recent provider value |
-| `open_interest_date` | nullable date | no | date aligned with `open_interest` |
-| `close_price` | nullable decimal(18,6) | no | latest provider close |
-| `close_price_date` | nullable date | no | date aligned with `close_price` |
-| `first_seen_ts` | timestamptz | yes | first discovery timestamp |
-| `last_seen_ts` | timestamptz | yes | latest discovery timestamp |
-| `provider_updated_ts` | nullable timestamptz | no | when the source API indicates a last update |
-| `catalog_status_reason` | nullable string | no | inactive/expired rationale for operators |
-| `schema_version` | int | yes | fixed at `1` |
+| Field                   | Type                   | Required | Notes                                                    |
+| ----------------------- | ---------------------- | -------- | -------------------------------------------------------- |
+| `contract_id`           | string                 | yes      | Alpaca contract `id`                                     |
+| `contract_symbol`       | string                 | yes      | Alpaca contract `symbol`; must equal envelope `symbol`   |
+| `name`                  | string                 | no       | provider display name                                    |
+| `status`                | string                 | yes      | `active`, `inactive`, `expired`, `unknown`               |
+| `tradable`              | boolean                | yes      | copied from provider when available                      |
+| `expiration_date`       | date                   | yes      | UTC date                                                 |
+| `root_symbol`           | string                 | yes      | contract root                                            |
+| `underlying_symbol`     | string                 | yes      | underlying equity symbol                                 |
+| `underlying_asset_id`   | nullable string        | no       | provider asset id                                        |
+| `option_type`           | string                 | yes      | `call` or `put`                                          |
+| `style`                 | string                 | yes      | `american`, `european`, or `unknown`                     |
+| `strike_price`          | decimal(18,6)          | yes      | canonical strike                                         |
+| `contract_size`         | int                    | yes      | parsed from provider `size`, defaults to `100` if absent |
+| `open_interest`         | nullable bigint        | no       | most recent provider value                               |
+| `open_interest_date`    | nullable date          | no       | date aligned with `open_interest`                        |
+| `close_price`           | nullable decimal(18,6) | no       | latest provider close                                    |
+| `close_price_date`      | nullable date          | no       | date aligned with `close_price`                          |
+| `first_seen_ts`         | timestamptz            | yes      | first discovery timestamp                                |
+| `last_seen_ts`          | timestamptz            | yes      | latest discovery timestamp                               |
+| `provider_updated_ts`   | nullable timestamptz   | no       | when the source API indicates a last update              |
+| `catalog_status_reason` | nullable string        | no       | inactive/expired rationale for operators                 |
+| `schema_version`        | int                    | yes      | fixed at `1`                                             |
 
 Semantics:
 
@@ -117,19 +117,19 @@ Key: `contract_symbol`
 
 Payload record: `options_trade_v1`
 
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `contract_symbol` | string | yes | must equal envelope `symbol` |
-| `underlying_symbol` | string | yes | denormalized for consumer convenience |
-| `price` | double | yes | trade price |
-| `size` | double | yes | contracts traded |
-| `exchange` | nullable string | no | venue/exchange code when present |
-| `trade_id` | nullable string | no | provider trade identifier if present |
-| `conditions` | nullable array<string> | no | provider conditions codes |
-| `tape` | nullable string | no | provider tape when present |
-| `participant_ts` | timestamptz | yes | trade timestamp from provider |
-| `receipt_ts` | timestamptz | yes | normalized producer receipt timestamp |
-| `schema_version` | int | yes | fixed at `1` |
+| Field               | Type                   | Required | Notes                                 |
+| ------------------- | ---------------------- | -------- | ------------------------------------- |
+| `contract_symbol`   | string                 | yes      | must equal envelope `symbol`          |
+| `underlying_symbol` | string                 | yes      | denormalized for consumer convenience |
+| `price`             | double                 | yes      | trade price                           |
+| `size`              | double                 | yes      | contracts traded                      |
+| `exchange`          | nullable string        | no       | venue/exchange code when present      |
+| `trade_id`          | nullable string        | no       | provider trade identifier if present  |
+| `conditions`        | nullable array<string> | no       | provider conditions codes             |
+| `tape`              | nullable string        | no       | provider tape when present            |
+| `participant_ts`    | timestamptz            | yes      | trade timestamp from provider         |
+| `receipt_ts`        | timestamptz            | yes      | normalized producer receipt timestamp |
+| `schema_version`    | int                    | yes      | fixed at `1`                          |
 
 Semantics:
 
@@ -143,20 +143,20 @@ Key: `contract_symbol`
 
 Payload record: `options_quote_v1`
 
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `contract_symbol` | string | yes | must equal envelope `symbol` |
-| `underlying_symbol` | string | yes | denormalized for consumer convenience |
-| `bid_price` | double | yes | current bid |
-| `bid_size` | double | yes | current bid size |
-| `ask_price` | double | yes | current ask |
-| `ask_size` | double | yes | current ask size |
-| `bid_exchange` | nullable string | no | venue code when present |
-| `ask_exchange` | nullable string | no | venue code when present |
-| `quote_condition` | nullable string | no | provider quote condition if present |
-| `participant_ts` | timestamptz | yes | quote timestamp from provider |
-| `receipt_ts` | timestamptz | yes | normalized producer receipt timestamp |
-| `schema_version` | int | yes | fixed at `1` |
+| Field               | Type            | Required | Notes                                 |
+| ------------------- | --------------- | -------- | ------------------------------------- |
+| `contract_symbol`   | string          | yes      | must equal envelope `symbol`          |
+| `underlying_symbol` | string          | yes      | denormalized for consumer convenience |
+| `bid_price`         | double          | yes      | current bid                           |
+| `bid_size`          | double          | yes      | current bid size                      |
+| `ask_price`         | double          | yes      | current ask                           |
+| `ask_size`          | double          | yes      | current ask size                      |
+| `bid_exchange`      | nullable string | no       | venue code when present               |
+| `ask_exchange`      | nullable string | no       | venue code when present               |
+| `quote_condition`   | nullable string | no       | provider quote condition if present   |
+| `participant_ts`    | timestamptz     | yes      | quote timestamp from provider         |
+| `receipt_ts`        | timestamptz     | yes      | normalized producer receipt timestamp |
+| `schema_version`    | int             | yes      | fixed at `1`                          |
 
 Semantics:
 
@@ -169,32 +169,32 @@ Key: `contract_symbol`
 
 Payload record: `options_snapshot_v1`
 
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `contract_symbol` | string | yes | must equal envelope `symbol` |
-| `underlying_symbol` | string | yes | underlying equity symbol |
-| `latest_trade_price` | nullable double | no | copied from latest trade |
-| `latest_trade_size` | nullable double | no | copied from latest trade |
-| `latest_trade_ts` | nullable timestamptz | no | copied from latest trade |
-| `latest_bid_price` | nullable double | no | copied from latest quote |
-| `latest_bid_size` | nullable double | no | copied from latest quote |
-| `latest_ask_price` | nullable double | no | copied from latest quote |
-| `latest_ask_size` | nullable double | no | copied from latest quote |
-| `latest_quote_ts` | nullable timestamptz | no | copied from latest quote |
-| `implied_volatility` | nullable double | no | provider IV |
-| `delta` | nullable double | no | provider Greek |
-| `gamma` | nullable double | no | provider Greek |
-| `theta` | nullable double | no | provider Greek |
-| `vega` | nullable double | no | provider Greek |
-| `rho` | nullable double | no | provider Greek when available |
-| `open_interest` | nullable bigint | no | provider open interest |
-| `open_interest_date` | nullable date | no | date aligned with open interest |
-| `mark_price` | nullable double | no | if provider returns a mark; otherwise null |
-| `mid_price` | nullable double | no | computed as `(bid+ask)/2` when both sides are positive |
-| `snapshot_class` | string | yes | `hot`, `warm`, `cold`, or `backfill` |
-| `source_window_start_ts` | nullable timestamptz | no | backfill window start when applicable |
-| `source_window_end_ts` | nullable timestamptz | no | backfill window end when applicable |
-| `schema_version` | int | yes | fixed at `1` |
+| Field                    | Type                 | Required | Notes                                                  |
+| ------------------------ | -------------------- | -------- | ------------------------------------------------------ |
+| `contract_symbol`        | string               | yes      | must equal envelope `symbol`                           |
+| `underlying_symbol`      | string               | yes      | underlying equity symbol                               |
+| `latest_trade_price`     | nullable double      | no       | copied from latest trade                               |
+| `latest_trade_size`      | nullable double      | no       | copied from latest trade                               |
+| `latest_trade_ts`        | nullable timestamptz | no       | copied from latest trade                               |
+| `latest_bid_price`       | nullable double      | no       | copied from latest quote                               |
+| `latest_bid_size`        | nullable double      | no       | copied from latest quote                               |
+| `latest_ask_price`       | nullable double      | no       | copied from latest quote                               |
+| `latest_ask_size`        | nullable double      | no       | copied from latest quote                               |
+| `latest_quote_ts`        | nullable timestamptz | no       | copied from latest quote                               |
+| `implied_volatility`     | nullable double      | no       | provider IV                                            |
+| `delta`                  | nullable double      | no       | provider Greek                                         |
+| `gamma`                  | nullable double      | no       | provider Greek                                         |
+| `theta`                  | nullable double      | no       | provider Greek                                         |
+| `vega`                   | nullable double      | no       | provider Greek                                         |
+| `rho`                    | nullable double      | no       | provider Greek when available                          |
+| `open_interest`          | nullable bigint      | no       | provider open interest                                 |
+| `open_interest_date`     | nullable date        | no       | date aligned with open interest                        |
+| `mark_price`             | nullable double      | no       | if provider returns a mark; otherwise null             |
+| `mid_price`              | nullable double      | no       | computed as `(bid+ask)/2` when both sides are positive |
+| `snapshot_class`         | string               | yes      | `hot`, `warm`, `cold`, or `backfill`                   |
+| `source_window_start_ts` | nullable timestamptz | no       | backfill window start when applicable                  |
+| `source_window_end_ts`   | nullable timestamptz | no       | backfill window end when applicable                    |
+| `schema_version`         | int                  | yes      | fixed at `1`                                           |
 
 Semantics:
 
@@ -208,20 +208,20 @@ Key: `component`
 
 Payload record: `options_status_v1`
 
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `component` | string | yes | one of `catalog`, `ws`, `enricher` |
-| `status` | string | yes | `ok`, `degraded`, `blocked`, `replaying` |
-| `session_state` | string | yes | `pre`, `regular`, `post`, `closed`, `holiday`, `weekend` |
-| `watermark_lag_ms` | nullable bigint | no | end-to-end lag for the component |
-| `active_contracts` | nullable int | no | catalog count or current subscribed set size |
-| `hot_contracts` | nullable int | no | current hot set size |
-| `rest_backlog` | nullable int | no | pending REST work items |
-| `error_code` | nullable string | no | Alpaca or internal code |
-| `error_detail` | nullable string | no | operator-readable summary |
-| `last_success_ts` | nullable timestamptz | no | last successful provider or sink interaction |
-| `heartbeat` | boolean | yes | `true` for heartbeat/status frames |
-| `schema_version` | int | yes | fixed at `1` |
+| Field              | Type                 | Required | Notes                                                    |
+| ------------------ | -------------------- | -------- | -------------------------------------------------------- |
+| `component`        | string               | yes      | one of `catalog`, `ws`, `enricher`                       |
+| `status`           | string               | yes      | `ok`, `degraded`, `blocked`, `replaying`                 |
+| `session_state`    | string               | yes      | `pre`, `regular`, `post`, `closed`, `holiday`, `weekend` |
+| `watermark_lag_ms` | nullable bigint      | no       | end-to-end lag for the component                         |
+| `active_contracts` | nullable int         | no       | catalog count or current subscribed set size             |
+| `hot_contracts`    | nullable int         | no       | current hot set size                                     |
+| `rest_backlog`     | nullable int         | no       | pending REST work items                                  |
+| `error_code`       | nullable string      | no       | Alpaca or internal code                                  |
+| `error_detail`     | nullable string      | no       | operator-readable summary                                |
+| `last_success_ts`  | nullable timestamptz | no       | last successful provider or sink interaction             |
+| `heartbeat`        | boolean              | yes      | `true` for heartbeat/status frames                       |
+| `schema_version`   | int                  | yes      | fixed at `1`                                             |
 
 Semantics:
 
@@ -629,12 +629,12 @@ Contract rule:
 
 The system uses four token buckets persisted in `torghut_options_rate_limit_state`:
 
-| Bucket | Initial refill | Initial burst | Use |
-| --- | --- | --- | --- |
-| `contracts` | `0.25 req/s` | `2` | paginated catalog discovery |
-| `snapshots_hot` | `1.0 req/s` | `10` | hot-set snapshot refresh |
-| `snapshots_cold` | `0.25 req/s` | `5` | warm/cold sweep refresh |
-| `bars_backfill` | `0.25 req/s` | `2` | historical bar gap repair |
+| Bucket           | Initial refill | Initial burst | Use                         |
+| ---------------- | -------------- | ------------- | --------------------------- |
+| `contracts`      | `0.25 req/s`   | `2`           | paginated catalog discovery |
+| `snapshots_hot`  | `1.0 req/s`    | `10`          | hot-set snapshot refresh    |
+| `snapshots_cold` | `0.25 req/s`   | `5`           | warm/cold sweep refresh     |
+| `bars_backfill`  | `0.25 req/s`   | `2`           | historical bar gap repair   |
 
 Contract rule:
 
@@ -718,12 +718,12 @@ Contract rule:
 
 Regular-session targets:
 
-| Signal | Target | Page threshold | Ticket threshold |
-| --- | --- | --- | --- |
-| catalog freshness | `<= 300s` | `> 900s for 15m` | `> 300s for 5m` |
-| hot snapshot freshness | `<= 30s` | `> 120s for 10m` | `> 30s for 5m` |
-| warm snapshot freshness | `<= 300s` | `> 900s for 15m` | `> 300s for 10m` |
-| TA watermark lag | `<= 30s` | `> 180s for 10m` | `> 60s for 10m` |
+| Signal                       | Target    | Page threshold   | Ticket threshold |
+| ---------------------------- | --------- | ---------------- | ---------------- |
+| catalog freshness            | `<= 300s` | `> 900s for 15m` | `> 300s for 5m`  |
+| hot snapshot freshness       | `<= 30s`  | `> 120s for 10m` | `> 30s for 5m`   |
+| warm snapshot freshness      | `<= 300s` | `> 900s for 15m` | `> 300s for 10m` |
+| TA watermark lag             | `<= 30s`  | `> 180s for 10m` | `> 60s for 10m`  |
 | ClickHouse derived freshness | `<= 120s` | `> 600s for 10m` | `> 120s for 10m` |
 
 Off-session targets:

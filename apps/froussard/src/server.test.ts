@@ -158,11 +158,15 @@ const mockApp = {
 }
 
 vi.mock('elysia', () => ({
-  Elysia: vi.fn(() => mockApp),
+  Elysia: vi.fn(function () {
+    return mockApp
+  }),
 }))
 
 vi.mock('@octokit/webhooks', () => ({
-  Webhooks: vi.fn(() => ({ verify: vi.fn(async () => true) })),
+  Webhooks: vi.fn(function () {
+    return { verify: vi.fn(async () => true) }
+  }),
 }))
 
 describe('server bootstrap', () => {

@@ -138,6 +138,7 @@ alertmanager:
 ```
 
 Notes:
+
 - Keep default receiver non-empty because Alertmanager requires a fallback receiver.
 - Use `${OBS_DISCORD_RELAY_URL}` (env expansion is already enabled for this chart, verified by runtime container args).
 - If in future we choose to hit Discord directly, replace the relay URL with a direct Discord webhook URL and remove relay-specific assumptions.
@@ -165,6 +166,7 @@ File: `argocd/applications/observability/graf-mimir-rules.yaml`
 3. Add a dedicated in-namespace relay deployment + service.
 
 Relay contract (minimum production requirements):
+
 - Accept POST from Alertmanager webhook format.
 - Convert payload to Discord embed/message format.
 - Return HTTP 200 only when posted successfully to Discord.

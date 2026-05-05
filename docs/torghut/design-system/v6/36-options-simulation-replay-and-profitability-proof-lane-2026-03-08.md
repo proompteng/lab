@@ -178,13 +178,13 @@ Gross return without these controls is not an acceptable promotion metric.
 
 The replay lane introduces five implementation units:
 
-| Component | Type | Responsibility |
-| --- | --- | --- |
-| `torghut-options-dataset-builder` | script / batch job | Build a reproducible dataset bundle for one options simulation window |
-| `torghut-options-ta-replay` | replay workflow extension | Rehydrate raw options topics into `torghut.sim.options.*` topics |
-| `torghut-options-ta-sim` | Flink simulation job | Materialize options simulation derived topics and ClickHouse tables |
-| `torghut-options-simulation-verifier` | script extension | Verify topic coverage, table isolation, contract coverage, and replay fidelity |
-| `torghut-options-simulation-report` | report generator extension | Produce profitability, liquidity, spread, and lifecycle artifacts |
+| Component                             | Type                       | Responsibility                                                                 |
+| ------------------------------------- | -------------------------- | ------------------------------------------------------------------------------ |
+| `torghut-options-dataset-builder`     | script / batch job         | Build a reproducible dataset bundle for one options simulation window          |
+| `torghut-options-ta-replay`           | replay workflow extension  | Rehydrate raw options topics into `torghut.sim.options.*` topics               |
+| `torghut-options-ta-sim`              | Flink simulation job       | Materialize options simulation derived topics and ClickHouse tables            |
+| `torghut-options-simulation-verifier` | script extension           | Verify topic coverage, table isolation, contract coverage, and replay fidelity |
+| `torghut-options-simulation-report`   | report generator extension | Produce profitability, liquidity, spread, and lifecycle artifacts              |
 
 ### Dataset bundle layout
 
@@ -278,19 +278,19 @@ Each replay run is defined by `torghut.options-simulation-manifest.v1`.
 
 Required fields:
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `schema_version` | `string` | fixed to `torghut.options-simulation-manifest.v1` |
-| `lane` | `string` | must equal `options` |
-| `feed` | `string` | `indicative` or `opra` |
-| `window.start` | `timestamp` | inclusive UTC start |
-| `window.end` | `timestamp` | exclusive UTC end |
-| `underlyings` | `array<string>` | underlying symbol set or selector |
-| `contract_policy` | `object` | DTE, expiry, call/put, strike-distance, and liquidity filters |
-| `catalog_snapshot_ref` | `string` | immutable contract snapshot artifact |
-| `raw_source_policy` | `object` | Kafka-retention vs provider-backfill rules |
-| `cost_model` | `object` | spread crossing, fee, multiplier, and fill assumptions |
-| `proof_gates` | `object` | coverage, minimum fills, minimum contracts, and artifact thresholds |
+| Field                  | Type            | Notes                                                               |
+| ---------------------- | --------------- | ------------------------------------------------------------------- |
+| `schema_version`       | `string`        | fixed to `torghut.options-simulation-manifest.v1`                   |
+| `lane`                 | `string`        | must equal `options`                                                |
+| `feed`                 | `string`        | `indicative` or `opra`                                              |
+| `window.start`         | `timestamp`     | inclusive UTC start                                                 |
+| `window.end`           | `timestamp`     | exclusive UTC end                                                   |
+| `underlyings`          | `array<string>` | underlying symbol set or selector                                   |
+| `contract_policy`      | `object`        | DTE, expiry, call/put, strike-distance, and liquidity filters       |
+| `catalog_snapshot_ref` | `string`        | immutable contract snapshot artifact                                |
+| `raw_source_policy`    | `object`        | Kafka-retention vs provider-backfill rules                          |
+| `cost_model`           | `object`        | spread crossing, fee, multiplier, and fill assumptions              |
+| `proof_gates`          | `object`        | coverage, minimum fills, minimum contracts, and artifact thresholds |
 
 ### Profitability report contract
 

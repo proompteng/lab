@@ -19,16 +19,16 @@
     "format:check": "bunx oxfmt --check ."
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^1.1.15",
-    "@mastra/core": "0.24.5",
-    "mastra": "0.18.5",
-    "octokit": "^4.1.2",
-    "zod": "^3.24.2"
+    "@ai-sdk/anthropic": "^3.0.74",
+    "@mastra/core": "1.32.1",
+    "mastra": "1.8.1",
+    "octokit": "^5.0.5",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bun": "1.3.13",
-    "@types/node": "^22.13.9",
-    "tsx": "^4.19.3",
-    "typescript": "^5.8.2"
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
   }
 }

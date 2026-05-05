@@ -30,8 +30,10 @@ where controls `c` include future trend, volatility, liquidity, and order-flow i
 
 1. Backbone: WaveNet-style residual stack with skip/residual paths and FiLM conditioning (Sec. 3.2, Fig. 1).
 2. Condition encoding split:
+
 - `Local`: history + per-step liquidity/imbalance/time features.
 - `Global`: horizon-level trend/volatility features.
+
 3. Control pathway: ControlNet-like additive module with zero-initialized 1x1 convs, trained in stage 2 after freezing base network (Sec. 3.2).
 4. Diffusion training: DDPM objective with classifier-free guidance; 100 noise levels; ancestral sampling (Sec. 4.2, Appendix A.1-A.2).
 
@@ -41,6 +43,7 @@ where controls `c` include future trend, volatility, liquidity, and order-flow i
 2. Universe: AMZN, AAPL, GOOG.
 3. Split: 16 train days, 1 validation day, 2 test days (Feb 2023 window).
 4. Evaluation axes:
+
 - Controllable realism (distributional distances + stylized facts).
 - Counterfactual validity under extreme regime interventions.
 - Counterfactual usefulness for regime prediction (Sec. 5; Tables 1-3 and appendix full table).
@@ -48,15 +51,18 @@ where controls `c` include future trend, volatility, liquidity, and order-flow i
 ## 3) Key Findings (Evidence-Backed)
 
 1. **Controlled realism is strong under observed regimes.**
+
 - DiffLOB is usually best or near-best across KS/Wasserstein/KL/JS for price and volume realism across three tickers (Table 1).
 - Removing control module degrades most metrics (Table 1).
 
 2. **Counterfactual validity is mixed but generally favorable.**
+
 - For volatility/liquidity/imbalance interventions, DiffLOB often leads.
 - Trend interventions are weaker; cGAN beats DiffLOB on AMZN high/low trend in Table 2.
 - Appendix full table confirms non-uniform wins across assets/regimes.
 
 3. **Downstream usefulness is plausible but noisy.**
+
 - `Real + CF` improves many extreme-regime subsets in Table 3, especially low-regime cases.
 - Several baseline absolute metrics remain poor/unstable (for example negative `R^2`), so robustness is not proven.
 
@@ -71,6 +77,7 @@ where controls `c` include future trend, volatility, liquidity, and order-flow i
 ## 5.1 Current Torghut Constraints
 
 1. Ingestion schema is indicator-centric, not full depth-L2 trajectory centric:
+
 - Flat signal columns include `microstructure_signal_v1` but no complete top-K LOB tensor stream ([services/torghut/app/trading/ingest.py](/workspace/lab/services/torghut/app/trading/ingest.py)).
 
 2. Microstructure contract is compact execution metadata (`spread_bps`, `depth_top5_usd`, `order_flow_imbalance`, etc.), not sequence-generation-ready state tensors ([microstructure.py](/workspace/lab/services/torghut/app/trading/microstructure.py)).
@@ -107,16 +114,19 @@ Interpretation: Implement as a bounded research lane with deterministic artifact
 ## 7) Implementation Plan (Phased, Deterministic)
 
 Phase A (research contract, low-risk integration)
+
 1. Add DiffLOB experiment spec doc + artifact schema under `services/torghut/app/trading/autonomy/`.
 2. Define deterministic run manifest fields: data snapshot hash, config hash, seed, model artifact hash, and metric bundle hash.
 3. Add parser/validator tests for the artifact contract only (no model training in runtime path).
 
 Phase B (offline model lane)
+
 1. Build external/offline training job for diffusion model with frozen input schema.
 2. Emit signed artifact package consumed by Torghut as read-only analysis evidence.
 3. Add CI checks for artifact schema compliance and reproducibility metadata completeness.
 
 Phase C (promotion gate experiments)
+
 1. Evaluate counterfactual usefulness in walk-forward slices aligned to Torghut horizons.
 2. Require regime-wise stability thresholds and fail-closed gating before any execution-policy linkage.
 3. Keep usage limited to simulation/paper-trading diagnostics until gates pass.

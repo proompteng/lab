@@ -24,16 +24,16 @@ The product looked half-alive. The login shell loaded, Argo reported `huly` heal
 
 ## Timeline (UTC)
 
-| Time | Event |
-| --- | --- |
-| 2026-03-19 22:xx | Triage confirmed Huly was functionally down despite `argocd/huly` reporting healthy workloads. |
-| 2026-03-19 22:xx | Live logs showed `account_db_v2_social_id_pk_change` failing repeatedly with Cockroach error `primary key dropped without subsequent addition of new primary key in same transaction`. |
-| 2026-03-19 22:xx | Verified `global_account` tables were empty and downstream `transactor`/`workspace` failures were fallout, not independent root causes. |
-| 2026-03-19 23:xx | Deployed readiness probes that fail on broken account/transactor/workspace behavior instead of only pod liveness. |
-| 2026-03-19 23:xx | Added a Cockroach repair job, but the first GitOps version still used `DROP CONSTRAINT` / `ADD CONSTRAINT` and failed with the same Cockroach limitation. |
-| 2026-03-19 23:xx | Live repair used Cockroach-safe DDL: `ALTER PRIMARY KEY USING COLUMNS (_id)`, then marked the stuck migration row applied. |
-| 2026-03-19 23:xx | Restarted `account`, `transactor`, and `workspace`; all recovered to `1/1 Ready`. |
-| 2026-03-19 23:47 | Merged the final GitOps reconciliation so Argo converged back to `Synced Healthy`. |
+| Time             | Event                                                                                                                                                                                         |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-03-19 22:xx | Triage confirmed Huly was functionally down despite `argocd/huly` reporting healthy workloads.                                                                                                |
+| 2026-03-19 22:xx | Live logs showed `account_db_v2_social_id_pk_change` failing repeatedly with Cockroach error `primary key dropped without subsequent addition of new primary key in same transaction`.        |
+| 2026-03-19 22:xx | Verified `global_account` tables were empty and downstream `transactor`/`workspace` failures were fallout, not independent root causes.                                                       |
+| 2026-03-19 23:xx | Deployed readiness probes that fail on broken account/transactor/workspace behavior instead of only pod liveness.                                                                             |
+| 2026-03-19 23:xx | Added a Cockroach repair job, but the first GitOps version still used `DROP CONSTRAINT` / `ADD CONSTRAINT` and failed with the same Cockroach limitation.                                     |
+| 2026-03-19 23:xx | Live repair used Cockroach-safe DDL: `ALTER PRIMARY KEY USING COLUMNS (_id)`, then marked the stuck migration row applied.                                                                    |
+| 2026-03-19 23:xx | Restarted `account`, `transactor`, and `workspace`; all recovered to `1/1 Ready`.                                                                                                             |
+| 2026-03-19 23:47 | Merged the final GitOps reconciliation so Argo converged back to `Synced Healthy`.                                                                                                            |
 | 2026-03-19 23:xx | Recreated six swarm Huly users through the UI, extracted fresh workspace tokens, rotated sealed secrets, and validated tracker/chat/docs access plus API read/write access for each identity. |
 
 ## Root Cause

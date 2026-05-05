@@ -602,7 +602,10 @@ function TorghutTrading() {
                       tickMargin={8}
                       tickFormatter={(value: string) => truncateLabel(value)}
                     />
-                    <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                    <ChartTooltip
+                      cursor={false}
+                      content={({ content: _content, ...props }) => <ChartTooltipContent {...props} />}
+                    />
                     <Bar dataKey="count" fill="var(--color-count)" radius={4} />
                   </BarChart>
                 </ChartContainer>
@@ -769,7 +772,10 @@ function RealizedPnlChart({ series }: { series: { ts: string; realizedPnl: numbe
           tickFormatter={(value: string) => formatShortTime(value)}
         />
         <YAxis tickLine={false} axisLine={false} width={72} tickFormatter={(value: number) => currency.format(value)} />
-        <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+        <ChartTooltip
+          cursor={false}
+          content={({ content: _content, ...props }) => <ChartTooltipContent {...props} />}
+        />
         <Line dataKey="realizedPnl" type="monotone" stroke="var(--color-realizedPnl)" strokeWidth={2} dot={false} />
       </LineChart>
     </ChartContainer>
@@ -830,7 +836,10 @@ function EquityChart({
           tickFormatter={(value: string) => formatShortTime(value)}
         />
         <YAxis tickLine={false} axisLine={false} width={72} tickFormatter={(value: number) => currency.format(value)} />
-        <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+        <ChartTooltip
+          cursor={false}
+          content={({ content: _content, ...props }) => <ChartTooltipContent {...props} />}
+        />
         {seriesKeys.map((item) => (
           <Line
             key={item.key}

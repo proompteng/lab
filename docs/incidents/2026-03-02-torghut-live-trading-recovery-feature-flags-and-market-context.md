@@ -83,4 +83,3 @@
 2. **Config robustness (Torghut)**: do not abort all remaining feature-flag overrides on a single missing key; degrade per-key with warning.
 3. **GitOps parity guard**: enforce CI diff check between `main` flag catalog and `feature-flags-state` catalog before rollout.
 4. **Runbook update**: add explicit check for feature-flag short-circuit indicators and missing flag keys in recovery triage.
-
