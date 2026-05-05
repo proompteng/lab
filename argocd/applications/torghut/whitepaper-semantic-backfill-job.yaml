@@ -18,6 +18,8 @@ spec:
     spec:
       restartPolicy: OnFailure
       serviceAccountName: torghut-runtime
+      nodeSelector:
+        kubernetes.io/arch: arm64
       securityContext:
         runAsNonRoot: true
         runAsUser: 999
