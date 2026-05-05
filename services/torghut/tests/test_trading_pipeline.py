@@ -8,7 +8,7 @@ import tempfile
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import Mock, patch
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -119,6 +119,30 @@ class FetchErrorWarmupIngestor(WarmupIngestor):
     ) -> SignalBatch:
         del start, end
         raise RuntimeError("warmup fetch failed")
+
+
+class TransactionAwareWarmupIngestor(WarmupIngestor):
+    def __init__(
+        self,
+        *,
+        warmup_signals: list[SignalEnvelope],
+        signals: list[SignalEnvelope],
+        cursor_at: datetime,
+        transaction_probe: Callable[[], bool],
+    ) -> None:
+        super().__init__(
+            warmup_signals=warmup_signals,
+            signals=signals,
+            cursor_at=cursor_at,
+        )
+        self.transaction_probe = transaction_probe
+        self.transaction_active_during_fetch: bool | None = None
+
+    def fetch_signals_with_reason(
+        self, *, start: datetime, end: datetime
+    ) -> SignalBatch:
+        self.transaction_active_during_fetch = self.transaction_probe()
+        return super().fetch_signals_with_reason(start=start, end=end)
 
 
 class RecordingDecisionEngine(DecisionEngine):
@@ -870,6 +894,58 @@ class TestTradingPipeline(TestCase):
         )
         self.assertEqual(decision_engine.observed_symbols, ["AAPL", "AAPL"])
         self.assertEqual(ingestor.committed_batches, 2)
+
+    def test_session_context_warmup_closes_transaction_before_replay_fetch(
+        self,
+    ) -> None:
+        warmup_signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 13, 45, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 13, 45, 1, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Min",
+            seq=1,
+            payload={"feature_schema_version": "3.0.0", "price": 100},
+        )
+        with self.session_local() as session:
+            session.execute(select(Strategy).limit(1)).all()
+            self.assertTrue(session.in_transaction())
+            ingestor = TransactionAwareWarmupIngestor(
+                warmup_signals=[warmup_signal],
+                signals=[],
+                cursor_at=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+                transaction_probe=session.in_transaction,
+            )
+            pipeline = self._build_warmup_pipeline(ingestor=ingestor)
+
+            with patch(
+                "app.trading.scheduler.pipeline.trading_now",
+                return_value=datetime(2026, 3, 26, 15, 0, tzinfo=timezone.utc),
+            ):
+                pipeline._warm_session_context_from_open(session)
+
+        self.assertFalse(ingestor.transaction_active_during_fetch)
+
+    def test_session_context_warmup_rolls_back_when_transaction_close_fails(
+        self,
+    ) -> None:
+        ingestor = WarmupIngestor(
+            warmup_signals=[],
+            signals=[],
+            cursor_at=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+        )
+        pipeline = self._build_warmup_pipeline(ingestor=ingestor)
+        session = Mock(spec=Session)
+        session.commit.side_effect = RuntimeError("commit failed")
+
+        with patch(
+            "app.trading.scheduler.pipeline.trading_now",
+            return_value=datetime(2026, 3, 26, 15, 0, tzinfo=timezone.utc),
+        ):
+            pipeline._warm_session_context_from_open(cast(Session, session))
+
+        session.rollback.assert_called_once()
+        self.assertEqual(ingestor.warmup_ranges, [])
+        self.assertIsNone(pipeline._session_context_warmup_day)
 
     def test_session_context_warmup_ignores_preopen_and_empty_cursor_windows(
         self,
