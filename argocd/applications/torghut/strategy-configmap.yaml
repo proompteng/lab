@@ -460,8 +460,8 @@ data:
         strategy_id: late_day_continuation_long_v1@research
         strategy_type: late_day_continuation_long_v1
         version: 1.0.0
-        description: Research-backed late-day continuation sleeve for strong liquid equities into the close, version=1.0.0
-        enabled: false
+        description: Paper-only late-day continuation sleeve on the live executable chip core; production approval blocked pending $300/day executable proof, version=1.0.0
+        enabled: true
         base_timeframe: "1Sec"
         universe_type: late_day_continuation_long_v1
         universe_symbols: ["NVDA", "AMD", "INTC"]

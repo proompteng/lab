@@ -286,6 +286,38 @@ class TestLiveConfigManifestContract(TestCase):
                 context=f"strategy {strategy.get('name')}",
             )
 
+    def test_late_day_paper_sleeve_keeps_remaining_entry_window(self) -> None:
+        strategies = _load_torghut_strategy_catalog()
+        late_day = next(
+            (
+                strategy
+                for strategy in strategies
+                if strategy.get("name") == "late-day-continuation-long-v1"
+            ),
+            None,
+        )
+        self.assertIsNotNone(late_day)
+        assert late_day is not None
+
+        description = str(late_day.get("description") or "").lower()
+        params = _params(late_day)
+        raw_symbols = late_day.get("universe_symbols")
+
+        self.assertTrue(_manifest_bool(late_day, "enabled"))
+        self.assertEqual(
+            late_day.get("strategy_id"), "late_day_continuation_long_v1@research"
+        )
+        self.assertIn("paper-only", description)
+        self.assertIn("$300/day", description)
+        self.assertIsInstance(raw_symbols, list)
+        _assert_exact_live_execution_chip_universe(
+            self,
+            cast(list[object], raw_symbols),
+            context="late-day paper sleeve universe",
+        )
+        self.assertEqual(params.get("entry_start_minute_utc"), "1080")
+        self.assertEqual(params.get("entry_end_minute_utc"), "1170")
+
     def test_runtime_symbol_sources_use_live_signal_universe(self) -> None:
         live_env = _load_torghut_knative_env()
         sim_env = _load_knative_env(
