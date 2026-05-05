@@ -283,6 +283,36 @@ class TestLiveConfigManifestContract(TestCase):
             context="torghut-ws subscription symbols",
         )
 
+    def test_migration_job_prepares_sim_database_before_sim_upgrade(self) -> None:
+        manifest = _load_yaml_mapping(
+            "argocd/applications/torghut/db-migrations-job.yaml"
+        )
+        containers = (
+            manifest.get("spec", {})
+            .get("template", {})
+            .get("spec", {})
+            .get("containers", [])
+        )
+        self.assertTrue(containers)
+        container = containers[0]
+        args = "\n".join(str(item) for item in container.get("args", []))
+        env_names = {
+            item.get("name")
+            for item in container.get("env", [])
+            if isinstance(item, Mapping)
+        }
+
+        self.assertIn("TORGHUT_POSTGRES_ADMIN_URI", env_names)
+        self.assertIn("CREATE DATABASE", args)
+        self.assertIn("GRANT ALL PRIVILEGES ON DATABASE", args)
+        self.assertIn("CREATE EXTENSION IF NOT EXISTS vector", args)
+        self.assertLess(
+            args.index("CREATE EXTENSION IF NOT EXISTS vector"),
+            args.index(
+                'DB_DSN="${TORGHUT_SIM_DB_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads'
+            ),
+        )
+
     def test_profitability_sweep_universes_are_chip_only(self) -> None:
         trading_config_dir = (
             _repo_root() / "services" / "torghut" / "config" / "trading"
