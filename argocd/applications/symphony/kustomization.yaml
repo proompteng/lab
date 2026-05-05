@@ -5,8 +5,6 @@ configMapGenerator:
   - name: symphony-workflow
     files:
       - WORKFLOW.md
-    options:
-      disableNameSuffixHash: true
 resources:
   - ../symphony-base
   - codex-auth-sealedsecret.yaml
