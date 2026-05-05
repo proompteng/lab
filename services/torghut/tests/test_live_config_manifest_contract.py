@@ -303,11 +303,20 @@ class TestLiveConfigManifestContract(TestCase):
         }
 
         self.assertIn("TORGHUT_POSTGRES_ADMIN_URI", env_names)
+        self.assertIn("postgresql+psycopg://", args)
+        self.assertIn("database_url(admin_uri, 'postgres')", args)
         self.assertIn("CREATE DATABASE", args)
         self.assertIn("GRANT ALL PRIVILEGES ON DATABASE", args)
         self.assertIn("CREATE EXTENSION IF NOT EXISTS vector", args)
+        self.assertIn("ALTER %s %s OWNER TO %I", args)
+        self.assertIn("pg_get_userbyid(c.relowner) <> target_role", args)
+        self.assertIn("target_role_literal", args)
         self.assertLess(
             args.index("CREATE EXTENSION IF NOT EXISTS vector"),
+            args.index("ALTER %s %s OWNER TO %I"),
+        )
+        self.assertLess(
+            args.index("ALTER %s %s OWNER TO %I"),
             args.index(
                 'DB_DSN="${TORGHUT_SIM_DB_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads'
             ),
