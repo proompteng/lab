@@ -176,6 +176,26 @@ Testing rules for the trading core:
   `/api/torghut/trading/control-plane/quant/health` surface; use `TRADING_JANGAR_QUANT_WINDOW` to align the expected
   freshness window.
 
+## Evidence epochs
+
+The May 5 cross-plane contract is implemented as an additive, shadow-first receipt surface:
+
+- `GET /trading/evidence-epochs/latest` compiles a `torghut.evidence-epoch.v1` payload and persists append-only
+  `evidence_epochs` / `evidence_receipts` rows by default.
+- `GET /trading/evidence-epochs/{evidence_epoch_id}` returns a persisted epoch by id.
+- Query `stage_scope=shadow|research|paper|canary|live|scale` to see the decision that would apply to that stage.
+  Shadow stays available while non-shadow scopes quarantine on missing Jangar authority, Torghut health timeouts,
+  stale data/empirical jobs, missing artifact parity, or missing portfolio proof.
+- Optional artifact parity inputs:
+  - `TORGHUT_REQUIRED_IMAGE_PLATFORMS=linux/amd64,linux/arm64`
+  - `TORGHUT_OBSERVED_IMAGE_PLATFORMS=linux/amd64,linux/arm64`
+  - `TORGHUT_RUNTIME_PULL_FAILURES_JSON='["torghut-sim ImagePullBackOff"]'`
+
+Runtime-closure bundles now also write `runtime-closure/promotion/portfolio-proof-receipt.json`. This does not change
+live capital behavior; it gives deployers a receipt id and reason codes before any non-shadow capital request. Rollback
+is epoch-scoped: quarantine the active epoch, revert the GitOps image or strategy config through the normal release PR,
+and leave prior receipts available for audit.
+
 ## Whitepaper workflow (GitHub issue -> Kafka -> AgentRun)
 
 - Kickoff contract in issue body:

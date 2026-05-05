@@ -660,6 +660,14 @@ data:
 
             self.assertEqual(summary.status, "pending_runtime_parity")
             self.assertTrue(Path(summary.portfolio_optimizer_evidence_path).exists())
+            self.assertTrue(Path(summary.portfolio_proof_receipt_path).exists())
+            portfolio_proof = json.loads(
+                Path(summary.portfolio_proof_receipt_path).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                portfolio_proof["payload"]["portfolio_candidate_id"],
+                "portfolio-direct",
+            )
             candidate_spec = json.loads(
                 Path(summary.candidate_spec_path).read_text(encoding="utf-8")
             )
@@ -678,6 +686,10 @@ data:
                     "artifact_ref"
                 ],
                 "promotion/portfolio-optimizer-evidence.json",
+            )
+            self.assertEqual(
+                gate_report["promotion_evidence"]["portfolio_proof"]["artifact_ref"],
+                "promotion/portfolio-proof-receipt.json",
             )
             prerequisites = summary.promotion_prerequisites
             self.assertIn(

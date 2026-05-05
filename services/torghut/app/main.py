@@ -56,6 +56,23 @@ from .trading.autonomy import (
 from .trading.autoresearch_routes import router as autoresearch_router
 from .trading.completion import build_doc29_completion_status
 from .trading.empirical_jobs import build_empirical_jobs_status
+from .trading.evidence_epochs import (
+    EvidenceEpoch,
+    compile_evidence_epoch,
+    load_evidence_epoch_payload,
+    load_latest_evidence_epoch_payload,
+    persist_evidence_epoch,
+)
+from .trading.evidence_receipts import (
+    EvidenceReceipt,
+    build_artifact_parity_receipt,
+    build_data_freshness_receipt,
+    build_empirical_jobs_receipt,
+    build_jangar_authority_receipt,
+    build_portfolio_proof_receipt,
+    build_schema_receipt,
+    build_service_health_receipt,
+)
 from .trading.forecast_runtime import forecast_status
 from .trading.hypotheses import (
     JangarDependencyQuorumStatus,
@@ -132,6 +149,25 @@ def _require_whitepaper_control_token(request: Request) -> None:
 def _env_or_none(name: str) -> str | None:
     value = os.getenv(name, "").strip()
     return value or None
+
+
+def _env_csv(name: str) -> tuple[str, ...]:
+    raw_value = os.getenv(name, "")
+    return tuple(item.strip() for item in raw_value.split(",") if item.strip())
+
+
+def _env_json_string_list(name: str) -> tuple[str, ...]:
+    raw_value = os.getenv(name, "").strip()
+    if not raw_value:
+        return ()
+    try:
+        decoded = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return (raw_value,)
+    if not isinstance(decoded, list):
+        return ()
+    decoded_items = cast(list[object], decoded)
+    return tuple(item for raw_item in decoded_items if (item := str(raw_item).strip()))
 
 
 def _assert_dspy_cutover_migration_guard() -> None:
@@ -2060,6 +2096,174 @@ def trading_autonomy() -> dict[str, object]:
         },
         "evidence_continuity": state.last_evidence_continuity_report,
     }
+
+
+def _build_current_evidence_epoch(
+    *,
+    session: Session,
+    account_label: str,
+    stage_scope: str,
+) -> EvidenceEpoch:
+    observed_at = datetime.now(timezone.utc)
+    receipts: list[EvidenceReceipt] = []
+
+    try:
+        database_contract = _evaluate_database_contract(session)
+        database_ok = bool(database_contract.get("ok"))
+        schema_current = bool(database_contract.get("schema_current"))
+        schema_lineage_ready = bool(database_contract.get("schema_graph_lineage_ready"))
+        schema_reasons = [
+            str(item)
+            for item in cast(
+                Sequence[object],
+                database_contract.get("schema_graph_lineage_errors") or [],
+            )
+            if str(item).strip()
+        ]
+        schema_head_signature = (
+            str(database_contract.get("schema_head_signature"))
+            if database_contract.get("schema_head_signature") is not None
+            else None
+        )
+    except Exception as exc:
+        database_ok = False
+        schema_current = False
+        schema_lineage_ready = False
+        schema_reasons = [f"database_contract_unavailable:{type(exc).__name__}"]
+        schema_head_signature = None
+
+    receipts.append(
+        build_jangar_authority_receipt(
+            quorum_payload=load_jangar_dependency_quorum().as_payload(),
+            observed_at=observed_at,
+        )
+    )
+    receipts.append(
+        build_service_health_receipt(
+            role="torghut-live",
+            liveness_ok=True,
+            readiness_ok=database_ok,
+            db_check_ok=database_ok,
+            trading_status_ok=True,
+            image_digest=BUILD_IMAGE_DIGEST,
+            revision=BUILD_COMMIT,
+            observed_at=observed_at,
+        )
+    )
+    receipts.append(
+        build_schema_receipt(
+            schema_current=schema_current,
+            lineage_ready=schema_lineage_ready,
+            schema_head_signature=schema_head_signature,
+            reason_codes=schema_reasons,
+            observed_at=observed_at,
+        )
+    )
+    receipts.append(
+        build_data_freshness_receipt(
+            source="database_contract",
+            fresh=database_ok,
+            as_of=observed_at,
+            observed_at=observed_at,
+            max_age_seconds=settings.trading_empirical_job_stale_after_seconds,
+            reason_codes=[] if database_ok else ["database_contract_not_ready"],
+        )
+    )
+
+    empirical_status = build_empirical_jobs_status(
+        session=session,
+        stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
+    )
+    receipts.append(
+        build_empirical_jobs_receipt(
+            empirical_status=empirical_status,
+            observed_at=observed_at,
+            ttl_seconds=settings.trading_empirical_job_stale_after_seconds,
+        )
+    )
+    receipts.append(
+        build_artifact_parity_receipt(
+            consumer_ref="torghut-live",
+            image_ref=BUILD_IMAGE_DIGEST,
+            required_platforms=_env_csv("TORGHUT_REQUIRED_IMAGE_PLATFORMS"),
+            observed_platforms=_env_csv("TORGHUT_OBSERVED_IMAGE_PLATFORMS"),
+            runtime_pull_failures=_env_json_string_list(
+                "TORGHUT_RUNTIME_PULL_FAILURES_JSON"
+            ),
+            observed_at=observed_at,
+        )
+    )
+    receipts.append(
+        build_portfolio_proof_receipt(
+            portfolio_candidate_id="",
+            target_net_pnl_per_day=Decimal("500"),
+            post_cost_net_pnl_per_day=Decimal("0"),
+            holdout_result=None,
+            runtime_closure_artifact_refs=(),
+            observed_at=observed_at,
+        )
+    )
+    return compile_evidence_epoch(
+        account_label=account_label,
+        stage_scope=stage_scope,
+        receipts=receipts,
+        created_at=observed_at,
+    )
+
+
+@app.get("/trading/evidence-epochs/latest")
+def trading_evidence_epoch_latest(
+    stage_scope: str = Query("shadow", min_length=1, max_length=32),
+    account_label: str = Query(
+        settings.trading_account_label, min_length=1, max_length=64
+    ),
+    refresh: bool = Query(True),
+    persist: bool = Query(True),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Compile or return the latest cross-plane evidence epoch for operators."""
+
+    if not refresh:
+        persisted_payload = load_latest_evidence_epoch_payload(
+            session,
+            account_label=account_label,
+            stage_scope=stage_scope,
+        )
+        if persisted_payload is not None:
+            return persisted_payload
+
+    epoch = _build_current_evidence_epoch(
+        session=session,
+        account_label=account_label,
+        stage_scope=stage_scope,
+    )
+    payload = epoch.to_payload()
+    if persist:
+        try:
+            persist_evidence_epoch(session, epoch)
+            session.commit()
+            payload["persisted"] = True
+        except SQLAlchemyError as exc:
+            session.rollback()
+            logger.warning("Failed to persist evidence epoch: %s", exc)
+            payload["persisted"] = False
+            payload["persist_error"] = type(exc).__name__
+    else:
+        payload["persisted"] = False
+    return payload
+
+
+@app.get("/trading/evidence-epochs/{evidence_epoch_id}")
+def trading_evidence_epoch_detail(
+    evidence_epoch_id: str,
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Return one persisted cross-plane evidence epoch."""
+
+    payload = load_evidence_epoch_payload(session, evidence_epoch_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="evidence_epoch_not_found")
+    return payload
 
 
 @app.get("/trading/empirical-jobs")
