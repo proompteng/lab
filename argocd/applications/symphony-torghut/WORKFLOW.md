@@ -2,7 +2,7 @@
 tracker:
   kind: linear
   api_key: $LINEAR_API_KEY
-  project_slug: 9bda8b51125a
+  project_slug: 531ab147cf3c
   handoff_state: Backlog
   active_states:
     - Todo

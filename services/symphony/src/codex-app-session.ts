@@ -159,6 +159,7 @@ const toSandboxPolicy = (sandbox: SandboxMode | null, override: SandboxPolicy | 
     return {
       type: 'workspaceWrite',
       writableRoots: [],
+      readOnlyAccess: { type: 'fullAccess' },
       networkAccess: true,
       excludeTmpdirEnvVar: false,
       excludeSlashTmp: false,
@@ -167,6 +168,7 @@ const toSandboxPolicy = (sandbox: SandboxMode | null, override: SandboxPolicy | 
   if (sandbox === 'read-only') {
     return {
       type: 'readOnly',
+      access: { type: 'fullAccess' },
       networkAccess: true,
     }
   }

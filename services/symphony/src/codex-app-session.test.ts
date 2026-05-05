@@ -267,12 +267,14 @@ const expectedByMode = {
   'workspace-write': {
     type: 'workspaceWrite',
     writableRoots: [],
+    readOnlyAccess: { type: 'fullAccess' },
     networkAccess: true,
     excludeTmpdirEnvVar: false,
     excludeSlashTmp: false,
   },
   'read-only': {
     type: 'readOnly',
+    access: { type: 'fullAccess' },
     networkAccess: true,
   },
 }
