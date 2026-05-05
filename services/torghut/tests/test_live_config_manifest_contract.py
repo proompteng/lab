@@ -166,18 +166,18 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(
             set(settings.trading_universe_static_fallback_symbols),
             {
-                "AAPL",
                 "AMAT",
                 "AMD",
+                "ASML",
                 "AVGO",
-                "GOOG",
                 "INTC",
-                "META",
-                "MSFT",
+                "KLAC",
+                "LRCX",
+                "MU",
                 "NVDA",
-                "QQQ",
-                "SPY",
-                "TSLA",
+                "QCOM",
+                "TSM",
+                "TXN",
             },
         )
         self.assertNotIn("TRADING_FEATURE_FLAGS_URL", env)
