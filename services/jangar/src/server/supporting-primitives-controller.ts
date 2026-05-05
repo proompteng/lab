@@ -942,7 +942,7 @@ const buildScheduleRunnerCommand = (): string =>
     'const target = targetByKind[String(manifest.kind)]',
     "if (!target) throw new Error(`unsupported schedule target kind: ${String(manifest.kind) || 'unknown'}`)",
     "const readEnv = (name) => process.env[name]?.trim() ?? ''",
-    `const namespace = String(manifest?.metadata?.namespace ?? readEnv(${JSON.stringify(SCHEDULE_RUNNER_NAMESPACE_ENV)}) || 'agents')`,
+    `const namespace = String(manifest?.metadata?.namespace ?? (readEnv(${JSON.stringify(SCHEDULE_RUNNER_NAMESPACE_ENV)}) || 'agents'))`,
     "const token = readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8').trim()",
     "const ca = readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt', 'utf8')",
     `const serviceHost = readEnv(${JSON.stringify(KUBERNETES_SERVICE_HOST_ENV)})`,
