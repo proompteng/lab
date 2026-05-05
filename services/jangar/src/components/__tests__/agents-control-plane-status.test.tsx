@@ -74,6 +74,57 @@ const baseStatus: ControlPlaneStatus = {
     reasons: ['workflow_backoff_warning'],
     message: 'Control-plane dependency quorum is degraded; delay capital promotion.',
   },
+  failure_domain_leases: {
+    mode: 'shadow',
+    design_artifact:
+      'docs/agents/designs/75-jangar-failure-domain-leases-and-database-routability-holdbacks-2026-05-05.md',
+    lease_set_digest: 'fdl-set:test',
+    generated_at: '2026-01-20T00:00:00Z',
+    leases: [
+      {
+        lease_id: 'fdl:database:test',
+        domain: 'database',
+        scope: 'jangar',
+        status: 'valid',
+        action_classes: ['dispatch_normal', 'deploy_widen'],
+        observed_at: '2026-01-20T00:00:00Z',
+        expires_at: '2026-01-20T00:01:00Z',
+        evidence_refs: ['database:probe:select_1'],
+        reason_codes: [],
+        rollback_target: null,
+        issuer: 'status_projector',
+      },
+      {
+        lease_id: 'fdl:workflow_artifact:test',
+        domain: 'workflow_artifact',
+        scope: 'agents',
+        status: 'expired',
+        action_classes: ['dispatch_normal'],
+        observed_at: '2026-01-20T00:00:00Z',
+        expires_at: '2026-01-20T00:00:00Z',
+        evidence_refs: ['event:agents:missing-configmap'],
+        reason_codes: ['workflow_artifact.configmap_missing'],
+        rollback_target: 'recreate missing workflow input ConfigMap or rerun affected stage',
+        issuer: 'status_projector',
+      },
+    ],
+    holdbacks: [
+      {
+        action_class: 'dispatch_normal',
+        decision: 'hold',
+        lease_ids: ['fdl:workflow_artifact:test'],
+        reason_codes: ['workflow_artifact.configmap_missing'],
+        message: 'dispatch_normal is held by workflow_artifact.configmap_missing.',
+      },
+      {
+        action_class: 'dispatch_repair',
+        decision: 'allow',
+        lease_ids: [],
+        reason_codes: [],
+        message: 'dispatch_repair is allowed by shadow failure-domain leases.',
+      },
+    ],
+  },
   database: {
     configured: true,
     connected: true,
@@ -183,6 +234,9 @@ describe('ControlPlaneStatusPanel', () => {
     expect(normalizedHtml).toContain('Modes: research_backtest, shadow_replay')
     expect(normalizedHtml).toContain('Authority: local')
     expect(normalizedHtml).toContain('Scope: agents')
+    expect(normalizedHtml).toContain('Failure-domain leases')
+    expect(normalizedHtml).toContain('Held actions: dispatch_normal')
+    expect(normalizedHtml).toContain('workflow_artifact.configmap_missing')
     expect(normalizedHtml).not.toContain('Top failure reasons: [object Object], [object Object]')
     expect(normalizedHtml).toContain('No segment detail available.')
   })

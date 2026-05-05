@@ -26,6 +26,8 @@ import { getRegisteredMigrationNames } from '~/server/kysely-migrations'
 const createTestKubeGateway = (overrides: Partial<KubeGateway> = {}): KubeGateway => ({
   listDeployments: vi.fn(async () => []),
   listJobs: vi.fn(async () => []),
+  listPods: vi.fn(async () => []),
+  listEvents: vi.fn(async () => []),
   listNamespaces: vi.fn(async () => []),
   listCustomResourceDefinitions: vi.fn(async () => []),
   getLease: vi.fn(async () => null),
@@ -326,6 +328,10 @@ describe('control-plane status', () => {
     delete process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST
     delete process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SUMMARY_LIMIT
     delete process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SWARMS
+    delete process.env.JANGAR_CONTROL_PLANE_ROUTE_HEALTH_URL
+    delete process.env.JANGAR_CONTROL_PLANE_ROUTE_PROBE_ENABLED
+    delete process.env.JANGAR_CONTROL_PLANE_ROUTE_NAMESPACE
+    delete process.env.JANGAR_FAILURE_DOMAIN_EVIDENCE_NAMESPACES
   })
 
   const buildExecutionTrustSwarmResource = (
@@ -612,6 +618,31 @@ describe('control-plane status', () => {
       reasons: [],
       message: 'Control-plane admission dependencies are healthy.',
     })
+    expect(status.failure_domain_leases).toMatchObject({
+      mode: 'shadow',
+      design_artifact:
+        'docs/agents/designs/75-jangar-failure-domain-leases-and-database-routability-holdbacks-2026-05-05.md',
+    })
+    expect(status.failure_domain_leases.leases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          domain: 'database',
+          status: 'valid',
+        }),
+        expect.objectContaining({
+          domain: 'route',
+          status: 'valid',
+        }),
+      ]),
+    )
+    expect(status.failure_domain_leases.holdbacks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_normal',
+          decision: 'allow',
+        }),
+      ]),
+    )
     expect(status.namespaces).toHaveLength(1)
     expect(status.namespaces[0]?.status).toBe('healthy')
     expect(status.namespaces[0]?.degraded_components ?? []).toHaveLength(0)

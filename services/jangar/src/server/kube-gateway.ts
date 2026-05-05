@@ -23,6 +23,7 @@ export type KubeGatewayCondition = {
   status: string | null
   reason: string | null
   lastTransitionTime: string | null
+  message?: string | null
 }
 
 export type KubeGatewayMetadata = {
@@ -31,6 +32,7 @@ export type KubeGatewayMetadata = {
   generation: number | null
   labels: Record<string, string>
   creationTimestamp: string | null
+  deletionTimestamp?: string | null
 }
 
 export type KubeGatewayDeployment = {
@@ -58,6 +60,50 @@ export type KubeGatewayJob = {
   }
 }
 
+export type KubeGatewayContainerState = {
+  waiting?: {
+    reason: string | null
+    message: string | null
+  }
+  terminated?: {
+    reason: string | null
+    message: string | null
+    exitCode: number | null
+  }
+  running?: boolean
+}
+
+export type KubeGatewayContainerStatus = {
+  name: string
+  image: string | null
+  ready: boolean
+  state: KubeGatewayContainerState
+}
+
+export type KubeGatewayPod = {
+  metadata: KubeGatewayMetadata
+  status: {
+    phase: string | null
+    conditions: KubeGatewayCondition[]
+    containerStatuses: KubeGatewayContainerStatus[]
+  }
+}
+
+export type KubeGatewayEvent = {
+  metadata: KubeGatewayMetadata
+  type: string | null
+  reason: string | null
+  message: string | null
+  firstTimestamp: string | null
+  lastTimestamp: string | null
+  eventTime: string | null
+  involvedObject: {
+    kind: string | null
+    name: string | null
+    namespace: string | null
+  }
+}
+
 export type KubeGatewaySwarm = {
   metadata: KubeGatewayMetadata
   status: Record<string, unknown>
@@ -68,6 +114,8 @@ export type KubeGatewayResourceAccess = 'ok' | 'missing' | 'forbidden'
 export type KubeGateway = {
   listDeployments: (namespace: string) => Promise<KubeGatewayDeployment[]>
   listJobs: (namespace: string, labelSelector?: string) => Promise<KubeGatewayJob[]>
+  listPods: (namespace: string, labelSelector?: string) => Promise<KubeGatewayPod[]>
+  listEvents: (namespace: string, fieldSelector?: string) => Promise<KubeGatewayEvent[]>
   listNamespaces: () => Promise<string[]>
   listCustomResourceDefinitions: () => Promise<string[]>
   getLease: (namespace: string, name: string) => Promise<V1Lease | null>
@@ -106,25 +154,39 @@ const parseMetadata = (value: unknown): KubeGatewayMetadata | null => {
   const name = asString(record?.name)
   if (!record || !name) return null
 
-  return {
+  const deletionTimestamp = asString(record.deletionTimestamp)
+  const metadata: KubeGatewayMetadata = {
     name,
     namespace: asString(record.namespace),
     generation: asNonNegativeInteger(record.generation),
     labels: parseLabels(record.labels),
     creationTimestamp: asString(record.creationTimestamp),
   }
+
+  if (deletionTimestamp !== null) {
+    metadata.deletionTimestamp = deletionTimestamp
+  }
+
+  return metadata
 }
 
 const parseCondition = (value: unknown): KubeGatewayCondition | null => {
   const record = asRecord(value)
   if (!record) return null
 
-  return {
+  const message = asString(record.message)
+  const condition: KubeGatewayCondition = {
     type: asString(record.type),
     status: asString(record.status),
     reason: asString(record.reason),
     lastTransitionTime: asString(record.lastTransitionTime),
   }
+
+  if (message !== null) {
+    condition.message = message
+  }
+
+  return condition
 }
 
 const parseConditions = (value: unknown) =>
@@ -157,10 +219,61 @@ const parseItemNames = (items: Record<string, unknown>[]) =>
     .map((item) => parseMetadata(item.metadata)?.name ?? asString(asRecord(item.metadata)?.name))
     .filter((entry): entry is string => Boolean(entry))
 
+const parseContainerState = (value: unknown): KubeGatewayContainerState => {
+  const record = asRecord(value) ?? {}
+  const waiting = asRecord(record.waiting)
+  const terminated = asRecord(record.terminated)
+  const state: KubeGatewayContainerState = {}
+
+  if (waiting) {
+    state.waiting = {
+      reason: asString(waiting.reason),
+      message: asString(waiting.message),
+    }
+  }
+  if (terminated) {
+    state.terminated = {
+      reason: asString(terminated.reason),
+      message: asString(terminated.message),
+      exitCode: asNonNegativeInteger(terminated.exitCode),
+    }
+  }
+  if (asRecord(record.running)) {
+    state.running = true
+  }
+
+  return state
+}
+
+const parseContainerStatuses = (value: unknown) =>
+  (Array.isArray(value) ? value : [])
+    .map((entry): KubeGatewayContainerStatus | null => {
+      const record = asRecord(entry)
+      const name = asString(record?.name)
+      if (!record || !name) return null
+
+      return {
+        name,
+        image: asString(record.image),
+        ready: record.ready === true,
+        state: parseContainerState(record.state),
+      }
+    })
+    .filter((entry): entry is KubeGatewayContainerStatus => entry !== null)
+
+const parseInvolvedObject = (value: unknown) => {
+  const record = asRecord(value) ?? {}
+  return {
+    kind: asString(record.kind),
+    name: asString(record.name),
+    namespace: asString(record.namespace),
+  }
+}
+
 const withLeaseNamespace = (namespace: string, lease: V1Lease) => ({
   ...lease,
   metadata: {
-    ...(asRecord(lease.metadata) ?? {}),
+    ...asRecord(lease.metadata),
     namespace,
   },
 })
@@ -217,6 +330,50 @@ export const createKubeGateway = (client: KubernetesClient = createKubernetesCli
           }
         })
         .filter((entry): entry is KubeGatewayJob => entry !== null)
+    }),
+  listPods: async (namespace, labelSelector) =>
+    wrapTransport('kube pods list failed', async () => {
+      const items = parseListItems(await client.list('pods', namespace, labelSelector), 'kube pods list')
+
+      return items
+        .map((item): KubeGatewayPod | null => {
+          const metadata = parseMetadata(item.metadata)
+          if (!metadata) return null
+
+          const status = asRecord(item.status) ?? {}
+
+          return {
+            metadata,
+            status: {
+              phase: asString(status.phase),
+              conditions: parseConditions(status.conditions),
+              containerStatuses: parseContainerStatuses(status.containerStatuses),
+            },
+          }
+        })
+        .filter((entry): entry is KubeGatewayPod => entry !== null)
+    }),
+  listEvents: async (namespace, fieldSelector) =>
+    wrapTransport('kube events list failed', async () => {
+      const items = parseListItems(await client.listEvents(namespace, fieldSelector), 'kube events list')
+
+      return items
+        .map((item): KubeGatewayEvent | null => {
+          const metadata = parseMetadata(item.metadata)
+          if (!metadata) return null
+
+          return {
+            metadata,
+            type: asString(item.type),
+            reason: asString(item.reason),
+            message: asString(item.message),
+            firstTimestamp: asString(item.firstTimestamp),
+            lastTimestamp: asString(item.lastTimestamp),
+            eventTime: asString(item.eventTime),
+            involvedObject: parseInvolvedObject(item.involvedObject),
+          }
+        })
+        .filter((entry): entry is KubeGatewayEvent => entry !== null)
     }),
   listNamespaces: async () =>
     wrapTransport('kube namespaces list failed', async () => {
