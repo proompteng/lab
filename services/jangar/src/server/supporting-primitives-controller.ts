@@ -1311,6 +1311,7 @@ const reconcileSchedule = async (
 
     const supportingConfig = resolveSupportingPrimitivesConfig(process.env)
     const image = supportingConfig.scheduleRunnerImage
+    const nodeSelector = supportingConfig.scheduleRunnerNodeSelector
     const podNamespace = supportingConfig.podNamespace
     const scheduleServiceAccount = supportingConfig.scheduleServiceAccount ?? supportingConfig.serviceAccountName
     const serviceAccountName =
@@ -1340,6 +1341,7 @@ const reconcileSchedule = async (
               spec: {
                 serviceAccountName,
                 restartPolicy: 'Never',
+                ...(nodeSelector && Object.keys(nodeSelector).length > 0 ? { nodeSelector } : {}),
                 containers: [
                   {
                     name: 'schedule-runner',
