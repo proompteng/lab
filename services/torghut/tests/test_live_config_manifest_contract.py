@@ -164,7 +164,10 @@ class TestLiveConfigManifestContract(TestCase):
             settings.trading_jangar_control_plane_status_url,
             "http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents",
         )
-        self.assertIsNone(settings.trading_jangar_quant_health_url)
+        self.assertEqual(
+            settings.trading_jangar_quant_health_url,
+            "http://jangar.jangar.svc.cluster.local/api/torghut/trading/control-plane/quant/health",
+        )
         self.assertIsNone(settings.trading_market_context_url)
         self.assertEqual(
             set(settings.trading_universe_static_fallback_symbols),
@@ -196,6 +199,18 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(env.get("TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS"), "10")
         self.assertNotIn("JANGAR_BASE_URL", env)
+
+    def test_live_manifest_sets_typed_quant_health_route(self) -> None:
+        env = _load_torghut_knative_env()
+
+        self.assertEqual(
+            env.get("TRADING_JANGAR_QUANT_HEALTH_URL"),
+            "http://jangar.jangar.svc.cluster.local/api/torghut/trading/control-plane/quant/health",
+        )
+        self.assertNotIn(
+            "/api/agents/control-plane/status",
+            str(env.get("TRADING_JANGAR_QUANT_HEALTH_URL")),
+        )
 
     def test_live_manifest_does_not_import_autonomy_env_from(self) -> None:
         manifest = _load_torghut_knative_manifest()

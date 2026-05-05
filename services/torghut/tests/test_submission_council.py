@@ -234,6 +234,11 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(result["capital_state"], "observe")
         self.assertEqual(result["reason"], "promotion_certificate_missing")
         self.assertIn("hypothesis_window_evidence_missing", result["blocked_reasons"])
+        contract = result["profit_window_contract"]
+        self.assertEqual(
+            contract["schema_version"], "torghut.profit-window-contract.v1"
+        )
+        self.assertEqual(contract["summary"]["windows_total"], 0)
 
     def test_build_live_submission_gate_payload_blocks_when_hypothesis_runtime_item_is_shadow(
         self,
@@ -326,6 +331,122 @@ class TestSubmissionCouncil(TestCase):
         self.assertFalse(result["allowed"])
         self.assertEqual(result["reason"], "quant_health_not_configured")
         self.assertIn("quant_health_not_configured", result["blocked_reasons"])
+
+    def test_profit_window_contract_prices_stale_empirical_and_market_context_per_lane(
+        self,
+    ) -> None:
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                last_autonomy_promotion_eligible=False,
+                last_autonomy_promotion_action=None,
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=900,
+                last_market_context_domain_states={"technicals": "down"},
+                market_context_alert_active=True,
+                market_context_alert_reason="market_context_down",
+                market_session_open=False,
+            ),
+            hypothesis_summary={
+                "summary": {
+                    "promotion_eligible_total": 0,
+                    "capital_stage_totals": {"shadow": 2},
+                    "dependency_quorum": {
+                        "decision": "allow",
+                        "reasons": [],
+                        "message": "ready",
+                    },
+                },
+                "items": [
+                    {
+                        "hypothesis_id": "H-CONT-01",
+                        "lane_id": "continuation",
+                        "strategy_family": "intraday_continuation",
+                        "state": "shadow",
+                        "capital_stage": "shadow",
+                        "reasons": [],
+                        "dependency_capabilities": {
+                            "required": [
+                                "jangar_dependency_quorum",
+                                "signal_continuity",
+                            ],
+                            "unknown": [],
+                        },
+                    },
+                    {
+                        "hypothesis_id": "H-REV-01",
+                        "lane_id": "event-reversion",
+                        "strategy_family": "event_reversion",
+                        "state": "shadow",
+                        "capital_stage": "shadow",
+                        "reasons": ["market_context_stale"],
+                        "dependency_capabilities": {
+                            "required": [
+                                "jangar_dependency_quorum",
+                                "market_context_freshness",
+                            ],
+                            "unknown": [],
+                        },
+                    },
+                ],
+            },
+            empirical_jobs_status={
+                "ready": False,
+                "status": "degraded",
+                "stale_jobs": ["benchmark_parity"],
+                "missing_jobs": [],
+                "ineligible_jobs": [],
+                "dataset_snapshot_refs": ["s3://torghut/empirical/cand-1"],
+            },
+            quant_health_status=self._healthy_quant_status(),
+            promotion_certificate_evidence=[],
+        )
+
+        contract = result["profit_window_contract"]
+        self.assertEqual(contract["window_session_class"], "off_session")
+        self.assertEqual(contract["summary"]["windows_total"], 2)
+        escrows = contract["escrows"]
+        empirical_escrows = [
+            item for item in escrows if item["type"] == "empirical_jobs"
+        ]
+        self.assertTrue(empirical_escrows)
+        self.assertTrue(all(item["status"] == "expired" for item in empirical_escrows))
+        rev_market_escrow = next(
+            item
+            for item in escrows
+            if item["type"] == "market_context"
+            and item["hypothesis_id"] == "H-REV-01"
+            and item["evidence_escrow_id"]
+            in next(
+                window
+                for window in contract["windows"]
+                if window["hypothesis_id"] == "H-REV-01"
+            )["required_escrow_ids"]
+        )
+        rev_window = next(
+            window
+            for window in contract["windows"]
+            if window["hypothesis_id"] == "H-REV-01"
+        )
+        cont_market_escrow = next(
+            item
+            for item in escrows
+            if item["type"] == "market_context" and item["hypothesis_id"] == "H-CONT-01"
+        )
+        cont_window = next(
+            window
+            for window in contract["windows"]
+            if window["hypothesis_id"] == "H-CONT-01"
+        )
+        self.assertTrue(rev_market_escrow["required"])
+        self.assertIn(
+            rev_market_escrow["evidence_escrow_id"],
+            rev_window["blocking_escrow_ids"],
+        )
+        self.assertFalse(cont_market_escrow["required"])
+        self.assertNotIn(
+            cont_market_escrow["evidence_escrow_id"],
+            cont_window["blocking_escrow_ids"],
+        )
 
     def test_resolve_quant_health_url_accepts_typed_endpoint_with_query(self) -> None:
         settings.trading_jangar_quant_health_url = " https://jangar.example/api/torghut/trading/control-plane/quant/health?window=1h "

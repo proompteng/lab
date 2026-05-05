@@ -827,7 +827,18 @@ class TestTradingApi(TestCase):
 
             self.assertEqual(payload["pipeline_mode"], "simple")
             self.assertEqual(payload["execution_lane"], "simple")
-            self.assertTrue(payload["live_submission_gate"]["allowed"])
+            self.assertFalse(payload["live_submission_gate"]["allowed"])
+            self.assertEqual(
+                payload["live_submission_gate"]["reason"],
+                "alpha_readiness_not_promotion_eligible",
+            )
+            self.assertTrue(
+                payload["live_submission_gate"]["simple_lane"]["shared_gate_enforced"]
+            )
+            self.assertIn(
+                "profit_window_contract",
+                payload["live_submission_gate"],
+            )
             self.assertEqual(payload["simple_lane_orders_submitted_total"], 7)
             self.assertEqual(
                 payload["simple_lane_reject_reason_totals"],

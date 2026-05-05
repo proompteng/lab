@@ -322,6 +322,25 @@ If the cutover misbehaves:
 - preserve expired and quarantined escrows instead of deleting them;
 - restore portfolio-wide blocking only as a temporary safety valve, not as the new source of truth.
 
+## Implementation note: 2026-05-05 shadow projection and simple-lane enforcement
+
+The first Torghut-owned implementation slice for `codex/swarm-torghut-quant` lands the cutover prerequisites without
+loosening live capital:
+
+- live and sim manifests explicitly point `TRADING_JANGAR_QUANT_HEALTH_URL` at
+  `/api/torghut/trading/control-plane/quant/health`; generic Jangar status remains separate dependency-quorum input and
+  is not accepted as quant authority;
+- the shared submission council payload now includes a `profit_window_contract` with deterministic
+  `profit_window_id` and `evidence_escrow_id` values for every hypothesis lane in the current gate snapshot;
+- stale empirical jobs are represented as `expired` `empirical_jobs` escrows, quant latest-store/freshness debt is
+  represented as `expired` `jangar_quant` or `clickhouse_freshness` escrows, and market-context debt blocks only lanes
+  that require market-context freshness;
+- the simple live direct-submit lane now calls the shared live-submission gate before Alpaca submission and persists the
+  gate payload in blocked decision metadata.
+
+This is still a shadow/accounting cut for window persistence. Rollback is to remove the live manifest quant-health env
+override and revert the simple-lane gate call; the projected window and escrow fields are additive response metadata.
+
 ## Risks and follow-up
 
 - overly generous repair-probe budgets could disguise underfunded windows as productive learning;
