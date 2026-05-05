@@ -16,6 +16,7 @@ const parsePositiveInt = (value: string | undefined, fallback: number) => {
 export type ListenConfig = {
   port: number
   hostname: string
+  idleTimeoutSeconds: number
 }
 
 export type WorkerHealthConfig = {
@@ -40,6 +41,7 @@ export const resolveHttpServerListenConfig = (
     options?.dev ? 3001 : 3000,
   ),
   hostname: normalizeNonEmpty(env.HOST) ?? (options?.dev ? '127.0.0.1' : '0.0.0.0'),
+  idleTimeoutSeconds: parsePositiveInt(env.JANGAR_HTTP_IDLE_TIMEOUT_SECONDS, 120),
 })
 
 export const resolveWorkerRuntimeConfig = (env: EnvSource = process.env): WorkerRuntimeConfig => {

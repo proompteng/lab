@@ -56,6 +56,8 @@ spec:
               value: production
             - name: UI_PORT
               value: "8080"
+            - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
+              value: "120"
             - name: JANGAR_BUMBA_TASK_QUEUE
               value: jangar
             - name: TEMPORAL_OTEL_ENABLED
