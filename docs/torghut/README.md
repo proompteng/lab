@@ -4,6 +4,10 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/86-torghut-profit-debt-ledger-and-repair-sla-experiments-2026-05-05.md` (current
+  Torghut capital-hold repair and profit-debt contract)
+- `docs/agents/designs/82-jangar-authority-clearance-cells-and-negative-evidence-slas-2026-05-05.md` (current Jangar
+  authority-clearance and negative-evidence SLA contract)
 - `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md` (current authority map)
 - `docs/torghut/design-system/v6/65-torghut-quant-proof-ledger-cutover-program-and-handoff-contract-2026-03-21.md` (current merged cross-plane cutover and handoff contract)
 - `docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md` (Jangar rollout-proof and runtime-completeness contract)
