@@ -467,9 +467,10 @@ RUN --mount=type=cache,target=/var/cache/apt \
 FROM tools-pty AS jangar-pty
 ARG TARGETARCH
 WORKDIR /app
+ENV NODE_ENV=development
 COPY json/ .
 RUN --mount=type=cache,id=bun-install-cache-jangar-pty,target=/root/.bun/install/cache \
-  NODE_ENV=development bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar
+  bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar
 RUN --mount=type=cache,id=bun-install-cache-node-pty-build,target=/root/.bun/install/cache \
   set -eux; \
   case "${TARGETARCH:-$(uname -m)}" in \
@@ -492,9 +493,10 @@ RUN --mount=type=cache,id=bun-install-cache-node-pty-build,target=/root/.bun/ins
 
 FROM tools AS jangar-deps-dev
 WORKDIR /app
+ENV NODE_ENV=development
 COPY json/ .
 RUN --mount=type=cache,id=bun-install-cache-jangar-deps-dev,target=/root/.bun/install/cache \
-  NODE_ENV=development bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar
+  bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar
 
 FROM jangar-deps-dev AS jangar-build
 WORKDIR /app
@@ -523,6 +525,7 @@ RUN if [ -f .output/server/index.mjs ] && [ -f .output/server/proto/proompteng/j
 
 FROM tools AS jangar-deps-prod
 WORKDIR /app
+ENV NODE_ENV=production
 COPY json/ .
 RUN --mount=type=cache,id=bun-install-cache-jangar-deps-prod,target=/root/.bun/install/cache \
   bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar
