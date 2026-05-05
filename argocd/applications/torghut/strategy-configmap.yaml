@@ -395,8 +395,8 @@ data:
         strategy_id: microbar_volume_continuation_long_top2@prod
         strategy_type: microbar_cross_sectional_long_v1
         version: 1.0.0
-        description: Promoted strict-daily-profit microbar volume continuation sleeve, version=1.0.0
-        enabled: true
+        description: Held strict-daily-profit microbar volume continuation sleeve; executable replay at current buying-power sizing did not clear the daily target, version=1.0.0
+        enabled: false
         base_timeframe: "1Sec"
         universe_type: microbar_cross_sectional_long_v1
         universe_symbols: ["AAPL", "AMAT", "AMD", "AVGO", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
@@ -416,8 +416,8 @@ data:
         strategy_id: microbar_prev_day_open60_short_top1_breadth_gated@prod
         strategy_type: microbar_cross_sectional_short_v1
         version: 1.0.0
-        description: Promoted strict-daily-profit previous-day open60 reversal short gated by prior open60 breadth, version=1.0.0
-        enabled: true
+        description: Held strict-daily-profit previous-day open60 reversal short gated by prior open60 breadth; executable replay at current buying-power sizing did not clear the daily target, version=1.0.0
+        enabled: false
         base_timeframe: "1Sec"
         universe_type: microbar_cross_sectional_short_v1
         universe_symbols: ["AAPL", "AMAT", "AMD", "AVGO", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
@@ -439,8 +439,8 @@ data:
         strategy_id: microbar_prev_day_open45_reversal_long_top1@prod
         strategy_type: microbar_cross_sectional_long_v1
         version: 1.0.0
-        description: Promoted strict-daily-profit previous-day open45 low-rank reversal long sleeve, version=1.0.0
-        enabled: true
+        description: Held strict-daily-profit previous-day open45 low-rank reversal long sleeve; executable replay at current buying-power sizing did not clear the daily target, version=1.0.0
+        enabled: false
         base_timeframe: "1Sec"
         universe_type: microbar_cross_sectional_long_v1
         universe_symbols: ["AAPL", "AMAT", "AMD", "AVGO", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
