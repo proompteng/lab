@@ -6,7 +6,7 @@ sources:
   - https://github.com/proompteng/charts/tree/main/charts/agents
 type: application
 kubeVersion: '>=1.25.0-0'
-version: 0.9.8
+version: 0.9.9
 appVersion: '0.9.0'
 icon: https://avatars.githubusercontent.com/u/234536857
 keywords:
@@ -203,6 +203,12 @@ annotations:
           implement: {targetRef: {kind: OrchestrationRun, name: codex-autonomous-run}}
           verify: {targetRef: {kind: AgentRun, name: codex-run-sample}}
   artifacthub.io/changes: |
+    - kind: changed
+      description: "Rewrite chart README around a first-time-user quickstart and production-ready install guidance."
+    - kind: fixed
+      description: "Grant CRD discovery RBAC automatically for cluster-scoped installs so controller readiness can validate installed CRDs."
+    - kind: fixed
+      description: "Make the kind quickstart complete an end-to-end smoke AgentRun with local pgvector Postgres."
     - kind: added
       description: "Add Swarm CRD for always-on autonomous mission orchestration."
     - kind: changed

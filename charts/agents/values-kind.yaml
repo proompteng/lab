@@ -9,17 +9,26 @@ resources:
     cpu: 100m
     memory: 256Mi
 
-controller:
-  namespaces:
-    - agents
-
 rbac:
-  clusterScoped: false
+  clusterScoped: true
+
+readinessProbe:
+  path: /health
+
+env:
+  vars:
+    OTEL_METRICS_EXPORTER: none
 
 database:
   secretRef:
     name: jangar-db-app
     key: uri
+
+controller:
+  namespaces:
+    - agents
+  vcsProviders:
+    enabled: false
 
 agentComms:
   enabled: false
