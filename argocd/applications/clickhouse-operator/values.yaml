@@ -183,3 +183,8 @@ additionalResources:
         matchLabels:
           app.kubernetes.io/name: altinity-clickhouse-operator
           app.kubernetes.io/instance: clickhouse-operator
+        matchExpressions:
+          - key: app.kubernetes.io/component
+            operator: NotIn
+            values:
+              - crd-install-hook
