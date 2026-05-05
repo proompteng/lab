@@ -6,10 +6,29 @@
 - Date: `2026-03-03`
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
-- Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on `2026-03-09`)
+- Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-05T19:16Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `88-torghut-session-proof-budget-consumer-and-capital-reentry-contract-2026-05-05.md`
+  - `docs/agents/designs/84-jangar-material-action-settlement-and-proof-budget-cutover-2026-05-05.md`
+  - `88-torghut-profit-slo-lanes-and-session-replay-governor-2026-05-05.md`
+  - `docs/agents/designs/84-jangar-material-action-settlement-ledger-and-slo-arbiter-2026-05-05.md`
+  - `88-torghut-session-proof-liquidity-and-hypothesis-market-maker-2026-05-05.md`
+  - `docs/agents/designs/84-jangar-evidence-liquidity-router-and-stale-digest-quarantine-2026-05-05.md`
+  - `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
+  - `docs/agents/designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md`
+  - `87-torghut-capital-lease-consumer-and-profit-repair-marketplace-2026-05-05.md`
+  - `docs/agents/designs/83-jangar-lease-backed-proof-market-and-profit-aware-rollout-authority-2026-05-05.md`
+  - `86-torghut-profit-repair-auction-and-proof-runway-consumer-2026-05-05.md`
+  - `docs/agents/designs/82-jangar-proof-runway-cutover-and-consumer-authority-2026-05-05.md`
+  - `86-torghut-profit-debt-ledger-and-repair-sla-experiments-2026-05-05.md`
+  - `docs/agents/designs/82-jangar-authority-clearance-cells-and-negative-evidence-slas-2026-05-05.md`
+  - `85-torghut-profit-escrow-repair-auction-and-capital-authority-2026-05-05.md`
+  - `docs/agents/designs/81-jangar-action-authority-ledger-and-repair-runway-2026-05-05.md`
+  - `85-torghut-proof-fresh-profitability-governor-and-causal-replay-quarantine-2026-05-05.md`
+  - `docs/agents/designs/81-jangar-action-class-proof-fuses-and-quant-health-quarantine-2026-05-05.md`
   - `84-torghut-capital-warrant-adoption-and-profitability-experiment-ladder-2026-05-05.md`
   - `docs/agents/designs/80-jangar-settlement-adoption-ladder-and-cutover-governance-2026-05-05.md`
   - `83-torghut-profit-runway-consumer-and-hypothesis-capital-auction-2026-05-05.md`
@@ -92,7 +111,34 @@
 - `82-torghut-order-admission-warrants-and-replay-capital-auction-2026-05-05.md`
 - `83-torghut-profit-runway-consumer-and-hypothesis-capital-auction-2026-05-05.md`
 - `84-torghut-capital-warrant-adoption-and-profitability-experiment-ladder-2026-05-05.md`
+- `85-torghut-profit-escrow-repair-auction-and-capital-authority-2026-05-05.md`
+- `85-torghut-proof-fresh-profitability-governor-and-causal-replay-quarantine-2026-05-05.md`
+- `86-torghut-profit-repair-auction-and-proof-runway-consumer-2026-05-05.md`
+- `86-torghut-profit-debt-ledger-and-repair-sla-experiments-2026-05-05.md`
+- `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
+- `87-torghut-capital-lease-consumer-and-profit-repair-marketplace-2026-05-05.md`
+- `88-torghut-profit-slo-lanes-and-session-replay-governor-2026-05-05.md`
+- `88-torghut-session-proof-liquidity-and-hypothesis-market-maker-2026-05-05.md`
+- `88-torghut-session-proof-budget-consumer-and-capital-reentry-contract-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/84-jangar-material-action-settlement-and-proof-budget-cutover-2026-05-05.md`
+  - `88-torghut-session-proof-budget-consumer-and-capital-reentry-contract-2026-05-05.md`
+  - `docs/agents/designs/84-jangar-material-action-settlement-ledger-and-slo-arbiter-2026-05-05.md`
+  - `88-torghut-profit-slo-lanes-and-session-replay-governor-2026-05-05.md`
+  - `docs/agents/designs/84-jangar-evidence-liquidity-router-and-stale-digest-quarantine-2026-05-05.md`
+  - `88-torghut-session-proof-liquidity-and-hypothesis-market-maker-2026-05-05.md`
+  - `docs/agents/designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md`
+  - `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
+  - `docs/agents/designs/83-jangar-lease-backed-proof-market-and-profit-aware-rollout-authority-2026-05-05.md`
+  - `87-torghut-capital-lease-consumer-and-profit-repair-marketplace-2026-05-05.md`
+  - `docs/agents/designs/82-jangar-proof-runway-cutover-and-consumer-authority-2026-05-05.md`
+  - `86-torghut-profit-repair-auction-and-proof-runway-consumer-2026-05-05.md`
+  - `docs/agents/designs/82-jangar-authority-clearance-cells-and-negative-evidence-slas-2026-05-05.md`
+  - `86-torghut-profit-debt-ledger-and-repair-sla-experiments-2026-05-05.md`
+  - `docs/agents/designs/81-jangar-action-authority-ledger-and-repair-runway-2026-05-05.md`
+  - `85-torghut-profit-escrow-repair-auction-and-capital-authority-2026-05-05.md`
+  - `docs/agents/designs/81-jangar-action-class-proof-fuses-and-quant-health-quarantine-2026-05-05.md`
+  - `85-torghut-proof-fresh-profitability-governor-and-causal-replay-quarantine-2026-05-05.md`
   - `docs/agents/designs/80-jangar-settlement-adoption-ladder-and-cutover-governance-2026-05-05.md`
   - `84-torghut-capital-warrant-adoption-and-profitability-experiment-ladder-2026-05-05.md`
   - `docs/agents/designs/79-jangar-control-plane-proof-runway-and-consumer-gated-rollout-2026-05-05.md`
@@ -171,6 +217,34 @@ Current source-state priority is narrower:
 - deterministic runtime closure is materially landed;
 - freshness discovery and proof persistence are still too brittle;
 - recurring empirical prove-and-promote automation remains blocked on those truth surfaces.
+
+## May 5, 2026 Proof Authority Refresh
+
+The current source-of-truth pair for the Jangar control-plane plan lane and Torghut capital handoff is:
+
+- `docs/agents/designs/84-jangar-material-action-settlement-and-proof-budget-cutover-2026-05-05.md`
+- `88-torghut-session-proof-budget-consumer-and-capital-reentry-contract-2026-05-05.md`
+
+The supporting SLO-arbiter and session-liquidity pair remains part of the May 5 control-plane evidence chain:
+
+- `docs/agents/designs/84-jangar-material-action-settlement-ledger-and-slo-arbiter-2026-05-05.md`
+- `88-torghut-profit-slo-lanes-and-session-replay-governor-2026-05-05.md`
+- `docs/agents/designs/84-jangar-evidence-liquidity-router-and-stale-digest-quarantine-2026-05-05.md`
+- `88-torghut-session-proof-liquidity-and-hypothesis-market-maker-2026-05-05.md`
+
+The current source-of-truth references for the Torghut quant discover lane are:
+
+- `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
+- `docs/agents/designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md`
+- `85-torghut-proof-fresh-profitability-governor-and-causal-replay-quarantine-2026-05-05.md`
+- `docs/agents/designs/81-jangar-action-class-proof-fuses-and-quant-health-quarantine-2026-05-05.md`
+
+Read these as the active handoff contract before using older May 5 proof-ledger variants. The refreshed evidence is
+more precise than the early-day snapshot: Torghut live and sim revisions are serving, schema proof is current, and
+runtime liveness is good, but readiness remains degraded, Jangar quant-health still times out, empirical proof jobs are
+stale, and runtime profitability has decisions without execution or TCA samples. The design consequence is unchanged
+but sharper: repair and replay stay open, paper/live widening requires fresh action-class authority and fresh profit
+proof, and blocked market time should be spent through zero-notional session proof budgets rather than ad hoc repair.
 
 ## Recent Updates
 
@@ -564,6 +638,7 @@ This pack is positioned as the next architecture layer above:
 50. `67-torghut-trading-engine-glossary-and-mechanics-2026-03-29.md`
 51. `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
 52. `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
+53. `89-torghut-hypothesis-warrant-ledger-and-profit-runway-2026-05-05.md`
 
 ## Why This Sequence
 
@@ -619,3 +694,6 @@ This pack is positioned as the next architecture layer above:
   contracts because the current bottleneck is no longer candidate generation alone. Portfolio proof must be bound to
   the exact Jangar runtime authority, Torghut health, data freshness, and artifact parity that were current when the
   candidate was evaluated.
+- `89-torghut-hypothesis-warrant-ledger-and-profit-runway-2026-05-05.md` is the current capital handoff contract. It
+  converts blocked paper/live authority into zero-notional replay and hypothesis warrants while keeping all capital
+  moves bound to fresh Jangar evidence epochs, empirical jobs, route proof, and measurable profit SLOs.

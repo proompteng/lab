@@ -1,0 +1,5 @@
+- op: remove
+  path: /spec/template/spec/affinity/podAntiAffinity/requiredDuringSchedulingIgnoredDuringExecution
+- op: replace
+  path: /spec/replicas
+  value: 2

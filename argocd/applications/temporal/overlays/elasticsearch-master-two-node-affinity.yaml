@@ -1,0 +1,15 @@
+- op: replace
+  path: /spec/template/spec/affinity/podAntiAffinity/requiredDuringSchedulingIgnoredDuringExecution
+  value: []
+- op: add
+  path: /spec/template/spec/affinity/podAntiAffinity/preferredDuringSchedulingIgnoredDuringExecution
+  value:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+            - key: app
+              operator: In
+              values:
+                - elasticsearch-master
+        topologyKey: kubernetes.io/hostname

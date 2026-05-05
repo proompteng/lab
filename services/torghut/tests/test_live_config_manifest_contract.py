@@ -15,19 +15,19 @@ from app.trading.llm.dspy_programs.runtime import DSPyReviewRuntime
 
 _RESEARCHED_CHIP_TECH_UNIVERSE = (
     "NVDA",
-    "AVGO",
-    "AMD",
     "TSM",
-    "ASML",
-    "AMAT",
+    "AVGO",
+    "INTC",
+    "AMD",
+    "MU",
     "LRCX",
     "KLAC",
-    "MU",
-    "INTC",
     "QCOM",
+    "AMAT",
+    "ASML",
     "MRVL",
 )
-_LIVE_EXECUTION_CHIP_TECH_UNIVERSE = ("NVDA", "AMD", "INTC")
+_LIVE_EXECUTION_CHIP_TECH_UNIVERSE = _RESEARCHED_CHIP_TECH_UNIVERSE
 _CHIP_UNIVERSE_SYMBOLS = set(_RESEARCHED_CHIP_TECH_UNIVERSE)
 _LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS = set(_LIVE_EXECUTION_CHIP_TECH_UNIVERSE)
 
@@ -148,6 +148,10 @@ def _csv_symbols(value: object) -> list[str]:
         for symbol in str(value or "").split(",")
         if symbol.strip()
     ]
+
+
+def _csv_values(value: object) -> set[str]:
+    return {item.strip() for item in str(value or "").split(",") if item.strip()}
 
 
 def _strategy_decimal(strategy: Mapping[str, object], key: str) -> Decimal | None:
@@ -301,37 +305,44 @@ class TestLiveConfigManifestContract(TestCase):
                 context=f"strategy {strategy.get('name')}",
             )
 
-    def test_late_day_paper_sleeve_keeps_remaining_entry_window(self) -> None:
+    def test_paper_microbar_sleeves_are_long_only_chip_universe(self) -> None:
         strategies = _load_torghut_strategy_catalog()
-        late_day = next(
-            (
-                strategy
-                for strategy in strategies
-                if strategy.get("name") == "late-day-continuation-long-v1"
-            ),
-            None,
-        )
-        self.assertIsNotNone(late_day)
-        assert late_day is not None
-
-        description = str(late_day.get("description") or "").lower()
-        params = _params(late_day)
-        raw_symbols = late_day.get("universe_symbols")
-
-        self.assertTrue(_manifest_bool(late_day, "enabled"))
+        enabled = {
+            str(strategy.get("name")): strategy
+            for strategy in strategies
+            if _manifest_bool(strategy, "enabled")
+        }
         self.assertEqual(
-            late_day.get("strategy_id"), "late_day_continuation_long_v1@research"
+            set(enabled),
+            {
+                "microbar-volume-continuation-long-top2-chip-v1",
+                "microbar-prev-day-open45-reversal-long-top1-chip-v1",
+            },
         )
-        self.assertIn("paper-only", description)
-        self.assertIn("$300/day", description)
-        self.assertIsInstance(raw_symbols, list)
-        _assert_exact_live_execution_chip_universe(
-            self,
-            cast(list[object], raw_symbols),
-            context="late-day paper sleeve universe",
-        )
-        self.assertEqual(params.get("entry_start_minute_utc"), "1080")
-        self.assertEqual(params.get("entry_end_minute_utc"), "1170")
+
+        for name, strategy in enabled.items():
+            description = str(strategy.get("description") or "").lower()
+            params = _params(strategy)
+            raw_symbols = strategy.get("universe_symbols")
+
+            self.assertEqual(
+                strategy.get("strategy_type"), "microbar_cross_sectional_long_v1"
+            )
+            self.assertIn("paper-only", description)
+            self.assertIn("$300/day", description)
+            self.assertEqual(
+                _strategy_decimal(strategy, "max_notional_per_trade"), Decimal("50000")
+            )
+            self.assertEqual(
+                _strategy_decimal(strategy, "max_position_pct_equity"), Decimal("2.0")
+            )
+            self.assertIsInstance(raw_symbols, list)
+            _assert_exact_live_execution_chip_universe(
+                self,
+                cast(list[object], raw_symbols),
+                context=f"{name} universe",
+            )
+            self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
 
     def test_runtime_symbol_sources_use_live_signal_universe(self) -> None:
         live_env = _load_torghut_knative_env()
@@ -373,7 +384,32 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(sim_env.get("TRADING_PRICE_TABLE"), "torghut.ta_microbars")
         self.assertEqual(
             sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS"),
-            "NVDA,AMD,INTC",
+            "NVDA,TSM,AVGO,INTC,AMD,MU,LRCX,KLAC,QCOM,AMAT,ASML,MRVL",
+        )
+        self.assertEqual(
+            _csv_values(sim_env.get("TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS")),
+            {"cursor_ahead_of_stream", "universe_source_unavailable"},
+        )
+        self.assertNotIn(
+            "no_signals_in_window",
+            _csv_values(sim_env.get("TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS")),
+        )
+
+    def test_autonomy_config_does_not_treat_normal_no_signal_as_critical(self) -> None:
+        manifest = _load_yaml_mapping(
+            "argocd/applications/torghut/autonomy-configmap.yaml"
+        )
+        data = manifest.get("data")
+        self.assertIsInstance(data, Mapping)
+
+        critical_reasons = _csv_values(
+            cast(Mapping[str, object], data).get(
+                "TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS"
+            )
+        )
+        self.assertEqual(
+            critical_reasons,
+            {"cursor_ahead_of_stream", "universe_source_unavailable"},
         )
 
     def test_clickhouse_replicas_are_not_pinned_to_single_architecture(self) -> None:

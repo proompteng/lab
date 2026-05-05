@@ -14,19 +14,31 @@ from app.config import settings
 from app.db import SessionLocal, ensure_schema
 from app.models import Strategy
 
-DEFAULT_CHIP_UNIVERSE = "AMAT,AMD,AVGO,INTC,MU,NVDA"
+DEFAULT_CHIP_UNIVERSE = "NVDA,TSM,AVGO,INTC,AMD,MU,LRCX,KLAC,QCOM,AMAT,ASML,MRVL"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Seed or update torghut strategies.")
     parser.add_argument("--name", required=True, help="Strategy name (unique key).")
-    parser.add_argument("--description", default="MACD/RSI demo strategy", help="Strategy description.")
-    parser.add_argument("--base-timeframe", default="1Min", help="Base timeframe (e.g., 1Min, 5Min).")
-    parser.add_argument("--symbols", default=DEFAULT_CHIP_UNIVERSE, help="Comma-separated symbol list.")
+    parser.add_argument(
+        "--description", default="MACD/RSI demo strategy", help="Strategy description."
+    )
+    parser.add_argument(
+        "--base-timeframe", default="1Min", help="Base timeframe (e.g., 1Min, 5Min)."
+    )
+    parser.add_argument(
+        "--symbols", default=DEFAULT_CHIP_UNIVERSE, help="Comma-separated symbol list."
+    )
     parser.add_argument("--enabled", action="store_true", help="Enable the strategy.")
     parser.add_argument("--disabled", action="store_true", help="Disable the strategy.")
-    parser.add_argument("--max-notional", default=None, help="Max notional per trade (optional).")
-    parser.add_argument("--max-position-pct", default=None, help="Max position pct of equity (optional).")
+    parser.add_argument(
+        "--max-notional", default=None, help="Max notional per trade (optional)."
+    )
+    parser.add_argument(
+        "--max-position-pct",
+        default=None,
+        help="Max position pct of equity (optional).",
+    )
     return parser.parse_args()
 
 

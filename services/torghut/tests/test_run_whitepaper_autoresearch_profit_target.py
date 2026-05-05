@@ -300,7 +300,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             Namespace(symbols="NVDA,AAPL,MSFT,AMAT,TSM,nvda")
         )
 
-        self.assertEqual(symbols, ("NVDA",))
+        self.assertEqual(symbols, ("NVDA", "AMAT", "TSM"))
 
     def test_candidate_universe_symbols_default_to_chip_coverage_when_empty(
         self,

@@ -22,8 +22,17 @@
     "enabled": false,
     "universe_symbols": [
       "NVDA",
+      "TSM",
+      "AVGO",
+      "INTC",
       "AMD",
-      "INTC"
+      "MU",
+      "LRCX",
+      "KLAC",
+      "QCOM",
+      "AMAT",
+      "ASML",
+      "MRVL"
     ],
     "max_notional_per_trade": "50000",
     "max_position_pct_equity": "3.0",

@@ -1516,6 +1516,77 @@ exit 1
     await expect(runCodexImplementation(eventPath)).resolves.toBeDefined()
   }, 40_000)
 
+  it('passes release lane with verified merged PR from final summary and swarm Argo fallback', async () => {
+    process.env.CODEX_PR_DISCOVERY_ENABLED = 'false'
+    const binDir = join(workdir, '.bin-release-summary-evidence')
+    await mkdir(binDir, { recursive: true })
+    const ghPath = join(binDir, 'gh')
+    await writeFile(
+      ghPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "pr" && "$2" == "view" && "$3" == "7007" ]]; then
+  echo '{"state":"MERGED","mergedAt":"2026-05-05T18:00:00Z","mergeCommit":{"oid":"abcdef1234567890"}}'
+  exit 0
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+`,
+      'utf8',
+    )
+    await chmod(ghPath, 0o755)
+    const kubectlPath = join(binDir, 'kubectl')
+    await writeFile(
+      kubectlPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "get" && "$2" == "applications.argoproj.io" && ( "$3" == "agents" || "$3" == "jangar" ) ]]; then
+  echo '{"status":{"sync":{"status":"Synced"},"health":{"status":"Healthy"}}}'
+  exit 0
+fi
+echo "unexpected kubectl invocation: $*" >&2
+exit 1
+`,
+      'utf8',
+    )
+    await chmod(kubectlPath, 0o755)
+    process.env.PATH = `${binDir}:${ORIGINAL_ENV.PATH ?? process.env.PATH ?? ''}`
+
+    runCodexSessionMock.mockImplementationOnce(async () => ({
+      agentMessages: [
+        [
+          'Summary:',
+          '- Squash-merged #7007 at commit `abcdef1234567890`.',
+          '- #5454 remains no-go; do not merge until the required review posts.',
+          '- Argo is Synced/Healthy for agents and jangar.',
+        ].join('\n'),
+      ],
+      sessionId: 'session-xyz',
+      exitCode: 0,
+      forcedTermination: false,
+    }))
+
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        prompt: 'Release verification run',
+        repository: 'owner/repo',
+        issueNumber: 42,
+        base: 'main',
+        head: 'codex/issue-42',
+        stage: 'implementation',
+        swarmAgentRole: 'deployer',
+        swarmHumanName: 'release-manager',
+        parameters: {
+          swarmName: 'jangar-control-plane',
+        },
+      }),
+      'utf8',
+    )
+
+    await expect(runCodexImplementation(eventPath)).resolves.toBeDefined()
+  }, 40_000)
+
   it('fails release lane when ArgoCD app health verification is unhealthy', async () => {
     const binDir = join(workdir, '.bin-kubectl-bad')
     await mkdir(binDir, { recursive: true })

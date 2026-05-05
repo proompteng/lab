@@ -24,13 +24,17 @@ from ..autonomy import (
     run_autonomous_lane,
     upsert_autonomy_no_signal_run,
 )
-from ..autonomy.phase_manifest_contract import build_phase_manifest_payload_with_runtime_and_rollback, coerce_path_strings
+from ..autonomy.phase_manifest_contract import (
+    build_phase_manifest_payload_with_runtime_and_rollback,
+    coerce_path_strings,
+)
 from ..feature_quality import FeatureQualityThresholds, evaluate_feature_batch_quality
 from ..ingest import SignalBatch
 from ..models import SignalEnvelope
 from ..time_source import trading_now
 from .pipeline import TradingPipeline
 from .safety import (
+    _FRESH_TAIL_NO_SIGNAL_REASONS,
     _coerce_recovery_reason_sequence,
     _is_market_session_open,
     _is_recoverable_emergency_stop_reason,
@@ -38,11 +42,13 @@ from .safety import (
     _merge_emergency_stop_reasons,
     _record_signal_continuity_recovery_cycle,
     _signal_bootstrap_grace_active,
+    _signal_tail_is_fresh,
     _split_emergency_stop_reasons,
 )
 from .state import TradingState
 
 logger = logging.getLogger(__name__)
+
 
 def _resolve_autonomy_artifact_root(raw_root: Path) -> Path:
     preferred_root = raw_root.expanduser()
@@ -77,6 +83,7 @@ def _resolve_autonomy_artifact_root(raw_root: Path) -> Path:
                     exc,
                 )
     raise RuntimeError("unable_to_resolve_autonomy_artifact_root")
+
 
 def _int_from_mapping(payload: Mapping[str, Any], key: str) -> int:
     value = payload.get(key)
@@ -137,7 +144,9 @@ class TradingSchedulerGovernanceMixin:
     _pipeline: Optional[TradingPipeline]
     _pipelines: list[TradingPipeline]
 
-    def _emit_autonomy_domain_telemetry(self, *, event_name: str, severity: str, properties: Mapping[str, Any]) -> None:
+    def _emit_autonomy_domain_telemetry(
+        self, *, event_name: str, severity: str, properties: Mapping[str, Any]
+    ) -> None:
         raise NotImplementedError
 
     def _drift_thresholds(self) -> DriftThresholds:
@@ -456,6 +465,18 @@ class TradingSchedulerGovernanceMixin:
                         "Suppressing emergency-stop staleness streak outside market session reason=%s streak=%s",
                         reason,
                         streak,
+                    )
+                    continue
+                if reason in _FRESH_TAIL_NO_SIGNAL_REASONS and _signal_tail_is_fresh(
+                    reason,
+                    lag_seconds,
+                    stale_lag_seconds=settings.trading_signal_stale_lag_alert_seconds,
+                ):
+                    logger.info(
+                        "Suppressing emergency-stop staleness streak while signal tail is fresh reason=%s streak=%s lag_seconds=%s",
+                        reason,
+                        streak,
+                        lag_seconds,
                     )
                     continue
                 reasons.append(f"signal_staleness_streak_exceeded:{reason}:{streak}")
