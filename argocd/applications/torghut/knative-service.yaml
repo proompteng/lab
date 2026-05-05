@@ -109,6 +109,8 @@ spec:
               value: "false"
             - name: TRADING_JANGAR_QUANT_HEALTH_REQUIRED
               value: "false"
+            - name: TRADING_JANGAR_QUANT_HEALTH_URL
+              value: http://jangar.jangar.svc.cluster.local/api/torghut/trading/control-plane/quant/health
             - name: TRADING_ACCOUNT_LABEL
               value: PA3SX7FYNUTF
             - name: TRADING_ACCOUNTS_JSON

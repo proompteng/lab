@@ -27,6 +27,7 @@ from .hypotheses import (
     load_jangar_dependency_quorum,
     summarize_hypothesis_runtime_statuses,
 )
+from .profit_windows import build_profit_window_contract
 from .tca import build_tca_gate_inputs
 
 _CAPITAL_STAGE_ORDER = (
@@ -969,6 +970,18 @@ def build_live_submission_gate_payload(
     )
 
     if settings.trading_mode != "live":
+        profit_window_contract = build_profit_window_contract(
+            runtime_items=runtime_items,
+            quant_evidence=quant_evidence,
+            empirical_jobs_status=empirical_jobs_status,
+            market_context_ref=market_context_ref,
+            segment_summary=segment_summary,
+            account=_safe_text(quant_evidence.get("account")),
+            window=_safe_text(quant_evidence.get("window")),
+            market_session_open=getattr(state, "market_session_open", None),
+            replay=bool(getattr(state, "simulation_replay_active", False)),
+            now=now,
+        )
         return {
             "allowed": True,
             "reason": "non_live_mode",
@@ -1012,6 +1025,7 @@ def build_live_submission_gate_payload(
             },
             "lineage_ref": _default_lineage_ref(),
             "evaluated_tuples": [],
+            "profit_window_contract": profit_window_contract,
         }
 
     blocked_reasons: list[str] = []
@@ -1142,6 +1156,20 @@ def build_live_submission_gate_payload(
             cast(Mapping[str, object], evaluated_tuples[0].get("lineage_ref"))
         )
 
+    profit_window_contract = build_profit_window_contract(
+        runtime_items=runtime_items,
+        quant_evidence=quant_evidence,
+        empirical_jobs_status=empirical_jobs_status,
+        market_context_ref=market_context_ref,
+        segment_summary=segment_summary,
+        lineage_ref=lineage_ref,
+        account=_safe_text(quant_evidence.get("account")),
+        window=_safe_text(quant_evidence.get("window")),
+        market_session_open=getattr(state, "market_session_open", None),
+        replay=bool(getattr(state, "simulation_replay_active", False)),
+        now=now,
+    )
+
     return {
         "allowed": allowed,
         "reason": reason,
@@ -1181,6 +1209,7 @@ def build_live_submission_gate_payload(
         "evidence_tuple": evidence_tuple,
         "lineage_ref": lineage_ref,
         "evaluated_tuples": evaluated_tuples,
+        "profit_window_contract": profit_window_contract,
     }
 
 

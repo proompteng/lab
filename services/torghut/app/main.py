@@ -3047,19 +3047,42 @@ def _build_live_submission_gate_payload(
                     or "emergency_stop_active"
                 )
             )
-        return {
-            "allowed": len(blocked_reasons) == 0,
-            "reason": "ready" if not blocked_reasons else blocked_reasons[0],
+        gate = build_live_submission_gate_payload(
+            state,
+            session=session,
+            hypothesis_summary=hypothesis_summary,
+            empirical_jobs_status=empirical_jobs_status,
+            dspy_runtime_status=dspy_runtime_status,
+            quant_health_status=quant_health_status,
+        )
+        merged_blocked_reasons = list(
+            dict.fromkeys(
+                [
+                    *[
+                        str(item).strip()
+                        for item in cast(
+                            Sequence[object],
+                            gate.get("blocked_reasons") or [],
+                        )
+                        if str(item).strip()
+                    ],
+                    *blocked_reasons,
+                ]
+            )
+        )
+        gate["allowed"] = bool(gate.get("allowed", False)) and not blocked_reasons
+        gate["blocked_reasons"] = merged_blocked_reasons
+        if blocked_reasons:
+            gate["reason"] = blocked_reasons[0]
+            gate["capital_stage"] = "shadow"
+            gate["capital_state"] = "observe"
+        gate["pipeline_mode"] = "simple"
+        gate["simple_lane"] = {
+            "submit_enabled": settings.trading_simple_submit_enabled,
+            "shared_gate_enforced": True,
             "blocked_reasons": blocked_reasons,
-            "capital_stage": "live" if not blocked_reasons else "shadow",
-            "configured_live_promotion": settings.trading_simple_submit_enabled,
-            "autonomy_promotion_eligible": False,
-            "drift_live_promotion_eligible": False,
-            "promotion_eligible_total": 0,
-            "dependency_quorum_decision": "informational_only",
-            "empirical_jobs_ready": None,
-            "dspy_live_ready": None,
         }
+        return gate
     return build_live_submission_gate_payload(
         state,
         session=session,

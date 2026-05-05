@@ -175,6 +175,14 @@ Testing rules for the trading core:
   `TRADING_JANGAR_QUANT_HEALTH_URL` when it does not target the typed
   `/api/torghut/trading/control-plane/quant/health` surface; use `TRADING_JANGAR_QUANT_WINDOW` to align the expected
   freshness window.
+- The shared live-submission gate now projects `profit_window_contract` with deterministic `profit_window_id` and
+  `evidence_escrow_id` values per hypothesis lane. The contract records session class, funded/expired/underfunded
+  escrow state for quant health, ClickHouse freshness, empirical jobs, market context, forecast/feature coverage, and
+  schema lineage so status, readiness, runtime-profitability, and decision metadata can cite the same lane-local
+  authority snapshot.
+- The simple direct-submit lane is no longer an authority bypass in live mode. Before submitting to Alpaca it evaluates
+  the same live-submission gate as the scheduler path and persists the gate payload in decision metadata when a
+  submission is blocked. Paper-mode simple execution remains unchanged.
 
 ## Whitepaper workflow (GitHub issue -> Kafka -> AgentRun)
 
