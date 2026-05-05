@@ -140,14 +140,14 @@ export const getReadyHandler = async () => {
   const leaderRequired = leaderElection.required
   const activeControllerReplica = !leaderRequired || leaderElection.isLeader
   const leaderElectionReady = activeControllerReplica || isStandbyLeaderElectionReady(leaderElection)
-  const agentsControllerReady = activeControllerReplica
+  const agentsControllerHealthy = activeControllerReplica
     ? isAgentRunIngestionReady(agentsController)
     : leaderElectionReady
   const servingPassportReady =
     servingPassport !== undefined && servingPassport.decision !== 'block' && servingPassport.decision !== 'hold'
   const memoryProviderReady = memoryProvider.status !== 'blocked'
-  const ready = controllersOk && agentsControllerReady && memoryProviderReady
-  const status = ready && servingPassportReady ? 'ok' : 'degraded'
+  const ready = controllersOk && leaderElectionReady && memoryProviderReady
+  const status = ready && agentsControllerHealthy && servingPassportReady ? 'ok' : 'degraded'
 
   const body = JSON.stringify({
     status,
