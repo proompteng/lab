@@ -10,6 +10,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `82-torghut-order-admission-warrants-and-replay-capital-auction-2026-05-05.md`
+  - `docs/agents/designs/78-jangar-capital-warrant-issuer-and-route-independent-order-admission-2026-05-05.md`
   - `81-torghut-capital-proof-reconciliation-and-jangar-settlement-consumer-2026-05-05.md`
   - `docs/agents/designs/77-jangar-evidence-settlement-authority-and-data-proof-handoff-2026-05-05.md`
   - `80-torghut-capital-proof-reclocking-and-live-submission-fuses-2026-05-05.md`
@@ -84,6 +86,8 @@
 - `80-torghut-capital-proof-reclocking-and-live-submission-fuses-2026-05-05.md`
 - `81-torghut-capital-proof-reconciliation-and-jangar-settlement-consumer-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/78-jangar-capital-warrant-issuer-and-route-independent-order-admission-2026-05-05.md`
+  - `82-torghut-order-admission-warrants-and-replay-capital-auction-2026-05-05.md`
   - `docs/agents/designs/77-jangar-evidence-settlement-authority-and-data-proof-handoff-2026-05-05.md`
   - `81-torghut-capital-proof-reconciliation-and-jangar-settlement-consumer-2026-05-05.md`
   - `docs/agents/designs/76-jangar-rollout-settlement-fuses-and-proof-reclocking-2026-05-05.md`
