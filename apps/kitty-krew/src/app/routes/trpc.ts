@@ -1,4 +1,4 @@
-import { createServerFileRoute } from '@tanstack/react-start/server'
+import { createFileRoute } from '@tanstack/react-router'
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch'
 import { createContext } from '~/server/context'
 import { appRouter } from '~/server/routers/_app'
@@ -11,7 +11,11 @@ const handleRequest = (request: Request) =>
     createContext,
   })
 
-export const ServerRoute = createServerFileRoute('/trpc').methods({
-  GET: ({ request }) => handleRequest(request),
-  POST: ({ request }) => handleRequest(request),
+export const Route = createFileRoute('/trpc')({
+  server: {
+    handlers: {
+      GET: ({ request }: { request: Request }) => handleRequest(request),
+      POST: ({ request }: { request: Request }) => handleRequest(request),
+    },
+  },
 })
