@@ -70,7 +70,17 @@ spec:
               containers:
                 - name: runner
                   image: ghcr.io/actions/actions-runner:latest
-                  command: ["/home/runner/run.sh"]
+                  command: ["/bin/bash", "-lc"]
+                  args:
+                    - |
+                      set -euo pipefail
+                      for attempt in $(seq 1 60); do
+                        if docker version >/dev/null 2>&1; then
+                          exec /home/runner/run.sh
+                        fi
+                        sleep 2
+                      done
+                      docker version
                   resources:
                     requests:
                       cpu: "4"
