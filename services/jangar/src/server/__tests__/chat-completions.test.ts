@@ -1415,7 +1415,12 @@ describe('chat completions handler', () => {
 
     const firstBody = await runOpenWebUiTurn([{ role: 'user', content: firstUser }])
     const firstReply = parseFrames(firstBody)
-      .map((chunk) => chunk.choices?.[0]?.delta?.content as string | undefined)
+      .map((chunk) => {
+        const choices = Array.isArray(chunk.choices) ? chunk.choices : []
+        const firstChoice = asRecord(choices[0])
+        const delta = asRecord(firstChoice?.delta)
+        return typeof delta?.content === 'string' ? delta.content : undefined
+      })
       .filter(Boolean)
       .join('')
       .trim()
