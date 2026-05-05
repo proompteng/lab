@@ -14,6 +14,11 @@ helmCharts:
     namespace: feature-flags
     valuesFile: flipt-values.yaml
 
+images:
+  - name: docker.flipt.io/flipt/flipt
+    newName: mirror.gcr.io/flipt/flipt
+    newTag: v2.9.0
+
 patches:
   - target:
       kind: ConfigMap

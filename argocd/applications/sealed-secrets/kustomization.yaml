@@ -30,3 +30,11 @@ helmCharts:
             paths:
               - path: /
                 pathType: Prefix
+
+images:
+  - name: docker.io/bitnami/sealed-secrets-controller
+    newName: mirror.gcr.io/bitnami/sealed-secrets-controller
+    newTag: 0.36.6
+  - name: ghcr.io/bakito/sealed-secrets-web
+    newName: ghcr.io/bakito/sealed-secrets-web
+    newTag: v3.1.9

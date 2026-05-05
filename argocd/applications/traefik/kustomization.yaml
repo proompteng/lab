@@ -12,3 +12,8 @@ helmCharts:
     namespace: traefik
     includeCRDs: true
     valuesFile: values.yaml
+
+images:
+  - name: docker.io/traefik
+    newName: mirror.gcr.io/library/traefik
+    newTag: v3.6.15
