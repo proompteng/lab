@@ -55,6 +55,12 @@ export const SWARM_SCHEDULE_ANNOTATION_NATS_URL = 'swarm.proompteng.ai/nats-url'
 export const SWARM_SCHEDULE_ANNOTATION_NATS_SUBJECT_PREFIX = 'swarm.proompteng.ai/nats-subject-prefix'
 export const SWARM_SCHEDULE_ANNOTATION_NATS_CHANNEL = 'swarm.proompteng.ai/nats-channel'
 export const SWARM_SCHEDULE_ANNOTATION_HUMAN_NAME = 'swarm.proompteng.ai/human-name'
+export const SWARM_ADMISSION_ANNOTATION_PASSPORT_ID = 'swarm.proompteng.ai/admission-passport-id'
+export const SWARM_ADMISSION_ANNOTATION_DECISION = 'swarm.proompteng.ai/admission-decision'
+export const SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST = 'swarm.proompteng.ai/recovery-case-set-digest'
+export const SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST = 'swarm.proompteng.ai/runtime-kit-set-digest'
+export const SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS = 'swarm.proompteng.ai/required-runtime-kits'
+export const SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION = 'swarm.proompteng.ai/admission-producer-revision'
 export const SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT = resolveSupportingPrimitivesConfig(
   process.env,
 ).swarmRequirementMaxPayloadBytes
@@ -390,6 +396,12 @@ export const resolveScheduleRuntimeInjection = (schedule: Record<string, unknown
   const natsUrl = asString(annotations[SWARM_SCHEDULE_ANNOTATION_NATS_URL])
   const natsSubjectPrefix = asString(annotations[SWARM_SCHEDULE_ANNOTATION_NATS_SUBJECT_PREFIX])
   const natsChannel = asString(annotations[SWARM_SCHEDULE_ANNOTATION_NATS_CHANNEL])
+  const admissionPassportId = asString(annotations[SWARM_ADMISSION_ANNOTATION_PASSPORT_ID])
+  const admissionDecision = asString(annotations[SWARM_ADMISSION_ANNOTATION_DECISION])
+  const recoveryCaseSetDigest = asString(annotations[SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST])
+  const runtimeKitSetDigest = asString(annotations[SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST])
+  const requiredRuntimeKits = asString(annotations[SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS])
+  const admissionProducerRevision = asString(annotations[SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION])
 
   const parameters: Record<string, string> = {}
   if (ownerChannel) parameters.ownerChannel = ownerChannel
@@ -400,6 +412,23 @@ export const resolveScheduleRuntimeInjection = (schedule: Record<string, unknown
   if (natsUrl) parameters.natsUrl = natsUrl
   if (natsSubjectPrefix) parameters.natsSubjectPrefix = natsSubjectPrefix
   if (natsChannel) parameters.natsChannel = natsChannel
+  if (admissionPassportId) parameters.swarmAdmissionPassportId = admissionPassportId
+  if (admissionDecision) parameters.swarmAdmissionDecision = admissionDecision
+  if (recoveryCaseSetDigest) parameters.swarmRecoveryCaseSetDigest = recoveryCaseSetDigest
+  if (runtimeKitSetDigest) parameters.swarmRuntimeKitSetDigest = runtimeKitSetDigest
+  if (requiredRuntimeKits) parameters.swarmRequiredRuntimeKits = requiredRuntimeKits
+  if (admissionProducerRevision) parameters.swarmAdmissionProducerRevision = admissionProducerRevision
 
-  return { parameters }
+  const runAnnotations = Object.fromEntries(
+    [
+      [SWARM_ADMISSION_ANNOTATION_PASSPORT_ID, admissionPassportId],
+      [SWARM_ADMISSION_ANNOTATION_DECISION, admissionDecision],
+      [SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST, recoveryCaseSetDigest],
+      [SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST, runtimeKitSetDigest],
+      [SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS, requiredRuntimeKits],
+      [SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION, admissionProducerRevision],
+    ].filter((entry): entry is [string, string] => Boolean(entry[1])),
+  )
+
+  return { parameters, annotations: runAnnotations }
 }

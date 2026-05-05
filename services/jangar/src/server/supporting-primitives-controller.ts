@@ -1,6 +1,12 @@
 import { assessAgentRunIngestion } from '~/server/agents-controller'
 import { isRuntimeTestEnv } from '~/server/agents-controller/runtime-config'
+import type { AdmissionPassportStatus } from '~/data/agents-control-plane'
 import { resolveSupportingControllerConfig } from '~/server/controller-runtime-config'
+import {
+  buildRuntimeAdmissionSnapshot,
+  findAdmissionPassport,
+  resolveAdmissionPassportConsumerClass,
+} from '~/server/control-plane-runtime-admission'
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
 import { startResourceWatch } from '~/server/kube-watch'
@@ -26,6 +32,12 @@ import {
   STAGE_LAST_RUN_KEY,
   STAGE_NAMES,
   SWARM_AGENT_WORKER_ID_LABEL,
+  SWARM_ADMISSION_ANNOTATION_DECISION,
+  SWARM_ADMISSION_ANNOTATION_PASSPORT_ID,
+  SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION,
+  SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST,
+  SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST,
+  SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS,
   SWARM_REQUIREMENT_ANNOTATION_SIGNAL,
   SWARM_REQUIREMENT_LABEL_ATTEMPT,
   SWARM_REQUIREMENT_LABEL_CHANNEL,
@@ -141,6 +153,139 @@ const KUBERNETES_SERVICE_HOST_ENV = 'KUBERNETES_SERVICE_HOST'
 const KUBERNETES_SERVICE_PORT_ENV = 'KUBERNETES_SERVICE_PORT'
 
 const nowIso = () => new Date().toISOString()
+
+type SwarmLaunchAdmission = {
+  enforced: boolean
+  admitted: boolean
+  consumerClass: string
+  passport: AdmissionPassportStatus | null
+  reason:
+    | 'RuntimeAdmissionDisabled'
+    | 'RuntimeAdmissionAllowed'
+    | 'AdmissionPassportMissing'
+    | 'RuntimeAdmissionBlocked'
+  message: string
+  annotations: Record<string, string>
+  parameters: Record<string, string>
+}
+
+const boolEnvProvided = (value: string | undefined) => value !== undefined && value.trim().length > 0
+
+const shouldEnforceSwarmRuntimeAdmission = () => {
+  const configured = resolveSupportingPrimitivesConfig(process.env).swarmRuntimeAdmissionEnforcement
+  if (!configured) return false
+  if (isRuntimeTestEnv() && !boolEnvProvided(process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT)) return false
+  return true
+}
+
+const buildAdmissionTrace = (passport: AdmissionPassportStatus | null) => {
+  if (!passport) {
+    return {
+      annotations: {},
+      parameters: {},
+    }
+  }
+
+  const requiredRuntimeKits = passport.required_runtime_kits.join(',')
+  const annotations = {
+    [SWARM_ADMISSION_ANNOTATION_PASSPORT_ID]: passport.admission_passport_id,
+    [SWARM_ADMISSION_ANNOTATION_DECISION]: passport.decision,
+    [SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST]: passport.recovery_case_set_digest,
+    [SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST]: passport.runtime_kit_set_digest,
+    [SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS]: requiredRuntimeKits,
+    [SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION]: passport.producer_revision,
+  }
+  const parameters = {
+    swarmAdmissionPassportId: passport.admission_passport_id,
+    swarmAdmissionDecision: passport.decision,
+    swarmRecoveryCaseSetDigest: passport.recovery_case_set_digest,
+    swarmRuntimeKitSetDigest: passport.runtime_kit_set_digest,
+    swarmRequiredRuntimeKits: requiredRuntimeKits,
+    swarmAdmissionProducerRevision: passport.producer_revision,
+  }
+
+  return { annotations, parameters }
+}
+
+const summarizePassportBlock = (passport: AdmissionPassportStatus | null) => {
+  if (!passport) return 'missing stage admission passport'
+  const reasons = passport.reason_codes.length > 0 ? `: ${passport.reason_codes.join(', ')}` : ''
+  return `stage admission passport ${passport.admission_passport_id} is ${passport.decision}${reasons}`
+}
+
+const resolveLaunchAdmission = (input: {
+  stage: StageName
+  snapshot: ReturnType<typeof buildRuntimeAdmissionSnapshot> | null
+  enforced: boolean
+}): SwarmLaunchAdmission => {
+  const consumerClass = resolveAdmissionPassportConsumerClass(input.stage)
+  if (!input.enforced) {
+    return {
+      enforced: false,
+      admitted: true,
+      consumerClass,
+      passport: null,
+      reason: 'RuntimeAdmissionDisabled',
+      message: 'runtime admission enforcement disabled',
+      annotations: {},
+      parameters: {},
+    }
+  }
+
+  const passport = input.snapshot
+    ? findAdmissionPassport({
+        admissionPassports: input.snapshot.admissionPassports,
+        consumerClass,
+      })
+    : undefined
+  const trace = buildAdmissionTrace(passport ?? null)
+  if (!passport) {
+    return {
+      enforced: true,
+      admitted: false,
+      consumerClass,
+      passport: null,
+      reason: 'AdmissionPassportMissing',
+      message: 'stage admission passport missing',
+      ...trace,
+    }
+  }
+
+  if (passport.decision !== 'allow') {
+    return {
+      enforced: true,
+      admitted: false,
+      consumerClass,
+      passport,
+      reason: 'RuntimeAdmissionBlocked',
+      message: summarizePassportBlock(passport),
+      ...trace,
+    }
+  }
+
+  return {
+    enforced: true,
+    admitted: true,
+    consumerClass,
+    passport,
+    reason: 'RuntimeAdmissionAllowed',
+    message: `stage admission passport ${passport.admission_passport_id} allows launch`,
+    ...trace,
+  }
+}
+
+const admissionStatusForStage = (admission: SwarmLaunchAdmission) => ({
+  enforced: admission.enforced,
+  admitted: admission.admitted,
+  consumerClass: admission.consumerClass,
+  passportId: admission.passport?.admission_passport_id ?? null,
+  decision: admission.passport?.decision ?? null,
+  reason: admission.reason,
+  message: admission.message,
+  runtimeKitSetDigest: admission.passport?.runtime_kit_set_digest ?? null,
+  recoveryCaseSetDigest: admission.passport?.recovery_case_set_digest ?? null,
+  requiredRuntimeKits: admission.passport?.required_runtime_kits ?? [],
+})
 
 const shouldStart = () => {
   if (isRuntimeTestEnv()) return false
@@ -864,6 +1009,7 @@ const buildScheduleRunTemplate = (
         generateName: `${scheduleName}-`,
         namespace: targetNamespace,
         labels,
+        ...(Object.keys(runtimeInjection.annotations).length > 0 ? { annotations: runtimeInjection.annotations } : {}),
       },
       spec: {
         ...spec,
@@ -888,6 +1034,7 @@ const buildScheduleRunTemplate = (
         generateName: `${scheduleName}-`,
         namespace: targetNamespace,
         labels,
+        ...(Object.keys(runtimeInjection.annotations).length > 0 ? { annotations: runtimeInjection.annotations } : {}),
       },
       spec: {
         ...spec,
@@ -1302,6 +1449,20 @@ const reconcileSwarm = async (
   }
 
   const nowMs = Date.now()
+  const runtimeAdmissionEnforced = shouldEnforceSwarmRuntimeAdmission()
+  const runtimeAdmissionSnapshot = runtimeAdmissionEnforced
+    ? buildRuntimeAdmissionSnapshot({ now: new Date(nowMs), natsUrl: nats.url })
+    : null
+  const launchAdmissions = Object.fromEntries(
+    STAGE_NAMES.map((stage) => [
+      stage,
+      resolveLaunchAdmission({
+        stage,
+        snapshot: runtimeAdmissionSnapshot,
+        enforced: runtimeAdmissionEnforced,
+      }),
+    ]),
+  ) as Record<StageName, SwarmLaunchAdmission>
   const existingFreezeUntil = asString(readNested(status, ['freeze', 'until']))
   const existingFreezeReason = asString(readNested(status, ['freeze', 'reason']))
   const frozenAtReleaseReason = existingFreezeReason ?? 'Healthy'
@@ -1461,6 +1622,7 @@ const reconcileSwarm = async (
     pending: 0,
     dispatched: 0,
     blocked: 0,
+    admissionBlocked: 0,
     completed: 0,
     invalidChannel: 0,
     duplicates: countIdempotencyDuplicates(implementRuns),
@@ -1468,6 +1630,7 @@ const reconcileSwarm = async (
     pauseReason: requirementDispatchPauseAssessment ? 'AgentRunIngestionDegraded' : null,
     pauseMessage: requirementDispatchPauseAssessment?.message ?? null,
   }
+  const requirementAdmission = launchAdmissions.implement
 
   for (const signal of requirementSignals) {
     const signalName = asString(readNested(signal, ['metadata', 'name']))
@@ -1503,6 +1666,11 @@ const reconcileSwarm = async (
       continue
     }
     if (freezeActive) continue
+    if (!requirementAdmission.admitted) {
+      requirementStats.blocked += 1
+      requirementStats.admissionBlocked += 1
+      continue
+    }
     if (requirementDispatchPauseAssessment) {
       requirementStats.blocked += 1
       continue
@@ -1558,6 +1726,7 @@ const reconcileSwarm = async (
     const runAnnotations = {
       [SWARM_REQUIREMENT_ANNOTATION_SIGNAL]: signalName,
       [SWARM_SCHEDULE_ANNOTATION_IDENTITY]: requirementIdentity.identity,
+      ...requirementAdmission.annotations,
     }
     const rawPayloadValue = stringifyUnknown(signalSpec.payload)
     const payloadValue = clampUtf8(rawPayloadValue, SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT)
@@ -1565,6 +1734,7 @@ const reconcileSwarm = async (
     const objectiveValue = makeRequirementObjective(description ?? '', payloadValue.value)
     const requirementParameters: Record<string, string> = {
       ...runtimeParameters,
+      ...requirementAdmission.parameters,
       swarmRequirementId: requirementId,
       swarmRequirementSignal: signalName,
       swarmRequirementSource: sourceSwarmRaw,
@@ -1655,11 +1825,13 @@ const reconcileSwarm = async (
   const stageStates: Record<string, unknown> = {}
 
   for (const stageConfig of stageConfigs) {
+    const stageAdmission = launchAdmissions[stageConfig.stage]
     const baseState: Record<string, unknown> = {
       enabled: stageConfig.enabled,
       scheduleName: stageConfig.scheduleName,
       cadence: stageConfig.every ?? null,
       targetRef: stageConfig.targetRef ?? null,
+      admission: admissionStatusForStage(stageAdmission),
     }
 
     if (!stageConfig.enabled || freezeActive) {
@@ -1671,6 +1843,22 @@ const reconcileSwarm = async (
       stageStates[stageConfig.stage] = {
         ...baseState,
         phase: freezeActive ? 'Frozen' : 'Disabled',
+      }
+      continue
+    }
+
+    if (!stageAdmission.admitted) {
+      try {
+        await kube.delete(RESOURCE_MAP.Schedule, stageConfig.scheduleName, swarmNamespace, { wait: false })
+      } catch {
+        // best effort
+      }
+      stageStates[stageConfig.stage] = {
+        ...baseState,
+        phase: 'AdmissionBlocked',
+        healthy: false,
+        reason: stageAdmission.reason,
+        message: stageAdmission.message,
       }
       continue
     }
@@ -1697,6 +1885,7 @@ const reconcileSwarm = async (
       nats,
       identity: stageIdentity,
     })
+    Object.assign(stageAnnotations, stageAdmission.annotations)
     const schedule = {
       apiVersion: 'schedules.proompteng.ai/v1alpha1',
       kind: 'Schedule',
@@ -1754,6 +1943,7 @@ const reconcileSwarm = async (
       agentIdentity: stageIdentity.identity,
       agentRole: stageIdentity.role,
       humanName: stageIdentity.humanName,
+      admission: admissionStatusForStage(stageAdmission),
       recentSuccessAt: latestSuccessMs === null ? null : new Date(latestSuccessMs).toISOString(),
       consecutiveFailures: consecutiveStageFailures,
       fresh,
@@ -1806,10 +1996,12 @@ const reconcileSwarm = async (
       pending: requirementStats.pending,
       dispatched: requirementStats.dispatched,
       blocked: requirementStats.blocked,
+      admissionBlocked: requirementStats.admissionBlocked,
       completed: requirementStats.completed,
       invalidChannel: requirementStats.invalidChannel,
       duplicates: requirementStats.duplicates,
       paused: requirementStats.paused,
+      admission: admissionStatusForStage(requirementAdmission),
       ...(requirementStats.pauseReason ? { pauseReason: requirementStats.pauseReason } : {}),
       ...(requirementStats.pauseMessage ? { pauseMessage: requirementStats.pauseMessage } : {}),
       ...(requirementTemplateError ? { error: requirementTemplateError } : {}),
@@ -1916,21 +2108,25 @@ const reconcileSwarm = async (
         ? 'VerifyFailed'
         : requirementStats.paused
           ? 'AgentRunIngestionDegraded'
-          : !requirementsHealthy
-            ? 'RequirementsBridgeDegraded'
-            : unhealthyStages.length > 0
-              ? 'StageHealthDegraded'
-              : 'Healthy',
+          : requirementStats.admissionBlocked > 0
+            ? 'RuntimeAdmissionBlocked'
+            : !requirementsHealthy
+              ? 'RequirementsBridgeDegraded'
+              : unhealthyStages.length > 0
+                ? 'StageHealthDegraded'
+                : 'Healthy',
     message:
       verifyFailures >= 2
         ? `verify stage has ${verifyFailures} consecutive failures`
         : requirementStats.paused
           ? (requirementStats.pauseMessage ?? 'requirement bridge paused because AgentRun ingestion is degraded')
-          : !requirementsHealthy
-            ? 'requirement bridge is degraded'
-            : unhealthyStages.length > 0
-              ? `unhealthy stages: ${unhealthyStages.join(', ')}`
-              : 'all stage and requirement health checks passing',
+          : requirementStats.admissionBlocked > 0
+            ? requirementAdmission.message
+            : !requirementsHealthy
+              ? 'requirement bridge is degraded'
+              : unhealthyStages.length > 0
+                ? `unhealthy stages: ${unhealthyStages.join(', ')}`
+                : 'all stage and requirement health checks passing',
   })
 
   if (requirementStats.invalidChannel > 0) {
@@ -1953,6 +2149,13 @@ const reconcileSwarm = async (
       status: 'False',
       reason: 'ImplementTemplateMissing',
       message: requirementTemplateError,
+    })
+  } else if (requirementStats.admissionBlocked > 0) {
+    conditions = upsertCondition(conditions, {
+      type: 'RequirementsBridge',
+      status: 'False',
+      reason: 'RuntimeAdmissionBlocked',
+      message: requirementAdmission.message,
     })
   } else if (requirementStats.duplicates > 0) {
     conditions = upsertCondition(conditions, {
