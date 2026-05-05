@@ -1,5 +1,6 @@
-- op: remove
+- op: replace
   path: /spec/template/spec/affinity/podAntiAffinity/requiredDuringSchedulingIgnoredDuringExecution
+  value: []
 - op: add
   path: /spec/template/spec/affinity/podAntiAffinity/preferredDuringSchedulingIgnoredDuringExecution
   value:
