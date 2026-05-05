@@ -5,12 +5,14 @@ Swarm: jangar-control-plane
 Branch: codex/swarm-jangar-control-plane-verify
 Base: main
 
-## Open PR Inventory
+## Release PR Inventory
 
 - #5454 `feat(jangar): surface failure-domain lease holdbacks`
   - Selected for Jangar release attention.
   - State: open, non-draft, `MERGEABLE`, `CLEAN`.
   - Gate: no-go because the mandatory Codex review for a >1,000-line PR has not posted.
+  - 2026-05-05T19:16Z recheck: checks remain pass/skipped only; GraphQL still reports
+    `reviewThreads.totalCount=0` and `reviews.totalCount=0`.
 - #5532 `docs(jangar): record control plane release verification`
   - Selected as the release-audit PR for this verification branch.
   - State: merged at 2026-05-05T19:00:09Z as merge commit `4f4e37372`.
@@ -57,12 +59,12 @@ Base: main
 - The selected earlier blockers (#5376, #5364, #5387) are already merged and no longer conflict with main.
 - #5454 has no GitHub review threads and no posted reviews by GraphQL (`reviewThreads.totalCount=0`, `reviews.totalCount=0`).
 - #5454 has two `@codex review` requests. Both bot responses report Codex code-review usage limits, so the required Codex review has not posted.
-- Updated the anchored progress comment on #5454 using `services/jangar/scripts/codex/codex-progress-comment.ts`.
+- Updated the anchored progress comment on #5454 using `services/jangar/scripts/codex/codex-progress-comment.ts`:
+  https://github.com/proompteng/lab/pull/5454#issuecomment-4379440176.
 
 ## Merge Outcomes
 
-- #5532 was squash-merged by another release worker while this verification branch was being rebased onto the current
-  release head.
+- #5532 was squash-merged at 2026-05-05T19:00:09Z as release-audit evidence for this verification branch.
 - #5454 must not be squash-merged until a Codex review is posted and all resulting review threads are resolved.
 - The latest merged Jangar runtime path on main is #5521, #5531, and #5538, promoting image `919848c1` with digest
   `sha256:8651851a0b5baef46b9a10f933a56473313f3028658d41e1b68a73289cc9fd57`.
@@ -107,6 +109,26 @@ Base: main
     present in the short startup tail.
   - Pod events for `jangar-847d6d7f8d-zx5sq` showed image pull/start success and one transient readiness probe
     connection-refused warning before the pod became Ready.
+- Stability recheck after #5538 at 2026-05-05T19:05Z:
+  - Pod list showed `jangar-847d6d7f8d-zx5sq` as `2/2 Running`, age 5m23s, with 0 restarts.
+  - Container status still reported `app ready=true restarts=0` and `docker ready=true restarts=0`.
+  - Pod conditions still reported `Ready=True` and `ContainersReady=True`.
+  - `/health` still returned ok.
+  - Jangar app logs for the prior two minutes were quiet.
+  - RBAC checks still returned `no` for `applications.argoproj.io` in `argocd` and `deployments.apps` in `jangar`, while
+    pod and event reads in `jangar` returned `yes`.
+- Runtime-dependency recheck at 2026-05-05T19:15Z:
+  - Pod `jangar-847d6d7f8d-zx5sq` remained `2/2 Running`; both containers were Ready with zero restarts, and the
+    app image ID still matched digest `sha256:8651851a0b5baef46b9a10f933a56473313f3028658d41e1b68a73289cc9fd57`.
+  - `/health` returned ok.
+  - `/api/agents/control-plane/status?namespace=agents` reported database `healthy`, connected, and migration
+    consistency `healthy`.
+  - The same control-plane status reported dependency quorum `block` with reason `empirical_jobs_degraded`.
+  - Torghut `/trading/status` was reachable on active revision `torghut-00219`, but empirical jobs were stale:
+    `benchmark_parity`, `foundation_router_parity`, `janus_event_car`, and `janus_hgrm_reward`.
+  - Torghut `/readyz` returned 503, and recent events included a `torghut-00219` readiness timeout.
+  - Jangar app logs in the prior five minutes included Postgres `Query read timeout` and a control-plane heartbeat
+    publish warning.
 - Recent warning events before recovery:
   - `pod/jangar-584d75f4f6-zt9b2`: readiness probe connection refused and app container backoff.
   - `pod/jangar-db-1`: readiness probe returned HTTP 500.
@@ -116,6 +138,10 @@ Base: main
 - Remaining warning signal at the 18:55Z recheck:
   - `pod/jangar-584d75f4f6-zt9b2` still had readiness/backoff warnings last seen 23 minutes earlier.
   - `pod/jangar-db-1` still had a readiness HTTP 500 warning last seen 11 minutes earlier.
+- Remaining warning signal at the 19:05Z recheck:
+  - The old `a1b55322` pod readiness/backoff warnings were 34 minutes old.
+  - `pod/jangar-db-1` still had a readiness HTTP 500 warning last seen 6m12s earlier.
+  - The initial `919848c1` pod readiness miss was 4m37s old and did not recur during the stability window.
 
 ## Risks
 
@@ -123,6 +149,7 @@ Base: main
 - The live Jangar pod is currently healthy by pod, digest, post-deploy verifier, and HTTP evidence. Recent CNPG
   readiness warnings and prior Kubernetes API 429s remain residual yellow signals even though the #5538 rollout itself
   is healthy.
+- Full runtime rollout remains no-go because the control-plane dependency quorum is blocked by stale empirical jobs.
 - #5454 remains blocked on Codex review capacity and must not be merged even though its branch is clean and checks are green.
 
 ## Rollback Path
@@ -141,6 +168,8 @@ Base: main
 ## Next Action
 
 - Keep #5454 blocked until Codex review capacity is restored and a review is posted.
+- Do not declare the control-plane runtime fully green until the stale empirical jobs dependency-quorum block is cleared
+  or explicitly accepted by a maintainer.
 - Recheck Jangar pod readiness, `/health`, warning events, app restart count, and Jangar app logs after the next stability
   window if any new Jangar promotion merges.
 - Request RBAC or an alternate read credential for Argo CD Application and Deployment rollout status if full GitOps certification is required from this runner.
