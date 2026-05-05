@@ -10,6 +10,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md`
+  - `docs/agents/designs/70-jangar-promotion-authority-ledger-and-rollout-rehearsal-cells-2026-05-05.md`
   - `75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md`
   - `docs/agents/designs/70-jangar-evidence-epoch-admission-and-rollout-quarantine-2026-05-05.md`
   - `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
@@ -58,8 +60,11 @@
 - `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 - `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
 - `73-torghut-profit-evidence-clock-and-capital-veto-contract-2026-05-05.md`
+- `75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md`
 - `75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/70-jangar-promotion-authority-ledger-and-rollout-rehearsal-cells-2026-05-05.md`
+  - `75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md`
   - `docs/agents/designs/70-jangar-evidence-epoch-admission-and-rollout-quarantine-2026-05-05.md`
   - `75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md`
   - `docs/agents/designs/67-jangar-runtime-evidence-epochs-and-artifact-parity-gates-2026-05-05.md`
@@ -219,6 +224,12 @@ Current source-state priority is narrower:
 - `75-torghut-profit-actuation-cells-and-capital-guardrail-marketplace-2026-05-05.md` now turns Torghut profit cells
   into capital actuation candidates whose marketplace score consumes Jangar actuation, cell-local freshness, empirical
   proof, simulation parity, post-cost edge, slippage, and rollback readiness.
+- `75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md` now turns the latest plan assessment into the
+  active Torghut implementation contract: non-observe capital requires one profit authority ledger entry, one Jangar
+  authority ledger id, and a successful rehearsal cell for the requested capital state.
+- `docs/agents/designs/70-jangar-promotion-authority-ledger-and-rollout-rehearsal-cells-2026-05-05.md` now defines
+  the companion Jangar contract: serving, dispatch, rollout, and Torghut promotion authority must project from a
+  durable promotion authority ledger with bounded read budgets and repair cells.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.
