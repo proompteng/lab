@@ -327,10 +327,12 @@ describe('agents controller startup', () => {
                   namespace: 'agents',
                   generation: 5,
                   creationTimestamp: '2026-01-20T00:00:00Z',
+                  annotations: { 'agents.proompteng.ai/template': 'true' },
+                  finalizers: [],
                 },
                 status: {
-                  phase: 'Template',
                   observedGeneration: 5,
+                  phase: 'Template',
                 },
               }),
             ],
@@ -342,6 +344,7 @@ describe('agents controller startup', () => {
 
     await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
 
+    expect(kube.patch).not.toHaveBeenCalled()
     expect(kube.applyStatus).not.toHaveBeenCalled()
     expect(__test.getRuntimeMutableState().agentRunIngestionState.get('agents')?.untouchedRunCount).toBe(0)
   })
