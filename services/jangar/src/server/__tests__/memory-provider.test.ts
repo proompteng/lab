@@ -5,8 +5,8 @@ const pgMocks = vi.hoisted(() => {
   const query = vi.fn(async () => ({ rows: [] }))
   const construct = vi.fn()
   class Pool {
-    constructor() {
-      construct()
+    constructor(options?: unknown) {
+      construct(options)
     }
     query = query
     end = end
@@ -114,10 +114,28 @@ describe('memory-provider', () => {
     await writeMemoryEvent(connection, 'sync-finished', { ok: true })
 
     expect(pgMocks.construct).toHaveBeenCalledTimes(1)
+    expect(pgMocks.construct).toHaveBeenCalledWith({
+      connectionString: connection.connectionString,
+      ssl: { rejectUnauthorized: false },
+      max: 2,
+    })
     expect(pgMocks.query).toHaveBeenCalledTimes(2)
 
     await closeMemoryProviderPools()
 
     expect(pgMocks.end).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows the memory postgres pool size to be lowered by env', async () => {
+    process.env.NODE_ENV = 'development'
+    process.env.JANGAR_MEMORY_DB_POOL_MAX = '1'
+
+    await writeMemoryEvent(connection, 'sync-started', { ok: true })
+
+    expect(pgMocks.construct).toHaveBeenCalledWith({
+      connectionString: connection.connectionString,
+      ssl: { rejectUnauthorized: false },
+      max: 1,
+    })
   })
 })
