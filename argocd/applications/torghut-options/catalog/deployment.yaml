@@ -15,7 +15,7 @@ spec:
       labels:
         app: torghut-options-catalog
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-03-09T04:20:00Z"
+        kubectl.kubernetes.io/restartedAt: "2026-05-05T20:20:00Z"
     spec:
       nodeSelector:
         kubernetes.io/arch: arm64
