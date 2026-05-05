@@ -24,8 +24,6 @@ spec:
         kubernetes.io/arch: arm64
       containerConcurrency: 0
       timeoutSeconds: 60
-      nodeSelector:
-        kubernetes.io/arch: arm64
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
