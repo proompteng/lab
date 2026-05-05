@@ -296,6 +296,11 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertTrue(containers)
         container = containers[0]
         args = "\n".join(str(item) for item in container.get("args", []))
+        upgrade_to_research_objects = (
+            'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini '
+            "upgrade 0026_strategy_factory_research_objects"
+        )
+        upgrade_heads = 'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads'
         env_names = {
             item.get("name")
             for item in container.get("env", [])
@@ -317,7 +322,12 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("{owned_relation['object_name']} OWNER TO {quoted_role}", args)
         self.assertNotIn("DO $$", args)
         self.assertNotIn("format(", args)
-        self.assertIn('DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic', args)
+        self.assertIn(upgrade_to_research_objects, args)
+        self.assertIn("0028_autoresearch_epoch_ledgers", args)
+        self.assertIn("whitepaper_claims", args)
+        self.assertIn("autoresearch_portfolio_candidates", args)
+        self.assertIn("public_table_exists", args)
+        self.assertIn(upgrade_heads, args)
         self.assertIn("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public", args)
         self.assertIn("granted simulation runtime privileges", args)
         self.assertLess(
@@ -326,14 +336,18 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertLess(
             args.index("owner_statement = ("),
-            args.index(
-                'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads'
-            ),
+            args.index(upgrade_to_research_objects),
         )
         self.assertLess(
-            args.index(
-                'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads'
-            ),
+            args.index(upgrade_to_research_objects),
+            args.index("stamped existing whitepaper/autoresearch ledger objects"),
+        )
+        self.assertLess(
+            args.index("stamped existing whitepaper/autoresearch ledger objects"),
+            args.index(upgrade_heads),
+        )
+        self.assertLess(
+            args.index(upgrade_heads),
             args.index("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public"),
         )
 

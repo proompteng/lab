@@ -138,6 +138,63 @@ spec:
                       )
                       print(f'stamped existing simulation runtime context as {context_revision}')
               PY
+              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade 0026_strategy_factory_research_objects
+              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/python - <<'PY'
+              import os
+
+              from sqlalchemy import create_engine, text
+
+              target_revision = '0028_autoresearch_epoch_ledgers'
+              stamp_source_revisions = {
+                  '0026_strategy_factory_research_objects',
+                  '0027_whitepaper_claim_graph',
+              }
+              preexisting_tables = [
+                  'whitepaper_claims',
+                  'whitepaper_claim_relations',
+                  'whitepaper_strategy_templates',
+                  'whitepaper_experiment_specs',
+                  'whitepaper_contradiction_events',
+                  'autoresearch_epochs',
+                  'autoresearch_candidate_specs',
+                  'autoresearch_proposal_scores',
+                  'autoresearch_portfolio_candidates',
+              ]
+
+              def sqlalchemy_dsn(raw: str) -> str:
+                  if raw.startswith('postgresql+'):
+                      return raw
+                  if raw.startswith('postgresql://'):
+                      return 'postgresql+psycopg://' + raw[len('postgresql://'):]
+                  if raw.startswith('postgres://'):
+                      return 'postgresql+psycopg://' + raw[len('postgres://'):]
+                  return raw
+
+              def public_table_exists(connection, table_name: str) -> bool:
+                  return bool(
+                      connection.execute(
+                          text('select to_regclass(:table_name) is not null'),
+                          {'table_name': f'public.{table_name}'},
+                      ).scalar()
+                  )
+
+              engine = create_engine(sqlalchemy_dsn(os.environ['DB_DSN']))
+              with engine.begin() as connection:
+                  versions = [
+                      row[0]
+                      for row in connection.execute(text('select version_num from alembic_version')).all()
+                  ]
+                  if (
+                      len(versions) == 1
+                      and versions[0] in stamp_source_revisions
+                      and all(public_table_exists(connection, table_name) for table_name in preexisting_tables)
+                  ):
+                      connection.execute(
+                          text('update alembic_version set version_num = :revision'),
+                          {'revision': target_revision},
+                      )
+                      print(f'stamped existing whitepaper/autoresearch ledger objects as {target_revision}')
+              PY
               DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
               DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/python - <<'PY'
               import os
