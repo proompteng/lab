@@ -10,6 +10,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `85-torghut-proof-fresh-profitability-governor-and-causal-replay-quarantine-2026-05-05.md`
+  - `docs/agents/designs/81-jangar-action-class-proof-fuses-and-quant-health-quarantine-2026-05-05.md`
   - `84-torghut-capital-warrant-adoption-and-profitability-experiment-ladder-2026-05-05.md`
   - `docs/agents/designs/80-jangar-settlement-adoption-ladder-and-cutover-governance-2026-05-05.md`
   - `83-torghut-profit-runway-consumer-and-hypothesis-capital-auction-2026-05-05.md`
@@ -92,7 +94,10 @@
 - `82-torghut-order-admission-warrants-and-replay-capital-auction-2026-05-05.md`
 - `83-torghut-profit-runway-consumer-and-hypothesis-capital-auction-2026-05-05.md`
 - `84-torghut-capital-warrant-adoption-and-profitability-experiment-ladder-2026-05-05.md`
+- `85-torghut-proof-fresh-profitability-governor-and-causal-replay-quarantine-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/81-jangar-action-class-proof-fuses-and-quant-health-quarantine-2026-05-05.md`
+  - `85-torghut-proof-fresh-profitability-governor-and-causal-replay-quarantine-2026-05-05.md`
   - `docs/agents/designs/80-jangar-settlement-adoption-ladder-and-cutover-governance-2026-05-05.md`
   - `84-torghut-capital-warrant-adoption-and-profitability-experiment-ladder-2026-05-05.md`
   - `docs/agents/designs/79-jangar-control-plane-proof-runway-and-consumer-gated-rollout-2026-05-05.md`
