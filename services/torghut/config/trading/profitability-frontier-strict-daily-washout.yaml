@@ -25,8 +25,7 @@ consistency_constraints:
   require_every_day_active: true
 strategy_overrides:
   universe_symbols:
-    - ['AMD', 'AMAT', 'GOOG', 'INTC', 'MSFT', 'MU', 'SHOP']
-    - ['AAPL', 'AMD', 'AMAT', 'AVGO', 'GOOG', 'INTC', 'META', 'MSFT', 'MU', 'NVDA', 'SHOP']
+    - ['AMAT', 'AMD', 'ASML', 'AVGO', 'INTC', 'KLAC', 'LRCX', 'MU', 'NVDA', 'QCOM', 'TSM', 'TXN']
   max_notional_per_trade:
     - '63180'
     - '94770'

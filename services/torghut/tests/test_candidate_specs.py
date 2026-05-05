@@ -4,6 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 from unittest import TestCase
 
+import app.trading.discovery.candidate_specs as candidate_specs_module
 from app.trading.discovery.candidate_specs import (
     candidate_spec_from_payload,
     compile_candidate_specs,
@@ -18,7 +19,54 @@ from app.trading.discovery.whitepaper_candidate_compiler import (
 )
 
 
+_CHIP_UNIVERSE_SYMBOLS = {
+    "AMAT",
+    "AMD",
+    "ASML",
+    "AVGO",
+    "INTC",
+    "KLAC",
+    "LRCX",
+    "MU",
+    "NVDA",
+    "QCOM",
+    "TSM",
+    "TXN",
+}
+
+
 class TestCandidateSpecs(TestCase):
+    def test_default_execution_profiles_use_chip_only_universes(self) -> None:
+        seen_profiles = 0
+        execution_profiles = candidate_specs_module._FAMILY_EXECUTION_PROFILES
+        for family, profiles in execution_profiles.items():
+            for index, profile in enumerate(profiles):
+                raw_symbols = profile.get("universe_symbols")
+                self.assertIsInstance(
+                    raw_symbols,
+                    list,
+                    f"{family} profile {index} missing universe_symbols",
+                )
+                symbols = [str(symbol).strip().upper() for symbol in raw_symbols]
+                self.assertLessEqual(
+                    len(symbols),
+                    12,
+                    f"{family} profile {index} has too many symbols",
+                )
+                self.assertEqual(
+                    len(symbols),
+                    len(set(symbols)),
+                    f"{family} profile {index} has duplicate symbols",
+                )
+                self.assertEqual(
+                    sorted(set(symbols) - _CHIP_UNIVERSE_SYMBOLS),
+                    [],
+                    f"{family} profile {index} contains non-chip symbols",
+                )
+                seen_profiles += 1
+
+        self.assertGreater(seen_profiles, 0)
+
     def test_candidate_spec_ids_are_deterministic_and_round_trip(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-1",
@@ -99,10 +147,9 @@ class TestCandidateSpecs(TestCase):
             "microstructure_continuation_matched_filter_v1:profile-1",
         )
         self.assertEqual(
-            continuation_specs[1]
-            .to_vnext_experiment_payload()["template_overrides"]["params"][
-                "leader_reclaim_start_minutes_since_open"
-            ],
+            continuation_specs[1].to_vnext_experiment_payload()["template_overrides"][
+                "params"
+            ]["leader_reclaim_start_minutes_since_open"],
             "45",
         )
 
@@ -212,7 +259,9 @@ class TestCandidateSpecs(TestCase):
         )
 
         self.assertEqual(late_day.runtime_family, "late_day_continuation_consistent")
-        self.assertEqual(late_day.runtime_strategy_name, "late-day-continuation-long-v1")
+        self.assertEqual(
+            late_day.runtime_strategy_name, "late-day-continuation-long-v1"
+        )
         self.assertEqual(late_day.objective["target_net_pnl_per_day"], "300")
         self.assertEqual(
             late_day.feature_contract["execution_profile"]["profile_id"],
