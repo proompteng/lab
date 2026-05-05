@@ -11,6 +11,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `86-torghut-profit-repair-auction-and-proof-runway-consumer-2026-05-05.md`
+  - `docs/agents/designs/82-jangar-proof-runway-cutover-and-consumer-authority-2026-05-05.md`
   - `86-torghut-profit-debt-ledger-and-repair-sla-experiments-2026-05-05.md`
   - `docs/agents/designs/82-jangar-authority-clearance-cells-and-negative-evidence-slas-2026-05-05.md`
   - `85-torghut-profit-escrow-repair-auction-and-capital-authority-2026-05-05.md`
@@ -101,8 +103,11 @@
 - `84-torghut-capital-warrant-adoption-and-profitability-experiment-ladder-2026-05-05.md`
 - `85-torghut-profit-escrow-repair-auction-and-capital-authority-2026-05-05.md`
 - `85-torghut-proof-fresh-profitability-governor-and-causal-replay-quarantine-2026-05-05.md`
+- `86-torghut-profit-repair-auction-and-proof-runway-consumer-2026-05-05.md`
 - `86-torghut-profit-debt-ledger-and-repair-sla-experiments-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/82-jangar-proof-runway-cutover-and-consumer-authority-2026-05-05.md`
+  - `86-torghut-profit-repair-auction-and-proof-runway-consumer-2026-05-05.md`
   - `docs/agents/designs/82-jangar-authority-clearance-cells-and-negative-evidence-slas-2026-05-05.md`
   - `86-torghut-profit-debt-ledger-and-repair-sla-experiments-2026-05-05.md`
   - `docs/agents/designs/81-jangar-action-authority-ledger-and-repair-runway-2026-05-05.md`
