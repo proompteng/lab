@@ -172,6 +172,11 @@ describe('supporting primitives controller', () => {
 
     expect(command).toContain("import { randomUUID } from 'node:crypto'\nimport { readFileSync } from 'node:fs'")
     expect(command).not.toContain("node:crypto' import")
+    expect(command.split('\n').slice(0, 3)).toEqual([
+      "import { randomUUID } from 'node:crypto'",
+      "import { readFileSync } from 'node:fs'",
+      "import { request } from 'node:https'",
+    ])
     expect(command).toContain("replaceAll('__JANGAR_DELIVERY_ID__', randomUUID())")
     expect(command).toContain('const targetByKind = {')
     expect(command).toContain("method: 'POST'")

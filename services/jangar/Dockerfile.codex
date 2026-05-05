@@ -121,7 +121,9 @@ RUN rm -rf "$WORKTREE" \
 
 COPY services/jangar/scripts/codex/codex-bootstrap.ts /usr/local/bin/codex-bootstrap
 COPY services/jangar/scripts/codex/agent-runner.ts /usr/local/bin/agent-runner
-COPY services/jangar/scripts/codex/codex-implement.ts /usr/local/bin/codex-implement
+COPY services/jangar/scripts/codex /app/services/jangar/scripts/codex
+COPY services/jangar/src/server/runtime-tooling-config.ts /app/services/jangar/src/server/runtime-tooling-config.ts
+COPY services/jangar/src/server/control-plane-runtime-admission.ts /app/services/jangar/src/server/control-plane-runtime-admission.ts
 COPY services/jangar/scripts/codex/codex-research.ts /usr/local/bin/codex-research
 COPY services/jangar/scripts/codex/codex-graf.ts /usr/local/bin/codex-graf
 COPY services/jangar/scripts/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
@@ -145,8 +147,9 @@ RUN mkdir -p /usr/local/node_modules/@proompteng \
     && ln -sf /usr/local/node_modules/@proompteng/cx-tools/dist/cx-workflow-query.js /usr/local/bin/cx-workflow-query \
     && ln -sf /usr/local/node_modules/@proompteng/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
     && ln -sf /usr/local/node_modules/@proompteng/cx-tools/dist/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
+    && ln -sf /app/services/jangar/scripts/codex/codex-implement.ts /usr/local/bin/codex-implement \
     && chmod +x /usr/local/node_modules/@proompteng/cx-tools/dist/cx-codex-run.js /usr/local/node_modules/@proompteng/cx-tools/dist/cx-workflow-start.js /usr/local/node_modules/@proompteng/cx-tools/dist/cx-workflow-query.js /usr/local/node_modules/@proompteng/cx-tools/dist/cx-workflow-signal.js /usr/local/node_modules/@proompteng/cx-tools/dist/cx-workflow-cancel.js \
-    && chmod +x /usr/local/bin/codex-bootstrap /usr/local/bin/agent-runner /usr/local/bin/codex-implement /usr/local/bin/codex-research /usr/local/bin/codex-graf /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak /usr/local/bin/discord-channel.ts
+    && chmod +x /usr/local/bin/codex-bootstrap /usr/local/bin/agent-runner /app/services/jangar/scripts/codex/codex-implement.ts /usr/local/bin/codex-research /usr/local/bin/codex-graf /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak /usr/local/bin/discord-channel.ts
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/codex-bootstrap"]
