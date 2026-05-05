@@ -753,6 +753,7 @@ class TestTradingApi(TestCase):
             ),
             patch("app.main._load_llm_evaluation", side_effect=_load_llm_evaluation),
             patch("app.main._load_tca_summary", side_effect=_load_tca),
+            patch("app.main.SessionLocal", self.session_local),
         ):
             response = self.client.get("/trading/status")
 
@@ -762,6 +763,49 @@ class TestTradingApi(TestCase):
             call_order.index("llm_evaluation"),
         )
         self.assertLess(call_order.index("dependency_quorum"), call_order.index("tca"))
+
+    def test_trading_status_uses_isolated_db_sessions_for_late_reads(self) -> None:
+        observed_sessions: list[Session] = []
+
+        def _load_llm_evaluation(session: Session) -> dict[str, object]:
+            observed_sessions.append(session)
+            return {"ok": True, "metrics": {"total_reviews": 1}}
+
+        def _load_tca(session: Session) -> dict[str, object]:
+            observed_sessions.append(session)
+            return {}
+
+        def _load_last_decision_at(session: Session) -> None:
+            observed_sessions.append(session)
+            return None
+
+        def _build_live_submission_gate(
+            *args: object, **kwargs: object
+        ) -> dict[str, object]:
+            session = kwargs["session"]
+            assert isinstance(session, Session)
+            observed_sessions.append(session)
+            return {"allowed": True, "reason": "ready", "blocked_reasons": []}
+
+        with (
+            patch("app.main._load_llm_evaluation", side_effect=_load_llm_evaluation),
+            patch("app.main._load_tca_summary", side_effect=_load_tca),
+            patch(
+                "app.main._load_last_decision_at", side_effect=_load_last_decision_at
+            ),
+            patch(
+                "app.main._build_live_submission_gate_payload",
+                side_effect=_build_live_submission_gate,
+            ),
+            patch("app.main.SessionLocal", self.session_local),
+        ):
+            response = self.client.get("/trading/status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(len(observed_sessions), 4)
+        self.assertIs(observed_sessions[0], observed_sessions[1])
+        self.assertIsNot(observed_sessions[0], observed_sessions[2])
+        self.assertIsNot(observed_sessions[2], observed_sessions[3])
 
     def test_readiness_checks_external_dependencies_before_postgres_session(
         self,

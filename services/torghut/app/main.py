@@ -517,7 +517,6 @@ def _readiness_dependency_snapshot(
 
 
 def _evaluate_trading_health_payload(
-    session: Session,
     *,
     include_database_contract: bool = False,
     allow_stale_dependency_cache: bool = False,
@@ -565,11 +564,12 @@ def _evaluate_trading_health_payload(
         scheduler_payload["startup_readiness_grace_active"] = in_startup_grace
 
     now = datetime.now(timezone.utc)
-    dependencies, checked_at, cache_used = _readiness_dependency_snapshot(
-        session,
-        include_database_contract=include_database_contract,
-        allow_stale_dependency_cache=allow_stale_dependency_cache,
-    )
+    with SessionLocal() as session:
+        dependencies, checked_at, cache_used = _readiness_dependency_snapshot(
+            session,
+            include_database_contract=include_database_contract,
+            allow_stale_dependency_cache=allow_stale_dependency_cache,
+        )
     dependencies = dict(dependencies)
     dependencies["universe"] = _evaluate_universe_dependency(scheduler)
     cache_age_seconds = (now - checked_at).total_seconds() if checked_at else 0.0
@@ -590,10 +590,12 @@ def _evaluate_trading_health_payload(
     alpha_readiness: dict[str, object]
     _hypothesis_payload: Mapping[str, object] = {}
     try:
+        with SessionLocal() as session:
+            tca_summary = _load_tca_summary(session)
         _hypothesis_payload, hypothesis_summary, _dependency_quorum = (
             _build_hypothesis_runtime_payload(
                 scheduler,
-                tca_summary=_load_tca_summary(session),
+                tca_summary=tca_summary,
                 market_context_status=scheduler.market_context_status(),
                 dependency_quorum=dependency_quorum,
             )
@@ -633,14 +635,15 @@ def _evaluate_trading_health_payload(
     quant_evidence = load_quant_evidence_status(
         account_label=settings.trading_account_label,
     )
-    live_submission_gate = _build_live_submission_gate_payload(
-        scheduler.state,
-        session=session,
-        hypothesis_summary=_hypothesis_payload,
-        empirical_jobs_status=empirical_jobs,
-        dspy_runtime_status=dspy_runtime,
-        quant_health_status=quant_evidence,
-    )
+    with SessionLocal() as session:
+        live_submission_gate = _build_live_submission_gate_payload(
+            scheduler.state,
+            session=session,
+            hypothesis_summary=_hypothesis_payload,
+            empirical_jobs_status=empirical_jobs,
+            dspy_runtime_status=dspy_runtime,
+            quant_health_status=quant_evidence,
+        )
     live_mode = settings.trading_mode == "live"
     empirical_jobs_required = (
         live_mode and settings.trading_empirical_jobs_health_required
@@ -1014,11 +1017,10 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
 
 
 @app.get("/readyz")
-def readyz(session: Session = Depends(get_session)) -> JSONResponse:
+def readyz() -> JSONResponse:
     """Readiness endpoint with dependency-aware status for rollout safety."""
 
     payload, status_code = _evaluate_trading_health_payload(
-        session,
         include_database_contract=True,
         allow_stale_dependency_cache=True,
     )
@@ -1622,7 +1624,7 @@ def search_whitepapers(
 
 
 @app.get("/trading/status")
-def trading_status(session: Session = Depends(get_session)) -> dict[str, object]:
+def trading_status() -> dict[str, object]:
     """Return trading loop status and metrics."""
 
     scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
@@ -1638,8 +1640,9 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
     )
     forecast_service_status = _forecast_service_status()
     lean_authority_status = _lean_authority_status()
-    llm_evaluation = _load_llm_evaluation(session)
-    tca_summary = _load_tca_summary(session)
+    with SessionLocal() as session:
+        llm_evaluation = _load_llm_evaluation(session)
+        tca_summary = _load_tca_summary(session)
     market_context_status = scheduler.market_context_status()
     hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
         _build_hypothesis_runtime_payload(
@@ -1660,18 +1663,20 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
     )
     shorting_metadata_status = scheduler.shorting_metadata_status()
     rejection_alert_status = scheduler.rejection_alert_status()
-    last_decision_at = _load_last_decision_at(session)
-    live_submission_gate = _build_live_submission_gate_payload(
-        state,
-        session=session,
-        hypothesis_summary=hypothesis_payload,
-        empirical_jobs_status=empirical_jobs,
-        dspy_runtime_status=cast(
-            dict[str, object],
-            scheduler.llm_status().get("dspy_runtime", {}),
-        ),
-        quant_health_status=quant_evidence,
-    )
+    with SessionLocal() as session:
+        last_decision_at = _load_last_decision_at(session)
+    with SessionLocal() as session:
+        live_submission_gate = _build_live_submission_gate_payload(
+            state,
+            session=session,
+            hypothesis_summary=hypothesis_payload,
+            empirical_jobs_status=empirical_jobs,
+            dspy_runtime_status=cast(
+                dict[str, object],
+                scheduler.llm_status().get("dspy_runtime", {}),
+            ),
+            quant_health_status=quant_evidence,
+        )
     simple_lane_reject_reason_totals = _simple_lane_reject_reason_totals(state)
     return {
         "enabled": settings.trading_enabled,
@@ -2456,10 +2461,10 @@ def trading_tca(
 
 
 @app.get("/trading/health")
-def trading_health(session: Session = Depends(get_session)) -> JSONResponse:
+def trading_health() -> JSONResponse:
     """Trading loop health including dependency readiness."""
 
-    payload, status_code = _evaluate_trading_health_payload(session)
+    payload, status_code = _evaluate_trading_health_payload()
     return JSONResponse(status_code=status_code, content=jsonable_encoder(payload))
 
 
