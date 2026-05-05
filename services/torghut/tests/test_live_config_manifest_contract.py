@@ -309,18 +309,23 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("GRANT ALL PRIVILEGES ON DATABASE", args)
         self.assertIn("CREATE EXTENSION IF NOT EXISTS vector", args)
         self.assertIn("postgresql+psycopg://", args)
-        self.assertIn("ALTER %%s %%s OWNER TO %%I", args)
-        self.assertIn("pg_get_userbyid(c.relowner) <> target_role", args)
-        self.assertIn("target_role_literal", args)
+        self.assertIn("select quote_ident(:role_name)", args)
+        self.assertIn("c.oid::regclass::text AS object_name", args)
+        self.assertIn("pg_get_userbyid(c.relowner) <> :runtime_role", args)
+        self.assertIn("owner_statement = (", args)
+        self.assertIn("ALTER {owned_relation['object_type']}", args)
+        self.assertIn("{owned_relation['object_name']} OWNER TO {quoted_role}", args)
+        self.assertNotIn("DO $$", args)
+        self.assertNotIn("format(", args)
         self.assertIn('DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic', args)
         self.assertIn("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public", args)
         self.assertIn("granted simulation runtime privileges", args)
         self.assertLess(
             args.index("CREATE EXTENSION IF NOT EXISTS vector"),
-            args.index("ALTER %%s %%s OWNER TO %%I"),
+            args.index("c.oid::regclass::text AS object_name"),
         )
         self.assertLess(
-            args.index("ALTER %%s %%s OWNER TO %%I"),
+            args.index("owner_statement = ("),
             args.index(
                 'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads'
             ),
