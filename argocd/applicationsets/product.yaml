@@ -314,7 +314,7 @@ spec:
                       - /spec/job/state
                       - /spec/job/upgradeMode
                       - /spec/restartNonce
-                automation: manual
+                automation: auto
                 enabled: "true"
               - name: torghut-options
                 path: argocd/applications/torghut-options
@@ -322,7 +322,7 @@ spec:
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "7"
-                automation: manual
+                automation: auto
                 enabled: "true"
               - name: bilig
                 path: argocd/applications/bilig
