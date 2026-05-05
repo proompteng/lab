@@ -32,20 +32,13 @@ patches:
       kind: Deployment
       name: istiod
     patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: istiod
-      spec:
-        template:
-          spec:
-            containers:
-              - name: discovery
-                env:
-                  - name: GOMEMLIMIT
-                    valueFrom:
-                      resourceFieldRef:
-                        divisor: "1"
-                        resource: limits.memory
-                  - name: PLATFORM
-                    $patch: delete
+      - op: add
+        path: /spec/template/spec/containers/0/env/10
+        value:
+          name: GOMEMLIMIT
+          valueFrom:
+            resourceFieldRef:
+              divisor: "1"
+              resource: limits.memory
+      - op: remove
+        path: /spec/template/spec/containers/0/env/12
