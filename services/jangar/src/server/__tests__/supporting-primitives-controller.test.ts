@@ -1598,6 +1598,8 @@ describe('supporting primitives controller', () => {
         return {
           items: [
             {
+              apiVersion: 'signals.proompteng.ai/v1alpha1',
+              kind: 'Signal',
               metadata: {
                 name: 'torghut-risk-handoff-2',
                 namespace: 'agents',
@@ -1998,6 +2000,8 @@ describe('supporting primitives controller', () => {
         return {
           items: [
             {
+              apiVersion: 'signals.proompteng.ai/v1alpha1',
+              kind: 'Signal',
               metadata: {
                 name: 'torghut-risk-handoff-2',
                 namespace: 'agents',
@@ -2052,13 +2056,96 @@ describe('supporting primitives controller', () => {
     const statusCall = applyStatus.mock.calls.at(-1)
     const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     const requirements = (status.requirements ?? {}) as Record<string, unknown>
-    expect(requirements.pending).toBe(1)
+    expect(requirements.pending).toBe(0)
     expect(requirements.dispatched).toBe(0)
     expect(requirements.invalidChannel).toBe(1)
+    expect(requirements.rejected).toBe(1)
     const conditions = Array.isArray(status.conditions) ? status.conditions : []
     const bridge = conditions.find((condition) => condition.type === 'RequirementsBridge')
-    expect(bridge?.status).toBe('False')
-    expect((bridge as { reason?: string } | undefined)?.reason).toBe('InvalidRequirementChannel')
+    expect(bridge?.status).toBe('True')
+    expect((bridge as { reason?: string } | undefined)?.reason).toBe('InvalidRequirementChannelRejected')
+
+    const signalStatusCall = applyStatus.mock.calls.find((call) => {
+      const payload = call[0] as Record<string, unknown>
+      return payload.kind === 'Signal'
+    })
+    const signalStatus = (signalStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(signalStatus.phase).toBe('Rejected')
+  })
+
+  it('does not count terminal rejected requirement signals as pending debt', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' },
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              apiVersion: 'signals.proompteng.ai/v1alpha1',
+              kind: 'Signal',
+              metadata: {
+                name: 'torghut-risk-handoff-rejected',
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'slack://swarm-bridge/TOR-456',
+              },
+              status: {
+                phase: 'Rejected',
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    const requirements = (status.requirements ?? {}) as Record<string, unknown>
+    expect(requirements.pending).toBe(0)
+    expect(requirements.dispatched).toBe(0)
+    expect(requirements.invalidChannel).toBe(0)
+    expect(requirements.rejected).toBe(0)
   })
 
   it('does not re-dispatch requirement signals that already completed', async () => {

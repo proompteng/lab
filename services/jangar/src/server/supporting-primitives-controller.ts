@@ -694,6 +694,32 @@ const listItems = (payload: Record<string, unknown>) => {
   return items.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
 }
 
+const TERMINAL_REQUIREMENT_SIGNAL_PHASES = new Set(['rejected', 'completed', 'done'])
+
+const isTerminalRequirementSignal = (signal: Record<string, unknown>) => {
+  const phase = (asString(readNested(signal, ['status', 'phase'])) ?? '').toLowerCase()
+  return TERMINAL_REQUIREMENT_SIGNAL_PHASES.has(phase)
+}
+
+const rejectRequirementSignal = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  signal: Record<string, unknown>,
+  reason: string,
+  message: string,
+) => {
+  const status = asRecord(signal.status) ?? {}
+  const conditions = upsertCondition(
+    normalizeConditions(status.conditions),
+    buildReadyCondition(false, reason, message),
+  )
+  await setStatus(kube, signal, {
+    observedGeneration: asRecord(signal.metadata)?.generation ?? 0,
+    phase: 'Rejected',
+    lastDeliveryAt: asString(status.lastDeliveryAt) ?? undefined,
+    conditions,
+  })
+}
+
 const stableStringify = (value: unknown): string => {
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value) ?? 'null'
@@ -1667,7 +1693,9 @@ const reconcileSwarm = async (
   )
   const requirementSelector = `${SWARM_REQUIREMENT_LABEL_TYPE}=requirement,${SWARM_REQUIREMENT_LABEL_TO}=${swarmLabel}`
   const requirementSignals = sortRequirementSignalsForDispatch(
-    listItems(await kube.list(RESOURCE_MAP.Signal, swarmNamespace, requirementSelector)),
+    listItems(await kube.list(RESOURCE_MAP.Signal, swarmNamespace, requirementSelector)).filter(
+      (signal) => !isTerminalRequirementSignal(signal),
+    ),
   )
   const requirementRunStates = new Map<
     string,
@@ -1711,6 +1739,7 @@ const reconcileSwarm = async (
     admissionBlocked: 0,
     completed: 0,
     invalidChannel: 0,
+    rejected: 0,
     duplicates: countIdempotencyDuplicates(implementRuns),
     paused: requirementDispatchPauseAssessment !== null,
     pauseReason: requirementDispatchPauseAssessment ? 'AgentRunIngestionDegraded' : null,
@@ -1727,9 +1756,14 @@ const reconcileSwarm = async (
     const signalChannel = asString(signalSpec.channel)
 
     if (!isNatsChannel(signalChannel)) {
-      requirementStats.pending += 1
-      requirementStats.blocked += 1
       requirementStats.invalidChannel += 1
+      requirementStats.rejected += 1
+      await rejectRequirementSignal(
+        kube,
+        signal,
+        'InvalidRequirementChannel',
+        'requirement signal rejected because channel is not NATS',
+      )
       continue
     }
 
@@ -2085,6 +2119,7 @@ const reconcileSwarm = async (
       admissionBlocked: requirementStats.admissionBlocked,
       completed: requirementStats.completed,
       invalidChannel: requirementStats.invalidChannel,
+      rejected: requirementStats.rejected,
       duplicates: requirementStats.duplicates,
       paused: requirementStats.paused,
       admission: admissionStatusForStage(requirementAdmission),
@@ -2097,8 +2132,12 @@ const reconcileSwarm = async (
   for (const stage of STAGE_NAMES) {
     const stageState = asRecord(stageStates[stage])
     const stageLastRun = asString(stageState?.lastRunTime)
-    if (stageLastRun) {
-      nextStatus[STAGE_LAST_RUN_KEY[stage]] = stageLastRun
+    const stageRecentSuccess = asString(stageState?.recentSuccessAt)
+    const stageActivityMs = [parseTimeOrNull(stageLastRun), parseTimeOrNull(stageRecentSuccess)]
+      .filter((value): value is number => value !== null)
+      .reduce((latest, value) => Math.max(latest, value), Number.NEGATIVE_INFINITY)
+    if (Number.isFinite(stageActivityMs)) {
+      nextStatus[STAGE_LAST_RUN_KEY[stage]] = new Date(stageActivityMs).toISOString()
     } else {
       const existing = asString(status[STAGE_LAST_RUN_KEY[stage]])
       if (existing) nextStatus[STAGE_LAST_RUN_KEY[stage]] = existing
@@ -2115,7 +2154,6 @@ const reconcileSwarm = async (
   const verifyStageState = asRecord(stageStates.verify) ?? {}
   const verifyFailures = Number(verifyStageState.consecutiveFailures ?? 0)
   const requirementsHealthy =
-    requirementStats.invalidChannel === 0 &&
     requirementStats.blocked === 0 &&
     requirementStats.duplicates === 0 &&
     !requirementStats.paused &&
@@ -2218,9 +2256,9 @@ const reconcileSwarm = async (
   if (requirementStats.invalidChannel > 0) {
     conditions = upsertCondition(conditions, {
       type: 'RequirementsBridge',
-      status: 'False',
-      reason: 'InvalidRequirementChannel',
-      message: `${requirementStats.invalidChannel} requirement signal(s) were rejected because channel is not NATS`,
+      status: 'True',
+      reason: 'InvalidRequirementChannelRejected',
+      message: `${requirementStats.invalidChannel} requirement signal(s) rejected and ignored because channel is not NATS`,
     })
   } else if (requirementStats.paused) {
     conditions = upsertCondition(conditions, {
