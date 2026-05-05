@@ -659,6 +659,7 @@ This pack is positioned as the next architecture layer above:
 51. `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
 52. `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
 53. `89-torghut-hypothesis-warrant-ledger-and-profit-runway-2026-05-05.md`
+54. `97-torghut-proof-sample-settlement-and-repair-close-loop-2026-05-05.md`
 
 ## Why This Sequence
 
@@ -717,3 +718,6 @@ This pack is positioned as the next architecture layer above:
 - `89-torghut-hypothesis-warrant-ledger-and-profit-runway-2026-05-05.md` is the current capital handoff contract. It
   converts blocked paper/live authority into zero-notional replay and hypothesis warrants while keeping all capital
   moves bound to fresh Jangar evidence epochs, empirical jobs, route proof, and measurable profit SLOs.
+- `97-torghut-proof-sample-settlement-and-repair-close-loop-2026-05-05.md` follows the proof-feed contract because the
+  current gap is producer-vs-consumer evidence disagreement. It makes Torghut emit a deterministic proof sample that
+  Jangar can settle into separate serve, repair, swarm, paper-capital, and live-capital decisions.
