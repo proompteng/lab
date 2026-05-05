@@ -21,6 +21,9 @@ helmCharts:
       config:
         cluster_size: 3
         seed_size: 2
+      image:
+        repo: mirror.gcr.io/cassandra
+        tag: 3.11.5
   - name: elasticsearch
     repo: https://helm.elastic.co
     version: 7.17.3
@@ -47,6 +50,8 @@ helmCharts:
     includeCRDs: true
     valuesInline:
       server:
+        image:
+          repository: mirror.gcr.io/temporalio/server
         config:
           persistence:
             defaultStore: default
@@ -80,7 +85,12 @@ helmCharts:
                   indices:
                     visibility: temporal_visibility_v1_dev
       web:
+        image:
+          repository: mirror.gcr.io/temporalio/ui
         # https://docs.temporal.io/references/web-ui-environment-variables
         additionalEnv:
           - name: TEMPORAL_CSRF_COOKIE_INSECURE
             value: "true"
+      admintools:
+        image:
+          repository: mirror.gcr.io/temporalio/admin-tools

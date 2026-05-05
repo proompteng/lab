@@ -3,6 +3,10 @@ commonLabels:
   app.kubernetes.io/part-of: data-platform
 commonAnnotations:
   argocd.argoproj.io/sync-wave: "10"
+crdHook:
+  image:
+    repository: mirror.gcr.io/bitnami/kubectl
+    tag: latest
 deployment:
   strategy:
     type: RollingUpdate
@@ -11,6 +15,7 @@ deployment:
       maxSurge: 1
 operator:
   image:
+    registry: mirror.gcr.io
     pullPolicy: IfNotPresent
   resources:
     requests:
@@ -21,6 +26,8 @@ operator:
       memory: 1Gi
 metrics:
   enabled: true
+  image:
+    registry: mirror.gcr.io
   resources:
     requests:
       cpu: 100m
@@ -90,7 +97,7 @@ configs:
                               topologyKey: kubernetes.io/hostname
                       containers:
                         - name: clickhouse
-                          image: altinity/clickhouse-server:25.3.6.10034.altinitystable
+                          image: mirror.gcr.io/altinity/clickhouse-server:25.3.6.10034.altinitystable
                           resources:
                             requests:
                               cpu: 1
@@ -141,7 +148,7 @@ configs:
                               topologyKey: kubernetes.io/hostname
                       containers:
                         - name: clickhouse-keeper
-                          image: clickhouse/clickhouse-keeper:24.3.5.46
+                          image: mirror.gcr.io/clickhouse/clickhouse-keeper:24.3.5.46
                           resources:
                             requests:
                               cpu: 500m
