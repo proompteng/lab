@@ -123,6 +123,22 @@ rbac:
         - get
         - list
         - watch
+    - apiGroups:
+        - apps
+      resources:
+        - deployments
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - argoproj.io
+      resources:
+        - applications
+      verbs:
+        - get
+        - list
+        - watch
 database:
   secretRef:
     name: jangar-db-app
