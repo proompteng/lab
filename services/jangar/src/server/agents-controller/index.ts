@@ -310,9 +310,12 @@ const getAgentRunUntouchedReasons = (agentRun: Record<string, unknown>) => {
   const reasons: string[] = []
   const metadata = asRecord(agentRun.metadata) ?? {}
   const status = asRecord(agentRun.status) ?? {}
+  const annotations = asRecord(metadata.annotations) ?? {}
   const generation = metadata.generation
   const observedGeneration = status.observedGeneration
   const phase = asString(status.phase)
+  const templateAnnotation = asString(annotations['agents.proompteng.ai/template'])?.toLowerCase()
+  const isTemplate = templateAnnotation === 'true' || phase === 'Template'
   const finalizers = Array.isArray(metadata.finalizers)
     ? metadata.finalizers.filter((item): item is string => typeof item === 'string')
     : []
@@ -324,7 +327,7 @@ const getAgentRunUntouchedReasons = (agentRun: Record<string, unknown>) => {
   } else if (generation != null && observedGeneration !== generation) {
     reasons.push('generation_drift')
   }
-  if (!finalizers.includes('agents.proompteng.ai/runtime-cleanup')) {
+  if (!isTemplate && !finalizers.includes('agents.proompteng.ai/runtime-cleanup')) {
     reasons.push('missing_finalizer')
   }
   return reasons
