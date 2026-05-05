@@ -21,6 +21,18 @@ const parseBoolean = (value: string | undefined, fallback: boolean) => {
   return fallback
 }
 
+const parseJsonRecord = (value: string | undefined) => {
+  const normalized = normalizeNonEmpty(value)
+  if (!normalized) return null
+  try {
+    const parsed = JSON.parse(normalized) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    return parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
 export type SupportingPrimitivesConfig = {
   swarmRequirementMaxDispatchPerReconcile: number
   swarmRequirementMaxPayloadBytes: number
@@ -31,6 +43,7 @@ export type SupportingPrimitivesConfig = {
   swarmDefaultNatsChannel: string
   defaultWorkloadImage: string | null
   scheduleRunnerImage: string
+  scheduleRunnerNodeSelector: Record<string, unknown> | null
   podNamespace: string | null
   scheduleServiceAccount: string | null
   serviceAccountName: string | null
@@ -53,6 +66,8 @@ export const resolveSupportingPrimitivesConfig = (env: EnvSource = process.env):
     normalizeNonEmpty(env.JANGAR_SCHEDULE_RUNNER_IMAGE) ??
     normalizeNonEmpty(env.JANGAR_IMAGE) ??
     'ghcr.io/proompteng/jangar:latest',
+  scheduleRunnerNodeSelector:
+    parseJsonRecord(env.JANGAR_SCHEDULE_RUNNER_NODE_SELECTOR) ?? parseJsonRecord(env.JANGAR_AGENT_RUNNER_NODE_SELECTOR),
   podNamespace: normalizeNonEmpty(env.JANGAR_POD_NAMESPACE),
   scheduleServiceAccount: normalizeNonEmpty(env.JANGAR_SCHEDULE_SERVICE_ACCOUNT),
   serviceAccountName: normalizeNonEmpty(env.JANGAR_SERVICE_ACCOUNT_NAME),
