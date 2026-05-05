@@ -10,8 +10,8 @@ metadata:
     argocd.argoproj.io/hook: PreSync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
 spec:
-  backoffLimit: 3
-  activeDeadlineSeconds: 300
+  backoffLimit: 6
+  activeDeadlineSeconds: 900
   ttlSecondsAfterFinished: 600
   template:
     metadata:
@@ -31,7 +31,53 @@ spec:
             - -ec
           args:
             - |
+              wait_for_database() {
+                label="$1"
+                dsn="$2"
+                timeout_seconds="$3"
+                DB_WAIT_LABEL="${label}" DB_WAIT_DSN="${dsn}" DB_WAIT_TIMEOUT_SECONDS="${timeout_seconds}" /opt/venv/bin/python - <<'PY'
+              import os
+              import time
+
+              from sqlalchemy import create_engine, text
+
+              def sqlalchemy_dsn(raw: str) -> str:
+                  if raw.startswith('postgresql+'):
+                      return raw
+                  if raw.startswith('postgresql://'):
+                      return 'postgresql+psycopg://' + raw[len('postgresql://'):]
+                  if raw.startswith('postgres://'):
+                      return 'postgresql+psycopg://' + raw[len('postgres://'):]
+                  return raw
+
+              label = os.environ['DB_WAIT_LABEL']
+              dsn = os.environ['DB_WAIT_DSN']
+              timeout_seconds = int(os.environ['DB_WAIT_TIMEOUT_SECONDS'])
+              deadline = time.monotonic() + timeout_seconds
+              attempt = 0
+              while True:
+                  attempt += 1
+                  try:
+                      engine = create_engine(sqlalchemy_dsn(dsn), pool_pre_ping=True)
+                      with engine.connect() as connection:
+                          connection.execute(text('select 1'))
+                      print(f'{label} ready after {attempt} attempt(s)')
+                      break
+                  except Exception as error:
+                      remaining = deadline - time.monotonic()
+                      if remaining <= 0:
+                          raise SystemExit(
+                              f'{label} did not become ready within {timeout_seconds}s '
+                              f'after {attempt} attempt(s): {type(error).__name__}'
+                          ) from error
+                      print(f'waiting for {label}: attempt={attempt} last_error={type(error).__name__}')
+                      time.sleep(min(5, max(1, remaining)))
+              PY
+              }
+
+              wait_for_database "torghut app database" "${DB_DSN}" 300
               /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
+              wait_for_database "postgres superuser database" "${TORGHUT_POSTGRES_ADMIN_URI}" 300
               DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/python - <<'PY'
               import os
               from urllib.parse import urlsplit
