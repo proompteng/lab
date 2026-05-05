@@ -1845,6 +1845,60 @@ exit 1
     await expect(runCodexImplementation(eventPath)).resolves.toBeDefined()
   }, 40_000)
 
+  it('recovers merged PR metadata for architect planning lanes before merge verification', async () => {
+    await mkdir(join(workdir, 'docs', 'agents', 'designs'), { recursive: true })
+    await writeFile(
+      join(workdir, 'docs', 'agents', 'designs', 'architectural-change.md'),
+      '# merged architecture change\n',
+      'utf8',
+    )
+
+    process.env.CODEX_PR_DISCOVERY_ENABLED = 'true'
+    process.env.CODEX_VERIFY_MERGE_WITH_GH = 'true'
+    const binDir = join(workdir, '.bin-gh-architect-pr-discovery')
+    await mkdir(binDir, { recursive: true })
+    const ghPath = join(binDir, 'gh')
+    await writeFile(
+      ghPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "pr" && "$2" == "list" ]]; then
+  echo '[{"number":5560,"url":"https://github.com/owner/repo/pull/5560"}]'
+  exit 0
+fi
+if [[ "$1" == "pr" && "$2" == "view" && "$3" == "5560" ]]; then
+  echo '{"state":"MERGED","mergedAt":"2026-05-05T20:50:20Z","mergeCommit":{"oid":"76db50ff50e19e698c73a2c9ca1d54bc05f4ef23"}}'
+  exit 0
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+`,
+      'utf8',
+    )
+    await chmod(ghPath, 0o755)
+    process.env.PATH = `${binDir}:${ORIGINAL_ENV.PATH ?? process.env.PATH ?? ''}`
+
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        prompt: 'Architect planning run',
+        repository: 'owner/repo',
+        issueNumber: 42,
+        base: 'main',
+        head: 'codex/issue-42',
+        stage: 'planning',
+        swarmAgentRole: 'architector',
+      }),
+      'utf8',
+    )
+
+    await expect(runCodexImplementation(eventPath)).resolves.toBeDefined()
+    await expect(readFile(join(workdir, '.codex-pr-number.txt'), 'utf8')).resolves.toContain('5560')
+    await expect(readFile(join(workdir, '.codex-pr-url.txt'), 'utf8')).resolves.toContain(
+      'https://github.com/owner/repo/pull/5560',
+    )
+  }, 40_000)
+
   it('fails engineer lane when PR checks are not verified green', async () => {
     process.env.CODEX_VERIFY_PR_CHECKS_WITH_GH = 'false'
     await writeFile(join(workdir, '.codex-pr-number.txt'), '4010\n', 'utf8')
