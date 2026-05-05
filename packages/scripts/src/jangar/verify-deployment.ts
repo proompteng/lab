@@ -31,6 +31,8 @@ type CommandResult = {
   exitCode: number
 }
 
+type CommandRunner = typeof runCommand
+
 type ResolvedOptions = {
   namespace: string
   deployments: string[]
@@ -88,6 +90,18 @@ const runCommand = async (command: string, args: string[], allowFailure = false)
   return { stdout, stderr, exitCode }
 }
 
+const ensureRevisionAvailable = async (revision: string, runner: CommandRunner = runCommand): Promise<boolean> => {
+  const existingCommit = await runner('git', ['cat-file', '-e', `${revision}^{commit}`], true)
+  if (existingCommit.exitCode === 0) {
+    return true
+  }
+
+  await runner('git', ['fetch', '--no-tags', '--depth=1', 'origin', revision], true)
+
+  const fetchedCommit = await runner('git', ['cat-file', '-e', `${revision}^{commit}`], true)
+  return fetchedCommit.exitCode === 0
+}
+
 const getArgoWaitReason = (
   status: ArgoStatus,
   options: ResolvedOptions,
@@ -113,6 +127,7 @@ const isExpectedRevisionSatisfied = async (
   statusRevision: string,
   expectedRevision: string,
   mode: ExpectedRevisionMode,
+  runner: CommandRunner = runCommand,
 ): Promise<boolean> => {
   if (!shaPattern.test(statusRevision) || !shaPattern.test(expectedRevision)) {
     return false
@@ -126,7 +141,13 @@ const isExpectedRevisionSatisfied = async (
     return false
   }
 
-  const ancestry = await runCommand('git', ['merge-base', '--is-ancestor', expectedRevision, statusRevision], true)
+  const expectedAvailable = await ensureRevisionAvailable(expectedRevision, runner)
+  const statusAvailable = await ensureRevisionAvailable(statusRevision, runner)
+  if (!expectedAvailable || !statusAvailable) {
+    return false
+  }
+
+  const ancestry = await runner('git', ['merge-base', '--is-ancestor', expectedRevision, statusRevision], true)
   if (ancestry.exitCode === 0) {
     return true
   }
@@ -134,8 +155,7 @@ const isExpectedRevisionSatisfied = async (
     return false
   }
 
-  const reason = (ancestry.stderr || ancestry.stdout || '').trim()
-  throw new Error(`Unable to validate revision ancestry: ${reason}`)
+  return false
 }
 
 const validateExpectedRevisionMode = (mode: string | undefined): ExpectedRevisionMode => {
@@ -415,7 +435,9 @@ if (import.meta.main) {
 }
 
 export const __private = {
+  ensureRevisionAvailable,
   extractExpectedDigest,
   getArgoWaitReason,
+  isExpectedRevisionSatisfied,
   parseArgs,
 }
