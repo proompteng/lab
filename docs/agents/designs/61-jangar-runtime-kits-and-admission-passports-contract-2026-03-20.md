@@ -364,10 +364,13 @@ The first enforcement slice is the stage and requirement launcher gate:
 - discover and plan schedules consume `swarm_plan`; implement schedules and requirement dispatch consume
   `swarm_implement`; verify schedules consume `swarm_verify`.
 - blocked or held stage passports delete the matching schedule and set the stage state to `AdmissionBlocked`.
+- existing swarm schedules also re-check the current stage passport before regenerating runner ConfigMaps or CronJobs,
+  so stale allowed passport annotations cannot keep launching work after the collaboration kit moves to `hold` or
+  `block`.
 - blocked or held implement passports prevent requirement dispatch and mark the `RequirementsBridge` condition with
   `RuntimeAdmissionBlocked`.
-- admitted schedules and requirement runs cite the passport id, admission decision, recovery digest, runtime-kit set
-  digest, required runtime kits, and producer revision in annotations plus run parameters.
+- admitted schedules, schedule runner templates, and requirement runs cite the passport id, admission decision, recovery
+  digest, runtime-kit set digest, required runtime kits, and producer revision in annotations plus run parameters.
 - command-style runtime components are admitted only when the resolved command path is executable; a file that exists
   on `PATH` but cannot run remains runtime-kit debt and blocks the collaboration passport.
 
