@@ -5,7 +5,9 @@ import type { Personality } from "../Personality";
 import type { ResponseItem } from "../ResponseItem";
 import type { ServiceTier } from "../ServiceTier";
 import type { JsonValue } from "../serde_json/JsonValue";
+import type { ApprovalsReviewer } from "./ApprovalsReviewer";
 import type { AskForApproval } from "./AskForApproval";
+import type { PermissionProfileSelectionParams } from "./PermissionProfileSelectionParams";
 import type { SandboxMode } from "./SandboxMode";
 
 /**
@@ -34,7 +36,24 @@ path?: string | null,
 /**
  * Configuration overrides for the resumed thread, if any.
  */
-model?: string | null, modelProvider?: string | null, serviceTier?: ServiceTier | null | null, cwd?: string | null, approvalPolicy?: AskForApproval | null, sandbox?: SandboxMode | null, config?: { [key in string]?: JsonValue } | null, baseInstructions?: string | null, developerInstructions?: string | null, personality?: Personality | null,
+model?: string | null, modelProvider?: string | null, serviceTier?: ServiceTier | null | null, cwd?: string | null, approvalPolicy?: AskForApproval | null,
+/**
+ * Override where approval requests are routed for review on this thread
+ * and subsequent turns.
+ */
+approvalsReviewer?: ApprovalsReviewer | null, sandbox?: SandboxMode | null,
+/**
+ * Named profile selection for the resumed thread. Cannot be combined
+ * with `sandbox`. Use bounded `modifications` for supported thread
+ * adjustments instead of replacing the full permissions profile.
+ */
+permissions?: PermissionProfileSelectionParams | null, config?: { [key in string]?: JsonValue } | null, baseInstructions?: string | null, developerInstructions?: string | null, personality?: Personality | null,
+/**
+ * When true, return only thread metadata and live-resume state without
+ * populating `thread.turns`. This is useful when the client plans to call
+ * `thread/turns/list` immediately after resuming.
+ */
+excludeTurns?: boolean,
 /**
  * If true, persist additional rollout EventMsg variants required to
  * reconstruct a richer thread history on subsequent resume/fork/read.

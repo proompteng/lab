@@ -119,7 +119,15 @@ describe('CodexAppServerClient v2 notifications', () => {
 
   it('omits the CLI approval flag for structured rejection policies', async () => {
     const { child, client } = setupClient({
-      approval: { reject: { sandbox_approval: true, rules: false, mcp_elicitations: false } },
+      approval: {
+        granular: {
+          sandbox_approval: true,
+          rules: false,
+          skill_approval: false,
+          request_permissions: false,
+          mcp_elicitations: false,
+        },
+      },
     })
 
     const [binaryPath, args] = vi.mocked(spawn).mock.calls[0] ?? []
