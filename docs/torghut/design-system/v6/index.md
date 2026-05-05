@@ -11,6 +11,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
+  - `docs/agents/designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md`
   - `86-torghut-profit-repair-auction-and-proof-runway-consumer-2026-05-05.md`
   - `docs/agents/designs/82-jangar-proof-runway-cutover-and-consumer-authority-2026-05-05.md`
   - `86-torghut-profit-debt-ledger-and-repair-sla-experiments-2026-05-05.md`
@@ -105,7 +107,10 @@
 - `85-torghut-proof-fresh-profitability-governor-and-causal-replay-quarantine-2026-05-05.md`
 - `86-torghut-profit-repair-auction-and-proof-runway-consumer-2026-05-05.md`
 - `86-torghut-profit-debt-ledger-and-repair-sla-experiments-2026-05-05.md`
+- `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md`
+  - `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
   - `docs/agents/designs/82-jangar-proof-runway-cutover-and-consumer-authority-2026-05-05.md`
   - `86-torghut-profit-repair-auction-and-proof-runway-consumer-2026-05-05.md`
   - `docs/agents/designs/82-jangar-authority-clearance-cells-and-negative-evidence-slas-2026-05-05.md`
@@ -197,6 +202,8 @@ Current source-state priority is narrower:
 
 The current source-of-truth pair for the Torghut quant discover lane is:
 
+- `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
+- `docs/agents/designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md`
 - `85-torghut-proof-fresh-profitability-governor-and-causal-replay-quarantine-2026-05-05.md`
 - `docs/agents/designs/81-jangar-action-class-proof-fuses-and-quant-health-quarantine-2026-05-05.md`
 
@@ -204,8 +211,8 @@ Read these as the active handoff contract before using older May 5 proof-ledger 
 more precise than the early-day snapshot: Torghut live and sim revisions are serving, schema proof is current, and
 runtime liveness is good, but readiness remains degraded, Jangar quant-health still times out, empirical proof jobs are
 stale, and runtime profitability has decisions without execution or TCA samples. The design consequence is unchanged
-but sharper: repair and replay stay open, while paper/live widening requires fresh action-class authority and fresh
-profit proof.
+but sharper: repair and replay stay open, paper/live widening requires fresh action-class authority and fresh profit
+proof, and blocked market time should be spent through zero-notional session proof budgets rather than ad hoc repair.
 
 ## Recent Updates
 

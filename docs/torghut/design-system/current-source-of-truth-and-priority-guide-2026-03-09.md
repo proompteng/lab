@@ -34,6 +34,8 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v1/historical-dataset-simulation.md`
    - `docs/torghut/design-system/v1/trading-day-simulation-automation.md`
 3. current autonomy/promotion contract source of truth:
+   - `docs/agents/designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md`
+   - `docs/torghut/design-system/v6/87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
    - `docs/agents/designs/77-jangar-evidence-settlement-authority-and-data-proof-handoff-2026-05-05.md`
    - `docs/torghut/design-system/v6/81-torghut-capital-proof-reconciliation-and-jangar-settlement-consumer-2026-05-05.md`
    - `docs/agents/designs/76-jangar-rollout-settlement-fuses-and-proof-reclocking-2026-05-05.md`
@@ -107,6 +109,14 @@ The current highest-priority work is:
 
 The May 5 cross-plane contracts are now the latest active architecture layer:
 
+- convert Jangar authority-clearance cells into a budgeted repair exchange with closure warrants so degraded execution
+  trust, image-pull blockers, route timeouts, and external-capital holds can run only bounded repair work until proof
+  closes in
+  `docs/agents/designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md`;
+- convert Torghut profit debt into a repair-alpha exchange with zero-notional session proof budgets so stale empirical
+  proof, missing quant health, signal-continuity alerts, feature gaps, drift gaps, and stale TCA compete by expected
+  learning value before any paper/live capital widening in
+  `docs/torghut/design-system/v6/87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`;
 - make Jangar the settlement authority for action classes by joining serving, execution, rollout, watch, workflow,
   route, database, and downstream consumer clocks in
   `docs/agents/designs/77-jangar-evidence-settlement-authority-and-data-proof-handoff-2026-05-05.md`;
