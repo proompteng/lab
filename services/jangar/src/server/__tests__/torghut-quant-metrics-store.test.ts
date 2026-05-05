@@ -85,19 +85,19 @@ describe('torghut quant metrics store', () => {
     migrationMocks.ensureMigrations.mockClear()
   })
 
-  it('uses an indexable account/window latest-stage lookup', async () => {
+  it('uses an indexable account/window recent latest-stage lookup', async () => {
     const { db, calls } = makeFakeDb()
     dbMocks.getDb.mockReturnValue(db)
     const { listLatestQuantPipelineHealth } = await import('../torghut-quant-metrics-store')
 
-    await listLatestQuantPipelineHealth({ account: 'paper', window: '15m' })
+    await listLatestQuantPipelineHealth({ account: 'paper', window: '15m', minAsOf: '2026-05-05T15:00:00.000Z' })
 
     const pipelineHealthSql = calls.find((call) => call.sql.includes('quant_pipeline_health'))?.sql
     expect(pipelineHealthSql).toBeTruthy()
     const normalized = String(pipelineHealthSql).toLowerCase().replace(/\s+/g, ' ')
 
     expect(normalized).toContain("select distinct on (account, (details->>'window'), strategy_id, stage)")
-    expect(normalized).toContain("where account = $1 and details->>'window' = $2")
+    expect(normalized).toContain("where account = $1 and details->>'window' = $2 and as_of >= $3")
     expect(normalized).toContain(
       "order by account asc, (details->>'window') asc, strategy_id asc, stage asc, as_of desc",
     )

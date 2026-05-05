@@ -26,6 +26,29 @@ describe('migration registration', () => {
     expect(normalized).toContain('on torghut_control_plane.quant_pipeline_health')
     expect(normalized).toContain("(account, ((details->>'window')), strategy_id, stage, as_of desc)")
   })
+
+  it('keeps the Torghut quant pipeline health account/window/as-of index registered', () => {
+    const migrationPath = new URL(
+      '../migrations/20260505_torghut_quant_pipeline_health_account_window_asof_index.ts',
+      import.meta.url,
+    )
+    const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase().replace(/\s+/g, ' ')
+
+    expect(normalized).toContain('create index if not exists torghut_quant_pipeline_health_account_window_asof_idx')
+    expect(normalized).toContain('on torghut_control_plane.quant_pipeline_health')
+    expect(normalized).toContain("(account, ((details->>'window')), as_of desc)")
+  })
+
+  it('keeps the Torghut latest quant metric account/window index registered', () => {
+    const migrationPath = new URL(
+      '../migrations/20260505_torghut_quant_metrics_latest_account_window_index.ts',
+      import.meta.url,
+    )
+    const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase().replace(/\s+/g, ' ')
+
+    expect(normalized).toContain('create index if not exists torghut_qm_latest_account_window_idx')
+    expect(normalized).toContain('on torghut_control_plane.quant_metrics_latest(account, "window")')
+  })
 })
 
 describe('resolveAllowUnorderedMigrations', () => {
