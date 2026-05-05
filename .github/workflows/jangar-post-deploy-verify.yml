@@ -118,7 +118,7 @@ jobs:
           if [ "${EVENT_NAME}" = "push" ]; then
             ARGS+=(--expected-revision "${GITHUB_SHA}" --expected-revision-mode ancestor)
           elif [ -n "${EXPECTED_REVISION_INPUT}" ]; then
-            ARGS+=(--expected-revision "${EXPECTED_REVISION_INPUT}")
+            ARGS+=(--expected-revision "${EXPECTED_REVISION_INPUT}" --expected-revision-mode ancestor)
           fi
 
           bun run packages/scripts/src/jangar/verify-deployment.ts "${ARGS[@]}"

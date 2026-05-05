@@ -61,6 +61,7 @@ const defaultHealthAttempts = 60
 const defaultHealthIntervalSeconds = 10
 const defaultDigestAttempts = 30
 const defaultDigestIntervalSeconds = 10
+const defaultRemoteBranch = 'main'
 const shaPattern = /^[0-9a-f]{40}$/i
 const supportedRevisionModes = ['exact', 'ancestor'] as const
 type ExpectedRevisionMode = (typeof supportedRevisionModes)[number]
@@ -99,7 +100,14 @@ const ensureRevisionAvailable = async (revision: string, runner: CommandRunner =
   await runner('git', ['fetch', '--no-tags', '--depth=1', 'origin', revision], true)
 
   const fetchedCommit = await runner('git', ['cat-file', '-e', `${revision}^{commit}`], true)
-  return fetchedCommit.exitCode === 0
+  if (fetchedCommit.exitCode === 0) {
+    return true
+  }
+
+  await runner('git', ['fetch', '--no-tags', 'origin', defaultRemoteBranch], true)
+
+  const branchFetchedCommit = await runner('git', ['cat-file', '-e', `${revision}^{commit}`], true)
+  return branchFetchedCommit.exitCode === 0
 }
 
 const getArgoWaitReason = (
