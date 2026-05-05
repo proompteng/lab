@@ -279,6 +279,7 @@ spec:
           ports:
             - containerPort: 2375
               name: docker
+              protocol: TCP
           securityContext:
             privileged: true
           volumeMounts:
@@ -710,6 +711,7 @@ spec:
           ports:
             - containerPort: 2375
               name: docker
+              protocol: TCP
           securityContext:
             privileged: true
           volumeMounts:
