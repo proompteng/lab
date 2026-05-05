@@ -177,6 +177,40 @@ describe('verify-deployment', () => {
     expect(calls).toContain(`merge-base --is-ancestor ${expectedRevision} ${statusRevision}`)
   })
 
+  it('fetches main when a newer synced revision is not directly fetchable by sha', async () => {
+    const expectedRevision = '0123456789abcdef0123456789abcdef01234567'
+    const statusRevision = 'abcdef0123456789abcdef0123456789abcdef01'
+    const availableRevisions = new Set([expectedRevision])
+    const calls: string[] = []
+
+    const runner = async (_command: string, args: string[]) => {
+      calls.push(args.join(' '))
+      if (args[0] === 'cat-file') {
+        const revision = args[2]?.replace(/\^\{commit\}$/, '')
+        return { stdout: '', stderr: '', exitCode: revision && availableRevisions.has(revision) ? 0 : 1 }
+      }
+      if (args[0] === 'fetch' && args[4] === statusRevision) {
+        return { stdout: '', stderr: 'fatal: could not find remote ref', exitCode: 128 }
+      }
+      if (args[0] === 'fetch' && args[3] === 'main') {
+        availableRevisions.add(statusRevision)
+        return { stdout: '', stderr: '', exitCode: 0 }
+      }
+      if (args[0] === 'merge-base') {
+        return { stdout: '', stderr: '', exitCode: 0 }
+      }
+
+      return { stdout: '', stderr: `unexpected git command: ${args.join(' ')}`, exitCode: 1 }
+    }
+
+    const satisfied = await __private.isExpectedRevisionSatisfied(statusRevision, expectedRevision, 'ancestor', runner)
+
+    expect(satisfied).toBe(true)
+    expect(calls).toContain(`fetch --no-tags --depth=1 origin ${statusRevision}`)
+    expect(calls).toContain('fetch --no-tags origin main')
+    expect(calls).toContain(`merge-base --is-ancestor ${expectedRevision} ${statusRevision}`)
+  })
+
   it('keeps waiting instead of throwing when an unknown revision cannot be fetched', async () => {
     const expectedRevision = '0123456789abcdef0123456789abcdef01234567'
     const statusRevision = 'abcdef0123456789abcdef0123456789abcdef01'

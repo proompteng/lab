@@ -3769,11 +3769,12 @@ export const runCodexImplementation = async (eventPath: string) => {
       const requirePullRequest = isReleaseLikeExecution ? false : requirePullRequestConfigured
       const pullRequestDiscoveryEnabled = parseBoolean(process.env.CODEX_PR_DISCOVERY_ENABLED, true)
       const shouldRecoverMissingPrMetadata = requirePullRequest && (!prUrl || !prNumber)
+      const shouldRecoverArchitectPrMetadata = executionLane === 'architect' && (!prUrl || !prNumber)
       const shouldRefreshReleasePrMetadata = isReleaseLikeExecution
       if (
         pullRequestDiscoveryEnabled &&
-        stage === 'implementation' &&
-        (shouldRecoverMissingPrMetadata || shouldRefreshReleasePrMetadata)
+        (stage === 'implementation' || shouldRecoverArchitectPrMetadata) &&
+        (shouldRecoverMissingPrMetadata || shouldRecoverArchitectPrMetadata || shouldRefreshReleasePrMetadata)
       ) {
         const discoveredPr = await discoverPullRequestMetadata({
           repository,

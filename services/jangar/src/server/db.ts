@@ -12,7 +12,6 @@ export type StoreDbResolution = {
 }
 
 type Timestamp = string | Date
-
 type JsonValue = Record<string, unknown>
 
 type AtlasRepositories = {
@@ -959,6 +958,7 @@ const createDbClient = (rawUrl: string): Db => {
     connectionString: url,
     ssl,
     keepAlive: true,
+    max: databaseConfig.poolMax,
     connectionTimeoutMillis,
     query_timeout: queryTimeoutMillis,
   })

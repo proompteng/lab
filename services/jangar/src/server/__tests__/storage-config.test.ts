@@ -14,11 +14,13 @@ describe('storage-config', () => {
         DATABASE_URL: 'postgres://jangar@db/jangar',
         PGSSLMODE: 'require',
         PGCONNECT_TIMEOUT_MS: '5000',
+        JANGAR_DB_POOL_MAX: '3',
       }),
     ).toEqual({
       url: 'postgres://jangar@db/jangar',
       sslMode: 'require',
       caCertPath: null,
+      poolMax: 3,
       connectTimeoutMs: 5000,
       queryTimeoutMs: 30000,
     })
@@ -34,6 +36,14 @@ describe('storage-config', () => {
       chatKeyPrefix: 'chat',
       renderKeyPrefix: 'render',
     })
+  })
+
+  it('falls back to a bounded database pool size', () => {
+    expect(resolveDatabaseConfig({ DATABASE_URL: 'postgres://jangar@db/jangar' }).poolMax).toBe(4)
+    expect(
+      resolveDatabaseConfig({ DATABASE_URL: 'postgres://jangar@db/jangar', JANGAR_DB_POOL_MAX: '0' }).poolMax,
+    ).toBe(4)
+    expect(resolveDatabaseConfig({ DATABASE_URL: 'postgres://jangar@db/jangar', PGPOOL_MAX: '2' }).poolMax).toBe(2)
   })
 
   it('parses clickhouse settings', () => {

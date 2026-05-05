@@ -18,6 +18,20 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Fast Jangar/Torghut live analysis workflow: `designs/jangar-torghut-live-analysis-playbook.md`
 - Autonomous Jangar/Torghut production system design: `designs/autonomous-jangar-torghut-production-system.md`
 - Current Jangar/Torghut architecture contracts:
+  - `designs/94-jangar-proof-backed-rollout-brake-and-repair-debt-ledger-2026-05-05.md`
+  - `../torghut/design-system/v6/98-torghut-repair-dividend-ledger-and-capital-reentry-guard-2026-05-05.md`
+  - `designs/93-jangar-torghut-proof-sample-settlement-and-repair-close-loop-2026-05-05.md`
+  - `../torghut/design-system/v6/97-torghut-proof-sample-settlement-and-repair-close-loop-2026-05-05.md`
+  - `designs/92-jangar-torghut-proof-feed-route-budget-and-quorum-split-2026-05-05.md`
+  - `../torghut/design-system/v6/96-torghut-control-plane-proof-feed-and-profit-route-budget-contract-2026-05-05.md`
+  - `designs/91-jangar-evidence-warrants-and-lane-local-quorum-2026-05-05.md`
+  - `../torghut/design-system/v6/95-torghut-hypothesis-warrant-reclocking-and-profit-repair-contract-2026-05-05.md`
+  - `designs/90-jangar-proof-capacity-leases-and-route-slo-governor-2026-05-05.md`
+  - `../torghut/design-system/v6/94-torghut-session-edge-ledger-and-cost-aware-capital-allocator-2026-05-05.md`
+  - `designs/89-jangar-brownout-adoption-ladder-and-quant-capital-contract-2026-05-05.md`
+  - `../torghut/design-system/v6/93-torghut-evidence-priced-hypothesis-market-and-capital-ladder-2026-05-05.md`
+  - `designs/88-jangar-negative-evidence-arbiter-and-brownout-governor-2026-05-05.md`
+  - `../torghut/design-system/v6/92-torghut-proof-cost-market-and-options-catalog-firebreak-2026-05-05.md`
   - `designs/85-jangar-evidence-epoch-runway-and-material-action-gates-2026-05-05.md`
   - `../torghut/design-system/v6/89-torghut-hypothesis-warrant-ledger-and-profit-runway-2026-05-05.md`
   - `designs/84-jangar-material-action-settlement-ledger-and-slo-arbiter-2026-05-05.md`

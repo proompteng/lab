@@ -20,11 +20,21 @@ type MemoryQueryResult = {
 
 type EnvSource = Record<string, string | undefined>
 
+const DEFAULT_MEMORY_DATABASE_POOL_MAX = 2
+
 const globalState = globalThis as typeof globalThis & {
   __jangarMemoryProviderPools?: Map<string, Pool>
 }
 
 const asString = (value: unknown) => (typeof value === 'string' && value.trim().length > 0 ? value.trim() : null)
+
+const parsePositiveInt = (value: string | undefined, fallback: number) => {
+  const normalized = asString(value)
+  if (!normalized) return fallback
+  const parsed = Number.parseInt(normalized, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+  return Math.floor(parsed)
+}
 
 const readNested = (obj: Record<string, unknown>, path: string[]) => {
   let cursor: unknown = obj
@@ -90,7 +100,11 @@ const getMemoryPool = (connectionString: string) => {
   const existing = pools.get(connectionString)
   if (existing) return existing
 
-  const created = new Pool({ connectionString, ssl: { rejectUnauthorized: false } })
+  const max = parsePositiveInt(
+    process.env.JANGAR_MEMORY_DB_POOL_MAX ?? process.env.JANGAR_DB_POOL_MAX,
+    DEFAULT_MEMORY_DATABASE_POOL_MAX,
+  )
+  const created = new Pool({ connectionString, ssl: { rejectUnauthorized: false }, max })
   pools.set(connectionString, created)
   return created
 }

@@ -14,7 +14,7 @@ from app.config import settings
 from app.db import SessionLocal, ensure_schema
 from app.models import Strategy
 
-DEFAULT_CHIP_UNIVERSE = "NVDA,TSM,AVGO,INTC,AMD,MU,LRCX,KLAC,QCOM,AMAT,ASML,MRVL"
+DEFAULT_CHIP_UNIVERSE = "NVDA,TSM,AVGO,AMD,MU,TXN,ADI,LRCX,KLAC,QCOM,AMAT,ASML"
 
 
 def parse_args() -> argparse.Namespace:

@@ -8,11 +8,18 @@ from datetime import date, datetime, timedelta, timezone
 import heapq
 from itertools import chain
 import json
+import logging
 from typing import Any, Iterator, cast
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
+
+
+logger = logging.getLogger(__name__)
+
+OPTIONS_STATUS_COUNT_TIMEOUT_MS = 500
 
 
 def _utc_now() -> datetime:
@@ -653,23 +660,27 @@ class OptionsRepository:
                 },
             )
 
-    def count_active_contracts(self) -> int:
-        with self.session() as session:
-            return int(
+    def _bounded_count(self, sql: str, *, timeout_ms: int = OPTIONS_STATUS_COUNT_TIMEOUT_MS) -> int | None:
+        bounded_timeout_ms = max(1, int(timeout_ms))
+        try:
+            with self.session() as session, session.begin():
                 session.execute(
-                    text(
-                        "SELECT COUNT(*) FROM torghut_options_contract_catalog WHERE status = 'active'"
-                    )
-                ).scalar_one()
-            )
+                    text(f"SET LOCAL statement_timeout = {bounded_timeout_ms}")
+                )
+                return int(session.execute(text(sql)).scalar_one() or 0)
+        except SQLAlchemyError as exc:
+            logger.warning("options status count failed query=%s error=%s", sql, exc)
+            return None
 
-    def count_hot_contracts(self) -> int:
-        with self.session() as session:
-            return int(
-                session.execute(
-                    text("SELECT COUNT(*) FROM torghut_options_subscription_state WHERE tier = 'hot'")
-                ).scalar_one()
-            )
+    def count_active_contracts(self) -> int | None:
+        return self._bounded_count(
+            "SELECT COUNT(*) FROM torghut_options_contract_catalog WHERE status = 'active'"
+        )
+
+    def count_hot_contracts(self) -> int | None:
+        return self._bounded_count(
+            "SELECT COUNT(*) FROM torghut_options_subscription_state WHERE tier = 'hot'"
+        )
 
     def max_active_open_interest(self) -> int:
         with self.session() as session:

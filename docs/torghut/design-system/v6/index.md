@@ -11,6 +11,18 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `98-torghut-repair-dividend-ledger-and-capital-reentry-guard-2026-05-05.md`
+  - `docs/agents/designs/94-jangar-proof-backed-rollout-brake-and-repair-debt-ledger-2026-05-05.md`
+  - `96-torghut-control-plane-proof-feed-and-profit-route-budget-contract-2026-05-05.md`
+  - `docs/agents/designs/92-jangar-torghut-proof-feed-route-budget-and-quorum-split-2026-05-05.md`
+  - `94-torghut-session-edge-ledger-and-cost-aware-capital-allocator-2026-05-05.md`
+  - `docs/agents/designs/90-jangar-proof-capacity-leases-and-route-slo-governor-2026-05-05.md`
+  - `93-torghut-recovery-budget-profit-ladder-and-session-cost-ledger-2026-05-05.md`
+  - `docs/agents/designs/89-jangar-action-settlement-windows-and-recovery-budget-governor-2026-05-05.md`
+  - `93-torghut-evidence-priced-hypothesis-market-and-capital-ladder-2026-05-05.md`
+  - `docs/agents/designs/89-jangar-brownout-adoption-ladder-and-quant-capital-contract-2026-05-05.md`
+  - `92-torghut-proof-cost-market-and-options-catalog-firebreak-2026-05-05.md`
+  - `docs/agents/designs/88-jangar-negative-evidence-arbiter-and-brownout-governor-2026-05-05.md`
   - `91-torghut-causal-replay-exchange-and-capital-reentry-governor-2026-05-05.md`
   - `docs/agents/designs/87-jangar-database-pressure-fuses-and-capital-authority-backplane-2026-05-05.md`
   - `90-torghut-proof-receipt-router-and-capital-query-firebreak-2026-05-05.md`
@@ -649,6 +661,7 @@ This pack is positioned as the next architecture layer above:
 51. `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
 52. `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
 53. `89-torghut-hypothesis-warrant-ledger-and-profit-runway-2026-05-05.md`
+54. `97-torghut-proof-sample-settlement-and-repair-close-loop-2026-05-05.md`
 
 ## Why This Sequence
 
@@ -707,3 +720,6 @@ This pack is positioned as the next architecture layer above:
 - `89-torghut-hypothesis-warrant-ledger-and-profit-runway-2026-05-05.md` is the current capital handoff contract. It
   converts blocked paper/live authority into zero-notional replay and hypothesis warrants while keeping all capital
   moves bound to fresh Jangar evidence epochs, empirical jobs, route proof, and measurable profit SLOs.
+- `97-torghut-proof-sample-settlement-and-repair-close-loop-2026-05-05.md` follows the proof-feed contract because the
+  current gap is producer-vs-consumer evidence disagreement. It makes Torghut emit a deterministic proof sample that
+  Jangar can settle into separate serve, repair, swarm, paper-capital, and live-capital decisions.

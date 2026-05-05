@@ -10,6 +10,7 @@ const DEFAULT_WORKTREE_PREFIX = 'openwebui:worktree'
 const DEFAULT_CLICKHOUSE_PORT = 8443
 const DEFAULT_CLICKHOUSE_DATABASE = 'torghut'
 const DEFAULT_CLICKHOUSE_TIMEOUT_MS = 10_000
+const DEFAULT_DATABASE_POOL_MAX = 4
 
 const normalizeNonEmpty = (value: string | undefined | null) => {
   const normalized = value?.trim()
@@ -39,6 +40,7 @@ export type DatabaseConfig = {
   url: string | null
   sslMode: string | null
   caCertPath: string | null
+  poolMax: number
   connectTimeoutMs: number
   queryTimeoutMs: number
 }
@@ -68,6 +70,7 @@ export const resolveDatabaseConfig = (env: EnvSource = process.env): DatabaseCon
   url: normalizeNonEmpty(env.DATABASE_URL),
   sslMode: normalizeNonEmpty(env.PGSSLMODE),
   caCertPath: normalizeNonEmpty(env.PGSSLROOTCERT) ?? normalizeNonEmpty(env.JANGAR_DB_CA_CERT),
+  poolMax: parsePositiveInt(env.JANGAR_DB_POOL_MAX ?? env.PGPOOL_MAX, DEFAULT_DATABASE_POOL_MAX),
   connectTimeoutMs: parsePositiveInt(env.PGCONNECT_TIMEOUT_MS, 10_000),
   queryTimeoutMs: parsePositiveInt(env.PGQUERY_TIMEOUT_MS, 30_000),
 })
