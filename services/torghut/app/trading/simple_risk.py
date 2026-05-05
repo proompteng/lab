@@ -153,12 +153,32 @@ def prepare_simple_decision(
             diagnostics=diagnostics,
         )
 
-    enforce_exposure = decision.action == "buy" or resolution.short_increasing
+    normalized_action = decision.action.strip().lower()
+    short_increasing = normalized_action == "sell" and quantized_qty > max(
+        current_qty, Decimal("0")
+    )
+    if short_increasing and not allow_shorts:
+        return SimpleRiskPreparation(
+            approved=False,
+            decision=decision,
+            quantity_resolution=resolution,
+            notional=price * quantized_qty,
+            reject_reason="shorting_not_allowed_for_asset",
+            diagnostics=diagnostics,
+        )
+
+    enforce_exposure = normalized_action == "buy" or short_increasing
     adjusted_qty = quantized_qty
     capped_by_order = False
     capped_by_symbol = False
+    capped_by_buying_power = False
+    buying_power: Decimal | None = None
 
-    if enforce_exposure and max_notional_per_order is not None and max_notional_per_order >= 0:
+    if (
+        enforce_exposure
+        and max_notional_per_order is not None
+        and max_notional_per_order >= 0
+    ):
         order_cap_qty = quantize_qty_for_symbol(
             decision.symbol,
             max_notional_per_order / price,
@@ -168,7 +188,11 @@ def prepare_simple_decision(
             adjusted_qty = order_cap_qty
             capped_by_order = True
 
-    if enforce_exposure and max_notional_per_symbol is not None and max_notional_per_symbol >= 0:
+    if (
+        enforce_exposure
+        and max_notional_per_symbol is not None
+        and max_notional_per_symbol >= 0
+    ):
         current_abs_value = abs(
             position_value_for_symbol(
                 positions,
@@ -192,11 +216,34 @@ def prepare_simple_decision(
                 adjusted_qty = symbol_cap_qty
                 capped_by_symbol = True
 
+    if enforce_exposure:
+        buying_power = _resolve_decimal(account.get("buying_power"))
+        diagnostics["buying_power"] = (
+            str(buying_power) if buying_power is not None else None
+        )
+        if buying_power is not None:
+            if buying_power <= 0:
+                buying_power_cap_qty = Decimal("0")
+            else:
+                buying_power_cap_qty = _buying_power_cap_qty(
+                    decision=decision,
+                    price=price,
+                    buying_power=buying_power,
+                    current_qty=current_qty,
+                    fractional_allowed=resolution.fractional_allowed,
+                )
+            diagnostics["buying_power_cap_qty"] = str(buying_power_cap_qty)
+            if buying_power_cap_qty < adjusted_qty:
+                adjusted_qty = buying_power_cap_qty
+                capped_by_buying_power = True
+
     diagnostics["final_qty"] = str(adjusted_qty)
     if adjusted_qty <= 0 or adjusted_qty < min_qty:
         reject_reason = "qty_below_min_after_clamp"
         if capped_by_symbol:
             reject_reason = "max_symbol_exposure_exceeded"
+        elif capped_by_buying_power:
+            reject_reason = "insufficient_buying_power"
         elif capped_by_order:
             reject_reason = "max_notional_exceeded"
         return SimpleRiskPreparation(
@@ -224,9 +271,14 @@ def prepare_simple_decision(
     notional = price * adjusted_qty
     diagnostics["final_notional"] = str(notional)
     if enforce_exposure:
-        buying_power = _resolve_decimal(account.get("buying_power"))
-        diagnostics["buying_power"] = str(buying_power) if buying_power is not None else None
-        if buying_power is not None and notional > buying_power:
+        buying_power_required = _buying_power_required_notional(
+            decision=decision,
+            qty=adjusted_qty,
+            price=price,
+            current_qty=current_qty,
+        )
+        diagnostics["buying_power_required_notional"] = str(buying_power_required)
+        if buying_power is not None and buying_power_required > buying_power:
             return SimpleRiskPreparation(
                 approved=False,
                 decision=decision,
@@ -247,6 +299,7 @@ def prepare_simple_decision(
         "quantity_resolution": resolution.to_payload(),
         "capped_by_order": capped_by_order,
         "capped_by_symbol": capped_by_symbol,
+        "capped_by_buying_power": capped_by_buying_power,
     }
     return SimpleRiskPreparation(
         approved=True,
@@ -279,6 +332,41 @@ def _resolve_decimal(value: Any) -> Decimal | None:
         return Decimal(str(value))
     except (ArithmeticError, ValueError):
         return None
+
+
+def _buying_power_cap_qty(
+    *,
+    decision: StrategyDecision,
+    price: Decimal,
+    buying_power: Decimal,
+    current_qty: Decimal,
+    fractional_allowed: bool,
+) -> Decimal:
+    buying_power_qty = buying_power / price
+    if decision.action.strip().lower() == "sell" and current_qty > 0:
+        buying_power_qty += current_qty
+    return quantize_qty_for_symbol(
+        decision.symbol,
+        buying_power_qty,
+        fractional_equities_enabled=fractional_allowed,
+    )
+
+
+def _buying_power_required_notional(
+    *,
+    decision: StrategyDecision,
+    qty: Decimal,
+    price: Decimal,
+    current_qty: Decimal,
+) -> Decimal:
+    if decision.action.strip().lower() == "buy":
+        return price * qty
+    if decision.action.strip().lower() != "sell" or qty <= 0:
+        return Decimal("0")
+    if current_qty >= qty:
+        return Decimal("0")
+    short_increasing_qty = qty if current_qty <= 0 else qty - current_qty
+    return price * short_increasing_qty
 
 
 __all__ = [

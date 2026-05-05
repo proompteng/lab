@@ -7,7 +7,7 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from sqlalchemy.orm import Session
 
@@ -116,6 +116,11 @@ class SimpleTradingPipeline(TradingPipeline):
                         allowed_symbols,
                     )
                     if submitted is not None:
+                        self._apply_simple_projected_buying_power(
+                            account,
+                            positions,
+                            submitted,
+                        )
                         self._apply_simple_projected_position(positions, submitted)
                 except Exception:
                     logger.exception(
@@ -134,7 +139,9 @@ class SimpleTradingPipeline(TradingPipeline):
         *,
         capital_stage: str | None = None,
     ) -> dict[str, object]:
-        snapshot = super()._submission_control_plane_snapshot(capital_stage=capital_stage)
+        snapshot = super()._submission_control_plane_snapshot(
+            capital_stage=capital_stage
+        )
         snapshot["pipeline_mode"] = settings.trading_pipeline_mode
         snapshot["execution_lane"] = "simple"
         snapshot["submit_path"] = "direct_alpaca"
@@ -274,7 +281,10 @@ class SimpleTradingPipeline(TradingPipeline):
                 log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
             )
             return False
-        if settings.trading_mode == "live" and not settings.trading_simple_submit_enabled:
+        if (
+            settings.trading_mode == "live"
+            and not settings.trading_simple_submit_enabled
+        ):
             self._block_decision_submission(
                 session=session,
                 decision=decision,
@@ -468,6 +478,27 @@ class SimpleTradingPipeline(TradingPipeline):
                 }
             )
 
+    @staticmethod
+    def _apply_simple_projected_buying_power(
+        account: dict[str, str],
+        positions: list[dict[str, Any]],
+        decision: StrategyDecision,
+    ) -> None:
+        buying_power = _optional_decimal(account.get("buying_power"))
+        if buying_power is None:
+            return
+        notional = _simple_decision_notional(decision)
+        if notional is None or notional <= 0:
+            return
+        consumed = _simple_buying_power_consumption(
+            positions=positions,
+            decision=decision,
+            notional=notional,
+        )
+        if consumed <= 0:
+            return
+        account["buying_power"] = str(max(buying_power - consumed, Decimal("0")))
+
 
 def _optional_decimal(value: Any) -> Decimal | None:
     if value is None:
@@ -485,7 +516,42 @@ def _min_optional_decimal(*values: Decimal | None) -> Decimal | None:
     return min(candidates)
 
 
-def _pct_cap_to_notional(*, equity: Decimal | None, pct: Decimal | None) -> Decimal | None:
+def _pct_cap_to_notional(
+    *, equity: Decimal | None, pct: Decimal | None
+) -> Decimal | None:
     if equity is None or equity <= 0 or pct is None or pct <= 0:
         return None
     return equity * pct
+
+
+def _simple_decision_notional(decision: StrategyDecision) -> Decimal | None:
+    simple_lane = decision.params.get("simple_lane")
+    if isinstance(simple_lane, Mapping):
+        simple_lane_payload = cast(Mapping[str, Any], simple_lane)
+        notional = _optional_decimal(simple_lane_payload.get("notional"))
+        if notional is not None:
+            return notional
+    price = _optional_decimal(decision.params.get("price"))
+    if price is None:
+        return None
+    return price * decision.qty
+
+
+def _simple_buying_power_consumption(
+    *,
+    positions: list[dict[str, Any]],
+    decision: StrategyDecision,
+    notional: Decimal,
+) -> Decimal:
+    action = decision.action.strip().lower()
+    if action == "buy":
+        return notional
+    if action != "sell" or decision.qty <= 0:
+        return Decimal("0")
+    current_qty = position_qty_for_symbol(positions, decision.symbol)
+    if current_qty >= decision.qty:
+        return Decimal("0")
+    short_increasing_qty = (
+        decision.qty if current_qty <= 0 else decision.qty - current_qty
+    )
+    return notional * (short_increasing_qty / decision.qty)
