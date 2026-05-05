@@ -154,27 +154,39 @@ const parseMetadata = (value: unknown): KubeGatewayMetadata | null => {
   const name = asString(record?.name)
   if (!record || !name) return null
 
-  return {
+  const deletionTimestamp = asString(record.deletionTimestamp)
+  const metadata: KubeGatewayMetadata = {
     name,
     namespace: asString(record.namespace),
     generation: asNonNegativeInteger(record.generation),
     labels: parseLabels(record.labels),
     creationTimestamp: asString(record.creationTimestamp),
-    deletionTimestamp: asString(record.deletionTimestamp),
   }
+
+  if (deletionTimestamp !== null) {
+    metadata.deletionTimestamp = deletionTimestamp
+  }
+
+  return metadata
 }
 
 const parseCondition = (value: unknown): KubeGatewayCondition | null => {
   const record = asRecord(value)
   if (!record) return null
 
-  return {
+  const message = asString(record.message)
+  const condition: KubeGatewayCondition = {
     type: asString(record.type),
     status: asString(record.status),
     reason: asString(record.reason),
     lastTransitionTime: asString(record.lastTransitionTime),
-    message: asString(record.message),
   }
+
+  if (message !== null) {
+    condition.message = message
+  }
+
+  return condition
 }
 
 const parseConditions = (value: unknown) =>
