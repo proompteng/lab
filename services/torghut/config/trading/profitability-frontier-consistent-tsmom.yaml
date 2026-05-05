@@ -4,14 +4,14 @@ family_template_id: intraday_tsmom_v2
 strategy_name: intraday-tsmom-profit-v3
 disable_other_strategies: true
 constraints:
-  holdout_target_net_per_day: '200'
+  holdout_target_net_per_day: '300'
   min_active_holdout_days: 2
   max_worst_holdout_day_loss: '200'
   min_profit_factor: '1.1'
   require_training_decisions: true
   require_holdout_decisions: true
 consistency_constraints:
-  target_net_per_day: '200'
+  target_net_per_day: '300'
   min_active_days: 9
   max_worst_day_loss: '250'
   max_negative_days: 2
@@ -19,7 +19,7 @@ consistency_constraints:
   require_every_day_active: true
 strategy_overrides:
   universe_symbols:
-    - ['NVDA', 'AMD', 'INTC']
+    - ['NVDA', 'TSM', 'AVGO', 'INTC', 'AMD', 'MU', 'LRCX', 'KLAC', 'QCOM', 'AMAT', 'ASML', 'MRVL']
   max_notional_per_trade:
     - '15000'
     - '25000'
