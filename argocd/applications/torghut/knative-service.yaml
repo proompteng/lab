@@ -159,7 +159,7 @@ spec:
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED
               value: "true"
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS
-              value: AAPL,AMAT,AMD,AVGO,GOOG,INTC,META,MSFT,NVDA,QQQ,SPY,TSLA
+              value: AMAT,AMD,ASML,AVGO,INTC,KLAC,LRCX,MU,NVDA,QCOM,TSM,TXN
             - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
               value: "900"
             - name: JANGAR_SYMBOLS_URL
