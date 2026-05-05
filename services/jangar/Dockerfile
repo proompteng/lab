@@ -424,9 +424,10 @@ ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 
 FROM tools AS workspace-tools-deps
 WORKDIR /app
+ENV NODE_ENV=development
 COPY json/ .
 RUN --mount=type=cache,id=bun-install-cache-workspace-tools,target=/root/.bun/install/cache \
-  NODE_ENV=development bun install --no-save --ignore-scripts \
+  bun install --no-save --ignore-scripts --linker=hoisted \
     --filter @proompteng/codex \
     --filter @proompteng/otel \
     --filter @proompteng/temporal-bun-sdk \
