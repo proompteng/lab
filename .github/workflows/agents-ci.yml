@@ -154,6 +154,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Run Agents script unit tests
+        run: |
+          bun test \
+            packages/scripts/src/agents/__tests__/smoke-agents.test.ts \
+            packages/scripts/src/jangar/__tests__/release-contract.test.ts \
+            packages/scripts/src/shared/__tests__/docker.test.ts
+
       - name: Classify Jangar image mode
         id: jangar_image_mode
         run: |

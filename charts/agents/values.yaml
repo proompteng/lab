@@ -17,6 +17,9 @@ image:
   pullPolicy: IfNotPresent
   pullSecrets: []
 
+imagePolicy:
+  requireDigest: false
+
 controlPlane:
   image:
     repository: ''
@@ -453,6 +456,7 @@ argocdHooks:
   image:
     repository: alpine/k8s
     tag: 1.30.11
+    digest: ''
     pullPolicy: IfNotPresent
   preSync:
     enabled: true
@@ -463,3 +467,13 @@ argocdHooks:
   smoke:
     labelSelector: ''
     agentRun: {}
+
+tests:
+  enabled: false
+  image:
+    repository: curlimages/curl
+    tag: 8.11.1
+    digest: ''
+    pullPolicy: IfNotPresent
+  timeoutSeconds: 30
+  resources: {}

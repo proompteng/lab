@@ -706,6 +706,8 @@ The chart emits a single `JANGAR_AGENT_RUNNER_IMAGE` env var per container with 
 
 Use `runner.image.*` as the normal configuration path. `runtime.agentRunnerImage` is kept only for compatibility.
 Override `runner.image.repository`, `runner.image.tag`, or `runner.image.digest` to point at your own build.
+Set `runner.image.pullSecrets` to reuse registry credentials for controller-launched runner pods when
+`controller.defaultWorkload.imagePullSecrets` is not set.
 
 ## Job TTL behavior
 
@@ -736,6 +738,8 @@ Enable reruns or system-improvement flows using:
 - Use `database.secretRef` and dedicated DB credentials per environment.
 - Scope controllers to specific namespaces unless you need cluster-wide control.
 - Prefer image digests in production (`values-prod.yaml`).
+- Set `imagePolicy.requireDigest=true` to reject mutable chart-managed deployment, runner, hook, and test images at
+  render time.
 
 ## Pod Security Admission
 
@@ -756,11 +760,38 @@ Helm ownership conflicts.
 - Control webhook buffering with `controller.webhook.queueSize`.
 - Tune retry backoff with `controller.webhook.retry.*` (seconds).
 
+## Helm test
+
+The chart includes an opt-in Helm test Pod that curls the in-cluster HTTP health endpoint through the rendered Service.
+It is disabled by default so GitOps renders through Kustomize/Argo CD do not create a hook Pod as a normal workload.
+
+```bash
+helm upgrade --install agents charts/agents \
+  --namespace agents \
+  --create-namespace \
+  --values charts/agents/values-local.yaml \
+  --set tests.enabled=true
+
+helm test agents --namespace agents
+```
+
 ## Publishing (OCI)
 
 ```bash
 bun packages/scripts/src/agents/publish-chart.ts
 ```
+
+Use `--dry-run` to package and validate metadata locally without pulling or pushing OCI artifacts.
+
+Signed publishing uses Helm provenance files. The publish script enables `helm package --sign` when
+`AGENTS_CHART_SIGN=true` and requires `AGENTS_CHART_SIGN_KEY`.
+
+Optional signing inputs:
+
+- `AGENTS_CHART_SIGN_KEYRING`
+- `AGENTS_CHART_SIGN_PASSPHRASE_FILE`
+
+When signing is enabled, `helm push` uploads the generated `.tgz.prov` alongside the chart package.
 
 ## Values
 

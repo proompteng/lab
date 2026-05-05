@@ -7,6 +7,8 @@ ARGOCD_AGENTS_DIR="${ROOT_DIR}/argocd/applications/agents"
 CI_VALUES_FILE="${ROOT_DIR}/scripts/agents/values-ci.yaml"
 # Backward-compatible: older callers used HELM_KUBE_VERSION.
 KUBE_VERSION_FOR_HELM="${KUBE_VERSION_FOR_HELM:-${HELM_KUBE_VERSION:-1.35.0}}"
+DUMMY_IMAGE_DIGEST="sha256:0000000000000000000000000000000000000000000000000000000000000000"
+TEST_IMAGE_DIGEST="sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69"
 
 run_with_helm3() {
   # kustomize --enable-helm is not compatible with Helm v4 yet; prefer Helm v3.
@@ -59,6 +61,73 @@ render_and_check "${CHART_DIR}/values-dev.yaml"
 render_and_check "${CHART_DIR}/values-local.yaml"
 render_and_check "${CI_VALUES_FILE}"
 render_and_check "${CHART_DIR}/values-prod.yaml"
+
+if run_with_helm3 helm template "${CHART_DIR}" \
+  --kube-version "${KUBE_VERSION_FOR_HELM}" \
+  --values "${CHART_DIR}/values-local.yaml" \
+  --set imagePolicy.requireDigest=true >/dev/null 2>&1; then
+  echo "imagePolicy.requireDigest=true should reject chart-managed images without digests." >&2
+  exit 1
+fi
+
+if run_with_helm3 helm template "${CHART_DIR}" \
+  --kube-version "${KUBE_VERSION_FOR_HELM}" \
+  --values "${CHART_DIR}/values-local.yaml" \
+  --set imagePolicy.requireDigest=true \
+  --set "image.digest=${DUMMY_IMAGE_DIGEST}" >/dev/null 2>&1; then
+  echo "imagePolicy.requireDigest=true should reject runner images without digests." >&2
+  exit 1
+fi
+
+if run_with_helm3 helm template "${CHART_DIR}" \
+  --kube-version "${KUBE_VERSION_FOR_HELM}" \
+  --values "${CHART_DIR}/values-local.yaml" \
+  --set imagePolicy.requireDigest=true \
+  --set "image.digest=sha256:not-a-real-digest" \
+  --set "runner.image.digest=${DUMMY_IMAGE_DIGEST}" >/dev/null 2>&1; then
+  echo "imagePolicy.requireDigest=true should reject malformed image digests." >&2
+  exit 1
+fi
+
+if run_with_helm3 helm template "${CHART_DIR}" \
+  --kube-version "${KUBE_VERSION_FOR_HELM}" \
+  --values "${CHART_DIR}/values-local.yaml" \
+  --set imagePolicy.requireDigest=true \
+  --set "image.digest=${DUMMY_IMAGE_DIGEST}" \
+  --set "runner.image.digest=${DUMMY_IMAGE_DIGEST}" \
+  --set argocdHooks.enabled=true \
+  --set argocdHooks.preSync.enabled=true \
+  --set "argocdHooks.smoke.labelSelector=agents.proompteng.ai/test=true" >/dev/null 2>&1; then
+  echo "imagePolicy.requireDigest=true should reject Argo CD hook images without digests." >&2
+  exit 1
+fi
+
+if run_with_helm3 helm template "${CHART_DIR}" \
+  --kube-version "${KUBE_VERSION_FOR_HELM}" \
+  --values "${CHART_DIR}/values-local.yaml" \
+  --set imagePolicy.requireDigest=true \
+  --set "image.digest=${DUMMY_IMAGE_DIGEST}" \
+  --set "runner.image.digest=${DUMMY_IMAGE_DIGEST}" \
+  --set tests.enabled=true >/dev/null 2>&1; then
+  echo "imagePolicy.requireDigest=true should reject Helm test images without digests." >&2
+  exit 1
+fi
+
+test_render="$(mktemp)"
+run_with_helm3 helm template "${CHART_DIR}" \
+  --kube-version "${KUBE_VERSION_FOR_HELM}" \
+  --values "${CHART_DIR}/values-local.yaml" \
+  --set tests.enabled=true \
+  --set "tests.image.digest=${TEST_IMAGE_DIGEST}" >"${test_render}"
+if command -v rg >/dev/null 2>&1; then
+  rg -q 'helm.sh/hook.*test' "${test_render}"
+  rg -q 'name: .*test-connection' "${test_render}"
+  rg -q 'curlimages/curl:8.11.1@sha256:' "${test_render}"
+else
+  grep -Eq 'helm.sh/hook.*test' "${test_render}"
+  grep -Eq 'name: .*test-connection' "${test_render}"
+  grep -Eq 'curlimages/curl:8.11.1@sha256:' "${test_render}"
+fi
 
 render_kustomize() {
   if command -v kustomize >/dev/null 2>&1; then

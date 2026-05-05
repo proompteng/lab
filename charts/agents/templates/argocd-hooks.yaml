@@ -1,6 +1,8 @@
 {{- if .Values.argocdHooks.enabled -}}
 {{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
 {{- $serviceAccount := .Values.argocdHooks.serviceAccountName | default (include "agents.serviceAccountName" .) -}}
+{{- $hookImage := .Values.argocdHooks.image | default dict -}}
+{{- $hookImageDigest := $hookImage.digest | default "" -}}
 {{- $smokeName := dig "metadata" "name" "" .Values.argocdHooks.smoke.agentRun -}}
 {{- $labelSelector := .Values.argocdHooks.smoke.labelSelector | default (printf "agents.proompteng.ai/agent-run=%s" $smokeName) -}}
 {{- if and .Values.argocdHooks.preSync.enabled (or $smokeName .Values.argocdHooks.smoke.labelSelector) -}}
@@ -26,7 +28,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: cleanup
-          image: "{{ .Values.argocdHooks.image.repository }}:{{ .Values.argocdHooks.image.tag }}"
+          image: "{{ .Values.argocdHooks.image.repository }}:{{ .Values.argocdHooks.image.tag }}{{- if $hookImageDigest }}@{{ $hookImageDigest }}{{ end }}"
           imagePullPolicy: {{ .Values.argocdHooks.image.pullPolicy }}
           command:
             - sh
@@ -66,7 +68,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: smoke
-          image: "{{ .Values.argocdHooks.image.repository }}:{{ .Values.argocdHooks.image.tag }}"
+          image: "{{ .Values.argocdHooks.image.repository }}:{{ .Values.argocdHooks.image.tag }}{{- if $hookImageDigest }}@{{ $hookImageDigest }}{{ end }}"
           imagePullPolicy: {{ .Values.argocdHooks.image.pullPolicy }}
           command:
             - sh

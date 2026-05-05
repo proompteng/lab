@@ -6,7 +6,10 @@ Docs index: [README](../README.md)
 
 ## Current State
 
-- Code: no attestations or provenance generation in workflows.
+- Code: chart publishing supports optional Helm provenance generation through
+  `packages/scripts/src/agents/publish-chart.ts` when `AGENTS_CHART_SIGN=true`.
+- Code: Jangar image publishing enables BuildKit SBOM and max provenance attestations through
+  `.github/workflows/jangar-build-push.yaml`.
 - Cluster: not configured.
 
 ## Problem
@@ -57,7 +60,8 @@ Regulated environments require provenance attestations.
 
 ## Acceptance Criteria
 
-- Attestations published for each release.
+- BuildKit image attestations are published for each Jangar image release.
+- Chart package provenance is published when signing credentials are configured.
 - Documentation covers verification.
 
 ## Handoff Appendix (Repo + Chart + Cluster)

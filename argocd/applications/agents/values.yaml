@@ -4,6 +4,8 @@ image:
   tag: 4d164488
   digest: sha256:cd99ef183bd5de5821ec485bb97184a672145bb92363c02220b27153013f20fd
   pullPolicy: IfNotPresent
+imagePolicy:
+  requireDigest: true
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
@@ -22,6 +24,7 @@ argocdHooks:
   image:
     repository: alpine/k8s
     tag: 1.30.11
+    digest: sha256:aff9e683cf3950861a806b89404c5d5b4f8d6d4ab527c6da567df71b4cd4f970
   postSync:
     enabled: false
   smoke:

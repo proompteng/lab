@@ -12,27 +12,47 @@ const defaultChartDir = resolve(rootDir, 'charts', 'agents')
 const chartPackageRef = 'oci://ghcr.io/proompteng/charts/agents'
 const chartPushRef = 'oci://ghcr.io/proompteng/charts'
 const decode = (bytes: Uint8Array<ArrayBufferLike>) => new TextDecoder().decode(bytes).trim()
+const parseBooleanEnv = (value: string | undefined) => value === '1' || value?.toLowerCase() === 'true'
 
-const parseChartDirArg = () => {
+const parseArgs = () => {
   const args = process.argv.slice(2)
+  let chartDir = defaultChartDir
+  let dryRun = parseBooleanEnv(process.env.AGENTS_CHART_DRY_RUN)
+
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
     if (!arg) continue
+    if (arg === '--dry-run') {
+      dryRun = true
+      continue
+    }
     if (arg === '--chart-dir') {
       const value = args[index + 1]
       if (!value) {
         throw new Error('Missing value for --chart-dir')
       }
-      return resolve(value)
+      chartDir = resolve(value)
+      index += 1
+      continue
     }
     if (arg.startsWith('--chart-dir=')) {
-      return resolve(arg.slice('--chart-dir='.length))
+      chartDir = resolve(arg.slice('--chart-dir='.length))
+      continue
     }
   }
-  return defaultChartDir
+
+  return { chartDir, dryRun }
 }
 
-const chartDir = parseChartDirArg()
+const { chartDir, dryRun } = parseArgs()
+const signChart = parseBooleanEnv(process.env.AGENTS_CHART_SIGN)
+const signingKey = process.env.AGENTS_CHART_SIGN_KEY?.trim()
+const signingKeyring = process.env.AGENTS_CHART_SIGN_KEYRING?.trim()
+const signingPassphraseFile = process.env.AGENTS_CHART_SIGN_PASSPHRASE_FILE?.trim()
+
+if (signChart && !signingKey) {
+  throw new Error('AGENTS_CHART_SIGN_KEY is required when AGENTS_CHART_SIGN=true.')
+}
 
 if (!(await Bun.file(resolve(chartDir, 'Chart.yaml')).exists())) {
   throw new Error(`Chart.yaml not found in ${chartDir}`)
@@ -91,7 +111,18 @@ const comparePackagesByContents = async (newPackagePath: string, existingPackage
   throw new Error(`failed to compare unpacked charts: ${decode(diffResult.stderr) || 'unknown error'}`)
 }
 
-const packageResult = Bun.spawnSync(['helm', 'package', chartDir, '--destination', localPackageDir])
+const packageArgs = ['helm', 'package', chartDir, '--destination', localPackageDir]
+if (signChart) {
+  packageArgs.push('--sign', '--key', signingKey as string)
+  if (signingKeyring) {
+    packageArgs.push('--keyring', signingKeyring)
+  }
+  if (signingPassphraseFile) {
+    packageArgs.push('--passphrase-file', signingPassphraseFile)
+  }
+}
+
+const packageResult = Bun.spawnSync(packageArgs)
 if (packageResult.exitCode !== 0) {
   throw new Error(`helm package failed: ${decode(packageResult.stderr) || 'unknown error'}`)
 }
@@ -109,6 +140,19 @@ if (!packagePath.endsWith(`-${chartVersion}.tgz`)) {
 }
 if (basename(packagePath) !== `${chartName}-${chartVersion}.tgz`) {
   throw new Error(`Packaged chart name does not match Chart.yaml (${chartName}).`)
+}
+
+const provenancePath = `${packagePath}.prov`
+if (signChart && !(await Bun.file(provenancePath).exists())) {
+  throw new Error(`helm package --sign completed but provenance file was not created at ${provenancePath}.`)
+}
+
+if (dryRun) {
+  console.log(`Dry run packaged ${packagePath}; skipping pull and push.`)
+  if (signChart) {
+    console.log(`Dry run generated provenance ${provenancePath}.`)
+  }
+  process.exit(0)
 }
 
 const pullResult = Bun.spawnSync([
@@ -142,3 +186,6 @@ if (pushResult.exitCode !== 0) {
 }
 
 console.log(`Published ${packagePath} to ${chartPushRef}`)
+if (signChart) {
+  console.log(`Published provenance ${provenancePath} with the chart package.`)
+}
