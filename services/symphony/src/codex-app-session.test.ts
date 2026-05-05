@@ -254,6 +254,106 @@ rl.on('line', (line) => {
     }
   })
 
+  test('emits current turn sandbox policy shapes for legacy sandbox modes', async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), 'symphony-codex-sandbox-policy-'))
+    const scriptPath = path.join(tempDir, 'fake-codex-app-server.mjs')
+
+    await writeFile(
+      scriptPath,
+      `
+import readline from 'node:readline'
+
+const expectedByMode = {
+  'workspace-write': {
+    type: 'workspaceWrite',
+    writableRoots: [],
+    networkAccess: true,
+    excludeTmpdirEnvVar: false,
+    excludeSlashTmp: false,
+  },
+  'read-only': {
+    type: 'readOnly',
+    networkAccess: true,
+  },
+}
+const expected = expectedByMode[process.env.SYMPHONY_SANDBOX_CASE]
+const rl = readline.createInterface({ input: process.stdin })
+
+rl.on('line', (line) => {
+  const message = JSON.parse(line)
+
+  if (message.method === 'initialize') {
+    console.log(JSON.stringify({ id: message.id, result: {} }))
+    return
+  }
+
+  if (message.method === 'thread/start') {
+    console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'thread-1' } } }))
+    return
+  }
+
+  if (message.method === 'turn/start') {
+    const actual = message.params?.sandboxPolicy
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      console.log(JSON.stringify({
+        id: message.id,
+        error: { code: -32602, message: 'unexpected sandbox policy: ' + JSON.stringify(actual) },
+      }))
+      return
+    }
+
+    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'turn-1' } } }))
+    console.log(JSON.stringify({
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turnId: 'turn-1' },
+    }))
+  }
+})
+      `.trim(),
+      'utf8',
+    )
+
+    try {
+      for (const threadSandbox of ['workspace-write', 'read-only'] as const) {
+        const program = Effect.scoped(
+          Effect.gen(function* () {
+            const sessions = yield* CodexSessionService
+            const session = yield* sessions.createSession({
+              command: `SYMPHONY_SANDBOX_CASE=${threadSandbox} node ${JSON.stringify(scriptPath)}`,
+              cwd: tempDir,
+              approvalPolicy: null,
+              threadSandbox,
+              turnSandboxPolicy: null,
+              readTimeoutMs: 5_000,
+              turnTimeoutMs: 5_000,
+              title: 'sandbox policy turn',
+              dynamicTools: [],
+              logger: createStubLogger(),
+              onEvent: () => Effect.void,
+              onToolCall: () =>
+                Effect.succeed({
+                  success: false,
+                  error: 'unsupported_tool_call',
+                  contentItems: [],
+                }),
+            })
+
+            return yield* session.runTurn('hello')
+          }),
+        ).pipe(Effect.provide(makeCodexSessionLayer(createStubLogger())))
+
+        const result = await Effect.runPromise(program)
+        expect(result).toEqual({
+          status: 'completed',
+          threadId: 'thread-1',
+          turnId: 'turn-1',
+        })
+      }
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
   test('fails the turn when the app-server emits a top-level error notification', async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), 'symphony-codex-error-notification-'))
     const scriptPath = path.join(tempDir, 'fake-codex-app-server.mjs')
