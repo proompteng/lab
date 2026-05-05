@@ -981,7 +981,7 @@ const buildScheduleRunnerCommand = (): string =>
     '  req.write(body)',
     '  req.end()',
     '})',
-  ].join(' ')
+  ].join('\n')
 
 const reconcileScheduleRunnerStatus = async (
   kube: ReturnType<typeof createKubernetesClient>,

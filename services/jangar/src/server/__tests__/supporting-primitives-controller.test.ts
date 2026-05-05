@@ -170,6 +170,8 @@ describe('supporting primitives controller', () => {
   it('builds schedule runner command with runtime delivery id substitution', () => {
     const command = __test__.buildScheduleRunnerCommand()
 
+    expect(command).toContain("import { randomUUID } from 'node:crypto'\nimport { readFileSync } from 'node:fs'")
+    expect(command).not.toContain("node:crypto' import")
     expect(command).toContain("replaceAll('__JANGAR_DELIVERY_ID__', randomUUID())")
     expect(command).toContain('const targetByKind = {')
     expect(command).toContain("method: 'POST'")
