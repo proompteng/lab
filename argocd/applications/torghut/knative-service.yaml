@@ -152,6 +152,12 @@ spec:
               value: sync
             - name: TRADING_STRATEGY_RELOAD_SECONDS
               value: "10"
+            - name: TRADING_JANGAR_CONTROL_PLANE_STATUS_URL
+              value: http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents
+            - name: TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS
+              value: "15"
+            - name: TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS
+              value: "10"
             - name: TRADING_UNIVERSE_SOURCE
               value: jangar
             - name: TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR

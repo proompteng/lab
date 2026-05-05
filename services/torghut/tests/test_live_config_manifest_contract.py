@@ -160,7 +160,10 @@ class TestLiveConfigManifestContract(TestCase):
             settings.trading_jangar_symbols_url,
             "http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity&format=compact",
         )
-        self.assertIsNone(settings.trading_jangar_control_plane_status_url)
+        self.assertEqual(
+            settings.trading_jangar_control_plane_status_url,
+            "http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents",
+        )
         self.assertIsNone(settings.trading_jangar_quant_health_url)
         self.assertIsNone(settings.trading_market_context_url)
         self.assertEqual(
@@ -184,7 +187,14 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertNotIn("TRADING_FORECAST_SERVICE_URL", env)
         self.assertNotIn("TRADING_LEAN_RUNNER_URL", env)
         self.assertNotIn("TRADING_MARKET_CONTEXT_URL", env)
-        self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_STATUS_URL", env)
+        self.assertEqual(
+            env.get("TRADING_JANGAR_CONTROL_PLANE_STATUS_URL"),
+            "http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents",
+        )
+        self.assertEqual(
+            env.get("TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS"), "15"
+        )
+        self.assertEqual(env.get("TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS"), "10")
         self.assertNotIn("JANGAR_BASE_URL", env)
 
     def test_live_manifest_does_not_import_autonomy_env_from(self) -> None:
