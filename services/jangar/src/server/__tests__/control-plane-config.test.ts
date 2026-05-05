@@ -49,13 +49,25 @@ describe('control-plane-config', () => {
       resolveControlPlaneStatusConfig({
         JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SWARMS: 'jangar-control-plane,torghut-quant,jangar-control-plane',
         JANGAR_CONTROL_PLANE_ROLLOUT_DEPLOYMENTS: 'agents,agents-controllers,agents',
+        JANGAR_TORGHUT_STATUS_TIMEOUT_MS: '6500',
         JANGAR_WORKFLOWS_WINDOW_MINUTES: '45',
       }),
     ).toMatchObject({
       executionTrustSwarms: ['jangar-control-plane', 'torghut-quant'],
       rolloutDeployments: ['agents', 'agents-controllers'],
+      torghutStatusTimeoutMs: 6500,
       workflowsWindowMinutes: 45,
     })
+  })
+
+  it('uses a rollout-safe Torghut status timeout default and bounds overrides', () => {
+    expect(resolveControlPlaneStatusConfig({}).torghutStatusTimeoutMs).toBe(5000)
+    expect(resolveControlPlaneStatusConfig({ JANGAR_TORGHUT_STATUS_TIMEOUT_MS: '20' }).torghutStatusTimeoutMs).toBe(
+      5000,
+    )
+    expect(resolveControlPlaneStatusConfig({ JANGAR_TORGHUT_STATUS_TIMEOUT_MS: '45000' }).torghutStatusTimeoutMs).toBe(
+      30000,
+    )
   })
 
   it('parses cache enablement explicitly', () => {
