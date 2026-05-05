@@ -41,10 +41,22 @@ patches:
     target:
       kind: Deployment
       name: argocd-repo-server
+  - path: overlays/argocd-repo-server-two-node-affinity.yaml
+    target:
+      kind: Deployment
+      name: argocd-repo-server
   - path: overlays/argocd-redis-ha-haproxy-deployment.yaml
     target:
       kind: Deployment
       name: argocd-redis-ha-haproxy
+  - path: overlays/argocd-redis-ha-haproxy-two-node-affinity.yaml
+    target:
+      kind: Deployment
+      name: argocd-redis-ha-haproxy
+  - path: overlays/argocd-redis-ha-server-two-node-affinity.yaml
+    target:
+      kind: StatefulSet
+      name: argocd-redis-ha-server
   - path: overlays/argocd-application-controller-statefulset.yaml
     target:
       kind: StatefulSet
