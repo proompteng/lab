@@ -1,10 +1,10 @@
-# Torghut Fundamentals + News via Codex Agent Provider (`gpt-5.3-codex-spark`)
+# Torghut Fundamentals + News via Codex Agent Provider (`gpt-5.5`)
 
 ## Status
 
 - Date: `2026-02-26`
 - Maturity: `production design + rollout plan`
-- Scope: replace unconfigured fundamentals/news providers with in-cluster Codex AgentRuns using `gpt-5.3-codex-spark`, with a core HTTP integration path first and optional streaming/analytics expansion
+- Scope: replace unconfigured fundamentals/news providers with in-cluster Codex AgentRuns using `gpt-5.5`, with a core HTTP integration path first and optional streaming/analytics expansion
 
 ## Objective
 
@@ -23,7 +23,7 @@ Deliver production-grade fundamentals and news context for Torghut by:
   - `TRADING_MARKET_CONTEXT_URL=http://jangar.jangar.svc.cluster.local/api/torghut/market-context/`
   - `TRADING_MARKET_CONTEXT_REQUIRED=true`
   - `TRADING_MARKET_CONTEXT_FAIL_MODE=shadow_only`
-  - `LLM_MODEL=gpt-5.3-codex-spark`
+  - `LLM_MODEL=gpt-5.5`
 - Verified from live `ksvc/torghut` env.
 
 ### 2. Jangar market-context is currently degraded due missing fundamentals/news configuration
@@ -39,7 +39,7 @@ Deliver production-grade fundamentals and news context for Torghut by:
 ### 3. Agent provider exists, but default model is not Spark
 
 - Live `AgentProvider/codex` writes `/root/.codex/config.toml` with:
-  - `model = "gpt-5.3-codex"`
+  - `model = "gpt-5.5"`
 - Therefore fundamentals/news AgentRuns need a new provider (or equivalent model override path) to guarantee Spark.
 
 ### 4. ClickHouse dataplane is healthy and fresh for TA, but has no fundamentals/news tables
@@ -66,7 +66,7 @@ Deliver production-grade fundamentals and news context for Torghut by:
 - Market-context contract version remains `torghut.market-context.v1`.
 - Fundamentals/news generation failures must degrade context, not silently pass as healthy.
 - No direct, ad-hoc cluster mutations in steady-state operation; GitOps is primary path.
-- Agent model for fundamentals/news must be pinned to `gpt-5.3-codex-spark`.
+- Agent model for fundamentals/news must be pinned to `gpt-5.5`.
 
 ## Implementation Profiles
 
@@ -108,7 +108,7 @@ flowchart LR
 Add resources under `argocd/applications/agents` and `argocd/applications/torghut`:
 
 1. `AgentProvider/codex-spark`
-   - clone of current `codex` provider with `model = "gpt-5.3-codex-spark"`.
+   - clone of current `codex` provider with `model = "gpt-5.5"`.
 2. `Agent/codex-fundamentals-agent` and `Agent/codex-news-agent`
    - `providerRef.name: codex-spark`
    - dedicated system prompts and secret bindings.
@@ -211,9 +211,7 @@ Each run must emit JSON:
   "sourceCount": 6,
   "qualityScore": 0.82,
   "payload": {},
-  "citations": [
-    { "source": "sec", "publishedAt": "2026-02-25T21:00:00Z", "url": "https://..." }
-  ],
+  "citations": [{ "source": "sec", "publishedAt": "2026-02-25T21:00:00Z", "url": "https://..." }],
   "riskFlags": []
 }
 ```
@@ -309,7 +307,7 @@ Exit gates:
 
 Exit gates:
 
-- >= `99%` successful runs for 24h.
+- > = `99%` successful runs for 24h.
 - No malformed artifacts.
 - Jangar health `overallState=ok` for active symbols,
 - no increase in `market_context_domain_error`.
@@ -383,7 +381,7 @@ SELECT symbol, domain, asOfUtc FROM torghut.market_context_latest ORDER BY asOfU
 ## Acceptance Criteria
 
 - Torghut market-context no longer reports `fundamentals_missing`/`news_missing` due unconfigured providers for active symbols.
-- Agent model pin for fundamentals/news is provably `gpt-5.3-codex-spark`.
+- Agent model pin for fundamentals/news is provably `gpt-5.5`.
 - Core v1 pipeline (AgentRun -> Postgres -> Jangar API -> Torghut) is observable and meets SLOs.
 - Optional Stream v2, if enabled, meets stream SLOs and does not regress Core v1 behavior.
 - Runbooks and rollback are validated in staging before production promotion.

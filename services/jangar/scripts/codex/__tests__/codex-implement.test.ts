@@ -2267,12 +2267,12 @@ exit 1
   }, 40_000)
 
   it('falls back to secondary model on transient provider quota/rate-limit failures', async () => {
-    process.env.CODEX_MODEL = 'gpt-5.3-codex-spark'
-    process.env.CODEX_MODEL_FALLBACKS = 'gpt-5.4'
+    process.env.CODEX_MODEL = 'primary-throttled-model'
+    process.env.CODEX_MODEL_FALLBACKS = 'fallback-capacity-model'
     process.env.CODEX_MAX_SESSION_ATTEMPTS = '2'
 
     runCodexSessionMock
-      .mockRejectedValueOnce(new Error('429 rate limit exceeded for gpt-5.3-codex-spark'))
+      .mockRejectedValueOnce(new Error('429 rate limit exceeded for primary-throttled-model'))
       .mockImplementationOnce(async (options) => {
         expect(options.resumeSessionId).toBeUndefined()
         expect(options.prompt).toContain('transient provider throttling/quota constraints')
@@ -2287,7 +2287,7 @@ exit 1
     const result = await runCodexImplementation(eventPath)
     expect(result.sessionId).toBe('fallback-session')
     expect(runCodexSessionMock).toHaveBeenCalledTimes(2)
-    expect(process.env.CODEX_MODEL).toBe('gpt-5.4')
+    expect(process.env.CODEX_MODEL).toBe('fallback-capacity-model')
     const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
     const notify = JSON.parse(notifyRaw) as {
       modelRequested?: string | null
@@ -2295,8 +2295,8 @@ exit 1
       fallbackUsed?: boolean | null
       attemptCount?: number | null
     }
-    expect(notify.modelRequested).toBe('gpt-5.3-codex-spark')
-    expect(notify.modelUsed).toBe('gpt-5.4')
+    expect(notify.modelRequested).toBe('primary-throttled-model')
+    expect(notify.modelUsed).toBe('fallback-capacity-model')
     expect(notify.fallbackUsed).toBe(true)
     expect(notify.attemptCount).toBe(2)
   }, 40_000)
@@ -2321,14 +2321,14 @@ exit 1
   })
 
   it('does not enable implicit fallback models when CODEX_MODEL_FALLBACKS is unset', async () => {
-    process.env.CODEX_MODEL = 'gpt-5.4'
+    process.env.CODEX_MODEL = 'gpt-5.5'
     delete process.env.CODEX_MODEL_FALLBACKS
     process.env.CODEX_MAX_SESSION_ATTEMPTS = '2'
 
-    runCodexSessionMock.mockRejectedValueOnce(new Error('429 rate limit exceeded for gpt-5.4'))
+    runCodexSessionMock.mockRejectedValueOnce(new Error('429 rate limit exceeded for gpt-5.5'))
 
-    await expect(runCodexImplementation(eventPath)).rejects.toThrow('429 rate limit exceeded for gpt-5.4')
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow('429 rate limit exceeded for gpt-5.5')
     expect(runCodexSessionMock).toHaveBeenCalledTimes(1)
-    expect(process.env.CODEX_MODEL).toBe('gpt-5.4')
+    expect(process.env.CODEX_MODEL).toBe('gpt-5.5')
   })
 })

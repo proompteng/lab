@@ -124,7 +124,7 @@ describe('CodexAppServerClient v2 notifications', () => {
 
     const [binaryPath, args] = vi.mocked(spawn).mock.calls[0] ?? []
     expect(binaryPath).toBe('codex')
-    expect(args).toEqual(['--sandbox', 'danger-full-access', '--model', 'gpt-5.4', 'app-server'])
+    expect(args).toEqual(['--sandbox', 'danger-full-access', '--model', 'gpt-5.5', 'app-server'])
 
     await respondToInitialize(child)
     await client.ensureReady()
@@ -148,7 +148,7 @@ describe('CodexAppServerClient v2 notifications', () => {
       '--ask-for-approval',
       'never',
       '--model',
-      'gpt-5.4',
+      'gpt-5.5',
       'app-server',
     ])
 

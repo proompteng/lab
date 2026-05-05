@@ -135,7 +135,7 @@ class TestDSPyTransportHardening(TestCase):
 
         with patch("app.trading.llm.dspy_programs.modules.dspy", fake_dspy):
             program = LiveDSPyCommitteeProgram(
-                model_name="openai/gpt-5.3-codex-spark",
+                model_name="openai/gpt-5.5",
                 api_base="https://jangar.openai.local/openai/v1",
             )
             program._ensure_predictor()

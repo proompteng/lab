@@ -49,7 +49,7 @@ the service, controllers, and runner lanes are all proven healthy.
 - `services/jangar/src/server/control-plane-status.ts` similarly builds controller status from local env/health
   sources rather than from the controller deployment that is actually reconciling `AgentRun`s.
 - `argocd/applications/agents/torghut-market-context-agentprovider.yaml` hard-codes
-  `model_reasoning_effort = "xhigh"` for `model = "gpt-5.4"`, matching the live smoke failure above.
+  `model_reasoning_effort = "xhigh"` for `model = "gpt-5.5"`, matching the live smoke failure above.
 - `services/jangar/scripts/codex/__tests__/codex-implement.test.ts` already proves the runtime can fall back to a
   secondary model on transient quota/rate-limit failures, but the cluster configuration is not enforcing a compatible
   fallback chain before launch.
@@ -106,7 +106,7 @@ Admission happens in two places:
 - Runtime admission: before creating the execution workload, Jangar validates the resolved provider config against the
   capability registry and fails fast with `ConfigInvalid`, not `BackoffLimitExceeded`.
 
-This closes the `xhigh`-for-`gpt-5.4` class of failures before a job is even spawned.
+This closes the `xhigh`-for-`gpt-5.5` class of failures before a job is even spawned.
 
 ### 2. Failure-budgeted execution lanes
 

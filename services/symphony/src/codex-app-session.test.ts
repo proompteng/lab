@@ -180,7 +180,7 @@ rl.on('line', (line) => {
         turnId: 'turn-1',
         outputChoices: [{ role: 'assistant', content: 'done' }],
         provider: 'codex',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         latency: 1.5,
       },
     }))

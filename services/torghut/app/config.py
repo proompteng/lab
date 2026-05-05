@@ -1567,7 +1567,7 @@ class Settings(BaseSettings):
     )
 
     llm_enabled: bool = Field(default=True, alias="LLM_ENABLED")
-    llm_model: str = Field(default="gpt-5.3-codex-spark", alias="LLM_MODEL")
+    llm_model: str = Field(default="gpt-5.5", alias="LLM_MODEL")
     llm_prompt_version: str = Field(default="v1", alias="LLM_PROMPT_VERSION")
     llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=300, alias="LLM_MAX_TOKENS")
