@@ -167,7 +167,7 @@ describe('supporting primitives controller', () => {
     expect(degraded?.status).toBe('True')
   })
 
-  it('builds schedule runner command with runtime delivery id substitution', () => {
+  it('builds schedule runner command with runtime delivery id substitution', async () => {
     const command = __test__.buildScheduleRunnerCommand()
 
     expect(command).toContain("import { randomUUID } from 'node:crypto'\nimport { readFileSync } from 'node:fs'")
@@ -180,9 +180,19 @@ describe('supporting primitives controller', () => {
     expect(command).toContain("replaceAll('__JANGAR_DELIVERY_ID__', randomUUID())")
     expect(command).toContain('const targetByKind = {')
     expect(command).toContain("method: 'POST'")
+    expect(command).toContain(
+      'const namespace = String(manifest?.metadata?.namespace ?? (readEnv("JANGAR_POD_NAMESPACE") || \'agents\'))',
+    )
     expect(command).toContain("from 'node:crypto'\nimport")
     expect(command).not.toContain("from 'node:crypto' import")
+    expect(command).not.toContain('?? readEnv("JANGAR_POD_NAMESPACE") ||')
     expect(command).not.toContain('kubectl create -f -')
+
+    const { spawnSync } = await vi.importActual<typeof import('node:child_process')>('node:child_process')
+    const syntaxCheck = spawnSync('bun', ['-e', command], { encoding: 'utf8' })
+    const stderr = syntaxCheck.stderr.toString()
+    expect(stderr).not.toContain('Unexpected ||')
+    expect(stderr).toContain('/config/run.json')
   })
 
   it('staggers hourly stage cadence deterministically per stage', () => {
