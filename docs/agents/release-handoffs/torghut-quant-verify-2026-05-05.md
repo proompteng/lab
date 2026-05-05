@@ -4,7 +4,58 @@ Timestamp: 2026-05-05T17:56:28Z
 Repository: `proompteng/lab`
 Base: `main`
 Release branch: `codex/swarm-torghut-quant-verify`
-Audit PRs: #5496 plus follow-up #5523 on the same release branch
+Audit PRs: #5496 plus follow-ups #5523 and #5533 on the same release branch
+
+## 2026-05-05T18:36Z Refresh
+
+Current gate is still no-go for #5412, `feat(torghut): add evidence epochs and shared live gate`. The PR is open,
+non-draft, mergeable, and clean at head `059349f5accd232429b4e7a7a031b342b78c1b8f`, but it changes 3,165 total lines
+across 20 files. No Codex review is posted, and the latest review requests returned
+`chatgpt-codex-connector` usage-limit responses instead of a review. I did not merge it without the required
+large-diff review or an explicit maintainer waiver.
+
+No Torghut implementation PR was merged by this refresh run. #5528 merged externally while I was inventorying open
+work, so it is recorded as context only and not claimed as owned. The active selected Torghut blocker remains #5412;
+the other open PRs inspected were either automated release/docs/app work outside the torghut-quant runtime path or
+already superseded by current `main`.
+
+GitOps and rollout evidence refreshed after current `main` advanced:
+
+- Argo application-controller logs showed `torghut` syncing main revision
+  `7e2fb9ce7ae4dc1c53ca9131924ed07541ae7792` and completing successfully at 2026-05-05T18:32:42Z.
+- Argo logs showed `torghut` later skipping auto-sync because the application was already `Synced`.
+- Argo logs showed `torghut-options` at `Synced` and health `Healthy` at 2026-05-05T18:33:35Z.
+- Direct Argo Application CR reads remain blocked by RBAC for `system:serviceaccount:agents:agents-sa`.
+- Runtime pods are ready on the promoted Torghut digest
+  `sha256:f183391e56cf5b52ee1d1cf73fbade982d46f357633b7942ebf674e6e8ef4f0a`: live
+  `torghut-00217-deployment-cfd7f798-kqs5h`, sim `torghut-sim-00298-deployment-fc885dcd8-2crg8`, options catalog
+  `torghut-options-catalog-6cbf647d57-vvlsz`, and options enricher `torghut-options-enricher-75b888bd98-5r2vs`.
+- Hook jobs `torghut-db-migrations`, `torghut-empirical-jobs-backfill`, `torghut-whitepaper-semantic-backfill`, and
+  `torghut-whitepapers-bootstrap` completed successfully after sync.
+- Live, sim, and options TA Flink REST `/overview` each reported one running job and zero failed jobs. Follow-up logs
+  showed new checkpoint completions after transient restart events.
+
+Endpoint evidence refreshed at 2026-05-05T18:36Z:
+
+- Options catalog `/healthz` and `/readyz`: HTTP 200; `/v1/options/hot-set`: HTTP 200 with 160 symbols and fresh
+  `generated_at`.
+- Options enricher `/healthz` and `/readyz`: HTTP 200.
+- Sim Torghut `/healthz`, `/readyz`, `/trading/status`, and `/trading/health`: HTTP 200 on active revision
+  `torghut-sim-00298`.
+- Live Torghut `/healthz` and `/trading/status`: HTTP 200 on active revision `torghut-00217`, commit
+  `59511b6b6af8b160aaf00b9fb5f44b7a62c61c5c`.
+- Live Torghut `/trading/health` and `/readyz`: HTTP 503 because the live submission gate is intentionally closed with
+  `simple_submit_disabled`, the control-plane continuity alert is active, and empirical dependency quorum checks remain
+  blocked.
+
+Release judgment: GitOps sync and Kubernetes rollout health are green for the merged Torghut promotion, and the options
+catalog readiness blocker observed earlier recovered. Production live trading remains no-go because the application
+runtime gate is deliberately closed. Treat #5412 as blocked until Codex review capacity returns and the review posts, or
+until a maintainer explicitly waives the large-diff gate.
+
+Rollback path remains a revert of #5514 merge commit `76709ed093bcff552d3a73c14d3563883ad5e81c` or a GitOps promotion
+back to digest `sha256:5b1685a25cd2d708373d928b095a641b0fe65d0887820f70f32f4e6147bd9bb0` if the current image shows
+new regression evidence. #5412 has no runtime rollback path in this run because it remains unmerged.
 
 ## Gate Decision
 
