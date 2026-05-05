@@ -64,11 +64,43 @@ configure worker versioning and build IDs.
 - Replay tooling
 - `temporal-bun` CLI for scaffolding and diagnostics
 
+## Production readiness
+
+This package is a Bun-native Temporal worker/client SDK, not a wrapper around the
+official Node.js worker runtime. The worker path does not depend on
+`@temporalio/worker`, Node-API native modules, `process.dlopen()`, or
+`worker_threads`.
+
+Release and deployment gates cover the production concerns that matter for
+Temporal workers:
+
+- deterministic workflow guards and real-history replay fixtures,
+- activity heartbeats, retries, cancellation, and failure conversion,
+- sticky-cache healing, build-id routing, graceful shutdown, and worker metrics,
+- Temporal CLI integration tests and worker load/perf checks in CI,
+- `bun run verify:production` asserts that published assets stay pure
+  Bun/TypeScript with no native bridge or official Node worker dependency path,
+- `dist/production-readiness.json` and `dist/agent-readiness.json` are generated
+  before packing so agents can inspect release evidence mechanically,
+- npm trusted publishing with provenance,
+- deployed usage from `services/jangar` through `createWorker()` and
+  `createTemporalClient()`.
+
+The remaining tradeoff is support ownership: this is a community/company SDK,
+not the official Temporal TypeScript SDK. Choose it when you want Bun as the
+worker runtime and are willing to validate your workflows with replay and load
+gates. Choose the official SDK when the requirement is official Temporal support
+on Node.js.
+
 ## Docs
 
 - Main guide: <https://docs.proompteng.ai/docs/temporal-bun-sdk>
 - Temporal Cloud and TLS: <https://docs.proompteng.ai/docs/temporal-bun-sdk-cloud-tls>
 - Bun SDK vs official TypeScript SDK: <https://docs.proompteng.ai/docs/temporal-bun-sdk-comparison>
+- Production readiness plan: `docs/production-readiness-implementation-plan.md`
+- Feature matrix: `docs/feature-matrix.md`
+- Support policy: `docs/support-policy.md`
+- Agent adoption guide: `docs/agent-adoption-guide.md`
 - Example app: <https://github.com/proompteng/lab/tree/main/packages/temporal-bun-sdk-example>
 - Issues: <https://github.com/proompteng/lab/issues>
 

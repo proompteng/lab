@@ -1,13 +1,16 @@
 # Temporal Bun SDK – Production-Ready Design
 
-_Last updated: November 13, 2025_
+_Last updated: May 5, 2026_
 
 ## Purpose
 
-This document is the single source of truth for taking `@proompteng/temporal-bun-sdk`
-to a generally available release on npm that can be trusted by millions of
-Temporal developers. It records what already ships in `main`, what gaps remain,
-and the quality bars we must meet before GA.
+This document is the single source of truth for operating
+`@proompteng/temporal-bun-sdk` as a production npm package that can be trusted by
+Temporal developers. It records what ships in `main`, the release gates that
+must stay green, and the hardening backlog after the GA-critical runtime path.
+The implementation plan for turning the current project-proven runtime into a
+public default-choice library lives in
+`docs/production-readiness-implementation-plan.md`.
 
 ## Bun-First Architecture Advantages
 
@@ -19,32 +22,44 @@ and the quality bars we must meet before GA.
 
 ## Current State Snapshot
 
-| Area               | Status    | Notes                                                                                                                                                                       |
-| ------------------ | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Workflow execution | **Alpha** | Deterministic command context, activity/timer/child/signal/continue-as-new intents, deterministic guard.                                                                    |
-| Worker runtime     | **Beta**  | Sticky cache routing performs drift detection + healing; Effect-based scheduler with configurable concurrency; observability/logging/heartbeat telemetry wired via TBS-004. |
-| Client             | **Beta**  | Start/signal/query/cancel/update/describe namespace with Connect transport; effect-layered interceptors, retries, and telemetry shipped.                                    |
-| Activities         | **Beta-** | Handler registry, cancellation signals. Heartbeats, retries, and failure categorisation remain.                                                                             |
-| Tooling & docs     | **Beta-** | Replay runbook + history capture automation documented; CLI scaffolds projects and Docker image. Remaining doc gaps outside TBS-001.                                        |
-| Testing            | **Beta**  | Determinism regression harness (`tests/replay/**`) plus Temporal CLI integration suite (`tests/integration/history-replay.test.ts`); load/perf smoke tests still pending.   |
+The SDK is past the original Alpha/Beta planning phase. The public package has
+shipped repeatedly on npm, the release workflow gates publishes with build,
+format, unit, integration, and load checks, and `services/jangar` consumes the
+Bun worker/client path in the deployed control-plane worker.
 
-> **Release target:** GA requires all sections below marked as **Critical for GA**
-> to be complete, with supporting validation and documentation.
+| Area               | Status               | Notes                                                                                                                                                                                 |
+| ------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workflow execution | **GA-critical done** | Deterministic command context, activity/timer/child/signal/continue-as-new intents, deterministic guard, replay ingestion, and real-history replay fixtures.                          |
+| Worker runtime     | **GA-critical done** | Sticky cache routing performs drift detection + healing; Effect-based scheduler, configurable concurrency, graceful shutdown, build-id routing, logging, metrics, and load harness.   |
+| Client             | **GA-critical done** | Start/signal/query/cancel/update/describe namespace with Connect transport; effect-layered interceptors, retries, TLS/mTLS validation, Temporal Cloud Ops client, and typed helpers.  |
+| Activities         | **GA-critical done** | Handler registry, AsyncLocalStorage context, cancellation propagation, heartbeats, retry policy adherence, failure categorisation, and integration coverage.                          |
+| Tooling & docs     | **Release ready**    | CLI scaffolds workers, validates connectivity, runs replay/lint commands, builds Docker assets, and documents Temporal Cloud/TLS, schedules, replay, observability, and release flow. |
+| Testing            | **Release gated**    | Unit suites, replay fixtures, Temporal CLI integration tests, worker load/perf checks, formatting, build, and npm provenance publishing gate releases.                                |
+
+> **Production-readiness note:** The remaining adoption risk is no longer
+> "Bun cannot load the official Node worker stack." This SDK does not depend on
+> `@temporalio/worker`, Node-API native modules, `process.dlopen()`, or
+> `worker_threads` for worker execution. The real external concern is trust:
+> third-party support status, public proof of deterministic replay and soak/load
+> behaviour, and clear operational docs for teams choosing a non-official SDK.
+> `bun run verify:production` is the mechanical package-boundary gate: it fails
+> if native bridge artifacts, official Node worker dependencies, or stale native
+> Docker build paths re-enter the production package.
 
 ## Architecture Overview
 
 - **Workflow Runtime (`src/workflow/*`)**
   - _Shipped:_ Deterministic workflow context, command intents, determinism guard.
-  - _GA requirements:_ History replay ingest, failure categorisation, command metadata (headers/memo/search attributes), workflow cache eviction strategy.
+  - _Release gate:_ History replay ingest, failure categorisation, command metadata (headers/memo/search attributes), workflow cache eviction strategy.
 - **Worker Runtime (`src/worker/*`)**
   - _Shipped:_ Single-threaded pollers, deterministic snapshot persistence per run.
-  - _GA requirements:_ Configurable concurrency, sticky task queues, build-id routing, graceful shutdown with drain, heartbeat plumbing, metrics/logging hooks.
+  - _Release gate:_ Configurable concurrency, sticky task queues, build-id routing, graceful shutdown with drain, heartbeat plumbing, metrics/logging hooks.
 - **Client (`src/client.ts`)**
   - _Shipped:_ Connect WorkflowService client with payload conversion, header normalisation, and effect-layered interceptors for retries/auth/metrics/tracing.
-  - _GA requirements:_ TLS/auth hardening, memo/search attribute helpers, long-running operation ergonomics.
+  - _Release gate:_ TLS/auth hardening, memo/search attribute helpers, long-running operation ergonomics.
 - **Activities (`src/activities/*`, `src/worker/activity-context.ts`)**
   - _Shipped:_ AsyncLocalStorage-based context, cancellation surface.
-  - _GA requirements:_ Heartbeat API, retry policy adherence, progress payload encoding, failure classification.
+  - _Release gate:_ Heartbeat API, retry policy adherence, progress payload encoding, failure classification.
 - **Tooling**
   - CLI (`src/bin/temporal-bun.ts`) scaffolds projects; needs connectivity checks, history replay tooling, lint hooks.
 - **Generated Protos (`src/proto/**`)\*\*
@@ -52,18 +67,18 @@ and the quality bars we must meet before GA.
 
 ## Functional Roadmap
 
-| Capability         | Status                           | Acceptance Criteria                                                                                                        | GA Critical? |
-| ------------------ | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| Command coverage   | ✅ context + intents             | Activities, timers, child workflows, signals, continue-as-new emit correct commands with metadata and retries.             | Yes          |
-| History replay     | ✅ ingestion + sticky cache      | Worker hydrates history into determinism state, verifies commands, tolerates sticky cache eviction, exposes replay API.    | Yes          |
-| Activity lifecycle | ✅ complete                      | Heartbeats, retries, cancellation reasons, eager activities.                                                               | Yes          |
-| Worker concurrency | ✅ scheduler + sticky queues     | Configurable parallelism, sticky queues, build-id routing, per-namespace/task queue isolation.                             | Yes          |
-| Client resilience  | ✅ complete                      | Retry policies, interceptors, TLS/mTLS test matrix, structured errors.                                                     | Yes          |
-| Diagnostics        | ✅ logs + metrics (tracing next) | Effect-based logger + metrics exporters ship with worker/client runtimes; tracing hooks scheduled separately.              | Yes          |
-| Testing & QA       | ✅ replay + integration          | Deterministic regression suite, integration tests with Temporal dev server; load/perf smoke tests still pending.           | Yes          |
-| Tooling            | ✅ complete                      | CLI connectivity check, replay CLI, proto regeneration script, API docs generator.                                         | No (Beta)    |
-| Documentation      | ✅ complete                      | Architecture guide, workflow/activities best practices, migration guide, troubleshooting, accessibility for CLI.           | Yes          |
-| Release operations | ✅ automated                     | Trusted release workflows (prepare/publish), release-please changelog automation, npm provenance publishing, support SLAs. | Yes          |
+| Capability         | Status                           | Acceptance Criteria                                                                                                                      | GA Critical? |
+| ------------------ | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| Command coverage   | ✅ context + intents             | Activities, timers, child workflows, signals, continue-as-new emit correct commands with metadata and retries.                           | Yes          |
+| History replay     | ✅ ingestion + sticky cache      | Worker hydrates history into determinism state, verifies commands, tolerates sticky cache eviction, exposes replay API.                  | Yes          |
+| Activity lifecycle | ✅ complete                      | Heartbeats, retries, cancellation reasons, eager activities.                                                                             | Yes          |
+| Worker concurrency | ✅ scheduler + sticky queues     | Configurable parallelism, sticky queues, build-id routing, per-namespace/task queue isolation.                                           | Yes          |
+| Client resilience  | ✅ complete                      | Retry policies, interceptors, TLS/mTLS test matrix, structured errors.                                                                   | Yes          |
+| Diagnostics        | ✅ logs + metrics (tracing next) | Effect-based logger + metrics exporters ship with worker/client runtimes; tracing hooks scheduled separately.                            | Yes          |
+| Testing & QA       | ✅ replay + integration + load   | Deterministic regression suite, integration tests with Temporal dev server, worker load/perf smoke tests, package-boundary verification. | Yes          |
+| Tooling            | ✅ complete                      | CLI connectivity check, replay CLI, production boundary verification, proto regeneration script, API docs generator.                     | Yes          |
+| Documentation      | ✅ complete                      | Architecture guide, workflow/activities best practices, migration guide, troubleshooting, accessibility for CLI.                         | Yes          |
+| Release operations | ✅ automated                     | Trusted release workflows (prepare/publish), release-please changelog automation, npm provenance publishing, support SLAs.               | Yes          |
 
 Legend: ✅ complete, 🚧 in progress/planned.
 
@@ -436,7 +451,7 @@ can contribute independently without re-planning.
 - **CLI (TBS-007)**
   - Add `temporal-bun doctor` for connectivity validation.
   - Add `temporal-bun replay` for history replay against workflows.
-  - Offer `--use-zig-bridge` toggle if native bridge returns.
+  - Keep the production runtime Bun/TypeScript-only; native experiments must live outside the published package until they earn separate release gates.
 - **Proto updates**
   - Scripted `buf` regeneration with Temporal release cadence tracking.
 - **Release automation**
@@ -552,9 +567,9 @@ can contribute independently without re-planning.
 9. ✅ Release automation: lint/test/build, versioning, changelog, npm publish pipeline.
 10. ✅ Support & maintenance guide (issue triage and security policy).
 
-Progress through this checklist gates each release milestone (Alpha → Beta → RC → GA).
-Every GA-critical item requires passing integration tests and updated documentation
-before the release train can proceed.
+This checklist gates each release. Every GA-critical item requires passing
+integration tests, worker load checks, production boundary verification, and
+updated documentation before the release train can proceed.
 
 ## Post-GA Enhancements
 

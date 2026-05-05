@@ -22,7 +22,8 @@ bun install
   Effect runtime:
   - Do not disable the deterministic context unless explicitly testing legacy paths.
   - Activities/workflows should remain within Effect handlers to preserve replay guarantees.
-- **Native bridge:** The example targets the pure TypeScript runtime exclusively; native bridge flags are not supported.
+- **Runtime boundary:** The example targets the Bun/TypeScript runtime
+  exclusively; legacy native bridge flags are not supported.
 
 ## Quickstart
 

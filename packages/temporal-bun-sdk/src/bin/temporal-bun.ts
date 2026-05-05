@@ -581,7 +581,7 @@ FROM oven/bun:1.3.13
 WORKDIR /app
 
 COPY package.json bunfig.toml tsconfig.json ./
-RUN bun install --production
+RUN bun install --production --ignore-scripts
 
 COPY src ./src
 
