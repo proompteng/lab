@@ -17,6 +17,8 @@ spec:
       annotations:
         kubectl.kubernetes.io/restartedAt: "2026-03-09T03:45:00Z"
     spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
       serviceAccountName: torghut-runtime
       containers:
         - name: torghut-options-enricher
