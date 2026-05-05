@@ -34,6 +34,10 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v1/historical-dataset-simulation.md`
    - `docs/torghut/design-system/v1/trading-day-simulation-automation.md`
 3. current autonomy/promotion contract source of truth:
+   - `docs/agents/designs/89-jangar-brownout-adoption-ladder-and-quant-capital-contract-2026-05-05.md`
+   - `docs/torghut/design-system/v6/93-torghut-evidence-priced-hypothesis-market-and-capital-ladder-2026-05-05.md`
+   - `docs/agents/designs/88-jangar-negative-evidence-arbiter-and-brownout-governor-2026-05-05.md`
+   - `docs/torghut/design-system/v6/92-torghut-proof-cost-market-and-options-catalog-firebreak-2026-05-05.md`
    - `docs/agents/designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md`
    - `docs/torghut/design-system/v6/87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
    - `docs/agents/designs/77-jangar-evidence-settlement-authority-and-data-proof-handoff-2026-05-05.md`
@@ -109,6 +113,17 @@ The current highest-priority work is:
 
 The May 5 cross-plane contracts are now the latest active architecture layer:
 
+- adopt Jangar brownout decisions by action class, keep bounded repair work open under explicit budgets, and expose a
+  Torghut quant capital posture only after dispatch and rollout enforcement are validated in
+  `docs/agents/designs/89-jangar-brownout-adoption-ladder-and-quant-capital-contract-2026-05-05.md`;
+- price Torghut hypotheses by expected edge, empirical freshness, data quality, Jangar posture, and repair cost before
+  allocating zero-notional repair, paper probes, or live capital in
+  `docs/torghut/design-system/v6/93-torghut-evidence-priced-hypothesis-market-and-capital-ladder-2026-05-05.md`;
+- let negative evidence overrule stale positive receipts for dispatch, rollout widening, and Torghut paper/live
+  capital while repair lanes remain bounded in
+  `docs/agents/designs/88-jangar-negative-evidence-arbiter-and-brownout-governor-2026-05-05.md`;
+- price proof producers and isolate options-catalog query failures from broader Torghut replay in
+  `docs/torghut/design-system/v6/92-torghut-proof-cost-market-and-options-catalog-firebreak-2026-05-05.md`;
 - convert Jangar authority-clearance cells into a budgeted repair exchange with closure warrants so degraded execution
   trust, image-pull blockers, route timeouts, and external-capital holds can run only bounded repair work until proof
   closes in

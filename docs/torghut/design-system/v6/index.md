@@ -13,6 +13,8 @@
 - Evidence (current next-work priority):
   - `93-torghut-recovery-budget-profit-ladder-and-session-cost-ledger-2026-05-05.md`
   - `docs/agents/designs/89-jangar-action-settlement-windows-and-recovery-budget-governor-2026-05-05.md`
+  - `93-torghut-evidence-priced-hypothesis-market-and-capital-ladder-2026-05-05.md`
+  - `docs/agents/designs/89-jangar-brownout-adoption-ladder-and-quant-capital-contract-2026-05-05.md`
   - `92-torghut-proof-cost-market-and-options-catalog-firebreak-2026-05-05.md`
   - `docs/agents/designs/88-jangar-negative-evidence-arbiter-and-brownout-governor-2026-05-05.md`
   - `91-torghut-causal-replay-exchange-and-capital-reentry-governor-2026-05-05.md`
