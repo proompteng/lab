@@ -12,6 +12,8 @@
 - Evidence (current next-work priority):
   - `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
   - `docs/agents/designs/67-jangar-runtime-evidence-epochs-and-artifact-parity-gates-2026-05-05.md`
+  - `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
+  - `docs/agents/designs/69-jangar-evidence-escrow-and-repair-cell-contract-2026-05-05.md`
   - `73-torghut-profit-evidence-clock-and-capital-veto-contract-2026-05-05.md`
   - `docs/agents/designs/68-jangar-evidence-clock-arbiter-and-rollout-veto-contract-2026-05-05.md`
   - `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
@@ -53,6 +55,8 @@
 - Cross-system source of truth:
   - `docs/agents/designs/67-jangar-runtime-evidence-epochs-and-artifact-parity-gates-2026-05-05.md`
   - `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
+  - `docs/agents/designs/69-jangar-evidence-escrow-and-repair-cell-contract-2026-05-05.md`
+  - `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
   - `docs/agents/designs/68-jangar-evidence-clock-arbiter-and-rollout-veto-contract-2026-05-05.md`
   - `docs/agents/designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md`
   - `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
@@ -178,6 +182,13 @@ Current source-state priority is narrower:
 - `docs/agents/designs/68-jangar-evidence-clock-arbiter-and-rollout-veto-contract-2026-05-05.md` now separates Jangar
   serving readiness from promotion authority with evidence clocks and rollout vetoes for dispatch, schedule launch,
   deploy widening, and Torghut capital promotion.
+- `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md` now makes profitability promotion
+  cell-scoped: every non-observe capital request must cite one profit cell and one fresh Jangar evidence escrow, with
+  stale options, missing autoresearch evidence, failed simulation revisions, and blocked control-plane escrows recorded
+  as explicit vetoes.
+- `docs/agents/designs/69-jangar-evidence-escrow-and-repair-cell-contract-2026-05-05.md` now turns the latest
+  control-plane assessment into a concrete Jangar contract: compile durable evidence escrows, route degraded facts into
+  repair cells, keep serving readiness separate from promotion authority, and enforce read-budgeted database probes.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.
@@ -372,6 +383,7 @@ This pack is positioned as the next architecture layer above:
 62. `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
 63. `61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`
 64. `62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`
+65. `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
 
 ## Recommended Build Order
 
@@ -426,6 +438,7 @@ This pack is positioned as the next architecture layer above:
 49. `66-torghut-property-based-testing-coverage-and-lint-hardening-2026-03-28.md`
 50. `67-torghut-trading-engine-glossary-and-mechanics-2026-03-29.md`
 51. `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
+52. `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
 
 ## Why This Sequence
 
