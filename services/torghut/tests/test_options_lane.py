@@ -4,7 +4,7 @@ import json
 import os
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
-from typing import Iterator
+from typing import Any, Iterator
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -49,6 +49,20 @@ class _FakeScalarResult:
         return self._value
 
 
+class _FakeMappingResult:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self._rows = rows
+
+    def mappings(self) -> _FakeMappingResult:
+        return self
+
+    def first(self) -> dict[str, Any] | None:
+        return self._rows[0] if self._rows else None
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        return iter(self._rows)
+
+
 class _FakeBegin:
     def __enter__(self) -> _FakeBegin:
         return self
@@ -81,6 +95,73 @@ class _FakeCountRepository(OptionsRepository):
     @contextmanager
     def session(self) -> Iterator[_FakeCountSession]:  # type: ignore[override]
         yield self.fake_session
+
+
+class _FakeRepositorySession:
+    def __init__(self, mapping_results: list[list[dict[str, Any]]]) -> None:
+        self.mapping_results = mapping_results
+        self.statements: list[tuple[str, dict[str, Any] | None]] = []
+
+    def begin(self) -> _FakeBegin:
+        return _FakeBegin()
+
+    def execute(
+        self,
+        statement: object,
+        params: dict[str, Any] | list[dict[str, Any]] | None = None,
+    ) -> _FakeMappingResult:
+        self.statements.append(
+            (str(statement), params if isinstance(params, dict) else None)
+        )
+        if self.mapping_results:
+            return _FakeMappingResult(self.mapping_results.pop(0))
+        return _FakeMappingResult([])
+
+
+class _FakeRepository(OptionsRepository):
+    def __init__(self, session: _FakeRepositorySession) -> None:
+        self.fake_session = session
+        self.default_calls: list[dict[str, tuple[float, int]]] = []
+
+    @contextmanager
+    def session(self) -> Iterator[_FakeRepositorySession]:  # type: ignore[override]
+        yield self.fake_session
+
+    def ensure_rate_bucket_defaults(
+        self, defaults: dict[str, tuple[float, int]]
+    ) -> None:
+        self.default_calls.append(defaults)
+
+
+def _contract_payload(
+    contract_symbol: str,
+    *,
+    observed_at: datetime,
+    first_seen_ts: datetime | None = None,
+    expiration_date: date | None = None,
+    status: str = "active",
+) -> dict[str, Any]:
+    return {
+        "contract_symbol": contract_symbol,
+        "contract_id": f"{contract_symbol}-id",
+        "root_symbol": "NVDA",
+        "underlying_symbol": "NVDA",
+        "expiration_date": expiration_date or date(2026, 3, 20),
+        "strike_price": 100.0,
+        "option_type": "call",
+        "style": "american",
+        "contract_size": 100,
+        "status": status,
+        "tradable": True,
+        "open_interest": 42,
+        "open_interest_date": date(2026, 3, 7),
+        "close_price": 2.15,
+        "close_price_date": date(2026, 3, 7),
+        "provider_updated_ts": observed_at,
+        "first_seen_ts": first_seen_ts or observed_at,
+        "last_seen_ts": observed_at,
+        "metadata": {"source": "test"},
+    }
 
 
 class TestOptionsLaneSession(TestCase):
@@ -118,6 +199,13 @@ class TestOptionsLaneSettings(TestCase):
 
 
 class TestOptionsRepositoryStatusCounts(TestCase):
+    def test_repository_constructor_creates_disposable_engine(self) -> None:
+        repo = OptionsRepository("sqlite+pysqlite:///:memory:")
+        try:
+            self.assertIsNotNone(repo)
+        finally:
+            repo.close()
+
     def test_count_active_contracts_uses_bounded_statement_timeout(self) -> None:
         session = _FakeCountSession(value=42)
         repo = _FakeCountRepository(session)
@@ -152,6 +240,141 @@ class TestOptionsRepositoryStatusCounts(TestCase):
                 for sql in session.statements
             )
         )
+
+
+class TestOptionsRepositoryCatalog(TestCase):
+    def test_acquire_rate_bucket_consumes_refilled_token(self) -> None:
+        last_refill_ts = datetime(2026, 3, 8, 17, 59, tzinfo=timezone.utc)
+        session = _FakeRepositorySession(
+            [
+                [
+                    {
+                        "bucket_name": "contracts",
+                        "refill_per_second": 1.0,
+                        "burst_capacity": 4,
+                        "tokens_available": 0.0,
+                        "last_refill_ts": last_refill_ts,
+                    }
+                ]
+            ]
+        )
+        repo = _FakeRepository(session)
+
+        self.assertTrue(repo.acquire_rate_bucket("contracts", 1.0, 4))
+
+        self.assertEqual(repo.default_calls, [{"contracts": (1.0, 4)}])
+        update_params = session.statements[-1][1]
+        self.assertEqual(update_params["bucket_name"], "contracts")
+        self.assertGreaterEqual(update_params["tokens_available"], 0.0)
+
+    def test_sync_contract_catalog_page_preserves_existing_first_seen_ts(
+        self,
+    ) -> None:
+        observed_at = datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc)
+        first_seen_ts = datetime(2026, 3, 7, 18, 0, tzinfo=timezone.utc)
+        current_row = _contract_payload(
+            "NVDA260320C00100000",
+            observed_at=observed_at,
+            first_seen_ts=first_seen_ts,
+            status="inactive",
+        )
+        session = _FakeRepositorySession([[current_row]])
+        repo = _FakeRepository(session)
+        contract = _contract_payload("NVDA260320C00100000", observed_at=observed_at)
+
+        published_rows = repo.sync_contract_catalog_page(
+            [contract], observed_at=observed_at
+        )
+
+        self.assertEqual(published_rows[0]["first_seen_ts"], first_seen_ts)
+        self.assertEqual(published_rows[0]["status"], "active")
+
+    def test_mark_contracts_missing_from_cycle_classifies_stale_rows(self) -> None:
+        observed_at = datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc)
+        expired_row = _contract_payload(
+            "NVDA260306C00100000",
+            observed_at=observed_at,
+            expiration_date=date(2026, 3, 6),
+        )
+        inactive_row = _contract_payload(
+            "NVDA260320C00100000",
+            observed_at=observed_at,
+            expiration_date=date(2026, 3, 20),
+        )
+        session = _FakeRepositorySession([[expired_row, inactive_row]])
+        repo = _FakeRepository(session)
+
+        transitions = repo.mark_contracts_missing_from_cycle(observed_at=observed_at)
+
+        self.assertEqual(
+            [(row["contract_symbol"], row["status"]) for row in transitions],
+            [
+                ("NVDA260306C00100000", "expired"),
+                ("NVDA260320C00100000", "inactive"),
+            ],
+        )
+
+    def test_sync_contract_catalog_uses_missing_cycle_when_contracts_empty(
+        self,
+    ) -> None:
+        observed_at = datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc)
+
+        class EmptyCycleRepository(_FakeRepository):
+            def __init__(self) -> None:
+                super().__init__(_FakeRepositorySession([]))
+                self.page_calls = 0
+
+            def sync_contract_catalog_page(
+                self, contracts: list[dict[str, Any]], *, observed_at: datetime
+            ) -> list[dict[str, Any]]:
+                self.page_calls += 1
+                return []
+
+            def mark_contracts_missing_from_cycle(
+                self, *, observed_at: datetime
+            ) -> list[dict[str, Any]]:
+                return [{"contract_symbol": "NVDA260320C00100000"}]
+
+        repo = EmptyCycleRepository()
+
+        published_rows, transitions = repo.sync_contract_catalog(
+            [], observed_at=observed_at
+        )
+
+        self.assertEqual(published_rows, [])
+        self.assertEqual(transitions, [{"contract_symbol": "NVDA260320C00100000"}])
+        self.assertEqual(repo.page_calls, 1)
+
+    def test_sync_contract_catalog_marks_unseen_active_contracts(self) -> None:
+        observed_at = datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc)
+        stale_row = _contract_payload(
+            "NVDA260306C00100000",
+            observed_at=observed_at,
+            expiration_date=date(2026, 3, 6),
+        )
+
+        class StaleCycleRepository(_FakeRepository):
+            def sync_contract_catalog_page(
+                self, contracts: list[dict[str, Any]], *, observed_at: datetime
+            ) -> list[dict[str, Any]]:
+                return []
+
+        session = _FakeRepositorySession([[stale_row]])
+        repo = StaleCycleRepository(session)
+
+        _, transitions = repo.sync_contract_catalog(
+            [
+                _contract_payload(
+                    "NVDA260320C00100000",
+                    observed_at=observed_at,
+                    expiration_date=date(2026, 3, 20),
+                )
+            ],
+            observed_at=observed_at,
+        )
+
+        self.assertEqual(transitions[0]["contract_symbol"], "NVDA260306C00100000")
+        self.assertEqual(transitions[0]["status"], "expired")
 
 
 class TestOptionsLaneNormalization(TestCase):
@@ -304,6 +527,39 @@ class TestOptionsLaneNormalization(TestCase):
 
 
 class TestOptionsLaneRanking(TestCase):
+    def test_ranked_contract_rows_accepts_json_string_ranking_inputs(self) -> None:
+        observed_at = datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc)
+
+        ranked = ranked_contract_rows(
+            [
+                {
+                    "contract_symbol": "AAPL260320C00100000",
+                    "status": "active",
+                    "underlying_symbol": "AAPL",
+                    "expiration_date": date(2026, 3, 20),
+                    "strike_price": 100.0,
+                    "close_price": 100.0,
+                    "open_interest": 100,
+                    "ranking_inputs": json.dumps(
+                        {
+                            "quote_recency_score": "0.9",
+                            "trade_recency_score": "0.8",
+                            "underlying_activity_score": "0.7",
+                            "moneyness_score": "0.6",
+                        }
+                    ),
+                }
+            ],
+            observed_at=observed_at,
+            hot_cap=1,
+            warm_cap=1,
+            provider_cap_bootstrap=2,
+            underlying_priority=set(),
+        )
+
+        self.assertAlmostEqual(ranked[0]["ranking_inputs"]["quote_recency_score"], 0.9)
+        self.assertAlmostEqual(ranked[0]["ranking_inputs"]["trade_recency_score"], 0.8)
+
     def test_ranked_contract_rows_assigns_hot_and_warm_tiers(self) -> None:
         observed_at = datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc)
         contracts = [
