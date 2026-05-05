@@ -204,6 +204,7 @@ spec:
             - name: TRADING_ORDER_FEED_GROUP_ID
               value: torghut-order-feed-sim-default
             - name: TRADING_ORDER_FEED_TOPIC_V2
+              value: ""
             - name: TRADING_SIMULATION_ORDER_UPDATES_TOPIC
               value: torghut.sim.trade-updates.v1
             - name: TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS
