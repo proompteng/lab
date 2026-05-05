@@ -59,7 +59,7 @@ The repository centers on:
 ### Prerequisites
 
 - Node `24.11.1`
-- Bun `1.3.10`
+- Bun `1.3.13`
 - Go `1.24+` for Go services
 - Ruby `3.4.7` + Bundler `2.7+` for `services/dernier`
 - Python:

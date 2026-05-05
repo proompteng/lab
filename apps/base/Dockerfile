@@ -1,5 +1,7 @@
 FROM node:lts
 
+ARG BUN_VERSION=1.3.13
+
 LABEL maintainer="Greg Konush <greg.konush@gmail.com>"
 
 ENV BUILDER_VERSION=0.0.1
@@ -18,7 +20,7 @@ RUN groupadd -r -g 1001 app && \
     mkdir -p /opt/app-root/src "$BUN_INSTALL" && \
     chown -R app:app /opt/app-root
 
-RUN curl -fsSL https://bun.sh/install | bash && \
+RUN curl -fsSL https://bun.sh/install | bash -s -- "bun-v${BUN_VERSION}" && \
     chown -R app:app "$BUN_INSTALL"
 
 # TODO (optional): Copy the builder files into /opt/app-root

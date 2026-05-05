@@ -482,6 +482,7 @@ resource "coder_script" "bootstrap_tools" {
 
     export PATH="$HOME/.local/bin:$PATH"
     export BUN_INSTALL="$HOME/.bun"
+    BOOTSTRAP_BUN_VERSION="1.3.13"
     mkdir -p "$BUN_INSTALL" "$HOME/.local/bin" /tmp/coder-script-data/bin
     case ":$PATH:" in
       *:"$BUN_INSTALL/bin":*) ;;
@@ -489,8 +490,8 @@ resource "coder_script" "bootstrap_tools" {
     esac
 
     if ! command -v bun >/dev/null 2>&1; then
-      log "Installing Bun runtime"
-      if ! curl -fsSL https://bun.sh/install | bash >"$LOG_DIR/bun-install.log" 2>&1; then
+      log "Installing Bun runtime $BOOTSTRAP_BUN_VERSION"
+      if ! curl -fsSL https://bun.sh/install | bash -s -- "bun-v${BOOTSTRAP_BUN_VERSION}" >"$LOG_DIR/bun-install.log" 2>&1; then
         fail "Bun install failed; see $LOG_DIR/bun-install.log"
       fi
       hash -r

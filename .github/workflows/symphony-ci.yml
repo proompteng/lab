@@ -37,7 +37,7 @@ jobs:
     if: github.event_name == 'pull_request'
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      bun-version: 1.3.10
+      bun-version: 1.3.13
       node-version: 24.11.1
       install-command: bun install --frozen-lockfile --ignore-scripts && bun run --cwd packages/otel build && bun run --cwd packages/codex build
       lint-command: bunx oxfmt --check services/symphony packages/scripts/src/symphony argocd/applications/symphony argocd/applications/symphony-jangar argocd/applications/symphony-torghut argocd/applications/symphony-base argocd/applications/jangar/alloy-configmap.yaml argocd/applications/torghut/alloy-configmap.yaml argocd/applications/observability/graf-mimir-rules.yaml argocd/applications/observability/kustomization.yaml argocd/applications/observability/symphony-fleet-dashboard-configmap.yaml

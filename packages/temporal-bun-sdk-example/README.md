@@ -15,7 +15,7 @@ bun install
 
 ## Requirements
 
-- **Runtime:** Bun ≥ 1.3.10 with `effect` dependency available (installed via `bun install`).
+- **Runtime:** Bun ≥ 1.3.13 with `effect` dependency available (installed via `bun install`).
 - **Temporal access:** Temporal CLI ≥ 1.4 (install via `curl -sSfL https://temporal.download/cli.sh | bash -s -- -b /usr/local/bin`).
 - **Configuration:** Environment variables consumed by `loadTemporalConfig` (see below).
 - **Effect-first integration:** The worker and sample workflows rely on the
