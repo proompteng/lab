@@ -37,10 +37,17 @@ spec:
 
               from sqlalchemy import create_engine, text
 
+              def sqlalchemy_dsn(raw):
+                  if raw.startswith('postgresql+'):
+                      return raw
+                  if raw.startswith('postgresql://'):
+                      return 'postgresql+psycopg://' + raw[len('postgresql://'):]
+                  return raw
+
               revision_before_context = '0023_simulation_run_progress'
               context_revision = '0024_simulation_runtime_context'
 
-              engine = create_engine(os.environ['DB_DSN'])
+              engine = create_engine(sqlalchemy_dsn(os.environ['DB_DSN']))
               with engine.begin() as connection:
                   has_version_table = connection.execute(
                       text("select to_regclass('public.alembic_version') is not null"),

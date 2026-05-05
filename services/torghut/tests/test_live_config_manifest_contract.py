@@ -283,6 +283,26 @@ class TestLiveConfigManifestContract(TestCase):
             context="torghut-ws subscription symbols",
         )
 
+    def test_migration_hook_uses_installed_psycopg_driver_for_sim_stamp(self) -> None:
+        manifest = _load_yaml_mapping(
+            "argocd/applications/torghut/db-migrations-job.yaml"
+        )
+        containers = (
+            manifest.get("spec", {})
+            .get("template", {})
+            .get("spec", {})
+            .get("containers", [])
+        )
+        self.assertTrue(containers)
+        first_container = cast(Mapping[str, object], containers[0])
+        args = first_container.get("args")
+        self.assertIsInstance(args, list)
+        script = "\n".join(str(item) for item in cast(list[object], args))
+
+        self.assertIn("postgresql+psycopg://", script)
+        self.assertIn("create_engine(sqlalchemy_dsn(os.environ['DB_DSN']))", script)
+        self.assertIn("TORGHUT_SIM_DB_DSN", script)
+
     def test_profitability_sweep_universes_are_chip_only(self) -> None:
         trading_config_dir = (
             _repo_root() / "services" / "torghut" / "config" / "trading"
