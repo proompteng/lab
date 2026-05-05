@@ -457,8 +457,7 @@ jobs:
           JANGAR_COMMIT="$(git -C "${WORKSPACE}" rev-parse HEAD)"
           IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 
-          # Use docker.io for Bun base image in CI builds to avoid mirror image metadata drift.
-          # Local image rebuilds are best-effort in CI; fall back to the public image on timeout.
+          # Use the mirrored Bun base image so local CI rebuilds do not fail on Docker Hub pull limits.
           # ARC arm64 runners can spend well over 18 minutes in the pruned control-plane docker
           # build while still making forward progress, so give the local image build enough headroom
           # to complete instead of terminating a healthy build.
@@ -475,7 +474,7 @@ jobs:
             --build-arg "JANGAR_BUILD_CI=true" \
             --build-arg "JANGAR_BUILD_SOURCEMAP=0" \
             --build-arg "JANGAR_BUILD_LOG_LEVEL=warn" \
-            --build-arg "BUN_BASE_IMAGE=docker.io/oven/bun" \
+            --build-arg "BUN_BASE_IMAGE=mirror.gcr.io/oven/bun" \
             --progress=plain \
             "${PRUNE_DIR}"; then
             echo "Built local image ${IMAGE}."
