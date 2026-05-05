@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from pathlib import Path
-from typing import Mapping, cast
+from typing import Iterable, Mapping, cast
 from unittest import TestCase
 
 from pydantic import ValidationError
@@ -10,6 +11,23 @@ from yaml import safe_load
 
 from app.config import Settings
 from app.trading.llm.dspy_programs.runtime import DSPyReviewRuntime
+
+
+_CHIP_UNIVERSE_TOP_12 = (
+    "AMAT",
+    "AMD",
+    "ASML",
+    "AVGO",
+    "INTC",
+    "KLAC",
+    "LRCX",
+    "MU",
+    "NVDA",
+    "QCOM",
+    "TSM",
+    "TXN",
+)
+_CHIP_UNIVERSE_SYMBOLS = set(_CHIP_UNIVERSE_TOP_12)
 
 
 def _repo_root() -> Path:
@@ -131,6 +149,28 @@ def _params(strategy: Mapping[str, object]) -> Mapping[str, object]:
     )
 
 
+def _assert_chip_universe(
+    test_case: TestCase, symbols: Iterable[object], *, context: str
+) -> None:
+    normalized = [
+        str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
+    ]
+    test_case.assertTrue(normalized, f"{context} missing universe symbols")
+    test_case.assertLessEqual(
+        len(normalized), 12, f"{context} has more than 12 symbols"
+    )
+    test_case.assertEqual(
+        len(normalized),
+        len(set(normalized)),
+        f"{context} has duplicate symbols",
+    )
+    test_case.assertEqual(
+        sorted(set(normalized) - _CHIP_UNIVERSE_SYMBOLS),
+        [],
+        f"{context} contains non-chip symbols",
+    )
+
+
 class TestLiveConfigManifestContract(TestCase):
     def test_knative_env_wiring_is_safe_live_defaults(self) -> None:
         env = _load_torghut_knative_env()
@@ -168,20 +208,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIsNone(settings.trading_market_context_url)
         self.assertEqual(
             set(settings.trading_universe_static_fallback_symbols),
-            {
-                "AMAT",
-                "AMD",
-                "ASML",
-                "AVGO",
-                "INTC",
-                "KLAC",
-                "LRCX",
-                "MU",
-                "NVDA",
-                "QCOM",
-                "TSM",
-                "TXN",
-            },
+            _CHIP_UNIVERSE_SYMBOLS,
         )
         self.assertNotIn("TRADING_FEATURE_FLAGS_URL", env)
         self.assertNotIn("TRADING_FORECAST_SERVICE_URL", env)
@@ -196,6 +223,80 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(env.get("TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS"), "10")
         self.assertNotIn("JANGAR_BASE_URL", env)
+
+    def test_strategy_catalog_universes_are_chip_only(self) -> None:
+        for strategy in _load_torghut_strategy_catalog():
+            raw_symbols = strategy.get("universe_symbols")
+            self.assertIsInstance(
+                raw_symbols,
+                list,
+                f"{strategy.get('name')} missing explicit universe_symbols",
+            )
+            _assert_chip_universe(
+                self,
+                cast(list[object], raw_symbols),
+                context=f"strategy {strategy.get('name')}",
+            )
+
+    def test_profitability_sweep_universes_are_chip_only(self) -> None:
+        trading_config_dir = (
+            _repo_root() / "services" / "torghut" / "config" / "trading"
+        )
+        checked_universe_sets = 0
+        for path in sorted(trading_config_dir.glob("profitability-frontier*.yaml")):
+            payload = safe_load(path.read_text(encoding="utf-8"))
+            self.assertIsInstance(payload, dict, f"{path} did not parse to a mapping")
+            overrides = cast(Mapping[str, object], payload).get("strategy_overrides")
+            if not isinstance(overrides, Mapping):
+                continue
+            raw_universe_sets = overrides.get("universe_symbols")
+            if raw_universe_sets is None:
+                continue
+            self.assertIsInstance(
+                raw_universe_sets,
+                list,
+                f"{path} missing strategy_overrides.universe_symbols",
+            )
+            for index, raw_symbols in enumerate(cast(list[object], raw_universe_sets)):
+                self.assertIsInstance(
+                    raw_symbols,
+                    list,
+                    f"{path} universe_symbols[{index}] is not a list",
+                )
+                _assert_chip_universe(
+                    self,
+                    cast(list[object], raw_symbols),
+                    context=f"{path.name} universe_symbols[{index}]",
+                )
+                checked_universe_sets += 1
+        self.assertGreater(checked_universe_sets, 0)
+
+    def test_candidate_records_are_not_left_on_mixed_large_cap_universes(self) -> None:
+        candidates_dir = (
+            _repo_root() / "services" / "torghut" / "config" / "trading" / "candidates"
+        )
+        for path in sorted(candidates_dir.glob("*.json")):
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertIsInstance(payload, dict, f"{path} did not parse to a mapping")
+            candidate_strategy = payload.get("candidate_strategy")
+            self.assertIsInstance(
+                candidate_strategy,
+                Mapping,
+                f"{path} missing candidate_strategy",
+            )
+            raw_symbols = cast(Mapping[str, object], candidate_strategy).get(
+                "universe_symbols"
+            )
+            self.assertIsInstance(
+                raw_symbols,
+                list,
+                f"{path} missing candidate_strategy.universe_symbols",
+            )
+            _assert_chip_universe(
+                self,
+                cast(list[object], raw_symbols),
+                context=f"{path.name} candidate universe",
+            )
 
     def test_live_manifest_does_not_import_autonomy_env_from(self) -> None:
         manifest = _load_torghut_knative_manifest()

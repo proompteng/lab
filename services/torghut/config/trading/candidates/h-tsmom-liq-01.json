@@ -3,7 +3,7 @@
   "candidate_id": "H-TSMOM-LIQ-01",
   "lane_id": "intraday-tsmom-liquid-open",
   "strategy_family": "intraday_tsmom_v1",
-  "promotion_state": "repo_catalog_promoted_not_deployed",
+  "promotion_state": "blocked_requires_chip_universe_replay",
   "research_basis": [
     {
       "label": "Stock Turnover Leadership and Expected Returns",
@@ -21,16 +21,18 @@
     "strategy_id": "intraday_tsmom_v1@prod",
     "enabled": true,
     "universe_symbols": [
-      "NVDA",
-      "AAPL",
-      "MSFT",
       "AMAT",
-      "META",
-      "AVGO",
       "AMD",
-      "GOOG",
-      "PLTR",
-      "INTC"
+      "ASML",
+      "AVGO",
+      "INTC",
+      "KLAC",
+      "LRCX",
+      "MU",
+      "NVDA",
+      "QCOM",
+      "TSM",
+      "TXN"
     ],
     "max_notional_per_trade": "50000",
     "max_position_pct_equity": "3.0",
@@ -63,8 +65,8 @@
     }
   },
   "blocking_risks": [
-    "Replay conversion materially exceeds production conversion in INTC, PLTR, and GOOG.",
-    "Production and checked-in Argo strategy catalogs are out of sync.",
+    "March 30 through April 2 replay evidence was generated on the previous mixed mega-cap universe and is not profitability proof for the chip-only universe.",
+    "Fresh empirical promotion evidence is required before treating this chip-only candidate as profitable or live-promotable.",
     "Close-to-close account equity on 2026-04-02 was negative despite positive regular-session equity delta."
   ]
 }
