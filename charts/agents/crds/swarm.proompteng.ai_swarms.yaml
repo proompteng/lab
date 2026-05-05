@@ -64,24 +64,15 @@ spec:
                 integrations:
                   type: object
                   properties:
-                    huly:
+                    nats:
                       type: object
                       properties:
-                        baseUrl:
+                        url:
                           type: string
-                        workspace:
+                        subjectPrefix:
                           type: string
-                        project:
+                        channel:
                           type: string
-                        skillRef:
-                          type: string
-                        authSecretRef:
-                          type: object
-                          properties:
-                            name:
-                              type: string
-                          required:
-                            - name
                         personas:
                           type: object
                           properties:
@@ -92,15 +83,9 @@ spec:
                                   type: string
                                 workerIdentity:
                                   type: string
-                                tokenKey:
-                                  type: string
-                                expectedActorIdKey:
-                                  type: string
                               required:
                                 - humanName
                                 - workerIdentity
-                                - tokenKey
-                                - expectedActorIdKey
                             engineer:
                               type: object
                               properties:
@@ -108,15 +93,9 @@ spec:
                                   type: string
                                 workerIdentity:
                                   type: string
-                                tokenKey:
-                                  type: string
-                                expectedActorIdKey:
-                                  type: string
                               required:
                                 - humanName
                                 - workerIdentity
-                                - tokenKey
-                                - expectedActorIdKey
                             deployer:
                               type: object
                               properties:
@@ -124,21 +103,14 @@ spec:
                                   type: string
                                 workerIdentity:
                                   type: string
-                                tokenKey:
-                                  type: string
-                                expectedActorIdKey:
-                                  type: string
                               required:
                                 - humanName
                                 - workerIdentity
-                                - tokenKey
-                                - expectedActorIdKey
                           required:
                             - architect
                             - engineer
                             - deployer
                       required:
-                        - authSecretRef
                         - personas
                 domains:
                   type: array

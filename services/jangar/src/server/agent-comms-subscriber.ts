@@ -99,6 +99,10 @@ const parseSubject = (subject: string) => {
   const prefix = (() => {
     if (parts[0] === 'workflow') return { offset: 1, runtime: 'native' }
     if (parts[0] === 'agents' && parts[1] === 'workflow') return { offset: 2, runtime: 'native' }
+    if (parts[0] === 'argo' && parts[1] === 'workflow') return { offset: 2, runtime: 'argo' }
+    if (parts[0] === 'workflow_comms' && parts[1] === 'agent_messages') {
+      return { offset: 2, runtime: 'workflow_comms' }
+    }
     return null
   })()
   if (!prefix) return null

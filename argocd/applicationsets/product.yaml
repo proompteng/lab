@@ -56,21 +56,6 @@ spec:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
                 enabled: "false"
-              - name: huly
-                path: argocd/applications/huly
-                namespace: huly
-                renderWithLovely: false
-                syncOptions:
-                  - CreateNamespace=true
-                  - RespectIgnoreDifferences=true
-                  - ApplyOutOfSyncOnly=true
-                  - PruneLast=true
-                  - ServerSideApply=false
-                  - ClientSideApplyMigration=false
-                annotations:
-                  argocd.argoproj.io/sync-wave: "6"
-                automation: manual
-                enabled: "true"
               - name: discourse
                 path: argocd/applications/discourse
                 namespace: discourse

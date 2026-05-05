@@ -17,8 +17,9 @@ export type SupportingPrimitivesConfig = {
   swarmRequirementMaxDispatchPerReconcile: number
   swarmRequirementMaxPayloadBytes: number
   swarmRequirementMaxAttempts: number
-  swarmDefaultHulyBaseUrl: string
-  swarmDefaultHulySkillRef: string
+  swarmDefaultNatsUrl: string
+  swarmDefaultNatsSubjectPrefix: string
+  swarmDefaultNatsChannel: string
   defaultWorkloadImage: string | null
   scheduleRunnerImage: string
   podNamespace: string | null
@@ -30,8 +31,12 @@ export const resolveSupportingPrimitivesConfig = (env: EnvSource = process.env):
   swarmRequirementMaxDispatchPerReconcile: parsePositiveInt(env.JANGAR_SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE, 5),
   swarmRequirementMaxPayloadBytes: parsePositiveInt(env.JANGAR_SWARM_REQUIREMENT_MAX_PAYLOAD_BYTES, 16_384),
   swarmRequirementMaxAttempts: parsePositiveInt(env.JANGAR_SWARM_REQUIREMENT_MAX_ATTEMPTS, 3),
-  swarmDefaultHulyBaseUrl: normalizeNonEmpty(env.JANGAR_SWARM_HULY_BASE_URL) ?? 'https://huly.proompteng.ai',
-  swarmDefaultHulySkillRef: normalizeNonEmpty(env.JANGAR_SWARM_HULY_SKILL_REF) ?? 'skills/huly-api/SKILL.md',
+  swarmDefaultNatsUrl:
+    normalizeNonEmpty(env.JANGAR_SWARM_NATS_URL) ??
+    normalizeNonEmpty(env.NATS_URL) ??
+    'nats://nats.nats.svc.cluster.local:4222',
+  swarmDefaultNatsSubjectPrefix: normalizeNonEmpty(env.JANGAR_SWARM_NATS_SUBJECT_PREFIX) ?? 'workflow',
+  swarmDefaultNatsChannel: normalizeNonEmpty(env.JANGAR_SWARM_NATS_CHANNEL) ?? 'general',
   defaultWorkloadImage:
     normalizeNonEmpty(env.JANGAR_AGENT_RUNNER_IMAGE) ?? normalizeNonEmpty(env.JANGAR_AGENT_IMAGE) ?? null,
   scheduleRunnerImage:

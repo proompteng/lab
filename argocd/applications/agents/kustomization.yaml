@@ -3,8 +3,6 @@ kind: Kustomization
 namespace: agents
 resources:
   - codex-auth-sealedsecret.yaml
-  - huly-api-jangar-sealedsecret.yaml
-  - huly-api-torghut-sealedsecret.yaml
   - swarm-implspecs.yaml
   - swarm-agentrun-templates.yaml
   - swarm-instances.yaml
@@ -40,7 +38,6 @@ resources:
   - torghut-agentruns.yaml
   - torghut-market-context-batch.yaml
   - torghut-market-context-priorityclass.yaml
-  - nats-service.yaml
   - tailscale-service.yaml
   - tailscale-networkpolicy.yaml
   - alloy-rbac.yaml

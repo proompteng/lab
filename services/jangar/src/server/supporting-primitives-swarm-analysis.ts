@@ -243,14 +243,24 @@ export const filterRunsAfterTime = (resources: Record<string, unknown>[], timest
 export const requirementIdForSignal = (signalNamespace: string, signalName: string) =>
   hashNameSuffix(`${signalNamespace}/${signalName}`)
 
-export const isHulyChannel = (channel: string | null | undefined) => {
+export const isNatsChannel = (channel: string | null | undefined) => {
   if (!channel) return false
   const value = channel.trim()
   if (!value) return false
-  if (value.toLowerCase().startsWith('huly://')) return true
+  const lower = value.toLowerCase()
+  if (lower.startsWith('nats://') || lower.startsWith('tls://')) return true
+  if (
+    lower.startsWith('workflow.') ||
+    lower.startsWith('agents.workflow.') ||
+    lower.startsWith('argo.workflow.') ||
+    lower.startsWith('workflow_comms.agent_messages.')
+  ) {
+    return true
+  }
+  if (!lower.includes('://')) return true
   try {
     const url = new URL(value)
-    return url.hostname.toLowerCase().includes('huly')
+    return url.protocol === 'nats:' || url.protocol === 'tls:'
   } catch {
     return false
   }

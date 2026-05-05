@@ -32,19 +32,10 @@ spec:
     swarmAgentWorkerId: worker-jangar-discover
     swarmAgentIdentity: victor-chen-jangar-architect
     swarmHumanName: Victor Chen
-    swarmAgentTokenKey: HULY_API_TOKEN_VICTOR_CHEN_JANGAR_ARCHITECT
-    swarmAgentExpectedActorIdKey: HULY_EXPECTED_ACTOR_ID_VICTOR_CHEN_JANGAR_ARCHITECT
     swarmTeamName: Jangar Engineering
     ownerChannel: swarm://owner/platform
-    hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
-    hulyWorkspace: proompteng
-    hulyProject: DefaultProject
-    hulyChannelName: general
-    hulyChannelUrl: https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message
-    hulyTeamspaceName: PROOMPTENG
-    hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
-    hulyRequireDedicatedAccount: "true"
-    hulySkillRef: skills/huly-api/SKILL.md
+    natsChannel: general
+    natsSubjectPrefix: workflow
     objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate the Jangar control plane
   vcsRef:
     name: github
@@ -54,7 +45,6 @@ spec:
   secrets:
     - github-token
     - codex-auth
-    - huly-api-jangar
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -90,19 +80,10 @@ spec:
     swarmAgentWorkerId: worker-jangar-plan
     swarmAgentIdentity: victor-chen-jangar-architect
     swarmHumanName: Victor Chen
-    swarmAgentTokenKey: HULY_API_TOKEN_VICTOR_CHEN_JANGAR_ARCHITECT
-    swarmAgentExpectedActorIdKey: HULY_EXPECTED_ACTOR_ID_VICTOR_CHEN_JANGAR_ARCHITECT
     swarmTeamName: Jangar Engineering
     ownerChannel: swarm://owner/platform
-    hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
-    hulyWorkspace: proompteng
-    hulyProject: DefaultProject
-    hulyChannelName: general
-    hulyChannelUrl: https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message
-    hulyTeamspaceName: PROOMPTENG
-    hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
-    hulyRequireDedicatedAccount: "true"
-    hulySkillRef: skills/huly-api/SKILL.md
+    natsChannel: general
+    natsSubjectPrefix: workflow
     objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate the Jangar control plane
   vcsRef:
     name: github
@@ -112,7 +93,6 @@ spec:
   secrets:
     - github-token
     - codex-auth
-    - huly-api-jangar
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -151,20 +131,11 @@ spec:
     swarmAgentWorkerId: worker-jangar-implement
     swarmAgentIdentity: elise-novak-jangar-engineer
     swarmHumanName: Elise Novak
-    swarmAgentTokenKey: HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER
-    swarmAgentExpectedActorIdKey: HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER
     swarmTeamName: Jangar Engineering
     objective: grab the system design document, implement high-quality engineering changes, update impacted documentation, and deliver a production-ready PR
     ownerChannel: swarm://owner/platform
-    hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
-    hulyWorkspace: proompteng
-    hulyProject: DefaultProject
-    hulyChannelName: general
-    hulyChannelUrl: https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message
-    hulyTeamspaceName: PROOMPTENG
-    hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
-    hulyRequireDedicatedAccount: "true"
-    hulySkillRef: skills/huly-api/SKILL.md
+    natsChannel: general
+    natsSubjectPrefix: workflow
   vcsRef:
     name: github
   vcsPolicy:
@@ -173,7 +144,6 @@ spec:
   secrets:
     - github-token
     - codex-auth
-    - huly-api-jangar
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -209,19 +179,10 @@ spec:
     swarmAgentWorkerId: worker-jangar-verify
     swarmAgentIdentity: marco-silva-jangar-deployer
     swarmHumanName: Marco Silva
-    swarmAgentTokenKey: HULY_API_TOKEN_MARCO_SILVA_JANGAR_DEPLOYER
-    swarmAgentExpectedActorIdKey: HULY_EXPECTED_ACTOR_ID_MARCO_SILVA_JANGAR_DEPLOYER
     swarmTeamName: Jangar Engineering
     ownerChannel: swarm://owner/platform
-    hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
-    hulyWorkspace: proompteng
-    hulyProject: DefaultProject
-    hulyChannelName: general
-    hulyChannelUrl: https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message
-    hulyTeamspaceName: PROOMPTENG
-    hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
-    hulyRequireDedicatedAccount: "true"
-    hulySkillRef: skills/huly-api/SKILL.md
+    natsChannel: general
+    natsSubjectPrefix: workflow
     objective: as release engineer, make Jangar PRs production-ready by fixing blockers until all required checks are green, then squash-merge and verify in-cluster GitOps rollout health
   vcsRef:
     name: github
@@ -231,7 +192,6 @@ spec:
   secrets:
     - github-token
     - codex-auth
-    - huly-api-jangar
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -267,19 +227,10 @@ spec:
     swarmAgentWorkerId: worker-torghut-discover
     swarmAgentIdentity: gideon-park-torghut-architect
     swarmHumanName: Gideon Park
-    swarmAgentTokenKey: HULY_API_TOKEN_GIDEON_PARK_TORGHUT_ARCHITECT
-    swarmAgentExpectedActorIdKey: HULY_EXPECTED_ACTOR_ID_GIDEON_PARK_TORGHUT_ARCHITECT
     swarmTeamName: Torghut Traders
     ownerChannel: swarm://owner/trading
-    hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
-    hulyWorkspace: proompteng
-    hulyProject: DefaultProject
-    hulyChannelName: general
-    hulyChannelUrl: https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message
-    hulyTeamspaceName: PROOMPTENG
-    hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
-    hulyRequireDedicatedAccount: "true"
-    hulySkillRef: skills/huly-api/SKILL.md
+    natsChannel: general
+    natsSubjectPrefix: workflow
     objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate Torghut quant
   vcsRef:
     name: github
@@ -289,7 +240,6 @@ spec:
   secrets:
     - github-token
     - codex-auth
-    - huly-api-torghut
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -325,19 +275,10 @@ spec:
     swarmAgentWorkerId: worker-torghut-plan
     swarmAgentIdentity: gideon-park-torghut-architect
     swarmHumanName: Gideon Park
-    swarmAgentTokenKey: HULY_API_TOKEN_GIDEON_PARK_TORGHUT_ARCHITECT
-    swarmAgentExpectedActorIdKey: HULY_EXPECTED_ACTOR_ID_GIDEON_PARK_TORGHUT_ARCHITECT
     swarmTeamName: Torghut Traders
     ownerChannel: swarm://owner/trading
-    hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
-    hulyWorkspace: proompteng
-    hulyProject: DefaultProject
-    hulyChannelName: general
-    hulyChannelUrl: https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message
-    hulyTeamspaceName: PROOMPTENG
-    hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
-    hulyRequireDedicatedAccount: "true"
-    hulySkillRef: skills/huly-api/SKILL.md
+    natsChannel: general
+    natsSubjectPrefix: workflow
     objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate Torghut quant
   vcsRef:
     name: github
@@ -347,7 +288,6 @@ spec:
   secrets:
     - github-token
     - codex-auth
-    - huly-api-torghut
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -386,20 +326,11 @@ spec:
     swarmAgentWorkerId: worker-torghut-implement
     swarmAgentIdentity: naomi-ibarra-torghut-engineer
     swarmHumanName: Naomi Ibarra
-    swarmAgentTokenKey: HULY_API_TOKEN_NAOMI_IBARRA_TORGHUT_ENGINEER
-    swarmAgentExpectedActorIdKey: HULY_EXPECTED_ACTOR_ID_NAOMI_IBARRA_TORGHUT_ENGINEER
     swarmTeamName: Torghut Traders
     objective: grab the system design document, implement high-quality engineering changes, update impacted documentation, and deliver a production-ready PR
     ownerChannel: swarm://owner/trading
-    hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
-    hulyWorkspace: proompteng
-    hulyProject: DefaultProject
-    hulyChannelName: general
-    hulyChannelUrl: https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message
-    hulyTeamspaceName: PROOMPTENG
-    hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
-    hulyRequireDedicatedAccount: "true"
-    hulySkillRef: skills/huly-api/SKILL.md
+    natsChannel: general
+    natsSubjectPrefix: workflow
   vcsRef:
     name: github
   vcsPolicy:
@@ -408,7 +339,6 @@ spec:
   secrets:
     - github-token
     - codex-auth
-    - huly-api-torghut
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -444,19 +374,10 @@ spec:
     swarmAgentWorkerId: worker-torghut-verify
     swarmAgentIdentity: julian-hart-torghut-deployer
     swarmHumanName: Julian Hart
-    swarmAgentTokenKey: HULY_API_TOKEN_JULIAN_HART_TORGHUT_DEPLOYER
-    swarmAgentExpectedActorIdKey: HULY_EXPECTED_ACTOR_ID_JULIAN_HART_TORGHUT_DEPLOYER
     swarmTeamName: Torghut Traders
     ownerChannel: swarm://owner/trading
-    hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
-    hulyWorkspace: proompteng
-    hulyProject: DefaultProject
-    hulyChannelName: general
-    hulyChannelUrl: https://huly.proompteng.ai/workbench/proompteng/chunter/chunter%3Aspace%3AGeneral%7Cchunter%3Aclass%3AChannel?message
-    hulyTeamspaceName: PROOMPTENG
-    hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
-    hulyRequireDedicatedAccount: "true"
-    hulySkillRef: skills/huly-api/SKILL.md
+    natsChannel: general
+    natsSubjectPrefix: workflow
     objective: as release engineer, make Torghut PRs production-ready by fixing blockers until all required checks are green, then squash-merge and verify in-cluster GitOps rollout health
   vcsRef:
     name: github
@@ -466,4 +387,3 @@ spec:
   secrets:
     - github-token
     - codex-auth
-    - huly-api-torghut

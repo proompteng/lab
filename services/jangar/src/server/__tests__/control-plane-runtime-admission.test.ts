@@ -1,12 +1,12 @@
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { buildRuntimeAdmissionSnapshot } from '~/server/control-plane-runtime-admission'
 
-const HULY_API_SCRIPT_PATH = fileURLToPath(
-  new URL('../../../../../skills/huly-api/scripts/huly-api.py', import.meta.url),
-)
 const REPO_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url))
 
 const ORIGINAL_ENV = { ...process.env }
@@ -23,30 +23,60 @@ const resetEnv = () => {
 }
 
 describe('buildRuntimeAdmissionSnapshot', () => {
-  afterEach(() => {
+  let tempDir: string | undefined
+
+  afterEach(async () => {
+    if (tempDir) {
+      await rm(tempDir, { recursive: true, force: true })
+      tempDir = undefined
+    }
     resetEnv()
   })
 
-  it('accepts HULY_BASE_URL when HULY_API_BASE_URL is unset', () => {
-    delete process.env.HULY_API_BASE_URL
-    process.env.HULY_BASE_URL = 'https://huly.example.test'
+  it('accepts NATS_URL and NATS helper runtime components for collaboration admission', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'runtime-admission-'))
+    const binDir = join(tempDir, 'bin')
+    await mkdir(binDir, { recursive: true })
+    const natsPath = join(binDir, 'nats')
+    await writeFile(natsPath, '#!/usr/bin/env bash\nexit 0\n', 'utf8')
+    await chmod(natsPath, 0o755)
+    process.env.PATH = `${binDir}:${process.env.PATH ?? ''}`
+    process.env.NATS_URL = 'nats://nats.nats.svc.cluster.local:4222'
 
     const snapshot = buildRuntimeAdmissionSnapshot({
       worktree: REPO_ROOT,
-      pythonBin: process.execPath,
-      hulyApiScriptPath: HULY_API_SCRIPT_PATH,
+      natsUrl: 'nats://nats.nats.svc.cluster.local:4222',
     })
 
     const collaborationKit = snapshot.runtimeKits.find((kit) => kit.kit_class === 'collaboration')
     expect(collaborationKit).toBeDefined()
     expect(collaborationKit?.decision).toBe('healthy')
-    expect(collaborationKit?.reason_codes).not.toContain('runtime_kit_component_missing:huly_api_base_url')
+    expect(collaborationKit?.subject_ref).toBe('jangar:codex:nats-collaboration')
+    expect(collaborationKit?.reason_codes).not.toContain('runtime_kit_component_missing:nats_url')
 
-    const baseUrlComponent = collaborationKit?.components.find(
-      (component) => component.component_kind === 'service_url',
+    expect(collaborationKit?.components).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          component_ref: expect.stringContaining('codex-nats-publish'),
+          present: true,
+          reason_code: null,
+        }),
+        expect.objectContaining({
+          component_ref: expect.stringContaining('codex-nats-soak'),
+          present: true,
+          reason_code: null,
+        }),
+        expect.objectContaining({
+          component_ref: 'nats',
+          present: true,
+          reason_code: null,
+        }),
+      ]),
     )
-    expect(baseUrlComponent).toMatchObject({
-      component_ref: 'HULY_API_BASE_URL|HULY_BASE_URL',
+
+    const natsUrlComponent = collaborationKit?.components.find((component) => component.component_ref === 'NATS_URL')
+    expect(natsUrlComponent).toMatchObject({
+      component_ref: 'NATS_URL',
       present: true,
       reason_code: null,
     })

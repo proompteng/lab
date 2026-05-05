@@ -4,7 +4,12 @@ const DEFAULT_NATS_URL = 'nats://nats.nats.svc.cluster.local:4222'
 const DEFAULT_FEATURE_FLAGS_TIMEOUT_MS = 500
 const DEFAULT_FEATURE_FLAGS_NAMESPACE = 'default'
 const DEFAULT_FEATURE_FLAGS_ENTITY_ID = 'jangar'
-const DEFAULT_AGENT_COMMS_FILTER_SUBJECTS = ['workflow.>', 'agents.workflow.>', 'workflow_comms.agent_messages.>']
+const DEFAULT_AGENT_COMMS_FILTER_SUBJECTS = [
+  'workflow.>',
+  'agents.workflow.>',
+  'argo.workflow.>',
+  'workflow_comms.agent_messages.>',
+]
 
 const TRUE_BOOLEAN_VALUES = new Set(['1', 'true', 'yes', 'on', 'enabled'])
 const FALSE_BOOLEAN_VALUES = new Set(['0', 'false', 'no', 'off', 'disabled'])

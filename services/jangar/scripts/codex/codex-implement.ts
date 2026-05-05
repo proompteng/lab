@@ -19,23 +19,8 @@ import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { Effect } from 'effect'
 
-import {
-  buildRuntimeAdmissionSnapshot,
-  findAdmissionPassport,
-  resolveAdmissionPassportConsumerClass,
-} from '../../src/server/control-plane-runtime-admission'
 import { runCli } from './lib/cli'
 import { pushCodexEventsToLoki, type RunCodexSessionResult, runCodexSession } from './lib/codex-runner'
-import {
-  listChannelMessages,
-  postChannelMessage,
-  type HulyListChannelMessagesResult,
-  type HulyPostChannelMessageResult,
-  type HulyUpsertMissionResult,
-  type HulyVerifyChatAccessResult,
-  upsertMission,
-  verifyChatAccess,
-} from './lib/huly-api-client'
 import {
   buildDiscordChannelCommand,
   copyAgentLogIfNeeded,
@@ -99,8 +84,9 @@ interface ImplementationEventPayload {
   swarmAgentIdentity?: string | null
   swarmAgentRole?: string | null
   swarmHumanName?: string | null
-  swarmAgentTokenKey?: string | null
-  swarmAgentExpectedActorIdKey?: string | null
+  natsUrl?: string | null
+  natsChannel?: string | null
+  natsSubjectPrefix?: string | null
 }
 
 const readEventPayload = async (path: string): Promise<ImplementationEventPayload> => {
@@ -131,8 +117,6 @@ type RequirementMetadata = {
   workerIdentity?: string
   workerRole?: string
   workerHumanName?: string
-  workerTokenKey?: string
-  workerExpectedActorIdKey?: string
 }
 
 type ModelExecutionMetadata = {
@@ -143,53 +127,13 @@ type ModelExecutionMetadata = {
   attemptCount: number
 }
 
-type HulyRequirementArtifacts = {
-  activeChannel: string
-  actorId?: string
-  latestPeerMessageId?: string
-  latestPeerMessage?: string
-  verification?: HulyVerifyChatAccessResult
-  listMessages?: HulyListChannelMessagesResult
-  replyMessage?: HulyPostChannelMessageResult
-  ownerMessage?: HulyPostChannelMessageResult
-  mission?: HulyUpsertMissionResult
-  ownerUpdateMessage?: string
-  releaseNote?: string
-  prelaunchFailure?: {
-    operation: 'huly_preflight'
-    consumerClass: string
-    passportDecision: string
-    passportId: string
-    reasonCodes: string[]
-    runtimeKitId: string
-    runtimeKitClass: string
-    runtimeKitDecision: string
-    checkedPaths?: string[]
-  }
-}
-
-type HulyArtifactsForNotify = {
+type SwarmCommunicationArtifacts = {
   channel?: string
-  actorId?: string
-  latestPeerMessageId?: string
-  replyMessageId?: string
-  ownerMessageId?: string
-  missionMessageId?: string
-  missionId?: string
-  missionStatus?: string
-  missionStage?: string
-  missionIssue?: string
-  missionIssueId?: string
-  missionIssueTitle?: string
-  missionIssueNumber?: number
-  missionProjectId?: string
-  missionProjectIdentifier?: string
-  missionDocumentId?: string
-  missionDocumentTitle?: string
-  missionDocumentTeamspaceId?: string
+  startedAt?: string
+  completedAt?: string
+  latestContextMessages?: number
   ownerUpdateMessage?: string
   releaseNote?: string
-  prelaunchFailure?: HulyRequirementArtifacts['prelaunchFailure']
 }
 
 const asStringMap = (value: Record<string, string | number | boolean> | undefined): Record<string, string> => {
@@ -282,52 +226,54 @@ const resolveExecutionLane = ({
   return 'engineer'
 }
 
-const isHulyRequirementChannel = (channel: string | undefined | null) => {
+const isNatsRequirementChannel = (channel: string | undefined | null) => {
   if (!channel) {
     return false
   }
   const normalized = channel.trim()
   const lower = normalized.toLowerCase()
-  if (lower.startsWith('huly://')) {
+  if (lower.startsWith('nats://') || lower.startsWith('tls://')) {
     return true
   }
+  if (
+    lower.startsWith('workflow.') ||
+    lower.startsWith('agents.workflow.') ||
+    lower.startsWith('argo.workflow.') ||
+    lower.startsWith('workflow_comms.agent_messages.')
+  ) {
+    return true
+  }
+  if (!lower.includes('://')) return true
   try {
     const parsed = new URL(normalized)
-    return parsed.protocol.startsWith('http') && parsed.hostname.toLowerCase().includes('huly')
+    return parsed.protocol === 'nats:' || parsed.protocol === 'tls:'
   } catch {
     return false
   }
 }
 
-const resolveHulyChannelFromCandidate = (value: string | null | undefined) => {
+const resolveNatsChannelFromCandidate = (value: string | null | undefined) => {
   const normalized = normalizeNullableStringValue(value)
   if (!normalized) {
     return undefined
   }
-  if (isHulyRequirementChannel(normalized)) {
+  if (isNatsRequirementChannel(normalized)) {
     return normalized
   }
-  // Huly channel names/ids like "general" or "chunter:space:General" are valid
-  // runtime inputs, but explicit non-Huly transports must stay fail-closed.
-  if (normalized.includes('://')) {
-    return undefined
-  }
-  return normalized
+  return undefined
 }
 
-const resolveActiveHulyChannel = (requirementMetadata: RequirementMetadata) => {
+const resolveActiveNatsChannel = (requirementMetadata: RequirementMetadata) => {
   const candidates = [
     requirementMetadata.channel,
-    process.env.hulyChannel,
-    process.env.HULY_CHANNEL,
-    process.env.hulyChannelName,
-    process.env.HULY_CHANNEL_NAME,
-    process.env.hulyChannelUrl,
-    process.env.HULY_CHANNEL_URL,
+    process.env.natsChannel,
+    process.env.NATS_CHANNEL,
+    process.env.NATS_CONTEXT_SUBJECT,
+    'general',
   ]
 
   return candidates
-    .map((candidate) => resolveHulyChannelFromCandidate(candidate))
+    .map((candidate) => resolveNatsChannelFromCandidate(candidate))
     .find((candidate): candidate is string => candidate !== undefined)
 }
 
@@ -342,121 +288,12 @@ const summarizeText = (value: string | undefined, max = 260) => {
   return `${trimmed.slice(0, max)}…`
 }
 
-const buildSwarmChannelMessage = ({
-  repository,
-  issueNumber,
-  stage,
-  decision,
-  summary,
-  description,
-  objective,
-  acceptance,
-  prUrl,
-  tests,
-  gaps,
-}: {
-  repository: string
-  issueNumber: string
-  stage: string
-  decision?: 'completed' | 'failed'
-  summary?: string | null
-  description?: string
-  objective?: string
-  acceptance?: string[]
-  prUrl?: string | null
-  tests?: string[]
-  gaps?: string[]
-}) => {
-  const context = [summary, description, objective]
-    .map((candidate) => normalizeNullableStringValue(candidate))
-    .find((candidate): candidate is string => Boolean(candidate))
-
-  const lines = [
-    `${repository}#${issueNumber}`,
-    decision ? `${stage}: ${decision}` : `stage: ${stage}`,
-    context ? summarizeText(context, 400) : '',
-    prUrl ? `PR: ${prUrl}` : '',
-    tests && tests.length > 0 ? `Tests: ${tests.join('; ')}` : '',
-    gaps && gaps.length > 0 ? `Gaps: ${gaps.join('; ')}` : '',
-    acceptance && acceptance.length > 0 ? `Acceptance: ${acceptance.join('; ')}` : '',
-  ]
-
-  return lines.filter((line) => line.length > 0).join('\n')
-}
-
 const truncatePromptSegment = (value: string, maxChars: number) => {
   const normalized = value.trim()
   if (normalized.length <= maxChars) {
     return normalized
   }
   return `${normalized.slice(0, maxChars)}\n...[truncated ${normalized.length - maxChars} chars]`
-}
-
-const resolveLatestPeerMessage = (
-  payload: HulyListChannelMessagesResult | undefined,
-  actorId?: string,
-): { messageId: string; message: string } | undefined => {
-  const messages = payload?.messages
-  if (!messages || messages.length === 0) {
-    return undefined
-  }
-
-  for (const message of messages) {
-    const messageId = normalizeNullableStringValue(message.messageId)
-    const text = normalizeNullableStringValue(message.message)
-    if (!messageId || !text) {
-      continue
-    }
-    if (actorId && typeof message.createdBy === 'string' && message.createdBy === actorId) {
-      continue
-    }
-    return { messageId, message: text }
-  }
-
-  const fallback = messages.find((entry) => {
-    const messageId = normalizeNullableStringValue(entry.messageId)
-    const message = normalizeNullableStringValue(entry.message)
-    return Boolean(messageId && message)
-  })
-
-  if (!fallback?.messageId || !fallback?.message) {
-    return undefined
-  }
-
-  return { messageId: String(fallback.messageId), message: String(fallback.message) }
-}
-
-const buildHulyReplyMessage = ({
-  message,
-  objective,
-  decision,
-  issueNumber,
-  stage,
-  prUrl,
-  tests,
-  gaps,
-}: {
-  message: string
-  objective?: string
-  decision: 'completed' | 'failed'
-  issueNumber: string
-  stage: string
-  prUrl?: string | null
-  tests?: string[]
-  gaps?: string[]
-}) => {
-  const lines = [
-    `Thanks for the note: "${summarizeText(message, 100)}".`,
-    decision === 'completed'
-      ? `Update for #${issueNumber}: ${stage} is complete.`
-      : `Update for #${issueNumber}: ${stage} is currently blocked.`,
-    objective ? `I kept the work focused on ${summarizeText(objective, 160)}.` : '',
-    prUrl ? `PR: ${prUrl}.` : '',
-    tests && tests.length > 0 ? `Validation: ${tests.join(', ')}.` : '',
-    gaps && gaps.length > 0 ? `Current risk: ${gaps.join('; ')}.` : '',
-  ]
-
-  return lines.filter((line) => line.length > 0).join(' ')
 }
 
 const resolveOwnerFacingStatus = (decision: 'completed' | 'failed') =>
@@ -511,9 +348,11 @@ const buildOwnerUpdateMessage = ({
   gaps?: string[]
   prUrl?: string | null
 }) => {
-  const ownerStatus = decision === 'completed' ? 'completed' : 'blocked pending follow-up'
+  const completed = decision === 'completed'
   const lines = [
-    `Update on ${repository}#${issueNumber}: ${stage} is ${ownerStatus}.`,
+    completed
+      ? `I finished ${stage} for ${repository}#${issueNumber}.`
+      : `I am blocked on ${stage} for ${repository}#${issueNumber}.`,
     requirementMetadata.objective ? `Objective: ${summarizeText(requirementMetadata.objective, 200)}.` : '',
     runSummary ? `Summary: ${summarizeText(runSummary, 220)}.` : '',
     prUrl ? `PR: ${prUrl}.` : '',
@@ -524,7 +363,7 @@ const buildOwnerUpdateMessage = ({
     requirementMetadata.acceptance && requirementMetadata.acceptance.length > 0
       ? `Acceptance criteria: ${requirementMetadata.acceptance.join('; ')}.`
       : '',
-    decision === 'completed'
+    completed
       ? 'Next step: deployer rollout verification in cluster.'
       : 'Next step: address blocker, rerun implementation, then re-verify rollout.',
   ]
@@ -589,359 +428,20 @@ const buildReleaseNote = ({
   return lines.filter((line) => line.length > 0).join('\n')
 }
 
-const buildMissionDetails = ({
-  requirementMetadata,
-  repository,
-  issueNumber,
-  prUrl,
-  tests,
-  gaps,
-  summary,
-  releaseNote,
-}: {
-  repository: string
-  issueNumber: string
-  requirementMetadata: RequirementMetadata
-  prUrl?: string | null
-  tests?: string[]
-  gaps?: string[]
-  summary?: string | null
-  releaseNote: string
-}) => {
-  const details = [
-    `- Repository: ${repository}`,
-    `- Issue: #${issueNumber}`,
-    `- Design document: ${GOVERNING_DESIGN_DOCUMENT}`,
-  ]
-
-  if (requirementMetadata.id) {
-    details.push(`- Requirement ID: ${requirementMetadata.id}`)
-  }
-  if (requirementMetadata.signal) {
-    details.push(`- Signal: ${requirementMetadata.signal}`)
-  }
-  if (requirementMetadata.source) {
-    details.push(`- Source: ${requirementMetadata.source}`)
-  }
-  if (requirementMetadata.target) {
-    details.push(`- Target: ${requirementMetadata.target}`)
-  }
-
-  if (summary) {
-    details.push(`- Summary: ${summarizeText(summary, 360)}`)
-  }
-
-  if (prUrl) {
-    details.push(`- PR: ${prUrl}`)
-  }
-
-  if (tests && tests.length > 0) {
-    details.push(`- Tests: ${tests.join(', ')}`)
-  }
-
-  if (gaps && gaps.length > 0) {
-    details.push(`- Risks/Gaps: ${gaps.join('; ')}`)
-  }
-
-  if (requirementMetadata.acceptance && requirementMetadata.acceptance.length > 0) {
-    details.push(`- Acceptance criteria: ${requirementMetadata.acceptance.join('; ')}`)
-  }
-
-  details.push('', 'Release note:', releaseNote)
-
-  return details.join('\n')
-}
-
-const resolveHulyMissionTitle = ({
-  repository,
-  issueNumber,
-  requirementMetadata,
-}: {
-  repository: string
-  issueNumber: string
-  requirementMetadata: RequirementMetadata
-}) => {
-  if (requirementMetadata.id) {
-    return `Cross-swarm mission ${requirementMetadata.id} (${repository}#${issueNumber})`
-  }
-  return `Cross-swarm mission ${repository}#${issueNumber}`
-}
-
-const resolveHulyMissionId = ({
-  repository,
-  issueNumber,
-  requirementMetadata,
-}: {
-  repository: string
-  issueNumber: string
-  requirementMetadata: RequirementMetadata
-}) => {
-  if (requirementMetadata.id) {
-    return requirementMetadata.id
-  }
-  return `${repository}-issue-${issueNumber}`
-}
-
-const resolveHulyWorkerContext = (requirementMetadata: RequirementMetadata) => ({
-  workerId: requirementMetadata.workerId,
-  workerIdentity: requirementMetadata.workerIdentity,
-  tokenEnvKey: requirementMetadata.workerTokenKey,
-  expectedActorEnvKey: requirementMetadata.workerExpectedActorIdKey,
-})
-
-const collectHulyArtifactsForNotify = (artifacts?: HulyRequirementArtifacts): HulyArtifactsForNotify | undefined => {
+const collectSwarmCommunicationArtifactsForNotify = (
+  artifacts?: SwarmCommunicationArtifacts,
+): SwarmCommunicationArtifacts | undefined => {
   if (!artifacts) {
     return undefined
   }
   return {
-    channel: artifacts.activeChannel,
-    actorId: artifacts.actorId,
-    latestPeerMessageId: artifacts.latestPeerMessageId,
-    replyMessageId: artifacts.replyMessage?.messageId,
-    ownerMessageId: artifacts.ownerMessage?.messageId,
-    missionMessageId: artifacts.mission?.channelMessage?.messageId,
-    missionId: artifacts.mission?.missionId,
-    missionStatus: artifacts.mission?.status,
-    missionStage: artifacts.mission?.stage,
-    missionIssue: artifacts.mission?.issue?.issueIdentifier,
-    missionIssueId: artifacts.mission?.issue?.issueId,
-    missionIssueTitle: artifacts.mission?.issue?.issueTitle,
-    missionIssueNumber: artifacts.mission?.issue?.issueNumber,
-    missionProjectId: artifacts.mission?.issue?.projectId,
-    missionProjectIdentifier: artifacts.mission?.issue?.projectIdentifier,
-    missionDocumentId: artifacts.mission?.document?.documentId,
-    missionDocumentTitle: artifacts.mission?.document?.documentTitle,
-    missionDocumentTeamspaceId: artifacts.mission?.document?.teamspaceId,
+    channel: artifacts.channel,
+    startedAt: artifacts.startedAt,
+    completedAt: artifacts.completedAt,
+    latestContextMessages: artifacts.latestContextMessages,
     ownerUpdateMessage: artifacts.ownerUpdateMessage,
     releaseNote: artifacts.releaseNote,
-    prelaunchFailure: artifacts.prelaunchFailure,
   }
-}
-
-const parseCheckedPaths = (value: string | null | undefined) => {
-  if (!value || !value.startsWith('checked_paths=[') || !value.endsWith(']')) {
-    return undefined
-  }
-  const content = value.slice('checked_paths=['.length, -1)
-  const paths = content
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-  return paths.length > 0 ? paths : undefined
-}
-
-const buildHulyPrelaunchFailure = ({
-  stage,
-}: {
-  stage: string
-}): HulyRequirementArtifacts['prelaunchFailure'] | undefined => {
-  const runtimeAdmission = buildRuntimeAdmissionSnapshot()
-  const consumerClass = resolveAdmissionPassportConsumerClass(stage)
-  const passport = findAdmissionPassport({
-    admissionPassports: runtimeAdmission.admissionPassports,
-    consumerClass,
-  })
-  if (!passport || (passport.decision !== 'block' && passport.decision !== 'hold')) {
-    return undefined
-  }
-
-  const runtimeKitId = passport.required_runtime_kits[0]
-  const runtimeKit = runtimeAdmission.runtimeKits.find((kit) => kit.runtime_kit_id === runtimeKitId)
-  if (!runtimeKit) {
-    return undefined
-  }
-
-  const helperComponent = runtimeKit.components.find((component) => component.component_kind === 'python_helper')
-
-  return {
-    operation: 'huly_preflight',
-    consumerClass,
-    passportDecision: passport.decision,
-    passportId: passport.admission_passport_id,
-    reasonCodes: passport.reason_codes,
-    runtimeKitId: runtimeKit.runtime_kit_id,
-    runtimeKitClass: runtimeKit.kit_class,
-    runtimeKitDecision: runtimeKit.decision,
-    checkedPaths: parseCheckedPaths(helperComponent?.evidence_ref),
-  }
-}
-
-const buildHulyPrelaunchFailureMessage = (failure: NonNullable<HulyRequirementArtifacts['prelaunchFailure']>) => {
-  const checkedPaths =
-    failure.checkedPaths && failure.checkedPaths.length > 0 ? ` checked_paths=[${failure.checkedPaths.join(', ')}]` : ''
-  const passportDecision = failure.passportDecision === 'block' ? 'blocked' : failure.passportDecision
-  return (
-    [
-      `passport=${passportDecision}`,
-      `consumer=${failure.consumerClass}`,
-      `runtime_kit=${failure.runtimeKitId}`,
-      `runtime_kit_decision=${failure.runtimeKitDecision}`,
-      `reason_codes=${failure.reasonCodes.join(',') || 'unknown'}`,
-    ].join(' ') + checkedPaths
-  )
-}
-
-const buildHulyArtifactsFromRun = async ({
-  artifacts,
-  logger,
-  repository,
-  issueNumber,
-  requirementMetadata,
-  stage,
-  tests,
-  gaps,
-  prUrl,
-  decision,
-  runSummary,
-  activeChannel,
-  workerContext,
-  includeReplyMessage,
-  latestPeerMessageId,
-  latestPeerMessage,
-}: {
-  artifacts: HulyRequirementArtifacts
-  logger: CodexLogger
-  repository: string
-  issueNumber: string
-  requirementMetadata: RequirementMetadata
-  stage: string
-  tests?: string[]
-  gaps?: string[]
-  prUrl?: string | null
-  decision: 'completed' | 'failed'
-  runSummary?: string | null
-  activeChannel: string
-  workerContext: ReturnType<typeof resolveHulyWorkerContext>
-  includeReplyMessage: boolean
-  latestPeerMessageId?: string
-  latestPeerMessage?: string
-}): Promise<HulyRequirementArtifacts> => {
-  const decisionSuffix = decision === 'completed' ? 'implementation completed' : 'implementation failed'
-  const ownerUpdateMessage = buildOwnerUpdateMessage({
-    decision,
-    repository,
-    issueNumber,
-    stage,
-    requirementMetadata,
-    runSummary,
-    tests,
-    prUrl,
-    gaps,
-  })
-  const releaseNote = buildReleaseNote({
-    decision,
-    repository,
-    issueNumber,
-    stage,
-    requirementMetadata,
-    runSummary,
-    tests,
-    prUrl,
-    gaps,
-  })
-  const details = buildMissionDetails({
-    repository,
-    issueNumber,
-    requirementMetadata,
-    prUrl,
-    tests,
-    gaps,
-    summary: runSummary,
-    releaseNote,
-  })
-  artifacts.ownerUpdateMessage = ownerUpdateMessage
-  artifacts.releaseNote = releaseNote
-
-  if (includeReplyMessage && latestPeerMessageId && latestPeerMessage) {
-    const replyMessage = buildSwarmChannelMessage({
-      repository,
-      issueNumber,
-      stage,
-      decision,
-      summary: runSummary,
-      description: requirementMetadata.description,
-      objective: requirementMetadata.objective,
-      acceptance: requirementMetadata.acceptance,
-      prUrl,
-      tests,
-      gaps,
-    })
-    try {
-      artifacts.replyMessage = await postChannelMessage({
-        channel: activeChannel,
-        message: replyMessage,
-        replyToMessageId: latestPeerMessageId,
-        workerId: workerContext.workerId,
-        workerIdentity: workerContext.workerIdentity,
-        tokenEnvKey: workerContext.tokenEnvKey,
-        expectedActorEnvKey: workerContext.expectedActorEnvKey,
-        requireExpectedActorId: true,
-      })
-      logger.info('Huly post-channel-message completed', {
-        channel: activeChannel,
-        purpose: 'thread-reply',
-        messageId: normalizeNullableStringValue(artifacts.replyMessage.messageId),
-        replyToMessageId: latestPeerMessageId,
-      })
-    } catch (error) {
-      logger.warn('Failed to post Huly reply message for requirement handoff', error)
-      throw error
-    }
-  }
-
-  try {
-    artifacts.ownerMessage = await postChannelMessage({
-      channel: activeChannel,
-      message: ownerUpdateMessage,
-      workerId: workerContext.workerId,
-      workerIdentity: workerContext.workerIdentity,
-      tokenEnvKey: workerContext.tokenEnvKey,
-      expectedActorEnvKey: workerContext.expectedActorEnvKey,
-      requireExpectedActorId: true,
-    })
-    logger.info('Huly post-channel-message completed', {
-      channel: activeChannel,
-      purpose: 'owner-update',
-      messageId: normalizeNullableStringValue(artifacts.ownerMessage.messageId),
-    })
-  } catch (error) {
-    logger.warn('Failed to post Huly owner update for requirement handoff', error)
-    throw error
-  }
-
-  const missionId = resolveHulyMissionId({ repository, issueNumber, requirementMetadata })
-  try {
-    artifacts.mission = await upsertMission({
-      missionId,
-      title: resolveHulyMissionTitle({ repository, issueNumber, requirementMetadata }),
-      summary: `Cross-swarm handoff ${decisionSuffix} for issue ${repository}#${issueNumber}`,
-      details,
-      channel: activeChannel,
-      message: ownerUpdateMessage,
-      stage,
-      status: decision === 'completed' ? 'completed' : 'failed',
-      workerId: workerContext.workerId,
-      workerIdentity: workerContext.workerIdentity,
-      tokenEnvKey: workerContext.tokenEnvKey,
-      expectedActorEnvKey: workerContext.expectedActorEnvKey,
-      requireExpectedActorId: true,
-    })
-    logger.info('Huly upsert-mission completed', {
-      channel: activeChannel,
-      missionId: artifacts.mission.missionId,
-      stage: artifacts.mission.stage,
-      status: artifacts.mission.status,
-      messageId: normalizeNullableStringValue(artifacts.mission.channelMessage?.messageId),
-      issueId: normalizeNullableStringValue(artifacts.mission.issue?.issueId),
-      issueIdentifier: normalizeNullableStringValue(artifacts.mission.issue?.issueIdentifier),
-      documentId: normalizeNullableStringValue(artifacts.mission.document?.documentId),
-    })
-  } catch (error) {
-    logger.warn('Failed to upsert Huly mission for requirement handoff', error)
-    throw error
-  }
-
-  return artifacts
 }
 
 const extractSwarmRequirementMetadata = (event: ImplementationEventPayload): RequirementMetadata => {
@@ -969,14 +469,15 @@ const extractSwarmRequirementMetadata = (event: ImplementationEventPayload): Req
     signal: resolve('swarmRequirementSignal', 'swarmRequirementSignal'),
     source: resolve('swarmRequirementSource', 'swarmRequirementSource'),
     target: resolve('swarmRequirementTarget', 'swarmRequirementTarget'),
-    channel: resolve('swarmRequirementChannel', 'swarmRequirementChannel'),
+    channel:
+      resolve('swarmRequirementChannel', 'swarmRequirementChannel') ??
+      resolve('natsChannel', 'natsChannel') ??
+      resolve('natsSubjectPrefix', 'natsSubjectPrefix'),
     description: resolve('swarmRequirementDescription', 'swarmRequirementDescription'),
     workerId: resolve('swarmAgentWorkerId', 'swarmAgentWorkerId'),
     workerIdentity: resolve('swarmAgentIdentity', 'swarmAgentIdentity'),
     workerRole: resolve('swarmAgentRole', 'swarmAgentRole'),
     workerHumanName: resolve('swarmHumanName', 'swarmHumanName'),
-    workerTokenKey: resolve('swarmAgentTokenKey', 'swarmAgentTokenKey'),
-    workerExpectedActorIdKey: resolve('swarmAgentExpectedActorIdKey', 'swarmAgentExpectedActorIdKey'),
     objective: payloadObjective ?? resolve('objective') ?? resolve('swarmRequirementObjective'),
     payload,
     acceptance: parsedPayload.acceptance,
@@ -1031,7 +532,7 @@ const prettyRequirementPayload = (payload: string) => {
 }
 
 const buildCrossSwarmRequirementScopePrompt = (basePrompt: string, requirement: RequirementMetadata) => {
-  if (!isHulyRequirementChannel(requirement.channel)) {
+  if (!isNatsRequirementChannel(requirement.channel)) {
     return basePrompt
   }
 
@@ -1130,7 +631,7 @@ const buildProgressComment = ({
     `- Updated: ${timestampUtc()}`,
   ]
 
-  if (isHulyRequirementChannel(requirementMetadata?.channel)) {
+  if (isNatsRequirementChannel(requirementMetadata?.channel)) {
     const provenance = [
       requirementMetadata?.id ? `- Requirement ID: ${requirementMetadata.id}` : null,
       requirementMetadata?.signal ? `- Signal: ${requirementMetadata.signal}` : null,
@@ -1276,6 +777,49 @@ const exportScalarEventParametersToEnv = (event: ImplementationEventPayload) => 
       process.env[envAlias] = envValue
       process.env[`CODEX_PARAM_${envAlias}`] = envValue
     }
+  }
+}
+
+const resolveEventOrParameterValue = (
+  event: ImplementationEventPayload,
+  parameters: Record<string, string>,
+  key: string,
+) => {
+  const eventValue = normalizeNullableStringValue(
+    (event as Record<string, unknown>)[key] as string | number | boolean | null | undefined,
+  )
+  if (eventValue) {
+    return eventValue
+  }
+  return normalizeNullableStringValue(parameters[key])
+}
+
+const normalizeNatsSubjectPrefix = (value: string | undefined) => {
+  const normalized = value?.trim().replace(/^\.+/, '').replace(/\.+$/, '')
+  return normalized && normalized.length > 0 ? normalized : undefined
+}
+
+const applyNatsRuntimeEnvFromEvent = (event: ImplementationEventPayload) => {
+  const parameters = asStringMap(event.parameters)
+  const natsUrl = resolveEventOrParameterValue(event, parameters, 'natsUrl')
+  const natsSubjectPrefix = normalizeNatsSubjectPrefix(
+    resolveEventOrParameterValue(event, parameters, 'natsSubjectPrefix'),
+  )
+  const natsChannel =
+    resolveEventOrParameterValue(event, parameters, 'swarmRequirementChannel') ??
+    resolveEventOrParameterValue(event, parameters, 'natsChannel')
+
+  if (natsUrl) {
+    process.env.NATS_URL = natsUrl
+  }
+  if (natsSubjectPrefix) {
+    process.env.NATS_SUBJECT_PREFIX = natsSubjectPrefix
+    if (!process.env.NATS_CONTEXT_SUBJECT) {
+      process.env.NATS_CONTEXT_SUBJECT = `${natsSubjectPrefix}.general.>`
+    }
+  }
+  if (natsChannel) {
+    process.env.NATS_CHANNEL = natsChannel
   }
 }
 
@@ -1512,14 +1056,12 @@ type CodexNotifyPayload = {
   swarmAgentIdentity?: string | null
   swarmAgentRole?: string | null
   swarmHumanName?: string | null
-  swarmAgentTokenKey?: string | null
-  swarmAgentExpectedActorIdKey?: string | null
   modelRequested?: string | null
   modelUsed?: string | null
   fallbackUsed?: boolean | null
   fallbackReason?: string | null
   attemptCount?: number | null
-  hulyArtifacts?: HulyArtifactsForNotify
+  swarmCommsArtifacts?: SwarmCommunicationArtifacts
 }
 
 const MAX_NOTIFY_LOG_CHARS = 12_000
@@ -1661,7 +1203,7 @@ const buildNotifyPayload = ({
   iterationCycle,
   iterations,
   requirementMetadata,
-  hulyArtifacts,
+  swarmCommsArtifacts,
   modelExecution,
 }: {
   repository: string
@@ -1696,7 +1238,7 @@ const buildNotifyPayload = ({
   iterationCycle?: number | null
   iterations?: number | null
   requirementMetadata?: RequirementMetadata
-  hulyArtifacts?: HulyRequirementArtifacts
+  swarmCommsArtifacts?: SwarmCommunicationArtifacts
   modelExecution?: ModelExecutionMetadata
 }): CodexNotifyPayload => {
   return {
@@ -1747,7 +1289,7 @@ const buildNotifyPayload = ({
     },
     log_excerpt: logExcerpt,
     issued_at: new Date().toISOString(),
-    cross_swarm_requirement: isHulyRequirementChannel(requirementMetadata?.channel),
+    cross_swarm_requirement: isNatsRequirementChannel(requirementMetadata?.channel),
     swarm_requirement: {
       id: requirementMetadata?.id,
       signal: requirementMetadata?.signal,
@@ -1774,14 +1316,12 @@ const buildNotifyPayload = ({
     swarmAgentIdentity: requirementMetadata?.workerIdentity ?? null,
     swarmAgentRole: requirementMetadata?.workerRole ?? null,
     swarmHumanName: requirementMetadata?.workerHumanName ?? null,
-    swarmAgentTokenKey: requirementMetadata?.workerTokenKey ?? null,
-    swarmAgentExpectedActorIdKey: requirementMetadata?.workerExpectedActorIdKey ?? null,
     modelRequested: modelExecution?.modelRequested ?? null,
     modelUsed: modelExecution?.modelUsed ?? null,
     fallbackUsed: modelExecution?.fallbackUsed ?? null,
     fallbackReason: modelExecution?.fallbackReason ?? null,
     attemptCount: modelExecution?.attemptCount ?? null,
-    hulyArtifacts: collectHulyArtifactsForNotify(hulyArtifacts),
+    swarmCommsArtifacts: collectSwarmCommunicationArtifactsForNotify(swarmCommsArtifacts),
   }
 }
 
@@ -2477,7 +2017,7 @@ const buildProviderFallbackPrompt = ({
     `Execution lane: ${lane}`,
     objective ? `Objective: ${objective}` : null,
     ...laneReminders,
-    'Preserve thread-aware, human teammate communication in Huly updates.',
+    'Publish concise teammate updates to NATS so Jangar can show live swarm communication.',
   ].filter((line): line is string => Boolean(line))
   return lines.join('\n')
 }
@@ -2709,10 +2249,18 @@ const fetchJangarMemories = async ({
 
 const publishNatsEvent = async (
   logger: CodexLogger,
-  input: { kind: string; content: string; attrs?: Record<string, unknown> },
+  input: { kind: string; content: string; attrs?: Record<string, unknown>; channel?: string },
 ) => {
   if (!process.env.NATS_URL) return
-  const args = ['--kind', input.kind, '--content', input.content, '--channel', 'general', '--publish-general']
+  const args = [
+    '--kind',
+    input.kind,
+    '--content',
+    input.content,
+    '--channel',
+    input.channel ?? 'general',
+    '--publish-general',
+  ]
   if (input.attrs && Object.keys(input.attrs).length > 0) {
     args.push('--attrs-json', JSON.stringify(input.attrs))
   }
@@ -2979,7 +2527,7 @@ const buildContextWindowRecoveryPrompt = ({
     'Keep all command output concise (head/tail/snippets only).',
     'Do not paste long logs or large generated content into the response.',
     'If a long report file is required, keep it short and pragmatic.',
-    'Preserve thread-aware, human teammate communication in Huly updates.',
+    'Publish concise teammate updates to NATS so Jangar can show live swarm communication.',
   ]
   return lines.filter((line) => line.length > 0).join('\n')
 }
@@ -3422,10 +2970,10 @@ export const runCodexImplementation = async (eventPath: string) => {
 
   const event = await readEventPayload(eventPath)
   const extractedRequirementMetadata = extractSwarmRequirementMetadata(event)
-  const resolvedHulyChannel = resolveActiveHulyChannel(extractedRequirementMetadata)
+  const resolvedNatsChannel = resolveActiveNatsChannel(extractedRequirementMetadata)
   const requirementMetadata = {
     ...extractedRequirementMetadata,
-    channel: extractedRequirementMetadata.channel ?? resolvedHulyChannel,
+    channel: extractedRequirementMetadata.channel ?? resolvedNatsChannel,
   }
   const parameters = asStringMap(event.parameters)
   const executionMode =
@@ -3433,7 +2981,7 @@ export const runCodexImplementation = async (eventPath: string) => {
   const isBatchTask = executionMode?.toLowerCase() === 'batch_task'
   const basePrompt = event.prompt?.trim() ?? ''
   let prompt = buildCrossSwarmRequirementScopePrompt(basePrompt, requirementMetadata)
-  const crossSwarmHulyChannel = resolveActiveHulyChannel(requirementMetadata)
+  const activeNatsChannel = resolveActiveNatsChannel(requirementMetadata)
 
   const repository =
     event.repository?.trim() || normalizeNullableStringValue(parameters.repository) || (isBatchTask ? 'batch-task' : '')
@@ -3580,6 +3128,7 @@ export const runCodexImplementation = async (eventPath: string) => {
   process.env.PR_NUMBER_PATH = prNumberPath
   process.env.PR_URL_PATH = prUrlPath
   exportScalarEventParametersToEnv(event)
+  applyNatsRuntimeEnvFromEvent(event)
 
   process.env.CODEX_STAGE = stage
   process.env.RUST_LOG = process.env.RUST_LOG ?? 'codex_core=info,codex_exec=info'
@@ -3648,71 +3197,17 @@ export const runCodexImplementation = async (eventPath: string) => {
   let runSucceeded = false
   let prNumber: number | null = null
   let prUrl: string | null = null
-  const hulyWorkerContext = resolveHulyWorkerContext(requirementMetadata)
-  let hulyArtifacts: HulyRequirementArtifacts | undefined
+  let swarmCommsArtifacts: SwarmCommunicationArtifacts | undefined = activeNatsChannel
+    ? {
+        channel: activeNatsChannel,
+        startedAt: new Date().toISOString(),
+      }
+    : undefined
   let lastAssistantMessage: string | null = null
   let memorySoak: MemoryContextPayload | null = null
   let natsContext: NatsContextPayload | null = null
-  const hulyAccessMessage = `Hi team, I am starting ${stage} for ${repository}#${issueNumber} and will post progress here.`
 
   try {
-    if (!isBatchTask && crossSwarmHulyChannel) {
-      hulyArtifacts = {
-        activeChannel: crossSwarmHulyChannel,
-      }
-
-      try {
-        const prelaunchFailure = buildHulyPrelaunchFailure({ stage })
-        if (prelaunchFailure) {
-          hulyArtifacts.prelaunchFailure = prelaunchFailure
-          lastAssistantMessage = buildHulyPrelaunchFailureMessage(prelaunchFailure)
-          throw new Error(`Huly collaboration launch refused before runtime initialization: ${lastAssistantMessage}`)
-        }
-
-        const listResult = await listChannelMessages({
-          channel: crossSwarmHulyChannel,
-          workerId: hulyWorkerContext.workerId,
-          workerIdentity: hulyWorkerContext.workerIdentity,
-          requireWorkerToken: true,
-          tokenEnvKey: hulyWorkerContext.tokenEnvKey,
-          expectedActorEnvKey: hulyWorkerContext.expectedActorEnvKey,
-          requireExpectedActorId: true,
-        })
-
-        const accessResult = await verifyChatAccess({
-          channel: crossSwarmHulyChannel,
-          message: hulyAccessMessage,
-          workerId: hulyWorkerContext.workerId,
-          workerIdentity: hulyWorkerContext.workerIdentity,
-          requireWorkerToken: true,
-          tokenEnvKey: hulyWorkerContext.tokenEnvKey,
-          expectedActorEnvKey: hulyWorkerContext.expectedActorEnvKey,
-          requireExpectedActorId: true,
-        })
-
-        const actorId =
-          normalizeNullableStringValue(accessResult.actorId) ||
-          normalizeNullableStringValue(accessResult.expectedActorId)
-        const latestPeerMessage = resolveLatestPeerMessage(listResult, actorId ?? undefined)
-
-        hulyArtifacts = {
-          ...hulyArtifacts,
-          activeChannel: crossSwarmHulyChannel,
-          actorId: actorId ?? undefined,
-          latestPeerMessageId: latestPeerMessage?.messageId,
-          latestPeerMessage: latestPeerMessage?.message,
-          verification: accessResult,
-          listMessages: listResult,
-        }
-      } catch (error) {
-        if (!lastAssistantMessage) {
-          lastAssistantMessage = error instanceof Error ? error.message : String(error)
-        }
-        logger.warn('Failed Huly cross-swarm initialization for implementation handoff', error)
-        throw error
-      }
-    }
-
     const systemPromptPath = normalizeOptionalString(sanitizeNullableString(process.env.CODEX_SYSTEM_PROMPT_PATH))
     const payloadSystemPrompt = normalizeOptionalString(sanitizeNullableString(event.systemPrompt))
     const expectedSystemPromptHash = normalizeOptionalString(
@@ -4239,27 +3734,56 @@ export const runCodexImplementation = async (eventPath: string) => {
     const summary = extractSummary(lastAssistantMessage)
     const tests = extractTests(lastAssistantMessage)
     const gaps = extractKnownGaps(lastAssistantMessage)
-    const hulyDecision = 'completed' as const
     const natsDecision = 'pass'
 
-    if (!isBatchTask && hulyArtifacts && crossSwarmHulyChannel && !hulyArtifacts.prelaunchFailure) {
-      hulyArtifacts = await buildHulyArtifactsFromRun({
-        artifacts: hulyArtifacts,
-        logger,
+    if (!isBatchTask && swarmCommsArtifacts && activeNatsChannel) {
+      const ownerUpdateMessage = buildOwnerUpdateMessage({
+        decision: 'completed',
         repository,
         issueNumber,
-        requirementMetadata,
         stage,
-        tests,
-        gaps,
-        prUrl,
-        decision: hulyDecision,
+        requirementMetadata,
         runSummary: summary,
-        activeChannel: crossSwarmHulyChannel,
-        workerContext: hulyWorkerContext,
-        includeReplyMessage: true,
-        latestPeerMessageId: hulyArtifacts.latestPeerMessageId,
-        latestPeerMessage: hulyArtifacts.latestPeerMessage,
+        tests,
+        prUrl,
+        gaps,
+      })
+      const releaseNote = buildReleaseNote({
+        decision: 'completed',
+        repository,
+        issueNumber,
+        stage,
+        requirementMetadata,
+        runSummary: summary,
+        tests,
+        prUrl,
+        gaps,
+      })
+      swarmCommsArtifacts = {
+        ...swarmCommsArtifacts,
+        channel: activeNatsChannel,
+        completedAt: new Date().toISOString(),
+        latestContextMessages: natsContext?.filtered,
+        ownerUpdateMessage,
+        releaseNote,
+      }
+      await publishNatsEvent(logger, {
+        kind: 'swarm-handoff',
+        content: ownerUpdateMessage,
+        channel: activeNatsChannel,
+        attrs: enrichRunNatsAttrs(
+          {
+            stage,
+            decision: natsDecision,
+            releaseNote,
+            prUrl,
+            tests,
+            gaps,
+            iteration,
+            iterationCycle,
+          },
+          requirementMetadata,
+        ),
       })
     }
     const nextPrompt = 'None'
@@ -4346,7 +3870,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       iterationCycle,
       iterations,
       requirementMetadata,
-      hulyArtifacts,
+      swarmCommsArtifacts,
       modelExecution,
     })
     try {
@@ -4386,50 +3910,67 @@ export const runCodexImplementation = async (eventPath: string) => {
     }
   } finally {
     if (!runSucceeded) {
-      if (!isBatchTask && crossSwarmHulyChannel && hulyArtifacts && !hulyArtifacts.prelaunchFailure) {
-        const summary = extractSummary(lastAssistantMessage)
-        const tests = extractTests(lastAssistantMessage)
-        const gaps = extractKnownGaps(lastAssistantMessage)
-        try {
-          hulyArtifacts = await buildHulyArtifactsFromRun({
-            artifacts: hulyArtifacts,
-            logger,
-            repository,
-            issueNumber,
-            requirementMetadata,
-            stage,
-            tests,
-            gaps,
-            prUrl,
-            decision: 'failed',
-            runSummary: summary,
-            activeChannel: crossSwarmHulyChannel,
-            workerContext: hulyWorkerContext,
-            includeReplyMessage: Boolean(hulyArtifacts.latestPeerMessageId && hulyArtifacts.latestPeerMessage),
-            latestPeerMessageId: hulyArtifacts.latestPeerMessageId,
-            latestPeerMessage: hulyArtifacts.latestPeerMessage,
-          })
-        } catch (error) {
-          logger.warn('Failed to publish failure handoff artifacts to Huly', error)
+      const summary = extractSummary(lastAssistantMessage)
+      const tests = extractTests(lastAssistantMessage)
+      const gaps = extractKnownGaps(lastAssistantMessage)
+      if (!isBatchTask && activeNatsChannel && swarmCommsArtifacts) {
+        const ownerUpdateMessage = buildOwnerUpdateMessage({
+          decision: 'failed',
+          repository,
+          issueNumber,
+          stage,
+          requirementMetadata,
+          runSummary: summary,
+          tests,
+          prUrl,
+          gaps,
+        })
+        const releaseNote = buildReleaseNote({
+          decision: 'failed',
+          repository,
+          issueNumber,
+          stage,
+          requirementMetadata,
+          runSummary: summary,
+          tests,
+          prUrl,
+          gaps,
+        })
+        swarmCommsArtifacts = {
+          ...swarmCommsArtifacts,
+          channel: activeNatsChannel,
+          completedAt: new Date().toISOString(),
+          latestContextMessages: natsContext?.filtered,
+          ownerUpdateMessage,
+          releaseNote,
         }
+        await publishNatsEvent(logger, {
+          kind: 'swarm-handoff',
+          content: ownerUpdateMessage,
+          channel: activeNatsChannel,
+          attrs: enrichRunNatsAttrs(
+            {
+              stage,
+              decision: 'fail',
+              releaseNote,
+              prUrl,
+              tests,
+              gaps,
+              iteration,
+              iterationCycle,
+            },
+            requirementMetadata,
+          ),
+        })
       }
 
-      const failureMissingItems = hulyArtifacts?.prelaunchFailure?.reasonCodes.length
-        ? hulyArtifacts.prelaunchFailure.reasonCodes
-        : ['unknown_failure']
+      const failureMissingItems = gaps.length > 0 ? gaps : ['unknown_failure']
       const failureGapAttrs: Record<string, unknown> = {
         stage,
         missingItems: failureMissingItems,
         suggestedFixes: [],
         iteration,
         iterationCycle,
-      }
-      if (hulyArtifacts?.prelaunchFailure) {
-        failureGapAttrs.passportDecision = hulyArtifacts.prelaunchFailure.passportDecision
-        failureGapAttrs.passportId = hulyArtifacts.prelaunchFailure.passportId
-        failureGapAttrs.runtimeKitClass = hulyArtifacts.prelaunchFailure.runtimeKitClass
-        failureGapAttrs.runtimeKitDecision = hulyArtifacts.prelaunchFailure.runtimeKitDecision
-        failureGapAttrs.runtimeKitId = hulyArtifacts.prelaunchFailure.runtimeKitId
       }
 
       if (!isBatchTask) {
@@ -4448,10 +3989,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       }
       await publishNatsEvent(logger, {
         kind: 'run-gaps',
-        content:
-          hulyArtifacts?.prelaunchFailure != null
-            ? `Pre-launch runtime passport refused: ${buildHulyPrelaunchFailureMessage(hulyArtifacts.prelaunchFailure)}`
-            : 'Run failed before emitting gaps; inspect logs and artifacts.',
+        content: gaps.length > 0 ? gaps.join('; ') : 'Run failed before emitting gaps; inspect logs and artifacts.',
         attrs: enrichRunNatsAttrs(failureGapAttrs, requirementMetadata),
       })
       await publishNatsEvent(logger, {
@@ -4463,8 +4001,6 @@ export const runCodexImplementation = async (eventPath: string) => {
             decision: 'fail',
             iteration,
             iterationCycle,
-            passportDecision: hulyArtifacts?.prelaunchFailure?.passportDecision,
-            passportId: hulyArtifacts?.prelaunchFailure?.passportId,
           },
           requirementMetadata,
         ),
@@ -4503,10 +4039,7 @@ export const runCodexImplementation = async (eventPath: string) => {
           prUrlPath,
           sessionId: capturedSessionId,
           lastAssistantMessage:
-            lastAssistantMessage ??
-            (hulyArtifacts?.prelaunchFailure
-              ? `Pre-launch runtime passport refused: ${buildHulyPrelaunchFailureMessage(hulyArtifacts.prelaunchFailure)}`
-              : `${stage} failed before a final assistant response was captured.`),
+            lastAssistantMessage ?? `${stage} failed before a final assistant response was captured.`,
           logExcerpt: failureLogExcerpt,
           prNumber,
           prUrl,
@@ -4516,7 +4049,7 @@ export const runCodexImplementation = async (eventPath: string) => {
           iterationCycle,
           iterations,
           requirementMetadata,
-          hulyArtifacts,
+          swarmCommsArtifacts,
         })
         await ensureFileDirectory(notifyPath)
         await writeFile(notifyPath, JSON.stringify(failureNotifyPayload, null, 2), 'utf8')

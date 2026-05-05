@@ -201,7 +201,7 @@ jobs:
         with:
           cluster_name: ${{ env.KIND_CLUSTER_NAME }}
           version: v0.31.0
-          node_image: kindest/node:v1.29.4
+          node_image: mirror.gcr.io/kindest/node:v1.29.4
           kubectl_version: v1.29.4
           wait: 180s
 
@@ -465,7 +465,7 @@ jobs:
           IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 
           # Use the mirror.gcr.io Bun mirror in CI to avoid Docker Hub anonymous pull limits.
-          # Local image rebuilds are best-effort in CI; fall back to the public image on timeout.
+          # Local image rebuilds fail with explicit diagnostics on timeout.
           # ARC arm64 runners can spend well over 18 minutes in the pruned control-plane docker
           # build while still making forward progress, so give the local image build enough headroom
           # to complete instead of terminating a healthy build.

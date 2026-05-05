@@ -14,37 +14,27 @@ import {
   runGitWithLockRecovery,
 } from '~/server/git-lock-recovery'
 import { withWorktreeLock } from '~/server/git-worktree-lock'
-import {
-  type ChatConfig,
-  type OpenWebUIRenderRuntime,
-  loadChatConfig,
-  resolveChatConfig,
-  resolveOpenWebUIRenderRuntime as resolveConfiguredOpenWebUIRenderRuntime,
-} from './chat-config'
+import { type OpenWebUIRenderRuntime, loadChatConfig, resolveChatConfig } from './chat-config'
 import {
   ChatCompletionEncoder,
   type ChatCompletionEncoderService,
   chatCompletionEncoderLive,
   normalizeStreamError,
 } from './chat-completion-encoder'
+import { resolveOpenWebUIDetailMode } from './chat-openwebui-detail'
 import { safeJsonStringify, stripTerminalControl } from './chat-text'
 import { ChatToolEventRenderer, chatToolEventRendererLive, type ToolRenderer } from './chat-tool-event-renderer'
 import {
-  buildTranscriptSignature,
+  buildOpenWebUITranscriptSignature,
   compareTranscript,
   fitPromptMessages,
-  normalizeMessageContent,
-  type ChatMessage as TranscriptMessage,
+  normalizeAssistantTranscriptContent,
+  normalizeOpenWebUITranscriptMessages,
   type TranscriptEntry,
 } from './chat-transcript'
 import { MissingUpstreamThreadError, isMissingUpstreamThreadError } from './chat-upstream-thread-error'
 import { getCodexClient, releaseCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
-import {
-  recordOpenWebUIDetailTurn,
-  recordOpenWebUITextOnlyFallback,
-  recordSseConnection,
-  recordSseError,
-} from './metrics'
+import { recordOpenWebUITextOnlyFallback, recordSseConnection, recordSseError } from './metrics'
 import { createSignedOpenWebUIRenderHref } from './openwebui-render-signing'
 import { getOpenWebUiRenderStore } from './openwebui-render-store'
 import { ThreadState, ThreadStateLive, type ThreadStateService, ThreadStateUnavailableError } from './thread-state'
@@ -180,20 +170,6 @@ const TRADE_EXECUTION_DIR_NAME = 'torghut'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const isOpenWebUIDetailLinksEnabled = (chatClientKind: ChatClientKind, config: ChatConfig) =>
-  chatClientKind === 'openwebui' && config.openWebUIRichRenderEnabled
-
-const shouldEmitExperimentalOpenWebUIJangarEvent = (
-  chatClientKind: ChatClientKind,
-  request: Request,
-  config: ChatConfig,
-) => {
-  if (!isOpenWebUIDetailLinksEnabled(chatClientKind, config)) return false
-  return request.headers.get('x-jangar-openwebui-render-mode')?.trim().toLowerCase() === 'rich-ui-v1'
-}
-
-let hasLoggedMissingOpenWebUIRenderRuntime = false
 
 const isErrno = (error: unknown): error is NodeJS.ErrnoException =>
   typeof error === 'object' && error !== null && 'code' in error
@@ -880,18 +856,6 @@ const buildInputTooLargeError = (maxInputChars: number) =>
     `Chat input exceeds the maximum supported length of ${maxInputChars} characters. Start a new chat or shorten the latest message.`,
   )
 
-const normalizeOpenWebUITranscriptMessages = (messages: ReadonlyArray<TranscriptMessage>) =>
-  messages.map((message) => {
-    if (message.role !== 'assistant') return message
-    return {
-      ...message,
-      content: normalizeAssistantTranscriptContent(normalizeMessageContent(message.content)),
-    }
-  })
-
-const buildOpenWebUITranscriptSignature = (messages: ReadonlyArray<TranscriptMessage>) =>
-  buildTranscriptSignature(normalizeOpenWebUITranscriptMessages(messages))
-
 export const handleChatCompletionEffect = (request: Request) =>
   pipe(
     parseRequestEffect(request),
@@ -917,29 +881,8 @@ export const handleChatCompletionEffect = (request: Request) =>
           encoder: ChatCompletionEncoder,
         })
         const statefulTranscriptEnabled = chatClientKind === 'openwebui' && config.statefulChatModeEnabled
-        const openWebUIDetailLinksRequested = isOpenWebUIDetailLinksEnabled(chatClientKind, config)
-        const openWebUIRenderRuntime = resolveConfiguredOpenWebUIRenderRuntime(config)
-        const openWebUIDetailLinksEnabled = openWebUIDetailLinksRequested && openWebUIRenderRuntime !== null
-        const experimentalJangarEventEnabled = shouldEmitExperimentalOpenWebUIJangarEvent(
-          chatClientKind,
-          request,
-          config,
-        )
-
-        if (chatClientKind === 'openwebui') {
-          recordOpenWebUIDetailTurn(
-            openWebUIDetailLinksEnabled ? 'enabled' : openWebUIDetailLinksRequested ? 'text_only' : 'disabled',
-          )
-        }
-        if (openWebUIDetailLinksRequested && !openWebUIRenderRuntime) {
-          recordOpenWebUITextOnlyFallback('render_runtime_missing')
-          if (!hasLoggedMissingOpenWebUIRenderRuntime) {
-            hasLoggedMissingOpenWebUIRenderRuntime = true
-            console.warn(
-              '[chat] openwebui rich detail requested but JANGAR_OPENWEBUI_EXTERNAL_BASE_URL or signing secret is missing; falling back to text-only mode',
-            )
-          }
-        }
+        const { openWebUIDetailLinksEnabled, experimentalJangarEventEnabled, openWebUIRenderRuntime } =
+          resolveOpenWebUIDetailMode(chatClientKind, request, config)
 
         let threadContext: ThreadContext | null = null
         let codexCwd = resolveCodexCwd()
@@ -1492,5 +1435,3 @@ const parseSseFrames = (body: string): unknown[] => {
   }
   return frames
 }
-
-const normalizeAssistantTranscriptContent = (content: string) => content.replace(/^\n+/, '').trimEnd()

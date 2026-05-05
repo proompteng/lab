@@ -18,7 +18,7 @@ import {
   resolveDefaultWorkloadImage,
   resolveRequirementPriorityScore,
   resolveScheduleRuntimeInjection,
-  resolveSwarmHulyIntegration,
+  resolveSwarmNatsIntegration,
   resolveSwarmPersonaForStage,
   resolveSwarmRunSecrets,
   sortRequirementSignalsForDispatch,
@@ -50,7 +50,7 @@ import {
   countIdempotencyDuplicates,
   filterRunsAfterTime,
   getRunTimestamp,
-  isHulyChannel,
+  isNatsChannel,
   isIdempotencyDuplicateRun,
   makeGenerateName,
   makeRequirementObjective,
@@ -854,7 +854,7 @@ const buildScheduleRunTemplate = (
     const spec = asRecord(target.spec) ?? {}
     const existingParameters = normalizeParameterMap(spec.parameters)
     const existingSecrets = parseStringList(spec.secrets)
-    const mergedSecrets = resolveSwarmRunSecrets(existingSecrets, runtimeInjection.hulySecret)
+    const mergedSecrets = resolveSwarmRunSecrets(existingSecrets)
     const existingWorkload = asRecord(spec.workload) ?? {}
     const workloadImage = asString(existingWorkload.image) ?? resolveDefaultWorkloadImage()
     return {
@@ -1137,7 +1137,7 @@ const reconcileSwarm = async (
   const execution = asRecord(spec.execution) ?? {}
   const risk = asRecord(spec.risk) ?? {}
   const ownerChannel = asString(owner.channel) ?? null
-  const huly = resolveSwarmHulyIntegration(spec, owner, swarmName)
+  const nats = resolveSwarmNatsIntegration(spec, owner, swarmName)
 
   const freezeAfterFailuresRaw = Number(risk.freezeAfterFailures)
   const freezeAfterFailures =
@@ -1156,15 +1156,10 @@ const reconcileSwarm = async (
   if (mode !== 'assisted' && mode !== 'lights-out') {
     errors.push('spec.mode must be assisted or lights-out')
   }
-  if (!huly.secretName) {
-    errors.push('spec.integrations.huly.authSecretRef.name is required')
-  }
   for (const role of ['architect', 'engineer', 'deployer'] as const) {
-    const persona = huly.personas[role]
-    if (!persona?.humanName || !persona.workerIdentity || !persona.tokenKey || !persona.expectedActorIdKey) {
-      errors.push(
-        `spec.integrations.huly.personas.${role} requires humanName, workerIdentity, tokenKey, and expectedActorIdKey`,
-      )
+    const persona = nats.personas[role]
+    if (!persona?.humanName || !persona.workerIdentity) {
+      errors.push(`spec.integrations.nats.personas.${role} requires humanName and workerIdentity`)
     }
   }
 
@@ -1482,7 +1477,7 @@ const reconcileSwarm = async (
     const signalSpec = asRecord(signal.spec) ?? {}
     const signalChannel = asString(signalSpec.channel)
 
-    if (!isHulyChannel(signalChannel)) {
+    if (!isNatsChannel(signalChannel)) {
       requirementStats.pending += 1
       requirementStats.blocked += 1
       requirementStats.invalidChannel += 1
@@ -1532,7 +1527,7 @@ const reconcileSwarm = async (
     const sourceSwarmRaw =
       asString(readNested(signal, ['metadata', 'labels', SWARM_REQUIREMENT_LABEL_FROM])) ?? 'unknown'
     const sourceSwarmLabel = normalizeLabelValue(sourceSwarmRaw)
-    const requirementPersona = resolveSwarmPersonaForStage(huly, 'implement')
+    const requirementPersona = resolveSwarmPersonaForStage(nats, 'implement')
     if (!requirementPersona) {
       requirementStats.blocked += 1
       continue
@@ -1545,7 +1540,7 @@ const reconcileSwarm = async (
     })
     const runtimeParameters = buildSwarmRuntimeParameters({
       ownerChannel,
-      huly,
+      nats,
       identity: requirementIdentity,
     })
     const runLabels = {
@@ -1558,7 +1553,7 @@ const reconcileSwarm = async (
       [SWARM_REQUIREMENT_LABEL_ATTEMPT]: String(attempt),
       [SWARM_REQUIREMENT_LABEL_FROM]: sourceSwarmLabel,
       [SWARM_REQUIREMENT_LABEL_TO]: swarmLabel,
-      [SWARM_REQUIREMENT_LABEL_CHANNEL]: 'huly',
+      [SWARM_REQUIREMENT_LABEL_CHANNEL]: 'nats',
     }
     const runAnnotations = {
       [SWARM_REQUIREMENT_ANNOTATION_SIGNAL]: signalName,
@@ -1574,7 +1569,7 @@ const reconcileSwarm = async (
       swarmRequirementSignal: signalName,
       swarmRequirementSource: sourceSwarmRaw,
       swarmRequirementTarget: swarmName,
-      swarmRequirementChannel: signalChannel ?? '',
+      swarmRequirementChannel: signalChannel ?? nats.channel,
     }
     if (description) {
       requirementParameters.swarmRequirementDescription = description
@@ -1602,7 +1597,7 @@ const reconcileSwarm = async (
       if (targetKind === 'AgentRun') {
         const existingParameters = normalizeParameterMap(targetSpec.parameters)
         const existingSecrets = parseStringList(targetSpec.secrets)
-        const mergedSecrets = resolveSwarmRunSecrets(existingSecrets, huly.secretName)
+        const mergedSecrets = resolveSwarmRunSecrets(existingSecrets)
         await kube.apply({
           apiVersion: 'agents.proompteng.ai/v1alpha1',
           kind: 'AgentRun',
@@ -1681,7 +1676,7 @@ const reconcileSwarm = async (
     }
 
     const stageLabel = normalizeLabelValue(stageConfig.stage)
-    const stagePersona = resolveSwarmPersonaForStage(huly, stageConfig.stage)
+    const stagePersona = resolveSwarmPersonaForStage(nats, stageConfig.stage)
     if (!stagePersona) {
       stageStates[stageConfig.stage] = {
         ...baseState,
@@ -1699,7 +1694,7 @@ const reconcileSwarm = async (
     })
     const stageAnnotations = buildSwarmScheduleAnnotations({
       ownerChannel,
-      huly,
+      nats,
       identity: stageIdentity,
     })
     const schedule = {
@@ -1943,7 +1938,7 @@ const reconcileSwarm = async (
       type: 'RequirementsBridge',
       status: 'False',
       reason: 'InvalidRequirementChannel',
-      message: `${requirementStats.invalidChannel} requirement signal(s) were rejected because channel is not Huly`,
+      message: `${requirementStats.invalidChannel} requirement signal(s) were rejected because channel is not NATS`,
     })
   } else if (requirementStats.paused) {
     conditions = upsertCondition(conditions, {

@@ -48,10 +48,9 @@ const parseOptionalJsonRecord = (value: string | undefined) => {
 
 export type RuntimeAdmissionConfig = {
   worktree: string
-  hulyBaseUrl: string
+  natsUrl: string
   pythonBin: string
   runtimeImage: string
-  hulyApiScriptPath: string | null
   pathEntries: string[]
 }
 
@@ -106,14 +105,9 @@ export type MockCodexConfig = {
 
 export const resolveRuntimeAdmissionConfig = (env: EnvSource = process.env): RuntimeAdmissionConfig => ({
   worktree: normalizeNonEmpty(env.WORKTREE) ?? (process.cwd().trim() || DEFAULT_WORKTREE),
-  hulyBaseUrl:
-    normalizeNonEmpty(env.HULY_API_BASE_URL) ??
-    normalizeNonEmpty(env.HULY_BASE_URL) ??
-    normalizeNonEmpty(env.hulyApiBaseUrl) ??
-    '',
+  natsUrl: normalizeNonEmpty(env.NATS_URL) ?? normalizeNonEmpty(env.natsUrl) ?? '',
   pythonBin: normalizeNonEmpty(env.PYTHON_BIN) ?? normalizeNonEmpty(env.PYTHON) ?? DEFAULT_PYTHON_BIN,
   runtimeImage: normalizeNonEmpty(env.JANGAR_RUNTIME_IMAGE) ?? normalizeNonEmpty(env.IMAGE_REF) ?? 'runtime:local',
-  hulyApiScriptPath: normalizeNonEmpty(env.HULY_API_SCRIPT_PATH),
   pathEntries: (env.PATH ?? '').split(':').filter((entry) => entry.length > 0),
 })
 
@@ -192,19 +186,16 @@ export const resolveMockCodexConfig = (env: EnvSource = process.env): MockCodexC
   }
 }
 
-export const resolveHulyApiScriptPathCandidatesFromConfig = (config: RuntimeAdmissionConfig, cwd = process.cwd()) => {
-  const configured = config.hulyApiScriptPath
-  if (configured) return [configured]
-  const relativePath = join('skills', 'huly-api', 'scripts', 'huly-api.py')
-  return [
-    join(cwd, relativePath),
-    join(config.worktree, relativePath),
-    '/workspace/lab/skills/huly-api/scripts/huly-api.py',
-    '/tmp/proompt-lab/skills/huly-api/scripts/huly-api.py',
-    '/app/skills/huly-api/scripts/huly-api.py',
-    '/root/.codex/skills/huly-api/scripts/huly-api.py',
-  ]
-}
+export const resolveCodexNatsHelperPathCandidatesFromConfig = (
+  config: RuntimeAdmissionConfig,
+  command: 'codex-nats-publish' | 'codex-nats-soak',
+  cwd = process.cwd(),
+) => [
+  join(cwd, 'services', 'jangar', 'scripts', `${command}.ts`),
+  join(cwd, 'scripts', `${command}.ts`),
+  join(config.worktree, 'services', 'jangar', 'scripts', `${command}.ts`),
+  join('/usr/local/bin', command),
+]
 
 export const validateRuntimeToolingConfig = (env: EnvSource = process.env) => {
   resolveRuntimeAdmissionConfig(env)

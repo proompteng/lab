@@ -175,6 +175,8 @@ describe('supporting primitives controller', () => {
     expect(command).toContain("replaceAll('__JANGAR_DELIVERY_ID__', randomUUID())")
     expect(command).toContain('const targetByKind = {')
     expect(command).toContain("method: 'POST'")
+    expect(command).toContain("from 'node:crypto'\nimport")
+    expect(command).not.toContain("from 'node:crypto' import")
     expect(command).not.toContain('kubectl create -f -')
   })
 
@@ -210,16 +212,13 @@ describe('supporting primitives controller', () => {
     ).toBe(1)
   })
 
-  it('strips global huly-api secret when building schedule run templates', () => {
+  it('deduplicates explicit schedule run template secrets without injecting collaboration secrets', () => {
     const schedule = {
       metadata: {
         name: 'torghut-quant-discover-sched',
         namespace: 'agents',
         labels: {
           'swarm.proompteng.ai/name': 'torghut-quant',
-        },
-        annotations: {
-          'swarm.proompteng.ai/huly-secret': 'huly-api-torghut',
         },
       },
     } as Record<string, unknown>
@@ -229,16 +228,14 @@ describe('supporting primitives controller', () => {
       spec: {
         agentRef: { name: 'codex-spark-agent' },
         runtime: { type: 'job' },
-        secrets: ['codex-auth', 'huly-api'],
+        secrets: ['codex-auth', 'codex-auth', 'keep-me'],
       },
     } as Record<string, unknown>
 
     const template = __test__.buildScheduleRunTemplate(schedule, target, '__DELIVERY__')
     const spec = (template as { spec?: Record<string, unknown> }).spec ?? {}
     const secrets = Array.isArray(spec.secrets) ? (spec.secrets as string[]) : []
-    expect(secrets).toContain('codex-auth')
-    expect(secrets).toContain('huly-api-torghut')
-    expect(secrets).not.toContain('huly-api')
+    expect(secrets).toEqual(['codex-auth', 'keep-me'])
   })
 
   it('skips apply for equivalent schedule resources', async () => {
@@ -543,14 +540,10 @@ describe('supporting primitives controller', () => {
         mode: 'lights-out',
         timezone: 'UTC',
         integrations: {
-          huly: {
-            baseUrl: 'https://huly.proompteng.ai',
-            workspace: 'virtual-workers',
-            project: 'jangar-control-plane',
-            authSecretRef: {
-              name: 'swarm-huly-access',
-            },
-            skillRef: 'skills/huly-api/SKILL.md',
+          nats: {
+            url: 'nats://nats.nats.svc.cluster.local:4222',
+            subjectPrefix: 'workflow',
+            channel: 'general',
           },
         },
         cadence: {
@@ -593,11 +586,9 @@ describe('supporting primitives controller', () => {
           ? (payload.metadata as Record<string, unknown>).annotations
           : undefined
       expect(annotations).toMatchObject({
-        'swarm.proompteng.ai/huly-base-url': 'https://huly.proompteng.ai',
-        'swarm.proompteng.ai/huly-workspace': 'virtual-workers',
-        'swarm.proompteng.ai/huly-project': 'jangar-control-plane',
-        'swarm.proompteng.ai/huly-secret': 'swarm-huly-access',
-        'swarm.proompteng.ai/huly-skill-ref': 'skills/huly-api/SKILL.md',
+        'swarm.proompteng.ai/nats-url': 'nats://nats.nats.svc.cluster.local:4222',
+        'swarm.proompteng.ai/nats-subject-prefix': 'workflow',
+        'swarm.proompteng.ai/nats-channel': 'general',
       })
       expect(typeof (annotations as Record<string, unknown>)['swarm.proompteng.ai/worker-id']).toBe('string')
       expect(typeof (annotations as Record<string, unknown>)['swarm.proompteng.ai/agent-identity']).toBe('string')
@@ -611,7 +602,7 @@ describe('supporting primitives controller', () => {
     expect(status.stageStates).toBeTruthy()
   })
 
-  it('does not derive huly api base url from owner channel transport-like values', async () => {
+  it('does not derive NATS url from owner channel transport-like values', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
     const get = vi.fn().mockResolvedValue({
@@ -631,7 +622,7 @@ describe('supporting primitives controller', () => {
       kind: 'Swarm',
       metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
       spec: {
-        owner: { id: 'platform-owner', channel: 'http://front.huly.svc.cluster.local' },
+        owner: { id: 'platform-owner', channel: 'http://example.invalid' },
         domains: ['platform-reliability'],
         objectives: ['improve reliability'],
         mode: 'lights-out',
@@ -660,10 +651,10 @@ describe('supporting primitives controller', () => {
       .find((payload) => payload.kind === 'Schedule') as { metadata?: Record<string, unknown> } | undefined
     expect(schedulePayload).toBeDefined()
     const annotations = (schedulePayload?.metadata?.annotations ?? {}) as Record<string, string>
-    expect(annotations['swarm.proompteng.ai/huly-base-url']).toBe('https://huly.proompteng.ai')
+    expect(annotations['swarm.proompteng.ai/nats-url']).toBe('nats://nats.nats.svc.cluster.local:4222')
   })
 
-  it('dispatches Huly requirement signals into implement runs', async () => {
+  it('dispatches NATS requirement signals into implement runs', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
     const get = vi.fn(async (resource: string) => {
@@ -680,7 +671,7 @@ describe('supporting primitives controller', () => {
             parameters: {
               staticKey: 'static-value',
             },
-            secrets: ['huly-api', 'keep-me'],
+            secrets: ['keep-me'],
           },
         }
       }
@@ -701,7 +692,7 @@ describe('supporting primitives controller', () => {
                 },
               },
               spec: {
-                channel: 'huly://swarm-bridge/issues/TOR-123',
+                channel: 'workflow.general.requirement',
                 description: 'Raise risk budget guardrails for market-open volatility',
                 payload: {
                   priority: 'high',
@@ -763,7 +754,7 @@ describe('supporting primitives controller', () => {
       spec: Record<string, unknown>
     }
     const runLabels = (requirementRun.metadata.labels ?? {}) as Record<string, string>
-    expect(runLabels['swarm.proompteng.ai/requirement-channel']).toBe('huly')
+    expect(runLabels['swarm.proompteng.ai/requirement-channel']).toBe('nats')
     expect(runLabels['swarm.proompteng.ai/from']).toBe('torghut-quant')
     expect(runLabels['swarm.proompteng.ai/to']).toBe('jangar-control-plane')
     expect(runLabels['swarm.proompteng.ai/worker-id']).toMatch(/^worker-/)
@@ -772,7 +763,7 @@ describe('supporting primitives controller', () => {
     const parameters = (requirementRun.spec.parameters ?? {}) as Record<string, string>
     expect(parameters.staticKey).toBe('static-value')
     expect(parameters.swarmRequirementSignal).toBe('torghut-risk-handoff-1')
-    expect(parameters.swarmRequirementChannel).toBe('huly://swarm-bridge/issues/TOR-123')
+    expect(parameters.swarmRequirementChannel).toBe('workflow.general.requirement')
     expect(parameters.swarmRequirementSource).toBe('torghut-quant')
     expect(parameters.swarmRequirementTarget).toBe('jangar-control-plane')
     expect(parameters.swarmRequirementDescription).toBe('Raise risk budget guardrails for market-open volatility')
@@ -792,15 +783,14 @@ describe('supporting primitives controller', () => {
     expect(parameters.swarmAgentIdentity).toBe('elise-novak-jangar-engineer')
     expect(parameters.swarmAgentRole).toBe('engineer')
     expect(parameters.swarmHumanName).toBe('Elise Novak')
-    expect(parameters.swarmAgentTokenKey).toBe('HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER')
-    expect(parameters.swarmAgentExpectedActorIdKey).toBe('HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER')
-    expect(parameters.hulyApiBaseUrl).toBe('https://huly.proompteng.ai')
-    expect(parameters.hulySkillRef).toBe('skills/huly-api/SKILL.md')
+    expect(parameters.natsUrl).toBe('nats://nats.nats.svc.cluster.local:4222')
+    expect(parameters.natsSubjectPrefix).toBe('workflow')
+    expect(parameters.natsChannel).toBe('general')
+    expect(parameters.swarmAgentTokenKey).toBeUndefined()
+    expect(parameters.swarmAgentExpectedActorIdKey).toBeUndefined()
     const runSecrets = Array.isArray(requirementRun.spec.secrets) ? (requirementRun.spec.secrets as string[]) : []
-    expect(runSecrets).not.toContain('huly-api')
     expect(runSecrets).toContain('keep-me')
-    expect(runSecrets).toContain('huly-api-jangar')
-    expect(runSecrets).toHaveLength(2)
+    expect(runSecrets).toHaveLength(1)
     expect((requirementRun.spec.workload as { image?: string } | undefined)?.image).toContain(TEST_RUNNER_IMAGE)
 
     const statusCall = applyStatus.mock.calls.at(-1)
@@ -859,7 +849,7 @@ describe('supporting primitives controller', () => {
                 },
               },
               spec: {
-                channel: 'huly://swarm-bridge/issues/TOR-PAUSE',
+                channel: 'workflow.general.requirement',
                 description: 'Pause dispatch until AgentRun ingestion recovers',
                 payload: { priority: 'critical' },
               },
@@ -963,7 +953,7 @@ describe('supporting primitives controller', () => {
                 },
               },
               spec: {
-                channel: 'huly://swarm-bridge/issues/TOR-LOW',
+                channel: 'workflow.general.requirement',
                 description: 'Low priority scope',
                 payload: {
                   priority: 'low',
@@ -982,7 +972,7 @@ describe('supporting primitives controller', () => {
                 },
               },
               spec: {
-                channel: 'huly://swarm-bridge/issues/TOR-HIGH',
+                channel: 'workflow.general.requirement',
                 description: 'Critical priority scope',
                 payload: {
                   priority: 'critical',
@@ -1083,7 +1073,7 @@ describe('supporting primitives controller', () => {
                 },
               },
               spec: {
-                channel: 'huly://swarm-bridge/issues/TOR-222',
+                channel: 'workflow.general.requirement',
                 payload: payloadForObjective,
               },
             },
@@ -1187,7 +1177,7 @@ describe('supporting primitives controller', () => {
                 },
               },
               spec: {
-                channel: 'huly://swarm-bridge/issues/TOR-444',
+                channel: 'workflow.general.requirement',
                 payload: payloadForObjective,
               },
             },
@@ -1292,7 +1282,7 @@ describe('supporting primitives controller', () => {
                 },
               },
               spec: {
-                channel: 'huly://swarm-bridge/issues/TOR-333',
+                channel: 'workflow.general.requirement',
                 payload: payloadForObjective,
               },
             },
@@ -1394,7 +1384,7 @@ describe('supporting primitives controller', () => {
                 },
               },
               spec: {
-                channel: 'huly://swarm-bridge/issues/TOR-444',
+                channel: 'workflow.general.requirement',
                 description: 'Long payload truncation validation run',
                 payload: largePayload,
               },
@@ -1462,7 +1452,7 @@ describe('supporting primitives controller', () => {
     expect(payload).toBe(largePayloadString.slice(0, 16_384))
   })
 
-  it('rejects non-Huly requirement channels for cross-swarm implementation', async () => {
+  it('rejects non-NATS requirement channels for cross-swarm implementation', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
     const get = vi.fn().mockResolvedValue({
@@ -1579,7 +1569,7 @@ describe('supporting primitives controller', () => {
                 },
               },
               spec: {
-                channel: 'huly://swarm-bridge/issues/TOR-789',
+                channel: 'workflow.general.requirement',
               },
             },
           ],
@@ -1683,7 +1673,7 @@ describe('supporting primitives controller', () => {
                 },
               },
               spec: {
-                channel: 'huly://swarm-bridge/issues/TOR-654',
+                channel: 'workflow.general.requirement',
               },
             },
           ],
