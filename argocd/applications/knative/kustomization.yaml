@@ -3,3 +3,42 @@ kind: Kustomization
 namespace: knative
 resources:
   - https://github.com/knative/operator/releases/download/knative-v1.22.0/operator.yaml
+patches:
+  - target:
+      group: apiextensions.k8s.io
+      version: v1
+      kind: CustomResourceDefinition
+      name: knativeeventings.operator.knative.dev
+    patch: |-
+      - op: add
+        path: /spec/conversion
+        value:
+          strategy: Webhook
+          webhook:
+            clientConfig:
+              service:
+                name: operator-webhook
+                namespace: knative
+                path: /resource-conversion
+                port: 443
+            conversionReviewVersions:
+              - v1beta1
+  - target:
+      group: apiextensions.k8s.io
+      version: v1
+      kind: CustomResourceDefinition
+      name: knativeservings.operator.knative.dev
+    patch: |-
+      - op: add
+        path: /spec/conversion
+        value:
+          strategy: Webhook
+          webhook:
+            clientConfig:
+              service:
+                name: operator-webhook
+                namespace: knative
+                path: /resource-conversion
+                port: 443
+            conversionReviewVersions:
+              - v1beta1
