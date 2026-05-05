@@ -17,7 +17,7 @@
   "dependencies": {
     "@hono/node-server": "^2.0.1",
     "@proompteng/otel": "workspace:*",
-    "hono": "^4.12.16",
+    "hono": "^4.12.17",
     "pino": "^10.3.1",
     "pino-loki": "^3.0.0",
     "tslib": "^2.8.1"
