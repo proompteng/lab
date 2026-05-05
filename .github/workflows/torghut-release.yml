@@ -102,8 +102,28 @@ jobs:
             fi
 
             if [ "${SOURCE_SHA}" != "${MAIN_HEAD}" ]; then
-              echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; latest main is ${MAIN_HEAD}"
-              PROMOTE='false'
+              if ! git merge-base --is-ancestor "${SOURCE_SHA}" "${MAIN_HEAD}"; then
+                echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; latest main ${MAIN_HEAD} is not a descendant."
+                PROMOTE='false'
+              else
+                TORGHUT_CHANGES="$(
+                  git diff --name-only "${SOURCE_SHA}..${MAIN_HEAD}" -- \
+                    services/torghut \
+                    packages/scripts/src/torghut \
+                    packages/scripts/src/shared \
+                    .github/workflows/torghut-build-push.yaml \
+                    .github/workflows/torghut-release.yml \
+                    package.json \
+                    bun.lock
+                )"
+                if [ -n "${TORGHUT_CHANGES}" ]; then
+                  echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; newer Torghut build inputs changed:"
+                  printf '%s\n' "${TORGHUT_CHANGES}"
+                  PROMOTE='false'
+                else
+                  echo "Promoting ${SOURCE_SHA}; newer main ${MAIN_HEAD} contains only unrelated changes."
+                fi
+              fi
             fi
           else
             if [ -n "${COMMIT_SHA_INPUT}" ]; then
