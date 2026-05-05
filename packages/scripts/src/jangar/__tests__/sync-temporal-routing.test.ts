@@ -23,6 +23,7 @@ describe('sync-temporal-routing', () => {
       'jangar-deployment',
       '--migrate-stale-running',
       '--migrate-unversioned-running',
+      '--allow-no-versioned-pollers',
       '--dry-run',
       '--reason',
       'test',
@@ -34,6 +35,7 @@ describe('sync-temporal-routing', () => {
     expect(parsed.deploymentName).toBe('jangar-deployment')
     expect(parsed.migrateStaleRunning).toBe(true)
     expect(parsed.migrateUnversionedRunning).toBe(true)
+    expect(parsed.allowNoVersionedPollers).toBe(true)
     expect(parsed.dryRun).toBe(true)
     expect(parsed.reason).toBe('test')
   })
@@ -60,6 +62,8 @@ describe('sync-temporal-routing', () => {
 
   it('selects a single poller build ID and fails on multiple', () => {
     expect(__private.selectTargetBuildId(['workflow-code@abc123'], 'jangar-deployment')).toBe('workflow-code@abc123')
+    expect(__private.selectTargetBuildId([], 'jangar-deployment', true)).toBeUndefined()
+    expect(() => __private.selectTargetBuildId([], 'jangar-deployment')).toThrow('No versioned workflow pollers found')
 
     expect(() =>
       __private.selectTargetBuildId(['workflow-code@abc123', 'workflow-code@def456'], 'jangar-deployment'),

@@ -11,6 +11,7 @@ type CliOptions = {
   deploymentName?: string
   migrateStaleRunning?: boolean
   migrateUnversionedRunning?: boolean
+  allowNoVersionedPollers?: boolean
   reason?: string
   dryRun?: boolean
 }
@@ -22,6 +23,7 @@ type ResolvedOptions = {
   deploymentName: string
   migrateStaleRunning: boolean
   migrateUnversionedRunning: boolean
+  allowNoVersionedPollers: boolean
   reason: string
   dryRun: boolean
 }
@@ -55,8 +57,9 @@ type WorkerDeploymentDescribeResponse = {
 type SyncResult = {
   changed: boolean
   previousBuildId?: string
-  targetBuildId: string
+  targetBuildId?: string
   deploymentBuildIds: string[]
+  skippedReason?: string
 }
 
 const defaultAddress = 'temporal-frontend.temporal.svc.cluster.local:7233'
@@ -110,6 +113,7 @@ Options:
   --deployment-name <name>              Temporal worker deployment name (default: <task-queue>-deployment)
   --migrate-stale-running               Move stale pinned running workflows to auto_upgrade after routing update
   --migrate-unversioned-running         Move unversioned running workflows to auto_upgrade
+  --allow-no-versioned-pollers          Skip routing sync when no versioned workflow pollers exist
   --reason <text>                       Reason recorded in workflow update-options
   --dry-run                             Print intended actions without mutating Temporal`)
       process.exit(0)
@@ -121,6 +125,10 @@ Options:
     }
     if (arg === '--migrate-unversioned-running') {
       options.migrateUnversionedRunning = true
+      continue
+    }
+    if (arg === '--allow-no-versioned-pollers') {
+      options.allowNoVersionedPollers = true
       continue
     }
     if (arg === '--dry-run') {
@@ -177,6 +185,7 @@ const resolveOptions = (options: CliOptions): ResolvedOptions => {
     deploymentName,
     migrateStaleRunning: options.migrateStaleRunning ?? false,
     migrateUnversionedRunning: options.migrateUnversionedRunning ?? false,
+    allowNoVersionedPollers: options.allowNoVersionedPollers ?? false,
     reason: options.reason?.trim() || defaultReason,
     dryRun: options.dryRun ?? false,
   }
@@ -275,8 +284,15 @@ const extractVersionedPollerBuildIds = (
   return [...workflowBuildIds]
 }
 
-const selectTargetBuildId = (candidateBuildIds: string[], deploymentName: string): string => {
+const selectTargetBuildId = (
+  candidateBuildIds: string[],
+  deploymentName: string,
+  allowNoVersionedPollers = false,
+): string | undefined => {
   if (candidateBuildIds.length === 0) {
+    if (allowNoVersionedPollers) {
+      return undefined
+    }
     throw new Error(
       `No versioned workflow pollers found for deployment '${deploymentName}'. Ensure worker pods are healthy before syncing routing.`,
     )
@@ -379,13 +395,21 @@ const syncCurrentVersion = async (options: ResolvedOptions): Promise<SyncResult>
   ])
   const queueDetails = parseJson<TaskQueueDescribeResponse>(queueResponse.stdout, 'task-queue describe output')
   const pollerBuildIds = extractVersionedPollerBuildIds(queueDetails.pollers, options.deploymentName)
-  const targetBuildId = selectTargetBuildId(pollerBuildIds, options.deploymentName)
+  const targetBuildId = selectTargetBuildId(pollerBuildIds, options.deploymentName, options.allowNoVersionedPollers)
+  const deploymentBuildIds = (deployment.versionSummaries ?? [])
+    .map((entry) => entry.BuildID ?? entry.buildId)
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+
+  if (!targetBuildId) {
+    const skippedReason = 'no_versioned_workflow_pollers'
+    console.log(
+      `No versioned workflow pollers found for deployment '${options.deploymentName}'; skipping Temporal routing sync.`,
+    )
+    return { changed: false, previousBuildId: currentBuildId, deploymentBuildIds, skippedReason }
+  }
 
   if (currentBuildId === targetBuildId) {
     console.log(`Temporal routing already aligned: ${options.deploymentName} -> ${targetBuildId}`)
-    const deploymentBuildIds = (deployment.versionSummaries ?? [])
-      .map((entry) => entry.BuildID ?? entry.buildId)
-      .filter((value): value is string => typeof value === 'string' && value.length > 0)
     return { changed: false, previousBuildId: currentBuildId, targetBuildId, deploymentBuildIds }
   }
 
@@ -393,9 +417,6 @@ const syncCurrentVersion = async (options: ResolvedOptions): Promise<SyncResult>
     console.log(
       `[dry-run] Would set current version: ${options.deploymentName} ${currentBuildId ?? '<none>'} -> ${targetBuildId}`,
     )
-    const deploymentBuildIds = (deployment.versionSummaries ?? [])
-      .map((entry) => entry.BuildID ?? entry.buildId)
-      .filter((value): value is string => typeof value === 'string' && value.length > 0)
     return { changed: true, previousBuildId: currentBuildId, targetBuildId, deploymentBuildIds }
   }
 
@@ -411,9 +432,6 @@ const syncCurrentVersion = async (options: ResolvedOptions): Promise<SyncResult>
   ])
   console.log(`Updated current version: ${options.deploymentName} ${currentBuildId ?? '<none>'} -> ${targetBuildId}`)
 
-  const deploymentBuildIds = (deployment.versionSummaries ?? [])
-    .map((entry) => entry.BuildID ?? entry.buildId)
-    .filter((value): value is string => typeof value === 'string' && value.length > 0)
   return { changed: true, previousBuildId: currentBuildId, targetBuildId, deploymentBuildIds }
 }
 
@@ -426,7 +444,7 @@ export const main = async (cliOptions?: CliOptions) => {
   let migratedStale = 0
   let migratedUnversioned = 0
 
-  if (options.migrateStaleRunning) {
+  if (options.migrateStaleRunning && sync.targetBuildId) {
     const staleBuildIds = [...new Set(sync.deploymentBuildIds)].filter((buildId) => buildId !== sync.targetBuildId)
     for (const buildId of staleBuildIds) {
       const query = `TaskQueue="${options.taskQueue}" and ExecutionStatus="Running" and TemporalWorkerDeploymentVersion="${options.deploymentName}:${buildId}"`
@@ -457,6 +475,7 @@ export const main = async (cliOptions?: CliOptions) => {
         previousBuildId: sync.previousBuildId,
         targetBuildId: sync.targetBuildId,
         changed: sync.changed,
+        skippedReason: sync.skippedReason,
         migratedStale,
         migratedUnversioned,
         dryRun: options.dryRun,

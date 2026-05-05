@@ -50,6 +50,10 @@ on:
       - '.github/workflows/agents-ci.yml'
       - '.github/workflows/jangar-build-push.yaml'
 
+concurrency:
+  group: agents-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest

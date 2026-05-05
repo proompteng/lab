@@ -563,6 +563,8 @@ describe('agents controller startup', () => {
 
   it('dedupes repeated ingestion stall logs and emits recovery after two healthy resyncs', async () => {
     stopAgentsController()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-20T00:03:00Z'))
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     const state = { namespaces: new Map() }
@@ -590,6 +592,7 @@ describe('agents controller startup', () => {
 
     try {
       await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      vi.advanceTimersByTime(1500)
       await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
 
       let stallMessages = warnSpy.mock.calls
@@ -619,6 +622,7 @@ describe('agents controller startup', () => {
     } finally {
       warnSpy.mockRestore()
       infoSpy.mockRestore()
+      vi.useRealTimers()
     }
   })
 })
