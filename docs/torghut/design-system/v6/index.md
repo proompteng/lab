@@ -10,6 +10,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `73-torghut-profit-evidence-clock-and-capital-veto-contract-2026-05-05.md`
+  - `docs/agents/designs/68-jangar-evidence-clock-arbiter-and-rollout-veto-contract-2026-05-05.md`
   - `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
   - `docs/agents/designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md`
   - `53-torghut-kafka-retention-bootstrap-and-archive-backed-profitability-proof-2026-03-27.md`
@@ -45,7 +47,9 @@
 - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 - `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 - `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
+- `73-torghut-profit-evidence-clock-and-capital-veto-contract-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/68-jangar-evidence-clock-arbiter-and-rollout-veto-contract-2026-05-05.md`
   - `docs/agents/designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md`
   - `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
   - `64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`
@@ -161,6 +165,12 @@ Current source-state priority is narrower:
 - `docs/agents/designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md` now binds Jangar
   rollout safety to runtime cells, receipt digests, and proof-read backpressure so serving readiness, dispatch,
   deploy verification, and Torghut promotion stop re-deriving authority from broad route-time status.
+- `73-torghut-profit-evidence-clock-and-capital-veto-contract-2026-05-05.md` now binds live capital to lane-local
+  evidence clocks: Jangar authority, market-context freshness, schema lineage, execution revision state, and
+  hypothesis promotion evidence must agree before non-observe capital can move.
+- `docs/agents/designs/68-jangar-evidence-clock-arbiter-and-rollout-veto-contract-2026-05-05.md` now separates Jangar
+  serving readiness from promotion authority with evidence clocks and rollout vetoes for dispatch, schedule launch,
+  deploy widening, and Torghut capital promotion.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.
