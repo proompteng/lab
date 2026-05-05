@@ -157,6 +157,19 @@ describe('update-manifests', () => {
     expect(historicalWorkflowManifest).toContain('runtime_simulation_dsn_password_env')
   })
 
+  it('keeps the migration hook gated on database readiness', () => {
+    const migrationManifest = readFileSync(join(repoRoot, 'argocd/applications/torghut/db-migrations-job.yaml'), 'utf8')
+
+    expect(migrationManifest).toContain('backoffLimit: 6')
+    expect(migrationManifest).toContain('activeDeadlineSeconds: 900')
+    expect(migrationManifest).toContain('wait_for_database()')
+    expect(migrationManifest).toContain("connection.execute(text('select 1'))")
+    expect(migrationManifest).toContain('wait_for_database "torghut app database" "${DB_DSN}" 300')
+    expect(migrationManifest).toContain(
+      'wait_for_database "postgres superuser database" "${TORGHUT_POSTGRES_ADMIN_URI}" 300',
+    )
+  })
+
   it('updates service and migration image digest, rollout timestamp, and metadata env values', () => {
     const fixture = createFixture()
     const result = __private.updateTorghutManifests({
