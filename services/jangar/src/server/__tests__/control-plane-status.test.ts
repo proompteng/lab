@@ -1660,7 +1660,7 @@ describe('control-plane status', () => {
       listSwarms: vi.fn(async () => [
         buildExecutionTrustSwarmResource({
           phase: 'Frozen',
-          freezeReason: 'StageStaleness',
+          freezeReason: 'ConsecutiveFailures',
           freezeUntil: '2026-01-20T00:40:00Z',
           requirementsPending: 2,
           requirementsLastSeen: '2026-01-20T00:00:00Z',
@@ -1697,10 +1697,59 @@ describe('control-plane status', () => {
     expect(snapshot.executionTrust.reason).toContain('execution trust blocked')
     expect(snapshot.swarms).toHaveLength(1)
     expect(snapshot.swarms[0]?.freeze).toMatchObject({
-      reason: 'StageStaleness',
+      reason: 'ConsecutiveFailures',
     })
     expect(snapshot.stages).toHaveLength(4)
     expect(snapshot.stages.some((stage) => stage.phase === 'Frozen')).toBe(true)
+  })
+
+  it('buildExecutionTrust degrades instead of blocking during active stale-stage recovery freezes', async () => {
+    const kubeGateway = createTestKubeGateway({
+      listSwarms: vi.fn(async () => [
+        buildExecutionTrustSwarmResource({
+          phase: 'Frozen',
+          freezeReason: 'StageStaleness',
+          freezeUntil: '2026-01-20T00:40:00Z',
+          requirementsPending: 2,
+          requirementsLastSeen: '2026-01-20T00:00:00Z',
+          stageStates: {
+            discover: {
+              phase: 'Frozen',
+              healthy: false,
+              cadence: '1m',
+              lastRunTime: '2026-01-20T00:00:00Z',
+              consecutiveFailures: 0,
+            },
+          },
+        }),
+      ]),
+    })
+
+    const snapshot = await buildExecutionTrust({
+      namespace: 'agents',
+      now: new Date('2026-01-20T00:20:00Z'),
+      swarms: ['jangar-control-plane'],
+      kube: kubeGateway,
+      summaryLimit: 20,
+    })
+
+    expect(snapshot.executionTrust.status).toBe('degraded')
+    expect(snapshot.executionTrust.blocking_windows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'swarms',
+          name: 'jangar-control-plane',
+          reason: 'swarm freeze active (StageStaleness)',
+          class: 'degraded',
+        }),
+        expect.objectContaining({
+          type: 'stages',
+          name: 'jangar-control-plane:discover',
+          reason: 'discover delayed by swarm freeze',
+          class: 'degraded',
+        }),
+      ]),
+    )
   })
 
   it('buildExecutionTrust degrades when freeze expiry is unreconciled', async () => {

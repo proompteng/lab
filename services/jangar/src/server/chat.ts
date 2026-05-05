@@ -67,12 +67,7 @@ const ChatRequestSchema = S.Struct({
   model: S.optional(S.String),
   messages: S.Array(MessageSchema),
   stream: S.optional(S.Boolean),
-  stream_options: S.optional(
-    S.Struct({
-      include_usage: S.optional(S.Boolean),
-      include_plan: S.optional(S.Boolean),
-    }),
-  ),
+  stream_options: S.optional(S.Struct({ include_usage: S.optional(S.Boolean), include_plan: S.optional(S.Boolean) })),
 })
 
 type ChatRequest = S.Schema.Type<typeof ChatRequestSchema>
@@ -91,7 +86,6 @@ class RequestError extends Error {
 class ChatStateStoreError extends Error {
   readonly store: string
   readonly detail: string
-
   constructor(store: string, error: unknown) {
     const detail = error instanceof Error ? error.message : String(error)
     super(`chat state store error (${store}): ${detail}`)
@@ -187,11 +181,8 @@ const TRADE_EXECUTION_DIR_NAME = 'torghut'
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const isOpenWebUIDetailLinksEnabled = (chatClientKind: ChatClientKind, config: ChatConfig) => {
-  if (chatClientKind !== 'openwebui') return false
-  if (!config.openWebUIRichRenderEnabled) return false
-  return true
-}
+const isOpenWebUIDetailLinksEnabled = (chatClientKind: ChatClientKind, config: ChatConfig) =>
+  chatClientKind === 'openwebui' && config.openWebUIRichRenderEnabled
 
 const shouldEmitExperimentalOpenWebUIJangarEvent = (
   chatClientKind: ChatClientKind,
@@ -199,8 +190,7 @@ const shouldEmitExperimentalOpenWebUIJangarEvent = (
   config: ChatConfig,
 ) => {
   if (!isOpenWebUIDetailLinksEnabled(chatClientKind, config)) return false
-  const requestedMode = request.headers.get('x-jangar-openwebui-render-mode')?.trim().toLowerCase()
-  return requestedMode === 'rich-ui-v1'
+  return request.headers.get('x-jangar-openwebui-render-mode')?.trim().toLowerCase() === 'rich-ui-v1'
 }
 
 let hasLoggedMissingOpenWebUIRenderRuntime = false
@@ -371,6 +361,15 @@ type ThreadContext = {
   threadState: ThreadStateService
   turnNumber: number | null
 }
+
+const statelessChatResolution = () => ({
+  threadContext: null,
+  codexCwd: resolveCodexCwd(),
+  transcriptState: null,
+  transcriptSignature: null,
+  worktreeName: null,
+  worktreePath: null,
+})
 
 const toSseResponse = (
   client: CodexAppServerClient,
@@ -1058,42 +1057,21 @@ export const handleChatCompletionEffect = (request: Request) =>
                   store: error.store,
                   detail: error.detail,
                 })
-                return Effect.succeed({
-                  threadContext: null,
-                  codexCwd: resolveCodexCwd(),
-                  transcriptState: null,
-                  transcriptSignature: null,
-                  worktreeName: null,
-                  worktreePath: null,
-                })
+                return Effect.succeed(statelessChatResolution())
               }
               if (error instanceof ThreadStateUnavailableError || error instanceof WorktreeStateUnavailableError) {
                 console.warn('[chat] openwebui state unavailable; falling back to stateless', {
                   chatId,
                   detail: error.message,
                 })
-                return Effect.succeed({
-                  threadContext: null,
-                  codexCwd: resolveCodexCwd(),
-                  transcriptState: null,
-                  transcriptSignature: null,
-                  worktreeName: null,
-                  worktreePath: null,
-                })
+                return Effect.succeed(statelessChatResolution())
               }
               if (error instanceof TranscriptStateUnavailableError) {
                 console.warn('[chat] openwebui transcript store unavailable; falling back to stateless', {
                   chatId,
                   detail: error.message,
                 })
-                return Effect.succeed({
-                  threadContext: null,
-                  codexCwd: resolveCodexCwd(),
-                  transcriptState: null,
-                  transcriptSignature: null,
-                  worktreeName: null,
-                  worktreePath: null,
-                })
+                return Effect.succeed(statelessChatResolution())
               }
               return Effect.fail(error)
             }),

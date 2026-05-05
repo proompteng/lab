@@ -81,6 +81,18 @@ export const resolveExecutionTrustSummaryLimit = () =>
 const asExecutionTrustClass = (value: unknown): 'degraded' | 'blocked' | 'unknown' =>
   value === 'degraded' || value === 'blocked' || value === 'unknown' ? value : 'unknown'
 
+const splitFreezeReasons = (reason: string | null) =>
+  (reason ?? '')
+    .split('|')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+
+const isBlockingFreezeReason = (reason: string | null) => {
+  const reasons = splitFreezeReasons(reason)
+  if (reasons.length === 0) return true
+  return reasons.some((entry) => entry !== 'StageStaleness')
+}
+
 const readRequirementsPending = (raw: unknown): number => {
   if (typeof raw === 'number' && Number.isFinite(raw)) return Math.max(0, Math.floor(raw))
   if (typeof raw === 'string' && raw.trim() !== '') {
@@ -122,6 +134,7 @@ const buildExecutionTrustStage = (input: {
   stageState: Record<string, unknown>
   nowMs: number
   freezeState: 'active' | 'expired_unreconciled' | 'inactive'
+  freezeBlocking?: boolean
 }) => {
   const configuredEveryRaw = asString(input.stageState['cadence'])
   const configuredEveryMs = parseDurationToMs(configuredEveryRaw)
@@ -151,7 +164,9 @@ const buildExecutionTrustStage = (input: {
   const phase = input.freezeState === 'expired_unreconciled' && frozen ? 'Recovering' : rawPhase
   const reason =
     input.freezeState === 'active'
-      ? `${input.stage} blocked by swarm freeze`
+      ? input.freezeBlocking === false
+        ? `${input.stage} delayed by swarm freeze`
+        : `${input.stage} blocked by swarm freeze`
       : input.freezeState === 'expired_unreconciled'
         ? `${input.stage} waiting for freeze reconciliation`
         : frozen
@@ -165,11 +180,13 @@ const buildExecutionTrustStage = (input: {
                 : null
   const classReason =
     input.freezeState === 'active'
-      ? 'blocked'
+      ? input.freezeBlocking === false
+        ? 'degraded'
+        : 'blocked'
       : input.freezeState === 'expired_unreconciled'
         ? 'degraded'
         : frozen || stale
-          ? 'blocked'
+          ? 'degraded'
           : latestFailureCount > 0 || healthy === false
             ? 'degraded'
             : healthy === null
@@ -285,6 +302,7 @@ export const buildExecutionTrust = async ({
     const freezeExpiredUnreconciled =
       phase.toLowerCase() === 'frozen' && freezeUntilMs !== null && freezeUntilMs <= nowMs
     const freezeReason = asString(freezeRaw.reason) ?? null
+    const freezeBlocking = freezeActive && isBlockingFreezeReason(freezeReason)
     const projectedPhase = freezeExpiredUnreconciled ? 'Recovering' : phase
     const ready =
       projectedPhase.toLowerCase() !== 'frozen' &&
@@ -301,7 +319,7 @@ export const buildExecutionTrust = async ({
       pending: requirementsPending,
       latestRequirementTimestampMs: latestRequirementTimestampMs < 0 ? null : latestRequirementTimestampMs,
       nowMs,
-      frozen: freezeActive,
+      frozen: freezeBlocking,
     })
 
     if (requirementsPendingClass === 'blocked') {
@@ -336,7 +354,7 @@ export const buildExecutionTrust = async ({
         scope: namespace,
         name: swarmName,
         reason: freezeReason ? `swarm freeze active (${freezeReason})` : 'swarm freeze active',
-        class: 'blocked',
+        class: freezeBlocking ? 'blocked' : 'degraded',
       })
     } else if (phase.toLowerCase() === 'frozen' && freezeUntilMs !== null && freezeUntilMs <= nowMs) {
       snapshot.blockingWindows.push({
@@ -384,6 +402,7 @@ export const buildExecutionTrust = async ({
         stageState: stageStateRaw,
         nowMs,
         freezeState: freezeActive ? 'active' : freezeExpiredUnreconciled ? 'expired_unreconciled' : 'inactive',
+        freezeBlocking,
       })
       snapshot.stages.push(builtStage.stageData)
       if (builtStage.blockingClass) {
