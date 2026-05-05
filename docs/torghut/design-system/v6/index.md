@@ -13,6 +13,8 @@
 - Evidence (current next-work priority):
   - `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
   - `docs/agents/designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md`
+  - `87-torghut-capital-lease-consumer-and-profit-repair-marketplace-2026-05-05.md`
+  - `docs/agents/designs/83-jangar-lease-backed-proof-market-and-profit-aware-rollout-authority-2026-05-05.md`
   - `86-torghut-profit-repair-auction-and-proof-runway-consumer-2026-05-05.md`
   - `docs/agents/designs/82-jangar-proof-runway-cutover-and-consumer-authority-2026-05-05.md`
   - `86-torghut-profit-debt-ledger-and-repair-sla-experiments-2026-05-05.md`
@@ -108,9 +110,12 @@
 - `86-torghut-profit-repair-auction-and-proof-runway-consumer-2026-05-05.md`
 - `86-torghut-profit-debt-ledger-and-repair-sla-experiments-2026-05-05.md`
 - `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
+- `87-torghut-capital-lease-consumer-and-profit-repair-marketplace-2026-05-05.md`
 - Cross-system source of truth:
   - `docs/agents/designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md`
   - `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
+  - `docs/agents/designs/83-jangar-lease-backed-proof-market-and-profit-aware-rollout-authority-2026-05-05.md`
+  - `87-torghut-capital-lease-consumer-and-profit-repair-marketplace-2026-05-05.md`
   - `docs/agents/designs/82-jangar-proof-runway-cutover-and-consumer-authority-2026-05-05.md`
   - `86-torghut-profit-repair-auction-and-proof-runway-consumer-2026-05-05.md`
   - `docs/agents/designs/82-jangar-authority-clearance-cells-and-negative-evidence-slas-2026-05-05.md`
