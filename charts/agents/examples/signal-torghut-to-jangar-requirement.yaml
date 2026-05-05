@@ -8,7 +8,7 @@ metadata:
     swarm.proompteng.ai/from: torghut-quant
     swarm.proompteng.ai/to: jangar-control-plane
 spec:
-  channel: huly://swarm-bridge/issues/TOR-REQ-001
+  channel: workflow.general.requirement
   description: Raise platform risk controls for market-open volatility regime.
   payload:
     priority: high

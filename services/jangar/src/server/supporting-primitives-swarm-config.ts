@@ -51,19 +51,16 @@ export const SWARM_SCHEDULE_ANNOTATION_WORKER_ID = 'swarm.proompteng.ai/worker-i
 export const SWARM_SCHEDULE_ANNOTATION_IDENTITY = 'swarm.proompteng.ai/agent-identity'
 export const SWARM_SCHEDULE_ANNOTATION_ROLE = 'swarm.proompteng.ai/agent-role'
 export const SWARM_SCHEDULE_ANNOTATION_OWNER_CHANNEL = 'swarm.proompteng.ai/owner-channel'
-export const SWARM_SCHEDULE_ANNOTATION_HULY_BASE_URL = 'swarm.proompteng.ai/huly-base-url'
-export const SWARM_SCHEDULE_ANNOTATION_HULY_WORKSPACE = 'swarm.proompteng.ai/huly-workspace'
-export const SWARM_SCHEDULE_ANNOTATION_HULY_PROJECT = 'swarm.proompteng.ai/huly-project'
-export const SWARM_SCHEDULE_ANNOTATION_HULY_SECRET = 'swarm.proompteng.ai/huly-secret'
-export const SWARM_SCHEDULE_ANNOTATION_HULY_SKILL_REF = 'swarm.proompteng.ai/huly-skill-ref'
-export const SWARM_SCHEDULE_ANNOTATION_HULY_TOKEN_KEY = 'swarm.proompteng.ai/huly-token-key'
-export const SWARM_SCHEDULE_ANNOTATION_HULY_EXPECTED_ACTOR_KEY = 'swarm.proompteng.ai/huly-expected-actor-key'
+export const SWARM_SCHEDULE_ANNOTATION_NATS_URL = 'swarm.proompteng.ai/nats-url'
+export const SWARM_SCHEDULE_ANNOTATION_NATS_SUBJECT_PREFIX = 'swarm.proompteng.ai/nats-subject-prefix'
+export const SWARM_SCHEDULE_ANNOTATION_NATS_CHANNEL = 'swarm.proompteng.ai/nats-channel'
 export const SWARM_SCHEDULE_ANNOTATION_HUMAN_NAME = 'swarm.proompteng.ai/human-name'
 export const SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT = resolveSupportingPrimitivesConfig(
   process.env,
 ).swarmRequirementMaxPayloadBytes
-const SWARM_DEFAULT_HULY_BASE_URL = resolveSupportingPrimitivesConfig(process.env).swarmDefaultHulyBaseUrl
-const SWARM_DEFAULT_HULY_SKILL_REF = resolveSupportingPrimitivesConfig(process.env).swarmDefaultHulySkillRef
+const SWARM_DEFAULT_NATS_URL = resolveSupportingPrimitivesConfig(process.env).swarmDefaultNatsUrl
+const SWARM_DEFAULT_NATS_SUBJECT_PREFIX = resolveSupportingPrimitivesConfig(process.env).swarmDefaultNatsSubjectPrefix
+const SWARM_DEFAULT_NATS_CHANNEL = resolveSupportingPrimitivesConfig(process.env).swarmDefaultNatsChannel
 export const SWARM_REQUIREMENT_MAX_ATTEMPTS = resolveSupportingPrimitivesConfig(process.env).swarmRequirementMaxAttempts
 
 export const deriveStageStaggerMinute = (swarmName: string, stage: StageName) => {
@@ -159,12 +156,10 @@ export const sortRequirementSignalsForDispatch = (signals: Record<string, unknow
     .map((entry) => entry.signal)
 }
 
-export type SwarmHulyIntegration = {
-  baseUrl: string
-  workspace?: string
-  project?: string
-  secretName: string
-  skillRef: string
+export type SwarmNatsIntegration = {
+  url: string
+  subjectPrefix: string
+  channel: string
   personas: Partial<Record<SwarmPersonaRole, SwarmPersona>>
 }
 
@@ -173,73 +168,54 @@ type SwarmAgentIdentity = {
   identity: string
   role: string
   humanName: string
-  tokenKey: string
-  expectedActorIdKey: string
 }
 
 type SwarmPersona = {
   role: SwarmPersonaRole
   humanName: string
   workerIdentity: string
-  tokenKey: string
-  expectedActorIdKey: string
 }
 
-const DEFAULT_SWARM_PERSONAS: Record<string, { secretName: string; personas: Record<SwarmPersonaRole, SwarmPersona> }> =
-  {
-    'jangar-control-plane': {
-      secretName: 'huly-api-jangar',
-      personas: {
-        architect: {
-          role: 'architect',
-          humanName: 'Victor Chen',
-          workerIdentity: 'victor-chen-jangar-architect',
-          tokenKey: 'HULY_API_TOKEN_VICTOR_CHEN_JANGAR_ARCHITECT',
-          expectedActorIdKey: 'HULY_EXPECTED_ACTOR_ID_VICTOR_CHEN_JANGAR_ARCHITECT',
-        },
-        engineer: {
-          role: 'engineer',
-          humanName: 'Elise Novak',
-          workerIdentity: 'elise-novak-jangar-engineer',
-          tokenKey: 'HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER',
-          expectedActorIdKey: 'HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER',
-        },
-        deployer: {
-          role: 'deployer',
-          humanName: 'Marco Silva',
-          workerIdentity: 'marco-silva-jangar-deployer',
-          tokenKey: 'HULY_API_TOKEN_MARCO_SILVA_JANGAR_DEPLOYER',
-          expectedActorIdKey: 'HULY_EXPECTED_ACTOR_ID_MARCO_SILVA_JANGAR_DEPLOYER',
-        },
+const DEFAULT_SWARM_PERSONAS: Record<string, { personas: Record<SwarmPersonaRole, SwarmPersona> }> = {
+  'jangar-control-plane': {
+    personas: {
+      architect: {
+        role: 'architect',
+        humanName: 'Victor Chen',
+        workerIdentity: 'victor-chen-jangar-architect',
+      },
+      engineer: {
+        role: 'engineer',
+        humanName: 'Elise Novak',
+        workerIdentity: 'elise-novak-jangar-engineer',
+      },
+      deployer: {
+        role: 'deployer',
+        humanName: 'Marco Silva',
+        workerIdentity: 'marco-silva-jangar-deployer',
       },
     },
-    'torghut-quant': {
-      secretName: 'huly-api-torghut',
-      personas: {
-        architect: {
-          role: 'architect',
-          humanName: 'Gideon Park',
-          workerIdentity: 'gideon-park-torghut-architect',
-          tokenKey: 'HULY_API_TOKEN_GIDEON_PARK_TORGHUT_ARCHITECT',
-          expectedActorIdKey: 'HULY_EXPECTED_ACTOR_ID_GIDEON_PARK_TORGHUT_ARCHITECT',
-        },
-        engineer: {
-          role: 'engineer',
-          humanName: 'Naomi Ibarra',
-          workerIdentity: 'naomi-ibarra-torghut-engineer',
-          tokenKey: 'HULY_API_TOKEN_NAOMI_IBARRA_TORGHUT_ENGINEER',
-          expectedActorIdKey: 'HULY_EXPECTED_ACTOR_ID_NAOMI_IBARRA_TORGHUT_ENGINEER',
-        },
-        deployer: {
-          role: 'deployer',
-          humanName: 'Julian Hart',
-          workerIdentity: 'julian-hart-torghut-deployer',
-          tokenKey: 'HULY_API_TOKEN_JULIAN_HART_TORGHUT_DEPLOYER',
-          expectedActorIdKey: 'HULY_EXPECTED_ACTOR_ID_JULIAN_HART_TORGHUT_DEPLOYER',
-        },
+  },
+  'torghut-quant': {
+    personas: {
+      architect: {
+        role: 'architect',
+        humanName: 'Gideon Park',
+        workerIdentity: 'gideon-park-torghut-architect',
+      },
+      engineer: {
+        role: 'engineer',
+        humanName: 'Naomi Ibarra',
+        workerIdentity: 'naomi-ibarra-torghut-engineer',
+      },
+      deployer: {
+        role: 'deployer',
+        humanName: 'Julian Hart',
+        workerIdentity: 'julian-hart-torghut-deployer',
       },
     },
-  }
+  },
+}
 
 const resolveDefaultSwarmPersonaConfig = (swarmName: string, owner: Record<string, unknown>) => {
   const ownerId = asString(owner.id)?.toLowerCase() ?? ''
@@ -262,8 +238,8 @@ export const normalizeLabelValue = (value: string) => {
   if (!normalized) return 'swarm'
   const trimmed = normalized
     .slice(0, 63)
-    .replace(/^[.\-]+/, '')
-    .replace(/[.\-]+$/, '')
+    .replace(/^[.-]+/, '')
+    .replace(/[.-]+$/, '')
   return trimmed || 'swarm'
 }
 
@@ -290,49 +266,36 @@ const mergeUniqueStrings = (...values: string[][]) => {
   return merged
 }
 
-const GLOBAL_HULY_SECRET = 'huly-api'
+export const resolveSwarmRunSecrets = (existingSecrets: string[]) => mergeUniqueStrings(existingSecrets)
 
-export const resolveSwarmRunSecrets = (existingSecrets: string[], explicitHulySecret?: string | null) => {
-  const filtered = existingSecrets.filter((secret) => secret !== GLOBAL_HULY_SECRET)
-  const explicit = explicitHulySecret?.trim()
-  if (!explicit) return filtered
-  return mergeUniqueStrings(filtered, [explicit])
-}
-
-const normalizeHulyBaseUrl = (value: string | null | undefined) => {
-  if (!value) return ''
-  const trimmed = value.trim()
+const normalizeNatsUrl = (value: string | null | undefined) => {
+  const trimmed = value?.trim() ?? ''
   if (!trimmed) return ''
-  if (trimmed.toLowerCase().startsWith('huly://')) {
-    return SWARM_DEFAULT_HULY_BASE_URL
-  }
   try {
     const url = new URL(trimmed)
-    if (!url.hostname.toLowerCase().includes('huly')) return ''
-    if (url.hostname.toLowerCase().startsWith('front.')) {
-      url.hostname = `transactor.${url.hostname.slice('front.'.length)}`
-    }
-    const origin = `${url.protocol}//${url.host}`
-    return origin.replace(/\/+$/, '')
+    return url.protocol === 'nats:' || url.protocol === 'tls:' ? trimmed : ''
   } catch {
     return ''
   }
 }
 
-export const resolveSwarmHulyIntegration = (
+const normalizeSubjectToken = (value: string | null | undefined, fallback: string) => {
+  const normalized = value?.trim()
+  if (!normalized) return fallback
+  return normalized.replace(/^\.+/, '').replace(/\.+$/, '') || fallback
+}
+
+export const resolveSwarmNatsIntegration = (
   spec: Record<string, unknown>,
   owner: Record<string, unknown>,
   swarmName: string,
-): SwarmHulyIntegration => {
+): SwarmNatsIntegration => {
   const integrations = asRecord(spec.integrations) ?? {}
-  const huly = asRecord(integrations.huly) ?? {}
-  const authSecretRef = asRecord(huly.authSecretRef) ?? {}
-  const baseUrl = normalizeHulyBaseUrl(asString(huly.baseUrl)) || SWARM_DEFAULT_HULY_BASE_URL
-  const secretName = asString(authSecretRef.name)?.trim() ?? ''
-  const workspace = asString(huly.workspace)?.trim() || undefined
-  const project = asString(huly.project)?.trim() || undefined
-  const skillRef = asString(huly.skillRef)?.trim() || SWARM_DEFAULT_HULY_SKILL_REF
-  const rawPersonas = asRecord(huly.personas) ?? {}
+  const nats = asRecord(integrations.nats) ?? {}
+  const url = normalizeNatsUrl(asString(nats.url)) || SWARM_DEFAULT_NATS_URL
+  const subjectPrefix = normalizeSubjectToken(asString(nats.subjectPrefix), SWARM_DEFAULT_NATS_SUBJECT_PREFIX)
+  const channel = normalizeSubjectToken(asString(nats.channel), SWARM_DEFAULT_NATS_CHANNEL)
+  const rawPersonas = asRecord(nats.personas) ?? {}
   const personaEntries = Object.entries(rawPersonas)
     .map(([role, value]) => {
       if (role !== 'architect' && role !== 'engineer' && role !== 'deployer') return null
@@ -341,8 +304,6 @@ export const resolveSwarmHulyIntegration = (
         role,
         humanName: asString(record.humanName)?.trim() ?? '',
         workerIdentity: asString(record.workerIdentity)?.trim() ?? '',
-        tokenKey: asString(record.tokenKey)?.trim() ?? '',
-        expectedActorIdKey: asString(record.expectedActorIdKey)?.trim() ?? '',
       } satisfies SwarmPersona
     })
     .filter((persona): persona is SwarmPersona => persona !== null)
@@ -355,17 +316,15 @@ export const resolveSwarmHulyIntegration = (
       ? explicitPersonas
       : (defaultConfig?.personas ?? explicitPersonas)
   return {
-    baseUrl,
-    workspace,
-    project,
-    secretName: secretName || defaultConfig?.secretName || '',
-    skillRef,
+    url,
+    subjectPrefix,
+    channel,
     personas,
   }
 }
 
-export const resolveSwarmPersonaForStage = (huly: SwarmHulyIntegration, stage: StageName) => {
-  return huly.personas[STAGE_PERSONA_ROLE[stage]]
+export const resolveSwarmPersonaForStage = (nats: SwarmNatsIntegration, stage: StageName) => {
+  return nats.personas[STAGE_PERSONA_ROLE[stage]]
 }
 
 export const buildSwarmAgentIdentity = (input: {
@@ -382,14 +341,12 @@ export const buildSwarmAgentIdentity = (input: {
     identity: input.persona.workerIdentity.slice(0, 120),
     role: input.persona.role,
     humanName: input.persona.humanName,
-    tokenKey: input.persona.tokenKey,
-    expectedActorIdKey: input.persona.expectedActorIdKey,
   }
 }
 
 export const buildSwarmRuntimeParameters = (input: {
   ownerChannel: string | null
-  huly: SwarmHulyIntegration
+  nats: SwarmNatsIntegration
   identity: SwarmAgentIdentity
 }) => {
   const parameters: Record<string, string> = {
@@ -397,20 +354,17 @@ export const buildSwarmRuntimeParameters = (input: {
     swarmAgentIdentity: input.identity.identity,
     swarmAgentRole: input.identity.role,
     swarmHumanName: input.identity.humanName,
-    swarmAgentTokenKey: input.identity.tokenKey,
-    swarmAgentExpectedActorIdKey: input.identity.expectedActorIdKey,
-    hulyApiBaseUrl: input.huly.baseUrl,
-    hulySkillRef: input.huly.skillRef,
+    natsUrl: input.nats.url,
+    natsSubjectPrefix: input.nats.subjectPrefix,
+    natsChannel: input.nats.channel,
   }
   if (input.ownerChannel) parameters.ownerChannel = input.ownerChannel
-  if (input.huly.workspace) parameters.hulyWorkspace = input.huly.workspace
-  if (input.huly.project) parameters.hulyProject = input.huly.project
   return parameters
 }
 
 export const buildSwarmScheduleAnnotations = (input: {
   ownerChannel: string | null
-  huly: SwarmHulyIntegration
+  nats: SwarmNatsIntegration
   identity: SwarmAgentIdentity
 }) => {
   const annotations: Record<string, string> = {
@@ -418,15 +372,11 @@ export const buildSwarmScheduleAnnotations = (input: {
     [SWARM_SCHEDULE_ANNOTATION_IDENTITY]: input.identity.identity,
     [SWARM_SCHEDULE_ANNOTATION_ROLE]: input.identity.role,
     [SWARM_SCHEDULE_ANNOTATION_HUMAN_NAME]: input.identity.humanName,
-    [SWARM_SCHEDULE_ANNOTATION_HULY_BASE_URL]: input.huly.baseUrl,
-    [SWARM_SCHEDULE_ANNOTATION_HULY_SECRET]: input.huly.secretName,
-    [SWARM_SCHEDULE_ANNOTATION_HULY_SKILL_REF]: input.huly.skillRef,
-    [SWARM_SCHEDULE_ANNOTATION_HULY_TOKEN_KEY]: input.identity.tokenKey,
-    [SWARM_SCHEDULE_ANNOTATION_HULY_EXPECTED_ACTOR_KEY]: input.identity.expectedActorIdKey,
+    [SWARM_SCHEDULE_ANNOTATION_NATS_URL]: input.nats.url,
+    [SWARM_SCHEDULE_ANNOTATION_NATS_SUBJECT_PREFIX]: input.nats.subjectPrefix,
+    [SWARM_SCHEDULE_ANNOTATION_NATS_CHANNEL]: input.nats.channel,
   }
   if (input.ownerChannel) annotations[SWARM_SCHEDULE_ANNOTATION_OWNER_CHANNEL] = input.ownerChannel
-  if (input.huly.workspace) annotations[SWARM_SCHEDULE_ANNOTATION_HULY_WORKSPACE] = input.huly.workspace
-  if (input.huly.project) annotations[SWARM_SCHEDULE_ANNOTATION_HULY_PROJECT] = input.huly.project
   return annotations
 }
 
@@ -437,13 +387,9 @@ export const resolveScheduleRuntimeInjection = (schedule: Record<string, unknown
   const identity = asString(annotations[SWARM_SCHEDULE_ANNOTATION_IDENTITY])
   const role = asString(annotations[SWARM_SCHEDULE_ANNOTATION_ROLE])
   const humanName = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HUMAN_NAME])
-  const hulyBaseUrl = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_BASE_URL])
-  const hulyWorkspace = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_WORKSPACE])
-  const hulyProject = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_PROJECT])
-  const hulySecret = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_SECRET])
-  const hulySkillRef = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_SKILL_REF])
-  const hulyTokenKey = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_TOKEN_KEY])
-  const hulyExpectedActorIdKey = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_EXPECTED_ACTOR_KEY])
+  const natsUrl = asString(annotations[SWARM_SCHEDULE_ANNOTATION_NATS_URL])
+  const natsSubjectPrefix = asString(annotations[SWARM_SCHEDULE_ANNOTATION_NATS_SUBJECT_PREFIX])
+  const natsChannel = asString(annotations[SWARM_SCHEDULE_ANNOTATION_NATS_CHANNEL])
 
   const parameters: Record<string, string> = {}
   if (ownerChannel) parameters.ownerChannel = ownerChannel
@@ -451,12 +397,9 @@ export const resolveScheduleRuntimeInjection = (schedule: Record<string, unknown
   if (identity) parameters.swarmAgentIdentity = identity
   if (role) parameters.swarmAgentRole = role
   if (humanName) parameters.swarmHumanName = humanName
-  if (hulyBaseUrl) parameters.hulyApiBaseUrl = hulyBaseUrl
-  if (hulyWorkspace) parameters.hulyWorkspace = hulyWorkspace
-  if (hulyProject) parameters.hulyProject = hulyProject
-  if (hulySkillRef) parameters.hulySkillRef = hulySkillRef
-  if (hulyTokenKey) parameters.swarmAgentTokenKey = hulyTokenKey
-  if (hulyExpectedActorIdKey) parameters.swarmAgentExpectedActorIdKey = hulyExpectedActorIdKey
+  if (natsUrl) parameters.natsUrl = natsUrl
+  if (natsSubjectPrefix) parameters.natsSubjectPrefix = natsSubjectPrefix
+  if (natsChannel) parameters.natsChannel = natsChannel
 
-  return { parameters, hulySecret }
+  return { parameters }
 }

@@ -222,8 +222,8 @@ spec:
                 namespace: nats
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
-                automation: manual
-                enabled: "false"
+                automation: auto
+                enabled: "true"
               - name: nack
                 path: argocd/applications/nack
                 namespace: nack

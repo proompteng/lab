@@ -13,15 +13,9 @@ import type {
   RuntimeKitDecision,
   RuntimeKitStatus,
 } from '~/data/agents-control-plane'
-import { resolveHulyApiScriptPathCandidatesFromConfig, resolveRuntimeAdmissionConfig } from './runtime-tooling-config'
+import { resolveCodexNatsHelperPathCandidatesFromConfig, resolveRuntimeAdmissionConfig } from './runtime-tooling-config'
 
-const DEFAULT_PYTHON_BIN = 'python3'
 const DEFAULT_WORKTREE = '/workspace/lab'
-const HULY_API_SCRIPT_RELATIVE_PATH = join('skills', 'huly-api', 'scripts', 'huly-api.py')
-const WORKSPACE_HULY_API_PATH = '/workspace/lab/skills/huly-api/scripts/huly-api.py'
-const TMP_WORKSPACE_HULY_API_PATH = '/tmp/proompt-lab/skills/huly-api/scripts/huly-api.py'
-const APP_HULY_API_PATH = '/app/skills/huly-api/scripts/huly-api.py'
-const BUNDLED_HULY_API_PATH = '/root/.codex/skills/huly-api/scripts/huly-api.py'
 const PRODUCER_REVISION = '2026-03-21-runtime-admission-shadow-v1'
 const WORKSPACE_CONTRACT_VERSION = '2026-03-20-runtime-kit-shadow-v1'
 const RUNTIME_FRESHNESS_MS = 5 * 60 * 1000
@@ -38,9 +32,7 @@ type RuntimeAdmissionInput = {
   now?: Date
   executionTrust?: ExecutionTrustStatus
   worktree?: string
-  pythonBin?: string
-  hulyApiBaseUrl?: string
-  hulyApiScriptPath?: string
+  natsUrl?: string
 }
 
 const hashText = (value: string) => createHash('sha256').update(value).digest('hex')
@@ -64,27 +56,26 @@ const resolveWorktree = (value?: string) => {
 
 const normalizeCandidate = (value: string | undefined | null) => value?.trim() ?? ''
 
-const resolveHulyBaseUrl = (configuredValue?: string) =>
-  configuredValue?.trim() || resolveRuntimeAdmissionConfig(process.env).hulyBaseUrl
+const resolveNatsUrl = (configuredValue?: string) =>
+  configuredValue?.trim() || resolveRuntimeAdmissionConfig(process.env).natsUrl
 
-export const resolveHulyApiScriptPathCandidates = ({
+export const resolveCodexNatsHelperPathCandidates = ({
   worktree,
-  configuredPath,
+  command = 'codex-nats-publish',
   cwd,
 }: {
   worktree?: string
-  configuredPath?: string
+  command?: 'codex-nats-publish' | 'codex-nats-soak'
   cwd?: string
 } = {}) => {
   const resolvedCwd = normalizeCandidate(cwd) || process.cwd()
   return unique(
-    resolveHulyApiScriptPathCandidatesFromConfig(
+    resolveCodexNatsHelperPathCandidatesFromConfig(
       {
         ...resolveRuntimeAdmissionConfig(process.env),
         worktree: resolveWorktree(worktree),
-        hulyApiScriptPath:
-          normalizeCandidate(configuredPath) || resolveRuntimeAdmissionConfig(process.env).hulyApiScriptPath,
       },
+      command,
       resolvedCwd,
     ),
   )
@@ -384,14 +375,18 @@ export const buildRuntimeAdmissionSnapshot = (input: RuntimeAdmissionInput = {})
   const runtimeConfig = resolveRuntimeAdmissionConfig(process.env)
   const imageRef = runtimeConfig.runtimeImage
   const worktree = resolveWorktree(input.worktree)
-  const pythonRef = input.pythonBin?.trim() || runtimeConfig.pythonBin || DEFAULT_PYTHON_BIN
-  const resolvedPythonPath = resolveCommandCandidate(pythonRef)
-  const hulyApiBaseUrl = resolveHulyBaseUrl(input.hulyApiBaseUrl)
-  const hulyApiCandidates = resolveHulyApiScriptPathCandidates({
+  const natsUrl = resolveNatsUrl(input.natsUrl)
+  const natsPublishCandidates = resolveCodexNatsHelperPathCandidates({
     worktree,
-    configuredPath: (input.hulyApiScriptPath?.trim() || runtimeConfig.hulyApiScriptPath) ?? undefined,
+    command: 'codex-nats-publish',
   })
-  const resolvedHulyApiPath = findExistingCandidate(hulyApiCandidates)
+  const natsSoakCandidates = resolveCodexNatsHelperPathCandidates({
+    worktree,
+    command: 'codex-nats-soak',
+  })
+  const resolvedNatsPublishPath = findExistingCandidate(natsPublishCandidates)
+  const resolvedNatsSoakPath = findExistingCandidate(natsSoakCandidates)
+  const resolvedNatsCliPath = resolveCommandCandidate('nats')
 
   const servingKit = buildRuntimeKit({
     now,
@@ -412,24 +407,32 @@ export const buildRuntimeAdmissionSnapshot = (input: RuntimeAdmissionInput = {})
   const collaborationKit = buildRuntimeKit({
     now,
     kitClass: 'collaboration',
-    subjectRef: 'jangar:codex:huly-collaboration',
+    subjectRef: 'jangar:codex:nats-collaboration',
     imageRef,
     components: [
       buildRuntimeKitComponent({
-        componentKind: 'python_helper',
-        componentRef: resolvedHulyApiPath ?? hulyApiCandidates[0] ?? HULY_API_SCRIPT_RELATIVE_PATH,
+        componentKind: 'binary',
+        componentRef: resolvedNatsPublishPath ?? natsPublishCandidates[0] ?? 'codex-nats-publish',
         required: true,
-        path: resolvedHulyApiPath,
-        reasonCode: 'runtime_kit_component_missing:huly_api_script',
-        evidenceRef: `checked_paths=[${hulyApiCandidates.join(', ')}]`,
+        path: resolvedNatsPublishPath,
+        reasonCode: 'runtime_kit_component_missing:codex_nats_publish',
+        evidenceRef: `checked_paths=[${natsPublishCandidates.join(', ')}]`,
       }),
       buildRuntimeKitComponent({
         componentKind: 'binary',
-        componentRef: pythonRef,
+        componentRef: resolvedNatsSoakPath ?? natsSoakCandidates[0] ?? 'codex-nats-soak',
         required: true,
-        path: resolvedPythonPath,
-        reasonCode: 'runtime_kit_component_missing:python_binary',
-        evidenceRef: pythonRef,
+        path: resolvedNatsSoakPath,
+        reasonCode: 'runtime_kit_component_missing:codex_nats_soak',
+        evidenceRef: `checked_paths=[${natsSoakCandidates.join(', ')}]`,
+      }),
+      buildRuntimeKitComponent({
+        componentKind: 'binary',
+        componentRef: 'nats',
+        required: true,
+        path: resolvedNatsCliPath,
+        reasonCode: 'runtime_kit_component_missing:nats_cli',
+        evidenceRef: 'nats',
       }),
       buildRuntimeKitComponent({
         componentKind: 'workspace_path',
@@ -441,10 +444,10 @@ export const buildRuntimeAdmissionSnapshot = (input: RuntimeAdmissionInput = {})
       }),
       buildConfigComponent({
         componentKind: 'service_url',
-        componentRef: 'HULY_API_BASE_URL|HULY_BASE_URL',
+        componentRef: 'NATS_URL',
         required: true,
-        value: hulyApiBaseUrl,
-        reasonCode: 'runtime_kit_component_missing:huly_api_base_url',
+        value: natsUrl,
+        reasonCode: 'runtime_kit_component_missing:nats_url',
       }),
     ],
   })

@@ -1,9 +1,9 @@
 # Swarm End-To-End Runbook
 
-Status: Current (2026-03-02)
+Status: Current (2026-05-05)
 
-This runbook documents how dual swarms run continuously, how they communicate through Huly, and how to verify the
-full loop from requirement signal to implementation execution.
+This runbook documents how dual swarms run continuously, how they communicate through NATS, and how to verify the full
+loop from requirement signal to implementation execution with Jangar visibility.
 
 ## System Topology
 
@@ -11,57 +11,61 @@ full loop from requirement signal to implementation execution.
 flowchart LR
   T["Torghut Swarm (trading)"] -->|Signal requirement| S["Signal CRD (agents ns)"]
   S --> J["Jangar Swarm (engineering)"]
-  T --> H["Huly (Tracker + Chat + Docs)"]
-  J --> H
+  T --> N["NATS JetStream agent-comms"]
+  J --> N
+  N --> V["Jangar /agents visibility"]
   T --> AR["AgentRun Scheduler"]
   J --> AR
   AR --> C["codex-spark-agent"]
   C --> G["GitHub PR + CI"]
   G --> A["Argo CD"]
   A --> K["Kubernetes Runtime"]
-  K --> H
+  K --> N
 ```
 
 ## Channel Communication Contract
 
-All workers use the Huly skill and must do three actions per stage:
+All workers publish durable progress to NATS and Jangar subscribes those messages into `workflow_comms.agent_messages`.
+Each stage must do three actions:
 
-1. Read recent channel history (`list-channel-messages`).
-2. React to relevant teammate messages (post explicit replies referencing message ids).
-3. Publish a worker-authored mission update (`upsert-mission --message ...`).
+1. Read recent NATS context with `codex-nats-soak`.
+2. Publish progress, risk, validation, and handoff events with `codex-nats-publish`.
+3. Confirm the messages are visible in Jangar under `/agents` and `/agents/general`.
 
 Channel selection is dynamic at runtime:
 
 1. `swarmRequirementChannel` from signal (if present).
-2. `hulyChannelName`.
-3. `hulyChannelUrl`.
+2. `natsChannel`.
+3. `NATS_CHANNEL`.
+4. `general`.
 
-`owner.channel` remains a logical conversation URI for swarm ownership and routing. Huly transport uses explicit
-`hulyApiBaseUrl` wiring and must not be inferred from `owner.channel`.
+`owner.channel` remains a logical conversation URI for swarm ownership and routing. NATS transport uses
+`integrations.nats` or the chart-level `agentComms.nats` values and must not be inferred from `owner.channel`.
 
 ## Execution Loop
 
 ```mermaid
 sequenceDiagram
   participant T as Torghut Swarm
-  participant H as Huly Channel
+  participant N as NATS agent-comms
   participant S as Signal CRD
   participant J as Jangar Swarm
   participant R as AgentRun
   participant C as codex-spark-agent
+  participant V as Jangar /agents
   participant G as GitHub/CI
   participant A as Argo CD
 
-  T->>H: Read latest teammate messages
-  T->>H: React with requirement context
-  T->>S: Create requirement signal (huly://.../channels/<name>)
+  T->>N: Publish requirement context
+  T->>S: Create requirement signal (workflow.general.requirement)
   S->>J: Dispatch requirement context
   J->>R: Create requirement-driven implement run
-  C->>H: Read channel history before acting
-  C->>H: Post worker-authored access and mission updates
+  C->>N: Soak recent messages before acting
+  C->>N: Publish run-started, run-summary, run-gaps, run-outcome, swarm-handoff
+  N->>V: Subscriber stores messages for operator visibility
   C->>G: Commit / PR / CI
   G->>A: Green checks and merge
-  A->>H: Deployment outcome posted by worker
+  A->>N: Deployment outcome posted by worker
 ```
 
 ## Live Verification Procedure
@@ -84,6 +88,8 @@ Expected:
 
 ```bash
 kubectl -n argocd get application agents -o json | jq '{sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision}'
+kubectl -n argocd get application nats -o json | jq '{sync:.status.sync.status,health:.status.health.status,revision:.status.sync.revision}'
+kubectl -n nats get pods,svc,streams.jetstream.nats.io,consumers.jetstream.nats.io
 kubectl -n agents get swarm
 kubectl -n agents get schedules.schedules.proompteng.ai
 ```
@@ -91,6 +97,8 @@ kubectl -n agents get schedules.schedules.proompteng.ai
 Expected:
 
 - `agents` app is `Synced` and `Healthy`.
+- `nats` app is `Synced` and `Healthy`.
+- `stream/agent-comms` and `consumer/jangar-agent-comms` exist.
 - `jangar-control-plane` and `torghut-quant` swarms are `Active` and `Ready=True`.
 - All stage schedules are `Active`.
 
@@ -124,12 +132,12 @@ metadata:
     swarm.proompteng.ai/to: jangar-control-plane
     swarm.proompteng.ai/type: requirement
 spec:
-  channel: huly://virtual-workers/channels/general
+  channel: workflow.general.requirement
   description: "Live e2e validation from Torghut to Jangar"
   payload:
     mission: $NAME
     priority: high
-    acceptance: "publish issue/document/channel artifacts and complete handoff"
+    acceptance: "publish NATS handoff events and show them in Jangar"
 EOF
 ```
 
@@ -146,21 +154,20 @@ RUN="<name-from-previous-command>"
 kubectl -n agents get agentrun "$RUN" -w
 ```
 
-### 4. Huly read/reply/post evidence
+### 4. NATS and Jangar visibility evidence
 
-Inspect the run job logs and confirm all three behaviors:
+Inspect the run job logs and confirm NATS publish behavior:
 
 ```bash
 JOB=$(kubectl -n agents get job -l agents.proompteng.ai/agent-run="$RUN" -o jsonpath='{.items[0].metadata.name}')
-kubectl -n agents logs job/"$JOB" --tail=400 | rg -n "list-channel-messages|verify-chat-access|upsert-mission|messageId|issueId|documentId"
+kubectl -n agents logs job/"$JOB" --tail=400 | rg -n "codex-nats-soak|codex-nats-publish|run-started|swarm-handoff|run-outcome"
 ```
 
 Expected evidence:
 
-- `list-channel-messages` called before mission action.
-- `verify-chat-access` called with explicit `--message`.
-- `upsert-mission` called with explicit `--message`.
-- Returned Huly artifact ids (`issueId`, `documentId`, `messageId`).
+- `codex-nats-soak` runs before implementation when context is required.
+- `codex-nats-publish` emits `run-started`, `run-summary`, `run-gaps`, `run-outcome`, and `swarm-handoff`.
+- Jangar `/agents/general` shows the emitted messages after the subscriber stores them.
 
 ## Current Known State
 
@@ -173,8 +180,8 @@ Treat loop as failed if any of these occur:
 
 - Signal exists but no requirement-driven Jangar run is created.
 - Jangar run reaches `Failed` or stays non-terminal past runtime SLO.
-- Run does not show `list-channel-messages`, `verify-chat-access --message`, and `upsert-mission --message`.
-- Huly artifacts are missing issue/doc/channel ids.
+- Run does not show NATS publish events.
+- Jangar does not show the NATS messages in the agent communication views.
 
 ## Recovery Actions
 

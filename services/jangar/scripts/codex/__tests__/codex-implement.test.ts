@@ -66,147 +66,11 @@ const runnerMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../lib/codex-runner', () => runnerMocks)
-const hulyApiMocks = vi.hoisted(() => ({
-  listChannelMessages: vi.fn<
-    (input: {
-      channel: string
-      workerId?: string
-      workerIdentity?: string
-      limit?: number
-      requireWorkerToken?: boolean
-      tokenEnvKey?: string
-      expectedActorEnvKey?: string
-      requireExpectedActorId?: boolean
-    }) => Promise<{
-      messages: Array<{
-        messageId: string
-        message: string
-        createdBy: string
-      }>
-      count?: number
-      channelId?: string
-    }>
-  >(async ({ channel, limit }) => {
-    const message = channel.includes('latest') ? 'Upstream decision context' : 'Seed message from source worker'
-    const count = limit ?? 10
-    return {
-      count,
-      messages: [
-        {
-          messageId: 'msg-777',
-          message: `${message} :: ${channel}`,
-          createdBy: 'source-worker',
-        },
-      ],
-    }
-  }),
-  verifyChatAccess: vi.fn<
-    (input: {
-      channel: string
-      message: string
-      workerId?: string
-      workerIdentity?: string
-      requireWorkerToken?: boolean
-      tokenEnvKey?: string
-      expectedActorEnvKey?: string
-      requireExpectedActorId?: boolean
-    }) => Promise<{
-      actorId: string
-      channelMessage?: { messageId?: string }
-      expectedActorId?: string
-    }>
-  >(async () => ({
-    actorId: 'worker-actor-id',
-  })),
-  postChannelMessage: vi.fn<
-    (input: {
-      channel: string
-      message: string
-      replyToMessageId?: string
-      replyToMessageClass?: string
-      workerId?: string
-      workerIdentity?: string
-      requireWorkerToken?: boolean
-      tokenEnvKey?: string
-      expectedActorEnvKey?: string
-      requireExpectedActorId?: boolean
-    }) => Promise<{
-      messageId: string
-    }>
-  >(async ({ message }) => ({
-    messageId: `posted-${message.slice(0, 8).replace(/\s+/g, '-') || 'msg'}`,
-    action: 'posted',
-  })),
-  upsertMission: vi.fn<
-    (input: {
-      missionId: string
-      title: string
-      summary: string
-      details?: string
-      channel: string
-      message: string
-      stage?: string
-      status?: string
-      workerId?: string
-      workerIdentity?: string
-      requireWorkerToken?: boolean
-      tokenEnvKey?: string
-      expectedActorEnvKey?: string
-      requireExpectedActorId?: boolean
-    }) => Promise<{
-      missionId: string
-      stage?: string
-      status?: string
-      channelMessage?: {
-        messageId?: string
-      }
-      issue?: {
-        issueId?: string
-        issueIdentifier?: string
-        issueTitle?: string
-        issueNumber?: number
-        projectId?: string
-        projectIdentifier?: string
-      }
-      document?: {
-        documentId?: string
-        documentTitle?: string
-        teamspaceId?: string
-      }
-    }>
-  >(async ({ missionId, stage, status, channel }) => ({
-    missionId,
-    stage,
-    status,
-    channelMessage: {
-      messageId: `mission-msg-${missionId.slice(0, 8)}`,
-    },
-    issue: {
-      issueId: `issue-${missionId.slice(0, 8)}`,
-      issueIdentifier: `MISSION-${missionId.slice(0, 8)}-${channel.includes('TORGHUT') ? 'OK' : 'GEN'}`,
-      issueTitle: 'Mission Issue',
-      issueNumber: 42,
-      projectId: 'project-default',
-      projectIdentifier: 'DefaultProject',
-    },
-    document: {
-      documentId: `doc-${missionId.slice(0, 8)}`,
-      documentTitle: 'Mission Document',
-      teamspaceId: 'PROOMPTENG',
-    },
-  })),
-}))
-
-vi.mock('../lib/huly-api-client', () => hulyApiMocks)
 
 const runCodexSessionMock = runnerMocks.runCodexSession
 const pushCodexEventsToLokiMock = runnerMocks.pushCodexEventsToLoki
 const buildDiscordChannelCommandMock = utilMocks.buildDiscordChannelCommand
 const runCodexProgressCommentMock = progressCommentMocks.runCodexProgressComment
-const listChannelMessagesMock = hulyApiMocks.listChannelMessages
-const verifyChatAccessMock = hulyApiMocks.verifyChatAccess
-const postChannelMessageMock = hulyApiMocks.postChannelMessage
-const upsertMissionMock = hulyApiMocks.upsertMission
 
 const ORIGINAL_ENV = { ...process.env }
 
@@ -221,17 +85,82 @@ const resetEnv = () => {
   }
 }
 
+const installNatsPublishCapture = async (workdir: string, fileName = 'nats-publish-capture.jsonl') => {
+  const binDir = join(workdir, 'bin')
+  await mkdir(binDir, { recursive: true })
+  const capturePath = join(workdir, fileName)
+  process.env.CODEX_NATS_PUBLISH_CAPTURE_PATH = capturePath
+  process.env.NATS_URL = 'nats://example'
+  process.env.PATH = `${binDir}:${process.env.PATH ?? ''}`
+
+  const publishScriptPath = join(binDir, 'codex-nats-publish')
+  await writeFile(
+    publishScriptPath,
+    [
+      '#!/usr/bin/env node',
+      'const { appendFileSync } = require("node:fs");',
+      'const path = process.env.CODEX_NATS_PUBLISH_CAPTURE_PATH;',
+      'if (path) { appendFileSync(path, JSON.stringify(process.argv.slice(2)) + "\\n", "utf8"); }',
+      'process.exit(0);',
+      '',
+    ].join('\n'),
+    'utf8',
+  )
+  await chmod(publishScriptPath, 0o755)
+
+  const soakScriptPath = join(binDir, 'codex-nats-soak')
+  await writeFile(
+    soakScriptPath,
+    [
+      '#!/usr/bin/env node',
+      'const { writeFileSync } = require("node:fs");',
+      'const path = process.env.NATS_CONTEXT_PATH;',
+      'if (path) { writeFileSync(path, JSON.stringify({ fetched: 0, filtered: 0, messages: [] }) + "\\n", "utf8"); }',
+      'process.exit(0);',
+      '',
+    ].join('\n'),
+    'utf8',
+  )
+  await chmod(soakScriptPath, 0o755)
+  return capturePath
+}
+
+const readCapturedNatsPublishes = async (capturePath: string) =>
+  (await readFile(capturePath, 'utf8'))
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as string[])
+
+const findCapturedNatsPublish = (captured: string[][], kind: string) =>
+  captured.find((args) => {
+    const kindIndex = args.indexOf('--kind')
+    return kindIndex >= 0 && args[kindIndex + 1] === kind
+  })
+
+const attrsFromCapturedNatsPublish = (args: string[]) => {
+  const attrsIndex = args.indexOf('--attrs-json')
+  expect(attrsIndex).toBeGreaterThan(-1)
+  const attrsRaw = args[attrsIndex + 1]
+  expect(typeof attrsRaw).toBe('string')
+  return JSON.parse(attrsRaw ?? '{}') as Record<string, unknown>
+}
+
+const contentFromCapturedNatsPublish = (args: string[]) => {
+  const contentIndex = args.indexOf('--content')
+  expect(contentIndex).toBeGreaterThan(-1)
+  return args[contentIndex + 1] ?? ''
+}
+
 describe('runCodexImplementation', () => {
   let workdir: string
   let remoteDir: string
   let eventPath: string
-  let hulyApiScriptPath: string
 
   beforeEach(async () => {
     workdir = await mkdtemp(join(tmpdir(), 'codex-impl-test-'))
     remoteDir = await mkdtemp(join(tmpdir(), 'codex-impl-remote-'))
     eventPath = join(workdir, 'event.json')
-    hulyApiScriptPath = join(workdir, 'skills', 'huly-api', 'scripts', 'huly-api.py')
     delete process.env.OUTPUT_PATH
     delete process.env.JSON_OUTPUT_PATH
     delete process.env.AGENT_OUTPUT_PATH
@@ -258,17 +187,18 @@ describe('runCodexImplementation', () => {
     delete process.env.CODEX_VERIFY_RELEASE_ROLLOUT_WITH_CLUSTER
     delete process.env.CODEX_STRICT_ROLE_EVIDENCE
     delete process.env.CODEX_ALLOW_HEURISTIC_EVIDENCE
+    delete process.env.CODEX_NATS_PUBLISH_CAPTURE_PATH
+    delete process.env.NATS_URL
+    delete process.env.NATS_CHANNEL
+    delete process.env.NATS_SUBJECT_PREFIX
+    delete process.env.natsChannel
+    delete process.env.NATS_CONTEXT_SUBJECT
     delete process.env.VCS_PULL_REQUESTS_ENABLED
     process.env.WORKTREE = workdir
     process.env.LGTM_LOKI_ENDPOINT = 'http://localhost/loki'
     process.env.CHANNEL_SCRIPT = ''
     process.env.CODEX_SKIP_PR_CHECK = '1'
     process.env.CODEX_NATS_SOAK_REQUIRED = 'false'
-    process.env.HULY_API_BASE_URL = 'https://huly.example.test'
-    process.env.HULY_API_SCRIPT_PATH = hulyApiScriptPath
-
-    await mkdir(join(workdir, 'skills', 'huly-api', 'scripts'), { recursive: true })
-    await writeFile(hulyApiScriptPath, '#!/usr/bin/env python3\nprint("ok")\n', 'utf8')
 
     const payload = {
       prompt: 'Implementation prompt',
@@ -325,49 +255,6 @@ describe('runCodexImplementation', () => {
       forcedTermination: false,
     }))
     runCodexProgressCommentMock.mockReset()
-    listChannelMessagesMock.mockReset()
-    verifyChatAccessMock.mockReset()
-    postChannelMessageMock.mockReset()
-    upsertMissionMock.mockReset()
-    listChannelMessagesMock.mockImplementation(async ({ channel, limit }) => ({
-      count: limit ?? 3,
-      messages: [
-        {
-          messageId: 'msg-latest',
-          message: `Cross-swarm source message for ${channel}`,
-          createdBy: 'source-worker',
-        },
-      ],
-    }))
-    verifyChatAccessMock.mockImplementation(async () => ({
-      actorId: 'worker-actor-id',
-      expectedActorId: 'worker-actor-id',
-    }))
-    postChannelMessageMock.mockImplementation(async ({ message }) => ({
-      messageId: `msg-${(message || 'update').slice(0, 8).replace(/\s+/g, '-')}`,
-      action: 'posted',
-    }))
-    upsertMissionMock.mockImplementation(async ({ missionId, stage, status, channel }) => ({
-      missionId,
-      stage,
-      status,
-      channelMessage: {
-        messageId: `mission-msg-${missionId.slice(0, 8)}`,
-      },
-      issue: {
-        issueId: `issue-${missionId.slice(0, 8)}`,
-        issueIdentifier: `MISSION-${missionId.slice(0, 8)}-${channel.includes('TORGHUT') ? 'OK' : 'GEN'}`,
-        issueTitle: 'Mission Issue',
-        issueNumber: 42,
-        projectId: 'project-default',
-        projectIdentifier: 'DefaultProject',
-      },
-      document: {
-        documentId: `doc-${missionId.slice(0, 8)}`,
-        documentTitle: 'Mission Document',
-        teamspaceId: 'PROOMPTENG',
-      },
-    }))
     pushCodexEventsToLokiMock.mockReset()
     pushCodexEventsToLokiMock.mockImplementation(async () => {})
     buildDiscordChannelCommandMock.mockClear()
@@ -436,7 +323,7 @@ describe('runCodexImplementation', () => {
       head: 'codex/issue-42',
       issueTitle: 'Title',
       objective: 'validate cross-swarm dispatch and implementation handoff',
-      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementChannel: 'workflow.general.requirement',
       swarmRequirementId: '00gcj8mu',
       swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
       swarmRequirementSource: 'torghut-quant',
@@ -459,7 +346,7 @@ describe('runCodexImplementation', () => {
     expect(completedBody).toContain('- Signal: torghut-to-jangar-e2e-1772426902')
     expect(completedBody).toContain('- Source: torghut-quant')
     expect(completedBody).toContain('- Target: jangar-control-plane')
-    expect(completedBody).toContain('- Channel: huly://swarm-bridge/issues/TORGHUT-1772426902')
+    expect(completedBody).toContain('- Channel: workflow.general.requirement')
     expect(completedBody).toContain('### Requirement description')
     expect(completedBody).toContain('End-to-end validation requirement from torghut swarm to jangar swarm.')
     expect(completedBody).toContain('### Swarm executor')
@@ -548,7 +435,7 @@ describe('runCodexImplementation', () => {
     expect(invocation?.prompt).not.toContain('IMPORTANT git + PR contract')
   }, 40_000)
 
-  it('uses cross-swarm requirement scope when channel is Huly', async () => {
+  it('uses cross-swarm requirement scope when channel is NATS', async () => {
     const payload = {
       prompt: 'Implementation prompt',
       repository: 'owner/repo',
@@ -557,7 +444,7 @@ describe('runCodexImplementation', () => {
       head: 'codex/issue-42',
       issueTitle: 'Title',
       objective: 'validate cross-swarm dispatch and implementation handoff',
-      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementChannel: 'workflow.general.requirement',
       swarmRequirementId: '00gcj8mu',
       swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
       swarmRequirementSource: 'torghut-quant',
@@ -601,7 +488,7 @@ describe('runCodexImplementation', () => {
       base: 'main',
       head: 'codex/issue-42',
       issueTitle: 'Title',
-      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772430502',
+      swarmRequirementChannel: 'workflow.general.requirement',
       swarmRequirementId: '00gcj8mx',
       swarmRequirementSignal: 'torghut-to-jangar-e2e-1772430502',
       swarmRequirementSource: 'torghut-quant',
@@ -633,7 +520,7 @@ describe('runCodexImplementation', () => {
       head: 'codex/issue-42',
       issueTitle: 'Title',
       objective: 'ignore this objective',
-      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementChannel: 'workflow.general.requirement',
       swarmRequirementDescription: 'End-to-end validation requirement from torghut swarm to jangar swarm.',
       swarmRequirementPayload:
         '{"objective":"Payload objective should dominate","acceptance":["run uses requirement payload objective"]}',
@@ -650,7 +537,7 @@ describe('runCodexImplementation', () => {
     )
   }, 40_000)
 
-  it('uses cross-swarm requirement scope when channel is an HTTPS Huly URL', async () => {
+  it('uses cross-swarm requirement scope when channel is an HTTPS NATS URL', async () => {
     const payload = {
       prompt: 'Implementation prompt',
       repository: 'owner/repo',
@@ -659,15 +546,15 @@ describe('runCodexImplementation', () => {
       head: 'codex/issue-42',
       issueTitle: 'Title',
       objective: 'validate cross-swarm dispatch with full URL channel',
-      swarmRequirementChannel: 'https://huly.proompteng.ai/swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementChannel: 'nats://nats.nats.svc.cluster.local:4222/workflow/general/requirement',
       swarmRequirementId: '00gcj8mv',
       swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
       swarmRequirementSource: 'torghut-quant',
       swarmRequirementTarget: 'jangar-control-plane',
       swarmAgentWorkerId: 'worker-0027jshz',
       swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027jshz',
-      swarmRequirementDescription: 'Validate Huly URL-based requirement handoff in jangar control plane.',
-      swarmRequirementPayload: '{"acceptance":["URL channels are treated as Huly requirements"],"priority":"high"}',
+      swarmRequirementDescription: 'Validate NATS URL-based requirement handoff in jangar control plane.',
+      swarmRequirementPayload: '{"acceptance":["URL channels are treated as NATS requirements"],"priority":"high"}',
       swarmRequirementPayloadBytes: '150',
       swarmRequirementPayloadTruncated: false,
     }
@@ -677,10 +564,12 @@ describe('runCodexImplementation', () => {
 
     const invocation = runCodexSessionMock.mock.calls[0]?.[0]
     expect(invocation?.prompt).toContain('Cross-swarm implementation requirement (primary scope):')
-    expect(invocation?.prompt).toContain('Channel: https://huly.proompteng.ai/swarm-bridge/issues/TORGHUT-1772426902')
+    expect(invocation?.prompt).toContain(
+      'Channel: nats://nats.nats.svc.cluster.local:4222/workflow/general/requirement',
+    )
   }, 40_000)
 
-  it('adds cross-swarm provenance fields to notify payload for Huly requirements', async () => {
+  it('adds cross-swarm provenance fields to notify payload for NATS requirements', async () => {
     const payload = {
       prompt: 'Implementation prompt',
       repository: 'owner/repo',
@@ -689,7 +578,7 @@ describe('runCodexImplementation', () => {
       head: 'codex/issue-42',
       issueTitle: 'Title',
       objective: 'validate cross-swarm dispatch and implementation handoff',
-      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementChannel: 'workflow.general.requirement',
       swarmRequirementId: '00gcj8mu',
       swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
       swarmRequirementSource: 'torghut-quant',
@@ -727,7 +616,7 @@ describe('runCodexImplementation', () => {
       signal: 'torghut-to-jangar-e2e-1772426902',
       source: 'torghut-quant',
       target: 'jangar-control-plane',
-      channel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      channel: 'workflow.general.requirement',
       objective: 'validate cross-swarm dispatch and implementation handoff',
       description: 'End-to-end validation requirement from torghut swarm to jangar swarm.',
       payload: '{"acceptance":["run includes requirement provenance labels and parameters"],"priority":"high"}',
@@ -738,7 +627,7 @@ describe('runCodexImplementation', () => {
     expect(notify.swarmRequirementSignal).toBe('torghut-to-jangar-e2e-1772426902')
     expect(notify.swarmRequirementSource).toBe('torghut-quant')
     expect(notify.swarmRequirementTarget).toBe('jangar-control-plane')
-    expect(notify.swarmRequirementChannel).toBe('huly://swarm-bridge/issues/TORGHUT-1772426902')
+    expect(notify.swarmRequirementChannel).toBe('workflow.general.requirement')
     expect(notify.swarmRequirementObjective).toBe('validate cross-swarm dispatch and implementation handoff')
     expect(notify.swarmRequirementPayload).toContain('"acceptance"')
     expect(notify.swarmAgentWorkerId).toBe('worker-0027jshz')
@@ -746,13 +635,10 @@ describe('runCodexImplementation', () => {
     expect(notify.swarmAgentRole).toBeNull()
   }, 40_000)
 
-  it('uses environment fallback channel resolution for Huly handoff', async () => {
-    delete process.env.hulyChannel
-    delete process.env.HULY_CHANNEL
-    delete process.env.HULY_CHANNEL_NAME
-    delete process.env.hulyChannelUrl
-    delete process.env.HULY_CHANNEL_URL
-    process.env.hulyChannelName = 'huly://swarm-bridge/issues/TORGHUT-ENV-TEST-1'
+  it('uses environment fallback channel resolution for NATS handoff', async () => {
+    delete process.env.natsChannel
+    delete process.env.NATS_CHANNEL
+    process.env.natsChannel = 'workflow.general.requirement'
 
     const payload = {
       prompt: 'Implementation prompt',
@@ -761,29 +647,19 @@ describe('runCodexImplementation', () => {
       base: 'main',
       head: 'codex/issue-42',
       issueTitle: 'Title',
-      objective: 'Validate Huly env fallback channel',
+      objective: 'Validate NATS env fallback channel',
     }
     await writeFile(eventPath, JSON.stringify(payload))
 
     await runCodexImplementation(eventPath)
 
-    expect(listChannelMessagesMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: 'huly://swarm-bridge/issues/TORGHUT-ENV-TEST-1',
-      }),
-    )
-    expect(verifyChatAccessMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: 'huly://swarm-bridge/issues/TORGHUT-ENV-TEST-1',
-      }),
-    )
     const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
-    const notify = JSON.parse(notifyRaw) as { hulyArtifacts?: { channel?: string } }
-    expect(notify.hulyArtifacts?.channel).toBe('huly://swarm-bridge/issues/TORGHUT-ENV-TEST-1')
+    const notify = JSON.parse(notifyRaw) as { swarmCommsArtifacts?: { channel?: string } }
+    expect(notify.swarmCommsArtifacts?.channel).toBe('workflow.general.requirement')
   }, 40_000)
 
-  it('accepts plain Huly channel names from HULY_CHANNEL fallback', async () => {
-    process.env.HULY_CHANNEL = 'general'
+  it('accepts plain NATS channel names from NATS_CHANNEL fallback', async () => {
+    process.env.NATS_CHANNEL = 'general'
 
     const payload = {
       prompt: 'Implementation prompt',
@@ -792,29 +668,20 @@ describe('runCodexImplementation', () => {
       base: 'main',
       head: 'codex/issue-42',
       issueTitle: 'Title',
-      objective: 'Validate plain HULY_CHANNEL fallback',
+      objective: 'Validate plain NATS_CHANNEL fallback',
     }
     await writeFile(eventPath, JSON.stringify(payload))
 
     await runCodexImplementation(eventPath)
 
-    expect(listChannelMessagesMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: 'general',
-      }),
-    )
-    expect(verifyChatAccessMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: 'general',
-      }),
-    )
     const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
-    const notify = JSON.parse(notifyRaw) as { hulyArtifacts?: { channel?: string } }
-    expect(notify.hulyArtifacts?.channel).toBe('general')
+    const notify = JSON.parse(notifyRaw) as { swarmCommsArtifacts?: { channel?: string } }
+    expect(notify.swarmCommsArtifacts?.channel).toBe('general')
   }, 40_000)
 
-  it('prefers explicit requirement channels over HULY_CHANNEL fallbacks', async () => {
-    process.env.HULY_CHANNEL = 'general'
+  it('uses scheduled swarm natsChannel from event parameters for NATS handoff', async () => {
+    delete process.env.natsChannel
+    delete process.env.NATS_CHANNEL
 
     const payload = {
       prompt: 'Implementation prompt',
@@ -823,86 +690,88 @@ describe('runCodexImplementation', () => {
       base: 'main',
       head: 'codex/issue-42',
       issueTitle: 'Title',
-      objective: 'Validate explicit Huly requirement channel precedence',
-      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-REQ-TAKES-PRECEDENCE',
+      objective: 'Validate scheduled swarm NATS parameter fallback',
+      parameters: {
+        natsChannel: 'general',
+        swarmAgentWorkerId: 'worker-jangar-implement',
+        swarmAgentIdentity: 'elise-novak-jangar-engineer',
+        swarmAgentRole: 'engineer',
+      },
     }
     await writeFile(eventPath, JSON.stringify(payload))
 
     await runCodexImplementation(eventPath)
-
-    expect(listChannelMessagesMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: 'huly://swarm-bridge/issues/TORGHUT-REQ-TAKES-PRECEDENCE',
-      }),
-    )
-    expect(verifyChatAccessMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: 'huly://swarm-bridge/issues/TORGHUT-REQ-TAKES-PRECEDENCE',
-      }),
-    )
-    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
-    const notify = JSON.parse(notifyRaw) as { hulyArtifacts?: { channel?: string } }
-    expect(notify.hulyArtifacts?.channel).toBe('huly://swarm-bridge/issues/TORGHUT-REQ-TAKES-PRECEDENCE')
-  }, 40_000)
-
-  it('captures blocked prelaunch passport evidence before Huly initialization when the helper path is missing', async () => {
-    process.env.HULY_API_SCRIPT_PATH = '/tmp/missing-huly-api.py'
-
-    const payload = {
-      prompt: 'Implementation prompt',
-      repository: 'owner/repo',
-      issueNumber: 42,
-      base: 'main',
-      head: 'codex/issue-42',
-      issueTitle: 'Title',
-      objective: 'validate blocked prelaunch passport evidence',
-      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772433239',
-      swarmRequirementId: '00gc1i45',
-      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772433239',
-      swarmRequirementSource: 'torghut-quant',
-      swarmRequirementTarget: 'jangar-control-plane',
-      swarmRequirementDescription: 'Block launch before Huly calls when the helper runtime component is missing.',
-    }
-    await writeFile(eventPath, JSON.stringify(payload))
-
-    await expect(runCodexImplementation(eventPath)).rejects.toThrow(
-      /Huly collaboration launch refused before runtime initialization: passport=blocked/,
-    )
-
-    expect(runCodexSessionMock).not.toHaveBeenCalled()
-    expect(listChannelMessagesMock).not.toHaveBeenCalled()
-    expect(verifyChatAccessMock).not.toHaveBeenCalled()
-    expect(postChannelMessageMock).not.toHaveBeenCalled()
-    expect(upsertMissionMock).not.toHaveBeenCalled()
 
     const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
     const notify = JSON.parse(notifyRaw) as {
-      last_assistant_message?: string | null
-      hulyArtifacts?: {
-        prelaunchFailure?: {
-          operation?: string
-          consumerClass?: string
-          passportDecision?: string
-          runtimeKitClass?: string
-          runtimeKitDecision?: string
-          reasonCodes?: string[]
-          checkedPaths?: string[]
-        }
-      }
+      swarmCommsArtifacts?: { channel?: string }
+      swarmAgentWorkerId?: string | null
+      swarmAgentIdentity?: string | null
+      swarmAgentRole?: string | null
     }
-    expect(notify.last_assistant_message).toContain('passport=blocked')
-    expect(notify.hulyArtifacts?.prelaunchFailure).toMatchObject({
-      operation: 'huly_preflight',
-      consumerClass: 'swarm_implement',
-      passportDecision: 'block',
-      runtimeKitClass: 'collaboration',
-      runtimeKitDecision: 'blocked',
-      reasonCodes: expect.arrayContaining(['runtime_kit_component_missing:huly_api_script']),
-      checkedPaths: ['/tmp/missing-huly-api.py'],
-    })
+    expect(notify.swarmCommsArtifacts?.channel).toBe('general')
+    expect(notify.swarmAgentWorkerId).toBe('worker-jangar-implement')
+    expect(notify.swarmAgentIdentity).toBe('elise-novak-jangar-engineer')
+    expect(notify.swarmAgentRole).toBe('engineer')
   }, 40_000)
 
-  it('creates Huly reply, owner update, and mission artifacts for completed cross-swarm runs', async () => {
+  it('exports scheduled swarm NATS connection details from event parameters', async () => {
+    delete process.env.NATS_URL
+    delete process.env.NATS_CHANNEL
+    delete process.env.NATS_SUBJECT_PREFIX
+    delete process.env.NATS_CONTEXT_SUBJECT
+    const capturePath = await installNatsPublishCapture(workdir, 'nats-publish-custom-prefix.jsonl')
+
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'Validate scheduled swarm NATS connection export',
+      parameters: {
+        natsUrl: 'nats://custom-nats.nats.svc.cluster.local:4222',
+        natsSubjectPrefix: 'agents.workflow',
+        natsChannel: 'ops',
+      },
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    expect(process.env.NATS_URL).toBe('nats://custom-nats.nats.svc.cluster.local:4222')
+    expect(process.env.NATS_SUBJECT_PREFIX).toBe('agents.workflow')
+    expect(process.env.NATS_CONTEXT_SUBJECT).toBe('agents.workflow.general.>')
+    expect(process.env.NATS_CHANNEL).toBe('ops')
+    const captured = await readCapturedNatsPublishes(capturePath)
+    expect(findCapturedNatsPublish(captured, 'run-started')).toBeTruthy()
+  }, 40_000)
+
+  it('prefers explicit requirement channels over NATS_CHANNEL fallbacks', async () => {
+    process.env.NATS_CHANNEL = 'general'
+
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'Validate explicit NATS requirement channel precedence',
+      swarmRequirementChannel: 'workflow.general.requirement',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as { swarmCommsArtifacts?: { channel?: string } }
+    expect(notify.swarmCommsArtifacts?.channel).toBe('workflow.general.requirement')
+  }, 40_000)
+
+  it('publishes NATS owner update and release-note artifacts for completed cross-swarm runs', async () => {
+    const capturePath = await installNatsPublishCapture(workdir, 'nats-publish-handoff.jsonl')
     const payload = {
       prompt: 'Implementation prompt',
       repository: 'owner/repo',
@@ -911,7 +780,7 @@ describe('runCodexImplementation', () => {
       head: 'codex/issue-42',
       issueTitle: 'Title',
       objective: 'validate cross-swarm handoff artifacts',
-      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772433239',
+      swarmRequirementChannel: 'workflow.general.requirement',
       swarmRequirementId: '00gc1i45',
       swarmRequirementSignal: 'torghut-to-jangar-e2e-1772433239',
       swarmRequirementSource: 'torghut-quant',
@@ -920,74 +789,43 @@ describe('runCodexImplementation', () => {
       swarmAgentWorkerId: 'worker-0027ilba',
       swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027ilba',
       swarmAgentRole: 'implement',
-      swarmAgentTokenKey: 'HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER',
-      swarmAgentExpectedActorIdKey: 'HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER',
     }
     await writeFile(eventPath, JSON.stringify(payload))
 
     await runCodexImplementation(eventPath)
 
-    expect(listChannelMessagesMock).toHaveBeenCalledTimes(1)
-    expect(verifyChatAccessMock).toHaveBeenCalledTimes(1)
-    expect(verifyChatAccessMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: 'Hi team, I am starting implementation for owner/repo#42 and will post progress here.',
-        requireWorkerToken: true,
-        workerId: 'worker-0027ilba',
-        workerIdentity: 'vw-jangar-control-plane-implement-worker-0027ilba',
-        requireExpectedActorId: true,
-        tokenEnvKey: 'HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER',
-        expectedActorEnvKey: 'HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER',
-      }),
-    )
-    expect(postChannelMessageMock).toHaveBeenCalledTimes(2)
-    const replyCall = postChannelMessageMock.mock.calls.find((call) => {
-      const args = call?.[0] as
-        | {
-            channel: string
-            message: string
-            replyToMessageId?: string
-            workerId?: string
-            workerIdentity?: string
-          }
-        | undefined
-      return args?.replyToMessageId === 'msg-latest'
+    const captured = await readCapturedNatsPublishes(capturePath)
+    const handoff = findCapturedNatsPublish(captured, 'swarm-handoff')
+    expect(handoff).toBeDefined()
+    if (!handoff) throw new Error('Expected a swarm-handoff publish call')
+    expect(contentFromCapturedNatsPublish(handoff)).toContain('I finished implementation for owner/repo#42.')
+    const handoffAttrs = attrsFromCapturedNatsPublish(handoff)
+    expect(handoffAttrs).toMatchObject({
+      stage: 'implementation',
+      decision: 'pass',
+      swarmRequirementId: '00gc1i45',
+      swarmRequirementChannel: 'workflow.general.requirement',
+      swarmAgentWorkerId: 'worker-0027ilba',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027ilba',
+      swarmAgentRole: 'implement',
     })
-    expect(replyCall).toBeDefined()
-    expect(replyCall?.[0]?.message).toContain('owner/repo#42')
-    expect(replyCall?.[0]?.message).toMatch(/implementation(?:\s+is)?\s*:?\s*completed/)
-    expect(replyCall?.[0]?.message).toContain('implementation completed via Codex run.')
-    expect(replyCall?.[0]?.replyToMessageId).toBe('msg-latest')
-    expect(upsertMissionMock).toHaveBeenCalledTimes(1)
+    expect(handoffAttrs.releaseNote).toContain('Rollback path:')
+    expect(handoffAttrs.releaseNote).toContain('Owner-facing status: merge-ready')
+
     const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
     const notify = JSON.parse(notifyRaw) as {
-      hulyArtifacts?: {
-        latestPeerMessageId?: string
-        replyMessageId?: string
-        ownerMessageId?: string
-        missionMessageId?: string
-        missionId?: string
-        missionStatus?: string
-        missionIssueId?: string
-        missionDocumentId?: string
+      swarmCommsArtifacts?: {
         ownerUpdateMessage?: string
         releaseNote?: string
       }
     }
-    expect(notify.hulyArtifacts?.latestPeerMessageId).toBe('msg-latest')
-    expect(notify.hulyArtifacts?.replyMessageId).toBeDefined()
-    expect(notify.hulyArtifacts?.ownerMessageId).toBeDefined()
-    expect(notify.hulyArtifacts?.missionMessageId).toBe('mission-msg-00gc1i45')
-    expect(notify.hulyArtifacts?.missionId).toBe('00gc1i45')
-    expect(notify.hulyArtifacts?.missionStatus).toBe('completed')
-    expect(notify.hulyArtifacts?.missionIssueId).toBe('issue-00gc1i45')
-    expect(notify.hulyArtifacts?.missionDocumentId).toBe('doc-00gc1i45')
-    expect(notify.hulyArtifacts?.ownerUpdateMessage).toContain('Update on owner/repo#42: implementation is completed.')
-    expect(notify.hulyArtifacts?.releaseNote).toContain('Rollback path:')
-    expect(notify.hulyArtifacts?.releaseNote).toContain('Owner-facing status: merge-ready')
+    expect(notify.swarmCommsArtifacts?.ownerUpdateMessage).toContain('I finished implementation for owner/repo#42.')
+    expect(notify.swarmCommsArtifacts?.releaseNote).toContain('Rollback path:')
+    expect(notify.swarmCommsArtifacts?.releaseNote).toContain('Owner-facing status: merge-ready')
   }, 40_000)
 
   it('captures acceptance criteria from cross-swarm payload and includes release-note fields in owner update', async () => {
+    const capturePath = await installNatsPublishCapture(workdir, 'nats-publish-acceptance.jsonl')
     const payload = {
       prompt: 'Implementation prompt',
       repository: 'owner/repo',
@@ -996,7 +834,7 @@ describe('runCodexImplementation', () => {
       head: 'codex/issue-42',
       issueTitle: 'Title',
       objective: 'validate cross-swarm handoff with acceptance',
-      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772433239',
+      swarmRequirementChannel: 'workflow.general.requirement',
       swarmRequirementId: '00gc1i45',
       swarmRequirementSignal: 'torghut-to-jangar-e2e-1772433239',
       swarmRequirementSource: 'torghut-quant',
@@ -1016,36 +854,23 @@ describe('runCodexImplementation', () => {
     expect(invocation?.prompt).toContain('Acceptance criteria:')
     expect(invocation?.prompt).toContain('- create issue/chat/doc artifacts')
 
-    const ownerMessageCall = postChannelMessageMock.mock.calls.find((call) => {
-      const args = call?.[0] as
-        | {
-            channel: string
-            message: string
-            replyToMessageId?: string
-            workerId?: string
-            workerIdentity?: string
-          }
-        | undefined
-      return !args?.replyToMessageId
-    })
-    expect(ownerMessageCall?.[0]?.message).toContain('Update on owner/repo#42:')
-    expect(ownerMessageCall?.[0]?.message).toContain('completed')
-    expect(ownerMessageCall?.[0]?.message).toContain('Validation results:')
-    expect(ownerMessageCall?.[0]?.message).toContain(
-      'Acceptance criteria: create issue/chat/doc artifacts; complete handoff.',
-    )
-
-    const missionDetails = upsertMissionMock.mock.calls[0]?.[0]
-    expect(missionDetails?.details).toContain('Acceptance criteria: create issue/chat/doc artifacts; complete handoff')
-    expect(missionDetails?.details).toContain('Release note:')
-    expect(missionDetails?.details).toContain('Design document:')
-    expect(missionDetails?.details).toContain('Rollback path:')
-    expect(missionDetails?.details).toContain('Owner-facing status: merge-ready pending deployer rollout verification.')
-    expect(missionDetails?.message).toContain('Validation results:')
-    expect(missionDetails?.message).toContain('Update on owner/repo#42:')
+    const captured = await readCapturedNatsPublishes(capturePath)
+    const handoff = findCapturedNatsPublish(captured, 'swarm-handoff')
+    expect(handoff).toBeDefined()
+    if (!handoff) throw new Error('Expected a swarm-handoff publish call')
+    const content = contentFromCapturedNatsPublish(handoff)
+    expect(content).toContain('I finished implementation for owner/repo#42.')
+    expect(content).toContain('finished')
+    expect(content).toContain('Validation results:')
+    expect(content).toContain('Acceptance criteria: create issue/chat/doc artifacts; complete handoff.')
+    const attrs = attrsFromCapturedNatsPublish(handoff)
+    expect(attrs.releaseNote).toContain('Design document:')
+    expect(attrs.releaseNote).toContain('Rollback path:')
+    expect(attrs.releaseNote).toContain('Owner-facing status: merge-ready pending deployer rollout verification.')
   }, 40_000)
 
-  it('posts failure Huly mission handoff artifacts when implementation fails', async () => {
+  it('posts failure NATS mission handoff artifacts when implementation fails', async () => {
+    const capturePath = await installNatsPublishCapture(workdir, 'nats-publish-failed-handoff.jsonl')
     runCodexSessionMock.mockRejectedValueOnce(new Error('session failed'))
 
     const payload = {
@@ -1056,7 +881,7 @@ describe('runCodexImplementation', () => {
       head: 'codex/issue-42',
       issueTitle: 'Title',
       objective: 'validate cross-swarm failure handoff',
-      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772433239',
+      swarmRequirementChannel: 'workflow.general.requirement',
       swarmRequirementId: '00gc1i45',
       swarmRequirementSignal: 'torghut-to-jangar-e2e-1772433239',
       swarmRequirementSource: 'torghut-quant',
@@ -1070,9 +895,17 @@ describe('runCodexImplementation', () => {
 
     await expect(runCodexImplementation(eventPath)).rejects.toThrow('session failed')
 
-    expect(upsertMissionMock).toHaveBeenCalledTimes(1)
-    const status = upsertMissionMock.mock.calls[0]?.[0]?.status
-    expect(status).toBe('failed')
+    const captured = await readCapturedNatsPublishes(capturePath)
+    const handoff = findCapturedNatsPublish(captured, 'swarm-handoff')
+    expect(handoff).toBeDefined()
+    if (!handoff) throw new Error('Expected a failed swarm-handoff publish call')
+    expect(contentFromCapturedNatsPublish(handoff)).toContain('I am blocked on implementation for owner/repo#42.')
+    expect(attrsFromCapturedNatsPublish(handoff)).toMatchObject({
+      stage: 'implementation',
+      decision: 'fail',
+      swarmRequirementId: '00gc1i45',
+      swarmRequirementChannel: 'workflow.general.requirement',
+    })
   }, 40_000)
 
   it('accepts worker identity metadata from parameters map', async () => {
@@ -1083,7 +916,7 @@ describe('runCodexImplementation', () => {
       base: 'main',
       head: 'codex/issue-42',
       issueTitle: 'Title',
-      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementChannel: 'workflow.general.requirement',
       parameters: {
         swarmRequirementId: '00gcj8mu',
         swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
@@ -1120,7 +953,7 @@ describe('runCodexImplementation', () => {
     expect(notify.swarmAgentIdentity).toBe('vw-jangar-control-plane-implement-worker-params-0027jshz')
   }, 40_000)
 
-  it('does not apply cross-swarm prompt wrapping for non-Huly channels', async () => {
+  it('does not apply cross-swarm prompt wrapping for non-NATS channels', async () => {
     const payload = {
       prompt: 'Implementation prompt',
       repository: 'owner/repo',
@@ -1129,7 +962,7 @@ describe('runCodexImplementation', () => {
       head: 'codex/issue-42',
       issueTitle: 'Title',
       swarmRequirementChannel: 'slack://channel-id',
-      swarmRequirementDescription: 'No Huly wrapping should occur.',
+      swarmRequirementDescription: 'No NATS wrapping should occur.',
     }
     await writeFile(eventPath, JSON.stringify(payload))
 
@@ -1344,7 +1177,7 @@ describe('runCodexImplementation', () => {
       base: 'main',
       head: 'codex/issue-42',
       issueTitle: 'Title',
-      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementChannel: 'workflow.general.requirement',
       swarmRequirementId: '00gcj8mu',
       swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
       swarmRequirementSource: 'torghut-quant',
@@ -1417,7 +1250,7 @@ describe('runCodexImplementation', () => {
       head: 'codex/issue-42',
       issueTitle: 'Title',
       objective: 'validate cross-swarm handoff visibility',
-      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772426902',
+      swarmRequirementChannel: 'workflow.general.requirement',
       swarmRequirementId: '00gcj8mu',
       swarmRequirementSignal: 'torghut-to-jangar-e2e-1772426902',
       swarmRequirementSource: 'torghut-quant',
@@ -1464,7 +1297,7 @@ describe('runCodexImplementation', () => {
     expect(attrs.swarmRequirementSignal).toBe('torghut-to-jangar-e2e-1772426902')
     expect(attrs.swarmRequirementSource).toBe('torghut-quant')
     expect(attrs.swarmRequirementTarget).toBe('jangar-control-plane')
-    expect(attrs.swarmRequirementChannel).toBe('huly://swarm-bridge/issues/TORGHUT-1772426902')
+    expect(attrs.swarmRequirementChannel).toBe('workflow.general.requirement')
     expect(attrs.swarmRequirementDescription).toBe('End-to-end requirement handoff validation.')
     expect(attrs.swarmRequirementObjective).toBe('validate cross-swarm handoff visibility')
     expect(attrs.swarmRequirementPayload).toContain('"acceptance"')

@@ -153,6 +153,20 @@ export const buildTranscriptSignature = (messages: ReadonlyArray<ChatMessage>): 
     contentHash: hashContent(normalizeMessageContent(message.content)),
   }))
 
+export const normalizeAssistantTranscriptContent = (content: string) => content.replace(/^\n+/, '').trimEnd()
+
+export const normalizeOpenWebUITranscriptMessages = (messages: ReadonlyArray<ChatMessage>) =>
+  messages.map((message) => {
+    if (message.role !== 'assistant') return message
+    return {
+      ...message,
+      content: normalizeAssistantTranscriptContent(normalizeMessageContent(message.content)),
+    }
+  })
+
+export const buildOpenWebUITranscriptSignature = (messages: ReadonlyArray<ChatMessage>) =>
+  buildTranscriptSignature(normalizeOpenWebUITranscriptMessages(messages))
+
 export type TranscriptComparison = {
   prefixMatch: boolean
   prefixLength: number

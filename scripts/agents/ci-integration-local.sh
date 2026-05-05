@@ -33,6 +33,7 @@ KUBECONFIG_PATH="${KUBECONFIG_PATH:-${ROOT_DIR}/.tmp/agents-ci-local/kubeconfig-
 NAMESPACE="${AGENTS_NAMESPACE:-agents-ci}"
 RELEASE_NAME="${AGENTS_RELEASE_NAME:-agents-ci}"
 VALUES_FILE="${AGENTS_VALUES_FILE:-scripts/agents/values-ci.yaml}"
+KIND_NODE_IMAGE="${KIND_NODE_IMAGE:-mirror.gcr.io/kindest/node:v1.29.4}"
 SKIP_CLEANUP="${SKIP_CLEANUP:-0}"
 
 mkdir -p "$(dirname "${KUBECONFIG_PATH}")"
@@ -70,7 +71,7 @@ trap cleanup EXIT
 
 echo "[local-agents-ci] create kind cluster: ${CLUSTER_NAME}"
 kind delete cluster --name "${CLUSTER_NAME}" >/dev/null 2>&1 || true
-kind create cluster --name "${CLUSTER_NAME}" --image kindest/node:v1.29.4 --wait 180s --kubeconfig "${KUBECONFIG_PATH}"
+kind create cluster --name "${CLUSTER_NAME}" --image "${KIND_NODE_IMAGE}" --wait 180s --kubeconfig "${KUBECONFIG_PATH}"
 
 export KUBECONFIG="${KUBECONFIG_PATH}"
 kubectl get nodes -o wide
@@ -87,6 +88,7 @@ echo "[local-agents-ci] run smoke"
   AGENTS_VALUES_FILE="${VALUES_FILE}" \
   AGENTS_CREATE_NAMESPACE="true" \
   AGENTS_DB_BOOTSTRAP="true" \
+  AGENTS_DB_IMAGE="${AGENTS_DB_IMAGE:-mirror.gcr.io/pgvector/pgvector:pg16}" \
   AGENTS_TIMEOUT="${AGENTS_TIMEOUT:-10m}" \
   AGENTCTL_BIN="${AGENTCTL_BIN:-services/jangar/agentctl/dist/agentctl}" \
   bun run packages/scripts/src/agents/smoke-agents.ts)

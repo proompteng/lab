@@ -9,7 +9,7 @@ See also:
 - `README.md` (docs index)
 - `designs/handoff-common.md` (GitOps render + live verification commands)
 - `ci-validation-plan.md` (what to run before/after rollout)
-- `swarm-end-to-end-runbook.md` (dual-swarm Huly communication + e2e validation flow)
+- `swarm-end-to-end-runbook.md` (dual-swarm NATS communication + Jangar visibility e2e validation flow)
 
 ## Install
 
@@ -155,7 +155,7 @@ Expected outcomes:
   the missing component in `reason_codes`.
 - The Argo Workflows resource check returns empty output (no CRD or no workflows).
 
-If a cross-swarm stage refuses launch before Huly initialization, verify the passport debt first:
+If a cross-swarm stage refuses launch before NATS collaboration initialization, verify the passport debt first:
 
 ```bash
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | \
@@ -169,9 +169,9 @@ Expected outcomes:
 - a blocked or held `swarm_implement` passport cites the collaboration `runtime_kit_id` in
   `required_runtime_kits`.
 - the collaboration runtime kit points at the missing component through `reason_codes` and
-  `components[].evidence_ref` (for example `runtime_kit_component_missing:huly_api_script` with the
+  `components[].evidence_ref` (for example `runtime_kit_component_missing:codex_nats_publish` with the
   checked helper paths).
-- rollback is runtime-local: restore the missing helper/config in the admitted image or revert the
+- rollback is runtime-local: restore the missing helper/config/secret in the admitted image or revert the
   change that introduced the incompatible runtime contract, then redeploy and re-check the same passport ids.
 
 ## Native workflow e2e proof

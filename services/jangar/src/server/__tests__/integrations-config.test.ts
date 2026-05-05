@@ -20,6 +20,19 @@ describe('integrations-config', () => {
     expect(config.filterSubjects).toEqual(['workflow.alpha', 'agents.workflow.beta'])
   })
 
+  it('subscribes to all default workflow subject families for Jangar visibility', () => {
+    const config = resolveAgentCommsSubscriberConfig({
+      NATS_URL: 'nats://nats.internal:4222',
+    })
+
+    expect(config.filterSubjects).toEqual([
+      'workflow.>',
+      'agents.workflow.>',
+      'argo.workflow.>',
+      'workflow_comms.agent_messages.>',
+    ])
+  })
+
   it('normalizes feature flag client settings', () => {
     expect(
       resolveFeatureFlagsClientConfig({

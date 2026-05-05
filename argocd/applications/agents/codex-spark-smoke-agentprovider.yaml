@@ -43,7 +43,7 @@ spec:
       prompt = f"""Execute a read-only Codex runtime smoke validation.
 
       Requirements:
-      - Do not modify repository state, branches, commits, pull requests, issues, Huly artifacts, or cluster resources.
+      - Do not modify repository state, branches, commits, pull requests, issues, or cluster resources.
       - Use the mounted Codex config/auth exactly as provided.
       - Verify the configured provider, model, auth secret, and runner image can start successfully.
       - Write `/workspace/.agentrun/smoke/result.md` with:

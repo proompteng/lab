@@ -122,7 +122,13 @@ database:
     name: jangar-db-app
     key: uri
 agentComms:
-  enabled: false
+  enabled: true
+  nats:
+    url: nats://nats.nats.svc.cluster.local:4222
+    userSecret:
+      name: nats-agents-credentials
+      usernameKey: username
+      passwordKey: password
 grpc:
   enabled: true
   port: 50051

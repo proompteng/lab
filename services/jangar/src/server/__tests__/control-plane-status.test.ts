@@ -507,7 +507,7 @@ describe('control-plane status', () => {
       buildRuntimeKit({
         runtime_kit_id: 'runtime-kit:collaboration:1',
         kit_class: 'collaboration',
-        subject_ref: 'jangar:codex:huly-collaboration',
+        subject_ref: 'jangar:codex:nats-collaboration',
         component_digest: 'digest-collaboration',
       }),
     ],
@@ -687,10 +687,10 @@ describe('control-plane status', () => {
               buildRuntimeKit({
                 runtime_kit_id: 'runtime-kit:collaboration:2',
                 kit_class: 'collaboration',
-                subject_ref: 'jangar:codex:huly-collaboration',
+                subject_ref: 'jangar:codex:nats-collaboration',
                 component_digest: 'digest-collaboration',
                 decision: 'blocked',
-                reason_codes: ['runtime_kit_component_missing:huly_api_script'],
+                reason_codes: ['runtime_kit_component_missing:codex_nats_publish'],
               }),
             ],
             admissionPassports: [
@@ -700,7 +700,7 @@ describe('control-plane status', () => {
                 consumer_class: 'swarm_implement',
                 runtime_kit_set_digest: 'runtime-2',
                 decision: 'block',
-                reason_codes: ['runtime_kit_component_missing:huly_api_script'],
+                reason_codes: ['runtime_kit_component_missing:codex_nats_publish'],
                 required_runtime_kits: ['runtime-kit:collaboration:2'],
               }),
             ],

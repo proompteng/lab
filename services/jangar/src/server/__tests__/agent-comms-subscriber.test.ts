@@ -110,4 +110,27 @@ describe('agent comms subscriber consume', () => {
     expect(goodMsg.ack).toHaveBeenCalledTimes(1)
     expect(insertMessages).toHaveBeenCalledTimes(1)
   })
+
+  it('normalizes every configured workflow subject family for Jangar visibility', () => {
+    const native = __test__.normalizePayload(JSON.stringify({ content: 'native update' }), 'workflow.general.status')
+    const agents = __test__.normalizePayload(
+      JSON.stringify({ content: 'agents update' }),
+      'agents.workflow.general.status',
+    )
+    const argo = __test__.normalizePayload(JSON.stringify({ content: 'argo update' }), 'argo.workflow.general.status')
+    const workflowComms = __test__.normalizePayload(
+      JSON.stringify({ content: 'stored update' }),
+      'workflow_comms.agent_messages.general.status',
+    )
+
+    expect(native?.channel).toBe('general')
+    expect(native?.kind).toBe('status')
+    expect(native?.attrs?.runtime).toBe('native')
+    expect(agents?.channel).toBe('general')
+    expect(agents?.attrs?.runtime).toBe('native')
+    expect(argo?.channel).toBe('general')
+    expect(argo?.attrs?.runtime).toBe('argo')
+    expect(workflowComms?.channel).toBe('general')
+    expect(workflowComms?.attrs?.runtime).toBe('workflow_comms')
+  })
 })

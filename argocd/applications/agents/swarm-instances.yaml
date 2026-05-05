@@ -11,7 +11,7 @@ spec:
     - platform-reliability
     - platform-evolution
   objectives:
-    - operate as the Jangar Engineering team in Huly (tracker, chat, documents)
+    - operate as the Jangar Engineering team through NATS-backed swarm communication
     - continuously discover and implement control-plane improvements
     - deliver Torghut platform requirements safely to production
   mode: lights-out
@@ -22,36 +22,27 @@ spec:
     implementEvery: 1h
     verifyEvery: 1h
   integrations:
-    huly:
-      baseUrl: http://transactor.huly.svc.cluster.local
-      workspace: proompteng
-      project: DefaultProject
-      skillRef: skills/huly-api/SKILL.md
-      authSecretRef:
-        name: huly-api-jangar
+    nats:
+      url: nats://nats.nats.svc.cluster.local:4222
+      subjectPrefix: workflow
+      channel: general
       personas:
         architect:
           humanName: Victor Chen
           workerIdentity: victor-chen-jangar-architect
-          tokenKey: HULY_API_TOKEN_VICTOR_CHEN_JANGAR_ARCHITECT
-          expectedActorIdKey: HULY_EXPECTED_ACTOR_ID_VICTOR_CHEN_JANGAR_ARCHITECT
         engineer:
           humanName: Elise Novak
           workerIdentity: elise-novak-jangar-engineer
-          tokenKey: HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER
-          expectedActorIdKey: HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER
         deployer:
           humanName: Marco Silva
           workerIdentity: marco-silva-jangar-deployer
-          tokenKey: HULY_API_TOKEN_MARCO_SILVA_JANGAR_DEPLOYER
-          expectedActorIdKey: HULY_EXPECTED_ACTOR_ID_MARCO_SILVA_JANGAR_DEPLOYER
   discovery:
     minCitations: 2
     minConfidence: 0.75
     sources:
       - name: internet-research
       - name: runtime-alerts
-      - name: huly-requirements
+      - name: nats-requirements
   delivery:
     repoAllowlist:
       - proompteng/lab
@@ -108,9 +99,9 @@ spec:
     - quant-research
     - autonomous-trading
   objectives:
-    - operate as the Torghut Traders team in Huly (tracker, chat, documents)
+    - operate as the Torghut Traders team through NATS-backed swarm communication
     - continuously discover and implement quant alpha and risk-control improvements
-    - issue platform requirements to jangar-control-plane via Huly requirement channels
+    - issue platform requirements to jangar-control-plane via NATS requirement channels
   mode: lights-out
   timezone: UTC
   cadence:
@@ -119,29 +110,20 @@ spec:
     implementEvery: 1h
     verifyEvery: 1h
   integrations:
-    huly:
-      baseUrl: http://transactor.huly.svc.cluster.local
-      workspace: proompteng
-      project: DefaultProject
-      skillRef: skills/huly-api/SKILL.md
-      authSecretRef:
-        name: huly-api-torghut
+    nats:
+      url: nats://nats.nats.svc.cluster.local:4222
+      subjectPrefix: workflow
+      channel: general
       personas:
         architect:
           humanName: Gideon Park
           workerIdentity: gideon-park-torghut-architect
-          tokenKey: HULY_API_TOKEN_GIDEON_PARK_TORGHUT_ARCHITECT
-          expectedActorIdKey: HULY_EXPECTED_ACTOR_ID_GIDEON_PARK_TORGHUT_ARCHITECT
         engineer:
           humanName: Naomi Ibarra
           workerIdentity: naomi-ibarra-torghut-engineer
-          tokenKey: HULY_API_TOKEN_NAOMI_IBARRA_TORGHUT_ENGINEER
-          expectedActorIdKey: HULY_EXPECTED_ACTOR_ID_NAOMI_IBARRA_TORGHUT_ENGINEER
         deployer:
           humanName: Julian Hart
           workerIdentity: julian-hart-torghut-deployer
-          tokenKey: HULY_API_TOKEN_JULIAN_HART_TORGHUT_DEPLOYER
-          expectedActorIdKey: HULY_EXPECTED_ACTOR_ID_JULIAN_HART_TORGHUT_DEPLOYER
   discovery:
     minCitations: 2
     minConfidence: 0.8
