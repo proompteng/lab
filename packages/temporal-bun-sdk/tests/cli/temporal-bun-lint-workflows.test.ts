@@ -12,7 +12,7 @@ test('lint-workflows fails on fetch() usage in workflow modules', async () => {
     const entry = join(workflowsDir, 'index.ts')
     const bad = join(workflowsDir, 'bad.ts')
     await writeFile(entry, "export * from './bad'\n")
-    await writeFile(bad, 'export const run = async () => { await fetch(\"https://example.com\") }\n')
+    await writeFile(bad, 'export const run = async () => { await fetch("https://example.com") }\n')
 
     const result = await executeLintWorkflows({
       cwd: dir,
@@ -66,6 +66,28 @@ test('lint-workflows fails on capturing Date.now in workflow modules', async () 
   })
 })
 
+test('lint-workflows fails on live time and randomness member calls in workflow modules', async () => {
+  await withTempDir(async (dir) => {
+    const workflowsDir = join(dir, 'workflows')
+    await mkdir(workflowsDir, { recursive: true })
+
+    const entry = join(workflowsDir, 'index.ts')
+    await writeFile(entry, 'export const run = () => Date.now() + Math.random() + performance.now()\n')
+
+    const result = await executeLintWorkflows({
+      cwd: dir,
+      workflows: [entry],
+      mode: 'strict',
+      format: 'json',
+    })
+
+    expect(result.exitCode).toBe(1)
+    expect(result.violations.some((v) => v.rule === 'deny-member-expression' && v.message.includes('Date.now'))).toBeTrue()
+    expect(result.violations.some((v) => v.rule === 'deny-member-expression' && v.message.includes('Math.random'))).toBeTrue()
+    expect(result.violations.some((v) => v.rule === 'deny-member-expression' && v.message.includes('performance.now'))).toBeTrue()
+  })
+})
+
 test('lint-workflows fails when a workflow imports @proompteng/temporal-bun-sdk/client', async () => {
   await withTempDir(async (dir) => {
     const workflowsDir = join(dir, 'workflows')
@@ -86,3 +108,66 @@ test('lint-workflows fails when a workflow imports @proompteng/temporal-bun-sdk/
   })
 })
 
+test('lint-workflows fails on raw Promise constructors in workflow modules', async () => {
+  await withTempDir(async (dir) => {
+    const workflowsDir = join(dir, 'workflows')
+    await mkdir(workflowsDir, { recursive: true })
+
+    const entry = join(workflowsDir, 'index.ts')
+    await writeFile(entry, 'export const run = () => new Promise((resolve) => resolve("ok"))\n')
+
+    const result = await executeLintWorkflows({
+      cwd: dir,
+      workflows: [entry],
+      mode: 'strict',
+      format: 'json',
+    })
+
+    expect(result.exitCode).toBe(1)
+    expect(result.violations.some((v) => v.rule === 'deny-global' && v.message.includes('Promise'))).toBeTrue()
+  })
+})
+
+test('lint-workflows fails on Effect promise escape hatches in workflow modules', async () => {
+  await withTempDir(async (dir) => {
+    const workflowsDir = join(dir, 'workflows')
+    await mkdir(workflowsDir, { recursive: true })
+
+    const entry = join(workflowsDir, 'index.ts')
+    await writeFile(
+      entry,
+      "import { Effect } from 'effect'\nexport const run = () => Effect.tryPromise(() => fetch('https://example.com'))\n",
+    )
+
+    const result = await executeLintWorkflows({
+      cwd: dir,
+      workflows: [entry],
+      mode: 'strict',
+      format: 'json',
+    })
+
+    expect(result.exitCode).toBe(1)
+    expect(result.violations.some((v) => v.rule === 'deny-member-expression' && v.message.includes('Effect.tryPromise'))).toBeTrue()
+  })
+})
+
+test('lint-workflows fails on eval and Function constructors in workflow modules', async () => {
+  await withTempDir(async (dir) => {
+    const workflowsDir = join(dir, 'workflows')
+    await mkdir(workflowsDir, { recursive: true })
+
+    const entry = join(workflowsDir, 'index.ts')
+    await writeFile(entry, "export const run = () => eval('1') + new Function('return 2')()\n")
+
+    const result = await executeLintWorkflows({
+      cwd: dir,
+      workflows: [entry],
+      mode: 'strict',
+      format: 'json',
+    })
+
+    expect(result.exitCode).toBe(1)
+    expect(result.violations.some((v) => v.rule === 'deny-global' && v.message.includes('eval'))).toBeTrue()
+    expect(result.violations.some((v) => v.rule === 'deny-global' && v.message.includes('Function'))).toBeTrue()
+  })
+})

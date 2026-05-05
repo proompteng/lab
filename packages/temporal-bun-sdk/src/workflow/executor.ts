@@ -45,6 +45,33 @@ const noopWorkflowLogger: WorkflowLogger = {
   log: () => Effect.void,
 }
 
+const describeUnknownError = (error: unknown, fallback: string): string => {
+  if (error == null) {
+    return fallback
+  }
+  switch (typeof error) {
+    case 'string':
+      return error
+    case 'number':
+    case 'bigint':
+    case 'boolean':
+      return `${error}`
+    case 'symbol':
+      return error.description ? `Symbol(${error.description})` : 'Symbol()'
+    default:
+      break
+  }
+  try {
+    const json = JSON.stringify(error)
+    if (json) {
+      return json
+    }
+  } catch {
+    // Fall back to the object tag below when the value cannot be stringified.
+  }
+  return Object.prototype.toString.call(error)
+}
+
 export interface WorkflowUpdateInvocation {
   readonly protocolInstanceId: string
   readonly requestMessageId: string
@@ -665,12 +692,19 @@ export class WorkflowExecutor {
     }
     const results: WorkflowQueryEvaluationResult[] = []
     for (const request of requests) {
-      const evaluation = await Effect.runPromise(registry.evaluate(request))
-      const encoded =
-        evaluation.status === 'success'
-          ? await this.#encodeSuccessfulQueryResult(evaluation.result)
-          : await this.#encodeFailedQueryResult(evaluation.error)
-      results.push({ request: evaluation.request, result: encoded })
+      try {
+        const evaluation = await Effect.runPromise(registry.evaluate(request))
+        const encoded =
+          evaluation.status === 'success'
+            ? await this.#encodeSuccessfulQueryResult(evaluation.result)
+            : await this.#encodeFailedQueryResult(evaluation.error)
+        results.push({ request: evaluation.request, result: encoded })
+      } catch (error) {
+        results.push({
+          request,
+          result: await this.#encodeFailedQueryResult(error),
+        })
+      }
     }
     return results
   }
@@ -686,7 +720,7 @@ export class WorkflowExecutor {
   }
 
   async #encodeFailedQueryResult(error: unknown): Promise<WorkflowQueryResult> {
-    const normalized = error instanceof Error ? error : new Error(String(error ?? 'Workflow query failed'))
+    const normalized = error instanceof Error ? error : new Error(describeUnknownError(error, 'Workflow query failed'))
     const failure = await encodeErrorToFailure(this.#dataConverter, normalized)
     return create(WorkflowQueryResultSchema, {
       resultType: QueryResultType.FAILED,

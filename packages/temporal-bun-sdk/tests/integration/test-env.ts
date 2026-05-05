@@ -43,6 +43,12 @@ const isLoopbackTemporalAddress = (address: string): boolean => {
   )
 }
 
+const truthy = new Set(['1', 'true', 't', 'yes', 'y', 'on'])
+const isReleaseGate = (): boolean => {
+  const raw = process.env.TEMPORAL_BUN_RELEASE_GATE
+  return Boolean(raw && truthy.has(raw.trim().toLowerCase()))
+}
+
 let sharedEnvPromise: Promise<IntegrationTestEnv> | null = null
 let refCount = 0
 
@@ -77,6 +83,9 @@ const setupIntegrationTestEnv = async (): Promise<IntegrationTestEnv> => {
   if (Exit.isFailure(harnessExit)) {
     const unavailable = findTemporalCliUnavailableError(harnessExit.cause)
     if (unavailable) {
+      if (isReleaseGate()) {
+        throw unavailable
+      }
       cliUnavailable = true
       console.warn(`[temporal-bun-sdk] Temporal CLI unavailable: ${unavailable.message}`)
     } else {
@@ -88,6 +97,9 @@ const setupIntegrationTestEnv = async (): Promise<IntegrationTestEnv> => {
     if (Exit.isFailure(setupExit)) {
       const unavailable = findTemporalCliUnavailableError(setupExit.cause)
       if (unavailable) {
+        if (isReleaseGate()) {
+          throw unavailable
+        }
         cliUnavailable = true
         console.warn(`[temporal-bun-sdk] Temporal endpoint unavailable during setup: ${unavailable.message}`)
       } else {
@@ -135,6 +147,9 @@ const setupIntegrationTestEnv = async (): Promise<IntegrationTestEnv> => {
 
   const runOrSkip: RunOrSkip = async (name, scenario) => {
     if (cliUnavailable) {
+      if (isReleaseGate()) {
+        throw new Error(`Release gate cannot skip integration scenario: ${name}`)
+      }
       console.warn(`[temporal-bun-sdk] skipped integration scenario: ${name}`)
       return undefined
     }
@@ -148,6 +163,9 @@ const setupIntegrationTestEnv = async (): Promise<IntegrationTestEnv> => {
     } catch (error) {
       const unavailable = findTemporalCliUnavailableError(error)
       if (unavailable) {
+        if (isReleaseGate()) {
+          throw unavailable
+        }
         cliUnavailable = true
         console.warn(`[temporal-bun-sdk] skipped integration scenario ${name}: ${unavailable.message}`)
         return undefined

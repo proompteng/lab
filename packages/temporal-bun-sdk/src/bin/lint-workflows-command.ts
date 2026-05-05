@@ -85,9 +85,31 @@ const defaultDenyImports = new Set<string>([
   'worker_threads',
 ])
 
-const defaultDenyGlobals = new Set<string>(['fetch', 'WebSocket', 'setTimeout', 'setInterval', 'Bun.spawn', 'Deno.run'])
+const defaultDenyGlobals = new Set<string>([
+  'eval',
+  'Function',
+  'fetch',
+  'Promise',
+  'WebSocket',
+  'setTimeout',
+  'setInterval',
+  'Bun.spawn',
+  'Bun.nanoseconds',
+  'Deno.run',
+])
 
-const defaultDenyMemberExpressions = new Set<string>(['process.env', 'Bun.env'])
+const defaultDenyMemberExpressions = new Set<string>([
+  'Date.now',
+  'Math.random',
+  'process.env',
+  'Bun.env',
+  'Bun.nanoseconds',
+  'crypto.randomUUID',
+  'crypto.getRandomValues',
+  'performance.now',
+  'Effect.promise',
+  'Effect.tryPromise',
+])
 
 const expandWorkflowEntries = async (cwdPath: string, patterns: readonly string[]): Promise<string[]> => {
   const entries = new Set<string>()

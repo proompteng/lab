@@ -28,6 +28,51 @@ README says:
 That means the comparison is not "two identical runtimes." They optimize for
 different execution environments.
 
+## What "not production ready" usually means here
+
+When an agent says a Bun Temporal SDK is not production ready, it is usually
+collapsing three different concerns:
+
+- the official Temporal TypeScript worker cannot be made production safe on Bun
+  by bundling or emulating its Node-specific worker stack,
+- a third-party SDK is not the same support contract as an official Temporal SDK,
+- Temporal worker correctness depends on deterministic replay, cancellation,
+  heartbeats, worker versioning, and long-running poller behaviour, not just on
+  whether a quickstart starts a workflow.
+
+The first concern is real for `@temporalio/worker`, but it is not a direct
+description of `@proompteng/temporal-bun-sdk`. This package ships its own
+Bun-native worker/client runtime and does not depend on `@temporalio/worker`,
+Node-API native modules, `process.dlopen()`, or `worker_threads` for worker
+execution.
+
+The second concern remains a fair adoption tradeoff: this is a
+community/company package, not the official Temporal SDK. Teams that require an
+official vendor-supported SDK should choose the official Node.js path.
+
+The third concern is the real production bar. For this SDK, production readiness
+is evidenced by:
+
+- npm releases under `@proompteng/temporal-bun-sdk` with provenance publishing,
+- release CI that runs build, format, unit/integration, replay, and worker load
+  suites before publish,
+- a `verify:production` package gate that fails if native bridge artifacts or
+  official Node worker dependencies re-enter the package boundary,
+- generated `production-readiness.json` and `agent-readiness.json` artifacts
+  that make package-boundary, replay, load, and default-choice blockers
+  machine-readable,
+- deterministic workflow guards, real-history replay fixtures, sticky-cache
+  healing, build-id routing, activity heartbeat/retry coverage, and structured
+  worker metrics,
+- deployed `services/jangar` worker usage of `createWorker` and
+  `createTemporalClient` against the current Temporal infrastructure.
+
+For external consumers, the remaining thing to validate is operational fit:
+their workflow patterns, history sizes, runtime duration, throughput targets,
+and incident-response requirements. The SDK should be evaluated with the same
+replay and load gates used by the release workflow, not by checking whether the
+official Node worker happens to run under Bun.
+
 ## Quick decision guide
 
 ### Use the official TypeScript SDK when
@@ -47,16 +92,16 @@ different execution environments.
 
 ## Feature comparison
 
-| Area | `@proompteng/temporal-bun-sdk` | Official TypeScript SDK |
-| --- | --- | --- |
-| Worker runtime target | Bun-first | Node.js-first |
-| Official support status | Community/company package | Official Temporal SDK |
-| Client-only usage on Bun | Supported by this package | Possible, but not officially supported by Temporal |
-| Worker execution on Bun | Primary use case | Official docs discourage it |
-| Runtime model | Pure TypeScript Bun runtime | Node worker stack with Node-specific runtime features |
-| Cloud auth | `TEMPORAL_API_KEY` and `TEMPORAL_CLOUD_API_KEY` | Supported in official SDK ecosystem, but Bun workers are not the default path |
-| TLS and mTLS | Built-in config loader for CA, cert, key, and server name override | Supported in official SDK ecosystem |
-| CLI and project bootstrap | Bundled `temporal-bun` CLI | Official Temporal ecosystem provides its own tools and project scaffolds |
+| Area                      | `@proompteng/temporal-bun-sdk`                                     | Official TypeScript SDK                                                       |
+| ------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| Worker runtime target     | Bun-first                                                          | Node.js-first                                                                 |
+| Official support status   | Community/company package                                          | Official Temporal SDK                                                         |
+| Client-only usage on Bun  | Supported by this package                                          | Possible, but not officially supported by Temporal                            |
+| Worker execution on Bun   | Primary use case                                                   | Official docs discourage it                                                   |
+| Runtime model             | Pure TypeScript Bun runtime                                        | Node worker stack with Node-specific runtime features                         |
+| Cloud auth                | `TEMPORAL_API_KEY` and `TEMPORAL_CLOUD_API_KEY`                    | Supported in official SDK ecosystem, but Bun workers are not the default path |
+| TLS and mTLS              | Built-in config loader for CA, cert, key, and server name override | Supported in official SDK ecosystem                                           |
+| CLI and project bootstrap | Bundled `temporal-bun` CLI                                         | Official Temporal ecosystem provides its own tools and project scaffolds      |
 
 ## Tradeoffs
 

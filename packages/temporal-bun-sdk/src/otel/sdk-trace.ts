@@ -60,6 +60,7 @@ export interface SpanProcessor {
 
 class SimpleSpanProcessor implements SpanProcessor {
   readonly #exporter: SpanExporter
+  #shutdown = false
 
   constructor(exporter: SpanExporter) {
     this.#exporter = exporter
@@ -68,6 +69,9 @@ class SimpleSpanProcessor implements SpanProcessor {
   onStart(): void {}
 
   onEnd(span: SpanData): void {
+    if (this.#shutdown) {
+      return
+    }
     this.#exporter.export([span], (result) => {
       if (result.code === ExportResultCode.SUCCESS) {
         return
@@ -77,6 +81,7 @@ class SimpleSpanProcessor implements SpanProcessor {
   }
 
   async shutdown(): Promise<void> {
+    this.#shutdown = true
     await this.#exporter.shutdown()
   }
 

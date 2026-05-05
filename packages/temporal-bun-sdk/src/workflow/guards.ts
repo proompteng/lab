@@ -275,6 +275,11 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
       return originalRandom()
     }
     if (ctx.guard.isQueryMode()) {
+      handleViolation({
+        api: 'Math.random',
+        message: 'Math.random() cannot read live randomness during workflow query evaluation',
+        remediation: 'Queries must be read-only; read workflow state recorded during normal workflow tasks.',
+      })
       return originalRandom()
     }
     return ctx.guard.nextRandom(originalRandom)
@@ -300,6 +305,11 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
         return original()
       }
       if (ctx.guard.isQueryMode()) {
+        handleViolation({
+          api: 'crypto.randomUUID',
+          message: 'crypto.randomUUID() cannot read live randomness during workflow query evaluation',
+          remediation: 'Queries must be read-only; read workflow state recorded during normal workflow tasks.',
+        })
         return original()
       }
 
@@ -344,6 +354,11 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
         return original(array)
       }
       if (ctx.guard.isQueryMode()) {
+        handleViolation({
+          api: 'crypto.getRandomValues',
+          message: 'crypto.getRandomValues() cannot read live randomness during workflow query evaluation',
+          remediation: 'Queries must be read-only; read workflow state recorded during normal workflow tasks.',
+        })
         return original(array)
       }
 

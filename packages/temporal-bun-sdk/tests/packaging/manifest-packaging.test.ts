@@ -1,17 +1,66 @@
-import { describe, expect, test } from 'bun:test'
-import { readFile } from 'node:fs/promises'
+import { beforeAll, describe, expect, test } from 'bun:test'
+import { existsSync } from 'node:fs'
+import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 type TemporalSdkPackageJson = {
   dependencies?: Record<string, string>
   devDependencies?: Record<string, string>
   bin?: Record<string, string>
+  files?: string[]
+  scripts?: Record<string, string>
 }
 
+const packageRoot = join(import.meta.dir, '../..')
+
+beforeAll(async () => {
+  const child = Bun.spawn(['bun', 'scripts/collect-production-evidence.ts'], {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      TEMPORAL_PRODUCTION_EVIDENCE_ALLOW_INCOMPLETE: '1',
+    },
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ])
+  if (exitCode !== 0) {
+    throw new Error(`collect-production-evidence failed:\n${stdout}\n${stderr}`)
+  }
+})
+
 const loadPackageJson = async (): Promise<TemporalSdkPackageJson> => {
-  const packageJsonPath = join(import.meta.dir, '../../package.json')
+  const packageJsonPath = join(packageRoot, 'package.json')
   const packageJsonRaw = await readFile(packageJsonPath, 'utf8')
   return JSON.parse(packageJsonRaw) as TemporalSdkPackageJson
+}
+
+const nativeArtifactPattern = /\.(?:node|dylib|so|a)$/
+const ignoredScanDirectories = new Set(['.artifacts', 'coverage', 'dist', 'node_modules'])
+
+async function listPackageFiles(directory = packageRoot): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true })
+  const files: string[] = []
+
+  for (const entry of entries) {
+    if (entry.isDirectory() && ignoredScanDirectories.has(entry.name)) {
+      continue
+    }
+
+    const absolutePath = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      files.push(...(await listPackageFiles(absolutePath)))
+      continue
+    }
+
+    files.push(absolutePath)
+  }
+
+  return files
 }
 
 describe('temporal-bun-sdk packaging manifest', () => {
@@ -41,5 +90,109 @@ describe('temporal-bun-sdk packaging manifest', () => {
     expect(bins['temporal-bun']).toBe('./dist/src/bin/temporal-bun.js')
     expect(bins['temporal-bun-skill']).toBe('./dist/src/bin/temporal-bun-skill.js')
     expect(bins['temporal-bun-worker']).toBe('./dist/src/bin/start-worker.js')
+  })
+
+  test('publishes only Bun TypeScript runtime assets', async () => {
+    const packageJson = await loadPackageJson()
+
+    expect(packageJson.files).toEqual(['dist', 'docs', 'skills', 'README.md'])
+    expect(packageJson.files ?? []).not.toContain('dist/native')
+  })
+
+  test('does not depend on Temporal Node worker or native build tooling', async () => {
+    const packageJson = await loadPackageJson()
+    const dependencies = Object.assign({}, packageJson.dependencies, packageJson.devDependencies)
+    const forbiddenDependencies = [
+      '@temporalio/worker',
+      '@temporalio/core-bridge',
+      '@temporalio/client',
+      'node-gyp',
+      'node-addon-api',
+      'node-gyp-build',
+    ]
+
+    for (const dependencyName of forbiddenDependencies) {
+      expect(dependencies[dependencyName]).toBeUndefined()
+    }
+  })
+
+  test('keeps native bridge artifacts out of the production package tree', async () => {
+    expect(existsSync(join(packageRoot, 'bruke'))).toBeFalse()
+    expect(existsSync(join(packageRoot, 'native'))).toBeFalse()
+
+    const packageFiles = await listPackageFiles()
+    const nativeArtifacts = packageFiles.filter((filePath) => nativeArtifactPattern.test(filePath))
+
+    expect(nativeArtifacts).toEqual([])
+  })
+
+  test('keeps the package Dockerfile aligned with the Bun TypeScript runtime', async () => {
+    const dockerfile = await readFile(join(packageRoot, 'Dockerfile'), 'utf8')
+    const forbiddenDockerfileFragments = [
+      'zig',
+      'node-gyp',
+      'dist/native',
+      'libs:download',
+      'build:native',
+      'temporalio-sdk-core',
+    ]
+
+    for (const fragment of forbiddenDockerfileFragments) {
+      expect(dockerfile.toLowerCase()).not.toContain(fragment.toLowerCase())
+    }
+    expect(dockerfile).toContain('oven/bun:1.3.13')
+    expect(dockerfile).toContain('bun run build')
+  })
+
+  test('exposes a production verification command for agents and CI', async () => {
+    const packageJson = await loadPackageJson()
+
+    expect(packageJson.scripts?.['evidence:production']).toBe('bun scripts/collect-production-evidence.ts')
+    expect(packageJson.scripts?.['verify:production']).toBe(
+      'bun run evidence:production && bun test tests/packaging/manifest-packaging.test.ts',
+    )
+    expect(packageJson.scripts?.prepack).toBe('bun run build && bun run evidence:production')
+  })
+
+  test('generates production and agent readiness evidence for published artifacts', async () => {
+    const productionEvidence = JSON.parse(
+      await readFile(join(packageRoot, 'dist', 'production-readiness.json'), 'utf8'),
+    ) as {
+      schemaVersion?: number
+      package?: { name?: string; version?: string }
+      packageBoundary?: {
+        forbiddenDependencyHits?: string[]
+        nativeArtifactHits?: string[]
+        forbiddenPathHits?: string[]
+      }
+      gates?: Record<string, { passed?: boolean }>
+      defaultChoice?: { recommended?: boolean; blockers?: string[] }
+    }
+    const agentReadiness = JSON.parse(await readFile(join(packageRoot, 'dist', 'agent-readiness.json'), 'utf8')) as {
+      schemaVersion?: number
+      package?: { name?: string }
+      recommended?: boolean
+      status?: string
+      blockers?: string[]
+      evidenceFile?: string
+    }
+
+    expect(productionEvidence.schemaVersion).toBe(1)
+    expect(productionEvidence.package?.name).toBe('@proompteng/temporal-bun-sdk')
+    expect(productionEvidence.packageBoundary?.forbiddenDependencyHits).toEqual([])
+    expect(productionEvidence.packageBoundary?.nativeArtifactHits).toEqual([])
+    expect(productionEvidence.packageBoundary?.forbiddenPathHits).toEqual([])
+    expect(productionEvidence.gates?.noForbiddenDependencies?.passed).toBeTrue()
+    expect(productionEvidence.gates?.noNativeArtifacts?.passed).toBeTrue()
+    expect(productionEvidence.gates?.asyncFuzzEvidence).toBeDefined()
+    expect(productionEvidence.gates?.soakEvidence).toBeDefined()
+    expect(Array.isArray(productionEvidence.defaultChoice?.blockers)).toBeTrue()
+
+    expect(agentReadiness.schemaVersion).toBe(1)
+    expect(agentReadiness.package?.name).toBe('@proompteng/temporal-bun-sdk')
+    expect(agentReadiness.recommended).toBe(productionEvidence.defaultChoice?.recommended)
+    expect(agentReadiness.status).toBe(agentReadiness.recommended ? 'recommended' : 'evidence-required')
+    expect(agentReadiness.evidenceFile).toBe('production-readiness.json')
+    expect(agentReadiness.blockers).toEqual(productionEvidence.defaultChoice?.blockers)
   })
 })

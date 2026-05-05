@@ -12,6 +12,12 @@ import {
 import { readWorkerLoadConfig } from '../tests/integration/load/config'
 import { runWorkerLoad } from '../tests/integration/load/runner'
 
+const truthy = new Set(['1', 'true', 't', 'yes', 'y', 'on'])
+const releaseGate = (): boolean => {
+  const raw = process.env.TEMPORAL_BUN_RELEASE_GATE
+  return Boolean(raw && truthy.has(raw.trim().toLowerCase()))
+}
+
 const main = async () => {
   const argv = parseArgs({
     options: {
@@ -43,6 +49,9 @@ const main = async () => {
   if (Exit.isFailure(harnessExit)) {
     const unavailable = findTemporalCliUnavailableError(harnessExit.cause)
     if (unavailable) {
+      if (releaseGate()) {
+        throw unavailable
+      }
       console.warn(`[worker-load] skipped: ${unavailable.message}`)
       return
     }
@@ -54,20 +63,26 @@ const main = async () => {
   if (Exit.isFailure(setupExit)) {
     const unavailable = findTemporalCliUnavailableError(setupExit.cause)
     if (unavailable) {
+      if (releaseGate()) {
+        throw unavailable
+      }
       console.warn(`[worker-load] skipped during setup: ${unavailable.message}`)
       return
     }
     throw setupExit.cause
   }
 
-  try {
-    const envOverrides = {
-      ...loadConfig.metricEnv,
-      TEMPORAL_WORKFLOW_CONCURRENCY: String(loadConfig.workflowConcurrencyTarget),
-      TEMPORAL_ACTIVITY_CONCURRENCY: String(loadConfig.activityConcurrencyTarget),
-      TEMPORAL_STICKY_SCHEDULING_ENABLED: '1',
-    }
+  const envOverrides = {
+    ...loadConfig.metricEnv,
+    TEMPORAL_WORKFLOW_CONCURRENCY: String(loadConfig.workflowConcurrencyTarget),
+    TEMPORAL_ACTIVITY_CONCURRENCY: String(loadConfig.activityConcurrencyTarget),
+    TEMPORAL_STICKY_SCHEDULING_ENABLED: '1',
+  }
 
+  let result: Awaited<ReturnType<typeof runWorkerLoad>> | null = null
+  let scenarioSkip: string | null = null
+  let scenarioFailure: unknown
+  try {
     const scenarioExit = await Effect.runPromiseExit(
       harness.runScenario(
         'worker-load-cli',
@@ -85,28 +100,49 @@ const main = async () => {
     )
     if (Exit.isFailure(scenarioExit)) {
       const unavailable = findTemporalCliUnavailableError(scenarioExit.cause)
-      if (unavailable) {
-        console.warn(`[worker-load] skipped during scenario: ${unavailable.message}`)
-        return
+      if (unavailable && !releaseGate()) {
+        scenarioSkip = `[worker-load] skipped during scenario: ${unavailable.message}`
+      } else {
+        throw unavailable ?? scenarioExit.cause
       }
-      throw scenarioExit.cause
+    } else {
+      result = scenarioExit.value
     }
-    const result = scenarioExit.value
+  } catch (error) {
+    scenarioFailure = error
+  }
 
-    renderSummary(result)
-    console.info(`[worker-load] metrics written to ${loadConfig.metricsStreamPath}`)
-    console.info(`[worker-load] summary written to ${loadConfig.metricsReportPath}`)
-    console.info(`[worker-load] CLI log at ${harness.temporalCliLogPath}`)
-  } finally {
-    const teardownExit = await Effect.runPromiseExit(harness.teardown)
-    if (Exit.isFailure(teardownExit)) {
-      const unavailable = findTemporalCliUnavailableError(teardownExit.cause)
-      if (unavailable) {
-        console.warn(`[worker-load] teardown warning: ${unavailable.message}`)
-        return
-      }
-      throw teardownExit.cause
+  let teardownWarning: string | null = null
+  const teardownExit = await Effect.runPromiseExit(harness.teardown)
+  if (Exit.isFailure(teardownExit)) {
+    const unavailable = findTemporalCliUnavailableError(teardownExit.cause)
+    if (unavailable && !releaseGate()) {
+      teardownWarning = `[worker-load] teardown warning: ${unavailable.message}`
+    } else if (!scenarioFailure) {
+      throw unavailable ?? teardownExit.cause
     }
+  }
+
+  if (scenarioFailure) {
+    throw scenarioFailure
+  }
+  if (scenarioSkip) {
+    console.warn(scenarioSkip)
+    if (teardownWarning) {
+      console.warn(teardownWarning)
+    }
+    return
+  }
+  if (!result) {
+    throw new Error('worker load scenario did not produce a result')
+  }
+
+  renderSummary(result)
+  console.info(`[worker-load] metrics written to ${loadConfig.metricsStreamPath}`)
+  console.info(`[worker-load] summary written to ${loadConfig.metricsReportPath}`)
+  console.info(`[worker-load] CLI log at ${harness.temporalCliLogPath}`)
+  if (teardownWarning) {
+    console.warn(teardownWarning)
   }
 }
 
