@@ -16,6 +16,10 @@ on:
       - 'scripts/karapace/**'
       - '.github/workflows/karapace-schema-sync.yaml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   sync:
     runs-on: arc-arm64
@@ -40,7 +44,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y make g++
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source
 
       - name: Validate protos compile
         run: buf build proto

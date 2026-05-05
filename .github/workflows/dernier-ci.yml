@@ -9,6 +9,10 @@ on:
       - 'skaffold.yaml'
       - '.github/workflows/dernier-ci.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest

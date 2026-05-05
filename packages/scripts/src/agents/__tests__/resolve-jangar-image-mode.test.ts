@@ -71,4 +71,10 @@ describe('agents-ci workflow local Jangar image build', () => {
     expect(workflow).toContain('--build-arg "BUN_BASE_IMAGE=mirror.gcr.io/oven/bun" \\')
     expect(workflow).not.toContain('BUN_BASE_IMAGE=docker.io/oven/bun')
   })
+
+  it('classifies pull request changes from the merge base', () => {
+    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+
+    expect(workflow).toContain('git diff --name-only "${BASE_SHA}...${HEAD_SHA}"')
+  })
 })
