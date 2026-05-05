@@ -5,7 +5,7 @@ This guide covers the contributor tooling that should match the current repo sta
 ## Node.js and Bun
 
 - Node.js: `24.11.1`
-- Bun: `1.3.10`
+- Bun: `1.3.13`
 
 Examples with `nvm`:
 
@@ -17,7 +17,7 @@ nvm alias default 24.11.1
 Install Bun from the official installer:
 
 ```bash
-curl -fsSL https://bun.sh/install | bash
+curl -fsSL https://bun.sh/install | bash -s -- bun-v1.3.13
 ```
 
 ## OpenTofu and Terraform
