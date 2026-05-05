@@ -26,6 +26,8 @@ from app.models import (
     WhitepaperDocumentVersion,
 )
 
+_CHIP_UNIVERSE = ["AMAT", "AMD", "AVGO", "INTC", "MU", "NVDA"]
+
 
 def _source_jsonl_payload() -> dict[str, object]:
     return {
@@ -101,7 +103,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             clickhouse_password="secret",
             start_equity="31590.02",
             chunk_minutes=10,
-            symbols="AAPL,NVDA,MSFT,AMAT",
+            symbols=",".join(_CHIP_UNIVERSE),
             progress_log_seconds=30,
             train_days=6,
             holdout_days=3,
@@ -259,7 +261,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertTrue(candidate_specs)
             self.assertTrue(
                 all(
-                    spec["strategy_overrides"]["universe_symbols"] == ["NVDA", "AMAT"]
+                    spec["strategy_overrides"]["universe_symbols"] == _CHIP_UNIVERSE
                     for spec in candidate_specs
                 )
             )
@@ -292,6 +294,22 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     for row in selection["rows"]
                 )
             )
+
+    def test_candidate_universe_symbols_filter_to_live_chip_coverage(self) -> None:
+        symbols = runner._candidate_universe_symbols_from_args(
+            Namespace(symbols="NVDA,AAPL,MSFT,AMAT,TSM,nvda")
+        )
+
+        self.assertEqual(symbols, ("NVDA", "AMAT"))
+
+    def test_candidate_universe_symbols_default_to_chip_coverage_when_empty(
+        self,
+    ) -> None:
+        symbols = runner._candidate_universe_symbols_from_args(
+            Namespace(symbols="AAPL,MSFT,SHOP")
+        )
+
+        self.assertEqual(symbols, tuple(_CHIP_UNIVERSE))
 
     def test_rejects_candidate_universe_larger_than_twelve_symbols(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -961,6 +979,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(parsed.replay_mode, "synthetic")
         self.assertEqual(parsed.source_jsonl, [source_path])
         self.assertEqual(parsed.clickhouse_password_env, "TORGHUT_CLICKHOUSE_PASSWORD")
+        self.assertEqual(parsed.symbols, ",".join(_CHIP_UNIVERSE))
         self.assertFalse(parsed.persist_results)
 
     def test_clickhouse_password_env_resolution_keeps_secret_out_of_argv(

@@ -47,6 +47,12 @@ def _load_torghut_knative_manifest() -> dict[str, object]:
     return _load_yaml_mapping("argocd/applications/torghut/knative-service.yaml")
 
 
+def _load_torghut_clickhouse_manifest() -> dict[str, object]:
+    return _load_yaml_mapping(
+        "argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml"
+    )
+
+
 def _load_knative_env(relative_path: str) -> dict[str, object]:
     manifest = _load_yaml_mapping(relative_path)
     containers = (
@@ -282,6 +288,23 @@ class TestLiveConfigManifestContract(TestCase):
             _csv_symbols(cast(Mapping[str, object], ws_data).get("SYMBOLS")),
             context="torghut-ws subscription symbols",
         )
+
+    def test_clickhouse_replicas_are_not_pinned_to_single_architecture(self) -> None:
+        manifest = _load_torghut_clickhouse_manifest()
+        pod_templates = (
+            manifest.get("spec", {}).get("templates", {}).get("podTemplates", [])
+        )
+        self.assertTrue(pod_templates)
+        for template in pod_templates:
+            self.assertIsInstance(template, Mapping)
+            spec = cast(Mapping[str, object], template).get("spec")
+            self.assertIsInstance(spec, Mapping)
+            node_selector = cast(Mapping[str, object], spec).get("nodeSelector")
+            self.assertNotEqual(
+                node_selector,
+                {"kubernetes.io/arch": "arm64"},
+                f"{template.get('name')} pins ClickHouse to one architecture",
+            )
 
     def test_migration_job_prepares_sim_database_before_sim_upgrade(self) -> None:
         manifest = _load_yaml_mapping(

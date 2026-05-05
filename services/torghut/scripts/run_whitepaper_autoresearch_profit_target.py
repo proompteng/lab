@@ -30,7 +30,10 @@ from app.trading.discovery.autoresearch import (
     load_strategy_autoresearch_program,
     run_id,
 )
-from app.trading.discovery.candidate_specs import CandidateSpec
+from app.trading.discovery.candidate_specs import (
+    LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE,
+    CandidateSpec,
+)
 from app.trading.discovery.candidate_specs import candidate_spec_id_for_payload
 from app.trading.discovery.evidence_bundles import (
     CandidateEvidenceBundle,
@@ -70,6 +73,9 @@ from app.whitepapers.claim_compiler import (
 )
 
 import scripts.run_strategy_factory_v2 as strategy_factory_runner
+
+
+_DEFAULT_CHIP_UNIVERSE_CSV = ",".join(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -128,7 +134,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--start-equity", default="31590.02")
     parser.add_argument("--chunk-minutes", type=int, default=10)
-    parser.add_argument("--symbols", default="AAPL,NVDA,MSFT,AMAT")
+    parser.add_argument("--symbols", default=_DEFAULT_CHIP_UNIVERSE_CSV)
     parser.add_argument("--progress-log-seconds", type=int, default=30)
     parser.add_argument("--max-frontier-candidates-per-spec", type=int, default=64)
     parser.add_argument("--real-replay-timeout-seconds", type=int, default=0)
@@ -249,17 +255,22 @@ def _resolved_clickhouse_password(args: argparse.Namespace) -> str:
 
 def _candidate_universe_symbols_from_args(args: argparse.Namespace) -> tuple[str, ...]:
     symbols_raw = str(getattr(args, "symbols", "") or "")
-    symbols: list[str] = []
-    seen: set[str] = set()
+    raw_symbols: list[str] = []
+    raw_seen: set[str] = set()
     for item in symbols_raw.split(","):
         symbol = item.strip().upper()
-        if not symbol or symbol in seen:
+        if not symbol or symbol in raw_seen:
             continue
-        symbols.append(symbol)
-        seen.add(symbol)
-    if len(symbols) > 12:
-        raise ValueError(f"candidate_universe_too_large:{len(symbols)}")
-    return tuple(symbols)
+        raw_symbols.append(symbol)
+        raw_seen.add(symbol)
+    if len(raw_symbols) > 12:
+        raise ValueError(f"candidate_universe_too_large:{len(raw_symbols)}")
+
+    allowed = set(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
+    filtered_symbols = [symbol for symbol in raw_symbols if symbol in allowed]
+    if not filtered_symbols:
+        return LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE
+    return tuple(filtered_symbols)
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -306,9 +317,7 @@ def _oracle_policy_from_args(args: argparse.Namespace) -> ProfitTargetOraclePoli
     min_positive_day_ratio = _decimal(
         getattr(args, "min_positive_day_ratio", "0.60"), default="0.60"
     )
-    min_daily_net_pnl = _decimal(
-        getattr(args, "min_daily_net_pnl", "0"), default="0"
-    )
+    min_daily_net_pnl = _decimal(getattr(args, "min_daily_net_pnl", "0"), default="0")
     max_worst_day_loss = _decimal(
         getattr(args, "max_worst_day_loss", "350"), default="350"
     )
@@ -1345,7 +1354,7 @@ def _synthetic_symbol_contribution_shares(spec: CandidateSpec) -> dict[str, str]
         if str(symbol).strip()
     ][:4]
     if not symbols:
-        symbols = ["AAPL", "NVDA", "MSFT", "AMAT"]
+        symbols = list(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE[:4])
     share = Decimal("1") / Decimal(len(symbols))
     return {symbol: str(share) for symbol in symbols}
 
@@ -1801,20 +1810,34 @@ def run_whitepaper_autoresearch_profit_target(
                 )
             ),
             "min_daily_net_pnl": str(
-                max(_decimal(getattr(args, "min_daily_net_pnl", "0")), objective.min_daily_net_pnl)
+                max(
+                    _decimal(getattr(args, "min_daily_net_pnl", "0")),
+                    objective.min_daily_net_pnl,
+                )
             ),
             "max_worst_day_loss": str(
-                min(_decimal(getattr(args, "max_worst_day_loss", "350")), objective.max_worst_day_loss)
+                min(
+                    _decimal(getattr(args, "max_worst_day_loss", "350")),
+                    objective.max_worst_day_loss,
+                )
             ),
             "max_drawdown": str(
-                min(_decimal(getattr(args, "max_drawdown", "900")), objective.max_drawdown)
+                min(
+                    _decimal(getattr(args, "max_drawdown", "900")),
+                    objective.max_drawdown,
+                )
             ),
             "max_best_day_share": str(
-                min(_decimal(getattr(args, "max_best_day_share", "0.25")), objective.max_best_day_share)
+                min(
+                    _decimal(getattr(args, "max_best_day_share", "0.25")),
+                    objective.max_best_day_share,
+                )
             ),
             "min_avg_filled_notional_per_day": str(
                 max(
-                    _decimal(getattr(args, "min_avg_filled_notional_per_day", "300000")),
+                    _decimal(
+                        getattr(args, "min_avg_filled_notional_per_day", "300000")
+                    ),
                     objective.min_daily_notional,
                 )
             ),

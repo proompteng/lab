@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from unittest import TestCase
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -42,3 +43,9 @@ class TestStrategySeed(TestCase):
             )
             self.assertEqual(updated.description, "updated")
             self.assertFalse(updated.enabled)
+
+    def test_parse_args_defaults_to_chip_universe(self) -> None:
+        with patch("sys.argv", ["seed_strategy.py", "--name", "demo"]):
+            args = seed_strategy.parse_args()
+
+        self.assertEqual(args.symbols, seed_strategy.DEFAULT_CHIP_UNIVERSE)

@@ -42,18 +42,12 @@ from app.trading.scheduler.state import TradingState
 from app.trading.universe import UniverseResolver
 
 DEFAULT_SYMBOLS = [
-    'AAPL',
     'AMAT',
     'AMD',
     'AVGO',
-    'GOOG',
     'INTC',
-    'META',
-    'MSFT',
+    'MU',
     'NVDA',
-    'QQQ',
-    'SPY',
-    'TSLA',
 ]
 ALLOWED_REJECT_REASONS = {
     'kill_switch_enabled',
