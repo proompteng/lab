@@ -59,7 +59,7 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
       context = resolve(repoRoot, options.context ?? process.env.KHOSHUT_BUILD_CONTEXT ?? '.')
     }
 
-    return buildAndPushDockerImage({
+    return await buildAndPushDockerImage({
       registry,
       repository,
       tag,
