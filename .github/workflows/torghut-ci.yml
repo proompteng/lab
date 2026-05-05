@@ -14,6 +14,10 @@ on:
       - 'argocd/applications/torghut/**'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   pyright:
     name: Pyright
@@ -54,7 +58,6 @@ jobs:
 
   lint-and-tests:
     name: Bytecode + pytest + coverage
-    needs: pyright
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -107,7 +110,6 @@ jobs:
 
   quality-signals:
     name: Quality signals (complexity + security)
-    needs: pyright
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

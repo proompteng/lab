@@ -12,11 +12,15 @@ on:
       - 'packages/otel/**'
       - '.github/workflows/otel-ci.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint-test-build:
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      install-command: bun install --frozen-lockfile --ignore-scripts
+      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/otel
       lint-command: bunx oxfmt --check packages/otel/src packages/otel/tests
       oxlint-command: bunx oxlint --config .oxlintrc.json packages/otel/src packages/otel/tests
       test-command: bun run --filter @proompteng/otel test
