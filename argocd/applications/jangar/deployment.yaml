@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: 2026-05-05T16:22:25Z
+    deploy.knative.dev/rollout: 2026-05-05T17:13:49Z
 spec:
   replicas: 1
   strategy:
@@ -56,6 +56,8 @@ spec:
               value: production
             - name: UI_PORT
               value: "8080"
+            - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
+              value: "120"
             - name: JANGAR_BUMBA_TASK_QUEUE
               value: jangar
             - name: TEMPORAL_OTEL_ENABLED
@@ -205,7 +207,7 @@ spec:
             - name: JANGAR_REDIS_URL
               value: redis://jangar-openwebui-redis:6379/1
             - name: JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED
-              value: "true"
+              value: "false"
             - name: NATS_URL
               value: nats://nats.nats.svc.cluster.local:4222
             - name: NATS_USER

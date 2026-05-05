@@ -1,138 +1,150 @@
 # Torghut Quant Release Verification
 
-Timestamp: 2026-05-05T16:55:13Z
+Timestamp: 2026-05-05T17:52:00Z
 Repository: `proompteng/lab`
 Base: `main`
 Release branch: `codex/swarm-torghut-quant-verify`
-Audit PR: #5496
+Audit PR: #5496 plus follow-up verification on the same release branch
 
 ## Gate Decision
 
-Go for the selected small Torghut release and safety PRs. No-go remains in place for the large implementation PR and
-for live order submission.
+Go for the selected small Torghut image promotion #5514 after all required checks passed. No-go remains in place for
+declaring the post-merge application rollout fully healthy, for live order submission, and for the large implementation
+PR #5412.
 
-PR outcomes:
+#5514, `chore(torghut): promote image 59511b6b`, was clean, comment-clean, and green before merge. I squash-merged it at
+2026-05-05T17:31:56Z with merge commit `76709ed093bcff552d3a73c14d3563883ad5e81c`. Argo CD reconciled the Torghut and
+Torghut options applications to main revision `be72b6213be7cb00d92b76364147519a1cbaf3eb`, which includes #5514 and the
+promoted Torghut image digest `sha256:f183391e56cf5b52ee1d1cf73fbade982d46f357633b7942ebf674e6e8ef4f0a`.
 
-- #5494, `chore(torghut): promote image 2ea968af`, was clean, comment-clean, and green across Torghut CI, Argo lint,
-  kubeconform, semantic title, and semantic commit checks. It was squash-merged at 2026-05-05T16:12:33Z with merge
-  commit `2dbe57a9872dac681d6f8cdce021996243f70197`.
-- #5503, `fix(torghut): clean argo rollout drift`, was a small follow-up cleanup for drift after #5494. It updated the
-  options TA restart nonce, removed a blank DSPy artifact hash from the sim Knative service, and moved the whitepapers
-  bootstrap job from `Skip` to `PostSync` hook semantics. It was merged at 2026-05-05T16:36:29Z with merge commit
+The rollout is not a production-health go. GitOps sync completed and Kubernetes workload readiness is green for the
+new live, sim, options catalog, and options enricher pods, but application readiness remains blocked: live Torghut
+reports 503 because live submission is intentionally disabled, and the options catalog `/readyz` endpoint still reports
+503 with `ready=false` and `last_success_ts=null`.
+
+## PR Outcomes
+
+- #5494, `chore(torghut): promote image 2ea968af`, was squash-merged at 2026-05-05T16:12:33Z with merge commit
+  `2dbe57a9872dac681d6f8cdce021996243f70197`.
+- #5503, `fix(torghut): clean argo rollout drift`, was squash-merged at 2026-05-05T16:36:29Z with merge commit
   `b653bd4fd6faeb39ab78a1eea4d2b6f2ed299f4a`.
-- #5507, `fix(torghut): narrow paper lane to executable chip core`, passed every visible required check and had no
-  comments or review threads. It was merged at 2026-05-05T16:48:21Z with merge commit
-  `d73020e67ff5409786f2c1c9984d03575c648088`.
-- #5412, `feat(torghut): add evidence epochs and shared live gate`, remains open and no-go. It is clean and green, but
-  changes 3,165 total lines, so the large-diff Codex review gate applies. The Codex review request returned a
+- #5507, `fix(torghut): narrow paper lane to executable chip core`, was squash-merged at 2026-05-05T16:48:21Z with
+  merge commit `d73020e67ff5409786f2c1c9984d03575c648088`.
+- #5510, `chore(torghut): promote image d73020e6`, was squash-merged at 2026-05-05T16:59:52Z with merge commit
+  `de82183cbb55a576e8750f31a327cffb45db0004`.
+- #5514, `chore(torghut): promote image 59511b6b`, was squash-merged at 2026-05-05T17:31:56Z with merge commit
+  `76709ed093bcff552d3a73c14d3563883ad5e81c`.
+- #5412, `feat(torghut): add evidence epochs and shared live gate`, remains open and no-go. It is CI-green but changes
+  3,165 total lines, so the large-diff Codex review gate applies. The requested Codex review returned a
   `chatgpt-codex-connector` usage-limit response instead of a posted review. I did not merge it without a posted Codex
   review and resolved threads, or an explicit maintainer waiver.
-- #5458, `chore(torghut): promote image 02ffd49f`, was conflict-blocked and superseded by newer Torghut images. I closed
-  it as unsafe to repair because merging it would roll production backward.
-- #5467, `chore(torghut): promote image 0c28a908`, was conflict-blocked and superseded by newer Torghut images. I closed
-  it as unsafe to repair because merging it would roll production backward.
+- #5458 and #5467 were previously closed as superseded image promotions because repairing either PR would have rolled
+  production backward.
 
-## PR Comment Updates
+## Comments And Conflicts
 
-- #5412 progress comment updated through `services/jangar/scripts/codex/codex-progress-comment.ts`:
+- #5514 had no blocking comments, no review threads, and required checks were green before merge.
+- #5412 progress stayed anchored with the `<!-- codex:progress -->` marker:
   https://github.com/proompteng/lab/pull/5412#issuecomment-4378206627.
-- #5458 closed with a superseded-release comment:
-  https://github.com/proompteng/lab/pull/5458.
-- #5467 closed with a superseded-release comment:
-  https://github.com/proompteng/lab/pull/5467.
-- #5496 progress comment updated through `services/jangar/scripts/codex/codex-progress-comment.ts`:
-  https://github.com/proompteng/lab/pull/5496#issuecomment-4380989574.
+- #5412 has no posted Codex review and no review threads to resolve; the blocker is the missing large-diff review, not a
+  failing check.
+- This follow-up audit branch was merged with current `origin/main` before updating the handoff, resolving the prior
+  add/add conflict in this document by preserving current main evidence and appending #5514 rollout evidence.
 
 ## Rollout Evidence
 
-Direct Argo CD Application, Knative Service, Knative Revision, and FlinkDeployment reads were blocked by Kubernetes RBAC
-for `system:serviceaccount:agents:agents-sa`. The smallest unblocker is read-only `get`/`list` access to those resources,
-or an Argo CD credential with equivalent read access.
+Direct Argo CD Application CR reads are blocked by Kubernetes RBAC for `system:serviceaccount:agents:agents-sa`, but
+Argo application-controller logs are readable and provided sync evidence. The smallest unblocker for direct Application
+inspection remains read-only `get`/`list` access to `applications.argoproj.io` in namespace `argocd`, or an Argo CD
+credential with equivalent read access.
 
-GitOps/source parity:
+GitOps and sync evidence:
 
-- `origin/main` contains the selected merges through #5507 at `d73020e67ff5409786f2c1c9984d03575c648088`.
-- `origin/main` keeps the Torghut runtime image at
-  `registry.ide-newton.ts.net/lab/torghut@sha256:6ee3ec45802d336b0e6626e942d380a9bb47bb375f0901012d80e653f76c127b`.
-- The cluster `torghut-ws-config` ConfigMap now has `SYMBOLS=NVDA,AMD,INTC`.
-- The cluster `torghut-strategy-config` ConfigMap now marks the first strategy as `intraday_tsmom_v1@paper` with
-  `universe_symbols: ["NVDA", "AMD", "INTC"]`.
-- The active live pod `torghut-00215-deployment-554dc64c86-8wmgt` has
-  `TRADING_SIMPLE_SUBMIT_ENABLED=false` and `TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS=NVDA,AMD,INTC`.
+- Argo logs showed `torghut` initiated automated sync to `be72b6213be7cb00d92b76364147519a1cbaf3eb` at
+  2026-05-05T17:35:04Z and completed successfully at 2026-05-05T17:38:43Z.
+- Argo logs showed `torghut-options` initiated automated sync to the same revision at 2026-05-05T17:35:14Z and
+  completed successfully at 2026-05-05T17:35:15Z.
+- Follow-up Argo reconciliations logged `Skipping auto-sync: application status is Synced` for both applications.
+- `origin/main` contains #5514 at merge commit `76709ed093bcff552d3a73c14d3563883ad5e81c`; later main revisions were
+  docs/Jangar changes and did not change the promoted Torghut digest.
 
-Workload readiness after #5507:
+Workload readiness after #5514:
 
-- Live pod `torghut-00215-deployment-554dc64c86-8wmgt` is `2/2 Running` with zero restarts.
-- Sim pod `torghut-sim-00295-deployment-67b7d6cfc9-xct8n` is `2/2 Running` with zero restarts.
-- `torghut-ta`, `torghut-ta-sim`, `torghut-options-ta`, and their taskmanager pods are Running and ready.
-- Options catalog and options enricher are Running and ready.
-- `kubectl -n torghut get pods --field-selector=status.phase!=Running` returned no resources after hook cleanup.
+- Live pod `torghut-00217-deployment-cfd7f798-kqs5h` is `2/2 Running` on digest
+  `sha256:f183391e56cf5b52ee1d1cf73fbade982d46f357633b7942ebf674e6e8ef4f0a` with zero restarts.
+- Sim pod `torghut-sim-00297-deployment-6bcf98d4bc-pcc4f` is `2/2 Running` on the same digest with zero restarts.
+- Options catalog pod `torghut-options-catalog-6cbf647d57-vvlsz` is `1/1 Running` on the same digest with zero restarts.
+- Options enricher pod `torghut-options-enricher-75b888bd98-5r2vs` is `1/1 Running` on the same digest with zero
+  restarts.
+- `kubectl get pods -n torghut --field-selector=status.phase!=Running` returned no resources.
+- Recent rollout events show expected startup/readiness probe failures while new pods started, followed by Knative
+  `RevisionReady` and `LatestReadyUpdate` events for `torghut-00217` and `torghut-sim-00297`.
 
-Endpoint checks after #5507:
+Endpoint evidence:
 
 - Live `/healthz`: HTTP 200.
-- Live `/trading/status`: HTTP 200 and active revision `torghut-00215`.
-- Live `/readyz` and `/trading/health`: HTTP 503 because `live_submission_gate.allowed=false` with reason
-  `simple_submit_disabled`. This is the safety state introduced by #5507; live order submission is intentionally no-go.
-- Sim `/readyz`: HTTP 200 on active revision `torghut-sim-00295`.
-- Options catalog `/readyz`: HTTP 200.
-- Options enricher `/readyz`: HTTP 200 with a fresh success timestamp.
-- Options TA REST `/config`: HTTP 200.
+- Live `/trading/status`: HTTP 200, reporting version `v0.568.5-16-g59511b6b6`, commit
+  `59511b6b6af8b160aaf00b9fb5f44b7a62c61c5c`, and active revision `torghut-00217`.
+- Live `/readyz`: HTTP 503 with scheduler, Postgres, ClickHouse, Alpaca, database, and universe checks OK, but overall
+  readiness degraded.
+- Live `/trading/health`: HTTP 503. Live order submission remains blocked by the intended no-live-submit posture.
+- Sim `/healthz`, `/readyz`, `/trading/status`, and `/trading/health`: HTTP 200 on active revision
+  `torghut-sim-00297`.
+- Options enricher `/healthz` and `/readyz`: HTTP 200 with a fresh success timestamp.
+- Options catalog `/healthz`: HTTP 200 and `/v1/options/hot-set`: HTTP 200 with 160 symbols.
+- Options catalog `/readyz`: HTTP 503 with `ready=false`, `last_success_ts=null`, and no error code or detail.
+- Live TA REST, sim TA REST, and options TA REST `/overview`: HTTP 200 with one running Flink job on each service.
 
 Event notes:
 
-- Expected transient rollout warnings appeared while Knative replaced old live/sim revisions and Flink reconciled:
-  startup/readiness probe failures, old-revision readiness failures during termination, temporary Flink `Job Not Found`,
-  and PDB selection warnings.
-- Follow-up evidence showed new live/sim revisions ready, old revisions drained, hooks completed, and no stuck or pending
-  pods.
+- Expected transient rollout warnings appeared while new revisions and hooks scheduled: startup/readiness probe failures,
+  old-revision shutdown readiness failures, and hook startup events.
+- Persistent residual warnings observed during inspection were pre-existing `MultiplePodDisruptionBudgets` for
+  ClickHouse pods and older websocket liveness restarts before this rollout.
+- No non-running Torghut pods remained after hook cleanup.
 
 ## Risk And Rollback
 
 Residual risks:
 
-- Live order submission is intentionally blocked after #5507. Treat `simple_submit_disabled` as the current trading gate:
+- Live order submission is intentionally blocked. Treat `simple_submit_disabled` as the current trading gate: the
   cluster rollout is applied, but live trading remains no-go until executable proof exists and a follow-up PR re-enables
   submit.
-- Live `/readyz` and `/trading/health` return 503 because the app currently includes the disabled live submission gate in
-  its health dependencies. If operators require HTTP 200 readiness while submit is intentionally disabled, the next PR
-  should change the health semantics rather than re-enable live submit without proof.
-- Jangar's dynamic equity universe endpoint still returns 12 symbols even though the deployed static fallback, strategy
-  catalog, and websocket fallback are narrowed to `NVDA,AMD,INTC`. Strategy runtime filters by strategy symbols, but the
-  dynamic Jangar source should be narrowed or made auditable before claiming full runtime universe closure.
+- The #5514 image is reconciled and pod-ready, but production application health is not fully green because live Torghut
+  readiness and trading health are 503 under the no-live-submit posture.
+- Options catalog readiness is the active post-merge blocker: pod readiness and `/healthz` are green, and persisted
+  hot-set reads work, but service `/readyz` is 503 with no successful catalog cycle timestamp.
 - #5412 remains unmerged because Codex review capacity is exhausted. It should stay blocked until a Codex review posts
   and all resulting threads resolve, or until a maintainer explicitly waives the gate.
-- Direct Argo, Knative, and Flink custom-resource reads are blocked for `system:serviceaccount:agents:agents-sa`; use a
-  credential with the missing read access for direct sync inspection.
-- Streaming sidecars `torghut-ws` and `torghut-ws-options` were Ready during final inspection but had recent liveness
-  restarts before the selected merges. Treat another liveness loop or sustained readiness 503 as a rollout-health
-  blocker.
+- Direct Argo Application CR reads are blocked for `system:serviceaccount:agents:agents-sa`; use a credential with
+  Application read access for direct sync inspection.
 
 Rollback path:
 
-- For #5507, revert merge commit `d73020e67ff5409786f2c1c9984d03575c648088` if the submit-disable health behavior or
-  chip-core narrowing causes unacceptable production impact. Reverting will re-enable the prior live submit posture, so
-  require explicit maintainer approval before using that rollback.
-- For #5503, revert merge commit `b653bd4fd6faeb39ab78a1eea4d2b6f2ed299f4a` if the hook or options TA drift cleanup
-  regresses reconciliation.
-- For #5494, revert merge commit `2dbe57a9872dac681d6f8cdce021996243f70197` or open a new GitOps promotion PR to the
-  previous known-good Torghut image, then let Argo CD reconcile.
-- If #5412 later merges and live submission health regresses, revert the shared live-gate code/config change or promote a
-  prior image through the normal release PR flow. Preserve append-only evidence epoch, receipt, and profit-window records
-  for audit continuity.
+- For #5514, revert merge commit `76709ed093bcff552d3a73c14d3563883ad5e81c` or open a new GitOps promotion PR back to
+  the previous known-good Torghut image digest
+  `sha256:5b1685a25cd2d708373d928b095a641b0fe65d0887820f70f32f4e6147bd9bb0`, then let Argo CD reconcile.
+- Because the current blockers are application-readiness semantics and the options catalog worker readiness state, not
+  pod crashes or schema failures, rollback should be reserved for image-specific regression evidence such as new crashes,
+  missing hot-set data, endpoint regressions beyond the known 503s, or sustained options catalog failure past the
+  operator tolerance window.
+- For #5412, do not merge until the Codex review gate clears or a maintainer waives it. If #5412 later merges and live
+  submission health regresses, revert the shared live-gate change or promote a prior Torghut image through normal GitOps.
 
 ## Owner Update Message
 
-Rollout state is applied with a live-trading no-go gate. #5494, #5503, and #5507 are merged with green checks, and GitOps
-reconciled #5507 into the cluster: `torghut-00215` and `torghut-sim-00295` are Running with zero restarts, the strategy
-and websocket configmaps are narrowed to `NVDA,AMD,INTC`, and live status reports active revision `torghut-00215`.
-Infrastructure health is stable from the surfaces I can read, but live `/readyz` and `/trading/health` are 503 because
-#5507 intentionally disables live simple submit; live order submission is blocked by design until executable proof exists.
-#5412 remains a no-go because the required Codex review did not post. Argo/Knative/Flink custom-resource reads remain
-RBAC-blocked in this runner, so the direct evidence is source parity plus workload, endpoint, configmap, and event checks.
+Rollout state is blocked at application health, not GitOps. I squash-merged #5514 after every required check passed, and
+Argo synced Torghut and Torghut options to main revision `be72b6213` between 2026-05-05T17:35:04Z and
+2026-05-05T17:38:43Z. Live and sim moved to `torghut-00217` and `torghut-sim-00297` on digest `f183391e` with zero
+restarts; sim health, live `/healthz`, live `/trading/status`, TA, TA-sim, options TA, and options-enricher are green.
+I am not declaring production health green because live `/readyz` and `/trading/health` remain 503 under the no-live
+submit posture, and options catalog `/readyz` is 503 with `ready=false` and no successful catalog cycle timestamp.
+Rollback is a revert of #5514 merge commit `76709ed09` or a GitOps promotion back to digest `5b1685a25`; first
+remediation should focus on options catalog readiness and the explicit health semantics for live no-submit.
 
 ## Next Action
 
-Decide whether the intended `simple_submit_disabled` state should keep live `/readyz` degraded or whether health should
-report HTTP 200 while separately surfacing live order submission as no-go. Then restore Codex review capacity or provide
-an explicit maintainer waiver for #5412 before any large implementation merge.
+Keep #5412 blocked until Codex review capacity returns or a maintainer explicitly waives the large-diff review gate.
+For the merged #5514 rollout, continue probing options catalog `/readyz` and catalog logs; if readiness does not recover
+within the operator tolerance window, open a fix-forward PR for catalog readiness semantics or a GitOps rollback PR to
+the previous image digest.

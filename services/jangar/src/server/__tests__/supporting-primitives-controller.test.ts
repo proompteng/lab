@@ -170,6 +170,8 @@ describe('supporting primitives controller', () => {
         }) as unknown as KubernetesClient,
     )
     process.env.JANGAR_AGENT_RUNNER_IMAGE = TEST_RUNNER_IMAGE
+    delete process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR
+    delete process.env.JANGAR_SCHEDULE_RUNNER_NODE_SELECTOR
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY
     delete process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT
@@ -181,6 +183,8 @@ describe('supporting primitives controller', () => {
     agentsControllerModule.stopAgentsController()
     vi.useRealTimers()
     delete process.env.JANGAR_AGENT_RUNNER_IMAGE
+    delete process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR
+    delete process.env.JANGAR_SCHEDULE_RUNNER_NODE_SELECTOR
     delete process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT
   })
 
@@ -477,6 +481,51 @@ describe('supporting primitives controller', () => {
       swarmRuntimeKitSetDigest: 'runtime-digest:current',
       swarmRequiredRuntimeKits: 'runtime-kit:collaboration:current',
     })
+  })
+
+  it('pins schedule runner cronjobs to the configured workload node selector', async () => {
+    process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR = JSON.stringify({ 'kubernetes.io/arch': 'arm64' })
+
+    const target = {
+      kind: 'AgentRun',
+      metadata: { name: 'agentrun-plan-template', namespace: 'agents' },
+      spec: {
+        agentRef: { name: 'codex-spark-agent' },
+        runtime: { type: 'job' },
+      },
+    }
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) return target
+      return null
+    })
+    const apply = vi.fn().mockResolvedValue({})
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const kube = { get, apply, applyStatus } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-plan-sched',
+        namespace: 'agents',
+        generation: 5,
+      },
+      spec: {
+        cron: '*/10 * * * *',
+        targetRef: { kind: 'AgentRun', name: 'agentrun-plan-template', namespace: 'agents' },
+      },
+    }
+
+    await __test__.reconcileSchedule(kube, schedule, 'agents')
+
+    const cronJob = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((payload) => payload.kind === 'CronJob') as { spec?: Record<string, unknown> } | undefined
+    const podSpec = (
+      ((cronJob?.spec?.jobTemplate as Record<string, unknown> | undefined)?.spec as Record<string, unknown> | undefined)
+        ?.template as Record<string, unknown> | undefined
+    )?.spec as Record<string, unknown> | undefined
+
+    expect(podSpec?.nodeSelector).toEqual({ 'kubernetes.io/arch': 'arm64' })
   })
 
   it('skips apply for equivalent schedule resources', async () => {
