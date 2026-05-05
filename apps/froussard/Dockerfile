@@ -2,8 +2,10 @@
 
 ARG NODE_VERSION=24.11.1
 ARG BUN_VERSION=1.3.13
+ARG NODE_BASE_IMAGE=mirror.gcr.io/node
+ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 
-FROM node:${NODE_VERSION}-bookworm AS base
+FROM ${NODE_BASE_IMAGE}:${NODE_VERSION}-bookworm AS base
 ARG BUN_VERSION
 ENV BUN_INSTALL="/root/.bun"
 ENV PATH="$BUN_INSTALL/bin:$PATH"
@@ -29,7 +31,7 @@ RUN bun run --filter froussard build
 FROM deps AS prod-deps
 RUN bun install --filter froussard --production --frozen-lockfile --ignore-scripts
 
-FROM oven/bun:${BUN_VERSION}-slim AS runtime
+FROM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /workspace
 COPY --from=prod-deps /workspace /workspace

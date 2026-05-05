@@ -43,26 +43,17 @@
     {
       "id": "KF-2",
       "finding": "Removing NSP or replacing bidirectional pre-training with left-to-right LM materially hurts downstream performance.",
-      "evidence": [
-        "Section Ablation over Pre-training Tasks",
-        "Table task_ablation"
-      ]
+      "evidence": ["Section Ablation over Pre-training Tasks", "Table task_ablation"]
     },
     {
       "id": "KF-3",
       "finding": "Larger model variants materially improve downstream accuracy even with shared hyperparameter settings.",
-      "evidence": [
-        "Section Effect of Model Size",
-        "Table size_ablation"
-      ]
+      "evidence": ["Section Effect of Model Size", "Table size_ablation"]
     },
     {
       "id": "KF-4",
       "finding": "The same BERT backbone can be used via both fine-tuning and feature-based usage with only modest gap for NER in feature mode.",
-      "evidence": [
-        "Section Feature-based Approach with BERT",
-        "Table ner_results"
-      ]
+      "evidence": ["Section Feature-based Approach with BERT", "Table ner_results"]
     },
     {
       "id": "KF-5",
@@ -161,23 +152,6 @@
       "claim": "Shows existing chunk/embedding indexing infrastructure used by whitepaper synthesis artifacts."
     }
   ],
-  "implementation_plan_md": "### Phase 0 (No code change)
-1. Lock review artifacts and PR metadata in `docs/whitepapers/wp-26f514d7ee2dbb2c26992487/`.
-2. Set engineering decision to conditional implementation to avoid accidental production promotion.
-
-### Phase 1 (Research lane foundation)
-1. Add training/eval scaffold documentation and runbook for corpus manifests, tokenizer, seeds, and hardware constraints.
-2. Add experiment configuration schema for pre-training and fine-tuning tasks, checkpoint naming, and reproducibility metadata.
-3. Create dataset adapter contract for GLUE/SQuAD/SWAG ingestion and scoring in a dedicated service, distinct from current whitepaper workflow.
-
-### Phase 2 (Deterministic implementation)
-1. Implement masked LM + NSP pre-training job with explicit versioned preprocessing + deterministic splits.
-2. Add fine-tuning runners for GLUE and SQuAD task suites with fixed seed sweeps and logging.
-3. Add artifact outputs matching existing whitepaper synthesis schema and link them through PR payload hooks.
-
-### Phase 3 (Governance + rollout)
-1. Add CI-style checks for reproducibility manifests before any implementation designation.
-2. Gate promotion behind explicit manual approval and explicit scope in whitepaper workflow.
-3. Keep deployment mode research-only by default; require a separate production exception process.",
+  "implementation_plan_md": "### Phase 0 (No code change)\n1. Lock review artifacts and PR metadata in `docs/whitepapers/wp-26f514d7ee2dbb2c26992487/`.\n2. Set engineering decision to conditional implementation to avoid accidental production promotion.\n\n### Phase 1 (Research lane foundation)\n1. Add training/eval scaffold documentation and runbook for corpus manifests, tokenizer, seeds, and hardware constraints.\n2. Add experiment configuration schema for pre-training and fine-tuning tasks, checkpoint naming, and reproducibility metadata.\n3. Create dataset adapter contract for GLUE/SQuAD/SWAG ingestion and scoring in a dedicated service, distinct from current whitepaper workflow.\n\n### Phase 2 (Deterministic implementation)\n1. Implement masked LM + NSP pre-training job with explicit versioned preprocessing + deterministic splits.\n2. Add fine-tuning runners for GLUE and SQuAD task suites with fixed seed sweeps and logging.\n3. Add artifact outputs matching existing whitepaper synthesis schema and link them through PR payload hooks.\n\n### Phase 3 (Governance + rollout)\n1. Add CI-style checks for reproducibility manifests before any implementation designation.\n2. Gate promotion behind explicit manual approval and explicit scope in whitepaper workflow.\n3. Keep deployment mode research-only by default; require a separate production exception process.",
   "confidence": 0.84
 }

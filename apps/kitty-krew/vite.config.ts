@@ -6,11 +6,7 @@ import tsconfigPaths from 'vite-tsconfig-paths'
 
 const plugins: PluginOption[] = [
   ...tanstackStart({
-    customViteReactPlugin: true,
-    target: 'bun',
-    tsr: {
-      srcDirectory: 'src/app',
-    },
+    srcDirectory: 'src/app',
   }),
   react(),
   tailwindcss() as unknown as PluginOption,

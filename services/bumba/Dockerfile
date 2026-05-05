@@ -2,9 +2,10 @@
 # This Dockerfile is intended to be built from a Turbo-pruned context:
 # `bunx turbo prune --scope=@proompteng/bumba --docker --out-dir <dir>`
 ARG BUN_VERSION=1.3.13
+ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 ARG LAB_GIT_SHA=dev
 
-FROM oven/bun:${BUN_VERSION} AS deps
+FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS deps
 WORKDIR /app
 ENV HUSKY=0
 COPY json/ .
@@ -19,7 +20,7 @@ FROM deps AS build
 COPY full/ .
 RUN bun --cwd=packages/temporal-bun-sdk run build
 
-FROM oven/bun:${BUN_VERSION} AS deps-prod
+FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS deps-prod
 WORKDIR /app
 ENV HUSKY=0
 COPY json/ .
@@ -28,7 +29,7 @@ RUN bun -e "const fs = require('fs'); const path = 'package.json'; const pkg = J
 RUN --mount=type=cache,target=/root/.cache/bun \
   bun install --omit=dev --ignore-scripts --filter @proompteng/bumba
 
-FROM oven/bun:${BUN_VERSION} AS runner
+FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ARG LAB_GIT_SHA=dev

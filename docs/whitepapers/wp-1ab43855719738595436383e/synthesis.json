@@ -16,15 +16,8 @@
   "full_paper_reviewed": true,
   "review_scope": {
     "pages_reviewed": 31,
-    "included_sections": [
-      "main_text",
-      "references",
-      "appendix"
-    ],
-    "source_artifacts": [
-      "arxiv_pdf",
-      "arxiv_source_tex"
-    ]
+    "included_sections": ["main_text", "references", "appendix"],
+    "source_artifacts": ["arxiv_pdf", "arxiv_source_tex"]
   },
   "executive_summary": "The paper contributes a practical LLM+MCTS architecture for symbolic alpha mining, where multi-dimensional backtest signals guide iterative formula refinement and Frequent Subtree Avoidance mitigates structural collapse. In-scope experiments show strong relative gains and efficiency, but production viability is constrained by missing statistical confidence reporting, incomplete reproducibility packaging, and limited execution-realism stress evidence.",
   "methodology_summary": {
@@ -51,9 +44,7 @@
           "ir": 1.2712
         }
       },
-      "evidence": [
-        "Experiment Section: Ablation Study Table"
-      ]
+      "evidence": ["Experiment Section: Ablation Study Table"]
     },
     {
       "id": "KF-2",
@@ -67,10 +58,7 @@
     {
       "id": "KF-3",
       "finding": "Cross-market transfer appears directionally positive on S&P500 IC/RankIC comparisons.",
-      "evidence": [
-        "Appendix Section: Additional Results on the U.S. Stock Market",
-        "Table experimental_result_sp500"
-      ]
+      "evidence": ["Appendix Section: Additional Results on the U.S. Stock Market", "Table experimental_result_sp500"]
     },
     {
       "id": "KF-4",
@@ -79,10 +67,7 @@
         "ours_gpt41_total_cost_usd": 74.402,
         "ours_gemini_2_flash_lite_total_cost_usd": 7.537
       },
-      "evidence": [
-        "Appendix Section: Cost Estimation Details",
-        "Table cost_comparison"
-      ]
+      "evidence": ["Appendix Section: Cost Estimation Details", "Table cost_comparison"]
     }
   ],
   "novelty_claims": [

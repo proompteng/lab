@@ -18,37 +18,22 @@
     {
       "id": "KF-1",
       "finding": "The layered architecture is clear enough to support modular implementation with auditable stage boundaries.",
-      "evidence": [
-        "Section 3.1",
-        "Figure 1",
-        "Section 4"
-      ]
+      "evidence": ["Section 3.1", "Figure 1", "Section 4"]
     },
     {
       "id": "KF-2",
       "finding": "Reported returns and risk-adjusted metrics outperform selected rule-based baselines for all three tested assets.",
-      "evidence": [
-        "Section 6.1",
-        "Table 2"
-      ]
+      "evidence": ["Section 6.1", "Table 2"]
     },
     {
       "id": "KF-3",
       "finding": "Case studies provide interpretable decision transitions via cross-agent reasoning narratives.",
-      "evidence": [
-        "Section 6.2.2",
-        "Figure 6",
-        "Figure 7"
-      ]
+      "evidence": ["Section 6.2.2", "Figure 6", "Figure 7"]
     },
     {
       "id": "KF-4",
       "finding": "Evaluation realism is limited by short horizon, small asset set, and omission of transaction costs.",
-      "evidence": [
-        "Section 5.1",
-        "Section 5.2",
-        "Section 6.3"
-      ]
+      "evidence": ["Section 5.1", "Section 5.2", "Section 6.3"]
     }
   ],
   "novelty_claims": [

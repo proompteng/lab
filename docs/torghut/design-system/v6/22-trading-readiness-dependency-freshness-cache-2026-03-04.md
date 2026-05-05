@@ -20,34 +20,41 @@ The readiness handler currently executes all expensive dependency checks synchro
 Introduce a bounded TTL in-memory readiness dependency cache used by the shared readiness payload path.
 
 1. Add configurable cache controls in `services/torghut/app/config.py`:
+
 - `TRADING_READINESS_DEPENDENCY_CACHE_ENABLED`
 - `TRADING_READINESS_DEPENDENCY_CACHE_TTL_SECONDS`
 
 2. Add caching helper helpers in `services/torghut/app/main.py`:
+
 - `_readiness_dependency_cache_key`
 - `_readiness_dependency_checks`
 - `_readiness_dependency_snapshot`
 
 3. Keep the existing `/readyz` semantics for contract shape and status mapping while adding metadata under `dependencies.readiness_cache`:
+
 - `cache_used`
 - `cache_ttl_seconds`
 - `checked_at`
 
 4. Add regression tests in `services/torghut/tests/test_trading_api.py` for:
+
 - cache hit (single invocation across repeated `/readyz` calls)
 - stale refresh (forced cache age beyond TTL triggers new dependency checks)
 
 ## Alternatives Considered
 
 1. Keep current synchronous checks (status quo)
+
 - Pros: behavior is straightforward and always freshest.
 - Cons: unchanged probe churn and no suppression of transient dependency flaps.
 
 2. Reduce dependency timeouts only
+
 - Pros: easier and smaller diff.
 - Cons: still executes full dependency suite each probe and remains sensitive to traffic bursts.
 
 3. Cache dependency checks with bounded TTL (selected)
+
 - Pros: reduces readiness-probe amplification, adds deterministic freshness metadata, keeps fail-closed behavior when stale checks degrade.
 - Cons: introduces up to TTL of stale readiness reporting and requires cache-control tuning.
 

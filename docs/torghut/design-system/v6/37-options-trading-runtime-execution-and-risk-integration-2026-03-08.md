@@ -156,13 +156,13 @@ sufficient.
 
 The options trading wave introduces five runtime components:
 
-| Component | Responsibility |
-| --- | --- |
-| `OptionsSignalAdapter` | Read options-derived features and convert them into trading-runtime signal objects |
-| `OptionsPriceService` | Resolve executable prices from options quotes, contract bars, and broker confirmations |
-| `OptionsRiskPolicy` | Enforce premium, concentration, DTE, liquidity, and lifecycle limits |
-| `OptionsExecutionAdapter` | Build and submit broker order payloads and reconcile order activities |
-| `OptionsLifecycleMonitor` | Poll positions and activities for exercise, DNE, assignment, and expiry transitions |
+| Component                 | Responsibility                                                                         |
+| ------------------------- | -------------------------------------------------------------------------------------- |
+| `OptionsSignalAdapter`    | Read options-derived features and convert them into trading-runtime signal objects     |
+| `OptionsPriceService`     | Resolve executable prices from options quotes, contract bars, and broker confirmations |
+| `OptionsRiskPolicy`       | Enforce premium, concentration, DTE, liquidity, and lifecycle limits                   |
+| `OptionsExecutionAdapter` | Build and submit broker order payloads and reconcile order activities                  |
+| `OptionsLifecycleMonitor` | Poll positions and activities for exercise, DNE, assignment, and expiry transitions    |
 
 These may live inside the existing `services/torghut/app/trading/**` package tree,
 but they are lane-specific interfaces, not anonymous conditionals scattered through
@@ -226,23 +226,23 @@ It does not read from equity `ta_signals` or `ta_microbars`.
 
 The options decision object must carry at minimum:
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `lane` | `string` | fixed to `options` |
-| `contract_symbol` | `string` | broker order symbol |
-| `underlying_symbol` | `string` | underlying equity |
-| `action` | `string` | `buy_to_open`, `sell_to_close`, `exercise`, `dne` |
-| `qty_contracts` | `decimal` | contract count |
-| `limit_price` | `decimal` | contract premium price |
-| `option_type` | `string` | `call` or `put` |
-| `strike_price` | `decimal` | strike |
-| `expiration_date` | `date` | expiry date |
-| `dte` | `int` | days to expiry |
-| `mid_price` | `decimal` | observed mid |
-| `mark_price` | `decimal` | observed mark if present |
-| `spread_bps` | `decimal` | liquidity quality input |
-| `premium_notional` | `decimal` | `qty * price * multiplier` |
-| `rationale_json` | `jsonb` | strategy / LLM rationale payload |
+| Field               | Type      | Notes                                             |
+| ------------------- | --------- | ------------------------------------------------- |
+| `lane`              | `string`  | fixed to `options`                                |
+| `contract_symbol`   | `string`  | broker order symbol                               |
+| `underlying_symbol` | `string`  | underlying equity                                 |
+| `action`            | `string`  | `buy_to_open`, `sell_to_close`, `exercise`, `dne` |
+| `qty_contracts`     | `decimal` | contract count                                    |
+| `limit_price`       | `decimal` | contract premium price                            |
+| `option_type`       | `string`  | `call` or `put`                                   |
+| `strike_price`      | `decimal` | strike                                            |
+| `expiration_date`   | `date`    | expiry date                                       |
+| `dte`               | `int`     | days to expiry                                    |
+| `mid_price`         | `decimal` | observed mid                                      |
+| `mark_price`        | `decimal` | observed mark if present                          |
+| `spread_bps`        | `decimal` | liquidity quality input                           |
+| `premium_notional`  | `decimal` | `qty * price * multiplier`                        |
+| `rationale_json`    | `jsonb`   | strategy / LLM rationale payload                  |
 
 ### Runtime risk policy contract
 

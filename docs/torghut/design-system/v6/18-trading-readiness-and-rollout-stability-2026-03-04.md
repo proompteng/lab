@@ -22,16 +22,23 @@ Introduce `/readyz` as a reusable, dependency-aware readiness contract and map K
 ### Implementation
 
 1. Add shared helper:
-  - `services/torghut/app/main.py: _evaluate_trading_health_payload(session)`
-  - Centralizes scheduler/dependency evaluation currently in `/trading/health`.
+
+- `services/torghut/app/main.py: _evaluate_trading_health_payload(session)`
+- Centralizes scheduler/dependency evaluation currently in `/trading/health`.
+
 2. Add endpoint:
-  - `GET /readyz` (same payload and 503/200 status behavior as `/trading/health`).
+
+- `GET /readyz` (same payload and 503/200 status behavior as `/trading/health`).
+
 3. Update Knative readiness probe:
-  - `services/torghut/argocd/applications/torghut/knative-service.yaml`
-  - `readinessProbe.httpGet.path: /readyz`.
+
+- `services/torghut/argocd/applications/torghut/knative-service.yaml`
+- `readinessProbe.httpGet.path: /readyz`.
+
 4. Add regression tests:
-  - `services/torghut/tests/test_trading_api.py`
-  - covers `/readyz` success and dependency-failure behavior.
+
+- `services/torghut/tests/test_trading_api.py`
+- covers `/readyz` success and dependency-failure behavior.
 
 ## Alternatives Considered
 

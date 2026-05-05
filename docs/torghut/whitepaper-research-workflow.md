@@ -3,6 +3,7 @@
 This runbook documents how to trigger Torghut's whitepaper analysis workflow and verify end-to-end progress.
 
 Source implementation:
+
 - `services/torghut/app/main.py`
 - `services/torghut/app/whitepapers/workflow.py`
 
@@ -43,13 +44,16 @@ Include this block in the GitHub issue body:
 
 ```md
 <!-- TORGHUT_WHITEPAPER:START -->
+
 workflow: whitepaper-analysis-v1
 base_branch: main
+
 <!-- TORGHUT_WHITEPAPER:END -->
 ```
 
 Also include at least one `.pdf` URL in the issue body (markdown link or plain URL).  
 Optional marker keys:
+
 - `attachment_url`: explicit PDF URL override
 - `head_branch`: explicit AgentRun head branch (defaults to `codex/whitepaper-<suffix>`)
 
@@ -69,8 +73,10 @@ Minimal valid body template:
 
 ```md
 <!-- TORGHUT_WHITEPAPER:START -->
+
 workflow: whitepaper-analysis-v1
 base_branch: main
+
 <!-- TORGHUT_WHITEPAPER:END -->
 
 Attachment:
@@ -84,6 +90,7 @@ attachment_url: https://example.com/path/paper.pdf
 ```
 
 Do not trigger by:
+
 - Editing only the title (no body marker).
 - Omitting the marker block.
 - Posting a non-PDF link as the only source.
@@ -92,6 +99,7 @@ Do not trigger by:
 ## Required runtime configuration
 
 Minimum:
+
 - `WHITEPAPER_WORKFLOW_ENABLED=true`
 - Ceph/S3 config:
   - `WHITEPAPER_CEPH_ENDPOINT` (or `WHITEPAPER_CEPH_BUCKET_HOST` + `WHITEPAPER_CEPH_BUCKET_PORT`)
@@ -100,14 +108,17 @@ Minimum:
   - optional `WHITEPAPER_CEPH_BUCKET` (default: `torghut-whitepapers`)
 
 For Kafka ingestion path:
+
 - `WHITEPAPER_KAFKA_BOOTSTRAP_SERVERS`
 - optional `WHITEPAPER_KAFKA_TOPIC` (default: `github.webhook.events`)
 
 For AgentRun submission:
+
 - `WHITEPAPER_AGENTRUN_SUBMIT_URL` or `JANGAR_BASE_URL` (default fallback: `http://agents.agents.svc.cluster.local`)
 - optional `JANGAR_API_KEY`
 
 For deterministic engineering trigger + rollout policy:
+
 - optional `WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED` (default: `true`)
 - optional `WHITEPAPER_ENGINEERING_MIN_CONFIDENCE` (default: `0.80`)
 - optional `WHITEPAPER_ENGINEERING_MIN_SCORE` (default: `0.75`)
@@ -118,9 +129,11 @@ For deterministic engineering trigger + rollout policy:
 - optional `WHITEPAPER_ENGINEERING_MANUAL_ALLOWED_PROFILES` (default: `manual,assisted,automatic`)
 
 For comment-based requeue:
+
 - optional `WHITEPAPER_REQUEUE_COMMENT_KEYWORD` (default: `research whitepaper`)
 
 For manual control endpoint auth:
+
 - optional `WHITEPAPER_WORKFLOW_API_TOKEN` (if unset, Torghut falls back to `JANGAR_API_KEY`)
 - when either token is set, send `Authorization: Bearer <token>` or `x-whitepaper-token`
 
@@ -155,6 +168,7 @@ curl -sS -X POST "http://localhost:8181/whitepapers/events/github-issue" \
 ```
 
 Expected response:
+
 - `202` with `{"accepted": true, "run_id": "wp-...", ...}` when queued
 - `200` with `{"accepted": false, "reason": "..."}` when ignored/rejected
 
@@ -167,6 +181,7 @@ curl -sS "http://localhost:8181/whitepapers/status" | jq
 ```
 
 Key fields:
+
 - `workflow_enabled`
 - `worker_running`
 - `requeue_comment_keyword`
@@ -179,6 +194,7 @@ curl -sS "http://localhost:8181/whitepapers/runs/<run_id>" | jq
 ```
 
 This includes:
+
 - run status and failure reason
 - document/document_version metadata
 - latest dispatched AgentRun metadata
@@ -246,6 +262,7 @@ curl -sS -X POST "http://localhost:8181/whitepapers/runs/<run_id>/approve-implem
 ```
 
 Manual override writes auditable fields:
+
 - `approval_source=jangar_ui`
 - `approved_by`
 - `approved_at`
@@ -322,6 +339,7 @@ erDiagram
 ## Common reject/failure reasons
 
 From ingestion responses and persisted run failures:
+
 - `workflow_disabled`
 - `ignored_event`
 - `marker_missing`

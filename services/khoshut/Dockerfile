@@ -2,8 +2,9 @@
 # This Dockerfile is intended to be built from a Turbo-pruned context:
 # `bunx turbo prune --scope=@proompteng/khoshut --docker --out-dir <dir>`
 ARG BUN_VERSION=1.3.13
+ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 
-FROM oven/bun:${BUN_VERSION} AS deps
+FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS deps
 WORKDIR /app
 ENV HUSKY=0
 COPY json/ .
@@ -16,7 +17,7 @@ RUN --mount=type=cache,target=/root/.cache/bun \
 FROM deps AS build
 COPY full/ .
 
-FROM oven/bun:${BUN_VERSION} AS deps-prod
+FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS deps-prod
 WORKDIR /app
 ENV HUSKY=0
 COPY json/ .
@@ -25,7 +26,7 @@ RUN bun -e "const fs = require('fs'); const p = 'package.json'; const pkg = JSON
 RUN --mount=type=cache,target=/root/.cache/bun \
   bun install --no-save --production --frozen-lockfile --ignore-scripts --filter @proompteng/khoshut
 
-FROM oven/bun:${BUN_VERSION} AS runner
+FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=deps-prod /app/node_modules ./node_modules

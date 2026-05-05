@@ -14,12 +14,7 @@
   "full_paper_reviewed": true,
   "review_scope": {
     "pages_reviewed": 24,
-    "included_sections": [
-      "main_text",
-      "references",
-      "result_tables_3_to_18",
-      "figures_1_to_7"
-    ]
+    "included_sections": ["main_text", "references", "result_tables_3_to_18", "figures_1_to_7"]
   },
   "executive_summary": "The paper combines LLM alpha generation with PPO-based dynamic alpha weighting. Reported results show strong outperformance versus market benchmarks for Apple, HSBC, Pepsi, and Tencent, but clear underperformance for Toyota. The approach is useful as a research prototype for adaptive signal blending, but production viability is constrained by leakage risk, small-universe evaluation, and limited statistical rigor.",
   "problem_statement": "Recent LLM studies generate useful formulaic alphas but typically use static integration schemes. The paper targets dynamic, market-adaptive integration of multiple LLM-generated alphas through reinforcement learning.",
@@ -28,10 +23,7 @@
     {
       "id": "KF-1",
       "finding": "PPO-adjusted strategy outperforms market benchmarks on 4 of 5 stocks.",
-      "evidence": [
-        "Section 4.3",
-        "Table 7"
-      ],
+      "evidence": ["Section 4.3", "Table 7"],
       "details": {
         "apple": {
           "cum_return": 1.6817,
@@ -58,28 +50,17 @@
     {
       "id": "KF-2",
       "finding": "PPO weighting materially improves over equal-weight alpha aggregation for most assets.",
-      "evidence": [
-        "Section 4.4",
-        "Table 8",
-        "Table 7"
-      ]
+      "evidence": ["Section 4.4", "Table 8", "Table 7"]
     },
     {
       "id": "KF-3",
       "finding": "Alpha-selection variants (low-correlation, high-contribution, random-30) do not change the overall headline that PPO generally beats benchmarks.",
-      "evidence": [
-        "Section 5.1",
-        "Tables 9-12"
-      ]
+      "evidence": ["Section 5.1", "Tables 9-12"]
     },
     {
       "id": "KF-4",
       "finding": "Sentiment variants and prompt-information variants affect magnitude but preserve broad PPO effectiveness in reported setup.",
-      "evidence": [
-        "Section 5.2",
-        "Section 5.3",
-        "Tables 13-18"
-      ]
+      "evidence": ["Section 5.2", "Section 5.3", "Tables 13-18"]
     }
   ],
   "novelty_claims": [

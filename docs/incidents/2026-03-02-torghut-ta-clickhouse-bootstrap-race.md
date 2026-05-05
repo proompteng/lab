@@ -15,23 +15,24 @@
 ## User-Facing Symptom
 
 `GET /trading/status` reported:
+
 - `autonomy_last_error`: `clickhouse_http_404 ... Database torghut does not exist`
 - `failure_streak`: increased past rollback threshold
 - `rollback.emergency_stop_active`: `true`
 
 ## Timeline (UTC)
 
-| Time | Event |
-| --- | --- |
-| 2026-03-02 02:31:19 | `FlinkDeployment/torghut-ta` created. |
-| 2026-03-02 02:31:20 | TA jobmanager pod started. |
-| 2026-03-02 02:32:08-02:32:14 | TA schema bootstrap failed repeatedly with `UnknownHostException: torghut-clickhouse.torghut.svc.cluster.local`; retried 4 times, then gave up. |
-| 2026-03-02 02:34:50 | `Service/torghut-clickhouse` created (after TA already abandoned schema init). |
-| 2026-03-02 07:09 | Live remediation phase 1: created fallback `MergeTree` TA tables (`torghut.ta_microbars`, `torghut.ta_signals`) on both ClickHouse replicas to restore reads quickly. |
-| 2026-03-02 07:18 | Diagnosed Keeper unavailability root cause: `ImagePullBackOff` on `clickhouse/clickhouse-keeper:24.3.5.46` due Docker Hub unauthenticated pull rate limit (`429 Too Many Requests`). |
-| 2026-03-02 07:21 | Patched live Keeper image to internal mirror and reconciled `StatefulSet` to `1` replica; Keeper endpoints became available. |
-| 2026-03-02 07:26-07:32 | Live remediation phase 2: dropped fallback TA tables and re-applied canonical replicated schema (`ReplicatedReplacingMergeTree`) via `ta-schema.sql` `ON CLUSTER default`; transient `clickhouse_http_404` observed during table recreation window. |
-| 2026-03-02 07:32+ | No further TA table-not-found errors observed; `torghut-ta` remained `RUNNING/STABLE`; Keeper-backed cluster DDL probe succeeded. |
+| Time                         | Event                                                                                                                                                                                                                                               |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-03-02 02:31:19          | `FlinkDeployment/torghut-ta` created.                                                                                                                                                                                                               |
+| 2026-03-02 02:31:20          | TA jobmanager pod started.                                                                                                                                                                                                                          |
+| 2026-03-02 02:32:08-02:32:14 | TA schema bootstrap failed repeatedly with `UnknownHostException: torghut-clickhouse.torghut.svc.cluster.local`; retried 4 times, then gave up.                                                                                                     |
+| 2026-03-02 02:34:50          | `Service/torghut-clickhouse` created (after TA already abandoned schema init).                                                                                                                                                                      |
+| 2026-03-02 07:09             | Live remediation phase 1: created fallback `MergeTree` TA tables (`torghut.ta_microbars`, `torghut.ta_signals`) on both ClickHouse replicas to restore reads quickly.                                                                               |
+| 2026-03-02 07:18             | Diagnosed Keeper unavailability root cause: `ImagePullBackOff` on `clickhouse/clickhouse-keeper:24.3.5.46` due Docker Hub unauthenticated pull rate limit (`429 Too Many Requests`).                                                                |
+| 2026-03-02 07:21             | Patched live Keeper image to internal mirror and reconciled `StatefulSet` to `1` replica; Keeper endpoints became available.                                                                                                                        |
+| 2026-03-02 07:26-07:32       | Live remediation phase 2: dropped fallback TA tables and re-applied canonical replicated schema (`ReplicatedReplacingMergeTree`) via `ta-schema.sql` `ON CLUSTER default`; transient `clickhouse_http_404` observed during table recreation window. |
+| 2026-03-02 07:32+            | No further TA table-not-found errors observed; `torghut-ta` remained `RUNNING/STABLE`; Keeper-backed cluster DDL probe succeeded.                                                                                                                   |
 
 ## Root Cause
 

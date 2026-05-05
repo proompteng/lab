@@ -59,42 +59,52 @@ Total reward applies per-component caps and multiplicative interaction between p
 ## 3) Key Findings
 
 1. Strong headline pass-rate results across datasets.
+
 - Evidence: Sec. 3.2, Table 1-2.
 - AlphaAgentEvo-4B: HS300 (`VR 0.979`, `pass@3 0.97`, `pass@5 0.97`), CSI500 (`VR 0.977`, `pass@3 0.93`, `pass@5 0.95`), Alpha158 bullish window (`pass@5 0.994`).
 
 2. ToolRL underperforms on longer-horizon evolution despite similar pass@3 in some cases.
+
 - Evidence: Sec. 3.2 narrative + Table 1.
 
 3. Reward components are complementary; removing exploration or consistency drops pass rates.
+
 - Evidence: Sec. 3.4, Fig. 4.
 - Example: AlphaEvo500 pass@3 falls from `0.65` to `0.54` (without exploration) and `0.51` (without consistency).
 
 4. Generated alpha diversity is higher than key baselines under pairwise AST similarity analysis.
+
 - Evidence: Sec. 3.5, Fig. 5.
 - Reported AlphaAgentEvo stats: average similarity `0.039`, max similarity `0.263`.
 
 5. Out-of-sample distribution visuals suggest competitive AER/IR versus GPT-5-mini and DeepSeek-R1.
+
 - Evidence: Sec. 3.5, Fig. 6 (distribution-level plot evidence; not full tabular significance analysis).
 
 6. Appendix multi-factor portfolio comparison reports best AER/IR/MDD among listed methods.
+
 - Evidence: Appendix B, Table 3.
 - AlphaAgentEvo-4B: `AER 0.129`, `IR 2.442`, `MDD -0.176`.
 
 ## 4) Novelty Claims Assessment
 
 1. Claim: first self-evolving ARL framework for alpha mining.
+
 - Assessment: `partially_supported`.
 - Why: paper clearly defines ARL adaptation and trajectory-level training (Sec. 2.2), but "first" is a novelty-positioning claim not independently verified in-paper.
 
 2. Claim: hierarchical reward induces long-horizon planning and reflective reasoning.
+
 - Assessment: `supported_in_scope`.
 - Why: reward design is explicit (Sec. 2.3), and trajectory/ablation evidence is directionally consistent (Sec. 3.3-3.4).
 
 3. Claim: better diversity and transferability of generated alphas.
+
 - Assessment: `supported_in_scope`.
 - Why: diversity and transfer analyses are provided (Sec. 3.5), though uncertainty intervals are not reported.
 
 4. Claim: 4B model exceeds stronger closed-model baselines.
+
 - Assessment: `partially_supported`.
 - Why: supported by reported benchmark tables; broad fairness and statistical significance remain under-specified.
 

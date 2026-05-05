@@ -14,10 +14,7 @@
   "full_paper_reviewed": true,
   "review_scope": {
     "pages_reviewed": 16,
-    "included_sections": [
-      "main_text",
-      "appendix"
-    ]
+    "included_sections": ["main_text", "appendix"]
   },
   "executive_summary": "Janus-Q presents a two-stage event-driven trading pipeline: event-centric CAR-labeled data construction, then SFT plus GRPO with a hierarchical gated reward (HGRM). The strongest technical contribution is structured reward gating that ties semantic correctness to executable trading objectives. Reported results are strong in the provided setup, but production viability is constrained by external-validity and reproducibility risks.",
   "problem_statement": "Current trading systems underuse event-level semantics and often misalign language reasoning with market-grounded decisions. Janus-Q attempts to align event understanding and trading actions through structured supervision and reward design.",
@@ -26,11 +23,7 @@
     {
       "id": "KF-1",
       "finding": "Janus-Q reports best Sharpe Ratio and decision metrics among listed baselines in the evaluation window.",
-      "evidence": [
-        "Section 4.5.1",
-        "Table 2",
-        "Figure 3"
-      ],
+      "evidence": ["Section 4.5.1", "Table 2", "Figure 3"],
       "details": {
         "janus_q": {
           "mae": 0.0349,
@@ -49,10 +42,7 @@
     {
       "id": "KF-2",
       "finding": "SFT is foundational; removing it causes severe performance collapse, while GRPO contributes additional gains.",
-      "evidence": [
-        "Section 4.6.1",
-        "Table 3"
-      ],
+      "evidence": ["Section 4.6.1", "Table 3"],
       "details": {
         "without_sft": {
           "da": 0.4429,
@@ -71,20 +61,12 @@
     {
       "id": "KF-3",
       "finding": "Diversified reward objectives are complementary; removing any HGRM component reduces full-model SR.",
-      "evidence": [
-        "Section 4.6.2",
-        "Table 4",
-        "Section 3.2"
-      ]
+      "evidence": ["Section 4.6.2", "Table 4", "Section 3.2"]
     },
     {
       "id": "KF-4",
       "finding": "Holding-period and position-limit sensitivity indicate event alpha decays quickly and requires exposure controls.",
-      "evidence": [
-        "Appendix A.4",
-        "Figure 9",
-        "Figure 10"
-      ]
+      "evidence": ["Appendix A.4", "Figure 9", "Figure 10"]
     }
   ],
   "novelty_claims": [

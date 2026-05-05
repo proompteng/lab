@@ -24,16 +24,16 @@ AgentRun logs showed substantive implementation progress, but no pull request wa
 
 ## Timeline (UTC)
 
-| Time | Event |
-| --- | --- |
-| 2026-02-25 08:xx | Run `...20260225b` fails: `ENOENT reading "/app/node_modules/@proompteng/discord"`. |
-| 2026-02-25 09:0x | Fix merged for discord workspace import coupling (`#3644`, `f12b6082`). |
-| 2026-02-25 09:1x | Run `...20260225d` fails: `posix_spawn 'git'` (worktree bootstrap missing). |
-| 2026-02-25 09:2x | Fix merged for repository bootstrap in Codex implement path (`#3647`, `338312f4`). |
-| 2026-02-25 09:3x | Run `...20260225e` fails: `Executable not found in $PATH: "codex-nats-soak"`. |
-| 2026-02-25 09:24 | Runtime image fix merged to include codex NATS helper scripts (`#3650`, `1cc0ecd2`). |
+| Time             | Event                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------------------- |
+| 2026-02-25 08:xx | Run `...20260225b` fails: `ENOENT reading "/app/node_modules/@proompteng/discord"`.      |
+| 2026-02-25 09:0x | Fix merged for discord workspace import coupling (`#3644`, `f12b6082`).                  |
+| 2026-02-25 09:1x | Run `...20260225d` fails: `posix_spawn 'git'` (worktree bootstrap missing).              |
+| 2026-02-25 09:2x | Fix merged for repository bootstrap in Codex implement path (`#3647`, `338312f4`).       |
+| 2026-02-25 09:3x | Run `...20260225e` fails: `Executable not found in $PATH: "codex-nats-soak"`.            |
+| 2026-02-25 09:24 | Runtime image fix merged to include codex NATS helper scripts (`#3650`, `1cc0ecd2`).     |
 | 2026-02-25 09:33 | GitOps promotions land (`#3651`, `#3652`), Argo apps refreshed to revision `aea6833...`. |
-| 2026-02-25 10:06 | Recreated run `...20260225g` succeeds; agent creates PR `#3653`; checks green. |
+| 2026-02-25 10:06 | Recreated run `...20260225g` succeeds; agent creates PR `#3653`; checks green.           |
 
 ## Root Cause
 

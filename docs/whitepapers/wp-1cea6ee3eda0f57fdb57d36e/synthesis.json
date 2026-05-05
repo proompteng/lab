@@ -18,42 +18,22 @@
     {
       "id": "KF-1",
       "finding": "The two-loop architecture is a practical pattern for self-improving agents where high-fidelity external evaluation is available.",
-      "evidence": [
-        "Section 3",
-        "Figure 1",
-        "Algorithm 1",
-        "Algorithm 2"
-      ]
+      "evidence": ["Section 3", "Figure 1", "Algorithm 1", "Algorithm 2"]
     },
     {
       "id": "KF-2",
       "finding": "Provable efficiency claims are assumption-heavy and mostly inherited from cited prior work rather than fully new proof machinery.",
-      "evidence": [
-        "Section 4.1.2",
-        "Lemma 4.3",
-        "Section 4.1.3",
-        "Lemma 4.5",
-        "Section 4.1.4",
-        "Theorem 4.6"
-      ]
+      "evidence": ["Section 4.1.2", "Lemma 4.3", "Section 4.1.3", "Lemma 4.5", "Section 4.1.4", "Theorem 4.6"]
     },
     {
       "id": "KF-3",
       "finding": "Experiments claim iterative performance/relevance gains, but the paper provides limited explicit quantitative tables in the main body.",
-      "evidence": [
-        "Section 6",
-        "Figure 3",
-        "Figure 4",
-        "Figure 5"
-      ]
+      "evidence": ["Section 6", "Figure 3", "Figure 4", "Figure 5"]
     },
     {
       "id": "KF-4",
       "finding": "The method's practical success depends strongly on KB quality and evaluator fidelity.",
-      "evidence": [
-        "Section 3.2",
-        "Section 7"
-      ]
+      "evidence": ["Section 3.2", "Section 7"]
     }
   ],
   "novelty_claims": [

@@ -90,7 +90,7 @@ Create a values file for your environment:
 image:
   repository: registry.example.com/platform/jangar
   tag: 2026-05-05
-  digest: sha256:REPLACE_WITH_CONTROL_PLANE_IMAGE_DIGEST
+  digest: sha256:REPLACE_WITH_JANGAR_IMAGE_DIGEST
   pullSecrets:
     - registry-cred
 
@@ -523,7 +523,8 @@ Frequent render failures:
 
 | Value                                                                | Purpose                                                                   |
 | -------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `image.repository`, `image.tag`, `image.digest`                      | Control-plane image.                                                      |
+| `image.repository`, `image.tag`, `image.digest`                      | Default Jangar image used by the control-plane and controllers.           |
+| `controlPlane.image.*`, `controllers.image.*`                        | Optional per-deployment overrides when those images differ.                |
 | `runner.image.repository`, `runner.image.tag`, `runner.image.digest` | Default image for AgentRun Jobs.                                          |
 | `imagePolicy.requireDigest`                                          | Require immutable image digests for chart-managed images.                 |
 | `database.secretRef.*`                                               | Existing database URL Secret.                                             |

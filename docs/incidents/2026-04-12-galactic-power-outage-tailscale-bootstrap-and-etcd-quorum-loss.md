@@ -117,20 +117,20 @@ Primary causes:
 
 ## Approximate Timeline
 
-| Time | Event |
-| --- | --- |
-| 2026-04-12 21:08Z | `tailscaled` on the NUC started running again after the outage, but remained in `NoState`. |
-| 2026-04-12 21:09Z onward | NUC logs showed repeated registration failures to `controlplane.tailscale.com` with `context deadline exceeded`. |
-| 2026-04-12 21:25Z-21:28Z | Talos control-plane nodes `192.168.1.194`, `192.168.1.203`, and `192.168.1.85` booted and exposed Talos API again. |
-| 2026-04-12 21:26Z onward | Talos machine status on each node remained `booting`, with unmet condition `etcd not healthy`. |
-| 2026-04-12 21:35Z onward | etcd logs showed repeated pre-vote loops and timeouts dialing peers on `100.126.71.62:2380`, `100.73.189.86:2380`, and `100.108.8.111:2380`. |
-| 2026-04-12 21:35Z onward | `ext-tailscale` on Talos nodes failed `tailscale up` with `invalid key: API key does not exist`. |
-| 2026-04-12 21:36Z | Verification showed NUC SSH reachable, LAN TCP `:6443` open, but tailnet path to the NUC unavailable and cluster API still down. |
-| 2026-04-12 ~21:47Z | NUC host resolver was restored to `systemd-resolved` management, `tailscaled` restarted, and NUC Tailscale recovered to `100.88.12.116`. |
-| 2026-04-12 ~22:00Z | Tailscale admin confirmed there were no active auth keys, proving the Talos node auth key stored in 1Password was stale. |
-| 2026-04-12 ~22:03Z | A new reusable tagged auth key (`tag:k8s-subnet-router`) was generated, stored back into 1Password, and used to regenerate Talos node `tailscale-extension-service.yaml` files. |
-| 2026-04-12 ~22:04Z | Regenerated `ExtensionServiceConfig` patches were applied to `192.168.1.85`, `192.168.1.194`, and `192.168.1.203` with `talosctl patch machineconfig --mode no-reboot`. |
-| 2026-04-12 ~22:05Z | Talos nodes regained `100.x` Tailscale IPs, `etcd` quorum returned, and `kubectl get nodes` showed all three control-plane nodes `Ready`. |
+| Time                     | Event                                                                                                                                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-12 21:08Z        | `tailscaled` on the NUC started running again after the outage, but remained in `NoState`.                                                                                      |
+| 2026-04-12 21:09Z onward | NUC logs showed repeated registration failures to `controlplane.tailscale.com` with `context deadline exceeded`.                                                                |
+| 2026-04-12 21:25Z-21:28Z | Talos control-plane nodes `192.168.1.194`, `192.168.1.203`, and `192.168.1.85` booted and exposed Talos API again.                                                              |
+| 2026-04-12 21:26Z onward | Talos machine status on each node remained `booting`, with unmet condition `etcd not healthy`.                                                                                  |
+| 2026-04-12 21:35Z onward | etcd logs showed repeated pre-vote loops and timeouts dialing peers on `100.126.71.62:2380`, `100.73.189.86:2380`, and `100.108.8.111:2380`.                                    |
+| 2026-04-12 21:35Z onward | `ext-tailscale` on Talos nodes failed `tailscale up` with `invalid key: API key does not exist`.                                                                                |
+| 2026-04-12 21:36Z        | Verification showed NUC SSH reachable, LAN TCP `:6443` open, but tailnet path to the NUC unavailable and cluster API still down.                                                |
+| 2026-04-12 ~21:47Z       | NUC host resolver was restored to `systemd-resolved` management, `tailscaled` restarted, and NUC Tailscale recovered to `100.88.12.116`.                                        |
+| 2026-04-12 ~22:00Z       | Tailscale admin confirmed there were no active auth keys, proving the Talos node auth key stored in 1Password was stale.                                                        |
+| 2026-04-12 ~22:03Z       | A new reusable tagged auth key (`tag:k8s-subnet-router`) was generated, stored back into 1Password, and used to regenerate Talos node `tailscale-extension-service.yaml` files. |
+| 2026-04-12 ~22:04Z       | Regenerated `ExtensionServiceConfig` patches were applied to `192.168.1.85`, `192.168.1.194`, and `192.168.1.203` with `talosctl patch machineconfig --mode no-reboot`.         |
+| 2026-04-12 ~22:05Z       | Talos nodes regained `100.x` Tailscale IPs, `etcd` quorum returned, and `kubectl get nodes` showed all three control-plane nodes `Ready`.                                       |
 
 ## Evidence Collected
 
@@ -536,7 +536,7 @@ Root causes:
    ordinary drift and could still show the app as effectively healthy while the workload could not mount.
 1. The bare repo cached on the PVC had a broken remote-tracking ref under:
    - `refs/remotes/origin/feature-flags-state`
-   which caused Flipt's initial fetch path to fail after the outage.
+     which caused Flipt's initial fetch path to fail after the outage.
 
 Recovery steps:
 

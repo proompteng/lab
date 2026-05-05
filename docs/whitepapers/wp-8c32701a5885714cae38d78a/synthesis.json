@@ -31,10 +31,7 @@
     {
       "id": "KF-1",
       "finding": "FinPos is reported to outperform all listed baselines across five stocks in cumulative return and often Sharpe ratio.",
-      "evidence": [
-        "Section 5.2",
-        "Table 1"
-      ],
+      "evidence": ["Section 5.2", "Table 1"],
       "details": {
         "sample_points": {
           "tsla": {
@@ -58,36 +55,22 @@
     {
       "id": "KF-2",
       "finding": "Multi-timescale reward is the most critical component in ablation experiments.",
-      "evidence": [
-        "Section 5.3.1",
-        "Table 2",
-        "Figure 3"
-      ]
+      "evidence": ["Section 5.3.1", "Table 2", "Figure 3"]
     },
     {
       "id": "KF-3",
       "finding": "Separating quantity/risk sizing from direction improves drawdown behavior versus fixed-unit decisions.",
-      "evidence": [
-        "Section 5.3.2",
-        "Table 2",
-        "Section 4.2.2"
-      ]
+      "evidence": ["Section 5.3.2", "Table 2", "Section 4.2.2"]
     },
     {
       "id": "KF-4",
       "finding": "Prompt design quality materially impacts financial reasoning performance and can introduce overload effects.",
-      "evidence": [
-        "Appendix D.3.1",
-        "Figure 5",
-        "Table 6"
-      ]
+      "evidence": ["Appendix D.3.1", "Figure 5", "Table 6"]
     },
     {
       "id": "KF-5",
       "finding": "Authors explicitly limit the work to research and acknowledge single-asset and prompt-dependency limitations.",
-      "evidence": [
-        "Limitations (page 9)"
-      ]
+      "evidence": ["Limitations (page 9)"]
     }
   ],
   "novelty_claims": [

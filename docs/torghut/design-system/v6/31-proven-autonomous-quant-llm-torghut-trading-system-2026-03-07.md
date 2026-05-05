@@ -909,9 +909,9 @@ The system should expose the following as first-class status:
 - evidence continuity state
 - promotion blocked reason
 - capital allocation stage
- - scheduler-armed state
- - simulation activity classification
- - evidence bundle eligibility state
+- scheduler-armed state
+- simulation activity classification
+- evidence bundle eligibility state
 
 The operator should never need to infer promotion truth from unrelated health endpoints.
 

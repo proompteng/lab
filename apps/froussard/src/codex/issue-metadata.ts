@@ -85,7 +85,9 @@ const parseYamlBlock = (block: string): Record<string, unknown> => {
     const indent = rawLine.match(/^\s*/)?.[0]?.length ?? 0
     const line = rawLine.trim()
 
-    while (stack.length > 1 && indent <= stack[stack.length - 1].indent) {
+    while (stack.length > 1) {
+      const top = stack[stack.length - 1]
+      if (!top || indent > top.indent) break
       stack.pop()
     }
 

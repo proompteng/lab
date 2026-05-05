@@ -178,14 +178,14 @@ Exit criteria:
 
 ## 5) Engineering Workstreams
 
-| Workstream | Primary Files/Systems | Owner Role | Output |
-| --- | --- | --- | --- |
-| Policy and gates | `autonomy/gates.py`, `autonomy/policy_checks.py`, gate policy JSON | Trading Platform | Consistent fail-closed governance |
-| Janus data pipeline | `autonomy/janus_q.py`, artifact manifests | Research Eng | Deterministic event/CAR + reward artifacts |
-| Training stack | training jobs, model registry, run manifests | ML Platform | Reproducible SFT/GRPO candidates |
-| Evaluation rigor | report generation, significance tooling | Quant Research | Promotion-grade evidence package |
-| Runtime serving | lane runtime, inference path, fallback policies | Runtime Eng | Reliable paper/live execution path |
-| Observability and ops | metrics, alerts, runbooks, on-call drills | SRE/On-call | Operable production system |
+| Workstream            | Primary Files/Systems                                              | Owner Role       | Output                                     |
+| --------------------- | ------------------------------------------------------------------ | ---------------- | ------------------------------------------ |
+| Policy and gates      | `autonomy/gates.py`, `autonomy/policy_checks.py`, gate policy JSON | Trading Platform | Consistent fail-closed governance          |
+| Janus data pipeline   | `autonomy/janus_q.py`, artifact manifests                          | Research Eng     | Deterministic event/CAR + reward artifacts |
+| Training stack        | training jobs, model registry, run manifests                       | ML Platform      | Reproducible SFT/GRPO candidates           |
+| Evaluation rigor      | report generation, significance tooling                            | Quant Research   | Promotion-grade evidence package           |
+| Runtime serving       | lane runtime, inference path, fallback policies                    | Runtime Eng      | Reliable paper/live execution path         |
+| Observability and ops | metrics, alerts, runbooks, on-call drills                          | SRE/On-call      | Operable production system                 |
 
 ## 6) Quality Gates (Promotion Requirements)
 

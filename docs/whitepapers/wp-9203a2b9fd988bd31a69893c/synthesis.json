@@ -31,10 +31,7 @@
     {
       "id": "KF-1",
       "finding": "QuantaAlpha achieves best-reported headline performance on CSI 300 against all listed baselines.",
-      "evidence": [
-        "Section 5.2",
-        "Table 1"
-      ],
+      "evidence": ["Section 5.2", "Table 1"],
       "details": {
         "quantaalpha_gpt_5_2": {
           "ic": 0.1501,
@@ -46,10 +43,7 @@
     {
       "id": "KF-2",
       "finding": "Mutation is the highest-impact evolutionary operator in ablations.",
-      "evidence": [
-        "Section 5.3",
-        "Table 2"
-      ],
+      "evidence": ["Section 5.3", "Table 2"],
       "details": {
         "remove_mutation": {
           "ic_delta": -0.0292,
@@ -61,18 +55,12 @@
     {
       "id": "KF-3",
       "finding": "Consistency, complexity, and redundancy controls each contribute to stability and returns.",
-      "evidence": [
-        "Section 5.3",
-        "Figure 4"
-      ]
+      "evidence": ["Section 5.3", "Figure 4"]
     },
     {
       "id": "KF-4",
       "finding": "Zero-shot transfer claims indicate sizable cumulative excess returns under distribution shift.",
-      "evidence": [
-        "Section 5.4",
-        "Figure 1"
-      ],
+      "evidence": ["Section 5.4", "Figure 1"],
       "details": {
         "csi500_cumulative_excess_return": "about_160_percent",
         "sp500_cumulative_excess_return": "about_137_percent"
@@ -81,11 +69,7 @@
     {
       "id": "KF-5",
       "finding": "Iterative evolution shows early sample-efficient gains with later diminishing returns.",
-      "evidence": [
-        "Section 5.4",
-        "Figure 6",
-        "Figure 8"
-      ],
+      "evidence": ["Section 5.4", "Figure 6", "Figure 8"],
       "details": {
         "suggested_optimal_iteration_window": "iteration_11_to_12",
         "approx_factor_pool_size": 350

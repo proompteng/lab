@@ -14,11 +14,7 @@
   "full_paper_reviewed": true,
   "review_scope": {
     "pages_reviewed": 43,
-    "included_sections": [
-      "main_text",
-      "references",
-      "appendices_A_to_K"
-    ]
+    "included_sections": ["main_text", "references", "appendices_A_to_K"]
   },
   "executive_summary": "ATLAS combines a multi-agent market-analysis stack with a central trading agent and introduces Adaptive-OPRO, a sequential prompt-optimization method using rolling-window performance feedback. The strongest evidence is in bearish/volatile conditions where Adaptive-OPRO often converts negative baseline returns into positive outcomes, but external validity is constrained by narrow scope (three assets, one two-month period), deterministic simulator execution, and low run count.",
   "problem_statement": "LLM trading agents need to integrate heterogeneous signals and adapt policy under delayed, noisy feedback without breaking execution interfaces or drifting into unstable behavior.",
@@ -27,10 +23,7 @@
     {
       "id": "KF-1",
       "finding": "Adaptive-OPRO shows strong gains in bearish/volatile conditions for most models, often reversing negative baseline ROI.",
-      "evidence": [
-        "Table 1",
-        "Section 6.1"
-      ],
+      "evidence": ["Table 1", "Section 6.1"],
       "details": {
         "sample_points": {
           "gpt_o4_mini": {
@@ -51,12 +44,7 @@
     {
       "id": "KF-2",
       "finding": "Reflection frequently degrades or destabilizes performance in delayed/noisy regimes.",
-      "evidence": [
-        "Section 6.1",
-        "Appendix H",
-        "Tables 1-2",
-        "Tables 9-11"
-      ],
+      "evidence": ["Section 6.1", "Appendix H", "Tables 1-2", "Tables 9-11"],
       "details": {
         "reported_signal": "reflection ROI gain vs baseline has negative correlation with baseline quality in volatile regime (r=-0.78, p<0.05)"
       }
@@ -64,10 +52,7 @@
     {
       "id": "KF-3",
       "finding": "Ablation evidence suggests market and news inputs are complementary and regime-dependent.",
-      "evidence": [
-        "Table 3",
-        "Section 6.4"
-      ],
+      "evidence": ["Table 3", "Section 6.4"],
       "details": {
         "volatile_regime_roi": {
           "atlas": 9.06,
@@ -83,18 +68,12 @@
     {
       "id": "KF-4",
       "finding": "Order-level action space surfaces execution-quality differences beyond narrative analysis quality.",
-      "evidence": [
-        "Section 6.2",
-        "Section 6.3"
-      ]
+      "evidence": ["Section 6.2", "Section 6.3"]
     },
     {
       "id": "KF-5",
       "finding": "Headline claim of consistent outperformance is directionally supported but not universal in every model/regime cell.",
-      "evidence": [
-        "Table 2",
-        "Section 6"
-      ],
+      "evidence": ["Table 2", "Section 6"],
       "details": {
         "counterexample": "Qwen3-235B bullish ROI baseline 43.91 exceeds Adaptive-OPRO 41.25"
       }

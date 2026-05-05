@@ -14,11 +14,7 @@
   "full_paper_reviewed": true,
   "review_scope": {
     "pages_reviewed": 60,
-    "included_sections": [
-      "front_matter",
-      "main_text",
-      "references"
-    ]
+    "included_sections": ["front_matter", "main_text", "references"]
   },
   "executive_summary": "This thesis studies whether option demand shocks move underlying stock prices by comparing Net Buy Pressure (NBP) and Net Open Interest (Net OI) for 20 option-active U.S. equities from January 2020 through December 2022. The claimed thesis result is that NBP is the relevant short-horizon driver, especially when VIX is high, while Net OI is mostly uninformative. The implementation conclusion for this repository is negative: the paper is not internally consistent enough for deterministic adoption, and the repo lacks the option-native data plane required to reproduce or operationalize the method.",
   "problem_statement": "The paper aims to determine whether demand shocks in equity options spill over into underlying stock returns, and whether that effect is explained by mechanical dealer hedging rather than only by private information. It further asks whether the effect is stronger in high-volatility regimes and whether NBP is a better demand proxy than Net OI.",
@@ -27,30 +23,19 @@
     {
       "id": "KF-1",
       "finding": "The thesis claims NBP is the relevant short-horizon option-demand metric and Net OI is largely uninformative for next-day returns.",
-      "evidence": [
-        "Sec. 1.4, pp. 7-9",
-        "Sec. 6.2, pp. 38-40",
-        "Sec. 7.1, pp. 50-52"
-      ],
+      "evidence": ["Sec. 1.4, pp. 7-9", "Sec. 6.2, pp. 38-40", "Sec. 7.1, pp. 50-52"],
       "details": "The document consistently describes NBP as the immediate order-flow metric and Net OI as a weaker, position-based proxy."
     },
     {
       "id": "KF-2",
       "finding": "The displayed baseline regression table does not show statistically significant NBP effects even though the conclusion claims significance.",
-      "evidence": [
-        "Table 2, pp. 38-40",
-        "Sec. 7.1, pp. 50-51"
-      ],
+      "evidence": ["Table 2, pp. 38-40", "Sec. 7.1, pp. 50-51"],
       "details": "Table 2 reports positive NBP coefficients with standard errors of similar magnitude and no significance stars, while the conclusion states NBP emerged as a significant positive predictor."
     },
     {
       "id": "KF-3",
       "finding": "The volatility-regime definition is internally inconsistent, weakening confidence in the reported high-VIX amplification claim.",
-      "evidence": [
-        "Sec. 3.5, pp. 23-24",
-        "Sec. 5.2, p. 32",
-        "Table 3, pp. 41-42"
-      ],
+      "evidence": ["Sec. 3.5, pp. 23-24", "Sec. 5.2, p. 32", "Table 3, pp. 41-42"],
       "details": "The thesis alternates between a fixed rule of VIX > 20 and a top-quartile definition, while the reported sample split in Table 3 matches neither formulation cleanly without further explanation."
     },
     {
@@ -69,12 +54,7 @@
     {
       "id": "KF-5",
       "finding": "The paper is not reproducible as written because sample counts, variable scaling, and firm-level robustness summaries are inconsistent across sections.",
-      "evidence": [
-        "Sec. 3.3, p. 20",
-        "Table 1, pp. 25-26",
-        "Table 2, p. 38",
-        "Table 4, pp. 43-45"
-      ],
+      "evidence": ["Sec. 3.3, p. 20", "Table 1, pp. 25-26", "Table 2, p. 38", "Table 4, pp. 43-45"],
       "details": "The thesis reports incompatible observation counts, unclear NBP scaling, and a firm-level summary table that conflicts with the surrounding narrative."
     }
   ],

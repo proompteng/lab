@@ -1,18 +1,11 @@
-import { createMetadataImage } from 'fumadocs-core/server'
-import { loader, type Source } from 'fumadocs-core/source'
-import { docs as generatedDocs } from '@/.source'
+import { loader } from 'fumadocs-core/source'
+import { docs as generatedDocs } from '@/.source/server'
 
 const baseUrl = '/docs'
 
-type RuntimeDocs = typeof generatedDocs
-type DocsSourceConfig = {
-  pageData: RuntimeDocs['docs'][number]
-  metaData: RuntimeDocs['meta'][number]
-}
+const mdxSource = generatedDocs.toFumadocsSource()
 
-const mdxSource = generatedDocs.toFumadocsSource() as Source<DocsSourceConfig>
-
-export const source = loader<DocsSourceConfig>({
+export const source = loader({
   baseUrl,
   source: mdxSource,
   url: (slugs, locale) => {
@@ -23,20 +16,22 @@ export const source = loader<DocsSourceConfig>({
   },
 })
 
-type DocsPage = Awaited<ReturnType<typeof source.getPages>>[number]
+type DocsPage = NonNullable<ReturnType<typeof source.getPage>>
 
-const metadata = createMetadataImage({
-  source,
-  imageRoute: '/og/docs',
-  filename: 'og.png',
-})
+const ogImageRoute = '/og/docs'
+const ogImageFilename = 'og.png'
 
-export const getPageImage = (page: DocsPage) => ({
-  ...metadata.getImageMeta(page.slugs),
-  segments: page.slugs,
-})
+const getOgImageSegments = (page: DocsPage) => [...page.slugs, ogImageFilename]
 
-export const generateOgImageParams = metadata.generateParams
+export const getPageImage = (page: DocsPage) => {
+  const segments = getOgImageSegments(page)
+  return {
+    url: `${ogImageRoute}/${segments.join('/')}`,
+    segments,
+  }
+}
+
+export const generateOgImageParams = () => source.getPages().map((page) => ({ slug: getOgImageSegments(page) }))
 
 export async function getLLMText(page: DocsPage) {
   const rawContent = await page.data.getText('processed').catch(async () => page.data.getText('raw'))

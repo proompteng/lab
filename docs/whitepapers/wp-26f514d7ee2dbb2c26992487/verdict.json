@@ -8,7 +8,7 @@
   "rejection_reasons": [
     "Reject immediate full production implementation: no in-repo BERT pretraining/fine-tuning/eval pipeline for GLUE+SQuAD+SWAG with deterministic manifests.",
     "Reject deployment claims beyond research lane: compute, dataset licensing/access, and long-duration training controls are not currently implemented in this repo.",
-    "Reject immediate baseline replacement in active product logic: this repo's current mission path is workflow/orchestration and model-serving support, not replacement of production language stack." 
+    "Reject immediate baseline replacement in active product logic: this repo's current mission path is workflow/orchestration and model-serving support, not replacement of production language stack."
   ],
   "recommendations": [
     "Proceed with this design as a documented, reproducibility-first reference implementation plan.",

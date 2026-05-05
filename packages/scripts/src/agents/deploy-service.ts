@@ -11,6 +11,12 @@ import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
 import { inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
 
+type KubernetesManifest = {
+  metadata?: {
+    annotations?: Record<string, unknown>
+  }
+}
+
 type Options = {
   kustomizePath: string
   valuesPath: string
@@ -274,6 +280,25 @@ const updateValuesFile = (
   )
 }
 
+const isArgoHookManifest = (manifest: unknown): boolean => {
+  if (!manifest || typeof manifest !== 'object') return false
+  const annotations = (manifest as KubernetesManifest).metadata?.annotations
+  return typeof annotations?.['argocd.argoproj.io/hook'] === 'string'
+}
+
+const filterDirectApplyManifests = (rendered: string): string => {
+  const kept = YAML.parseAllDocuments(rendered)
+    .filter((document) => {
+      const manifest = document.toJSON()
+      if (manifest === null || manifest === undefined) return false
+      return !isArgoHookManifest(manifest)
+    })
+    .map((document) => document.toString({ lineWidth: 120 }).trim())
+    .filter(Boolean)
+
+  return kept.length > 0 ? `${kept.join('\n---\n')}\n` : ''
+}
+
 const renderAndApply = async (kustomizePath: string) => {
   ensureCli('kubectl')
   const { helmDir, helmBinary, cleanup } = writeHelmShim()
@@ -286,8 +311,8 @@ const renderAndApply = async (kustomizePath: string) => {
   const tmpDir = mkdtempSync(`${tmpdir()}/agents-render-`)
   const tmpPath = resolve(tmpDir, 'manifests.yaml')
   try {
-    writeFileSync(tmpPath, rendered)
-    await run('kubectl', ['apply', '-f', tmpPath])
+    writeFileSync(tmpPath, filterDirectApplyManifests(rendered))
+    await run('kubectl', ['apply', '--server-side', '--force-conflicts', '-f', tmpPath])
   } finally {
     cleanup()
     try {
@@ -355,5 +380,8 @@ export const __private = {
   parseArgs,
   parseBoolean,
   resolveOptions,
+  filterDirectApplyManifests,
+  isArgoHookManifest,
+  renderAndApply,
   updateValuesFile,
 }

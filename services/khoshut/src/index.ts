@@ -1,6 +1,6 @@
 import { serve } from 'inngest/bun'
 import { getConfig } from './config'
-import { functions, inngest } from './inngest'
+import { functions, inngest, workflowRequestedEvent } from './inngest'
 import { waitForInngestHealthy } from './startup'
 
 type TriggerPayload = {
@@ -61,12 +61,7 @@ const main = async (): Promise<void> => {
         const payload = await parseTriggerPayload(request)
         const message =
           typeof payload.message === 'string' && payload.message.trim().length > 0 ? payload.message : 'Mend!'
-        const eventResult = await inngest.send({
-          name: 'khoshut/workflow.requested',
-          data: {
-            message,
-          },
-        })
+        const eventResult = await inngest.send(workflowRequestedEvent.create({ message }))
 
         return json({
           status: 'queued',

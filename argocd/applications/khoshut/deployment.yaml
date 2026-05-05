@@ -16,7 +16,7 @@ spec:
         app.kubernetes.io/name: khoshut
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-02-21T23:59:24Z"
+        kubectl.kubernetes.io/restartedAt: "2026-05-05T11:10:50Z"
     spec:
       containers:
         - name: khoshut

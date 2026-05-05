@@ -29,7 +29,7 @@ import {
 type ReplayHistorySourceKind = 'file' | 'cli' | 'service'
 export type ReplayHistorySourcePreference = 'auto' | 'cli' | 'service'
 
-type BunReadableStream = ReadableStream<Uint8Array<ArrayBufferLike>> | number | null
+type BunReadableStream = ReadableStream<Uint8Array<ArrayBufferLike>> | number | null | undefined
 
 type Mutable<T> = {
   -readonly [K in keyof T]: T[K]
@@ -530,11 +530,12 @@ const executeReplayDirectoryInternal = (
     const status: ReplayBatchResult['status'] = exitCode === 2 ? 'nondeterministic' : 'ok'
 
     let reportPath: string | undefined
-    if (options.outDir) {
+    const outDir = options.outDir
+    if (outDir) {
       const outcome = yield* Effect.tryPromise({
         try: () =>
           writeReplayBatchArtifacts({
-            outDir: options.outDir,
+            outDir,
             historyDir: options.historyDir,
             summaries,
             startedAtIso,
@@ -732,8 +733,11 @@ async function loadHistoryViaCli({
 }
 
 const buildCliEnv = (config: TemporalConfig, namespace: string): Record<string, string> => {
-  const env: Record<string, string> = {
-    ...process.env,
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === 'string') {
+      env[key] = value
+    }
   }
   env.TEMPORAL_ADDRESS = config.address
   env.TEMPORAL_NAMESPACE = namespace

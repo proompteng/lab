@@ -33,10 +33,12 @@ This runbook is the authoritative operator sequence for a production-readiness s
 Run one fresh March 13 full-day replay on the frozen digest.
 
 Replay contract for the proof lane:
+
 - historical proof manifests must use `ta_restore.mode=stateless`
 - proof reruns must hard-reset TA operator state; resuming prior checkpoint lineage is invalid for readiness signoff
 
 Required outcome:
+
 - non-zero decisions
 - non-zero executions
 - `legacy_path_count=0`
@@ -45,6 +47,7 @@ Required outcome:
 Then run three consecutive true warm-cache reruns for the same March 13 window on the same digest.
 
 Required outcome for all three warm reruns:
+
 - cache hit path actually used
 - no `cursor_tail_stable`
 - identical decision, execution, order-event, and TCA counts
@@ -62,6 +65,7 @@ python services/torghut/scripts/run_simulation_analysis.py activity ...
 Run the held-out March 2-13 window using the frozen digest and the existing empirical promotion contracts.
 
 Required artifacts:
+
 - profitability proof manifest
 - model-risk evidence package
 - quant-readiness verification output
@@ -80,6 +84,7 @@ python services/torghut/scripts/verify_quant_readiness.py \
 Execute the production-real Alpaca paper proof on the next live US equities session.
 
 Required outcome:
+
 - account lookup succeeds
 - pre-submit validation succeeds
 - order submit succeeds
@@ -99,6 +104,7 @@ python services/torghut/scripts/verify_alpaca_broker.py \
 Capture the live readiness gate on the same digest used for the replay and broker proof.
 
 Required outcome:
+
 - `GET /readyz` returns `200`
 - `GET /trading/health` returns `200`
 - Jangar dependency quorum returns `allow`
@@ -129,6 +135,7 @@ python services/torghut/scripts/assemble_production_readiness_bundle.py \
 ```
 
 The bundle must contain:
+
 - `simulation-proof.json`
 - `broker-proof.json`
 - `profitability-proof.json`

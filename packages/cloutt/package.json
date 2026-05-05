@@ -12,19 +12,19 @@
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
   "dependencies": {
-    "cdk8s": "^2.69.48",
-    "cdk8s-plus-31": "^2.1.2",
-    "constructs": "^10.4.2",
-    "js-yaml": "^4.1.0",
-    "zod": "^3.24.2"
+    "cdk8s": "^2.70.61",
+    "cdk8s-plus-31": "^2.6.43",
+    "constructs": "^10.6.0",
+    "js-yaml": "^4.1.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/jest": "^29",
-    "@types/node": "^22",
-    "cdk8s-cli": "^2.200.9",
-    "jest": "^29",
-    "ts-jest": "^29",
+    "@types/jest": "^30",
+    "@types/node": "^25",
+    "cdk8s-cli": "^2.206.10",
+    "jest": "^30",
+    "ts-jest": "^29.4.9",
     "ts-node": "^10",
-    "typescript": "^5.8.2"
+    "typescript": "^6.0.3"
   }
 }

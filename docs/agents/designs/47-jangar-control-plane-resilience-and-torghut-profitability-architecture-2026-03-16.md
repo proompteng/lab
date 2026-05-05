@@ -55,24 +55,27 @@ This document sets the merged architecture direction for the current discover cy
 
 ## Problem framing
 
-1) **Jangar reliability gap**: mixed-stage failures and stale run windows can be present while rollout/policy checks remain permissive.
-2) **Rollout ambiguity gap**: stage failures, readiness, and canary transitions are not coupled through one deterministic trust envelope.
-3) **Torghut promotion gap**: profitability outcomes exist, but candidate promotion evidence is not uniformly encoded as a contract with risk budgets and regime-aware governance.
-4) **Evidence portability gap**: current handoff does not force immutable evidence bundles on freeze/rollback events by default.
+1. **Jangar reliability gap**: mixed-stage failures and stale run windows can be present while rollout/policy checks remain permissive.
+2. **Rollout ambiguity gap**: stage failures, readiness, and canary transitions are not coupled through one deterministic trust envelope.
+3. **Torghut promotion gap**: profitability outcomes exist, but candidate promotion evidence is not uniformly encoded as a contract with risk budgets and regime-aware governance.
+4. **Evidence portability gap**: current handoff does not force immutable evidence bundles on freeze/rollback events by default.
 
 ## Candidate architecture options
 
 ### Option A — Keep status changes isolated to observability
+
 - Keep control-plane visibility but avoid enforcement changes.
 - Pros: minimal risk and implementation cost.
 - Cons: does not reduce failure blast radius and leaves no hard recovery guarantee.
 
 ### Option B — Add single hard stop on `StageStaleness`
+
 - Block all rollout when any stage is stale.
 - Pros: fast safety improvement.
 - Cons: over-broad freezes and weak support for transient infra faults.
 
 ### Option C — Segmented trust envelope + hypothesis promotion contract (recommended)
+
 - Unify reliability and profitability control into two linked envelopes:
   - Stage-level failure-class envelope for Jangar rollback and canary holdoff.
   - Quant policy envelope for Torghut with explicit evidence, confidence, and guardrails.
@@ -206,4 +209,3 @@ Mitigations:
 2. Enable canary holdoff controls from Jangar execution trust contract.
 3. Confirm backup/restore and probe recovery deltas are represented in evidence bundles.
 4. Keep rollback logs immutable and verify two successful evidence windows before full release.
-

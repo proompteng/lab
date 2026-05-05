@@ -39,11 +39,7 @@
     {
       "id": "KF-1",
       "finding": "AlphaAgentEvo-4B achieves the best reported pass-rate profile across the primary tables.",
-      "evidence": [
-        "Section 3.2",
-        "Table 1",
-        "Table 2"
-      ],
+      "evidence": ["Section 3.2", "Table 1", "Table 2"],
       "details": {
         "hs300": {
           "vr": 0.979,
@@ -65,10 +61,7 @@
     {
       "id": "KF-2",
       "finding": "Reward ablations show both exploration and consistency terms are required for efficient evolution.",
-      "evidence": [
-        "Section 3.4",
-        "Figure 4"
-      ],
+      "evidence": ["Section 3.4", "Figure 4"],
       "details": {
         "alphaevo500_pass_at_3": {
           "full": 0.65,
@@ -78,17 +71,14 @@
         "alpha158_pass_at_3": {
           "full": 0.581,
           "without_exploration": 0.513,
-          "without_consistency": 0.510
+          "without_consistency": 0.51
         }
       }
     },
     {
       "id": "KF-3",
       "finding": "Diversity analysis indicates lower concentration on repeated patterns than major baselines.",
-      "evidence": [
-        "Section 3.5",
-        "Figure 5"
-      ],
+      "evidence": ["Section 3.5", "Figure 5"],
       "details": {
         "average_similarity": 0.039,
         "max_similarity": 0.263
@@ -97,10 +87,7 @@
     {
       "id": "KF-4",
       "finding": "Appendix multi-factor portfolio comparison reports highest AER/IR and best drawdown among listed methods.",
-      "evidence": [
-        "Appendix B",
-        "Table 3"
-      ],
+      "evidence": ["Appendix B", "Table 3"],
       "details": {
         "aer": 0.129,
         "ir": 2.442,
@@ -110,10 +97,7 @@
     {
       "id": "KF-5",
       "finding": "Training analysis claims stable reward improvement with later exploration rebound.",
-      "evidence": [
-        "Appendix C",
-        "Figure 7"
-      ]
+      "evidence": ["Appendix C", "Figure 7"]
     }
   ],
   "novelty_claims": [

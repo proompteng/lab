@@ -10,10 +10,12 @@ const producerFactory = vi.fn()
 
 vi.mock('kafkajs', () => {
   return {
-    Kafka: vi.fn((config: AppConfig['kafka']) => ({
-      producer: producerFactory,
-      __config: config,
-    })),
+    Kafka: vi.fn(function (config: AppConfig['kafka']) {
+      return {
+        producer: producerFactory,
+        __config: config,
+      }
+    }),
   }
 })
 

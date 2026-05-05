@@ -20,7 +20,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: app
-          image: registry.ide-newton.ts.net/lab/froussard@sha256:beb5ccf1275c548e70eb47e76c562ff7fad1d8aa062c43ee5f276af7d5e571bb
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:ea09d6a274a7364b728a344f97e5d0cff9c6e8ca051252e95d4a564946e66b4b
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -67,9 +67,9 @@ spec:
             - name: OTEL_SERVICE_NAMESPACE
               value: froussard
             - name: FROUSSARD_VERSION
-              value: v0.568.0-84-g96d6ee0f3
+              value: v0.568.2-78-g0c2b64c03
             - name: FROUSSARD_COMMIT
-              value: 96d6ee0f36a79b537aee9a0e3cb0484933a1d98f
+              value: 0c2b64c032d7fb1a95b9c5eb42f62e71d01b5dc5
             - name: LGTM_TEMPO_TRACES_ENDPOINT
               value: http://observability-tempo-gateway.observability.svc.cluster.local:4317
             - name: LGTM_MIMIR_METRICS_ENDPOINT

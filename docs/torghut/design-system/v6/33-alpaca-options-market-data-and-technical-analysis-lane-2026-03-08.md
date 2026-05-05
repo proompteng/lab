@@ -168,13 +168,13 @@ production design is optimized for real OPRA options market data rather than for
 
 The selected runtime introduces four new components and one new Kafka principal:
 
-| Component | Type | Responsibility | Failure containment |
-| --- | --- | --- | --- |
-| `torghut-options-catalog` | `Deployment` | Poll Alpaca contract catalog, page the active universe, persist catalog/subscription state in Postgres, emit contract records | Contract discovery can lag without interrupting live equity trading |
-| `torghut-ws-options` | `Deployment` | Maintain the active Alpaca options websocket session, decode MsgPack payloads, publish trades/quotes/status | Websocket faults are isolated from equity `torghut-ws` |
-| `torghut-options-enricher` | `Deployment` | Poll REST snapshots, chain snapshots, latest quotes, and historical bars for cold-path coverage and backfill | REST throttling does not take down raw websocket ingest |
-| `torghut-options-ta` | `FlinkDeployment` | Consume raw options topics, build contract bars/features and surface features, publish derived topics, write ClickHouse | Options TA failure does not block equity TA |
-| `torghut-options` | `KafkaUser` | Dedicated principal for options produce/consume flows | Credentials are not shared with the equity lane |
+| Component                  | Type              | Responsibility                                                                                                                | Failure containment                                                 |
+| -------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `torghut-options-catalog`  | `Deployment`      | Poll Alpaca contract catalog, page the active universe, persist catalog/subscription state in Postgres, emit contract records | Contract discovery can lag without interrupting live equity trading |
+| `torghut-ws-options`       | `Deployment`      | Maintain the active Alpaca options websocket session, decode MsgPack payloads, publish trades/quotes/status                   | Websocket faults are isolated from equity `torghut-ws`              |
+| `torghut-options-enricher` | `Deployment`      | Poll REST snapshots, chain snapshots, latest quotes, and historical bars for cold-path coverage and backfill                  | REST throttling does not take down raw websocket ingest             |
+| `torghut-options-ta`       | `FlinkDeployment` | Consume raw options topics, build contract bars/features and surface features, publish derived topics, write ClickHouse       | Options TA failure does not block equity TA                         |
+| `torghut-options`          | `KafkaUser`       | Dedicated principal for options produce/consume flows                                                                         | Credentials are not shared with the equity lane                     |
 
 ### End-to-end flow
 
@@ -240,27 +240,27 @@ The implementation relies on the current official Alpaca options interfaces:
 
 The options lane introduces the following public Kafka contracts:
 
-| Topic | Producer | Key | Purpose |
-| --- | --- | --- | --- |
-| `torghut.options.contracts.v1` | `torghut-options-catalog` | `contract_symbol` | Contract catalog events and status transitions |
-| `torghut.options.trades.v1` | `torghut-ws-options` | `contract_symbol` | Raw option trades from websocket |
-| `torghut.options.quotes.v1` | `torghut-ws-options` | `contract_symbol` | Raw option quotes from websocket |
-| `torghut.options.snapshots.v1` | `torghut-options-enricher` | `contract_symbol` | REST snapshot and enrichment state |
-| `torghut.options.status.v1` | catalog, websocket, enricher | `component` | Component health, rate-limit, freshness, and degraded-mode signals |
-| `torghut.options.ta.contract-bars.1s.v1` | `torghut-options-ta` | `contract_symbol` | Contract-level 1-second bars with mark/mid context |
-| `torghut.options.ta.contract-features.v1` | `torghut-options-ta` | `contract_symbol` | Derived contract-level technical and microstructure features |
-| `torghut.options.ta.surface-features.v1` | `torghut-options-ta` | `underlying_symbol` | Derived underlying-level surface metrics |
-| `torghut.options.ta.status.v1` | `torghut-options-ta` | `component` | Flink job status, watermark lag, and output health |
+| Topic                                     | Producer                     | Key                 | Purpose                                                            |
+| ----------------------------------------- | ---------------------------- | ------------------- | ------------------------------------------------------------------ |
+| `torghut.options.contracts.v1`            | `torghut-options-catalog`    | `contract_symbol`   | Contract catalog events and status transitions                     |
+| `torghut.options.trades.v1`               | `torghut-ws-options`         | `contract_symbol`   | Raw option trades from websocket                                   |
+| `torghut.options.quotes.v1`               | `torghut-ws-options`         | `contract_symbol`   | Raw option quotes from websocket                                   |
+| `torghut.options.snapshots.v1`            | `torghut-options-enricher`   | `contract_symbol`   | REST snapshot and enrichment state                                 |
+| `torghut.options.status.v1`               | catalog, websocket, enricher | `component`         | Component health, rate-limit, freshness, and degraded-mode signals |
+| `torghut.options.ta.contract-bars.1s.v1`  | `torghut-options-ta`         | `contract_symbol`   | Contract-level 1-second bars with mark/mid context                 |
+| `torghut.options.ta.contract-features.v1` | `torghut-options-ta`         | `contract_symbol`   | Derived contract-level technical and microstructure features       |
+| `torghut.options.ta.surface-features.v1`  | `torghut-options-ta`         | `underlying_symbol` | Derived underlying-level surface metrics                           |
+| `torghut.options.ta.status.v1`            | `torghut-options-ta`         | `component`         | Flink job status, watermark lag, and output health                 |
 
 ### ClickHouse tables
 
 ClickHouse stores derived analytics only. The planned tables are:
 
-| Table | Grain | Notes |
-| --- | --- | --- |
-| `options_contract_bars_1s` | one row per contract per second | Stores microbars, mark, mid, count, size, and derived liquidity context |
-| `options_contract_features` | one row per contract per feature window | Stores realized vol, spread, imbalance, IV/Greek deltas, DTE, moneyness, and related derived features |
-| `options_surface_features` | one row per underlying per timestamp/window | Stores ATM IV, skew, term slope, breadth, and cross-contract surface summaries |
+| Table                       | Grain                                       | Notes                                                                                                 |
+| --------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `options_contract_bars_1s`  | one row per contract per second             | Stores microbars, mark, mid, count, size, and derived liquidity context                               |
+| `options_contract_features` | one row per contract per feature window     | Stores realized vol, spread, imbalance, IV/Greek deltas, DTE, moneyness, and related derived features |
+| `options_surface_features`  | one row per underlying per timestamp/window | Stores ATM IV, skew, term slope, breadth, and cross-contract surface summaries                        |
 
 ### Postgres-owned state
 

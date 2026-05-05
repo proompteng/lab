@@ -51,6 +51,7 @@ export const createObservabilityStub = () => {
   const logs: Array<{ level: string; message: string; fields?: Record<string, unknown> }> = []
   let counterIncrements = 0
   let flushes = 0
+  const histogramObservations = new Map<string, number[]>()
   const services: ObservabilityServices = {
     logger: {
       log: (level, message, fields) =>
@@ -66,9 +67,14 @@ export const createObservabilityStub = () => {
               counterIncrements += 1
             }),
         }),
-      histogram: () =>
+      histogram: (name) =>
         Effect.succeed({
-          observe: () => Effect.void,
+          observe: (value) =>
+            Effect.sync(() => {
+              const values = histogramObservations.get(name) ?? []
+              values.push(value)
+              histogramObservations.set(name, values)
+            }),
         }),
     },
     metricsExporter: {
@@ -86,5 +92,6 @@ export const createObservabilityStub = () => {
     logs,
     getCounterIncrements: () => counterIncrements,
     getFlushes: () => flushes,
+    getHistogramObservations: (name: string) => histogramObservations.get(name) ?? [],
   }
 }

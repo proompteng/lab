@@ -6,6 +6,7 @@
 - Playbook: docs/torghut/rollouts/historical-simulation-playbook.md
 
 ## Run plan (required sequence)
+
 1. Capture active Argo workflows and stop all running entries in `argo-workflows` namespace.
 2. Clean Kafka simulation topics before run.
 3. Verify/prepare dataset manifest for Feb 27 trading day.
@@ -16,6 +17,7 @@
 8. Confirm post-run restoration of simulation settings.
 
 ## Root cause and remediations
+
 - Root cause A (confirmed): `runtime_sasl_password` fallback is now fixed in-script and `manifest.kafka.runtime_sasl_password` no longer hard-blocks flows that only define base credentials.
 - Root cause B (confirmed): `replay.pace_mode=accelerated` plus sparse historical timestamps produced artificial max sleep pacing and visible stalls despite active producer writes.
 - Root cause C (confirmed): logs were only in file state updates; no heartbeat lines were printed to stdout.
@@ -28,6 +30,7 @@
     - updated image tag to `sim-run-fix-2026-03-01-02` and python `-u` invocation for immediate stdout flush.
 
 ## Commands executed
+
 - [x] Step 1: `argo list --running -n argo-workflows` (no active workflows found)
 - [x] Step 1b: `argo list --completed -n argo-workflows | grep torghut-historical-simulation`
 - [x] Step 2: list simulation topics matching `^torghut\.sim\.` and delete old simulation topics (none found)
@@ -39,6 +42,7 @@
 - [ ] Step 8: verify restoration checks
 
 ## Audit log
+
 - status: blocked
 - 2026-03-01: workflow lint passes (`./scripts/argo-lint.sh argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`).
 - 2026-03-01: `argo` run history is full of `mode=run` failures; latest runs are `sim-2026-02-27-10` (invalid confirm phrase), `sim-2026-02-27-11` (permission denied creating `vector` extension), and prior `sim-2026-02-27-xx` attempts.

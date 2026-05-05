@@ -35,18 +35,21 @@ For implementation planning, this is not a deterministic architecture blueprint 
 ## 3) Feasibility synthesis for proompteng implementation
 
 ### 3.1 Viable reusable patterns
+
 - Add **structured outputs** and **tool schemas** for any model orchestration path.
 - Use **evidence-aware prompting** with bounded tool scopes.
 - Build explicit escalation points for uncertain or non-monotonic outputs.
 - Start with read-only or draft-only assistants before adding action-taking behavior.
 
 ### 3.2 High-friction gaps from this paper
+
 - No direct, production-grade protocol for reliability across distribution shift.
 - No formal proof-level guarantees for interpretability or memory/stateful reasoning.
 - Noted vulnerabilities: brittle prompts, arithmetic and planning failures, social-bias risk.
 - Reuse potential is strongest for experiments, not immediate autonomy.
 
 ### 3.3 Recommended implementation stance
+
 - **Do not gate critical production workflows on the paper’s claims alone.**
 - Treat findings as benchmark-informed inspiration for:
   - richer benchmark design,
@@ -79,16 +82,19 @@ For implementation planning, this is not a deterministic architecture blueprint 
 ## 6) Implementation plan (whitepaper-to-repo bridge)
 
 ### Phase 1: Harness and reproducibility (2–3 weeks)
+
 - Create a versioned benchmark folder covering all major sections used in this review.
 - Pin baseline prompts and scoring criteria for code/math/tool-use + interaction.
 - Add model-vs-baseline reproducibility manifests.
 
 ### Phase 2: Safety-first pilot (2–4 weeks)
+
 - Deploy draft assistants with schema-constrained actions and read-only tool surfaces.
 - Add strict logging, explainability checks, and confidence gating.
 - Run adversarial and regression suites derived from failure patterns identified in the paper.
 
 ### Phase 3: Controlled expansion (ongoing)
+
 - Introduce limited write actions behind explicit approvals.
 - Expand memory/state handling only after audit evidence meets reliability thresholds.
 - Re-evaluate against updated model versions before any autonomous production claim.

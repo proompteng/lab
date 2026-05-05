@@ -32,10 +32,7 @@
     {
       "id": "KF-1",
       "finding": "GTBR breach carries explanatory power beyond the sign of market-maker short gamma.",
-      "evidence": [
-        "Section 4.1",
-        "Table 2"
-      ],
+      "evidence": ["Section 4.1", "Table 2"],
       "details": {
         "table_2_column_4": {
           "r30_0": 1.05,
@@ -47,28 +44,16 @@
     {
       "id": "KF-2",
       "finding": "Short gamma is not enough when the underlying remains inside GTBR; the effect becomes material only after GTBR breach.",
-      "evidence": [
-        "Section 4.1",
-        "Table 3"
-      ],
+      "evidence": ["Section 4.1", "Table 3"],
       "details": {
-        "no_gtbr_break": [
-          0.413,
-          0.286
-        ],
-        "gtbr_break": [
-          0.9,
-          0.723
-        ]
+        "no_gtbr_break": [0.413, 0.286],
+        "gtbr_break": [0.9, 0.723]
       }
     },
     {
       "id": "KF-3",
       "finding": "The normalized-return decile analysis places the momentum jump around the GTBR threshold itself.",
-      "evidence": [
-        "Section 4.3",
-        "Figure 3"
-      ],
+      "evidence": ["Section 4.3", "Figure 3"],
       "details": {
         "gtbr_crossing_percentile": 67.7
       }
@@ -76,10 +61,7 @@
     {
       "id": "KF-4",
       "finding": "Long gamma behaves as a reversion force when the underlying never breaches GTBR during the pre-close window.",
-      "evidence": [
-        "Section 4.2",
-        "Table 4"
-      ],
+      "evidence": ["Section 4.2", "Table 4"],
       "details": {
         "cumul_hit_gtbr360_zero_normgamma5": -1.25
       }
@@ -87,25 +69,14 @@
     {
       "id": "KF-5",
       "finding": "The paper's downside-move subsample shows materially stronger short-gamma and GTBR-breach effects than the upside-move subsample.",
-      "evidence": [
-        "Section 4.6",
-        "Table 7"
-      ]
+      "evidence": ["Section 4.6", "Table 7"]
     },
     {
       "id": "KF-6",
       "finding": "The forecasting section contains a material prose-table inconsistency: the text claims all OOS R-squared values are positive, but Table 10 reports negative minimum OOS R-squared values.",
-      "evidence": [
-        "Section 4.9",
-        "Table 10"
-      ],
+      "evidence": ["Section 4.9", "Table 10"],
       "details": {
-        "reported_min_oos_r2": [
-          -1.21,
-          -1.68,
-          -1.31,
-          -1.71
-        ]
+        "reported_min_oos_r2": [-1.21, -1.68, -1.31, -1.71]
       }
     }
   ],

@@ -105,7 +105,13 @@ const DOCK_ITEMS = [
   { id: 'docs', label: 'Docs', emoji: '📘', terminal: false, href: 'https://docs.proompteng.ai' },
   { id: 'terminal', label: 'proompteng', terminal: true },
   { id: 'mail', label: 'Mail', emoji: '✉️', terminal: false, href: 'mailto:greg@proompteng.ai' },
-  { id: 'settings', label: 'Settings', emoji: '⚙️', terminal: false, href: 'https://artifacthub.io/packages/helm/agents/agents' },
+  {
+    id: 'settings',
+    label: 'Settings',
+    emoji: '⚙️',
+    terminal: false,
+    href: 'https://artifacthub.io/packages/helm/agents/agents',
+  },
 ] as const
 
 export default function DesktopHero() {
@@ -329,13 +335,13 @@ export default function DesktopHero() {
             onClosedStateChange={setIsTerminalClosed}
           />
 
-        <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-[90] flex justify-center px-3 pb-4">
-              <Dock
-                items={DOCK_ITEMS}
-                menuBarButtonRef={menuBarButtonRef}
-                onDockItemClick={handleDockItemClick}
-                isTerminalClosed={isTerminalClosed}
-              />
+          <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-[90] flex justify-center px-3 pb-4">
+            <Dock
+              items={DOCK_ITEMS}
+              menuBarButtonRef={menuBarButtonRef}
+              onDockItemClick={handleDockItemClick}
+              isTerminalClosed={isTerminalClosed}
+            />
           </footer>
           {isAboutDialogOpen ? (
             <div
@@ -715,20 +721,20 @@ function DockButton({
   }
 
   return (
-      <motion.button
-        type="button"
-        ref={assignButtonRef}
-        onPointerEnter={onHoverStart}
-        onPointerLeave={onHoverEnd}
-        onClick={() => {
-          onDockItemClick(dockItem)
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== ' ' && event.key !== 'Enter') return
-          event.preventDefault()
-          onDockItemClick(dockItem)
-        }}
-        className={cn(
+    <motion.button
+      type="button"
+      ref={assignButtonRef}
+      onPointerEnter={onHoverStart}
+      onPointerLeave={onHoverEnd}
+      onClick={() => {
+        onDockItemClick(dockItem)
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== ' ' && event.key !== 'Enter') return
+        event.preventDefault()
+        onDockItemClick(dockItem)
+      }}
+      className={cn(
         'relative isolate inline-flex shrink-0 items-center justify-center overflow-visible p-0 leading-none text-zinc-100',
         'transform-gpu will-change-transform',
         showTooltip ? 'z-50' : 'z-10',

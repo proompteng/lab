@@ -10,7 +10,7 @@ const hostname = process.env.POD_NAME ?? process.env.HOSTNAME ?? os.hostname()
 const lokiEndpoint = process.env.LGTM_LOKI_ENDPOINT
 const lokiBasicAuth = process.env.LGTM_LOKI_BASIC_AUTH
 
-const destinations: { stream: NodeJS.WritableStream }[] = [{ stream: process.stdout }]
+const destinations: pino.StreamEntry[] = [{ stream: process.stdout }]
 
 if (lokiEndpoint) {
   try {

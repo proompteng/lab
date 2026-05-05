@@ -88,23 +88,23 @@ now explicitly non-authoritative for promotion and completion gating.
 The decisive full-session proving run was `sim-2026-03-06-full-day-r1` using dataset
 `torghut-full-day-20260306` and candidate `intraday_tsmom_v1@prod`.
 
-| Field | Result |
-|---|---|
-| Coverage | `1.0` (`PASS`) over the full `390` minute regular session |
-| Trade decisions | `1145` |
-| Executions | `528` |
-| Execution TCA rows | `528` |
-| Execution order events | `520` |
-| Decision-to-execution rate | `46.1%` |
-| Median absolute slippage | `0.0872` bps |
-| P95 absolute slippage | `0.6614` bps |
-| Max absolute slippage | `1.0015` bps |
-| Fill-price budget | `within_budget` (`12` bps median budget, `25` bps p95 budget) |
-| Gross PnL | `66.16` |
-| Net estimated PnL | `66.16` |
-| Realized PnL | `-65.18` |
-| Unrealized PnL | `131.34` |
-| Open lots at end of run | `258` |
+| Field                      | Result                                                        |
+| -------------------------- | ------------------------------------------------------------- |
+| Coverage                   | `1.0` (`PASS`) over the full `390` minute regular session     |
+| Trade decisions            | `1145`                                                        |
+| Executions                 | `528`                                                         |
+| Execution TCA rows         | `528`                                                         |
+| Execution order events     | `520`                                                         |
+| Decision-to-execution rate | `46.1%`                                                       |
+| Median absolute slippage   | `0.0872` bps                                                  |
+| P95 absolute slippage      | `0.6614` bps                                                  |
+| Max absolute slippage      | `1.0015` bps                                                  |
+| Fill-price budget          | `within_budget` (`12` bps median budget, `25` bps p95 budget) |
+| Gross PnL                  | `66.16`                                                       |
+| Net estimated PnL          | `66.16`                                                       |
+| Realized PnL               | `-65.18`                                                      |
+| Unrealized PnL             | `131.34`                                                      |
+| Open lots at end of run    | `258`                                                         |
 
 The profitability interpretation matters. This run proves replay coverage, execution quality, and truthful evidence
 assembly. It does not by itself prove durable live profitability. End-of-window net stayed positive because of
@@ -185,27 +185,27 @@ This document should now be read as both:
 
 ### What appears genuinely strong in source today
 
-| Area | Source evidence | Assessment |
-|---|---|---|
-| Runtime control loop | `services/torghut/app/trading/scheduler.py` | Broad end-to-end orchestration exists and appears production-oriented, although too large for safe iteration. |
-| Risk controls | `services/torghut/app/trading/risk.py` | Deterministic risk authority appears real and should remain final authority. |
-| Execution policy | `services/torghut/app/trading/execution_policy.py` | Execution policy sophistication is ahead of the alpha plane and should be preserved. |
-| Adapters | `services/torghut/app/trading/execution_adapters.py` | Broker and simulation abstraction exists and is worth keeping. |
-| Persistence and audit | `services/torghut/app/models/entities.py` | The lineage and audit backbone is already substantial. |
-| Governance lane | `services/torghut/app/trading/autonomy/lane.py`, `services/torghut/app/trading/autonomy/policy_checks.py` | Promotion, rollback, and prerequisite orchestration are structurally real, but currently able to consume synthetic evidence. |
-| LLM fail-closed posture | `services/torghut/app/trading/llm/review_engine.py`, `services/torghut/app/trading/llm/dspy_programs/modules.py` | Good safety posture for advisory use; not evidence of alpha maturity. |
+| Area                    | Source evidence                                                                                                  | Assessment                                                                                                                   |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Runtime control loop    | `services/torghut/app/trading/scheduler.py`                                                                      | Broad end-to-end orchestration exists and appears production-oriented, although too large for safe iteration.                |
+| Risk controls           | `services/torghut/app/trading/risk.py`                                                                           | Deterministic risk authority appears real and should remain final authority.                                                 |
+| Execution policy        | `services/torghut/app/trading/execution_policy.py`                                                               | Execution policy sophistication is ahead of the alpha plane and should be preserved.                                         |
+| Adapters                | `services/torghut/app/trading/execution_adapters.py`                                                             | Broker and simulation abstraction exists and is worth keeping.                                                               |
+| Persistence and audit   | `services/torghut/app/models/entities.py`                                                                        | The lineage and audit backbone is already substantial.                                                                       |
+| Governance lane         | `services/torghut/app/trading/autonomy/lane.py`, `services/torghut/app/trading/autonomy/policy_checks.py`        | Promotion, rollback, and prerequisite orchestration are structurally real, but currently able to consume synthetic evidence. |
+| LLM fail-closed posture | `services/torghut/app/trading/llm/review_engine.py`, `services/torghut/app/trading/llm/dspy_programs/modules.py` | Good safety posture for advisory use; not evidence of alpha maturity.                                                        |
 
 ### What is still scaffolded, synthetic, or contract-only
 
-| Area | Source evidence | Why it matters |
-|---|---|---|
-| Forecasting | `services/torghut/app/trading/forecasting.py:1`, `_DeterministicAdapter` | Forecast-shaped artifacts can exist without trained, calibrated model inference. |
-| Benchmark parity | `services/torghut/app/trading/parity.py`, `_deterministic_ratio(...)`, `generation_mode="deterministic_*"` | Promotion artifacts can look complete while remaining synthetic. |
-| Janus-Q | `services/torghut/app/trading/autonomy/janus_q.py:1` | Reward and event-study evidence remain deterministic scaffolds. |
-| LEAN runner | `services/torghut/app/lean_runner.py`, `_deterministic_backtest_result(...)` | Backtest/shadow surfaces can read as real while remaining placeholders. |
-| Regime HMM | `services/torghut/app/trading/regime_hmm.py` | The schema and parsing surface exists, but that is not the same as a trained regime model. |
-| Strategy runtime | `services/torghut/app/trading/strategy_runtime.py` | Runtime strategy logic remains plugin-oriented and deterministic rather than spec-compiled. |
-| Alpha research | `services/torghut/app/trading/alpha/data_sources.py` and related modules | The current baseline is useful but too narrow and too light for production promotion authority. |
+| Area             | Source evidence                                                                                            | Why it matters                                                                                  |
+| ---------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Forecasting      | `services/torghut/app/trading/forecasting.py:1`, `_DeterministicAdapter`                                   | Forecast-shaped artifacts can exist without trained, calibrated model inference.                |
+| Benchmark parity | `services/torghut/app/trading/parity.py`, `_deterministic_ratio(...)`, `generation_mode="deterministic_*"` | Promotion artifacts can look complete while remaining synthetic.                                |
+| Janus-Q          | `services/torghut/app/trading/autonomy/janus_q.py:1`                                                       | Reward and event-study evidence remain deterministic scaffolds.                                 |
+| LEAN runner      | `services/torghut/app/lean_runner.py`, `_deterministic_backtest_result(...)`                               | Backtest/shadow surfaces can read as real while remaining placeholders.                         |
+| Regime HMM       | `services/torghut/app/trading/regime_hmm.py`                                                               | The schema and parsing surface exists, but that is not the same as a trained regime model.      |
+| Strategy runtime | `services/torghut/app/trading/strategy_runtime.py`                                                         | Runtime strategy logic remains plugin-oriented and deterministic rather than spec-compiled.     |
+| Alpha research   | `services/torghut/app/trading/alpha/data_sources.py` and related modules                                   | The current baseline is useful but too narrow and too light for production promotion authority. |
 
 The important operational change is that these scaffolded surfaces no longer count as passing promotion evidence on the
 doc29 path. They can remain in source temporarily without being allowed to silently satisfy paper or live gates.
@@ -433,12 +433,12 @@ Promotion gates must evaluate both.
 These values are intentionally conservative starting defaults. They should be moved into config and tuned from real
 observations, but they must exist as explicit numbers rather than prose-only "within thresholds" language.
 
-| Target | Minimum provenance | Minimum maturity | Minimum sample / coverage | Calibration / deviation thresholds |
-|---|---|---|---|---|
-| Research acceptance | `historical_market_replay` | `calibrated` | `>= 250` simulated decisions across `>= 5` purged folds | No placeholder or synthetic-generated artifact may be counted as passing evidence |
-| Paper promotion | `historical_market_replay` | `calibrated` | `>= 500` simulated decisions and `100%` required benchmark-family coverage | Median simulated fill-price error budget defined for the target venue before paper starts |
-| Live canary | `paper_runtime_observed` | `empirically_validated` | `>= 40` market-session samples | Shadow/live decision alignment `>= 95%`; average realized slippage must remain within the hypothesis budget |
-| Live scale-up | `live_runtime_observed` | `empirically_validated` | `>= 120` market-session samples across `>= 10` sessions | Rolling post-cost expectancy `> 0`; average absolute slippage within budget for `3` consecutive windows; no active continuity or drift gate failure |
+| Target              | Minimum provenance         | Minimum maturity        | Minimum sample / coverage                                                  | Calibration / deviation thresholds                                                                                                                  |
+| ------------------- | -------------------------- | ----------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Research acceptance | `historical_market_replay` | `calibrated`            | `>= 250` simulated decisions across `>= 5` purged folds                    | No placeholder or synthetic-generated artifact may be counted as passing evidence                                                                   |
+| Paper promotion     | `historical_market_replay` | `calibrated`            | `>= 500` simulated decisions and `100%` required benchmark-family coverage | Median simulated fill-price error budget defined for the target venue before paper starts                                                           |
+| Live canary         | `paper_runtime_observed`   | `empirically_validated` | `>= 40` market-session samples                                             | Shadow/live decision alignment `>= 95%`; average realized slippage must remain within the hypothesis budget                                         |
+| Live scale-up       | `live_runtime_observed`    | `empirically_validated` | `>= 120` market-session samples across `>= 10` sessions                    | Rolling post-cost expectancy `> 0`; average absolute slippage within budget for `3` consecutive windows; no active continuity or drift gate failure |
 
 The critical rule is that placeholder evidence can still exist for scaffolding, but it must be ineligible for paper or
 live promotion.
@@ -469,19 +469,19 @@ explicit schema.
 
 ## Recommended Source Changes
 
-| Source area | Recommended action |
-|---|---|
-| `services/torghut/app/trading/scheduler.py` | Split into internal pipelines after promotion-truthfulness work is underway; keep behavior unchanged during the split. |
-| `services/torghut/app/trading/forecasting.py` | Preserve contract types, replace deterministic producers with model-serving and calibration-backed producers. |
-| `services/torghut/app/trading/parity.py` | Convert from synthetic report generation into report assembly over empirical benchmark outputs. |
-| `services/torghut/app/lean_runner.py` | Either implement real backtest/shadow integration or rename/block the current deterministic output from promotion authority. |
-| `services/torghut/app/trading/regime_hmm.py` | Keep the schema/parser role and add real regime producers elsewhere. |
-| `services/torghut/app/trading/strategy_runtime.py` | Move toward `StrategySpecV2`-compiled runtime behavior instead of manual plugin-only registration. |
-| `services/torghut/app/trading/autonomy/lane.py` | Preserve the orchestration skeleton but make it consume truthful evaluator outputs. |
-| `services/torghut/app/trading/autonomy/policy_checks.py` | Add provenance, maturity, calibration, and shadow/live deviation checks. |
-| `services/torghut/app/trading/llm/dspy_programs/modules.py` | Keep for research/advisory and typed critique, not direct execution authority. |
-| `services/torghut/app/trading/llm/review_engine.py` | Keep advisory/fail-closed behavior; do not let it become proof of alpha quality. |
-| `services/torghut/app/trading/alpha/*` | Expand beyond narrow offline baselines into cost-aware and portfolio-aware research families. |
+| Source area                                                 | Recommended action                                                                                                           |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `services/torghut/app/trading/scheduler.py`                 | Split into internal pipelines after promotion-truthfulness work is underway; keep behavior unchanged during the split.       |
+| `services/torghut/app/trading/forecasting.py`               | Preserve contract types, replace deterministic producers with model-serving and calibration-backed producers.                |
+| `services/torghut/app/trading/parity.py`                    | Convert from synthetic report generation into report assembly over empirical benchmark outputs.                              |
+| `services/torghut/app/lean_runner.py`                       | Either implement real backtest/shadow integration or rename/block the current deterministic output from promotion authority. |
+| `services/torghut/app/trading/regime_hmm.py`                | Keep the schema/parser role and add real regime producers elsewhere.                                                         |
+| `services/torghut/app/trading/strategy_runtime.py`          | Move toward `StrategySpecV2`-compiled runtime behavior instead of manual plugin-only registration.                           |
+| `services/torghut/app/trading/autonomy/lane.py`             | Preserve the orchestration skeleton but make it consume truthful evaluator outputs.                                          |
+| `services/torghut/app/trading/autonomy/policy_checks.py`    | Add provenance, maturity, calibration, and shadow/live deviation checks.                                                     |
+| `services/torghut/app/trading/llm/dspy_programs/modules.py` | Keep for research/advisory and typed critique, not direct execution authority.                                               |
+| `services/torghut/app/trading/llm/review_engine.py`         | Keep advisory/fail-closed behavior; do not let it become proof of alpha quality.                                             |
+| `services/torghut/app/trading/alpha/*`                      | Expand beyond narrow offline baselines into cost-aware and portfolio-aware research families.                                |
 
 ## Phased Delivery Order
 
