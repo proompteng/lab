@@ -20,6 +20,10 @@ spec:
       nodeSelector:
         kubernetes.io/arch: arm64
       serviceAccountName: torghut-runtime
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: torghut-options-enricher
           image: registry.ide-newton.ts.net/lab/torghut@sha256:d278a4d4267f011ba559dc51401acc6ac8f43d44a766b61f29a4d01859cce5cf
@@ -90,3 +94,8 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
