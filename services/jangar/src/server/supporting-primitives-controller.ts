@@ -49,6 +49,7 @@ import {
   SWARM_REQUIREMENT_MAX_ATTEMPTS,
   SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT,
   SWARM_SCHEDULE_ANNOTATION_IDENTITY,
+  SWARM_SCHEDULE_ANNOTATION_NATS_URL,
   type StageName,
   type StageTargetRef,
 } from '~/server/supporting-primitives-swarm-config'
@@ -151,6 +152,8 @@ const SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS = 30_000
 const SCHEDULE_RUNNER_NAMESPACE_ENV = 'JANGAR_POD_NAMESPACE'
 const KUBERNETES_SERVICE_HOST_ENV = 'KUBERNETES_SERVICE_HOST'
 const KUBERNETES_SERVICE_PORT_ENV = 'KUBERNETES_SERVICE_PORT'
+const SWARM_STAGE_LABEL = 'swarm.proompteng.ai/stage'
+const SWARM_NAME_LABEL = 'swarm.proompteng.ai/name'
 
 const nowIso = () => new Date().toISOString()
 
@@ -286,6 +289,43 @@ const admissionStatusForStage = (admission: SwarmLaunchAdmission) => ({
   recoveryCaseSetDigest: admission.passport?.recovery_case_set_digest ?? null,
   requiredRuntimeKits: admission.passport?.required_runtime_kits ?? [],
 })
+
+const resolveSwarmScheduleStage = (schedule: Record<string, unknown>): StageName | null => {
+  const labels = asRecord(readNested(schedule, ['metadata', 'labels'])) ?? {}
+  if (!asString(labels[SWARM_NAME_LABEL])) return null
+  const stage = asString(labels[SWARM_STAGE_LABEL])?.trim().toLowerCase()
+  if (!stage) return null
+  return STAGE_NAMES.find((candidate) => candidate === stage) ?? null
+}
+
+const resolveScheduleLaunchAdmission = (schedule: Record<string, unknown>): SwarmLaunchAdmission | null => {
+  const stage = resolveSwarmScheduleStage(schedule)
+  if (!stage) return null
+  const enforced = shouldEnforceSwarmRuntimeAdmission()
+  const annotations = asRecord(readNested(schedule, ['metadata', 'annotations'])) ?? {}
+  const natsUrl = asString(annotations[SWARM_SCHEDULE_ANNOTATION_NATS_URL]) ?? undefined
+  const snapshot = enforced ? buildRuntimeAdmissionSnapshot({ now: new Date(Date.now()), natsUrl }) : null
+  return resolveLaunchAdmission({ stage, snapshot, enforced })
+}
+
+const withScheduleAdmissionTrace = (
+  schedule: Record<string, unknown>,
+  admission: SwarmLaunchAdmission | null,
+): Record<string, unknown> => {
+  if (!admission?.admitted || Object.keys(admission.annotations).length === 0) return schedule
+  const metadata = asRecord(schedule.metadata) ?? {}
+  const annotations = asRecord(metadata.annotations) ?? {}
+  return {
+    ...schedule,
+    metadata: {
+      ...metadata,
+      annotations: {
+        ...annotations,
+        ...admission.annotations,
+      },
+    },
+  }
+}
 
 const shouldStart = () => {
   if (isRuntimeTestEnv()) return false
@@ -1130,6 +1170,35 @@ const buildScheduleRunnerCommand = (): string =>
     '})',
   ].join('\n')
 
+const deleteScheduleRunnerResources = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  scheduleName: string,
+  namespace: string,
+) => {
+  await Promise.allSettled([
+    kube.delete('configmap', makeName(scheduleName, 'template'), namespace, { wait: false }),
+    kube.delete('cronjob', makeName(scheduleName, 'cron'), namespace, { wait: false }),
+  ])
+}
+
+const setScheduleAdmissionBlockedStatus = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  schedule: Record<string, unknown>,
+  admission: SwarmLaunchAdmission,
+) => {
+  const status = asRecord(schedule.status) ?? {}
+  const conditions = upsertCondition(
+    normalizeConditions(status.conditions),
+    buildReadyCondition(false, admission.reason, admission.message),
+  )
+  await setStatus(kube, schedule, {
+    observedGeneration: asRecord(schedule.metadata)?.generation ?? 0,
+    phase: 'AdmissionBlocked',
+    lastRunTime: asString(status.lastRunTime) ?? undefined,
+    conditions,
+  })
+}
+
 const reconcileScheduleRunnerStatus = async (
   kube: ReturnType<typeof createKubernetesClient>,
   schedule: Record<string, unknown>,
@@ -1137,6 +1206,12 @@ const reconcileScheduleRunnerStatus = async (
 ) => {
   const status = asRecord(schedule.status) ?? {}
   const scheduleName = asString(readNested(schedule, ['metadata', 'name'])) ?? 'schedule'
+  const admission = resolveScheduleLaunchAdmission(schedule)
+  if (admission && !admission.admitted) {
+    await deleteScheduleRunnerResources(kube, scheduleName, namespace)
+    await setScheduleAdmissionBlockedStatus(kube, schedule, admission)
+    return
+  }
   const cronJobName = makeName(scheduleName, 'cron')
   const cronResource = await kube.get('cronjob', cronJobName, namespace)
   const lastRunTime = asString(readNested(cronResource ?? {}, ['status', 'lastScheduleTime'])) ?? undefined
@@ -1176,9 +1251,19 @@ const reconcileSchedule = async (
   }
 
   try {
+    const admission = resolveScheduleLaunchAdmission(schedule)
+    if (admission && !admission.admitted) {
+      await deleteScheduleRunnerResources(kube, scheduleName, namespace)
+      await setScheduleAdmissionBlockedStatus(kube, schedule, admission)
+      return
+    }
     const target = await resolveScheduleTarget(kube, schedule)
     const deliveryPlaceholder = '__JANGAR_DELIVERY_ID__'
-    const template = buildScheduleRunTemplate(schedule, target, deliveryPlaceholder)
+    const template = buildScheduleRunTemplate(
+      withScheduleAdmissionTrace(schedule, admission),
+      target,
+      deliveryPlaceholder,
+    )
     const configName = makeName(scheduleName, 'template')
     const ownerReferences = buildOwnerRefs(schedule)
     const labels = { 'schedules.proompteng.ai/schedule': scheduleName }
@@ -2648,6 +2733,7 @@ export const __test__ = {
   cadenceToCron,
   deriveStageStaggerMinute,
   isSwarmStatusOnlyEvent,
+  reconcileSchedule,
   reconcileScheduleRunnerStatus,
   reconcileTool,
   reconcileSwarm,

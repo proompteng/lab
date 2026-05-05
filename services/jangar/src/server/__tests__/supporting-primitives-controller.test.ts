@@ -349,6 +349,134 @@ describe('supporting primitives controller', () => {
     })
   })
 
+  it('blocks swarm schedule runners when the current stage passport is not allowed', async () => {
+    process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT = '1'
+    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(
+      buildAdmissionSnapshot({
+        swarm_plan: {
+          decision: 'hold',
+          reason_codes: ['runtime_kit_component_missing:nats_cli'],
+        },
+      }),
+    )
+
+    const apply = vi.fn().mockResolvedValue({})
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue(null)
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { apply, applyStatus, get, delete: deleteFn } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-plan-sched',
+        namespace: 'agents',
+        generation: 4,
+        labels: {
+          'swarm.proompteng.ai/name': 'jangar-control-plane',
+          'swarm.proompteng.ai/stage': 'plan',
+        },
+        annotations: {
+          'swarm.proompteng.ai/nats-url': 'nats://nats.nats.svc.cluster.local:4222',
+        },
+      },
+      spec: {
+        cron: '*/10 * * * *',
+        targetRef: { kind: 'AgentRun', name: 'agentrun-plan-template', namespace: 'agents' },
+      },
+    }
+
+    await __test__.reconcileSchedule(kube, schedule, 'agents')
+
+    expect(apply).not.toHaveBeenCalled()
+    expect(deleteFn).toHaveBeenCalledWith('configmap', 'jangar-control-plane-plan-sched-template', 'agents', {
+      wait: false,
+    })
+    expect(deleteFn).toHaveBeenCalledWith('cronjob', 'jangar-control-plane-plan-sched-cron', 'agents', {
+      wait: false,
+    })
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(status.phase).toBe('AdmissionBlocked')
+    const ready = (Array.isArray(status.conditions) ? status.conditions : []).find(
+      (condition) => condition.type === 'Ready',
+    )
+    expect(ready?.reason).toBe('RuntimeAdmissionBlocked')
+    expect(String(ready?.message)).toContain('runtime_kit_component_missing:nats_cli')
+  })
+
+  it('refreshes swarm schedule run templates with the current stage passport', async () => {
+    process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT = '1'
+    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(
+      buildAdmissionSnapshot({
+        swarm_plan: {
+          admission_passport_id: 'passport:swarm_plan:current',
+          runtime_kit_set_digest: 'runtime-digest:current',
+          required_runtime_kits: ['runtime-kit:collaboration:current'],
+        },
+      }),
+    )
+
+    const target = {
+      kind: 'AgentRun',
+      metadata: { name: 'agentrun-plan-template', namespace: 'agents' },
+      spec: {
+        agentRef: { name: 'codex-spark-agent' },
+        runtime: { type: 'job' },
+      },
+    }
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) return target
+      return null
+    })
+    const apply = vi.fn().mockResolvedValue({})
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const kube = { get, apply, applyStatus, delete: vi.fn() } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-plan-sched',
+        namespace: 'agents',
+        generation: 5,
+        labels: {
+          'swarm.proompteng.ai/name': 'jangar-control-plane',
+          'swarm.proompteng.ai/stage': 'plan',
+        },
+        annotations: {
+          'swarm.proompteng.ai/nats-url': 'nats://nats.nats.svc.cluster.local:4222',
+          'swarm.proompteng.ai/admission-passport-id': 'passport:swarm_plan:stale',
+          'swarm.proompteng.ai/admission-decision': 'allow',
+        },
+      },
+      spec: {
+        cron: '*/10 * * * *',
+        targetRef: { kind: 'AgentRun', name: 'agentrun-plan-template', namespace: 'agents' },
+      },
+    }
+
+    await __test__.reconcileSchedule(kube, schedule, 'agents')
+
+    const configMap = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((payload) => payload.kind === 'ConfigMap') as { data?: Record<string, string> } | undefined
+    const runTemplate = JSON.parse(configMap?.data?.['run.json'] ?? '{}') as {
+      metadata?: Record<string, unknown>
+      spec?: Record<string, unknown>
+    }
+
+    expect(runTemplate.metadata?.annotations).toMatchObject({
+      'swarm.proompteng.ai/admission-passport-id': 'passport:swarm_plan:current',
+      'swarm.proompteng.ai/admission-decision': 'allow',
+      'swarm.proompteng.ai/runtime-kit-set-digest': 'runtime-digest:current',
+    })
+    expect(runTemplate.spec?.parameters).toMatchObject({
+      swarmAdmissionPassportId: 'passport:swarm_plan:current',
+      swarmRuntimeKitSetDigest: 'runtime-digest:current',
+      swarmRequiredRuntimeKits: 'runtime-kit:collaboration:current',
+    })
+  })
+
   it('skips apply for equivalent schedule resources', async () => {
     const apply = vi.fn().mockResolvedValue({})
     const get = vi.fn().mockResolvedValue({
