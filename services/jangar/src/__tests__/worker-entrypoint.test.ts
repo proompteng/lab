@@ -32,4 +32,18 @@ describe('worker entrypoint', () => {
 
     expect(matches).toHaveLength(2)
   })
+
+  it('installs workspace tool build dependencies with dev dependencies enabled', () => {
+    const dockerfile = readFileSync(new URL('../../Dockerfile', import.meta.url), 'utf8')
+    const workspaceToolsStage = dockerfile.match(
+      /FROM tools AS workspace-tools-deps[\s\S]*?FROM workspace-tools-deps AS codex-build/,
+    )?.[0]
+
+    expect(workspaceToolsStage).toBeDefined()
+    expect(workspaceToolsStage!.indexOf('ENV NODE_ENV=development')).toBeLessThan(
+      workspaceToolsStage!.indexOf('bun install --no-save --ignore-scripts --linker=hoisted'),
+    )
+    expect(workspaceToolsStage).toContain('bun install --no-save --ignore-scripts --linker=hoisted')
+    expect(workspaceToolsStage).toContain('--filter @proompteng/codex')
+  })
 })
