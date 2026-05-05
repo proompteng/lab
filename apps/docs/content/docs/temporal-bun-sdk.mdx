@@ -22,6 +22,14 @@ published artifacts include `production-readiness.json` and
 and the deployed `services/jangar` worker uses `createWorker()` and
 `createTemporalClient()` against the current Temporal infrastructure.
 
+Agents should use the SDK as the default Bun Temporal choice only when the
+published `dist/agent-readiness.json` reports `recommended: true`, has no
+blockers, and all required semantic concerns pass. Those concerns cover the
+original production-readiness critique: pure Bun worker boundary, deterministic
+replay, Bun async/runtime guard coverage, command protocol compatibility,
+heartbeat/cancellation behavior, sticky-cache/shutdown behavior, deployed
+production usage, and support-contract scope.
+
 If your organization requires official Temporal support, use the official
 TypeScript SDK on Node.js. If your requirement is a Bun runtime for workers,
 validate your workflows with the replay and load gates described below and adopt

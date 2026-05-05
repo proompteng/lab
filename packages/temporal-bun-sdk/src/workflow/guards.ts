@@ -167,7 +167,6 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
 
   const globalRef = globalThis as unknown as Record<symbol, unknown>
 
-  // TODO(TBS-NDG-001): Date constructor deterministic wrapper.
   const OriginalDate = Date
   globalRef[ORIGINAL_DATE_SYMBOL] = OriginalDate
   const originalDateNow = OriginalDate.now.bind(OriginalDate)
@@ -230,7 +229,6 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
   Object.setPrototypeOf(PatchedDate, OriginalDate)
   globalThis.Date = PatchedDate
 
-  // TODO(TBS-NDG-001): Date.now deterministic wrapper.
   Date.now = () => {
     const ctx = currentWorkflowLogContext()
     if (!ctx) {
@@ -254,7 +252,6 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
     return ctx.guard.nextTime(originalDateNow)
   }
 
-  // TODO(TBS-NDG-001): Math.random deterministic wrapper.
   const originalRandom = Math.random.bind(Math)
   globalRef[ORIGINAL_MATH_RANDOM_SYMBOL] = originalRandom
   Math.random = () => {
@@ -285,7 +282,6 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
     return ctx.guard.nextRandom(originalRandom)
   }
 
-  // TODO(TBS-NDG-001): crypto.randomUUID deterministic wrapper.
   const cryptoRef = (globalThis as unknown as { crypto?: unknown }).crypto as
     | { randomUUID?: () => string; getRandomValues?: <T extends ArrayBufferView>(array: T) => T }
     | undefined
@@ -337,7 +333,6 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
     }
   }
 
-  // TODO(TBS-NDG-001): crypto.getRandomValues deterministic wrapper.
   if (cryptoRef && typeof cryptoRef.getRandomValues === 'function') {
     const original = cryptoRef.getRandomValues.bind(cryptoRef)
     globalRef[ORIGINAL_CRYPTO_GET_RANDOM_VALUES_SYMBOL] = original
@@ -385,7 +380,6 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
     }
   }
 
-  // TODO(TBS-NDG-001): fetch side-effect guard.
   const originalFetch = typeof fetch === 'function' ? fetch.bind(globalThis) : undefined
   if (originalFetch) {
     globalRef[ORIGINAL_FETCH_SYMBOL] = originalFetch
@@ -408,7 +402,6 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
     }) as typeof fetch
   }
 
-  // TODO(TBS-NDG-001): setTimeout guard.
   const originalSetTimeout = typeof setTimeout === 'function' ? setTimeout.bind(globalThis) : undefined
   if (originalSetTimeout) {
     globalRef[ORIGINAL_SET_TIMEOUT_SYMBOL] = originalSetTimeout
@@ -431,7 +424,6 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
     }) as typeof setTimeout
   }
 
-  // TODO(TBS-NDG-001): setInterval guard.
   const originalSetInterval = typeof setInterval === 'function' ? setInterval.bind(globalThis) : undefined
   if (originalSetInterval) {
     globalRef[ORIGINAL_SET_INTERVAL_SYMBOL] = originalSetInterval
@@ -454,7 +446,6 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
     }) as typeof setInterval
   }
 
-  // TODO(TBS-NDG-001): performance.now guard.
   const originalPerformanceNow =
     typeof globalThis.performance?.now === 'function'
       ? globalThis.performance.now.bind(globalThis.performance)
@@ -480,7 +471,6 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
     }
   }
 
-  // TODO(TBS-NDG-001): WebSocket guard.
   const originalWebSocket = (globalThis as unknown as { WebSocket?: unknown }).WebSocket
   if (typeof originalWebSocket === 'function') {
     globalRef[ORIGINAL_WEBSOCKET_SYMBOL] = originalWebSocket
@@ -504,7 +494,6 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
     }
   }
 
-  // TODO(TBS-NDG-001): Bun.spawn guard.
   const maybeBun = (globalThis as unknown as { Bun?: unknown }).Bun as
     | { spawn?: (...args: unknown[]) => unknown; nanoseconds?: () => number }
     | undefined
@@ -529,7 +518,6 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
     }
   }
 
-  // TODO(TBS-NDG-001): Bun.nanoseconds guard.
   if (maybeBun?.nanoseconds && typeof maybeBun.nanoseconds === 'function') {
     globalRef[ORIGINAL_BUN_NANOSECONDS_SYMBOL] = maybeBun.nanoseconds.bind(maybeBun)
     maybeBun.nanoseconds = () => {

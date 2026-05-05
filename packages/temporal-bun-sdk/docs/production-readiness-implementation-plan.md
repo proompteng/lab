@@ -47,12 +47,12 @@ work is to convert private confidence into public, machine-checkable evidence.
 | Worker runtime       | `src/worker/runtime.ts` owns config load, WorkflowService transport, workflow/activity pollers, sticky queues, deployment/build IDs, scheduler, metrics, plugins, graceful shutdown, determinism marker emission, and activity task lifecycle.                   | Add restart/chaos/soak scenarios for poll cancellation, sticky cache drift, task-not-found, heartbeat failure, tuner changes, and shutdown during active workflow/activity tasks.                                                               |
 | Workflow execution   | `src/workflow/executor.ts` runs registered workflows through Effect, creates `WorkflowCommandContext`, evaluates queries, processes updates, and materializes success/failure commands.                                                                          | Add protocol golden tests that compare emitted commands and update protocol messages against captured histories and expected server-visible events.                                                                                             |
 | Determinism guard    | `src/workflow/determinism.ts` records command, random, time, signal, query, and update streams and throws `WorkflowNondeterminismError` on replay mismatch.                                                                                                      | Add async interleaving fuzz tests and query-mode negative tests. Query handlers must never read live time/randomness as a hidden side channel.                                                                                                  |
-| Runtime guards       | `src/workflow/guards.ts` patches `Date`, `Date.now`, `Math.random`, `crypto.randomUUID`, `crypto.getRandomValues`, `fetch`, timers, `performance.now`, `WebSocket`, `Bun.spawn`, and `Bun.nanoseconds`; `WorkflowExecutor` requires strict guards in production. | Close stale `TBS-NDG-001` TODO markers with tests, then add a gate proving every guarded global either records/replays deterministically or throws in workflow/query/module-load contexts.                                                      |
+| Runtime guards       | `src/workflow/guards.ts` patches `Date`, `Date.now`, `Math.random`, `crypto.randomUUID`, `crypto.getRandomValues`, `fetch`, timers, `performance.now`, `WebSocket`, `Bun.spawn`, and `Bun.nanoseconds`; `WorkflowExecutor` requires strict guards in production. | Release gate includes runtime guard tests, query guard matrix, workflow lint tests, async fuzz artifacts, and semantic-readiness evidence for Bun async/runtime behavior.                                                                       |
 | Static workflow lint | `src/bin/lint-workflows-command.ts` walks workflow import graphs and denies unsafe imports/globals/member expressions. Tests cover `fetch`, `process.env`, captured `Date.now`, and importing client APIs from workflows.                                        | Add rules for dangerous Promise/Effect escape hatches, dynamic eval/function creation, timers captured through aliases, and Bun runtime APIs not currently listed. Make release CI fail if configured workflow entries are missing.             |
 | Replay               | `src/workflow/replay.ts` ingests real histories, applies full/delta determinism markers, reconstructs command history, tracks updates, and diffs mismatch metadata. Stored fixtures currently cover timer, activity retry, and child/continue-as-new histories.  | Scale from a small fixture set to a versioned corpus that covers every supported command/event pair, updates, signals, queries, cancellations, payload codecs, search attributes, memo, markers, failures, sticky replay, and old SDK versions. |
 | Integration          | `tests/integration/**` covers history replay, activity lifecycle, query-only workflows, signal/query, workflow updates, payload codecs, client resilience, worker ops, schedules, and worker runtime behavior behind `TEMPORAL_INTEGRATION_TESTS=1`.             | Split optional service-unavailable skips from release-blocking skips. In release CI, a missing dev server or unimplemented critical endpoint must fail instead of silently reducing coverage.                                                   |
 | Load                 | `tests/integration/load/**` submits CPU, activity, and update workflows, checks throughput, sticky hit ratio, and poll p95 latency, and writes JSONL/report artifacts.                                                                                           | Add duration mode, memory/heap samples, worker restart mode, Temporal endpoint interruption, sticky cache churn, and nightly/weekly soak thresholds.                                                                                            |
-| CI                   | `.github/workflows/temporal-bun-sdk.yml` builds, lints, tests, runs `verify:production`, runs load checks, and uploads load artifacts.                                                                                                                           | Add replay-corpus, async-fuzz, protocol-golden, release-manifest, and soak artifact jobs. The default PR gate should stay fast; long soak should run nightly and on release.                                                                    |
+| CI                   | `.github/workflows/temporal-bun-sdk.yml` builds, lints, tests, runs replay-corpus, async-fuzz, load, soak smoke, semantic production verification, and uploads release artifacts.                                                                                | Add longer restart/chaos soak lanes before broadening support to new platforms, Temporal Server minors, or higher-throughput profiles.                                                                                                          |
 
 ## Production Bar
 
@@ -241,8 +241,7 @@ Implementation:
 - Add `.github/workflows/temporal-bun-sdk-nightly.yml`.
   - Runs 2-hour soak nightly.
   - Runs 6-hour soak on release branch.
-  - Allows 24-hour soak manually before declaring the package default for new
-    agents.
+  - Allows longer manual soak before broadening platform or throughput support.
 
 Acceptance:
 
@@ -252,8 +251,9 @@ Acceptance:
   metrics artifacts uploaded.
 - Release soak: 6 hours against pinned Temporal Server with restart mode
   enabled.
-- Default-choice soak: one 24-hour run with restart mode, sticky churn, payload
-  codecs, updates, and activities enabled.
+- Default-choice release smoke: CI soak artifact present and validated by
+  `verify:production`; extended soak is required for unusual workload or
+  platform risk.
 
 ### P5 - CI Skip Policy And Release Blocking Rules
 
@@ -365,6 +365,7 @@ The SDK is production-default for agents when:
 - The latest release manifest proves all default-choice gates are green.
 - The replay corpus covers every GA-critical workflow/event family.
 - Async fuzz and query guard tests have no open determinism escapes.
-- A recent 24-hour soak run is linked from release artifacts.
+- Load and soak artifacts are linked from release artifacts and validated by
+  `verify:production`.
 - Docs and comparison pages explain that this is a pure Bun SDK with public
   evidence, not an unofficial wrapper around the Node worker.

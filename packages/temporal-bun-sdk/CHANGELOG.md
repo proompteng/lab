@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.1](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.9.0...temporal-bun-sdk-v0.9.1) (2026-05-05)
+
+### Bug Fixes
+
+* **temporal-bun-sdk:** gate default choice on semantic readiness evidence
+
 ## [0.9.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.8.0...temporal-bun-sdk-v0.9.0) (2026-05-05)
 
 

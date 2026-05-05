@@ -154,7 +154,6 @@ export const executeLintWorkflows = async (options: {
   readonly configPath?: string
   readonly changedOnly?: boolean
 }): Promise<LintWorkflowsResult> => {
-  // TODO(TBS-NDG-003): implement workflow lint CLI
   const cwdPath = options.cwd ?? process.cwd()
   const mode = options.mode ?? resolveDefaultMode(process.env)
   const format = options.format ?? 'text'
