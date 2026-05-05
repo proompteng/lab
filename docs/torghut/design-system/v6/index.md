@@ -7,10 +7,12 @@
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-05T18:21Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-05T19:16Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `88-torghut-session-proof-liquidity-and-hypothesis-market-maker-2026-05-05.md`
+  - `docs/agents/designs/84-jangar-evidence-liquidity-router-and-stale-digest-quarantine-2026-05-05.md`
   - `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
   - `docs/agents/designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md`
   - `87-torghut-capital-lease-consumer-and-profit-repair-marketplace-2026-05-05.md`
@@ -111,7 +113,10 @@
 - `86-torghut-profit-debt-ledger-and-repair-sla-experiments-2026-05-05.md`
 - `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
 - `87-torghut-capital-lease-consumer-and-profit-repair-marketplace-2026-05-05.md`
+- `88-torghut-session-proof-liquidity-and-hypothesis-market-maker-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/84-jangar-evidence-liquidity-router-and-stale-digest-quarantine-2026-05-05.md`
+  - `88-torghut-session-proof-liquidity-and-hypothesis-market-maker-2026-05-05.md`
   - `docs/agents/designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md`
   - `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
   - `docs/agents/designs/83-jangar-lease-backed-proof-market-and-profit-aware-rollout-authority-2026-05-05.md`
