@@ -302,6 +302,27 @@ spec:
                 namespace: flink
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
+                ignoreDifferences:
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: flinkbluegreendeployments.flink.apache.org
+                    jqPathExpressions:
+                      - .spec.versions[].additionalPrinterColumns[].priority
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: flinkdeployments.flink.apache.org
+                    jqPathExpressions:
+                      - .spec.versions[].additionalPrinterColumns[].priority
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: flinksessionjobs.flink.apache.org
+                    jqPathExpressions:
+                      - .spec.versions[].additionalPrinterColumns[].priority
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: flinkstatesnapshots.flink.apache.org
+                    jqPathExpressions:
+                      - .spec.versions[].additionalPrinterColumns[].priority
                 automation: manual
                 enabled: "true"
               - name: milvus
