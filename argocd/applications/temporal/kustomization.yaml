@@ -34,6 +34,9 @@ helmCharts:
       minimumMasterNodes: 2
       protocol: http
       createCert: false
+      secret:
+        enabled: true
+        password: temporal-elasticsearch-readiness
       esConfig:
         elasticsearch.yml: |
           xpack.security.enabled: false
