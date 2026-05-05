@@ -306,6 +306,21 @@ class TestLiveConfigManifestContract(TestCase):
                 f"{template.get('name')} pins ClickHouse to one architecture",
             )
 
+    def test_whitepaper_semantic_backfill_runs_on_arm_nodes(self) -> None:
+        manifest = _load_yaml_mapping(
+            "argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml"
+        )
+        pod_spec = (
+            manifest.get("spec", {})
+            .get("template", {})
+            .get("spec", {})
+        )
+        self.assertIsInstance(pod_spec, Mapping)
+        self.assertEqual(
+            cast(Mapping[str, object], pod_spec).get("nodeSelector"),
+            {"kubernetes.io/arch": "arm64"},
+        )
+
     def test_migration_job_prepares_sim_database_before_sim_upgrade(self) -> None:
         manifest = _load_yaml_mapping(
             "argocd/applications/torghut/db-migrations-job.yaml"
