@@ -662,6 +662,8 @@ This pack is positioned as the next architecture layer above:
 52. `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
 53. `89-torghut-hypothesis-warrant-ledger-and-profit-runway-2026-05-05.md`
 54. `97-torghut-proof-sample-settlement-and-repair-close-loop-2026-05-05.md`
+55. `98-torghut-repair-dividend-ledger-and-capital-reentry-guard-2026-05-05.md`
+56. `99-torghut-hypothesis-repair-council-and-evidence-credit-ladder-2026-05-05.md`
 
 ## Why This Sequence
 
@@ -723,3 +725,10 @@ This pack is positioned as the next architecture layer above:
 - `97-torghut-proof-sample-settlement-and-repair-close-loop-2026-05-05.md` follows the proof-feed contract because the
   current gap is producer-vs-consumer evidence disagreement. It makes Torghut emit a deterministic proof sample that
   Jangar can settle into separate serve, repair, swarm, paper-capital, and live-capital decisions.
+- `98-torghut-repair-dividend-ledger-and-capital-reentry-guard-2026-05-05.md` adds the value layer: repairs must name
+  the stale proof they reduce and the capital gate they make more decidable before Jangar should spend scarce launch
+  capacity on them.
+- `99-torghut-hypothesis-repair-council-and-evidence-credit-ladder-2026-05-05.md` is the discover-stage handoff for the
+  current cluster state. It ranks zero-notional repairs by expected information value while keeping paper and live
+  capital blocked until Jangar credits, empirical jobs, account-scoped quant health, signal lag, rejection attribution,
+  and options proof are fresh.
