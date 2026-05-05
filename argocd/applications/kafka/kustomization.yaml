@@ -41,6 +41,7 @@ resources:
   - torghut-ws-kafkauser.yaml
   - torghut-options-kafkauser.yaml
   - torghut-topics.yaml
+  - torghut-sim-topics.yaml
   - torghut-options-topics.yaml
   - kafka-exporter-deployment.yaml
   - kafka-exporter-service.yaml

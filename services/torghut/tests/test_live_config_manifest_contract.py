@@ -13,15 +13,21 @@ from app.config import Settings
 from app.trading.llm.dspy_programs.runtime import DSPyReviewRuntime
 
 
-_LIVE_SIGNAL_COVERED_CHIP_UNIVERSE = (
-    "AMAT",
-    "AMD",
-    "AVGO",
-    "INTC",
-    "MU",
+_RESEARCHED_CHIP_TECH_UNIVERSE = (
     "NVDA",
+    "AVGO",
+    "AMD",
+    "TSM",
+    "ASML",
+    "AMAT",
+    "LRCX",
+    "KLAC",
+    "MU",
+    "INTC",
+    "QCOM",
+    "MRVL",
 )
-_CHIP_UNIVERSE_SYMBOLS = set(_LIVE_SIGNAL_COVERED_CHIP_UNIVERSE)
+_CHIP_UNIVERSE_SYMBOLS = set(_RESEARCHED_CHIP_TECH_UNIVERSE)
 
 
 def _repo_root() -> Path:
@@ -179,11 +185,11 @@ def _assert_chip_universe(
     test_case.assertEqual(
         sorted(set(normalized) - _CHIP_UNIVERSE_SYMBOLS),
         [],
-        f"{context} contains symbols without live chip TA signal coverage",
+        f"{context} contains symbols outside the researched chip/AI infrastructure universe",
     )
 
 
-def _assert_exact_live_signal_universe(
+def _assert_exact_chip_tech_universe(
     test_case: TestCase, symbols: Iterable[object], *, context: str
 ) -> None:
     normalized = [
@@ -192,8 +198,8 @@ def _assert_exact_live_signal_universe(
     _assert_chip_universe(test_case, normalized, context=context)
     test_case.assertEqual(
         tuple(normalized),
-        _LIVE_SIGNAL_COVERED_CHIP_UNIVERSE,
-        f"{context} does not match the live-signal-covered chip universe",
+        _RESEARCHED_CHIP_TECH_UNIVERSE,
+        f"{context} does not match the researched chip/AI infrastructure universe",
     )
 
 
@@ -258,7 +264,7 @@ class TestLiveConfigManifestContract(TestCase):
                 list,
                 f"{strategy.get('name')} missing explicit universe_symbols",
             )
-            _assert_exact_live_signal_universe(
+            _assert_exact_chip_tech_universe(
                 self,
                 cast(list[object], raw_symbols),
                 context=f"strategy {strategy.get('name')}",
@@ -273,20 +279,38 @@ class TestLiveConfigManifestContract(TestCase):
         ws_data = ws_config.get("data")
         self.assertIsInstance(ws_data, Mapping)
 
-        _assert_exact_live_signal_universe(
+        _assert_exact_chip_tech_universe(
             self,
             _csv_symbols(live_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS")),
             context="live static fallback symbols",
         )
-        _assert_exact_live_signal_universe(
+        _assert_exact_chip_tech_universe(
             self,
             _csv_symbols(sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS")),
             context="sim static fallback symbols",
         )
-        _assert_exact_live_signal_universe(
+        _assert_exact_chip_tech_universe(
             self,
             _csv_symbols(cast(Mapping[str, object], ws_data).get("SYMBOLS")),
             context="torghut-ws subscription symbols",
+        )
+
+    def test_sim_manifest_runs_paper_live_signal_profile(self) -> None:
+        sim_env = _load_knative_env(
+            "argocd/applications/torghut/knative-service-sim.yaml"
+        )
+
+        self.assertTrue(_manifest_bool(sim_env, "TRADING_ENABLED"))
+        self.assertEqual(sim_env.get("TRADING_MODE"), "paper")
+        self.assertEqual(sim_env.get("TRADING_PIPELINE_MODE"), "simple")
+        self.assertTrue(_manifest_bool(sim_env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
+        self.assertFalse(_manifest_bool(sim_env, "TRADING_SIMULATION_ENABLED"))
+        self.assertEqual(sim_env.get("CLICKHOUSE_DATABASE"), "torghut")
+        self.assertEqual(sim_env.get("TRADING_SIGNAL_TABLE"), "torghut.ta_signals")
+        self.assertEqual(sim_env.get("TRADING_PRICE_TABLE"), "torghut.ta_microbars")
+        self.assertEqual(
+            sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS"),
+            "NVDA,AVGO,AMD,TSM,ASML,AMAT,LRCX,KLAC,MU,INTC,QCOM,MRVL",
         )
 
     def test_clickhouse_replicas_are_not_pinned_to_single_architecture(self) -> None:
@@ -427,7 +451,7 @@ class TestLiveConfigManifestContract(TestCase):
                     list,
                     f"{path} universe_symbols[{index}] is not a list",
                 )
-                _assert_exact_live_signal_universe(
+                _assert_exact_chip_tech_universe(
                     self,
                     cast(list[object], raw_symbols),
                     context=f"{path.name} universe_symbols[{index}]",
@@ -456,7 +480,7 @@ class TestLiveConfigManifestContract(TestCase):
                 list,
                 f"{path} missing candidate_strategy.universe_symbols",
             )
-            _assert_exact_live_signal_universe(
+            _assert_exact_chip_tech_universe(
                 self,
                 cast(list[object], raw_symbols),
                 context=f"{path.name} candidate universe",

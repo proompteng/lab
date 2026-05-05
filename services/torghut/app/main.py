@@ -1773,6 +1773,9 @@ def trading_status() -> dict[str, object]:
         "rejections": {
             "policy_veto_total": state.metrics.llm_policy_veto_total,
             "runtime_fallback_total": state.metrics.llm_runtime_fallback_total,
+            "strategy_intent_suppression_total": dict(
+                state.metrics.strategy_intent_suppression_total
+            ),
             "market_context_block_total": state.metrics.llm_market_context_block_total,
             "pre_llm_capacity_reject_total": state.metrics.pre_llm_capacity_reject_total,
             "pre_llm_qty_below_min_total": state.metrics.pre_llm_qty_below_min_total,

@@ -85,7 +85,7 @@ spec:
             - name: CLICKHOUSE_PORT
               value: "8123"
             - name: CLICKHOUSE_DATABASE
-              value: torghut_sim_default
+              value: torghut
             - name: CLICKHOUSE_USERNAME
               value: torghut
             - name: CLICKHOUSE_PASSWORD
@@ -99,6 +99,12 @@ spec:
               value: "10"
             - name: TRADING_ENABLED
               value: "true"
+            - name: TRADING_PIPELINE_MODE
+              value: simple
+            - name: TRADING_SIMPLE_SUBMIT_ENABLED
+              value: "true"
+            - name: TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED
+              value: "false"
             - name: TRADING_KILL_SWITCH_ENABLED
               value: "false"
             - name: TRADING_FEATURE_FLAGS_ENABLED
@@ -119,6 +125,10 @@ spec:
               value: "true"
             - name: TRADING_MODE
               value: paper
+            - name: TRADING_STRATEGY_RUNTIME_MODE
+              value: scheduler_v3
+            - name: TRADING_STRATEGY_SCHEDULER_ENABLED
+              value: "true"
             - name: TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION
               value: "false"
             - name: TRADING_ACCOUNT_LABEL
@@ -131,15 +141,15 @@ spec:
             - name: TRADING_FRACTIONAL_EQUITIES_ENABLED
               value: "true"
             - name: TRADING_SIMULATION_ENABLED
-              value: "true"
+              value: "false"
             - name: TRADING_SIMULATION_CLOCK_MODE
               value: cursor
             - name: TRADING_SIGNAL_SOURCE
               value: clickhouse
             - name: TRADING_SIGNAL_TABLE
-              value: torghut_sim_default.ta_signals
+              value: torghut.ta_signals
             - name: TRADING_PRICE_TABLE
-              value: torghut_sim_default.ta_microbars
+              value: torghut.ta_microbars
             - name: TRADING_SIGNAL_ALLOWED_SOURCES
               value: ta
             - name: TRADING_SIGNAL_LOOKBACK_MINUTES
@@ -248,7 +258,7 @@ spec:
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED
               value: "true"
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS
-              value: AMAT,AMD,AVGO,INTC,MU,NVDA
+              value: NVDA,AVGO,AMD,TSM,ASML,AMAT,LRCX,KLAC,MU,INTC,QCOM,MRVL
             - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
               value: "900"
             - name: JANGAR_SYMBOLS_URL

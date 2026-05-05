@@ -463,6 +463,9 @@ class TestTradingMetrics(TestCase):
         metrics = TradingMetrics()
         metrics.strategy_events_total["legacy-1"] = 5
         metrics.strategy_intents_total["legacy-1"] = 2
+        metrics.strategy_intent_suppression_total[
+            "legacy-1|exit_only_sell_without_long_position"
+        ] = 3
         metrics.strategy_errors_total["legacy-1"] = 1
         metrics.strategy_latency_ms["legacy-1"] = 7
         metrics.intent_conflict_total = 1
@@ -476,6 +479,10 @@ class TestTradingMetrics(TestCase):
         )
         self.assertIn(
             'torghut_trading_strategy_intents_total{strategy_id="legacy-1"} 2', payload
+        )
+        self.assertIn(
+            'torghut_trading_strategy_intent_suppression_total{strategy_id="legacy-1",reason="exit_only_sell_without_long_position"} 3',
+            payload,
         )
         self.assertIn(
             'torghut_trading_strategy_errors_total{strategy_id="legacy-1"} 1', payload
@@ -525,6 +532,9 @@ class TestTradingMetrics(TestCase):
                 observation=RuntimeObservation(
                     strategy_events_total={"s1": 2},
                     strategy_intents_total={"s1": 1},
+                    strategy_intent_suppression_total={
+                        "s1|exit_only_sell_without_long_position": 3,
+                    },
                     strategy_errors_total={"s1": 1},
                     strategy_latency_ms={"s1": 9},
                     intent_conflicts_total=1,
@@ -535,6 +545,12 @@ class TestTradingMetrics(TestCase):
         self.assertEqual(metrics.strategy_runtime_fallback_total, 1)
         self.assertEqual(metrics.strategy_events_total.get("s1"), 2)
         self.assertEqual(metrics.strategy_intents_total.get("s1"), 1)
+        self.assertEqual(
+            metrics.strategy_intent_suppression_total.get(
+                "s1|exit_only_sell_without_long_position"
+            ),
+            3,
+        )
         self.assertEqual(metrics.strategy_errors_total.get("s1"), 1)
         self.assertEqual(metrics.strategy_latency_ms.get("s1"), 9)
         self.assertEqual(metrics.intent_conflict_total, 1)

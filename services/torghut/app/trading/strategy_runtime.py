@@ -27,7 +27,10 @@ from .research_sleeves import (
     evaluate_momentum_pullback_long,
     evaluate_washout_rebound_long,
 )
-from .strategy_specs import build_compiled_strategy_artifacts, strategy_type_supports_spec_v2
+from .strategy_specs import (
+    build_compiled_strategy_artifacts,
+    strategy_type_supports_spec_v2,
+)
 
 
 def _empty_meta() -> dict[str, Any]:
@@ -58,7 +61,7 @@ def _generic_plugin_trace(
         gates=(
             GateTrace(
                 gate=gate,
-                category='structure',
+                category="structure",
                 passed=passed,
                 thresholds=thresholds,
                 context=gate_context or {},
@@ -196,7 +199,9 @@ def _evaluate_microbar_cross_sectional(
             ),
         )
 
-    entry_minute = max(0, int(_decimal(params.get("entry_minute_after_open")) or Decimal("0")))
+    entry_minute = max(
+        0, int(_decimal(params.get("entry_minute_after_open")) or Decimal("0"))
+    )
     exit_minute = _microbar_exit_minute_after_open(params)
     if exit_minute is not None and minutes_elapsed >= exit_minute:
         rationale = (
@@ -252,8 +257,12 @@ def _evaluate_microbar_cross_sectional(
     gate_min = _decimal(params.get("gate_min"))
     gate_max = _decimal(params.get("gate_max"))
     if gate_feature:
-        passed_min = gate_min is None or (gate_value is not None and gate_value >= gate_min)
-        passed_max = gate_max is None or (gate_value is not None and gate_value <= gate_max)
+        passed_min = gate_min is None or (
+            gate_value is not None and gate_value >= gate_min
+        )
+        passed_max = gate_max is None or (
+            gate_value is not None and gate_value <= gate_max
+        )
         if not (passed_min and passed_max):
             thresholds: list[ThresholdTrace] = []
             if gate_min is not None:
@@ -316,7 +325,10 @@ def _evaluate_microbar_cross_sectional(
                 context=context,
                 gate="rank_selection",
                 passed=False,
-                gate_context={"reason": "missing_rank_feature", "rank_feature": rank_feature},
+                gate_context={
+                    "reason": "missing_rank_feature",
+                    "rank_feature": rank_feature,
+                },
             ),
         )
 
@@ -397,7 +409,9 @@ def _evaluate_microbar_cross_sectional(
         if comparator == "gte"
         else threshold_value - rank_value
     )
-    confidence = min(Decimal("0.95"), Decimal("0.55") + max(Decimal("0"), rank_distance))
+    confidence = min(
+        Decimal("0.95"), Decimal("0.55") + max(Decimal("0"), rank_distance)
+    )
     return PluginEvaluationResult(
         intent=StrategyIntent(
             strategy_id=context.strategy_id,
@@ -540,6 +554,9 @@ class RuntimeErrorRecord:
 class RuntimeObservation:
     strategy_events_total: dict[str, int] = field(default_factory=lambda: {})
     strategy_intents_total: dict[str, int] = field(default_factory=lambda: {})
+    strategy_intent_suppression_total: dict[str, int] = field(
+        default_factory=lambda: {}
+    )
     strategy_errors_total: dict[str, int] = field(default_factory=lambda: {})
     strategy_latency_ms: dict[str, int] = field(default_factory=lambda: {})
     intent_conflicts_total: int = 0
@@ -554,6 +571,13 @@ class RuntimeObservation:
     def record_intent(self, strategy_id: str) -> None:
         self.strategy_intents_total[strategy_id] = (
             self.strategy_intents_total.get(strategy_id, 0) + 1
+        )
+
+    def record_intent_suppression(self, strategy_id: str, reason: str) -> None:
+        normalized_reason = reason.strip() or "unknown"
+        key = f"{strategy_id}|{normalized_reason}"
+        self.strategy_intent_suppression_total[key] = (
+            self.strategy_intent_suppression_total.get(key, 0) + 1
         )
 
     def record_error(self, strategy_id: str) -> None:
@@ -588,7 +612,9 @@ class PluginEvaluationResult:
     trace: StrategyTrace | None = None
 
 
-def _coerce_plugin_result(result: PluginEvaluationResult | StrategyIntent | None) -> PluginEvaluationResult:
+def _coerce_plugin_result(
+    result: PluginEvaluationResult | StrategyIntent | None,
+) -> PluginEvaluationResult:
     if isinstance(result, PluginEvaluationResult):
         return result
     if result is None:
@@ -770,20 +796,20 @@ class LegacyMacdRsiPlugin:
                 intent=None,
                 trace=_generic_plugin_trace(
                     context=context,
-                    gate='legacy_required_inputs',
+                    gate="legacy_required_inputs",
                     passed=False,
                     thresholds=(
                         ThresholdTrace(
-                            metric='required_inputs_present',
-                            comparator='all_present',
+                            metric="required_inputs_present",
+                            comparator="all_present",
                             value={
-                                'macd': macd is not None,
-                                'macd_signal': macd_signal is not None,
-                                'rsi14': rsi14 is not None,
+                                "macd": macd is not None,
+                                "macd_signal": macd_signal is not None,
+                                "rsi14": rsi14 is not None,
                             },
                             threshold=True,
                             passed=False,
-                            missing_policy='fail_closed',
+                            missing_policy="fail_closed",
                         ),
                     ),
                 ),
@@ -803,10 +829,10 @@ class LegacyMacdRsiPlugin:
                 ),
                 trace=_generic_plugin_trace(
                     context=context,
-                    gate='legacy_macd_rsi_signal',
+                    gate="legacy_macd_rsi_signal",
                     passed=True,
-                    action='buy',
-                    rationale=('macd_cross_up', 'rsi_oversold'),
+                    action="buy",
+                    rationale=("macd_cross_up", "rsi_oversold"),
                 ),
             )
         if macd < macd_signal and rsi14 > Decimal("65"):
@@ -824,30 +850,30 @@ class LegacyMacdRsiPlugin:
                 ),
                 trace=_generic_plugin_trace(
                     context=context,
-                    gate='legacy_macd_rsi_signal',
+                    gate="legacy_macd_rsi_signal",
                     passed=True,
-                    action='sell',
-                    rationale=('macd_cross_down', 'rsi_overbought'),
+                    action="sell",
+                    rationale=("macd_cross_down", "rsi_overbought"),
                 ),
             )
         return PluginEvaluationResult(
             intent=None,
             trace=_generic_plugin_trace(
                 context=context,
-                gate='legacy_macd_rsi_signal',
+                gate="legacy_macd_rsi_signal",
                 passed=False,
                 thresholds=(
                     ThresholdTrace(
-                        metric='signal_condition',
-                        comparator='legacy_macd_rsi',
+                        metric="signal_condition",
+                        comparator="legacy_macd_rsi",
                         value={
-                            'macd': macd,
-                            'macd_signal': macd_signal,
-                            'rsi14': rsi14,
+                            "macd": macd,
+                            "macd_signal": macd_signal,
+                            "rsi14": rsi14,
                         },
-                        threshold='cross_and_rsi',
+                        threshold="cross_and_rsi",
                         passed=False,
-                        missing_policy='fail_open',
+                        missing_policy="fail_open",
                     ),
                 ),
             ),
@@ -912,7 +938,9 @@ class IntradayTsmomPlugin:
             macd_signal=macd_signal,
             rsi14=rsi14,
             vol_realized_w60s=vol,
-            price_vs_session_open_bps=_decimal(features.values.get("price_vs_session_open_bps")),
+            price_vs_session_open_bps=_decimal(
+                features.values.get("price_vs_session_open_bps")
+            ),
             price_vs_prev_session_close_bps=_decimal(
                 features.values.get("price_vs_prev_session_close_bps")
             ),
@@ -926,12 +954,18 @@ class IntradayTsmomPlugin:
             price_position_in_session_range=_decimal(
                 features.values.get("price_position_in_session_range")
             ),
-            price_vs_vwap_w5m_bps=_decimal(features.values.get("price_vs_vwap_w5m_bps")),
+            price_vs_vwap_w5m_bps=_decimal(
+                features.values.get("price_vs_vwap_w5m_bps")
+            ),
             price_vs_opening_range_high_bps=_decimal(
                 features.values.get("price_vs_opening_range_high_bps")
             ),
-            recent_spread_bps_avg=_decimal(features.values.get("recent_spread_bps_avg")),
-            recent_spread_bps_max=_decimal(features.values.get("recent_spread_bps_max")),
+            recent_spread_bps_avg=_decimal(
+                features.values.get("recent_spread_bps_avg")
+            ),
+            recent_spread_bps_max=_decimal(
+                features.values.get("recent_spread_bps_max")
+            ),
             recent_imbalance_pressure_avg=_decimal(
                 features.values.get("recent_imbalance_pressure_avg")
             ),
@@ -948,7 +982,9 @@ class IntradayTsmomPlugin:
                 features.values.get("cross_section_opening_window_return_rank")
             ),
             cross_section_opening_window_return_from_prev_close_rank=_decimal(
-                features.values.get("cross_section_opening_window_return_from_prev_close_rank")
+                features.values.get(
+                    "cross_section_opening_window_return_from_prev_close_rank"
+                )
             ),
             cross_section_continuation_rank=_decimal(
                 features.values.get("cross_section_continuation_rank")
@@ -971,14 +1007,16 @@ class IntradayTsmomPlugin:
                 intent=None,
                 trace=_generic_plugin_trace(
                     context=context,
-                    gate='intraday_tsmom_contract',
+                    gate="intraday_tsmom_contract",
                     passed=False,
                 ),
             )
 
         target_notional = _target_notional(context.params)
         direction = "buy" if evaluation.direction == "long" else "sell"
-        confidence_cap = Decimal("0.84") if evaluation.direction == "long" else Decimal("0.80")
+        confidence_cap = (
+            Decimal("0.84") if evaluation.direction == "long" else Decimal("0.80")
+        )
         intent = StrategyIntent(
             strategy_id=context.strategy_id,
             symbol=context.symbol,
@@ -994,7 +1032,7 @@ class IntradayTsmomPlugin:
             intent=intent,
             trace=_generic_plugin_trace(
                 context=context,
-                gate='intraday_tsmom_contract',
+                gate="intraday_tsmom_contract",
                 passed=True,
                 action=intent.direction,
                 rationale=intent.explain,
@@ -1044,11 +1082,21 @@ class MomentumPullbackLongPlugin:
             spread_bps=_decimal(features.values.get("spread_bps")),
             imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
             imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
-            price_vs_session_open_bps=_decimal(features.values.get("price_vs_session_open_bps")),
-            recent_spread_bps_avg=_decimal(features.values.get("recent_spread_bps_avg")),
-            recent_imbalance_pressure_avg=_decimal(features.values.get("recent_imbalance_pressure_avg")),
-            recent_quote_invalid_ratio=_decimal(features.values.get("recent_quote_invalid_ratio")),
-            recent_quote_jump_bps_max=_decimal(features.values.get("recent_quote_jump_bps_max")),
+            price_vs_session_open_bps=_decimal(
+                features.values.get("price_vs_session_open_bps")
+            ),
+            recent_spread_bps_avg=_decimal(
+                features.values.get("recent_spread_bps_avg")
+            ),
+            recent_imbalance_pressure_avg=_decimal(
+                features.values.get("recent_imbalance_pressure_avg")
+            ),
+            recent_quote_invalid_ratio=_decimal(
+                features.values.get("recent_quote_invalid_ratio")
+            ),
+            recent_quote_jump_bps_max=_decimal(
+                features.values.get("recent_quote_jump_bps_max")
+            ),
             recent_microprice_bias_bps_avg=_decimal(
                 features.values.get("recent_microprice_bias_bps_avg")
             ),
@@ -1132,29 +1180,51 @@ class BreakoutContinuationLongPlugin:
             spread_bps=_decimal(features.values.get("spread_bps")),
             imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
             imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
-            price_vs_session_open_bps=_decimal(features.values.get("price_vs_session_open_bps")),
+            price_vs_session_open_bps=_decimal(
+                features.values.get("price_vs_session_open_bps")
+            ),
             price_vs_prev_session_close_bps=_decimal(
                 features.values.get("price_vs_prev_session_close_bps")
             ),
-            opening_window_return_bps=_decimal(features.values.get("opening_window_return_bps")),
+            opening_window_return_bps=_decimal(
+                features.values.get("opening_window_return_bps")
+            ),
             opening_window_return_from_prev_close_bps=_decimal(
                 features.values.get("opening_window_return_from_prev_close_bps")
             ),
-            price_vs_opening_range_high_bps=_decimal(features.values.get("price_vs_opening_range_high_bps")),
+            price_vs_opening_range_high_bps=_decimal(
+                features.values.get("price_vs_opening_range_high_bps")
+            ),
             price_vs_opening_window_close_bps=_decimal(
                 features.values.get("price_vs_opening_window_close_bps")
             ),
-            opening_range_width_bps=_decimal(features.values.get("opening_range_width_bps")),
+            opening_range_width_bps=_decimal(
+                features.values.get("opening_range_width_bps")
+            ),
             session_range_bps=_decimal(features.values.get("session_range_bps")),
-            price_position_in_session_range=_decimal(features.values.get("price_position_in_session_range")),
-            price_vs_vwap_w5m_bps=_decimal(features.values.get("price_vs_vwap_w5m_bps")),
+            price_position_in_session_range=_decimal(
+                features.values.get("price_position_in_session_range")
+            ),
+            price_vs_vwap_w5m_bps=_decimal(
+                features.values.get("price_vs_vwap_w5m_bps")
+            ),
             session_high_price=_decimal(features.values.get("session_high_price")),
             opening_range_high=_decimal(features.values.get("opening_range_high")),
-            recent_spread_bps_avg=_decimal(features.values.get("recent_spread_bps_avg")),
-            recent_spread_bps_max=_decimal(features.values.get("recent_spread_bps_max")),
-            recent_imbalance_pressure_avg=_decimal(features.values.get("recent_imbalance_pressure_avg")),
-            recent_quote_invalid_ratio=_decimal(features.values.get("recent_quote_invalid_ratio")),
-            recent_quote_jump_bps_max=_decimal(features.values.get("recent_quote_jump_bps_max")),
+            recent_spread_bps_avg=_decimal(
+                features.values.get("recent_spread_bps_avg")
+            ),
+            recent_spread_bps_max=_decimal(
+                features.values.get("recent_spread_bps_max")
+            ),
+            recent_imbalance_pressure_avg=_decimal(
+                features.values.get("recent_imbalance_pressure_avg")
+            ),
+            recent_quote_invalid_ratio=_decimal(
+                features.values.get("recent_quote_invalid_ratio")
+            ),
+            recent_quote_jump_bps_max=_decimal(
+                features.values.get("recent_quote_jump_bps_max")
+            ),
             recent_microprice_bias_bps_avg=_decimal(
                 features.values.get("recent_microprice_bias_bps_avg")
             ),
@@ -1171,13 +1241,17 @@ class BreakoutContinuationLongPlugin:
                 features.values.get("cross_section_positive_session_open_ratio")
             ),
             cross_section_positive_opening_window_return_ratio=_decimal(
-                features.values.get("cross_section_positive_opening_window_return_ratio")
+                features.values.get(
+                    "cross_section_positive_opening_window_return_ratio"
+                )
             ),
             cross_section_positive_prev_session_close_ratio=_decimal(
                 features.values.get("cross_section_positive_prev_session_close_ratio")
             ),
             cross_section_positive_opening_window_return_from_prev_close_ratio=_decimal(
-                features.values.get("cross_section_positive_opening_window_return_from_prev_close_ratio")
+                features.values.get(
+                    "cross_section_positive_opening_window_return_from_prev_close_ratio"
+                )
             ),
             cross_section_above_vwap_w5m_ratio=_decimal(
                 features.values.get("cross_section_above_vwap_w5m_ratio")
@@ -1195,7 +1269,9 @@ class BreakoutContinuationLongPlugin:
                 features.values.get("cross_section_prev_session_close_rank")
             ),
             cross_section_opening_window_return_from_prev_close_rank=_decimal(
-                features.values.get("cross_section_opening_window_return_from_prev_close_rank")
+                features.values.get(
+                    "cross_section_opening_window_return_from_prev_close_rank"
+                )
             ),
             cross_section_range_position_rank=_decimal(
                 features.values.get("cross_section_range_position_rank")
@@ -1272,22 +1348,40 @@ class MeanReversionReboundLongPlugin:
             spread_bps=_decimal(features.values.get("spread_bps")),
             imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
             imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
-            price_vs_session_open_bps=_decimal(features.values.get("price_vs_session_open_bps")),
+            price_vs_session_open_bps=_decimal(
+                features.values.get("price_vs_session_open_bps")
+            ),
             price_vs_prev_session_close_bps=_decimal(
                 features.values.get("price_vs_prev_session_close_bps")
             ),
-            opening_window_return_bps=_decimal(features.values.get("opening_window_return_bps")),
+            opening_window_return_bps=_decimal(
+                features.values.get("opening_window_return_bps")
+            ),
             opening_window_return_from_prev_close_bps=_decimal(
                 features.values.get("opening_window_return_from_prev_close_bps")
             ),
-            price_position_in_session_range=_decimal(features.values.get("price_position_in_session_range")),
-            price_vs_opening_range_low_bps=_decimal(features.values.get("price_vs_opening_range_low_bps")),
+            price_position_in_session_range=_decimal(
+                features.values.get("price_position_in_session_range")
+            ),
+            price_vs_opening_range_low_bps=_decimal(
+                features.values.get("price_vs_opening_range_low_bps")
+            ),
             session_range_bps=_decimal(features.values.get("session_range_bps")),
-            recent_spread_bps_avg=_decimal(features.values.get("recent_spread_bps_avg")),
-            recent_spread_bps_max=_decimal(features.values.get("recent_spread_bps_max")),
-            recent_imbalance_pressure_avg=_decimal(features.values.get("recent_imbalance_pressure_avg")),
-            recent_quote_invalid_ratio=_decimal(features.values.get("recent_quote_invalid_ratio")),
-            recent_quote_jump_bps_max=_decimal(features.values.get("recent_quote_jump_bps_max")),
+            recent_spread_bps_avg=_decimal(
+                features.values.get("recent_spread_bps_avg")
+            ),
+            recent_spread_bps_max=_decimal(
+                features.values.get("recent_spread_bps_max")
+            ),
+            recent_imbalance_pressure_avg=_decimal(
+                features.values.get("recent_imbalance_pressure_avg")
+            ),
+            recent_quote_invalid_ratio=_decimal(
+                features.values.get("recent_quote_invalid_ratio")
+            ),
+            recent_quote_jump_bps_max=_decimal(
+                features.values.get("recent_quote_jump_bps_max")
+            ),
             recent_microprice_bias_bps_avg=_decimal(
                 features.values.get("recent_microprice_bias_bps_avg")
             ),
@@ -1295,7 +1389,9 @@ class MeanReversionReboundLongPlugin:
                 features.values.get("cross_section_opening_window_return_rank")
             ),
             cross_section_opening_window_return_from_prev_close_rank=_decimal(
-                features.values.get("cross_section_opening_window_return_from_prev_close_rank")
+                features.values.get(
+                    "cross_section_opening_window_return_from_prev_close_rank"
+                )
             ),
             cross_section_continuation_rank=_decimal(
                 features.values.get("cross_section_continuation_rank")
@@ -1371,24 +1467,40 @@ class MeanReversionExhaustionShortPlugin:
             spread_bps=_decimal(features.values.get("spread_bps")),
             imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
             imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
-            price_vs_session_open_bps=_decimal(features.values.get("price_vs_session_open_bps")),
+            price_vs_session_open_bps=_decimal(
+                features.values.get("price_vs_session_open_bps")
+            ),
             price_vs_prev_session_close_bps=_decimal(
                 features.values.get("price_vs_prev_session_close_bps")
             ),
-            opening_window_return_bps=_decimal(features.values.get("opening_window_return_bps")),
+            opening_window_return_bps=_decimal(
+                features.values.get("opening_window_return_bps")
+            ),
             opening_window_return_from_prev_close_bps=_decimal(
                 features.values.get("opening_window_return_from_prev_close_bps")
             ),
-            price_position_in_session_range=_decimal(features.values.get("price_position_in_session_range")),
+            price_position_in_session_range=_decimal(
+                features.values.get("price_position_in_session_range")
+            ),
             price_vs_opening_range_high_bps=_decimal(
                 features.values.get("price_vs_opening_range_high_bps")
             ),
             session_range_bps=_decimal(features.values.get("session_range_bps")),
-            recent_spread_bps_avg=_decimal(features.values.get("recent_spread_bps_avg")),
-            recent_spread_bps_max=_decimal(features.values.get("recent_spread_bps_max")),
-            recent_imbalance_pressure_avg=_decimal(features.values.get("recent_imbalance_pressure_avg")),
-            recent_quote_invalid_ratio=_decimal(features.values.get("recent_quote_invalid_ratio")),
-            recent_quote_jump_bps_max=_decimal(features.values.get("recent_quote_jump_bps_max")),
+            recent_spread_bps_avg=_decimal(
+                features.values.get("recent_spread_bps_avg")
+            ),
+            recent_spread_bps_max=_decimal(
+                features.values.get("recent_spread_bps_max")
+            ),
+            recent_imbalance_pressure_avg=_decimal(
+                features.values.get("recent_imbalance_pressure_avg")
+            ),
+            recent_quote_invalid_ratio=_decimal(
+                features.values.get("recent_quote_invalid_ratio")
+            ),
+            recent_quote_jump_bps_max=_decimal(
+                features.values.get("recent_quote_jump_bps_max")
+            ),
             recent_microprice_bias_bps_avg=_decimal(
                 features.values.get("recent_microprice_bias_bps_avg")
             ),
@@ -1396,7 +1508,9 @@ class MeanReversionExhaustionShortPlugin:
                 features.values.get("cross_section_opening_window_return_rank")
             ),
             cross_section_opening_window_return_from_prev_close_rank=_decimal(
-                features.values.get("cross_section_opening_window_return_from_prev_close_rank")
+                features.values.get(
+                    "cross_section_opening_window_return_from_prev_close_rank"
+                )
             ),
             cross_section_continuation_rank=_decimal(
                 features.values.get("cross_section_continuation_rank")
@@ -1536,23 +1650,43 @@ class WashoutReboundLongPlugin:
             spread_bps=_decimal(features.values.get("spread_bps")),
             imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
             imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
-            price_vs_session_open_bps=_decimal(features.values.get("price_vs_session_open_bps")),
+            price_vs_session_open_bps=_decimal(
+                features.values.get("price_vs_session_open_bps")
+            ),
             price_vs_prev_session_close_bps=_decimal(
                 features.values.get("price_vs_prev_session_close_bps")
             ),
-            opening_window_return_bps=_decimal(features.values.get("opening_window_return_bps")),
+            opening_window_return_bps=_decimal(
+                features.values.get("opening_window_return_bps")
+            ),
             opening_window_return_from_prev_close_bps=_decimal(
                 features.values.get("opening_window_return_from_prev_close_bps")
             ),
-            price_position_in_session_range=_decimal(features.values.get("price_position_in_session_range")),
-            price_vs_session_low_bps=_decimal(features.values.get("price_vs_session_low_bps")),
-            price_vs_opening_range_low_bps=_decimal(features.values.get("price_vs_opening_range_low_bps")),
+            price_position_in_session_range=_decimal(
+                features.values.get("price_position_in_session_range")
+            ),
+            price_vs_session_low_bps=_decimal(
+                features.values.get("price_vs_session_low_bps")
+            ),
+            price_vs_opening_range_low_bps=_decimal(
+                features.values.get("price_vs_opening_range_low_bps")
+            ),
             session_range_bps=_decimal(features.values.get("session_range_bps")),
-            recent_spread_bps_avg=_decimal(features.values.get("recent_spread_bps_avg")),
-            recent_spread_bps_max=_decimal(features.values.get("recent_spread_bps_max")),
-            recent_imbalance_pressure_avg=_decimal(features.values.get("recent_imbalance_pressure_avg")),
-            recent_quote_invalid_ratio=_decimal(features.values.get("recent_quote_invalid_ratio")),
-            recent_quote_jump_bps_max=_decimal(features.values.get("recent_quote_jump_bps_max")),
+            recent_spread_bps_avg=_decimal(
+                features.values.get("recent_spread_bps_avg")
+            ),
+            recent_spread_bps_max=_decimal(
+                features.values.get("recent_spread_bps_max")
+            ),
+            recent_imbalance_pressure_avg=_decimal(
+                features.values.get("recent_imbalance_pressure_avg")
+            ),
+            recent_quote_invalid_ratio=_decimal(
+                features.values.get("recent_quote_invalid_ratio")
+            ),
+            recent_quote_jump_bps_max=_decimal(
+                features.values.get("recent_quote_jump_bps_max")
+            ),
             recent_microprice_bias_bps_avg=_decimal(
                 features.values.get("recent_microprice_bias_bps_avg")
             ),
@@ -1563,7 +1697,9 @@ class WashoutReboundLongPlugin:
                 features.values.get("cross_section_opening_window_return_rank")
             ),
             cross_section_opening_window_return_from_prev_close_rank=_decimal(
-                features.values.get("cross_section_opening_window_return_from_prev_close_rank")
+                features.values.get(
+                    "cross_section_opening_window_return_from_prev_close_rank"
+                )
             ),
             cross_section_continuation_rank=_decimal(
                 features.values.get("cross_section_continuation_rank")
@@ -1654,27 +1790,45 @@ class LateDayContinuationLongPlugin:
             spread_bps=_decimal(features.values.get("spread_bps")),
             imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
             imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
-            price_vs_session_open_bps=_decimal(features.values.get("price_vs_session_open_bps")),
+            price_vs_session_open_bps=_decimal(
+                features.values.get("price_vs_session_open_bps")
+            ),
             price_vs_prev_session_close_bps=_decimal(
                 features.values.get("price_vs_prev_session_close_bps")
             ),
-            opening_window_return_bps=_decimal(features.values.get("opening_window_return_bps")),
+            opening_window_return_bps=_decimal(
+                features.values.get("opening_window_return_bps")
+            ),
             opening_window_return_from_prev_close_bps=_decimal(
                 features.values.get("opening_window_return_from_prev_close_bps")
             ),
-            price_position_in_session_range=_decimal(features.values.get("price_position_in_session_range")),
-            price_vs_vwap_w5m_bps=_decimal(features.values.get("price_vs_vwap_w5m_bps")),
+            price_position_in_session_range=_decimal(
+                features.values.get("price_position_in_session_range")
+            ),
+            price_vs_vwap_w5m_bps=_decimal(
+                features.values.get("price_vs_vwap_w5m_bps")
+            ),
             session_high_price=_decimal(features.values.get("session_high_price")),
             opening_range_high=_decimal(features.values.get("opening_range_high")),
-            price_vs_opening_range_high_bps=_decimal(features.values.get("price_vs_opening_range_high_bps")),
+            price_vs_opening_range_high_bps=_decimal(
+                features.values.get("price_vs_opening_range_high_bps")
+            ),
             price_vs_opening_window_close_bps=_decimal(
                 features.values.get("price_vs_opening_window_close_bps")
             ),
-            recent_spread_bps_avg=_decimal(features.values.get("recent_spread_bps_avg")),
-            recent_imbalance_pressure_avg=_decimal(features.values.get("recent_imbalance_pressure_avg")),
+            recent_spread_bps_avg=_decimal(
+                features.values.get("recent_spread_bps_avg")
+            ),
+            recent_imbalance_pressure_avg=_decimal(
+                features.values.get("recent_imbalance_pressure_avg")
+            ),
             session_range_bps=_decimal(features.values.get("session_range_bps")),
-            recent_quote_invalid_ratio=_decimal(features.values.get("recent_quote_invalid_ratio")),
-            recent_quote_jump_bps_max=_decimal(features.values.get("recent_quote_jump_bps_max")),
+            recent_quote_invalid_ratio=_decimal(
+                features.values.get("recent_quote_invalid_ratio")
+            ),
+            recent_quote_jump_bps_max=_decimal(
+                features.values.get("recent_quote_jump_bps_max")
+            ),
             recent_microprice_bias_bps_avg=_decimal(
                 features.values.get("recent_microprice_bias_bps_avg")
             ),
@@ -1691,13 +1845,17 @@ class LateDayContinuationLongPlugin:
                 features.values.get("cross_section_positive_session_open_ratio")
             ),
             cross_section_positive_opening_window_return_ratio=_decimal(
-                features.values.get("cross_section_positive_opening_window_return_ratio")
+                features.values.get(
+                    "cross_section_positive_opening_window_return_ratio"
+                )
             ),
             cross_section_positive_prev_session_close_ratio=_decimal(
                 features.values.get("cross_section_positive_prev_session_close_ratio")
             ),
             cross_section_positive_opening_window_return_from_prev_close_ratio=_decimal(
-                features.values.get("cross_section_positive_opening_window_return_from_prev_close_ratio")
+                features.values.get(
+                    "cross_section_positive_opening_window_return_from_prev_close_ratio"
+                )
             ),
             cross_section_above_vwap_w5m_ratio=_decimal(
                 features.values.get("cross_section_above_vwap_w5m_ratio")
@@ -1715,7 +1873,9 @@ class LateDayContinuationLongPlugin:
                 features.values.get("cross_section_prev_session_close_rank")
             ),
             cross_section_opening_window_return_from_prev_close_rank=_decimal(
-                features.values.get("cross_section_opening_window_return_from_prev_close_rank")
+                features.values.get(
+                    "cross_section_opening_window_return_from_prev_close_rank"
+                )
             ),
             cross_section_range_position_rank=_decimal(
                 features.values.get("cross_section_range_position_rank")
@@ -1794,22 +1954,40 @@ class EndOfDayReversalLongPlugin:
             spread_bps=_decimal(features.values.get("spread_bps")),
             imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
             imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
-            price_vs_session_open_bps=_decimal(features.values.get("price_vs_session_open_bps")),
+            price_vs_session_open_bps=_decimal(
+                features.values.get("price_vs_session_open_bps")
+            ),
             price_vs_prev_session_close_bps=_decimal(
                 features.values.get("price_vs_prev_session_close_bps")
             ),
-            opening_window_return_bps=_decimal(features.values.get("opening_window_return_bps")),
+            opening_window_return_bps=_decimal(
+                features.values.get("opening_window_return_bps")
+            ),
             opening_window_return_from_prev_close_bps=_decimal(
                 features.values.get("opening_window_return_from_prev_close_bps")
             ),
-            price_position_in_session_range=_decimal(features.values.get("price_position_in_session_range")),
-            price_vs_opening_range_low_bps=_decimal(features.values.get("price_vs_opening_range_low_bps")),
+            price_position_in_session_range=_decimal(
+                features.values.get("price_position_in_session_range")
+            ),
+            price_vs_opening_range_low_bps=_decimal(
+                features.values.get("price_vs_opening_range_low_bps")
+            ),
             session_range_bps=_decimal(features.values.get("session_range_bps")),
-            recent_spread_bps_avg=_decimal(features.values.get("recent_spread_bps_avg")),
-            recent_spread_bps_max=_decimal(features.values.get("recent_spread_bps_max")),
-            recent_imbalance_pressure_avg=_decimal(features.values.get("recent_imbalance_pressure_avg")),
-            recent_quote_invalid_ratio=_decimal(features.values.get("recent_quote_invalid_ratio")),
-            recent_quote_jump_bps_max=_decimal(features.values.get("recent_quote_jump_bps_max")),
+            recent_spread_bps_avg=_decimal(
+                features.values.get("recent_spread_bps_avg")
+            ),
+            recent_spread_bps_max=_decimal(
+                features.values.get("recent_spread_bps_max")
+            ),
+            recent_imbalance_pressure_avg=_decimal(
+                features.values.get("recent_imbalance_pressure_avg")
+            ),
+            recent_quote_invalid_ratio=_decimal(
+                features.values.get("recent_quote_invalid_ratio")
+            ),
+            recent_quote_jump_bps_max=_decimal(
+                features.values.get("recent_quote_jump_bps_max")
+            ),
             recent_microprice_bias_bps_avg=_decimal(
                 features.values.get("recent_microprice_bias_bps_avg")
             ),
@@ -1817,7 +1995,9 @@ class EndOfDayReversalLongPlugin:
                 features.values.get("cross_section_opening_window_return_rank")
             ),
             cross_section_opening_window_return_from_prev_close_rank=_decimal(
-                features.values.get("cross_section_opening_window_return_from_prev_close_rank")
+                features.values.get(
+                    "cross_section_opening_window_return_from_prev_close_rank"
+                )
             ),
             cross_section_continuation_rank=_decimal(
                 features.values.get("cross_section_continuation_rank")
@@ -1852,7 +2032,10 @@ class StrategyRuntime:
         self, strategy: Strategy, features: FeatureVectorV3, *, timeframe: str
     ) -> RuntimeDecision | None:
         definition = self.definition_from_strategy(strategy)
-        if definition.universe_symbols and features.symbol not in definition.universe_symbols:
+        if (
+            definition.universe_symbols
+            and features.symbol not in definition.universe_symbols
+        ):
             return None
         plugin = self.registry.resolve(definition)
         if plugin is None:
@@ -1913,7 +2096,10 @@ class StrategyRuntime:
         for definition in sorted_definitions:
             if definition.base_timeframe != timeframe:
                 continue
-            if definition.universe_symbols and features.symbol not in definition.universe_symbols:
+            if (
+                definition.universe_symbols
+                and features.symbol not in definition.universe_symbols
+            ):
                 continue
             start = time.perf_counter()
             if self.registry.is_degraded(
@@ -1958,7 +2144,9 @@ class StrategyRuntime:
             )
 
             try:
-                plugin_result = _coerce_plugin_result(plugin.evaluate(context, features))
+                plugin_result = _coerce_plugin_result(
+                    plugin.evaluate(context, features)
+                )
                 latency_ms = int((time.perf_counter() - start) * 1000)
                 observation.record_event(definition.strategy_id, latency_ms)
                 self.registry.record_success(definition.strategy_id)
@@ -2017,7 +2205,9 @@ class StrategyRuntime:
         strategy_type = StrategyRuntime._strategy_plugin_type(strategy)
         version = StrategyRuntime._strategy_version(strategy)
         params = StrategyRuntime._strategy_params(strategy)
-        compiler_source = str(catalog_metadata.get("compiler_source") or "legacy_runtime")
+        compiler_source = str(
+            catalog_metadata.get("compiler_source") or "legacy_runtime"
+        )
         strategy_spec = (
             cast(dict[str, Any], catalog_metadata.get("strategy_spec_v2"))
             if isinstance(catalog_metadata.get("strategy_spec_v2"), dict)
@@ -2028,10 +2218,9 @@ class StrategyRuntime:
             if isinstance(catalog_metadata.get("compiled_targets"), dict)
             else {}
         )
-        declared_strategy_id = (
-            str(catalog_metadata.get("strategy_id") or "").strip()
-            or str(strategy.name)
-        )
+        declared_strategy_id = str(
+            catalog_metadata.get("strategy_id") or ""
+        ).strip() or str(strategy.name)
         if strategy_type_supports_spec_v2(strategy_type):
             compiler_source = "spec_v2"
             if not strategy_spec or not compiled_targets:
@@ -2108,7 +2297,9 @@ class StrategyRuntime:
             marker_start = description.rfind("@")
             marker_end = description.rfind(")")
             if marker_start >= 0:
-                candidate_end = marker_end if marker_end > marker_start else len(description)
+                candidate_end = (
+                    marker_end if marker_end > marker_start else len(description)
+                )
                 candidate = description[marker_start + 1 : candidate_end].strip()
                 if candidate:
                     return candidate

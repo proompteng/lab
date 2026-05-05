@@ -866,6 +866,9 @@ class TestTradingApi(TestCase):
                 "broker_submit_failed": 2,
                 "capital_stage_shadow": 9,
             }
+            scheduler.state.metrics.strategy_intent_suppression_total = {
+                "strategy-1|exit_only_sell_without_long_position": 4,
+            }
             app.state.trading_scheduler = scheduler
 
             response = self.client.get("/trading/status")
@@ -879,6 +882,10 @@ class TestTradingApi(TestCase):
             self.assertEqual(
                 payload["simple_lane_reject_reason_totals"],
                 {"broker_submit_failed": 2},
+            )
+            self.assertEqual(
+                payload["rejections"]["strategy_intent_suppression_total"],
+                {"strategy-1|exit_only_sell_without_long_position": 4},
             )
             self.assertTrue(payload["simple_lane_status"]["enabled"])
             self.assertEqual(

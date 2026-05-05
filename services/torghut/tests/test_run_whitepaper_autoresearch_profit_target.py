@@ -26,7 +26,7 @@ from app.models import (
     WhitepaperDocumentVersion,
 )
 
-_CHIP_UNIVERSE = ["AMAT", "AMD", "AVGO", "INTC", "MU", "NVDA"]
+_CHIP_UNIVERSE = list(runner.LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
 
 
 def _source_jsonl_payload() -> dict[str, object]:
@@ -300,7 +300,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             Namespace(symbols="NVDA,AAPL,MSFT,AMAT,TSM,nvda")
         )
 
-        self.assertEqual(symbols, ("NVDA", "AMAT"))
+        self.assertEqual(symbols, ("NVDA", "AMAT", "TSM"))
 
     def test_candidate_universe_symbols_default_to_chip_coverage_when_empty(
         self,
