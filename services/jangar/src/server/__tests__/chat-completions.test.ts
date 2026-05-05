@@ -14,6 +14,7 @@ import { buildTranscriptSignature, type TranscriptEntry } from '~/server/chat-tr
 import {
   resetOpenWebUiRenderStoreForTests,
   setOpenWebUiRenderStoreForTests,
+  type OpenWebUiRenderBlob,
   type OpenWebUiRenderStore,
 } from '~/server/openwebui-render-store'
 import { ThreadState, type ThreadStateService } from '~/server/thread-state'
@@ -1290,6 +1291,158 @@ describe('chat completions handler', () => {
     const prompt = mockClient.runTurnStream.mock.calls[0]?.[0]
     expect(prompt).toBe('user: follow up')
     expect(transcriptState.setTranscript).toHaveBeenCalled()
+  })
+
+  it('keeps OpenWebUI thread continuity when the client trims the prior assistant turn', async () => {
+    process.env.JANGAR_STATEFUL_CHAT_MODE = '1'
+    process.env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED = 'true'
+    process.env.JANGAR_OPENWEBUI_EXTERNAL_BASE_URL = 'https://jangar.test'
+    process.env.JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET = 'test-secret'
+
+    const renderBlobs = new Map<string, OpenWebUiRenderBlob>()
+    const renderStore: OpenWebUiRenderStore = {
+      getRenderBlob: vi.fn(async (renderId) => renderBlobs.get(renderId) ?? null),
+      setRenderBlob: vi.fn(async (blob) => {
+        renderBlobs.set(blob.renderId, blob)
+      }),
+      clearRenderBlob: vi.fn(async (renderId) => {
+        renderBlobs.delete(renderId)
+      }),
+      clearAll: vi.fn(async () => {
+        renderBlobs.clear()
+      }),
+      shutdown: vi.fn(async () => {}),
+    }
+    setOpenWebUiRenderStoreForTests(renderStore)
+
+    let storedThreadId: string | null = null
+    let storedTranscript: TranscriptEntry[] | null = null
+    let storedWorktreeName: string | null = 'austin'
+    let nextTurnNumber = 0
+
+    const threadState: ThreadStateService = {
+      getThreadId: vi.fn(() => Effect.succeed(storedThreadId)),
+      setThreadId: vi.fn((_chatId, threadId) =>
+        Effect.sync(() => {
+          storedThreadId = threadId
+        }),
+      ),
+      nextTurn: vi.fn(() =>
+        Effect.sync(() => {
+          nextTurnNumber += 1
+          return nextTurnNumber
+        }),
+      ),
+      clearChat: vi.fn(() =>
+        Effect.sync(() => {
+          storedThreadId = null
+        }),
+      ),
+    }
+    const worktreeState: WorktreeStateService = {
+      getWorktreeName: vi.fn(() => Effect.succeed(storedWorktreeName)),
+      setWorktreeName: vi.fn((_chatId, worktreeName) =>
+        Effect.sync(() => {
+          storedWorktreeName = worktreeName
+        }),
+      ),
+      clearWorktree: vi.fn(() =>
+        Effect.sync(() => {
+          storedWorktreeName = null
+        }),
+      ),
+    }
+    const transcriptState: TranscriptStateService = {
+      getTranscript: vi.fn(() => Effect.succeed(storedTranscript)),
+      setTranscript: vi.fn((_chatId, signature) =>
+        Effect.sync(() => {
+          storedTranscript = signature
+        }),
+      ),
+      clearTranscript: vi.fn(() =>
+        Effect.sync(() => {
+          storedTranscript = null
+        }),
+      ),
+    }
+
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string, _opts?: { threadId?: string }) => ({
+        turnId: `turn-${mockClient.runTurnStream.mock.calls.length + 1}`,
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: '\n53288' }
+          yield { type: 'usage', usage: { input_tokens: 8, output_tokens: 2 } }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const runOpenWebUiTurn = async (messages: Array<{ role: string; content: string }>) => {
+      const response = await Effect.runPromise(
+        pipe(
+          handleChatCompletionEffect(
+            new Request('http://localhost', {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                'x-openwebui-chat-id': 'chat-1',
+              },
+              body: JSON.stringify({
+                model: 'gpt-5.5',
+                messages,
+                stream: true,
+                stream_options: { include_usage: true },
+              }),
+            }),
+          ),
+          Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
+          Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
+          Effect.provideService(ThreadState, threadState),
+          Effect.provideService(WorktreeState, worktreeState),
+          Effect.provideService(TranscriptState, transcriptState),
+        ),
+      )
+
+      return response.text()
+    }
+
+    const firstUser = 'Add 21873 and 31415. Reply with digits only.'
+    const secondUser = 'Add 27182 and 14142. Reply with digits only.'
+
+    const firstBody = await runOpenWebUiTurn([{ role: 'user', content: firstUser }])
+    const firstReply = parseFrames(firstBody)
+      .map((chunk) => {
+        const choices = Array.isArray(chunk.choices) ? chunk.choices : []
+        const firstChoice = asRecord(choices[0])
+        const delta = asRecord(firstChoice?.delta)
+        return typeof delta?.content === 'string' ? delta.content : undefined
+      })
+      .filter(Boolean)
+      .join('')
+      .trim()
+
+    expect(firstReply).toContain('53288')
+    expect(firstReply).toContain('Usage:')
+    expect(storedThreadId).toBe('thread-1')
+    expect(storedTranscript).not.toBeNull()
+
+    await runOpenWebUiTurn([
+      { role: 'user', content: firstUser },
+      { role: 'assistant', content: firstReply },
+      { role: 'user', content: secondUser },
+    ])
+
+    expect(mockClient.runTurnStream).toHaveBeenCalledTimes(2)
+    expect(threadState.clearChat).not.toHaveBeenCalled()
+    expect(transcriptState.clearTranscript).not.toHaveBeenCalled()
+    expect(mockClient.runTurnStream.mock.calls[1]?.[0]).toBe(`user: ${secondUser}`)
+    expect((mockClient.runTurnStream.mock.calls[1]?.[1] as { threadId?: string } | undefined)?.threadId).toBe(
+      'thread-1',
+    )
   })
 
   it('does not reject append-only OpenWebUI turns just because the full transcript exceeds the retry budget', async () => {

@@ -29,7 +29,14 @@ import {
 } from './chat-completion-encoder'
 import { safeJsonStringify, stripTerminalControl } from './chat-text'
 import { ChatToolEventRenderer, chatToolEventRendererLive, type ToolRenderer } from './chat-tool-event-renderer'
-import { buildTranscriptSignature, compareTranscript, fitPromptMessages, type TranscriptEntry } from './chat-transcript'
+import {
+  buildTranscriptSignature,
+  compareTranscript,
+  fitPromptMessages,
+  normalizeMessageContent,
+  type ChatMessage as TranscriptMessage,
+  type TranscriptEntry,
+} from './chat-transcript'
 import { getCodexClient, releaseCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
 import {
   recordOpenWebUIDetailTurn,
@@ -839,6 +846,14 @@ const toSseResponse = (
       } finally {
         handleClientDisconnect = null
         for (const removeAbort of abortControllers) removeAbort()
+        if (persistRenderBlobs) {
+          const frames = session.finalize({ aborted, turnFinished })
+          const failedRenderIds = await persistRenderBlobs()
+          session.resolvePendingDetailLinks(frames, failedRenderIds)
+          enqueueFrames(frames)
+        } else {
+          enqueueFrames(session.finalize({ aborted, turnFinished }))
+        }
         if (onTurnSettled) {
           try {
             const state = session.getState()
@@ -856,14 +871,6 @@ const toSseResponse = (
               error: String(error),
             })
           }
-        }
-        if (persistRenderBlobs) {
-          const frames = session.finalize({ aborted, turnFinished })
-          const failedRenderIds = await persistRenderBlobs()
-          session.resolvePendingDetailLinks(frames, failedRenderIds)
-          enqueueFrames(frames)
-        } else {
-          enqueueFrames(session.finalize({ aborted, turnFinished }))
         }
 
         if (!controllerClosed) {
@@ -916,6 +923,18 @@ const buildInputTooLargeError = (maxInputChars: number) =>
     'input_too_large',
     `Chat input exceeds the maximum supported length of ${maxInputChars} characters. Start a new chat or shorten the latest message.`,
   )
+
+const normalizeOpenWebUITranscriptMessages = (messages: ReadonlyArray<TranscriptMessage>) =>
+  messages.map((message) => {
+    if (message.role !== 'assistant') return message
+    return {
+      ...message,
+      content: normalizeAssistantTranscriptContent(normalizeMessageContent(message.content)),
+    }
+  })
+
+const buildOpenWebUITranscriptSignature = (messages: ReadonlyArray<TranscriptMessage>) =>
+  buildTranscriptSignature(normalizeOpenWebUITranscriptMessages(messages))
 
 export const handleChatCompletionEffect = (request: Request) =>
   pipe(
@@ -1167,12 +1186,15 @@ export const handleChatCompletionEffect = (request: Request) =>
         let promptMessages = parsed.messages
         let nextTranscriptSignature: TranscriptEntry[] | null =
           threadContext && transcriptState && statefulTranscriptEnabled
-            ? buildTranscriptSignature(parsed.messages)
+            ? buildOpenWebUITranscriptSignature(parsed.messages)
             : null
 
         if (threadContext && threadContext.threadId && transcriptState && statefulTranscriptEnabled) {
-          const comparison = compareTranscript(storedTranscript, parsed.messages)
-          promptMessages = comparison.deltaMessages.length > 0 ? comparison.deltaMessages : parsed.messages
+          const comparison = compareTranscript(storedTranscript, normalizeOpenWebUITranscriptMessages(parsed.messages))
+          promptMessages =
+            comparison.prefixMatch && comparison.prefixLength > 0 && comparison.prefixLength < parsed.messages.length
+              ? parsed.messages.slice(comparison.prefixLength)
+              : parsed.messages
           nextTranscriptSignature = comparison.signature
 
           if (comparison.resetRequired) {
@@ -1261,7 +1283,10 @@ export const handleChatCompletionEffect = (request: Request) =>
                 const assistantContent = normalizeAssistantTranscriptContent(result.assistantContent)
                 const completedSignature =
                   assistantContent.length > 0
-                    ? buildTranscriptSignature([...parsed.messages, { role: 'assistant', content: assistantContent }])
+                    ? buildOpenWebUITranscriptSignature([
+                        ...parsed.messages,
+                        { role: 'assistant', content: assistantContent },
+                      ])
                     : nextTranscriptSignature
 
                 await pipe(
@@ -1533,4 +1558,4 @@ const parseSseFrames = (body: string): unknown[] => {
   return frames
 }
 
-const normalizeAssistantTranscriptContent = (content: string) => content.replace(/^\n+/, '')
+const normalizeAssistantTranscriptContent = (content: string) => content.replace(/^\n+/, '').trimEnd()
