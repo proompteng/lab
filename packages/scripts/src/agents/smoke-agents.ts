@@ -193,6 +193,70 @@ type BuildKubectlApplyArgsInput = {
   file?: string
 }
 
+type BuildPostgresBootstrapManifestInput = {
+  dbHost: string
+  dbPort: string
+  dbImage: string
+  dbUser: string
+  dbPassword: string
+  dbName: string
+}
+
+export const defaultPostgresImage = 'mirror.gcr.io/pgvector/pgvector:pg16'
+
+export const buildPostgresBootstrapManifest = ({
+  dbHost,
+  dbPort,
+  dbImage,
+  dbUser,
+  dbPassword,
+  dbName,
+}: BuildPostgresBootstrapManifestInput) => `apiVersion: v1
+kind: Service
+metadata:
+  name: ${dbHost}
+spec:
+  selector:
+    app: ${dbHost}
+  ports:
+    - port: ${dbPort}
+      targetPort: ${dbPort}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${dbHost}
+spec:
+  replicas: 1
+  progressDeadlineSeconds: 180
+  selector:
+    matchLabels:
+      app: ${dbHost}
+  template:
+    metadata:
+      labels:
+        app: ${dbHost}
+    spec:
+      containers:
+        - name: postgres
+          image: ${dbImage}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_USER
+              value: ${dbUser}
+            - name: POSTGRES_PASSWORD
+              value: ${dbPassword}
+            - name: POSTGRES_DB
+              value: ${dbName}
+          ports:
+            - containerPort: ${dbPort}
+          readinessProbe:
+            tcpSocket:
+              port: ${dbPort}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+`
+
 export const buildKubectlApplyArgs = ({ namespace, file }: BuildKubectlApplyArgsInput) => {
   // Smoke manifests are generated at runtime; skip OpenAPI validation so fresh kind API servers
   // do not fail the test on transient schema fetch EOFs.
@@ -211,6 +275,24 @@ export const buildKubectlWaitForCrdsArgs = (timeout = '120s') => [
   `--timeout=${timeout}`,
   '-f',
   agentsCrdsPath,
+]
+
+export const buildPostgresExtensionArgs = (namespace: string, pod: string, dbUser: string, dbName: string) => [
+  'kubectl',
+  '-n',
+  namespace,
+  'exec',
+  pod,
+  '--',
+  'psql',
+  '-U',
+  dbUser,
+  '-d',
+  dbName,
+  '-v',
+  'ON_ERROR_STOP=1',
+  '-c',
+  'CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pgcrypto;',
 ]
 
 const healthProbePort = '8080'
@@ -512,7 +594,7 @@ const main = async () => {
   const dbName = process.env.AGENTS_DB_NAME ?? 'agents'
   const dbHost = process.env.AGENTS_DB_HOST ?? `${releaseName}-postgres`
   const dbPort = process.env.AGENTS_DB_PORT ?? '5432'
-  const dbImage = process.env.AGENTS_DB_IMAGE ?? 'pgvector/pgvector:pg16'
+  const dbImage = process.env.AGENTS_DB_IMAGE ?? defaultPostgresImage
   const agentctlBin = process.env.AGENTCTL_BIN ?? 'agentctl'
   const kubeconfigPath =
     process.env.AGENTCTL_KUBECONFIG ?? process.env.KUBECONFIG ?? resolve(homedir(), '.kube', 'config')
@@ -554,52 +636,33 @@ const main = async () => {
     log('Bootstrapping postgres for smoke test...')
     await applyYaml(
       namespace,
-      `apiVersion: v1
-kind: Service
-metadata:
-  name: ${dbHost}
-spec:
-  selector:
-    app: ${dbHost}
-  ports:
-    - port: ${dbPort}
-      targetPort: ${dbPort}
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ${dbHost}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: ${dbHost}
-  template:
-    metadata:
-      labels:
-        app: ${dbHost}
-    spec:
-      containers:
-        - name: postgres
-          image: ${dbImage}
-          env:
-            - name: POSTGRES_USER
-              value: ${dbUser}
-            - name: POSTGRES_PASSWORD
-              value: ${dbPassword ?? 'generated'}
-            - name: POSTGRES_DB
-              value: ${dbName}
-          ports:
-            - containerPort: ${dbPort}
-          readinessProbe:
-            tcpSocket:
-              port: ${dbPort}
-            initialDelaySeconds: 5
-            periodSeconds: 5
-`,
+      buildPostgresBootstrapManifest({
+        dbHost,
+        dbPort,
+        dbImage,
+        dbUser,
+        dbPassword: dbPassword ?? 'generated',
+        dbName,
+      }),
     )
 
-    await run('kubectl', ['-n', namespace, 'rollout', 'status', `deploy/${dbHost}`, `--timeout=${timeoutFlag}`])
+    {
+      const exitCode = await runInherit([
+        'kubectl',
+        '-n',
+        namespace,
+        'rollout',
+        'status',
+        `deploy/${dbHost}`,
+        `--timeout=${timeoutFlag}`,
+      ])
+      if (exitCode !== 0) {
+        await dumpNamespaceDiagnostics(namespace, dbHost)
+        fatal(
+          `Command failed (${exitCode}): kubectl -n ${namespace} rollout status deploy/${dbHost} --timeout=${timeoutFlag}`,
+        )
+      }
+    }
 
     log('Ensuring required Postgres extensions for Jangar...')
     const podResult = await execCapture([
@@ -620,27 +683,10 @@ spec:
 
     // Jangar requires both pgvector (vector) and pgcrypto extensions.
     // Even after the pod is Ready, Postgres may still be finalizing startup; retry briefly.
-    const extensionSql = 'CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pgcrypto;'
     const extensionDeadlineMs = 60_000
     const extensionStart = Date.now()
     while (Date.now() - extensionStart <= extensionDeadlineMs) {
-      const exitCode = await runInherit([
-        'kubectl',
-        '-n',
-        namespace,
-        'exec',
-        dbPod,
-        '--',
-        'psql',
-        '-U',
-        dbUser,
-        '-d',
-        dbName,
-        '-v',
-        'ON_ERROR_STOP=1',
-        '-c',
-        extensionSql,
-      ])
+      const exitCode = await runInherit(buildPostgresExtensionArgs(namespace, dbPod, dbUser, dbName))
       if (exitCode === 0) break
       await sleep(2000)
     }
