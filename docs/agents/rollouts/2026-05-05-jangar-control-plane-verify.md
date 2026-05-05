@@ -5,6 +5,24 @@ Swarm: jangar-control-plane
 Branch: codex/swarm-jangar-control-plane-verify
 Base: main
 
+## Open PR Inventory
+
+- #5454 `feat(jangar): surface failure-domain lease holdbacks`
+  - Selected for Jangar release attention.
+  - State: open, non-draft, `MERGEABLE`, `CLEAN`.
+  - Gate: no-go because the mandatory Codex review for a >1,000-line PR has not posted.
+- #5532 `docs(jangar): record control plane release verification`
+  - Selected as the release-audit PR for this verification branch.
+  - State: open, non-draft, `MERGEABLE`, `CLEAN`, check rollup pass/skipped only at the 2026-05-05T18:55Z
+    recheck.
+- #5412 `feat(torghut): add evidence epochs and shared live gate`
+  - Adjacent Torghut/shared-live-gate work, not selected as the primary Jangar-control-plane PR for this pass.
+  - State: open, non-draft, `MERGEABLE`, `CLEAN`, but blocked by the same >1,000-line Codex review gate.
+- #5537 `revert(torghut): roll back image 7e2fb9ce`
+  - Adjacent Torghut rollback PR, not selected as a Jangar-control-plane merge candidate for this pass.
+  - State: open, non-draft, `MERGEABLE`, `UNSTABLE` at the 2026-05-05T18:55Z recheck because Torghut CI was still in
+    progress.
+
 ## PRs Touched
 
 - #5376 `fix(torghut): restore live jangar dependency quorum`
@@ -60,17 +78,30 @@ Base: main
   - `app ready=true restartCount=3`, unchanged from the first recovered observation.
   - `/health` still returned ok.
   - App logs for the prior two minutes were quiet.
+- Stability recheck at 2026-05-05T18:55Z:
+  - Pod list showed `jangar-584d75f4f6-zt9b2` as `2/2 Running` with `3` app restarts, last restart 23 minutes
+    earlier.
+  - Container status still reported `app ready=true restarts=3` and `docker ready=true restarts=0`.
+  - Pod conditions still reported `Ready=True` and `ContainersReady=True`.
+  - `/health` still returned ok.
+  - App logs for the prior 10 minutes included Kubernetes API `Too Many Requests`, worktree snapshot refresh failures for
+    unresolved PR refs, and ClickHouse freshness query timeouts.
 - Recent warning events before recovery:
   - `pod/jangar-584d75f4f6-zt9b2`: readiness probe connection refused and app container backoff.
   - `pod/jangar-db-1`: readiness probe returned HTTP 500.
   - Jangar app logs during failed starts showed Postgres `Query read timeout` during Kysely migrations.
 - Remaining warning signal at the 18:36Z recheck:
   - `pod/jangar-db-1` still had a recent readiness probe HTTP 500 event, so database health remains a residual risk.
+- Remaining warning signal at the 18:55Z recheck:
+  - `pod/jangar-584d75f4f6-zt9b2` still had readiness/backoff warnings last seen 23 minutes earlier.
+  - `pod/jangar-db-1` still had a readiness HTTP 500 warning last seen 11 minutes earlier.
 
 ## Risks
 
 - Rollout cannot be fully certified through Argo CD or Deployment rollout APIs from this runner because the available service account lacks RBAC for those resources.
-- The live Jangar pod is currently healthy by pod and HTTP evidence, and its restart count stayed stable through the 18:36Z recheck. Recent CNPG readiness warnings mean the gate remains yellow until database health is also quiet.
+- The live Jangar pod is currently healthy by pod and HTTP evidence, and its restart count stayed stable through the
+  18:55Z recheck. Recent CNPG readiness warnings and Kubernetes API 429s mean the gate remains yellow until database and
+  API pressure signals are also quiet.
 - #5454 remains blocked on Codex review capacity and must not be merged even though its branch is clean and checks are green.
 
 ## Rollback Path
@@ -86,5 +117,6 @@ Base: main
 ## Next Action
 
 - Keep #5454 blocked until Codex review capacity is restored and a review is posted.
-- Recheck Jangar pod readiness, `/health`, warning events, and app restart count after the next stability window.
+- Recheck Jangar pod readiness, `/health`, warning events, app restart count, and Jangar app logs after the next stability
+  window.
 - Request RBAC or an alternate read credential for Argo CD Application and Deployment rollout status if full GitOps certification is required from this runner.
