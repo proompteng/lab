@@ -5,7 +5,14 @@ metadata:
 spec:
   durableName: jangar-agent-comms
   streamName: agent-comms
+  description: Jangar agent communications ingestion
   ackPolicy: explicit
+  ackWait: 30s
   deliverPolicy: all
+  filterSubjects:
+    - workflow.>
+    - agents.workflow.>
+    - argo.workflow.>
+    - workflow_comms.agent_messages.>
   replayPolicy: instant
   maxAckPending: 20000
