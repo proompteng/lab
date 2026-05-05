@@ -166,8 +166,10 @@ describe('update-manifests', () => {
     expect(migrationManifest).toContain("connection.execute(text('select 1'))")
     expect(migrationManifest).toContain('wait_for_database "torghut app database" "${DB_DSN}" 300')
     expect(migrationManifest).toContain(
-      'wait_for_database "postgres superuser database" "${TORGHUT_POSTGRES_ADMIN_URI}" 300',
+      'wait_for_database "postgres superuser database" "${TORGHUT_POSTGRES_ADMIN_URI}" 300 postgres',
     )
+    expect(migrationManifest).toContain('DB_WAIT_DATABASE="${database}"')
+    expect(migrationManifest).toContain('dsn = database_url(dsn, database)')
   })
 
   it('updates service and migration image digest, rollout timestamp, and metadata env values', () => {
