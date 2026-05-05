@@ -18,14 +18,12 @@ run_with_helm3() {
   if command -v helm >/dev/null 2>&1; then
     if helm version --short 2>/dev/null | grep -qE '^v3\.'; then
       "$@"
-      return 0
+      return $?
     fi
   fi
   if command -v mise >/dev/null 2>&1; then
-    if mise exec helm@3 -- "$@"; then
-      return 0
-    fi
-    echo "mise exec helm@3 failed; falling back to system helm" >&2
+    mise exec helm@3 -- "$@"
+    return $?
   fi
   "$@"
 }
