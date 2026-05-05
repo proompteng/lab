@@ -10,6 +10,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
+  - `docs/agents/designs/67-jangar-runtime-evidence-epochs-and-artifact-parity-gates-2026-05-05.md`
   - `73-torghut-profit-evidence-clock-and-capital-veto-contract-2026-05-05.md`
   - `docs/agents/designs/68-jangar-evidence-clock-arbiter-and-rollout-veto-contract-2026-05-05.md`
   - `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
@@ -49,6 +51,8 @@
 - `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
 - `73-torghut-profit-evidence-clock-and-capital-veto-contract-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/67-jangar-runtime-evidence-epochs-and-artifact-parity-gates-2026-05-05.md`
+  - `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
   - `docs/agents/designs/68-jangar-evidence-clock-arbiter-and-rollout-veto-contract-2026-05-05.md`
   - `docs/agents/designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md`
   - `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
@@ -158,6 +162,9 @@ Current source-state priority is narrower:
 - `71-torghut-whitepaper-autoresearch-profit-target-strategy-factory-2026-04-21.md` now turns the whitepaper,
   strategy-factory, MLX, portfolio-sleeve, and runtime-closure pieces into one implementation contract for a
   production autoresearch epoch targeting a `$500/day` post-cost portfolio candidate.
+- `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md` now binds that profit target to
+  current cluster truth: Jangar runtime authority, Torghut service/data health, artifact platform parity, and portfolio
+  proof must share one evidence epoch before research or capital stages advance.
 - `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md` now turns the May 5 live assessment into the
   next architecture contract: route-time proof compilation moves behind a bounded proof exchange, lane-local data
   firebreaks block only the affected hypotheses, and non-shadow capital requires unexpired proof tied to Jangar
@@ -418,6 +425,7 @@ This pack is positioned as the next architecture layer above:
 48. `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
 49. `66-torghut-property-based-testing-coverage-and-lint-hardening-2026-03-28.md`
 50. `67-torghut-trading-engine-glossary-and-mechanics-2026-03-29.md`
+51. `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
 
 ## Why This Sequence
 
@@ -469,3 +477,7 @@ This pack is positioned as the next architecture layer above:
   service's trading core.
 - `67-torghut-trading-engine-glossary-and-mechanics-2026-03-29.md` adds the missing onboarding layer: one current
   terminology and mechanics map for data flow, strategy flow, persistence, replay, and diagnostics.
+- `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md` comes after the research factory
+  contracts because the current bottleneck is no longer candidate generation alone. Portfolio proof must be bound to
+  the exact Jangar runtime authority, Torghut health, data freshness, and artifact parity that were current when the
+  candidate was evaluated.
