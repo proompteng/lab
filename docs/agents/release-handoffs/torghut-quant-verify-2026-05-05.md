@@ -57,6 +57,29 @@ Rollback path remains a revert of #5514 merge commit `76709ed093bcff552d3a73c14d
 back to digest `sha256:5b1685a25cd2d708373d928b095a641b0fe65d0887820f70f32f4e6147bd9bb0` if the current image shows
 new regression evidence. #5412 has no runtime rollback path in this run because it remains unmerged.
 
+## 2026-05-05T18:47Z Rollback Gate
+
+#5533 was squash-merged as audit PR `a187e0a3b4ca3f5c6094d1606aa617e042eca398`. After that merge, Argo continued the
+already-pending #5529 image promotion, `16514498ba2f964af434641b3bee76d87d3e9e2d`, to digest
+`sha256:bb2deda23875eba4d06844e51061c80fe058877a025a6f581636c08945101b0e`.
+
+Torghut itself reached the GitOps and workload gate: Argo reported `phase: Running -> Succeeded` with
+`successfully synced (no more tasks)` at 2026-05-05T18:42:44Z, the post-sync hooks completed, and live/sim revisions
+`torghut-00218` and `torghut-sim-00299` were `2/2 Running` with zero restarts. Sim `/trading/health` and `/readyz`
+returned HTTP 200. Live `/trading/health` and `/readyz` remained HTTP 503 because the live submission gate and empirical
+dependency gate are deliberately blocking.
+
+The rollout failed at `torghut-options`. Argo reported `torghut-options` synced at 2026-05-05T18:43:20Z, but health
+stayed `Progressing` while the new `torghut-options-enricher-8b8bfb6d5-4v62t` pod remained `0/1 Running` on digest
+`sha256:bb2deda23875eba4d06844e51061c80fe058877a025a6f581636c08945101b0e`. Its `/healthz` returned HTTP 200 with
+`ready=false`, `/readyz` returned HTTP 503, and `kubectl wait --for=condition=Ready` timed out after 180 seconds. The
+old enricher pod stayed ready, so this was an incomplete rollout rather than a total options outage.
+
+Rollback decision: open #5537, a GitOps rollback PR that reverts #5529's image promotion only, returning Torghut
+runtime, analysis, hook, and options images to digest
+`sha256:f183391e56cf5b52ee1d1cf73fbade982d46f357633b7942ebf674e6e8ef4f0a`. The rollback trigger is the stuck options
+enricher readiness gate on `bb2deda`, not the expected live-trading no-go on `simple_submit_disabled`.
+
 ## Gate Decision
 
 Go for the selected small Torghut image promotion #5514 after all required checks passed. No-go remains in place for
