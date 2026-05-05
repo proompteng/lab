@@ -111,6 +111,8 @@ jobs:
           JANGAR_BUILD_SOURCEMAP: '0'
           JANGAR_BUILD_CI: 'true'
           JANGAR_BUILD_LOG_LEVEL: warn
+          DOCKER_BUILD_PROVENANCE: max
+          DOCKER_BUILD_SBOM: 'true'
         run: bun run packages/scripts/src/jangar/build-images.ts
 
       - name: Resolve pushed image digest

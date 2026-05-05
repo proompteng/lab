@@ -1,409 +1,340 @@
 # Agents Helm Chart
 
-Production Helm chart for the Agents control plane (Jangar) plus the full Agents CRD suite.
+Agents installs **Jangar**, a Kubernetes-native control plane for running agent and automation work as normal Kubernetes resources.
 
-Run AI workflows natively in Kubernetes with operator-driven orchestration, Jobs/Pods runtime, and first-class CRDs for agents, tools, approvals, schedules, artifacts, and workspaces.
+If you already understand Deployments and Jobs, this is the shortest mental model:
 
-## Try it now (5 minutes)
+- You create an `AgentRun` custom resource when you want work done.
+- Jangar watches that resource and launches Kubernetes Jobs/Pods to do the work.
+- The run status is written back to the `AgentRun`, so Kubernetes stays the source of truth.
 
-```bash
-# From repo root
-helm lint charts/agents
-helm template charts/agents --values charts/agents/values-local.yaml
-helm install agents charts/agents --namespace agents --create-namespace \
-  --values charts/agents/values-local.yaml
+The chart is published on Artifact Hub:
 
-kubectl -n agents port-forward svc/agents 8080:80 &
-curl -sf http://127.0.0.1:8080/health
-```
+- Artifact Hub: <https://artifacthub.io/packages/helm/agents/agents>
+- OCI chart: `oci://ghcr.io/proompteng/charts/agents`
+- Current chart version: `0.9.9`
 
-Apply the sample CRDs:
+## Start Here
 
-```bash
-kubectl apply -n agents -f charts/agents/examples/agentprovider-sample.yaml
-kubectl apply -n agents -f charts/agents/examples/agent-sample.yaml
-kubectl apply -n agents -f charts/agents/examples/memory-sample.yaml
-kubectl apply -n agents -f charts/agents/examples/implementationspec-sample.yaml
-kubectl apply -n agents -f charts/agents/examples/versioncontrolprovider-github.yaml
-kubectl apply -n agents -f charts/agents/examples/versioncontrolprovider-github-app.yaml
-kubectl apply -n agents -f charts/agents/examples/agentrun-sample.yaml
-kubectl apply -n agents -f charts/agents/examples/tool-sample.yaml
-kubectl apply -n agents -f charts/agents/examples/orchestration-sample.yaml
-kubectl apply -n agents -f charts/agents/examples/orchestrationrun-sample.yaml
-```
-
-## Kind quickstart (end-to-end)
-
-Spin up a local kind cluster, install Postgres, deploy the chart, and run the
-smoke AgentRun with a single command:
+Use the local end-to-end path first. It builds a Jangar image from this repository, creates a kind cluster, installs Postgres, deploys the chart, submits a smoke `AgentRun`, and waits for that run to succeed.
 
 ```bash
+git clone https://github.com/proompteng/lab.git
+cd lab
+
 scripts/agents/kind-e2e.sh
 ```
 
-The script builds a local Jangar image first (running `bun install` + `bun run build`
-if `.output` is missing), then loads the image into kind.
+Expected final output:
 
-Environment variables you can override:
-
-- `CLUSTER_NAME` (default: `agents`)
-- `NAMESPACE` (default: `agents`)
-- `POSTGRES_RELEASE` (default: `agents-postgres`)
-- `POSTGRES_USER` (default: `agents`)
-- `POSTGRES_PASSWORD` (default: `agents`)
-- `POSTGRES_DB` (default: `agents`)
-- `CHART_PATH` (default: `charts/agents`)
-- `VALUES_FILE` (default: `charts/agents/values-kind.yaml`)
-- `SECRET_NAME` (default: `jangar-db-app`)
-- `SECRET_KEY` (default: `uri`)
-- `KUBECTL_CONTEXT` (default: `kind-<cluster>`)
-- `IMAGE_REPOSITORY` (default: `jangar-local`)
-- `IMAGE_TAG` (default: `kind`)
-- `BUILD_IMAGE` (default: `1`, set to `0` to skip the Docker build)
-
-## Why teams use this chart
-
-- **Operator-native orchestration**: run workflows with Kubernetes Jobs/Pods (no external workflow engine required).
-- **Batteries-included CRDs**: agents, tools, orchestration, approvals, schedules, artifacts, workspaces, and more.
-- **Small blast radius**: no ingress, no bundled database, no migrations job baked in.
-- **Production-minded defaults**: RBAC, optional PDBs, network policy, HPA toggles, gRPC service option.
-- **Artifact Hub ready**: metadata, images, CRD docs, and examples included.
-
-## What this chart installs
-
-- Jangar control-plane Deployment + Service
-- Controllers and CRDs for:
-  - Agents (Agent, AgentRun, AgentProvider)
-  - Version control providers (VersionControlProvider)
-  - Orchestration (Orchestration, OrchestrationRun)
-  - Tools (Tool, ToolRun)
-  - Signals (Signal, SignalDelivery)
-  - Schedules (Schedule)
-  - Artifacts (Artifact)
-  - Workspaces (Workspace)
-  - Supporting primitives (ApprovalPolicy, Budget, SecretBinding, ImplementationSpec, ImplementationSource, Memory)
-
-## Architecture (at a glance)
-
-- **Control plane**: Jangar reconciles CRDs and schedules runtime Jobs/Pods.
-- **Runtime**: Agents and tools run as Jobs/Pods with input/run spec ConfigMaps.
-- **Storage**: Agent memory configured per Memory CRD and its Secret.
-- **Security**: RBAC, namespace scoping, optional network policy.
-
-## Requirements
-
-- Kubernetes 1.25+
-- Helm 3.12+
-- Postgres-compatible database connection string for Jangar
-
-## Configuration essentials
-
-### Database
-
-Provide one of:
-
-- `database.url` (inline)
-- `database.secretRef` (existing Secret)
-- `database.createSecret.enabled=true` with `database.url`
-
-Agent memory backends are configured separately via the `Memory` CRD.
-
-### Deterministic rollout on config/secret changes
-
-Control plane and controllers pods include rollout annotations only when `rolloutChecksums.enabled=true`.
-
-Source-of-truth model:
-
-- Chart-owned DB secret path: when `database.createSecret.enabled=true`, the chart computes
-  `agents.proompteng.ai/checksum-secret-<hash>` from the literal `database.url` value.
-- Externally managed Secret/ConfigMap inputs: the chart does **not** read live resources at render
-  time. You must supply checksum values from your external source of truth.
-
-Checksum annotation keys are deterministic and bounded:
-
-- `agents.proompteng.ai/checksum-secret-<hash>`
-- `agents.proompteng.ai/checksum-configmap-<hash>`
-
-The hash is computed from the referenced object identity (`kind`, `namespace`, `name`) so keys remain
-stable and always satisfy Kubernetes annotation key length constraints.
-
-The external inputs should be the exact same contract inputs that drive pod behavior. When
-`rolloutChecksums.enabled=true`, each source below that is in use becomes required in
-`rolloutChecksums.secrets` / `rolloutChecksums.configMaps`.
-
-- `database.secretRef` / `database.createSecret` (database source of truth)
-- `database.caSecret` (Postgres CA certificate Secret)
-- `envFromSecretRefs` (Secret names injected via `envFrom`)
-- `envFromConfigMapRefs` (ConfigMap names injected via `envFrom`)
-- `env.secrets` (Secret key refs in `env.secrets`)
-- `env.config` (ConfigMap key refs in `env.config`)
-- `agentComms.nats.userSecret` (NATS credentials secret)
-
-Example:
-
-The chart always derives a checksum from an inline DB secret when `database.createSecret.enabled=true`
-because that secret content is chart-owned and deterministic.
-
-For other inputs, list the exact resources and checksums in values:
-
-- `rolloutChecksums.secrets`
-- `rolloutChecksums.configMaps`
-
-Example:
-
-```yaml
-rolloutChecksums:
-  enabled: true
-  secrets:
-    - name: agents-github-token-env
-      namespace: agents # optional when same as release namespace
-      checksum: 'd34db33f...' # 64-char sha256 hex from external source of truth
-  configMaps:
-    - name: agents-runtime-config
-      namespace: agents # optional when same as release namespace
-      checksum: 'a1b2c3d4...'
+```text
+Agents chart kind run complete.
 ```
 
-The chart merges these entries into pod annotations for both `Deployment/agents` and
-`Deployment/agents-controllers`.
-
-Operator workflow:
-
-1. Apply/update the external Secret/ConfigMap source in your GitOps-managed system.
-2. Compute a deterministic SHA-256 over the exact source payload your deployment depends on.
-3. Update `rolloutChecksums.secrets[]` or `.configMaps[]` and deploy via GitOps (helm/Argo CD).
-
-Example (external Secret payload hash):
+Verify the result yourself:
 
 ```bash
-kubectl -n agents get secret agents-github-token-env -o json |
-  jq -cS '{data: .data, binaryData: .binaryData}' |
-  sha256sum | awk '{print $1}'
+kubectl --context kind-agents -n agents get deploy,pods,svc
+kubectl --context kind-agents -n agents get agentrun agents-workflow-smoke -o jsonpath='{.status.phase}{"\n"}'
+kubectl --context kind-agents -n agents describe agentrun agents-workflow-smoke
+kubectl --context kind-agents -n agents get jobs
 ```
 
-Example (external ConfigMap payload hash):
+Clean up the local cluster:
 
 ```bash
-kubectl -n agents get configmap agents-runtime-config -o json |
-  jq -cS '{data: .data, binaryData: .binaryData}' |
-  sha256sum | awk '{print $1}'
+kind delete cluster --name agents
 ```
 
-Source-payload hashing guidance:
+### What The Script Does
 
-- Include keys in a stable JSON order (`jq -cS`) and include both `data` and `binaryData`
-  so the checksum reflects everything that can affect runtime behavior.
-- For key-by-key checksums, include only the same keys the pod reads; avoid hashing unrelated metadata.
-- If your source of truth is a declarative manifest (for example, ExternalSecret or Sealed Secret),
-  hash the source manifest object (not the rendered Kubernetes object) before applying.
-- In GitOps/ExternalSecrets flows, calculate the hash from the source-of-truth manifest committed in your secrets repo.
+`scripts/agents/kind-e2e.sh` is intentionally more useful than a render-only demo:
 
-Limitations:
+1. Creates or reuses a kind cluster named `agents`.
+2. Builds the Jangar container image from `services/jangar/Dockerfile`.
+3. Loads that image into kind.
+4. Installs a disposable `pgvector/pgvector` Postgres deployment and creates the required `vector` and `pgcrypto` extensions.
+5. Creates the database URL Secret the chart expects.
+6. Installs this chart with `charts/agents/values-kind.yaml`, which grants CRD discovery RBAC and uses `/health`
+   as the local readiness gate.
+7. Applies the smoke `AgentProvider`, `Agent`, `ImplementationSpec`, and `AgentRun`.
+8. Waits for `agentrun/agents-workflow-smoke` to report `Succeeded`.
 
-- For external secret/configmap managers (ESO/ExternalSecrets, external controllers, etc.), Helm cannot safely read live object payloads during template rendering, so checksum updates must be supplied explicitly.
-- Include every secret/configmap that affects container runtime behavior; unmanaged edits to referenced values without matching checksums will not trigger rollout.
-- Chart rendering fails when required external Secret/ConfigMap inputs used by this chart are not listed in `rolloutChecksums`.
-- Empty or invalid checksum values are rejected by values schema/validation.
-- Duplicate `namespace/name` entries in the same object type (`secrets` or `configMaps`) are rejected.
+The important point: this proves the chart can do real controller work, not just pass `helm template`.
 
-### Controller scope
+## Install The Published Chart
 
-- Single namespace (namespaced RBAC): omit a scope list for release-namespace default or set exactly one namespace.
-- Explicit scope lists must be arrays, and if the key is present the list must have at least one namespace.
-- Multi-namespace: set any scope list with multiple namespaces and `rbac.clusterScoped=true`.
-- Wildcard: set exactly one value `["*"]` and `rbac.clusterScoped=true`.
-- Explicit single namespace with cluster-scoped RBAC: set `rbac.clusterScoped=true` when a scope list contains exactly one namespace but you still need cluster-level permissions.
-- Invalid combinations are rejected at render-time for all scope keys:
-  - explicit empty list (`[]`)
-  - wildcard (`"*"`) combined with any specific namespace
-  - multi-namespace with `rbac.clusterScoped=false`
-  - single-namespace lists in namespaced mode that target a namespace different from the chart namespace
-    (`namespaceOverride`/`Release.Namespace`)
-  - invalid namespace tokens (for example `""`, `"  agents"`, `"*"` mixed with specific namespaces, uppercase values)
+Use this path when you already have:
 
-For all scope keys:
+- Kubernetes `1.25+`
+- Helm with OCI registry support
+- A Postgres-compatible database URL
+- A Jangar image your cluster can pull
+- A runner image your cluster can pull for `AgentRun` Jobs
 
-- `controller.namespaces`
-- `orchestrationController.namespaces`
-- `supportingController.namespaces`
+The chart package is public. The runtime images are an operator decision: the local quickstart builds an image for kind, while production should use your promoted image tags and digests.
 
-Do **not** set an explicit empty list (`[]`). Empty scope arrays are rejected by chart validation.
+Create the namespace and database Secret:
 
-`rbac.clusterScoped=false` is namespaced to `namespaceOverride` (falling back to `Release.Namespace`
-when unset). If any scope key is set explicitly to one namespace, that namespace must be the same chart namespace.
+```bash
+kubectl create namespace agents
 
-Examples:
+kubectl -n agents create secret generic agents-db-app \
+  --from-literal=url='postgresql://USER:PASSWORD@HOST:5432/agents?sslmode=require'
+```
+
+Create a values file for your environment:
 
 ```yaml
-# Valid: namespaced controllers
+# agents-values.yaml
+image:
+  repository: registry.example.com/platform/jangar
+  tag: 2026-05-05
+  digest: sha256:REPLACE_WITH_CONTROL_PLANE_IMAGE_DIGEST
+  pullSecrets:
+    - registry-cred
+
+runner:
+  image:
+    repository: registry.example.com/platform/agent-runner
+    tag: 2026-05-05
+    digest: sha256:REPLACE_WITH_RUNNER_IMAGE_DIGEST
+    pullSecrets:
+      - registry-cred
+
+imagePolicy:
+  requireDigest: true
+
+database:
+  secretRef:
+    name: agents-db-app
+    key: url
+
 controller:
   namespaces:
     - agents
-rbac:
-  clusterScoped: false
 
-# Valid: cluster-scoped controllers for one namespace
+controllers:
+  enabled: true
+
+orchestrationController:
+  enabled: true
+
+supportingController:
+  enabled: true
+
+rbac:
+  clusterScoped: true
+
+readinessProbe:
+  # Use /health for first install. /ready also checks production dependencies such
+  # as execution trust and memory embeddings; enable it after those are configured.
+  path: /health
+```
+
+Install:
+
+```bash
+helm upgrade --install agents oci://ghcr.io/proompteng/charts/agents \
+  --version 0.9.9 \
+  --namespace agents \
+  --values agents-values.yaml \
+  --wait
+```
+
+Check the control plane:
+
+```bash
+kubectl -n agents rollout status deployment/agents --timeout=180s
+kubectl -n agents get deploy,svc,pods
+
+kubectl -n agents port-forward svc/agents 8080:80
+curl -sf http://127.0.0.1:8080/health
+```
+
+Run the chart smoke examples from the published package:
+
+```bash
+helm pull oci://ghcr.io/proompteng/charts/agents --version 0.9.9 --untar
+
+kubectl -n agents apply -f agents/examples/agentprovider-smoke.yaml
+kubectl -n agents apply -f agents/examples/agent-smoke.yaml
+kubectl -n agents apply -f agents/examples/implementationspec-smoke.yaml
+kubectl -n agents apply -f agents/examples/agentrun-workflow-smoke.yaml
+
+kubectl -n agents wait --for=condition=Succeeded agentrun/agents-workflow-smoke --timeout=300s
+kubectl -n agents describe agentrun agents-workflow-smoke
+```
+
+## First Concepts
+
+You do not need to understand every CRD before installing the chart. These are the pieces that matter first:
+
+| Concept | What it means | First example |
+| --- | --- | --- |
+| Jangar | The control plane installed by this chart. It watches CRDs and coordinates work. | `Deployment/agents` |
+| AgentRun | One requested unit of work. This is what you create when you want something to run. | `examples/agentrun-workflow-smoke.yaml` |
+| Agent | A reusable worker profile. It points at an AgentProvider and can define defaults. | `examples/agent-smoke.yaml` |
+| AgentProvider | How an agent is executed, such as a command, adapter, or runner entrypoint. | `examples/agentprovider-smoke.yaml` |
+| ImplementationSpec | The task text and required inputs for a run. | `examples/implementationspec-smoke.yaml` |
+| Runner image | The image used by Jobs/Pods launched for an AgentRun. | `runner.image.*` |
+| Memory | Optional storage configuration for agents that need persistent context. | `examples/memory-sample.yaml` |
+| VersionControlProvider | Optional repo access configuration for runs that clone, commit, push, or open PRs. | `examples/versioncontrolprovider-github.yaml` |
+
+## What Gets Installed
+
+The chart installs:
+
+- Jangar control-plane `Deployment` and HTTP `Service`
+- Optional gRPC `Service`
+- Optional controllers deployment for reconciliation/runtime work
+- Optional metrics `Service`, `ServiceMonitor`, and Grafana dashboard ConfigMap
+- RBAC for the selected namespace or cluster scope
+- CRDs for agents, runs, providers, implementation specs, memory, version control providers, orchestration, tools, signals, schedules, artifacts, workspaces, approvals, budgets, and secret bindings
+
+The chart does **not** install:
+
+- A production database
+- An ingress or public load balancer
+- A global cluster-wide controller unless you ask for it
+- Production secrets
+- Your private runner image
+
+That is deliberate. The chart should be safe to install into a namespace and then expand from there.
+
+## Common Tasks
+
+### Render Before Installing
+
+```bash
+helm template agents oci://ghcr.io/proompteng/charts/agents \
+  --version 0.9.9 \
+  --namespace agents \
+  --values agents-values.yaml
+```
+
+### Run Helm Test
+
+The chart includes an opt-in test Pod that curls the in-cluster health endpoint through the rendered Service.
+
+```bash
+helm upgrade --install agents oci://ghcr.io/proompteng/charts/agents \
+  --version 0.9.9 \
+  --namespace agents \
+  --values agents-values.yaml \
+  --set tests.enabled=true \
+  --wait
+
+helm test agents --namespace agents
+```
+
+### Use A Local Chart Checkout
+
+```bash
+helm lint charts/agents
+helm template agents charts/agents --namespace agents --values charts/agents/values-kind.yaml
+helm upgrade --install agents charts/agents --namespace agents --values charts/agents/values-kind.yaml --wait
+```
+
+For a full local run with a real cluster and smoke `AgentRun`, use `scripts/agents/kind-e2e.sh` instead of these render/install-only commands.
+
+## Production Configuration
+
+### Images
+
+Production should pin image tags and digests:
+
+```yaml
+image:
+  repository: registry.example.com/platform/jangar
+  tag: 2026-05-05
+  digest: sha256:...
+  pullSecrets:
+    - registry-cred
+
+runner:
+  image:
+    repository: registry.example.com/platform/agent-runner
+    tag: 2026-05-05
+    digest: sha256:...
+    pullSecrets:
+      - registry-cred
+
+imagePolicy:
+  requireDigest: true
+```
+
+`imagePolicy.requireDigest=true` rejects mutable chart-managed images at render time. It covers the control plane, runner image defaults, Argo CD hooks, Helm tests, and legacy runtime image values.
+
+### Database
+
+Use an existing Secret for production:
+
+```yaml
+database:
+  secretRef:
+    name: agents-db-app
+    key: url
+  caSecret:
+    name: agents-db-ca
+    key: ca.crt
+```
+
+Use `database.createSecret.enabled=true` only when you intentionally want Helm to own the database URL Secret.
+
+### Controller Scope
+
+Start with one watched namespace and cluster-scoped RBAC:
+
+```yaml
 controller:
   namespaces:
     - agents
 rbac:
   clusterScoped: true
+```
 
-# Valid: cluster-scoped controllers across namespaces
+The controller needs cluster-scoped read access to CustomResourceDefinitions so `/ready` can distinguish missing
+CRDs from missing RBAC. Use namespace-scoped RBAC only when you intentionally keep the readiness probe on `/health`
+or provide that CRD read permission outside this chart.
+
+Watch multiple namespaces by listing them:
+
+```yaml
 controller:
   namespaces:
     - team-a
     - team-b
 rbac:
   clusterScoped: true
-
-# Invalid: render-time failures
-controller:
-  namespaces: []               # empty scope array
-rbac:
-  clusterScoped: false
-
-controller:
-  namespaces:
-    - teams
-    - '*'                     # wildcard mixed with a concrete namespace
-rbac:
-  clusterScoped: true
 ```
 
-### AgentRun status artifact limits
+Valid scope patterns:
 
-AgentRun `status.artifacts` is intentionally bounded to keep Kubernetes objects small.
+| Mode | Namespace list | `rbac.clusterScoped` |
+| --- | --- | --- |
+| First install / production readiness | omitted or `["agents"]` | `true` |
+| Namespace Role only, `/health` readiness | omitted or `["agents"]` | `false` |
+| Multiple namespaces | `["team-a", "team-b"]` | `true` |
+| All namespaces | `["*"]` | `true` |
 
-Configure via Helm values (mapped to controller env vars):
+Invalid combinations fail at render time, including empty scope lists, wildcard mixed with real namespace names, and multi-namespace scope with namespaced RBAC.
 
-- `controller.agentRunArtifacts.max` → `JANGAR_AGENTRUN_ARTIFACTS_MAX` (default: `50`)
-- `controller.agentRunArtifacts.strict` → `JANGAR_AGENTRUN_ARTIFACTS_STRICT` (default: `false`)
+### Runner Defaults
 
-Note: The CRD schema hard-caps `status.artifacts` at 50 entries; controller-side config can only reduce this.
+The controller passes runner image defaults to AgentRun Jobs through `JANGAR_AGENT_RUNNER_IMAGE`.
 
-### Source-of-truth for env-var merges
+Precedence:
 
-- **Control plane**
-  - `controlPlane.env.vars` wins over `env.vars` for control-plane env.
-  - `grpc.manageEnvVar=true` (default) injects managed `JANGAR_GRPC_*` values from `grpc.*`; explicit values that disagree with these settings fail validation.
-- **Controllers**
-  - `controllers.env.vars` has explicit precedence.
-  - `env.vars` contributes non-reserved keys and can provide defaults for non-managed values.
-  - Reserved controller defaults are applied only when not explicitly set in `controllers.env.vars`:
-    - `JANGAR_MIGRATIONS=skip`
-    - `JANGAR_GRPC_ENABLED=0`
-    - `JANGAR_GRPC_HOST=0.0.0.0`
-    - `JANGAR_GRPC_PORT=<grpc.port>`
-    - `JANGAR_CONTROL_PLANE_CACHE_ENABLED=0`
-    - `JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED=true`
-    - `JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS=30`
-    - `JANGAR_AGENTRUN_ARTIFACTS_MAX=<controller.agentRunArtifacts.max>`
-    - `JANGAR_AGENTRUN_ARTIFACTS_STRICT=<controller.agentRunArtifacts.strict>`
+1. `env.vars.JANGAR_AGENT_RUNNER_IMAGE`
+2. `runner.image.*`
+3. `runtime.agentRunnerImage` legacy fallback
 
-#### Namespaced vs cluster-scoped install matrix
+Prefer `runner.image.*` for new installs.
 
-| Install mode                      | Scope list examples     | rbac.clusterScoped | RBAC scope                                              |
-| --------------------------------- | ----------------------- | ------------------ | ------------------------------------------------------- |
-| Namespaced (single)               | omitted or `["agents"]` | `false`            | Role + RoleBinding in release namespace                 |
-| Single namespace (cluster-scoped) | `["agents"]`            | `true`             | ClusterRole + ClusterRoleBinding                        |
-| Multi-namespace (explicit)        | `["team-a", "team-b"]`  | `true`             | ClusterRole + ClusterRoleBinding                        |
-| Wildcard (all namespaces)         | `["*"]`                 | `true`             | ClusterRole + ClusterRoleBinding (namespace list/watch) |
+### Availability
 
-If you set all three scope keys, they must use the same RBAC mode so controller permissions stay aligned.
-
-### Default scheduling for job pods
-
-Set controller-wide defaults for Job pods using `controller.defaultWorkload`. These defaults apply when the
-AgentRun runtime config does not specify a value.
-
-Common fields:
-
-- `controller.defaultWorkload.nodeSelector`
-- `controller.defaultWorkload.topologySpreadConstraints`
-- `controller.defaultWorkload.affinity`
-- `controller.defaultWorkload.topologySpreadConstraints`
-- `controller.defaultWorkload.priorityClassName`
-- `controller.defaultWorkload.schedulerName`
-
-Per-run overrides live under `spec.runtime.config` on the AgentRun and take precedence over defaults.
-Use `spec.runtime.config.topologySpreadConstraints` (array) to override or set an explicit empty array to clear
-defaults for a single run.
-
-### Concurrency limits
-
-- `controller.concurrency.perNamespace`, `controller.concurrency.perAgent`, `controller.concurrency.cluster`
-- `controller.repoConcurrency.enabled` with `controller.repoConcurrency.default` and optional `controller.repoConcurrency.overrides` per repo
-
-### gRPC service (optional)
-
-Enable gRPC for agentctl or in-cluster clients:
-
-- `grpc.enabled=true`
-- `grpc.manageEnvVar=true` (default) keeps control-plane `JANGAR_GRPC_*` values chart-owned and deterministic.
-- `controllers.service.enabled=true` to expose controller `agentctl` gRPC when `controllers.env.vars.JANGAR_GRPC_ENABLED=true`.
-- Controller `JANGAR_GRPC_HOST` and `JANGAR_GRPC_PORT` are still rendered from chart defaults (`0.0.0.0`, `grpc.port`) when unset so an explicit controller opt-in remains externally reachable once `controllers.service.enabled` is true.
-- `grpc.manageEnvVar=false` if you want manual ownership in values.
-- Source-of-truth for gRPC in managed mode:
-  - `JANGAR_GRPC_ENABLED` = `grpc.enabled`
-  - `JANGAR_GRPC_HOST` = `0.0.0.0`
-  - `JANGAR_GRPC_PORT` = `grpc.port`
-- Keep controller-side managed values at defaults unless intentionally overridden:
-  - `JANGAR_GRPC_ENABLED=0`
-  - `JANGAR_GRPC_HOST=0.0.0.0`
-  - `JANGAR_GRPC_PORT=<grpc.port>`
-- Controller-only service options:
-  - `controllers.service.enabled` (default `false`)
-  - `controllers.service.type` (default `ClusterIP`)
-  - `controllers.service.port` (default `50051`)
-  - `controllers.service.labels`
-  - `controllers.service.annotations`
-- `env.vars` is merged into both component maps, but controller reserved keys are intentionally owned by `controllers.env.vars` (or chart defaults). For controllers, avoid putting reserved keys in `env.vars`.
-- In managed mode, `env.vars`, `controlPlane.env.vars`, and `controllers.env.vars` must agree on managed `JANGAR_GRPC_*` values or render fails.
-- Set `env.vars.JANGAR_GRPC_TOKEN` to require a shared token.
-- For control-plane migration, remove manual `JANGAR_GRPC_*` settings from:
-  - `env.vars`
-  - `controlPlane.env.vars`
-- For controller migration, remove `JANGAR_GRPC_*` from `env.vars`; put overrides in `controllers.env.vars` when needed.
-
-### envFrom reserved-key guardrails
-
-Structured `envFrom` references can be used safely with chart-managed env keys:
-
-```yaml
-envFromSecretRefs:
-  - name: agents-config
-    optional: false
-    keys:
-      - JANGAR_GRPC_ENABLED
-      - JANGAR_MIGRATIONS
-```
-
-- `validation.reservedEnvKeysEnforced=true` (default) makes Helm fail if reserved keys are imported by `envFrom` in a way that conflicts with component ownership or managed expectations.
-- For control-plane keys, pin in `controlPlane.env.vars` or `env.vars` unless you rely on managed chart defaults:
-  - `JANGAR_GRPC_ENABLED` = `grpc.enabled`
-  - `JANGAR_GRPC_HOST` = `0.0.0.0`
-  - `JANGAR_GRPC_PORT` = `grpc.port`
-  - `JANGAR_CONTROL_PLANE_CACHE_ENABLED` (enable cache reads; defaults to `0` in controllers-only mode, `1` in control-plane mode)
-  - `JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS` (default: `120`; controls freshness window for cache row reuse)
-  - `JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE` (default: `true`; set to `false`/`0` for strict cache freshness)
-- For controller keys, pin in `controllers.env.vars` (or `env.vars` when not reserved/managed) when you intentionally diverge from defaults:
-  - `JANGAR_GRPC_ENABLED=0`
-  - `JANGAR_GRPC_HOST=0.0.0.0`
-  - `JANGAR_GRPC_PORT=<grpc.port>`
-  - `JANGAR_CONTROL_PLANE_CACHE_ENABLED=0`
-  - `JANGAR_AGENTRUN_IDEMPOTENCY_*`
-  - `JANGAR_AGENTRUN_ARTIFACTS_*`
-- A reserved key may only appear in one structured `envFrom` source across `envFromSecretRefs` and `envFromConfigMapRefs`. Duplicate declarations are rejected to prevent order-dependent behavior.
-
-### PodDisruptionBudget (availability)
-
-The chart exposes component-scoped disruption controls:
-
-- `podDisruptionBudget.*` applies to the control-plane `Deployment/agents`.
-- `controllers.podDisruptionBudget.*` applies to the controllers `Deployment/agents-controllers` and only takes effect when `controllers.enabled=true`.
-
-Example:
+Enable disruption protection and controller rollout safety:
 
 ```yaml
 podDisruptionBudget:
@@ -415,16 +346,6 @@ controllers:
   podDisruptionBudget:
     enabled: true
     maxUnavailable: 1
-```
-
-### Controller rollout strategy (rollout safety)
-
-During upgrades, controller availability is also controlled by `Deployment` strategy settings. Set
-`controllers.deploymentStrategy` when you need stricter availability behavior than the Kubernetes default.
-
-```yaml
-controllers:
-  enabled: true
   deploymentStrategy:
     type: RollingUpdate
     rollingUpdate:
@@ -432,344 +353,224 @@ controllers:
       maxSurge: 1
 ```
 
-For single-controller deployments this keeps at least one controller pod available throughout the rollout.
+### Observability
 
-### Observability (Prometheus + Grafana)
-
-The chart ships a Prometheus scrape endpoint and an optional ServiceMonitor plus a Grafana dashboard ConfigMap.
-
-- Metrics endpoint: `metrics.enabled=true` (default) exposes `metrics.path` (default `/metrics`).
-- Metrics service: `metrics.service.enabled=true` publishes a `*-metrics` Service on `metrics.service.port`.
-- ServiceMonitor: set `metrics.serviceMonitor.enabled=true` and add labels/annotations as needed.
-- Grafana dashboard: `metrics.dashboards.enabled=true` creates a ConfigMap labeled for Grafana sidecars.
-
-### Migrations
-
-Automatic migrations are enabled by default. To skip:
-
-- `env.vars.JANGAR_MIGRATIONS=skip` for the control plane
-- `controllers.env.vars.JANGAR_MIGRATIONS=skip` for controllers
-
-### Codex auth secret (optional)
-
-The controller mounts a writable `emptyDir` at `controller.authSecret.mountPath` (default `/root/.codex`) and then
-mounts the secret file at `auth.json` inside it. It also sets `CODEX_HOME` and `CODEX_AUTH` for the runner pods.
-
-Example:
-
-```bash
-helm upgrade agents charts/agents --namespace agents --reuse-values   --set controller.authSecret.name=codex-auth   --set controller.authSecret.key=auth.json
-```
-
-`codex-auth` is the mounted autonomous Codex auth contract for production runners. This chart only references the
-Secret name/key and mount path; the actual secret payload is managed outside these manifests and must use API-backed
-credentials rather than ChatGPT-account auth.
-
-### Admission control policy
-
-Use admission policy values to reject unsafe AgentRuns before submission. Rejections surface as `InvalidSpec`.
-
-Supported checks (pattern lists accept `*` wildcards):
-
-- `controller.admissionPolicy.labels.required`: label keys that must exist on AgentRuns.
-- `controller.admissionPolicy.labels.allowed`: allowed label key patterns (deny-by-default when set).
-- `controller.admissionPolicy.labels.denied`: blocked label key patterns (deny wins).
-- `controller.admissionPolicy.images.allowed`: allowed workload image patterns.
-- `controller.admissionPolicy.images.denied`: blocked workload image patterns (deny wins).
-- `controller.admissionPolicy.secrets.blocked`: secret names blocked by controller policy.
-
-Example:
+Metrics are enabled by default. Add ServiceMonitor and dashboard support when your cluster has Prometheus Operator and a Grafana sidecar:
 
 ```yaml
-controller:
-  admissionPolicy:
+metrics:
+  enabled: true
+  service:
+    enabled: true
+  serviceMonitor:
+    enabled: true
     labels:
-      required:
-        - team
-      denied:
-        - 'internal/*'
-    images:
-      allowed:
-        - 'registry.ide-newton.ts.net/lab/*'
-    secrets:
-      blocked:
-        - prod-kubeconfig
-```
-
-### AgentRun runner defaults (optional)
-
-Set defaults for AgentRun and Schedule workload images when the CRD does not specify one:
-
-- `runner.image.repository`/`runner.image.tag`/`runner.image.digest` → `JANGAR_AGENT_RUNNER_IMAGE` (recommended)
-- `runtime.agentRunnerImage` → `JANGAR_AGENT_RUNNER_IMAGE` (legacy compatibility fallback)
-- `runtime.agentImage` → `JANGAR_AGENT_IMAGE`
-- `runtime.scheduleRunnerImage` → `JANGAR_SCHEDULE_RUNNER_IMAGE`
-- `runtime.scheduleServiceAccount` → `JANGAR_SCHEDULE_SERVICE_ACCOUNT`
-
-Effective `JANGAR_AGENT_RUNNER_IMAGE` precedence in rendered Deployments:
-
-1. `env.vars.JANGAR_AGENT_RUNNER_IMAGE` (explicit operator override)
-2. `runner.image.*`
-3. `runtime.agentRunnerImage`
-
-For GitOps-managed production rollouts, treat `runner.image.*` as the authoritative promoted tag+digest pin for Codex
-runner jobs. Promote validated image pairs there and keep controller/runtime consumers in lockstep.
-
-### Agent comms subjects (optional)
-
-Override the default NATS subject filters (comma-separated) used by the agent comms subscriber:
-
-- `agentComms.subjects`
-
-### Version control providers
-
-Define a VersionControlProvider resource to decouple repo access from issue intake. This is required for
-agent runtimes that clone, commit, push, or open pull requests. Pair it with a SecretBinding that
-allows the provider's secret.
-
-Auth options (VersionControlProvider `spec.auth`):
-
-- `method: token` with `token.type: pat | fine_grained | api_token | access_token`
-- `method: app` (GitHub only) with `appId`, `installationId`, and `privateKeySecretRef`
-- `method: ssh` with `privateKeySecretRef` (optional `knownHostsConfigMapRef`)
-
-Repository policy (VersionControlProvider `spec.repositoryPolicy`):
-
-- `allow` and `deny` accept `*` wildcards (for example, `acme/*`).
-- Deny rules win. When an allow list is set, repositories must match it.
-- Runs with `spec.vcsPolicy.mode` other than `none` are blocked if the repository is not allowed.
-
-Token scopes & expiry guidance:
-
-- GitHub App installation tokens expire after ~1 hour (default 3600s). Use `spec.auth.app.tokenTtlSeconds` if you need a shorter TTL.
-- GitHub fine-grained PATs should include repository contents + pull request scopes for write flows.
-- GitLab tokens must include `read_repository` for read-only workflows and `write_repository` for pushes/merges.
-- Bitbucket access tokens should include repository read/write scopes matching your intended mode.
-- Gitea API tokens need repo access; set `spec.auth.username` if your HTTPS auth requires a specific account name.
-- If `spec.auth.token.type` is omitted, the controller applies the provider default (e.g., `fine_grained` for GitHub).
-- Deprecated token types surface Warning conditions on the provider and runs; configure overrides in values.
-
-Values example (deprecated token types):
-
-```yaml
-controller:
-  vcsProviders:
+      release: kube-prometheus-stack
+  dashboards:
     enabled: true
-    deprecatedTokenTypes:
-      github:
-        - pat
 ```
 
-Branch naming defaults (VersionControlProvider `spec.defaults`):
+### Network Policy
 
-- `branchTemplate` controls deterministic head branch names (e.g., `codex/{{issueNumber}}`).
-- `branchConflictSuffixTemplate` appends a suffix when another active run uses the same branch.
-
-Example token auth (GitHub fine-grained PAT):
+The chart can create a NetworkPolicy, but you must set rules that match your cluster. Start restrictive and explicitly allow Postgres, Kubernetes API, registry, and any external APIs your runners need.
 
 ```yaml
-apiVersion: agents.proompteng.ai/v1alpha1
-kind: VersionControlProvider
-metadata:
-  name: github
-spec:
-  provider: github
-  apiBaseUrl: https://api.github.com
-  cloneBaseUrl: https://github.com
-  webBaseUrl: https://github.com
-  auth:
-    method: token
-    token:
-      secretRef:
-        name: codex-github-token
-        key: token
-      type: fine_grained
-```
-
-Example GitHub App auth (short-lived tokens):
-
-```yaml
-apiVersion: agents.proompteng.ai/v1alpha1
-kind: VersionControlProvider
-metadata:
-  name: github-app
-spec:
-  provider: github
-  apiBaseUrl: https://api.github.com
-  cloneBaseUrl: https://github.com
-  webBaseUrl: https://github.com
-  auth:
-    method: app
-    app:
-      appId: '12345'
-      installationId: '7890'
-      privateKeySecretRef:
-        name: github-app-key
-        key: privateKey
-      tokenTtlSeconds: 3600
-```
-
-See `charts/agents/examples/versioncontrolprovider-github-app.yaml` for a full example with repository policy and
-pull request defaults.
-
-### PR rate limits
-
-To smooth bursts when creating pull requests, configure per-provider rate limits in the chart values. Limits are
-passed to agent runtimes and applied before PR creation with backoff on rate-limit responses.
-
-Example:
-
-```yaml
-controller:
-  vcsProviders:
-    prRateLimits:
-      github:
-        windowSeconds: 60
-        maxRequests: 15
-        backoffSeconds: 30
-      default:
-        windowSeconds: 60
-        maxRequests: 10
-        backoffSeconds: 20
-```
-
-## Example production values
-
-```yaml
-image:
-  repository: ghcr.io/proompteng/jangar
-  tag: 0.9.0
-
-database:
-  secretRef:
-    name: jangar-postgres
-    key: url
-
-controller:
-  namespaces:
-    - agents
-  vcsProviders:
-    enabled: true
-    deprecatedTokenTypes:
-      github:
-        - pat
-
-orchestrationController:
-  namespaces:
-    - agents
-
-supportingController:
-  namespaces:
-    - agents
-
-rbac:
-  clusterScoped: false
-
-grpc:
-  enabled: true
-
-podDisruptionBudget:
-  enabled: true
-
-controllers:
-  enabled: true
-  podDisruptionBudget:
-    enabled: true
-    maxUnavailable: 1
-
 networkPolicy:
   enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress: []
 ```
 
-## agentctl (optional)
+### Rollouts On External Secret Changes
 
-Submit runs with agentctl (kube mode by default):
+Helm cannot safely read live Secret or ConfigMap payloads during template rendering. If a pod depends on externally managed Secret/ConfigMap data and you want deterministic rollouts, enable explicit checksums:
+
+```yaml
+rolloutChecksums:
+  enabled: true
+  secrets:
+    - name: agents-db-app
+      namespace: agents
+      checksum: d34db33fd34db33fd34db33fd34db33fd34db33fd34db33fd34db33fd34db33f
+```
+
+Generate a stable Secret payload hash:
+
+```bash
+kubectl -n agents get secret agents-db-app -o json |
+  jq -cS '{data: .data, binaryData: .binaryData}' |
+  sha256sum | awk '{print $1}'
+```
+
+## AgentRun Examples
+
+### Minimal Smoke Workflow
+
+This is the example used by the end-to-end kind script:
+
+```bash
+kubectl -n agents apply -f charts/agents/examples/agentprovider-smoke.yaml
+kubectl -n agents apply -f charts/agents/examples/agent-smoke.yaml
+kubectl -n agents apply -f charts/agents/examples/implementationspec-smoke.yaml
+kubectl -n agents apply -f charts/agents/examples/agentrun-workflow-smoke.yaml
+kubectl -n agents wait --for=condition=Succeeded agentrun/agents-workflow-smoke --timeout=300s
+```
+
+### Version Control Runs
+
+Runs that clone, commit, push, or open pull requests need a `VersionControlProvider`:
+
+```bash
+kubectl -n agents apply -f charts/agents/examples/versioncontrolprovider-github.yaml
+```
+
+A GitHub App example is available at `charts/agents/examples/versioncontrolprovider-github-app.yaml`.
+
+Token guidance:
+
+- Prefer GitHub App installation tokens for production.
+- Fine-grained PATs need repository contents and pull request scopes for write flows.
+- Deny rules win over allow rules in repository policy.
+- Runs with `spec.vcsPolicy.mode` other than `none` are blocked if the repository is not allowed.
+
+### agentctl
+
+`agentctl` can submit runs through Kubernetes or gRPC. The chart exposes gRPC with:
+
+```yaml
+grpc:
+  enabled: true
+  servicePort: 50051
+```
+
+Example run submission:
 
 ```bash
 agentctl run submit \
-  --agent codex-agent \
-  --impl codex-impl-sample \
+  --agent smoke-agent \
+  --impl smoke-impl \
   --runtime workflow \
-  --workload-image registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl
+  --workload-image busybox:1.36
 ```
 
-Replace the workload image with your own agent-runner build.
-If your agent-runner uses NATS for context streaming, set `NATS_URL` in the AgentProvider `envTemplate`.
+## Troubleshooting
 
-## Runner image defaults
+### Pod Is `ImagePullBackOff`
 
-The chart emits a single `JANGAR_AGENT_RUNNER_IMAGE` env var per container with this precedence:
+The cluster cannot pull `image.*` or `runner.image.*`.
 
-1. `env.vars.JANGAR_AGENT_RUNNER_IMAGE`
-2. `runner.image.*`
-3. `runtime.agentRunnerImage`
+```bash
+kubectl -n agents describe pod -l app.kubernetes.io/instance=agents
+kubectl -n agents get events --sort-by=.lastTimestamp | tail -40
+```
 
-Use `runner.image.*` as the normal configuration path. `runtime.agentRunnerImage` is kept only for compatibility.
-Override `runner.image.repository`, `runner.image.tag`, or `runner.image.digest` to point at your own build.
+Fix the image repository/tag/digest or add the pull secret name under `image.pullSecrets` and `runner.image.pullSecrets`.
 
-## Job TTL behavior
+### Deployment Is `CrashLoopBackOff`
 
-Jobs launched by the controller use `controller.jobTtlSeconds` (or `controller.jobTtlSecondsAfterFinished`) as the
-default TTL (seconds).
-The controller applies TTL only after it records the AgentRun/workflow status to avoid cleanup races.
-Set `controller.jobTtlSeconds=0` (or `controller.jobTtlSecondsAfterFinished=0`) to disable job cleanup, or override per
-run via `spec.runtime.config.ttlSecondsAfterFinished`. Values are clamped to 30s–7d for safety.
-Log retention hints default to `controller.logRetentionSeconds` (overridable via
-`spec.runtime.config.logRetentionSeconds`).
+Check database connectivity and migrations first:
 
-## Native orchestration
+```bash
+kubectl -n agents logs deploy/agents --tail=200
+kubectl -n agents get secret agents-db-app -o jsonpath='{.data.url}' | base64 -d
+```
 
-Native orchestration runs in-cluster and supports:
+Common causes:
 
-- `AgentRun`
-- `ToolRun`
-- `SubOrchestration`
+- Database host is not reachable from inside the cluster.
+- Database credentials are wrong.
+- TLS mode or CA Secret does not match the database.
+- Migrations are disabled before schema exists.
 
-Enable reruns or system-improvement flows using:
+### AgentRun Does Not Finish
 
-- `workflowRuntime.native.rerunOrchestration`
-- `workflowRuntime.native.systemImprovementOrchestration`
+```bash
+kubectl -n agents describe agentrun agents-workflow-smoke
+kubectl -n agents get jobs,pods
+kubectl -n agents logs job/<job-name>
+kubectl -n agents logs deploy/agents-controllers --tail=200
+```
 
-## Security notes
+Common causes:
 
-- Keep `service.type=ClusterIP` and expose via a gateway/mesh if needed.
-- Use `database.secretRef` and dedicated DB credentials per environment.
-- Scope controllers to specific namespaces unless you need cluster-wide control.
-- Prefer image digests in production (`values-prod.yaml`).
+- `controllers.enabled=false` in an install that expects controller-launched Jobs.
+- Runner image cannot be pulled.
+- RBAC scope does not include the namespace where the AgentRun lives.
+- Admission policy rejected the run.
 
-## Pod Security Admission
+### Helm Render Fails
 
-Configure PSA labels via `podSecurityAdmission.labels` and enable them with `podSecurityAdmission.enabled=true`.
-Set `podSecurityAdmission.createNamespace=true` when the chart should create and label the namespace.
-For existing namespaces, keep `createNamespace=false` and apply the PSA labels out-of-band to avoid
-Helm ownership conflicts.
+The chart validates unsafe or ambiguous values at render time. Read the error message first, then check:
 
-## Admission control
+```bash
+helm template agents charts/agents --namespace agents --values agents-values.yaml --debug
+```
 
-- Configure backpressure with `controller.queue.*` and `controller.rate.*` in `values.yaml`.
-- Queue limits cap pending AgentRuns; rate limits cap submit throughput.
-- The controller enforces queue/rate limits for direct AgentRun CRs with `Blocked` conditions.
-- Webhook ingestion uses `controller.webhook.queueSize` and `controller.webhook.retry.*` for buffering and retries.
+Frequent render failures:
 
-## Webhook ingestion
+- `imagePolicy.requireDigest=true` without image digests.
+- Empty namespace scope arrays.
+- Multi-namespace scope without cluster-scoped RBAC.
+- Managed gRPC env vars overridden with conflicting values.
+- `rolloutChecksums.enabled=true` without checksums for referenced external Secrets/ConfigMaps.
 
-- Control webhook buffering with `controller.webhook.queueSize`.
-- Tune retry backoff with `controller.webhook.retry.*` (seconds).
+## Reference
 
-## Publishing (OCI)
+### High-Value Values
+
+| Value | Purpose |
+| --- | --- |
+| `image.repository`, `image.tag`, `image.digest` | Control-plane image. |
+| `runner.image.repository`, `runner.image.tag`, `runner.image.digest` | Default image for AgentRun Jobs. |
+| `imagePolicy.requireDigest` | Require immutable image digests for chart-managed images. |
+| `database.secretRef.*` | Existing database URL Secret. |
+| `database.caSecret.*` | Optional Postgres CA certificate Secret. |
+| `controller.namespaces` | Namespaces the main controller watches. |
+| `orchestrationController.namespaces` | Namespaces the orchestration controller watches. |
+| `supportingController.namespaces` | Namespaces supporting controllers watch. |
+| `rbac.clusterScoped` | Use ClusterRole/ClusterRoleBinding instead of namespace Role/RoleBinding. |
+| `controllers.enabled` | Run the controller deployment. |
+| `grpc.enabled` | Expose gRPC support for in-cluster clients and agentctl. |
+| `metrics.serviceMonitor.enabled` | Create a ServiceMonitor. |
+| `podDisruptionBudget.enabled` | Create a PDB for the control plane. |
+| `controllers.podDisruptionBudget.enabled` | Create a PDB for controllers. |
+| `tests.enabled` | Render the optional Helm test Pod. |
+
+See `values.yaml` and `values.schema.json` for the full contract.
+
+### Publishing The Chart
+
+Package and validate locally:
+
+```bash
+bun packages/scripts/src/agents/publish-chart.ts --dry-run
+```
+
+Publish to GHCR:
 
 ```bash
 bun packages/scripts/src/agents/publish-chart.ts
 ```
 
-## Values
+The repository workflow also pushes Artifact Hub OCI metadata and waits until Artifact Hub reports the published version as latest.
 
-See `values.yaml` and `values.schema.json` for full configuration.
+Signed publishing uses Helm provenance files. Set:
+
+- `AGENTS_CHART_SIGN=true`
+- `AGENTS_CHART_SIGN_KEY`
+- `AGENTS_CHART_SIGN_KEYRING` if needed
+- `AGENTS_CHART_SIGN_PASSPHRASE_FILE` if needed
 
 ## Support
 
-Open issues or discussions in the repo if you want:
+Open an issue with:
 
-- new CRDs
-- additional runtime adapters
-- better tooling around agentctl or observability
+- Chart version
+- Kubernetes version
+- Helm version
+- Values file with secrets removed
+- `helm template ... --debug` output for render issues
+- Relevant `kubectl describe`, `kubectl logs`, and `kubectl get events` output for runtime issues

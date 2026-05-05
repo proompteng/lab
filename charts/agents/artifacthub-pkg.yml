@@ -1,8 +1,8 @@
-version: 0.9.8
+version: 0.9.9
 name: agents
 displayName: Agents Control Plane (Jangar)
 description: Minimal Agents control plane with CRDs and native workflow runtime.
-license: Apache-2.0
+license: MIT
 homeURL: https://github.com/proompteng/charts/tree/main/charts/agents
 repository:
   name: proompteng/charts

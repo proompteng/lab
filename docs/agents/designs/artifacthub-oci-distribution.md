@@ -18,6 +18,10 @@ Define how the Agents Helm chart is packaged, published as an OCI artifact, and 
   `oci://ghcr.io/proompteng/charts`.
 - Manual publishing: `packages/scripts/src/agents/publish-chart.ts` packages and pushes the chart, verifying that
   `artifacthub-pkg.yml` and `Chart.yaml` versions match and that OCI contents remain immutable per chart version.
+- Local packaging checks: `packages/scripts/src/agents/publish-chart.ts --dry-run` packages the chart and validates
+  metadata without pulling or pushing OCI artifacts.
+- Provenance: `packages/scripts/src/agents/publish-chart.ts` can sign chart packages with Helm provenance when
+  `AGENTS_CHART_SIGN=true`; `helm push` uploads the generated `.tgz.prov` layer alongside the chart package.
 - Cluster: not applicable; this is a packaging and distribution workflow.
 
 ## Distribution Model
@@ -34,6 +38,9 @@ Define how the Agents Helm chart is packaged, published as an OCI artifact, and 
 - Validate locally:
   - `helm lint charts/agents`
   - `scripts/agents/validate-agents.sh`
+- Optional signed release:
+  - Set `AGENTS_CHART_SIGN=true`
+  - Set `AGENTS_CHART_SIGN_KEY` and, when needed, `AGENTS_CHART_SIGN_KEYRING` / `AGENTS_CHART_SIGN_PASSPHRASE_FILE`
 - Merge to `main` to trigger `.github/workflows/agents-sync.yml`, or run
   `packages/scripts/src/agents/publish-chart.ts` manually.
 

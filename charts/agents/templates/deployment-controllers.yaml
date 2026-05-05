@@ -43,6 +43,8 @@
 {{- $imageDigest := $controllersImage.digest | default .Values.image.digest -}}
 {{- $imagePullPolicy := $controllersImage.pullPolicy | default .Values.image.pullPolicy -}}
 {{- $imagePullSecrets := $controllersImage.pullSecrets | default .Values.image.pullSecrets -}}
+{{- $runnerImagePullSecrets := .Values.runner.image.pullSecrets | default (list) -}}
+{{- $workloadImagePullSecrets := .Values.controller.defaultWorkload.imagePullSecrets | default $runnerImagePullSecrets -}}
 {{- $replicas := .Values.controllers.replicaCount | default 1 -}}
 {{- $resources := .Values.controllers.resources | default .Values.resources -}}
 {{- $autoscaling := .Values.controllers.autoscaling | default dict -}}
@@ -241,9 +243,9 @@ spec:
             - name: JANGAR_AGENT_RUNNER_POD_SECURITY_CONTEXT
               value: {{ .Values.controller.defaultWorkload.podSecurityContext | toJson | quote }}
             {{- end }}
-            {{- if and .Values.controller.defaultWorkload.imagePullSecrets (gt (len .Values.controller.defaultWorkload.imagePullSecrets) 0) }}
+            {{- if and $workloadImagePullSecrets (gt (len $workloadImagePullSecrets) 0) }}
             - name: JANGAR_AGENT_RUNNER_IMAGE_PULL_SECRETS
-              value: {{ .Values.controller.defaultWorkload.imagePullSecrets | toJson | quote }}
+              value: {{ $workloadImagePullSecrets | toJson | quote }}
             {{- end }}
             {{- if .Values.controller.defaultWorkload.priorityClassName }}
             - name: JANGAR_AGENT_RUNNER_PRIORITY_CLASS

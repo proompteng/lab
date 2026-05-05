@@ -1,9 +1,16 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { __private, inspectImageDigest } from '../docker'
+import { __private, buildAndPushDockerImage, inspectImageDigest, resolveBuildAttestations } from '../docker'
+
+const originalSpawn = Bun.spawn
+const originalWhich = Bun.which
 
 afterEach(() => {
   __private.setSpawnSync()
+  Bun.spawn = originalSpawn
+  Bun.which = originalWhich
+  delete process.env.DOCKER_BUILD_PROVENANCE
+  delete process.env.DOCKER_BUILD_SBOM
 })
 
 describe('inspectImageDigest', () => {
@@ -52,5 +59,56 @@ describe('inspectImageDigest', () => {
     const digest = inspectImageDigest('registry.example/froussard:latest')
     expect(imagetoolsCalled).toBe(true)
     expect(digest).toBe('registry.example/froussard@sha256:222')
+  })
+})
+
+describe('resolveBuildAttestations', () => {
+  it('enables BuildKit provenance and SBOM attestations from env', () => {
+    process.env.DOCKER_BUILD_PROVENANCE = 'max'
+    process.env.DOCKER_BUILD_SBOM = 'true'
+
+    expect(resolveBuildAttestations()).toEqual(['type=provenance,mode=max', 'type=sbom'])
+  })
+
+  it('accepts explicit BuildKit attestation strings', () => {
+    process.env.DOCKER_BUILD_PROVENANCE = 'type=provenance,mode=min'
+    process.env.DOCKER_BUILD_SBOM = 'type=sbom,generator=image'
+
+    expect(resolveBuildAttestations()).toEqual(['type=provenance,mode=min', 'type=sbom,generator=image'])
+  })
+
+  it('keeps attestations disabled by default', () => {
+    expect(resolveBuildAttestations()).toEqual([])
+  })
+
+  it('uses buildx when attestations are requested for a single image build', async () => {
+    const commands: string[][] = []
+
+    process.env.DOCKER_BUILD_PROVENANCE = 'max'
+    Bun.which = ((binary: string) => (binary === 'docker' ? '/usr/bin/docker' : null)) as typeof Bun.which
+    Bun.spawn = ((command: Parameters<typeof Bun.spawn>[0], _options: Parameters<typeof Bun.spawn>[1]) => {
+      commands.push(typeof command === 'string' ? [command] : [...command])
+      return { exited: Promise.resolve(0) } as ReturnType<typeof Bun.spawn>
+    }) as typeof Bun.spawn
+    __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
+      const joined = typeof command === 'string' ? command : command.join(' ')
+      if (joined === 'docker buildx version') {
+        return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() } as ReturnType<typeof Bun.spawnSync>
+      }
+      return { exitCode: 1, stdout: new Uint8Array(), stderr: new Uint8Array() } as ReturnType<typeof Bun.spawnSync>
+    }) as typeof Bun.spawnSync)
+
+    await buildAndPushDockerImage({
+      registry: 'registry.example',
+      repository: 'lab/jangar',
+      tag: 'test',
+      context: '.',
+      dockerfile: 'Dockerfile',
+    })
+
+    expect(commands).toHaveLength(1)
+    expect(commands[0].slice(0, 4)).toEqual(['docker', 'buildx', 'build', '--push'])
+    expect(commands[0]).toContain('--attest')
+    expect(commands[0]).toContain('type=provenance,mode=max')
   })
 })

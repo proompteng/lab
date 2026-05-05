@@ -4,10 +4,9 @@ Status: Draft (2026-02-07)
 
 Docs index: [README](../README.md)
 
-## Current State
-
-- Code: no SBOM generation or signing pipeline in repo workflows.
-- Chart: no values for SBOM or signing.
+- Code: `jangar-build-push` enables BuildKit SBOM and max provenance attestations for published Jangar images via
+  `DOCKER_BUILD_SBOM=true` and `DOCKER_BUILD_PROVENANCE=max`.
+- Chart: OCI chart publishing supports optional Helm provenance signing; image signature verification remains separate.
 - Cluster: no admission policy or runtime verification is configured for signed images.
 
 ## Problem
@@ -58,8 +57,8 @@ Supply chain integrity is required for production adoption.
 
 ## Acceptance Criteria
 
-- SBOM artifacts are published per release.
-- Signatures are verified in CI.
+- SBOM and provenance attestations are published per Jangar image release.
+- Signatures are verified in CI once registry signing credentials or keyless signing trust policy is configured.
 
 ## Handoff Appendix (Repo + Chart + Cluster)
 

@@ -34,6 +34,16 @@
       },
       "additionalProperties": false
     },
+    "imagePolicy": {
+      "type": "object",
+      "properties": {
+        "requireDigest": {
+          "type": "boolean",
+          "description": "When true, fail rendering unless every enabled chart-managed deployment, runner, hook, and test image resolves to an immutable digest."
+        }
+      },
+      "additionalProperties": false
+    },
     "controlPlane": {
       "type": "object",
       "properties": {
@@ -1160,6 +1170,7 @@
           "properties": {
             "repository": { "type": "string" },
             "tag": { "type": "string" },
+            "digest": { "type": "string" },
             "pullPolicy": { "type": "string" }
           },
           "additionalProperties": false
@@ -1185,6 +1196,32 @@
           "properties": {
             "labelSelector": { "type": "string" },
             "agentRun": { "type": "object" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "tests": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "digest": { "type": "string" },
+            "pullPolicy": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "requests": { "type": "object", "additionalProperties": { "type": "string" } },
+            "limits": { "type": "object", "additionalProperties": { "type": "string" } }
           },
           "additionalProperties": false
         }

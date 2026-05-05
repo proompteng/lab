@@ -41,9 +41,10 @@ The Agents chart supports image tags and optional digests for both the control p
 
 ### Chart validation
 
-Add optional enforcement:
+Optional enforcement is implemented:
 
-- `imagePolicy.requireDigest=true` (default `false`): when enabled, render fails if any enabled component lacks a digest.
+- `imagePolicy.requireDigest=true` (default `false`): when enabled, render fails if any enabled chart-managed deployment,
+  runner, Argo hook, Helm test, or legacy runtime image lacks an immutable digest.
 
 ## Config Mapping
 
@@ -57,7 +58,7 @@ Add optional enforcement:
 
 ## Rollout Plan
 
-1. Add documentation + schema keys (no behavior change).
+1. Add documentation + schema keys.
 2. Enable `imagePolicy.requireDigest=true` in non-prod first.
 3. Enable in prod after verifying image promotion pipeline always supplies digests.
 

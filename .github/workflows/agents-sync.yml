@@ -7,6 +7,8 @@ on:
     paths:
       - 'charts/agents/**'
       - 'packages/scripts/src/agents/publish-chart.ts'
+      - 'scripts/agents/wait-for-artifacthub-chart.sh'
+      - 'artifacthub-repo.yml'
       - '.github/workflows/agents-sync.yml'
   workflow_dispatch: {}
 
@@ -33,6 +35,9 @@ jobs:
         uses: azure/setup-helm@v4
         with:
           version: v3.14.4
+
+      - name: Install ORAS
+        uses: oras-project/setup-oras@v1
 
       - name: Split charts/agents into charts repo and publish chart
         env:
@@ -63,6 +68,18 @@ jobs:
 
           git push --force-with-lease=main -u origin HEAD:main
 
+          cp "${GITHUB_WORKSPACE}/artifacthub-repo.yml" artifacthub-repo.yml
+
           echo "${AGENTS_SPLIT_TOKEN}" | helm registry login ghcr.io -u proompteng --password-stdin
+          echo "${AGENTS_SPLIT_TOKEN}" | oras login ghcr.io -u proompteng --password-stdin
+
+          oras push \
+            ghcr.io/proompteng/charts/agents:artifacthub.io \
+            --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+            artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
+
           bun "${GITHUB_WORKSPACE}/packages/scripts/src/agents/publish-chart.ts" \
             --chart-dir "${tmpdir}/agents-split/charts/agents"
+
+          "${GITHUB_WORKSPACE}/scripts/agents/wait-for-artifacthub-chart.sh" \
+            "${tmpdir}/agents-split/charts/agents"

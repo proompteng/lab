@@ -59,6 +59,30 @@ const normalizeCacheMode = (value: string | undefined): DockerCacheMode => {
   return normalized === 'min' ? 'min' : 'max'
 }
 
+const normalizeAttestation = (kind: 'provenance' | 'sbom', value: string | undefined): string | undefined => {
+  if (!value) return undefined
+  const normalized = value.trim().toLowerCase()
+  if (!isTruthyEnv(value) && normalized !== 'min' && normalized !== 'max' && !normalized.includes('type=')) {
+    return undefined
+  }
+  if (normalized.includes('type=')) {
+    return value.trim()
+  }
+  if (kind === 'provenance' && (normalized === 'min' || normalized === 'max')) {
+    return `type=provenance,mode=${normalized}`
+  }
+  return `type=${kind}`
+}
+
+export const resolveBuildAttestations = (): string[] => {
+  const attestations = [
+    normalizeAttestation('provenance', process.env.DOCKER_BUILD_PROVENANCE),
+    normalizeAttestation('sbom', process.env.DOCKER_BUILD_SBOM),
+  ].filter((attestation): attestation is string => Boolean(attestation))
+
+  return [...new Set(attestations)]
+}
+
 const collectBakeFsReadAllowlist = (cwd: string, targets: DockerBakeTargetOptions[]): string[] => {
   const paths = new Set<string>()
 
@@ -85,9 +109,13 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
   const dockerEnv = { DOCKER_BUILDKIT: process.env.DOCKER_BUILDKIT ?? '1' }
   const noCache = options.noCache ?? (isTruthyEnv(process.env.DOCKER_NO_CACHE) || isTruthyEnv(process.env.NO_CACHE))
   const cacheMode = normalizeCacheMode(options.cacheMode ?? process.env.DOCKER_BUILD_CACHE_MODE)
+  const attestations = resolveBuildAttestations()
 
   let shouldUseBuildx =
-    options.useBuildx === true || Boolean(options.cacheRef) || (options.platforms && options.platforms.length > 0)
+    options.useBuildx === true ||
+    Boolean(options.cacheRef) ||
+    Boolean(options.platforms?.length) ||
+    attestations.length > 0
   if (shouldUseBuildx && !isDockerBuildxAvailable()) {
     console.warn('docker buildx is unavailable; falling back to docker build + docker push (no remote cache).')
     shouldUseBuildx = false
@@ -109,7 +137,8 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
     shouldUseBuildx &&
     !options.useBuildx &&
     (!options.platforms || options.platforms.length === 0) &&
-    !effectiveCacheRef
+    !effectiveCacheRef &&
+    attestations.length === 0
   ) {
     shouldUseBuildx = false
   }
@@ -123,6 +152,7 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
     noCache: noCache || undefined,
     cacheRef: effectiveCacheRef,
     cacheMode: effectiveCacheRef ? cacheMode : undefined,
+    attestations: shouldUseBuildx && attestations.length > 0 ? attestations : undefined,
     buildxDriver: buildxDriver ?? undefined,
     useBuildx: shouldUseBuildx || undefined,
   })
@@ -144,6 +174,9 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
     if (ghTokenEnv) {
       args.push('--secret', 'id=github_token,env=GH_TOKEN')
     }
+    for (const attestation of attestations) {
+      args.push('--attest', attestation)
+    }
     for (const [key, value] of Object.entries(options.buildArgs ?? {})) {
       args.push('--build-arg', `${key}=${value}`)
     }
@@ -158,6 +191,9 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
     }
     if (ghTokenEnv) {
       args.push('--secret', 'id=github_token,env=GH_TOKEN')
+    }
+    if (attestations.length > 0) {
+      console.warn('Build attestations require docker buildx; skipping SBOM/provenance for docker build fallback.')
     }
     for (const [key, value] of Object.entries(options.buildArgs ?? {})) {
       args.push('--build-arg', `${key}=${value}`)
@@ -201,6 +237,7 @@ export const buildAndPushDockerImages = async (options: DockerBakeOptions): Prom
 
   const ghTokenEnv = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
   const dockerEnv = { DOCKER_BUILDKIT: process.env.DOCKER_BUILDKIT ?? '1' }
+  const attestations = resolveBuildAttestations()
   const secretSpecs = [
     ...new Set(
       targets.flatMap((target) => {
@@ -250,6 +287,7 @@ export const buildAndPushDockerImages = async (options: DockerBakeOptions): Prom
         if (target.buildArgs && Object.keys(target.buildArgs).length > 0) definition.args = target.buildArgs
         if (secretSpecs.length > 0) definition.secret = secretSpecs
         if (noCache) definition['no-cache'] = true
+        if (attestations.length > 0) definition.attest = attestations
         if (cacheRef) {
           definition['cache-from'] = [`type=registry,ref=${cacheRef}`]
           definition['cache-to'] = [`type=registry,ref=${cacheRef},mode=${cacheMode}`]
@@ -273,6 +311,7 @@ export const buildAndPushDockerImages = async (options: DockerBakeOptions): Prom
       cacheMode: target.cacheRef
         ? normalizeCacheMode(target.cacheMode ?? process.env.DOCKER_BUILD_CACHE_MODE)
         : undefined,
+      attestations: attestations.length > 0 ? attestations : undefined,
       buildArgs: Object.keys(target.buildArgs ?? {}).length ? target.buildArgs : undefined,
     })),
   )
