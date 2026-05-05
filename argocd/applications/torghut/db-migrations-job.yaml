@@ -79,18 +79,14 @@ spec:
               )
               with admin_sim_engine.connect() as connection:
                   connection.execute(text('CREATE EXTENSION IF NOT EXISTS vector'))
-                  target_role_literal = connection.execute(
-                      text('select quote_literal(:role_name)'),
-                      {'role_name': os.environ['TORGHUT_SIM_DB_USER']},
+                  runtime_role = os.environ['TORGHUT_SIM_DB_USER']
+                  quoted_role = connection.execute(
+                      text('select quote_ident(:role_name)'),
+                      {'role_name': runtime_role},
                   ).scalar_one()
-                  connection.exec_driver_sql(
-                      f"""
-                      DO $$
-                      DECLARE
-                        target_role text := {target_role_literal};
-                        owned_relation record;
-                      BEGIN
-                        FOR owned_relation IN
+                  owned_relations = connection.execute(
+                      text(
+                          """
                           SELECT
                             c.oid::regclass::text AS object_name,
                             CASE c.relkind
@@ -105,19 +101,20 @@ spec:
                           JOIN pg_namespace n ON n.oid = c.relnamespace
                           WHERE n.nspname = 'public'
                             AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
-                            AND pg_get_userbyid(c.relowner) <> target_role
+                            AND pg_get_userbyid(c.relowner) <> :runtime_role
                           ORDER BY c.relkind, c.relname
-                        LOOP
-                          EXECUTE format(
-                            'ALTER %%s %%s OWNER TO %%I',
-                            owned_relation.object_type,
-                            owned_relation.object_name,
-                            target_role
-                          );
-                        END LOOP;
-                      END $$;
-                      """
-                  )
+                          """
+                      ),
+                      {'runtime_role': runtime_role},
+                  ).mappings().all()
+                  for owned_relation in owned_relations:
+                      owner_statement = (
+                          f"ALTER {owned_relation['object_type']} "
+                          f"{owned_relation['object_name']} OWNER TO {quoted_role}"
+                      )
+                      connection.exec_driver_sql(owner_statement)
+                  if owned_relations:
+                      print(f'transferred {len(owned_relations)} simulation objects to {runtime_role}')
 
               engine = create_engine(sqlalchemy_dsn(os.environ['DB_DSN']))
               with engine.begin() as connection:
