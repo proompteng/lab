@@ -64,29 +64,29 @@ RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE: tuple[str, ...] = (
     "NVDA",
     "TSM",
     "AVGO",
-    "INTC",
     "AMD",
     "MU",
+    "TXN",
+    "ADI",
     "LRCX",
     "KLAC",
     "QCOM",
     "AMAT",
     "ASML",
-    "MRVL",
 )
 LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE: tuple[str, ...] = (
     "NVDA",
     "TSM",
     "AVGO",
-    "INTC",
     "AMD",
     "MU",
+    "TXN",
+    "ADI",
     "LRCX",
     "KLAC",
     "QCOM",
     "AMAT",
     "ASML",
-    "MRVL",
 )
 _RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE = RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE
 _AI_ACCELERATOR_UNIVERSE_PROFILE: tuple[str, ...] = (
@@ -96,15 +96,15 @@ _AI_ACCELERATOR_UNIVERSE_PROFILE: tuple[str, ...] = (
     "TSM",
     "ASML",
     "MU",
-    "MRVL",
+    "QCOM",
 )
 _EQUIPMENT_MEMORY_UNIVERSE_PROFILE: tuple[str, ...] = (
     "AMAT",
     "LRCX",
     "KLAC",
     "MU",
-    "INTC",
-    "QCOM",
+    "TXN",
+    "ADI",
 )
 _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE: tuple[str, ...] = (
     _RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE
@@ -117,18 +117,18 @@ _LARGE_CAP_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
 )
 _BREAKOUT_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
     _AI_ACCELERATOR_UNIVERSE_PROFILE,
-    ("NVDA", "AVGO", "AMD", "AMAT", "LRCX", "KLAC", "MU", "MRVL"),
+    ("NVDA", "AVGO", "AMD", "AMAT", "LRCX", "KLAC", "MU", "QCOM"),
     _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _REVERSAL_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
-    ("AMD", "INTC", "AMAT", "LRCX", "MU"),
-    ("AMD", "INTC", "AMAT", "LRCX", "KLAC", "MU", "AVGO"),
+    ("AMD", "TXN", "ADI", "AMAT", "LRCX", "MU"),
+    ("AMD", "TXN", "ADI", "AMAT", "LRCX", "KLAC", "MU", "AVGO"),
     _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _TSMOM_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
     ("NVDA",),
     ("NVDA", "AVGO", "AMD", "TSM"),
-    ("NVDA", "AVGO", "AMD", "TSM", "ASML", "AMAT", "MU", "MRVL"),
+    ("NVDA", "AVGO", "AMD", "TSM", "ASML", "AMAT", "MU", "QCOM"),
 )
 
 _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
