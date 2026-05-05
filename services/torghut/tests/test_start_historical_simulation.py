@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
 import uuid
 from contextlib import ExitStack
 from dataclasses import replace
@@ -8845,9 +8846,15 @@ class TestStartHistoricalSimulation(TestCase):
                 'kind': 'Service',
                 'namespace': 'torghut',
                 'name': 'torghut-sim',
-                'jsonPointers': ['/spec/template/spec/containers/0/env'],
+                'jqPathExpressions': [
+                    start_historical_simulation.SIMULATION_TORGHUT_RUNTIME_ENV_IGNORE_JQ
+                ],
             }
         ]
+        ignore_jq = runtime_ignore_differences[0]['jqPathExpressions'][0]
+        self.assertIn('DB_DSN', ignore_jq)
+        self.assertIn('TRADING_SIMULATION_ORDER_UPDATES_TOPIC', ignore_jq)
+        self.assertNotIn('TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS', ignore_jq)
         with (
             patch(
                 'scripts.start_historical_simulation._read_argocd_applicationset_entry',
@@ -8905,6 +8912,36 @@ class TestStartHistoricalSimulation(TestCase):
         )
         self.assertEqual(report['current_ignore_differences'], runtime_ignore_differences)
         self.assertTrue(report['coverage_complete'])
+
+    def test_product_applicationset_torghut_sim_env_ignore_is_selective(self) -> None:
+        repo_root = Path(__file__).resolve().parents[3]
+        appset = yaml.safe_load(
+            (repo_root / 'argocd' / 'applicationsets' / 'product.yaml').read_text(
+                encoding='utf-8'
+            )
+        )
+        elements = appset['spec']['generators'][0]['matrix']['generators'][1]['list'][
+            'elements'
+        ]
+        torghut_entry = next(item for item in elements if item.get('name') == 'torghut')
+        sim_rule = next(
+            rule
+            for rule in torghut_entry['ignoreDifferences']
+            if rule.get('kind') == 'Service' and rule.get('name') == 'torghut-sim'
+        )
+
+        self.assertNotIn('jsonPointers', sim_rule)
+        ignored_names = set(
+            re.findall(r'\.name == "([^"]+)"', sim_rule['jqPathExpressions'][0])
+        )
+        self.assertEqual(
+            ignored_names,
+            set(start_historical_simulation.SIMULATION_TORGHUT_RUNTIME_ENV_IGNORE_KEYS),
+        )
+        self.assertNotIn(
+            'TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS',
+            sim_rule['jqPathExpressions'][0],
+        )
 
     def test_argocd_application_mode_from_sync_policy_treats_missing_automation_as_manual(self) -> None:
         self.assertEqual(
