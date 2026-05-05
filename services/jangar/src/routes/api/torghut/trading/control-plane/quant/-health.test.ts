@@ -100,7 +100,7 @@ describe('getQuantHealthHandler', () => {
     expect(startTorghutQuantRuntime).toHaveBeenCalledTimes(1)
   })
 
-  it('suppresses missing-update alarm outside market hours', async () => {
+  it('suppresses missing-update alarm outside market hours and skips unscoped pipeline health', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-02-22T15:00:00.000Z')) // Sunday
     process.env.JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS = '15'
@@ -111,29 +111,40 @@ describe('getQuantHealthHandler', () => {
       updatedAt: '2026-02-22T14:58:00.000Z',
       count: 7,
     })
-    listLatestQuantPipelineHealth.mockResolvedValueOnce([
-      {
-        strategyId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        account: '',
-        stage: 'ingestion',
-        ok: true,
-        lagSeconds: 4,
-        asOf: '2026-02-22T14:59:58.000Z',
-        details: { window: '1d' },
-      },
-    ])
-
     const response = await getQuantHealthHandler(
       new Request('http://localhost/api/torghut/trading/control-plane/quant/health'),
     )
 
     expect(response.status).toBe(200)
     expect(getQuantLatestStoreStatus).toHaveBeenCalledWith({})
+    expect(listLatestQuantPipelineHealth).not.toHaveBeenCalled()
     const body = await response.json()
     expect(body.ok).toBe(true)
     expect(body.status).toBe('ok')
     expect(body.missingUpdateAlarm).toBe(false)
     expect(body.emptyLatestStoreAlarm).toBe(false)
+    expect(body.pipelineHealthScoped).toBe(false)
+    expect(body.pipelineHealthSkippedReason).toBe('account_and_window_required')
+  })
+
+  it('skips unscoped pipeline health when only a window is requested', async () => {
+    const { getQuantHealthHandler } = await import('./health')
+
+    getQuantLatestStoreStatus.mockResolvedValueOnce({
+      updatedAt: '2026-02-22T14:58:00.000Z',
+      count: 7,
+    })
+
+    const response = await getQuantHealthHandler(
+      new Request('http://localhost/api/torghut/trading/control-plane/quant/health?window=1h'),
+    )
+
+    expect(response.status).toBe(200)
+    expect(getQuantLatestStoreStatus).toHaveBeenCalledWith({ window: '1h' })
+    expect(listLatestQuantPipelineHealth).not.toHaveBeenCalled()
+    const body = await response.json()
+    expect(body.pipelineHealthScoped).toBe(false)
+    expect(body.pipelineHealthSkippedReason).toBe('account_and_window_required')
   })
 
   it('returns degraded status when latest store is empty', async () => {
@@ -181,16 +192,18 @@ describe('getQuantHealthHandler', () => {
     ])
 
     const response = await getQuantHealthHandler(
-      new Request('http://localhost/api/torghut/trading/control-plane/quant/health'),
+      new Request('http://localhost/api/torghut/trading/control-plane/quant/health?account=paper&window=1d'),
     )
 
     expect(response.status).toBe(200)
-    expect(getQuantLatestStoreStatus).toHaveBeenCalledWith({})
+    expect(getQuantLatestStoreStatus).toHaveBeenCalledWith({ account: 'paper', window: '1d' })
+    expect(listLatestQuantPipelineHealth).toHaveBeenCalledWith({ account: 'paper', window: '1d' })
     const body = await response.json()
     expect(body.ok).toBe(true)
     expect(body.status).toBe('degraded')
     expect(body.missingUpdateAlarm).toBe(false)
     expect(body.maxStageLagSeconds).toBe(9)
+    expect(body.pipelineHealthScoped).toBe(true)
   })
 
   it('scopes latest metric freshness check by requested strategy/account/window', async () => {
