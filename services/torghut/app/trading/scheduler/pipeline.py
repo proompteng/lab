@@ -278,6 +278,14 @@ class TradingPipeline:
         except Exception:
             logger.exception("Failed to read trade cursor for session context warmup")
             return
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
+            logger.exception(
+                "Failed to close trade-cursor transaction before session context warmup"
+            )
+            return
         if cursor_at.tzinfo is None:
             cursor_at = cursor_at.replace(tzinfo=timezone.utc)
         cursor_at = cursor_at.astimezone(timezone.utc)
