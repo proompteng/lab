@@ -3,6 +3,7 @@ kind: Deployment
 metadata:
   name: argocd-redis-ha-haproxy
 spec:
+  replicas: 2
   strategy:
     rollingUpdate:
       maxSurge: 0
