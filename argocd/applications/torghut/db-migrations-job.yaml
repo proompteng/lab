@@ -109,7 +109,7 @@ spec:
                           ORDER BY c.relkind, c.relname
                         LOOP
                           EXECUTE format(
-                            'ALTER %s %s OWNER TO %I',
+                            'ALTER %%s %%s OWNER TO %%I',
                             owned_relation.object_type,
                             owned_relation.object_name,
                             target_role

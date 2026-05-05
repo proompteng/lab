@@ -309,7 +309,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("GRANT ALL PRIVILEGES ON DATABASE", args)
         self.assertIn("CREATE EXTENSION IF NOT EXISTS vector", args)
         self.assertIn("postgresql+psycopg://", args)
-        self.assertIn("ALTER %s %s OWNER TO %I", args)
+        self.assertIn("ALTER %%s %%s OWNER TO %%I", args)
         self.assertIn("pg_get_userbyid(c.relowner) <> target_role", args)
         self.assertIn("target_role_literal", args)
         self.assertIn('DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic', args)
@@ -317,10 +317,10 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("granted simulation runtime privileges", args)
         self.assertLess(
             args.index("CREATE EXTENSION IF NOT EXISTS vector"),
-            args.index("ALTER %s %s OWNER TO %I"),
+            args.index("ALTER %%s %%s OWNER TO %%I"),
         )
         self.assertLess(
-            args.index("ALTER %s %s OWNER TO %I"),
+            args.index("ALTER %%s %%s OWNER TO %%I"),
             args.index(
                 'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads'
             ),
