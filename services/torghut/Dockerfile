@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1
 # check=error=true
 
-ARG PYTHON_VERSION=3.11
+ARG PYTHON_BASE_IMAGE=mirror.gcr.io/library/python:3.11-slim
 ARG TORGHUT_COMMIT=unknown
 
-FROM python:${PYTHON_VERSION}-slim AS builder
+FROM ${PYTHON_BASE_IMAGE} AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -32,7 +32,7 @@ RUN test -f /app/app/main.py \
 RUN /opt/venv/bin/uv sync --frozen --no-dev
 
 
-FROM python:${PYTHON_VERSION}-slim AS runtime
+FROM ${PYTHON_BASE_IMAGE} AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

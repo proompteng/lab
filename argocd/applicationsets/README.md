@@ -42,7 +42,7 @@ This repo uses Traefik `IngressRoute` resources (`apiVersion: traefik.io/v1alpha
 On a brand new cluster, install Traefik's CRDs before applying `argocd/applications/argocd`:
 
 ```bash
-kubectl apply --server-side --force-conflicts -k https://github.com/traefik/traefik-helm-chart/traefik/crds/?ref=v39.0.1
+kubectl apply --server-side --force-conflicts -k https://github.com/traefik/traefik-helm-chart/traefik/crds/?ref=v39.0.9
 kubectl get crd ingressroutes.traefik.io
 ```
 
@@ -61,13 +61,13 @@ The upstream `applicationsets.argoproj.io` CRD can be large enough that `kubectl
 Recommended (server-side apply):
 
 ```bash
-kubectl apply --server-side -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.0/manifests/crds/applicationset-crd.yaml
+kubectl apply --server-side -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.9/manifests/crds/applicationset-crd.yaml
 ```
 
 Fallback (create-only):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.0/manifests/crds/applicationset-crd.yaml | kubectl create -f -
+curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.9/manifests/crds/applicationset-crd.yaml | kubectl create -f -
 ```
 
 Verify:

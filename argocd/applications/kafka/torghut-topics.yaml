@@ -1,4 +1,4 @@
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: torghut.trades.v1
@@ -13,7 +13,7 @@ spec:
     retention.ms: 604800000
     cleanup.policy: delete
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: torghut.quotes.v1
@@ -28,7 +28,7 @@ spec:
     retention.ms: 604800000
     cleanup.policy: delete
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: torghut.bars.1m.v1
@@ -43,7 +43,7 @@ spec:
     retention.ms: 2592000000
     cleanup.policy: delete
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: torghut.status.v1
@@ -58,7 +58,7 @@ spec:
     retention.ms: 604800000
     cleanup.policy: compact,delete
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: torghut.trade-updates.v1
@@ -73,7 +73,7 @@ spec:
     retention.ms: 604800000
     cleanup.policy: delete
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: torghut.ta.bars.1s.v1
@@ -88,7 +88,7 @@ spec:
     retention.ms: 1209600000
     cleanup.policy: delete
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: torghut.ta.signals.v1
@@ -103,7 +103,7 @@ spec:
     retention.ms: 1209600000
     cleanup.policy: delete
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: torghut.ta.status.v1
@@ -118,7 +118,7 @@ spec:
     retention.ms: 604800000
     cleanup.policy: compact,delete
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: torghut.lean.shadow.v1
@@ -133,7 +133,7 @@ spec:
     retention.ms: 1209600000
     cleanup.policy: delete
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: torghut.lean.backtests.v1

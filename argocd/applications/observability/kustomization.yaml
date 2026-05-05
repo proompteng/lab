@@ -15,28 +15,28 @@ resources:
 helmCharts:
   - name: mimir-distributed
     repo: https://grafana.github.io/helm-charts
-    version: 5.8.0
+    version: 6.0.6
     releaseName: observability-mimir
     namespace: observability
     includeCRDs: true
     valuesFile: mimir-values.yaml
   - name: loki-distributed
     repo: https://grafana.github.io/helm-charts
-    version: 0.80.5
+    version: 0.80.6
     releaseName: observability-loki
     namespace: observability
     includeCRDs: true
     valuesFile: loki-values.yaml
   - name: tempo-distributed
     repo: https://grafana.github.io/helm-charts
-    version: 1.48.0
+    version: 1.61.3
     releaseName: observability-tempo
     namespace: observability
     includeCRDs: true
     valuesFile: tempo-values.yaml
   - name: grafana
     repo: https://grafana.github.io/helm-charts
-    version: 10.1.0
+    version: 10.5.15
     releaseName: observability-grafana
     namespace: observability
     valuesFile: grafana-values.yaml

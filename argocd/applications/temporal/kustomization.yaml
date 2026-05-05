@@ -7,47 +7,78 @@ resources:
   - ingressroute-temporal-k8s-private.yaml
 
 helmCharts:
+  - name: cassandra
+    repo: https://charts.helm.sh/incubator
+    version: 0.14.3
+    releaseName: temporal
+    namespace: temporal
+    valuesInline:
+      persistence:
+        enabled: true
+        storageClass: rook-ceph-block
+        accessMode: ReadWriteOnce
+        size: 20Gi
+      config:
+        cluster_size: 3
+        seed_size: 2
+  - name: elasticsearch
+    repo: https://helm.elastic.co
+    version: 7.17.3
+    releaseName: temporal
+    namespace: temporal
+    valuesInline:
+      replicas: 3
+      minimumMasterNodes: 2
+      clusterHealthCheckParams: "wait_for_status=green&timeout=1s"
+      persistence:
+        enabled: true
+      volumeClaimTemplate:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi
+        storageClassName: rook-ceph-block
   - name: temporal
     repo: https://go.temporal.io/helm-charts
-    version: 0.73.1
+    version: 1.2.0
     releaseName: temporal
     namespace: temporal
     includeCRDs: true
     valuesInline:
-      prometheus:
-        enabled: false
-      grafana:
-        enabled: false
-      elasticsearch:
-        replicas: 3
-        minimumMasterNodes: 2
-        clusterHealthCheckParams: "wait_for_status=green&timeout=1s"
-        # Persist ES data so Temporal visibility index survives node restarts
-        persistence:
-          enabled: true
-        volumeClaimTemplate:
-          accessModes:
-            - ReadWriteOnce
-          resources:
-            requests:
-              storage: 5Gi
-          storageClassName: rook-ceph-block
-      schema:
-        createDatabase:
-          enabled: true
-        setup:
-          enabled: true
-        update:
-          enabled: true
-      cassandra:
-        persistence:
-          enabled: true
-          storageClass: rook-ceph-block
-          accessMode: ReadWriteOnce
-          size: 20Gi
+      server:
         config:
-          cluster_size: 3
-          seed_size: 2
+          persistence:
+            defaultStore: default
+            visibilityStore: visibility
+            numHistoryShards: 512
+            datastores:
+              default:
+                cassandra:
+                  createDatabase: true
+                  manageSchema: true
+                  hosts: "temporal-cassandra.temporal,temporal-cassandra.temporal,temporal-cassandra.temporal"
+                  port: 9042
+                  keyspace: temporal
+                  user: user
+                  password: password
+                  replicationFactor: 1
+                  consistency:
+                    default:
+                      consistency: local_quorum
+                      serialConsistency: local_serial
+              visibility:
+                elasticsearch:
+                  manageSchema: true
+                  version: v7
+                  url:
+                    scheme: http
+                    host: "elasticsearch-master-headless:9200"
+                  username: ""
+                  password: ""
+                  logLevel: error
+                  indices:
+                    visibility: temporal_visibility_v1_dev
       web:
         # https://docs.temporal.io/references/web-ui-environment-variables
         additionalEnv:

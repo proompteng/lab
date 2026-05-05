@@ -4,6 +4,6 @@ namespace: kubernetes-reflector
 helmCharts:
   - name: reflector
     repo: https://emberstack.github.io/helm-charts
-    version: 9.1.35
+    version: 10.0.40
     releaseName: kubernetes-reflector
     namespace: kubernetes-reflector
