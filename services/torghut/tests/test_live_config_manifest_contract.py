@@ -27,7 +27,9 @@ _RESEARCHED_CHIP_TECH_UNIVERSE = (
     "QCOM",
     "MRVL",
 )
+_LIVE_EXECUTION_CHIP_TECH_UNIVERSE = ("NVDA", "AMD", "INTC")
 _CHIP_UNIVERSE_SYMBOLS = set(_RESEARCHED_CHIP_TECH_UNIVERSE)
+_LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS = set(_LIVE_EXECUTION_CHIP_TECH_UNIVERSE)
 
 
 def _repo_root() -> Path:
@@ -203,6 +205,20 @@ def _assert_exact_chip_tech_universe(
     )
 
 
+def _assert_exact_live_execution_chip_universe(
+    test_case: TestCase, symbols: Iterable[object], *, context: str
+) -> None:
+    normalized = [
+        str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
+    ]
+    _assert_chip_universe(test_case, normalized, context=context)
+    test_case.assertEqual(
+        tuple(normalized),
+        _LIVE_EXECUTION_CHIP_TECH_UNIVERSE,
+        f"{context} does not match the live executable chip core",
+    )
+
+
 class TestLiveConfigManifestContract(TestCase):
     def test_knative_env_wiring_is_safe_live_defaults(self) -> None:
         env = _load_torghut_knative_env()
@@ -240,7 +256,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIsNone(settings.trading_market_context_url)
         self.assertEqual(
             set(settings.trading_universe_static_fallback_symbols),
-            _CHIP_UNIVERSE_SYMBOLS,
+            _LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS,
         )
         self.assertNotIn("TRADING_FEATURE_FLAGS_URL", env)
         self.assertNotIn("TRADING_FORECAST_SERVICE_URL", env)
@@ -264,7 +280,7 @@ class TestLiveConfigManifestContract(TestCase):
                 list,
                 f"{strategy.get('name')} missing explicit universe_symbols",
             )
-            _assert_exact_chip_tech_universe(
+            _assert_exact_live_execution_chip_universe(
                 self,
                 cast(list[object], raw_symbols),
                 context=f"strategy {strategy.get('name')}",
@@ -279,17 +295,17 @@ class TestLiveConfigManifestContract(TestCase):
         ws_data = ws_config.get("data")
         self.assertIsInstance(ws_data, Mapping)
 
-        _assert_exact_chip_tech_universe(
+        _assert_exact_live_execution_chip_universe(
             self,
             _csv_symbols(live_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS")),
             context="live static fallback symbols",
         )
-        _assert_exact_chip_tech_universe(
+        _assert_exact_live_execution_chip_universe(
             self,
             _csv_symbols(sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS")),
             context="sim static fallback symbols",
         )
-        _assert_exact_chip_tech_universe(
+        _assert_exact_live_execution_chip_universe(
             self,
             _csv_symbols(cast(Mapping[str, object], ws_data).get("SYMBOLS")),
             context="torghut-ws subscription symbols",
@@ -310,7 +326,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(sim_env.get("TRADING_PRICE_TABLE"), "torghut.ta_microbars")
         self.assertEqual(
             sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS"),
-            "NVDA,AVGO,AMD,TSM,ASML,AMAT,LRCX,KLAC,MU,INTC,QCOM,MRVL",
+            "NVDA,AMD,INTC",
         )
 
     def test_clickhouse_replicas_are_not_pinned_to_single_architecture(self) -> None:
@@ -334,11 +350,7 @@ class TestLiveConfigManifestContract(TestCase):
         manifest = _load_yaml_mapping(
             "argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml"
         )
-        pod_spec = (
-            manifest.get("spec", {})
-            .get("template", {})
-            .get("spec", {})
-        )
+        pod_spec = manifest.get("spec", {}).get("template", {}).get("spec", {})
         self.assertIsInstance(pod_spec, Mapping)
         self.assertEqual(
             cast(Mapping[str, object], pod_spec).get("nodeSelector"),
@@ -358,11 +370,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertTrue(containers)
         container = containers[0]
         args = "\n".join(str(item) for item in container.get("args", []))
-        env = [
-            item
-            for item in container.get("env", [])
-            if isinstance(item, Mapping)
-        ]
+        env = [item for item in container.get("env", []) if isinstance(item, Mapping)]
         upgrade_to_research_objects = (
             'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini '
             "upgrade 0026_strategy_factory_research_objects"
@@ -451,7 +459,7 @@ class TestLiveConfigManifestContract(TestCase):
                     list,
                     f"{path} universe_symbols[{index}] is not a list",
                 )
-                _assert_exact_chip_tech_universe(
+                _assert_exact_live_execution_chip_universe(
                     self,
                     cast(list[object], raw_symbols),
                     context=f"{path.name} universe_symbols[{index}]",
@@ -480,7 +488,7 @@ class TestLiveConfigManifestContract(TestCase):
                 list,
                 f"{path} missing candidate_strategy.universe_symbols",
             )
-            _assert_exact_chip_tech_universe(
+            _assert_exact_live_execution_chip_universe(
                 self,
                 cast(list[object], raw_symbols),
                 context=f"{path.name} candidate universe",
@@ -505,6 +513,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(env.get("TRADING_MODE"), "live")
         self.assertEqual(env.get("TRADING_PIPELINE_MODE"), "simple")
         self.assertEqual(env.get("TRADING_UNIVERSE_SOURCE"), "jangar")
+        self.assertFalse(_manifest_bool(env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ENABLED"))
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION"))
         self.assertFalse(_manifest_bool(env, "TRADING_KILL_SWITCH_ENABLED"))
@@ -540,16 +549,21 @@ class TestLiveConfigManifestContract(TestCase):
         _require_flag_enabled_false("torghut_llm_fail_open_live_approved")
         _require_flag_enabled_false("torghut_llm_shadow_mode")
 
-    def test_strict_daily_profit_strategies_require_executable_live_proof(self) -> None:
+    def test_profit_claim_strategies_require_executable_live_proof(self) -> None:
         strategies = _load_torghut_strategy_catalog()
-        strict_daily_profit_strategies = [
-            strategy
-            for strategy in strategies
-            if "strict-daily-profit" in str(strategy.get("description") or "").lower()
-        ]
-        self.assertTrue(strict_daily_profit_strategies)
+        proof_claim_strategies: list[dict[str, object]] = []
+        for strategy in strategies:
+            description = str(strategy.get("description") or "").lower()
+            strategy_id = str(strategy.get("strategy_id") or "").lower()
+            if (
+                "strict-daily-profit" in description
+                or "promoted" in description
+                or strategy_id.endswith("@prod")
+            ):
+                proof_claim_strategies.append(strategy)
+        self.assertTrue(proof_claim_strategies)
 
-        for strategy in strict_daily_profit_strategies:
+        for strategy in proof_claim_strategies:
             if not _manifest_bool(strategy, "enabled"):
                 continue
 
@@ -567,17 +581,17 @@ class TestLiveConfigManifestContract(TestCase):
 
             self.assertTrue(
                 evidence_ref,
-                f"{strategy.get('name')} is strict-daily-profit live-enabled without executable evidence ref",
+                f"{strategy.get('name')} is live-enabled with a proof/promotion claim but no executable evidence ref",
             )
             self.assertGreaterEqual(
                 Decimal(str(target_net_pnl or "0")),
                 Decimal("300"),
-                f"{strategy.get('name')} is strict-daily-profit live-enabled without $300/day target proof",
+                f"{strategy.get('name')} is live-enabled with a proof/promotion claim but no $300/day target proof",
             )
             self.assertGreaterEqual(
                 Decimal(str(min_daily_net_pnl or "0")),
                 Decimal("300"),
-                f"{strategy.get('name')} is strict-daily-profit live-enabled without every-day $300 proof",
+                f"{strategy.get('name')} is live-enabled with a proof/promotion claim but no every-day $300 proof",
             )
             self.assertIsNotNone(max_notional_per_trade)
             self.assertLessEqual(

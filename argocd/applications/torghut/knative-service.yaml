@@ -86,7 +86,7 @@ spec:
             - name: TRADING_PIPELINE_MODE
               value: simple
             - name: TRADING_SIMPLE_SUBMIT_ENABLED
-              value: "true"
+              value: "false"
             - name: TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED
               value: "false"
             - name: TRADING_KILL_SWITCH_ENABLED
@@ -167,7 +167,7 @@ spec:
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED
               value: "true"
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS
-              value: NVDA,AVGO,AMD,TSM,ASML,AMAT,LRCX,KLAC,MU,INTC,QCOM,MRVL
+              value: NVDA,AMD,INTC
             - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
               value: "900"
             - name: JANGAR_SYMBOLS_URL
