@@ -18,6 +18,8 @@
   - `docs/agents/designs/68-jangar-evidence-clock-arbiter-and-rollout-veto-contract-2026-05-05.md`
   - `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
   - `docs/agents/designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md`
+  - `72-torghut-profit-proof-exchange-and-query-firebreak-contract-2026-05-05.md`
+  - `docs/agents/designs/67-jangar-evidence-epochs-and-proof-cell-rollout-contract-2026-05-05.md`
   - `53-torghut-kafka-retention-bootstrap-and-archive-backed-profitability-proof-2026-03-27.md`
   - `54-torghut-research-backed-sleeves-and-this-week-holdout-proof-2026-03-27.md`
   - `64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`
@@ -59,6 +61,8 @@
   - `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
   - `docs/agents/designs/68-jangar-evidence-clock-arbiter-and-rollout-veto-contract-2026-05-05.md`
   - `docs/agents/designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md`
+  - `docs/agents/designs/67-jangar-evidence-epochs-and-proof-cell-rollout-contract-2026-05-05.md`
+  - `72-torghut-profit-proof-exchange-and-query-firebreak-contract-2026-05-05.md`
   - `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
   - `64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`
   - `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
@@ -189,6 +193,13 @@ Current source-state priority is narrower:
 - `docs/agents/designs/69-jangar-evidence-escrow-and-repair-cell-contract-2026-05-05.md` now turns the latest
   control-plane assessment into a concrete Jangar contract: compile durable evidence escrows, route degraded facts into
   repair cells, keep serving readiness separate from promotion authority, and enforce read-budgeted database probes.
+- `72-torghut-profit-proof-exchange-and-query-firebreak-contract-2026-05-05.md` now turns the May 5 live-state
+  evidence into the active profitability safety contract: route-time proof scans move behind query firebreaks,
+  lane-local proof receipts become promotion authority, and Jangar consumes those receipts as evidence-epoch proof
+  cells before non-observe capital can advance.
+- `docs/agents/designs/67-jangar-evidence-epochs-and-proof-cell-rollout-contract-2026-05-05.md` now defines the
+  companion Jangar control-plane direction: serving, dispatch, deploy verification, and Torghut promotion project the
+  same durable evidence epoch rather than recomputing independent route-time truth.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.
@@ -384,6 +395,7 @@ This pack is positioned as the next architecture layer above:
 63. `61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`
 64. `62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`
 65. `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
+66. `72-torghut-profit-proof-exchange-and-query-firebreak-contract-2026-05-05.md`
 
 ## Recommended Build Order
 
