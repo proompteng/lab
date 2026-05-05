@@ -32,6 +32,36 @@ spec:
           args:
             - |
               /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
+              DB_DSN="${TORGHUT_SIM_DB_DSN}" /opt/venv/bin/python - <<'PY'
+              import os
+
+              from sqlalchemy import create_engine, text
+
+              revision_before_context = '0023_simulation_run_progress'
+              context_revision = '0024_simulation_runtime_context'
+
+              engine = create_engine(os.environ['DB_DSN'])
+              with engine.begin() as connection:
+                  has_version_table = connection.execute(
+                      text("select to_regclass('public.alembic_version') is not null"),
+                  ).scalar()
+                  has_context_table = connection.execute(
+                      text("select to_regclass('public.simulation_runtime_context') is not null"),
+                  ).scalar()
+                  versions = []
+                  if has_version_table:
+                      versions = [
+                          row[0]
+                          for row in connection.execute(text('select version_num from alembic_version')).all()
+                      ]
+
+                  if versions == [revision_before_context] and bool(has_context_table):
+                      connection.execute(
+                          text('update alembic_version set version_num = :revision'),
+                          {'revision': context_revision},
+                      )
+                      print(f'stamped existing simulation runtime context as {context_revision}')
+              PY
               DB_DSN="${TORGHUT_SIM_DB_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
           env:
             - name: DB_DSN
