@@ -21,8 +21,6 @@ spec:
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
     spec:
-      nodeSelector:
-        kubernetes.io/arch: arm64
       containerConcurrency: 0
       timeoutSeconds: 60
       containers:
