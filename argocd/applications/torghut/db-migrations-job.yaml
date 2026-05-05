@@ -32,7 +32,7 @@ spec:
           args:
             - |
               /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
-              DB_DSN="${TORGHUT_SIM_DB_DSN}" /opt/venv/bin/python - <<'PY'
+              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/python - <<'PY'
               import os
               from urllib.parse import urlsplit
 
@@ -96,40 +96,74 @@ spec:
                       )
                       print(f'stamped existing simulation runtime context as {context_revision}')
               PY
-              DB_DSN="${TORGHUT_SIM_DB_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
+              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
+              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/python - <<'PY'
+              import os
+
+              from sqlalchemy import create_engine, text
+
+              dsn = os.environ['DB_DSN']
+              if dsn.startswith('postgresql://'):
+                  dsn = f'postgresql+psycopg://{dsn.removeprefix("postgresql://")}'
+
+              runtime_role = os.environ['TORGHUT_SIM_DB_USER']
+              engine = create_engine(dsn)
+              with engine.begin() as connection:
+                  quoted_role = connection.execute(
+                      text('select quote_ident(:role)'),
+                      {'role': runtime_role},
+                  ).scalar_one()
+                  statements = [
+                      f'grant usage, create on schema public to {quoted_role}',
+                      f'grant all privileges on all tables in schema public to {quoted_role}',
+                      f'grant all privileges on all sequences in schema public to {quoted_role}',
+                      f'grant execute on all functions in schema public to {quoted_role}',
+                      f'alter default privileges in schema public grant all privileges on tables to {quoted_role}',
+                      f'alter default privileges in schema public grant all privileges on sequences to {quoted_role}',
+                      f'alter default privileges in schema public grant execute on functions to {quoted_role}',
+                  ]
+                  for statement in statements:
+                      connection.execute(text(statement))
+                  print(f'granted simulation runtime privileges to {runtime_role}')
+              PY
           env:
             - name: DB_DSN
               valueFrom:
                 secretKeyRef:
                   name: torghut-db-app
                   key: uri
-            - name: TORGHUT_SIM_DB_HOST
-              valueFrom:
-                secretKeyRef:
-                  name: torghut-db-app
-                  key: host
-            - name: TORGHUT_SIM_DB_PORT
-              valueFrom:
-                secretKeyRef:
-                  name: torghut-db-app
-                  key: port
             - name: TORGHUT_SIM_DB_USER
               valueFrom:
                 secretKeyRef:
                   name: torghut-db-app
                   key: username
-            - name: TORGHUT_SIM_DB_PASSWORD
+            - name: TORGHUT_SIM_ADMIN_DB_HOST
               valueFrom:
                 secretKeyRef:
-                  name: torghut-db-app
+                  name: torghut-db-superuser
+                  key: host
+            - name: TORGHUT_SIM_ADMIN_DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-superuser
+                  key: port
+            - name: TORGHUT_SIM_ADMIN_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-superuser
+                  key: username
+            - name: TORGHUT_SIM_ADMIN_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-superuser
                   key: password
             - name: TORGHUT_POSTGRES_ADMIN_URI
               valueFrom:
                 secretKeyRef:
                   name: torghut-db-superuser
                   key: uri
-            - name: TORGHUT_SIM_DB_DSN
-              value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
+            - name: TORGHUT_SIM_ADMIN_DSN
+              value: postgresql://$(TORGHUT_SIM_ADMIN_DB_USER):$(TORGHUT_SIM_ADMIN_DB_PASSWORD)@$(TORGHUT_SIM_ADMIN_DB_HOST):$(TORGHUT_SIM_ADMIN_DB_PORT)/torghut_sim_default
           resources:
             requests:
               cpu: 50m

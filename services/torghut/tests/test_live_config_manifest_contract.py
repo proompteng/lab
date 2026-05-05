@@ -306,10 +306,16 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("CREATE DATABASE", args)
         self.assertIn("GRANT ALL PRIVILEGES ON DATABASE", args)
         self.assertIn("CREATE EXTENSION IF NOT EXISTS vector", args)
+        self.assertIn("TORGHUT_SIM_ADMIN_DSN", env_names)
+        self.assertIn(
+            'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads',
+            args,
+        )
+        self.assertIn("grant all privileges on all tables in schema public", args)
         self.assertLess(
             args.index("CREATE EXTENSION IF NOT EXISTS vector"),
             args.index(
-                'DB_DSN="${TORGHUT_SIM_DB_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads'
+                'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads'
             ),
         )
 
