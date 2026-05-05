@@ -1,10 +1,10 @@
 # Torghut Quant Release Verification
 
-Timestamp: 2026-05-05T17:52:00Z
+Timestamp: 2026-05-05T17:56:28Z
 Repository: `proompteng/lab`
 Base: `main`
 Release branch: `codex/swarm-torghut-quant-verify`
-Audit PR: #5496 plus follow-up verification on the same release branch
+Audit PRs: #5496 plus follow-up #5523 on the same release branch
 
 ## Gate Decision
 
@@ -40,6 +40,9 @@ reports 503 because live submission is intentionally disabled, and the options c
   review and resolved threads, or an explicit maintainer waiver.
 - #5458 and #5467 were previously closed as superseded image promotions because repairing either PR would have rolled
   production backward.
+- #5523, `docs(torghut): update quant rollout verification`, is the follow-up audit PR on
+  `codex/swarm-torghut-quant-verify`. It records the #5514 merge decision, refreshed rollout evidence, residual risk,
+  and rollback path.
 
 ## Comments And Conflicts
 
@@ -80,7 +83,7 @@ Workload readiness after #5514:
 - Recent rollout events show expected startup/readiness probe failures while new pods started, followed by Knative
   `RevisionReady` and `LatestReadyUpdate` events for `torghut-00217` and `torghut-sim-00297`.
 
-Endpoint evidence:
+Endpoint evidence refreshed at 2026-05-05T17:56Z:
 
 - Live `/healthz`: HTTP 200.
 - Live `/trading/status`: HTTP 200, reporting version `v0.568.5-16-g59511b6b6`, commit
@@ -94,6 +97,14 @@ Endpoint evidence:
 - Options catalog `/healthz`: HTTP 200 and `/v1/options/hot-set`: HTTP 200 with 160 symbols.
 - Options catalog `/readyz`: HTTP 503 with `ready=false`, `last_success_ts=null`, and no error code or detail.
 - Live TA REST, sim TA REST, and options TA REST `/overview`: HTTP 200 with one running Flink job on each service.
+
+Read-only log evidence:
+
+- Options catalog access logs still show repeated `GET /readyz` responses at HTTP 503 while `/healthz` and
+  `/v1/options/hot-set` continue to return HTTP 200.
+- Options enricher logs show steady HTTP 200 responses for `/readyz` and `/healthz`.
+- Live Torghut logs show HTTP 503 for `/trading/health`, while `/healthz`, `/trading/status`, and metrics endpoints
+  continue to return HTTP 200.
 
 Event notes:
 
@@ -137,8 +148,9 @@ Rollout state is blocked at application health, not GitOps. I squash-merged #551
 Argo synced Torghut and Torghut options to main revision `be72b6213` between 2026-05-05T17:35:04Z and
 2026-05-05T17:38:43Z. Live and sim moved to `torghut-00217` and `torghut-sim-00297` on digest `f183391e` with zero
 restarts; sim health, live `/healthz`, live `/trading/status`, TA, TA-sim, options TA, and options-enricher are green.
-I am not declaring production health green because live `/readyz` and `/trading/health` remain 503 under the no-live
-submit posture, and options catalog `/readyz` is 503 with `ready=false` and no successful catalog cycle timestamp.
+I am not declaring production health green because refreshed checks at 2026-05-05T17:56Z still show live `/readyz` and
+`/trading/health` at 503 under the no-live-submit posture, and options catalog `/readyz` is 503 with `ready=false` and no
+successful catalog cycle timestamp.
 Rollback is a revert of #5514 merge commit `76709ed09` or a GitOps promotion back to digest `5b1685a25`; first
 remediation should focus on options catalog readiness and the explicit health semantics for live no-submit.
 
