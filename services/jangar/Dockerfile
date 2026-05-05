@@ -552,12 +552,13 @@ RUN --mount=type=cache,id=bun-install-cache-jangar-deps-prod,target=/root/.bun/i
 
 # Control-plane-only runtime image.
 #
-# - No Codex CLI / skills / dev tooling.
+# - No Codex CLI / skills / dev tooling beyond the NATS helpers required for runtime admission.
 # - Defaults to controllers + agent comms disabled; can be overridden via env vars.
 # - Still includes `kubectl` because the control plane uses it for list/watch/logs.
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS control-plane
 
 COPY --from=tools /usr/local/bin/kubectl /usr/local/bin/kubectl
+COPY --from=tools /usr/local/bin/nats /usr/local/bin/nats
 
 WORKDIR /app
 COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
@@ -596,6 +597,10 @@ RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-r
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
   && chmod +x /usr/local/bin/cx-codex-run /usr/local/bin/cx-workflow-start /usr/local/bin/cx-workflow-query /usr/local/bin/cx-workflow-signal /usr/local/bin/cx-workflow-cancel
+
+COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
+COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-soak.ts /usr/local/bin/codex-nats-soak
+RUN chmod +x /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak
 
 ENV JANGAR_AGENTS_CONTROLLER_ENABLED=0 \
   JANGAR_ORCHESTRATION_CONTROLLER_ENABLED=0 \

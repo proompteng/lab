@@ -60,6 +60,54 @@ render_and_check "${CHART_DIR}/values-local.yaml"
 render_and_check "${CI_VALUES_FILE}"
 render_and_check "${CHART_DIR}/values-prod.yaml"
 
+control_plane_nats_render="$(mktemp)"
+run_with_helm3 helm template "${CHART_DIR}" \
+  --kube-version "${KUBE_VERSION_FOR_HELM}" \
+  --values "${CHART_DIR}/values-local.yaml" \
+  --set controllers.enabled=true \
+  --set agentComms.enabled=true >"${control_plane_nats_render}"
+python3 - "${control_plane_nats_render}" <<'PY'
+import sys
+import yaml
+
+render_path = sys.argv[1]
+with open(render_path, encoding="utf-8") as handle:
+    docs = list(yaml.safe_load_all(handle))
+
+deployment = next(
+    (
+        doc
+        for doc in docs
+        if isinstance(doc, dict)
+        and doc.get("kind") == "Deployment"
+        and doc.get("metadata", {}).get("name") == "release-name-agents"
+    ),
+    None,
+)
+if deployment is None:
+    print("Rendered agents control-plane Deployment was not found.", file=sys.stderr)
+    sys.exit(1)
+
+containers = deployment.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+if not containers:
+    print("Rendered agents control-plane Deployment has no containers.", file=sys.stderr)
+    sys.exit(1)
+
+env_names = [entry.get("name") for entry in containers[0].get("env", []) if isinstance(entry, dict)]
+nats_url_count = env_names.count("NATS_URL")
+if nats_url_count != 1:
+    message = (
+        "Expected exactly one NATS_URL env var on the control-plane Deployment "
+        "when agentComms is enabled and controllers own the subscriber; "
+        f"found {nats_url_count}."
+    )
+    print(
+        message,
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PY
+
 if run_with_helm3 helm template "${CHART_DIR}" \
   --kube-version "${KUBE_VERSION_FOR_HELM}" \
   --values "${CHART_DIR}/values-local.yaml" \
