@@ -7,10 +7,12 @@
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-05T19:16Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-05T19:36Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `89-torghut-zero-notional-proof-runway-and-profit-debt-exchange-2026-05-05.md`
+  - `docs/agents/designs/85-jangar-proof-debt-exchange-and-rollout-credit-windows-2026-05-05.md`
   - `88-torghut-session-proof-budget-consumer-and-capital-reentry-contract-2026-05-05.md`
   - `docs/agents/designs/84-jangar-material-action-settlement-and-proof-budget-cutover-2026-05-05.md`
   - `88-torghut-profit-slo-lanes-and-session-replay-governor-2026-05-05.md`
@@ -121,6 +123,8 @@
 - `88-torghut-session-proof-liquidity-and-hypothesis-market-maker-2026-05-05.md`
 - `88-torghut-session-proof-budget-consumer-and-capital-reentry-contract-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/85-jangar-proof-debt-exchange-and-rollout-credit-windows-2026-05-05.md`
+  - `89-torghut-zero-notional-proof-runway-and-profit-debt-exchange-2026-05-05.md`
   - `docs/agents/designs/84-jangar-material-action-settlement-and-proof-budget-cutover-2026-05-05.md`
   - `88-torghut-session-proof-budget-consumer-and-capital-reentry-contract-2026-05-05.md`
   - `docs/agents/designs/84-jangar-material-action-settlement-ledger-and-slo-arbiter-2026-05-05.md`
