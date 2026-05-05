@@ -317,6 +317,7 @@ const getAgentRunUntouchedReasons = (agentRun: Record<string, unknown>) => {
     ? metadata.finalizers.filter((item): item is string => typeof item === 'string')
     : []
 
+  if (phase === 'Template') return reasons
   if (!phase) reasons.push('missing_phase')
   if (observedGeneration == null) {
     reasons.push('missing_observed_generation')
