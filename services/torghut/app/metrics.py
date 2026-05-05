@@ -847,7 +847,9 @@ def _render_execution_local_reject_total_map(values: Mapping[str, object]) -> li
     return lines
 
 
-def _render_execution_submit_attempt_total_map(values: Mapping[str, object]) -> list[str]:
+def _render_execution_submit_attempt_total_map(
+    values: Mapping[str, object],
+) -> list[str]:
     metric_name = "torghut_trading_execution_submit_attempt_total"
     lines = _metric_headers(
         metric_name,
@@ -875,7 +877,9 @@ def _render_execution_submit_attempt_total_map(values: Mapping[str, object]) -> 
     return lines
 
 
-def _render_execution_submit_result_total_map(values: Mapping[str, object]) -> list[str]:
+def _render_execution_submit_result_total_map(
+    values: Mapping[str, object],
+) -> list[str]:
     metric_name = "torghut_trading_execution_submit_result_total"
     lines = _metric_headers(
         metric_name,
@@ -969,11 +973,33 @@ def _render_strategy_runtime_map(key: str, values: Mapping[str, object]) -> list
     return lines
 
 
+def _render_strategy_intent_suppression_total_map(
+    values: Mapping[str, object],
+) -> list[str]:
+    metric_name = "torghut_trading_strategy_intent_suppression_total"
+    lines = _metric_headers(
+        metric_name,
+        "Count of runtime intents suppressed before decision creation.",
+        "counter",
+    )
+    for key, count in _sorted_metric_items(values, numeric_kind="int"):
+        strategy_id, reason = (key.split("|", 1) + ["unknown"])[:2]
+        lines.extend(
+            _render_labeled_metric(
+                metric_name=metric_name,
+                labels={"strategy_id": strategy_id, "reason": reason or "unknown"},
+                value=count,
+            )
+        )
+    return lines
+
+
 _SPECIAL_MAP_RENDERERS = {
     "execution_fallback_total": _render_execution_fallback_total_map,
     "execution_local_reject_total": _render_execution_local_reject_total_map,
     "execution_submit_attempt_total": _render_execution_submit_attempt_total_map,
     "execution_submit_result_total": _render_execution_submit_result_total_map,
+    "strategy_intent_suppression_total": _render_strategy_intent_suppression_total_map,
     "lean_failure_taxonomy_total": _render_lean_failure_taxonomy_total_map,
     "route_provenance": _render_route_provenance_map,
     "forecast_calibration_error": _render_forecast_calibration_error_map,

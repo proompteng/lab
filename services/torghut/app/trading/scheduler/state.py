@@ -14,6 +14,7 @@ from ..portfolio import AllocationResult
 from ..route_metadata import coerce_route_text
 from ..tca import AdaptiveExecutionPolicyDecision
 
+
 def _normalize_reason_metric(reason: str | None) -> str:
     normalized = reason.strip() if isinstance(reason, str) else ""
     return normalized or "unknown"
@@ -32,6 +33,7 @@ def _optional_decimal(value: Any) -> Optional[Decimal]:
         return Decimal(str(value))
     except (ArithmeticError, ValueError):
         return None
+
 
 RuntimeUncertaintyGateAction = Literal["pass", "degrade", "abstain", "fail"]
 
@@ -212,6 +214,9 @@ class TradingMetrics:
         default_factory=lambda: cast(dict[str, int], {})
     )
     strategy_intents_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    strategy_intent_suppression_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
     strategy_errors_total: dict[str, int] = field(
@@ -747,6 +752,10 @@ class TradingMetrics:
             self.strategy_intents_total[strategy_id] = (
                 self.strategy_intents_total.get(strategy_id, 0) + count
             )
+        for key, count in observation.strategy_intent_suppression_total.items():
+            self.strategy_intent_suppression_total[key] = (
+                self.strategy_intent_suppression_total.get(key, 0) + count
+            )
         for strategy_id, count in observation.strategy_errors_total.items():
             self.strategy_errors_total[strategy_id] = (
                 self.strategy_errors_total.get(strategy_id, 0) + count
@@ -1052,4 +1061,9 @@ class TradingState:
     metrics: TradingMetrics = field(default_factory=TradingMetrics)
 
 
-__all__ = ["RuntimeUncertaintyGate", "RuntimeUncertaintyGateAction", "TradingMetrics", "TradingState"]
+__all__ = [
+    "RuntimeUncertaintyGate",
+    "RuntimeUncertaintyGateAction",
+    "TradingMetrics",
+    "TradingState",
+]

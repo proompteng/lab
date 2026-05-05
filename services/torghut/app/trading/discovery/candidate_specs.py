@@ -60,28 +60,41 @@ _FAMILY_TIEBREAK = {
 _MAX_FAMILIES_PER_HYPOTHESIS = 3
 _DEFAULT_PROFILE_COUNT = 3
 
-LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE: tuple[str, ...] = (
-    "AMAT",
-    "AMD",
-    "AVGO",
-    "INTC",
-    "MU",
+RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE: tuple[str, ...] = (
     "NVDA",
+    "AVGO",
+    "AMD",
+    "TSM",
+    "ASML",
+    "AMAT",
+    "LRCX",
+    "KLAC",
+    "MU",
+    "INTC",
+    "QCOM",
+    "MRVL",
 )
-_LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE = LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE
+LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE = RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE
+_RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE = RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE
 _AI_ACCELERATOR_UNIVERSE_PROFILE: tuple[str, ...] = (
     "NVDA",
     "AVGO",
     "AMD",
+    "TSM",
+    "ASML",
     "MU",
+    "MRVL",
 )
 _EQUIPMENT_MEMORY_UNIVERSE_PROFILE: tuple[str, ...] = (
     "AMAT",
+    "LRCX",
+    "KLAC",
     "MU",
     "INTC",
+    "QCOM",
 )
 _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE: tuple[str, ...] = (
-    _LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE
+    _RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE
 )
 
 _LARGE_CAP_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
@@ -91,18 +104,18 @@ _LARGE_CAP_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
 )
 _BREAKOUT_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
     _AI_ACCELERATOR_UNIVERSE_PROFILE,
-    ("NVDA", "AVGO", "AMD", "AMAT", "MU"),
+    ("NVDA", "AVGO", "AMD", "AMAT", "LRCX", "KLAC", "MU", "MRVL"),
     _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _REVERSAL_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
-    ("AMD", "INTC", "AMAT", "MU"),
-    ("AMD", "INTC", "AMAT", "MU", "AVGO"),
+    ("AMD", "INTC", "AMAT", "LRCX", "MU"),
+    ("AMD", "INTC", "AMAT", "LRCX", "KLAC", "MU", "AVGO"),
     _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _TSMOM_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
     ("NVDA",),
-    ("NVDA", "AVGO", "AMD"),
-    ("NVDA", "AVGO", "AMD", "AMAT", "MU"),
+    ("NVDA", "AVGO", "AMD", "TSM"),
+    ("NVDA", "AVGO", "AMD", "TSM", "ASML", "AMAT", "MU", "MRVL"),
 )
 
 _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
@@ -685,7 +698,7 @@ def _mapping(value: Any) -> dict[str, Any]:
 def _universe_symbol_override(symbols: Sequence[str]) -> tuple[str, ...]:
     cleaned: list[str] = []
     seen: set[str] = set()
-    allowed = set(_LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
+    allowed = set(_RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE)
     for symbol in symbols:
         normalized = str(symbol).strip().upper()
         if not normalized or normalized in seen or normalized not in allowed:

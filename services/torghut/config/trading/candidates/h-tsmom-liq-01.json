@@ -21,12 +21,18 @@
     "strategy_id": "intraday_tsmom_v1@prod",
     "enabled": true,
     "universe_symbols": [
-      "AMAT",
-      "AMD",
+      "NVDA",
       "AVGO",
-      "INTC",
+      "AMD",
+      "TSM",
+      "ASML",
+      "AMAT",
+      "LRCX",
+      "KLAC",
       "MU",
-      "NVDA"
+      "INTC",
+      "QCOM",
+      "MRVL"
     ],
     "max_notional_per_trade": "50000",
     "max_position_pct_equity": "3.0",

@@ -535,7 +535,9 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(source_runtime[0].get("compiler_source"), "legacy_runtime")
         self.assertEqual(source_runtime[0].get("intent_target_notional"), "100")
 
-    def test_scheduler_runtime_uses_runtime_target_notional_for_qty_resolution(self) -> None:
+    def test_scheduler_runtime_uses_runtime_target_notional_for_qty_resolution(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         engine.strategy_runtime = StrategyRuntime(
             registry=StrategyRegistry(
@@ -573,9 +575,13 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(len(decisions), 1)
         self.assertEqual(decisions[0].qty, Decimal("2"))
-        self.assertEqual(decisions[0].params["sizing"]["method"], "runtime_target_notional")
+        self.assertEqual(
+            decisions[0].params["sizing"]["method"], "runtime_target_notional"
+        )
 
-    def test_scheduler_runtime_skips_non_executable_fractional_short_entry(self) -> None:
+    def test_scheduler_runtime_skips_non_executable_fractional_short_entry(
+        self,
+    ) -> None:
         class SmallShortPlugin:
             plugin_id = "small_short_plugin"
             version = "1.0.0"
@@ -722,7 +728,9 @@ class TestDecisionEngine(TestCase):
             settings.trading_fractional_equities_enabled = original_fractional
             settings.trading_max_position_pct_equity = original_max_pct
 
-    def test_legacy_buy_skips_when_residual_symbol_capacity_is_below_min_qty(self) -> None:
+    def test_legacy_buy_skips_when_residual_symbol_capacity_is_below_min_qty(
+        self,
+    ) -> None:
         original_fractional = settings.trading_fractional_equities_enabled
         original_max_pct = settings.trading_max_position_pct_equity
         settings.trading_fractional_equities_enabled = False
@@ -762,7 +770,9 @@ class TestDecisionEngine(TestCase):
             settings.trading_fractional_equities_enabled = original_fractional
             settings.trading_max_position_pct_equity = original_max_pct
 
-    def test_scheduler_runtime_intraday_tsmom_skips_same_direction_reentry(self) -> None:
+    def test_scheduler_runtime_intraday_tsmom_skips_same_direction_reentry(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
             id=uuid.uuid4(),
@@ -798,12 +808,21 @@ class TestDecisionEngine(TestCase):
             decisions = engine.evaluate(
                 signal,
                 [strategy],
-                positions=[{"symbol": "NVDA", "qty": "3", "side": "long", "market_value": "420.75"}],
+                positions=[
+                    {
+                        "symbol": "NVDA",
+                        "qty": "3",
+                        "side": "long",
+                        "market_value": "420.75",
+                    }
+                ],
             )
 
         self.assertEqual(decisions, [])
 
-    def test_scheduler_runtime_position_isolation_skips_unowned_sell_intent(self) -> None:
+    def test_scheduler_runtime_position_isolation_skips_unowned_sell_intent(
+        self,
+    ) -> None:
         buy_strategy_id = uuid.uuid4()
         sell_strategy_id = uuid.uuid4()
         engine = DecisionEngine(price_fetcher=None)
@@ -880,7 +899,9 @@ class TestDecisionEngine(TestCase):
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
             patch.object(settings, "trading_strategy_scheduler_enabled", True),
         ):
-            decisions = engine.evaluate(signal, [buy_strategy, sell_strategy], positions=[])
+            decisions = engine.evaluate(
+                signal, [buy_strategy, sell_strategy], positions=[]
+            )
 
         self.assertEqual(len(decisions), 1)
         self.assertEqual(decisions[0].action, "buy")
@@ -888,7 +909,9 @@ class TestDecisionEngine(TestCase):
         assert isinstance(runtime_payload, dict)
         self.assertEqual(runtime_payload.get("position_isolation_mode"), "per_strategy")
 
-    def test_scheduler_runtime_defaults_research_sleeves_to_position_isolation(self) -> None:
+    def test_scheduler_runtime_defaults_research_sleeves_to_position_isolation(
+        self,
+    ) -> None:
         strategy_id = uuid.uuid4()
         engine = DecisionEngine(price_fetcher=None)
         engine.strategy_runtime = StrategyRuntime(
@@ -941,7 +964,9 @@ class TestDecisionEngine(TestCase):
         assert isinstance(runtime_payload, dict)
         self.assertEqual(runtime_payload.get("position_isolation_mode"), "per_strategy")
 
-    def test_scheduler_runtime_position_isolation_allows_owned_sell_intent(self) -> None:
+    def test_scheduler_runtime_position_isolation_allows_owned_sell_intent(
+        self,
+    ) -> None:
         buy_strategy_id = uuid.uuid4()
         sell_strategy_id = uuid.uuid4()
         engine = DecisionEngine(price_fetcher=None)
@@ -1072,8 +1097,17 @@ class TestDecisionEngine(TestCase):
             patch.object(settings, "trading_strategy_scheduler_enabled", True),
         ):
             decisions = engine.evaluate(signal, [strategy], positions=[])
+            telemetry = engine.consume_runtime_telemetry()
 
         self.assertEqual(decisions, [])
+        self.assertIsNotNone(telemetry.observation)
+        assert telemetry.observation is not None
+        self.assertEqual(
+            telemetry.observation.strategy_intent_suppression_total,
+            {
+                f"{strategy.id}|exit_only_sell_without_long_position": 1,
+            },
+        )
 
     def test_scheduler_runtime_intraday_tsmom_caps_exit_only_sell_to_long_inventory(
         self,
@@ -1826,8 +1860,18 @@ class TestDecisionEngine(TestCase):
                 [
                     {"symbol": "META", "qty": "3", "side": "short"},
                     {"symbol": "", "qty": "2", "side": "short"},
-                    {"symbol": "AAPL", "qty": "bad", "side": "short", "market_value": "-50"},
-                    {"symbol": "NVDA", "qty": "bad", "side": "short", "market_value": "bad"},
+                    {
+                        "symbol": "AAPL",
+                        "qty": "bad",
+                        "side": "short",
+                        "market_value": "-50",
+                    },
+                    {
+                        "symbol": "NVDA",
+                        "qty": "bad",
+                        "side": "short",
+                        "market_value": "bad",
+                    },
                     {"symbol": "MSFT", "side": "short", "market_value": "0"},
                     {"symbol": "TSLA", "qty": "1", "side": "long"},
                 ]
@@ -1892,7 +1936,9 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(decisions, [])
 
-    def test_scheduler_runtime_research_sleeve_buy_respects_entry_cooldown(self) -> None:
+    def test_scheduler_runtime_research_sleeve_buy_respects_entry_cooldown(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
             id=uuid.uuid4(),
@@ -1976,7 +2022,9 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(len(first), 1)
         self.assertEqual(second, [])
 
-    def test_scheduler_runtime_continuation_buy_defaults_to_ioc_time_in_force(self) -> None:
+    def test_scheduler_runtime_continuation_buy_defaults_to_ioc_time_in_force(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
             id=uuid.uuid4(),
@@ -2151,7 +2199,9 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(len(first), 1)
         self.assertEqual(second, [])
 
-    def test_scheduler_runtime_microbar_long_sell_does_not_open_short_when_flat(self) -> None:
+    def test_scheduler_runtime_microbar_long_sell_does_not_open_short_when_flat(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         engine.strategy_runtime = StrategyRuntime(
             registry=StrategyRegistry(
@@ -2203,7 +2253,9 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(decisions, [])
 
-    def test_resolve_qty_for_aggregated_blocks_flat_microbar_long_time_exit(self) -> None:
+    def test_resolve_qty_for_aggregated_blocks_flat_microbar_long_time_exit(
+        self,
+    ) -> None:
         strategy = Strategy(
             id=uuid.uuid4(),
             name="microbar-long-flat-exit",
@@ -2239,7 +2291,9 @@ class TestDecisionEngine(TestCase):
         )
 
         self.assertEqual(qty, Decimal("0"))
-        self.assertEqual(sizing_meta.get("reason"), "exit_only_sell_without_long_position")
+        self.assertEqual(
+            sizing_meta.get("reason"), "exit_only_sell_without_long_position"
+        )
 
     def test_microbar_pairs_uses_catalog_strategy_type_for_directional_exit_semantics(
         self,
@@ -2301,7 +2355,9 @@ class TestDecisionEngine(TestCase):
             _is_exit_action_for_strategies(strategies=[long_strategy], action="sell")
         )
         self.assertEqual(
-            _exit_position_side_for_strategies(strategies=[long_strategy], action="sell"),
+            _exit_position_side_for_strategies(
+                strategies=[long_strategy], action="sell"
+            ),
             "long",
         )
         self.assertTrue(
@@ -2311,11 +2367,15 @@ class TestDecisionEngine(TestCase):
             _is_exit_action_for_strategies(strategies=[short_strategy], action="buy")
         )
         self.assertEqual(
-            _exit_position_side_for_strategies(strategies=[short_strategy], action="buy"),
+            _exit_position_side_for_strategies(
+                strategies=[short_strategy], action="buy"
+            ),
             "short",
         )
 
-    def test_scheduler_runtime_isolated_buy_cooldown_is_scoped_per_strategy(self) -> None:
+    def test_scheduler_runtime_isolated_buy_cooldown_is_scoped_per_strategy(
+        self,
+    ) -> None:
         first_strategy_id = uuid.uuid4()
         second_strategy_id = uuid.uuid4()
         engine = DecisionEngine(price_fetcher=None)
@@ -2409,7 +2469,9 @@ class TestDecisionEngine(TestCase):
             [str(first_strategy_id), str(second_strategy_id)],
         )
 
-    def test_scheduler_runtime_research_sleeve_buy_respects_stop_loss_lockout(self) -> None:
+    def test_scheduler_runtime_research_sleeve_buy_respects_stop_loss_lockout(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
             id=uuid.uuid4(),
@@ -2525,7 +2587,9 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(stop_decisions[0].rationale, "position_stop_loss_exit")
         self.assertEqual(locked_out, [])
 
-    def test_scheduler_runtime_observed_wide_spread_blocks_later_breakout_entry(self) -> None:
+    def test_scheduler_runtime_observed_wide_spread_blocks_later_breakout_entry(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
             id=uuid.uuid4(),
@@ -2852,7 +2916,9 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(decisions, [])
 
-    def test_scheduler_runtime_intraday_tsmom_emits_stop_loss_exit_overlay(self) -> None:
+    def test_scheduler_runtime_intraday_tsmom_emits_stop_loss_exit_overlay(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
             id=uuid.uuid4(),
@@ -3138,8 +3204,12 @@ class TestDecisionEngine(TestCase):
             patch.object(settings, "trading_strategy_scheduler_enabled", True),
             patch.object(settings, "trading_fractional_equities_enabled", True),
         ):
-            initial_decisions = engine.evaluate(peak_signal, [strategy], positions=positions)
-            trailing_decisions = engine.evaluate(trailing_signal, [strategy], positions=positions)
+            initial_decisions = engine.evaluate(
+                peak_signal, [strategy], positions=positions
+            )
+            trailing_decisions = engine.evaluate(
+                trailing_signal, [strategy], positions=positions
+            )
 
         self.assertEqual(initial_decisions, [])
         self.assertEqual(len(trailing_decisions), 1)
@@ -3227,8 +3297,12 @@ class TestDecisionEngine(TestCase):
             patch.object(settings, "trading_strategy_scheduler_enabled", True),
             patch.object(settings, "trading_fractional_equities_enabled", True),
         ):
-            initial_decisions = engine.evaluate(peak_signal, [strategy], positions=positions)
-            trailing_decisions = engine.evaluate(trailing_signal, [strategy], positions=positions)
+            initial_decisions = engine.evaluate(
+                peak_signal, [strategy], positions=positions
+            )
+            trailing_decisions = engine.evaluate(
+                trailing_signal, [strategy], positions=positions
+            )
 
         self.assertEqual(initial_decisions, [])
         self.assertEqual(trailing_decisions, [])
@@ -3313,8 +3387,12 @@ class TestDecisionEngine(TestCase):
             patch.object(settings, "trading_execution_prefer_limit", True),
             patch.object(settings, "trading_fractional_equities_enabled", True),
         ):
-            initial_decisions = engine.evaluate(peak_signal, [strategy], positions=positions)
-            trailing_decisions = engine.evaluate(trailing_signal, [strategy], positions=positions)
+            initial_decisions = engine.evaluate(
+                peak_signal, [strategy], positions=positions
+            )
+            trailing_decisions = engine.evaluate(
+                trailing_signal, [strategy], positions=positions
+            )
 
         self.assertEqual(initial_decisions, [])
         self.assertEqual(trailing_decisions, [])
@@ -4060,393 +4138,399 @@ class TestDecisionEngine(TestCase):
     def test_scheduler_runtime_attaches_forecast_contract_and_telemetry(self) -> None:
         strategy = Strategy(
             id=uuid.uuid4(),
-            name='runtime-forecast',
-            description='version=1.0.0',
+            name="runtime-forecast",
+            description="version=1.0.0",
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='legacy_macd_rsi',
+            base_timeframe="1Min",
+            universe_type="legacy_macd_rsi",
             universe_symbols=None,
             max_position_pct_equity=None,
-            max_notional_per_trade=Decimal('500'),
+            max_notional_per_trade=Decimal("500"),
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol='AAPL',
+            symbol="AAPL",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': 100,
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": 100,
             },
-            timeframe='1Min',
+            timeframe="1Min",
         )
         with (
-            patch.object(settings, 'trading_strategy_runtime_mode', 'scheduler_v3'),
-            patch.object(settings, 'trading_strategy_scheduler_enabled', True),
-            patch.object(settings, 'trading_forecast_router_enabled', True),
-            patch.object(settings, 'trading_forecast_router_policy_path', None),
-            patch.object(settings, 'trading_forecast_router_refinement_enabled', True),
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+            patch.object(settings, "trading_forecast_router_enabled", True),
+            patch.object(settings, "trading_forecast_router_policy_path", None),
+            patch.object(settings, "trading_forecast_router_refinement_enabled", True),
         ):
             engine = DecisionEngine(price_fetcher=None)
             decisions = engine.evaluate(signal, [strategy])
             forecast_telemetry = engine.consume_forecast_telemetry()
 
         self.assertEqual(len(decisions), 1)
-        forecast_payload = decisions[0].params.get('forecast')
-        forecast_audit = decisions[0].params.get('forecast_audit')
+        forecast_payload = decisions[0].params.get("forecast")
+        forecast_audit = decisions[0].params.get("forecast_audit")
         assert isinstance(forecast_payload, dict)
         assert isinstance(forecast_audit, dict)
-        self.assertEqual(forecast_payload.get('schema_version'), 'forecast_contract_v1')
-        self.assertIn('interval', forecast_payload)
-        self.assertIn('uncertainty', forecast_payload)
+        self.assertEqual(forecast_payload.get("schema_version"), "forecast_contract_v1")
+        self.assertIn("interval", forecast_payload)
+        self.assertIn("uncertainty", forecast_payload)
         self.assertEqual(len(forecast_telemetry), 1)
-        self.assertEqual(forecast_telemetry[0].symbol, 'AAPL')
+        self.assertEqual(forecast_telemetry[0].symbol, "AAPL")
 
     def test_decision_params_include_microstructure_advice_and_fragility_payloads(
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='wiring',
+            name="wiring",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol='aapl',
+            symbol="aapl",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
-                'microstructure_state': {
-                    'schema_version': 'microstructure_state_v1',
-                    'symbol': 'aapl',
-                    'event_ts': datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat(),
-                    'spread_bps': '18',
-                    'depth_top5_usd': '1200000',
-                    'order_flow_imbalance': '0.15',
-                    'latency_ms_estimate': 22,
-                    'fill_hazard': '0.65',
-                    'liquidity_regime': 'compressed',
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
+                "microstructure_state": {
+                    "schema_version": "microstructure_state_v1",
+                    "symbol": "aapl",
+                    "event_ts": datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat(),
+                    "spread_bps": "18",
+                    "depth_top5_usd": "1200000",
+                    "order_flow_imbalance": "0.15",
+                    "latency_ms_estimate": 22,
+                    "fill_hazard": "0.65",
+                    "liquidity_regime": "compressed",
                 },
-                'execution_advice': {
-                    'urgency_tier': 'normal',
-                    'max_participation_rate': '0.05',
-                    'preferred_order_type': 'limit',
-                    'adverse_selection_risk': '0.22',
-                    'expected_shortfall_bps_p50': '1.5',
-                    'expected_shortfall_bps_p95': '4.8',
-                    'simulator_version': 'sim-v5',
+                "execution_advice": {
+                    "urgency_tier": "normal",
+                    "max_participation_rate": "0.05",
+                    "preferred_order_type": "limit",
+                    "adverse_selection_risk": "0.22",
+                    "expected_shortfall_bps_p50": "1.5",
+                    "expected_shortfall_bps_p95": "4.8",
+                    "simulator_version": "sim-v5",
                 },
-                'spread_acceleration': Decimal('0.30'),
-                'liquidity_compression': Decimal('0.35'),
-                'crowding_proxy': Decimal('0.40'),
-                'correlation_concentration': Decimal('0.45'),
-                'fragility_state': 'elevated',
+                "spread_acceleration": Decimal("0.30"),
+                "liquidity_compression": Decimal("0.35"),
+                "crowding_proxy": Decimal("0.40"),
+                "correlation_concentration": Decimal("0.45"),
+                "fragility_state": "elevated",
             },
-            timeframe='1Min',
+            timeframe="1Min",
         )
 
         decisions = engine.evaluate(signal, [strategy])
 
         self.assertEqual(len(decisions), 1)
         params = decisions[0].params
-        micro = params.get('microstructure_state')
+        micro = params.get("microstructure_state")
         assert isinstance(micro, dict)
-        self.assertEqual(micro.get('schema_version'), 'microstructure_state_v1')
-        self.assertEqual(micro.get('symbol'), 'AAPL')
-        self.assertEqual(micro.get('liquidity_regime'), 'compressed')
+        self.assertEqual(micro.get("schema_version"), "microstructure_state_v1")
+        self.assertEqual(micro.get("symbol"), "AAPL")
+        self.assertEqual(micro.get("liquidity_regime"), "compressed")
 
-        advice = params.get('execution_advice')
+        advice = params.get("execution_advice")
         assert isinstance(advice, dict)
-        self.assertEqual(advice.get('urgency_tier'), 'normal')
-        self.assertEqual(advice.get('preferred_order_type'), 'limit')
-        self.assertEqual(advice.get('expected_shortfall_bps_p50'), '1.5')
+        self.assertEqual(advice.get("urgency_tier"), "normal")
+        self.assertEqual(advice.get("preferred_order_type"), "limit")
+        self.assertEqual(advice.get("expected_shortfall_bps_p50"), "1.5")
 
-        fragility = params.get('fragility_snapshot')
+        fragility = params.get("fragility_snapshot")
         assert isinstance(fragility, dict)
-        self.assertEqual(fragility.get('schema_version'), 'fragility_snapshot_v1')
-        self.assertEqual(fragility.get('symbol'), 'AAPL')
-        self.assertEqual(fragility.get('fragility_state'), 'elevated')
-        self.assertEqual(fragility.get('spread_acceleration'), Decimal('0.30'))
+        self.assertEqual(fragility.get("schema_version"), "fragility_snapshot_v1")
+        self.assertEqual(fragility.get("symbol"), "AAPL")
+        self.assertEqual(fragility.get("fragility_state"), "elevated")
+        self.assertEqual(fragility.get("spread_acceleration"), Decimal("0.30"))
 
     def test_decision_params_include_microstructure_signal_alias_payload(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='signal-alias',
+            name="signal-alias",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol='aapl',
+            symbol="aapl",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'microstructure_signal': {
-                    'schema_version': 'microstructure_signal_v1',
-                    'symbol': 'aapl',
-                    'event_ts': datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat(),
-                    'horizon': 'PT1S',
-                    'uncertainty_band': 'high',
-                    'expected_spread_impact_bps': '14',
-                    'expected_slippage_bps': '9.2',
-                    'feature_quality_status': 'pass',
-                    'depth_top5_usd': '1200000',
-                    'direction_probabilities': {
-                        'up': '0.70',
-                        'flat': '0.10',
-                        'down': '0.20',
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "microstructure_signal": {
+                    "schema_version": "microstructure_signal_v1",
+                    "symbol": "aapl",
+                    "event_ts": datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat(),
+                    "horizon": "PT1S",
+                    "uncertainty_band": "high",
+                    "expected_spread_impact_bps": "14",
+                    "expected_slippage_bps": "9.2",
+                    "feature_quality_status": "pass",
+                    "depth_top5_usd": "1200000",
+                    "direction_probabilities": {
+                        "up": "0.70",
+                        "flat": "0.10",
+                        "down": "0.20",
                     },
-                    'liquidity_state': 'compressed',
-                    'artifact': {
-                        'model_id': 'deeplob-bdlob-v1',
-                        'feature_schema_version': 'microstructure_signal_v1',
-                        'training_run_id': 'run-abc-123',
+                    "liquidity_state": "compressed",
+                    "artifact": {
+                        "model_id": "deeplob-bdlob-v1",
+                        "feature_schema_version": "microstructure_signal_v1",
+                        "training_run_id": "run-abc-123",
                     },
                 },
             },
-            timeframe='1Min',
+            timeframe="1Min",
         )
 
         decisions = engine.evaluate(signal, [strategy])
 
         self.assertEqual(len(decisions), 1)
         params = decisions[0].params
-        micro = params.get('microstructure_state')
+        micro = params.get("microstructure_state")
         assert isinstance(micro, dict)
-        self.assertEqual(micro.get('schema_version'), 'microstructure_signal_v1')
-        self.assertEqual(micro.get('symbol'), 'AAPL')
-        self.assertEqual(micro.get('liquidity_state'), 'compressed')
+        self.assertEqual(micro.get("schema_version"), "microstructure_signal_v1")
+        self.assertEqual(micro.get("symbol"), "AAPL")
+        self.assertEqual(micro.get("liquidity_state"), "compressed")
 
     def test_decision_params_fallback_for_malformed_microstructure_signal(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='signal-alias-fallback',
+            name="signal-alias-fallback",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol='aapl',
+            symbol="aapl",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'microstructure_signal': {
-                    'schema_version': 'microstructure_signal_v1',
-                    'symbol': 'aapl',
-                    'event_ts': '2026-01-01T00:00:00Z',
-                    'feature_quality_status': 'fail',
-                    'liquidity_state': 'compressed',
-                    'expected_spread_impact_bps': '14',
-                    'depth_top5_usd': '1200000',
-                    'direction_probabilities': {
-                        'up': '0.70',
-                        'flat': '0.10',
-                        'down': '0.20',
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "microstructure_signal": {
+                    "schema_version": "microstructure_signal_v1",
+                    "symbol": "aapl",
+                    "event_ts": "2026-01-01T00:00:00Z",
+                    "feature_quality_status": "fail",
+                    "liquidity_state": "compressed",
+                    "expected_spread_impact_bps": "14",
+                    "depth_top5_usd": "1200000",
+                    "direction_probabilities": {
+                        "up": "0.70",
+                        "flat": "0.10",
+                        "down": "0.20",
                     },
                 },
             },
-            timeframe='1Min',
+            timeframe="1Min",
         )
 
         decisions = engine.evaluate(signal, [strategy])
 
         self.assertEqual(len(decisions), 1)
-        self.assertNotIn('microstructure_state', decisions[0].params)
+        self.assertNotIn("microstructure_state", decisions[0].params)
 
-    def test_decision_params_do_not_synthesize_microstructure_without_explicit_payload(self) -> None:
+    def test_decision_params_do_not_synthesize_microstructure_without_explicit_payload(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='synthesis-safe',
+            name="synthesis-safe",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol='AAPL',
+            symbol="AAPL",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
-                'spread': Decimal('0.02'),
-                'depth_top5_usd': Decimal('1200000'),
-                'order_flow_imbalance': Decimal('0.15'),
-                'latency_ms_estimate': 22,
-                'fill_hazard': Decimal('0.65'),
-                'liquidity_regime': 'compressed',
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
+                "spread": Decimal("0.02"),
+                "depth_top5_usd": Decimal("1200000"),
+                "order_flow_imbalance": Decimal("0.15"),
+                "latency_ms_estimate": 22,
+                "fill_hazard": Decimal("0.65"),
+                "liquidity_regime": "compressed",
             },
-            timeframe='1Min',
+            timeframe="1Min",
         )
 
         decisions = engine.evaluate(signal, [strategy])
 
         self.assertEqual(len(decisions), 1)
-        self.assertIsNone(decisions[0].params.get('microstructure_state'))
+        self.assertIsNone(decisions[0].params.get("microstructure_state"))
 
     def test_decision_params_include_signal_seq(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='seq-wiring',
+            name="seq-wiring",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol='AAPL',
-            timeframe='1Min',
+            symbol="AAPL",
+            timeframe="1Min",
             seq=17,
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
             },
         )
 
         decisions = engine.evaluate(signal, [strategy])
 
         self.assertEqual(len(decisions), 1)
-        self.assertEqual(decisions[0].params.get('signal_seq'), 17)
+        self.assertEqual(decisions[0].params.get("signal_seq"), 17)
 
     def test_decision_params_include_simulation_context(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='sim-wiring',
+            name="sim-wiring",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol='AAPL',
-            timeframe='1Min',
+            symbol="AAPL",
+            timeframe="1Min",
             seq=321,
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
-                'simulation_context': {
-                    'dataset_event_id': 'evt-321',
-                    'source_topic': 'torghut.trades.v1',
-                    'source_partition': 4,
-                    'source_offset': 1200,
-                    'replay_topic': 'torghut.sim.trades.v1',
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
+                "simulation_context": {
+                    "dataset_event_id": "evt-321",
+                    "source_topic": "torghut.trades.v1",
+                    "source_partition": 4,
+                    "source_offset": 1200,
+                    "replay_topic": "torghut.sim.trades.v1",
                 },
             },
         )
 
         with (
-            patch.object(settings, 'trading_simulation_enabled', True),
-            patch.object(settings, 'trading_simulation_run_id', 'sim-2026-02-27-01'),
-            patch.object(settings, 'trading_simulation_dataset_id', 'dataset-1'),
+            patch.object(settings, "trading_simulation_enabled", True),
+            patch.object(settings, "trading_simulation_run_id", "sim-2026-02-27-01"),
+            patch.object(settings, "trading_simulation_dataset_id", "dataset-1"),
         ):
             decisions = engine.evaluate(signal, [strategy])
 
         self.assertEqual(len(decisions), 1)
-        simulation_context = decisions[0].params.get('simulation_context')
+        simulation_context = decisions[0].params.get("simulation_context")
         self.assertIsInstance(simulation_context, dict)
         assert isinstance(simulation_context, dict)
-        self.assertEqual(simulation_context.get('simulation_run_id'), 'sim-2026-02-27-01')
-        self.assertEqual(simulation_context.get('dataset_id'), 'dataset-1')
-        self.assertEqual(simulation_context.get('dataset_event_id'), 'evt-321')
-        self.assertEqual(simulation_context.get('signal_seq'), 321)
+        self.assertEqual(
+            simulation_context.get("simulation_run_id"), "sim-2026-02-27-01"
+        )
+        self.assertEqual(simulation_context.get("dataset_id"), "dataset-1")
+        self.assertEqual(simulation_context.get("dataset_event_id"), "evt-321")
+        self.assertEqual(simulation_context.get("signal_seq"), 321)
 
-    def test_decision_params_do_not_include_simulation_context_when_disabled(self) -> None:
+    def test_decision_params_do_not_include_simulation_context_when_disabled(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='no-sim',
+            name="no-sim",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol='AAPL',
-            timeframe='1Min',
+            symbol="AAPL",
+            timeframe="1Min",
             seq=11,
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
             },
         )
 
-        with patch.object(settings, 'trading_simulation_enabled', False):
+        with patch.object(settings, "trading_simulation_enabled", False):
             decisions = engine.evaluate(signal, [strategy])
 
         self.assertEqual(len(decisions), 1)
-        self.assertNotIn('simulation_context', decisions[0].params)
+        self.assertNotIn("simulation_context", decisions[0].params)
 
     def test_decision_params_include_regime_hmm_canonical_payload(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='regime-hmm',
+            name="regime-hmm",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 2, 27, tzinfo=timezone.utc),
-            symbol='AAPL',
-            timeframe='1Min',
+            symbol="AAPL",
+            timeframe="1Min",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
-                'hmm_regime_id': 'R2',
-                'schema_version': 'hmm_regime_context_v1',
-                'hmm_state_posterior': {'R2': '0.75'},
-                'hmm_entropy': '1.23',
-                'hmm_entropy_band': 'medium',
-                'hmm_predicted_next': 'R3',
-                'hmm_guardrail': {
-                    'stale': False,
-                    'fallback_to_defensive': False,
-                    'reason': 'stable',
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
+                "hmm_regime_id": "R2",
+                "schema_version": "hmm_regime_context_v1",
+                "hmm_state_posterior": {"R2": "0.75"},
+                "hmm_entropy": "1.23",
+                "hmm_entropy_band": "medium",
+                "hmm_predicted_next": "R3",
+                "hmm_guardrail": {
+                    "stale": False,
+                    "fallback_to_defensive": False,
+                    "reason": "stable",
                 },
-                'hmm_artifact': {
-                    'model_id': 'hmm-regime-v1.2.0',
-                    'feature_schema': 'hmm-v1-feature-schema',
-                    'training_run_id': 'trn_2026-02-28',
+                "hmm_artifact": {
+                    "model_id": "hmm-regime-v1.2.0",
+                    "feature_schema": "hmm-v1-feature-schema",
+                    "training_run_id": "trn_2026-02-28",
                 },
-                'hmm_transition_shock': False,
-                'hmm_duration_ms': 14,
+                "hmm_transition_shock": False,
+                "hmm_duration_ms": 14,
             },
         )
 
@@ -4454,50 +4538,54 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(len(decisions), 1)
         params = decisions[0].params
-        regime_payload = params.get('regime_hmm')
+        regime_payload = params.get("regime_hmm")
         self.assertIsInstance(regime_payload, dict)
-        self.assertEqual(regime_payload.get('regime_id'), 'R2')
-        self.assertEqual(regime_payload.get('artifact', {}).get('model_id'), 'hmm-regime-v1.2.0')
-        self.assertEqual(regime_payload.get('hmm_state_posterior'), {'R2': '0.75'})
-        self.assertEqual(regime_payload.get('hmm_entropy'), '1.23')
-        self.assertEqual(regime_payload.get('hmm_entropy_band'), 'medium')
-        self.assertEqual(regime_payload.get('hmm_predicted_next'), 'R3')
-        self.assertEqual(regime_payload.get('hmm_transition_shock'), False)
-        self.assertEqual(params.get('regime_label'), 'r2')
-        self.assertEqual(params.get('route_regime_label'), 'r2')
+        self.assertEqual(regime_payload.get("regime_id"), "R2")
+        self.assertEqual(
+            regime_payload.get("artifact", {}).get("model_id"), "hmm-regime-v1.2.0"
+        )
+        self.assertEqual(regime_payload.get("hmm_state_posterior"), {"R2": "0.75"})
+        self.assertEqual(regime_payload.get("hmm_entropy"), "1.23")
+        self.assertEqual(regime_payload.get("hmm_entropy_band"), "medium")
+        self.assertEqual(regime_payload.get("hmm_predicted_next"), "R3")
+        self.assertEqual(regime_payload.get("hmm_transition_shock"), False)
+        self.assertEqual(params.get("regime_label"), "r2")
+        self.assertEqual(params.get("route_regime_label"), "r2")
 
-    def test_decision_params_fallback_with_invalid_schema_version_preserves_lineage(self) -> None:
+    def test_decision_params_fallback_with_invalid_schema_version_preserves_lineage(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='regime-hmm-invalid-schema',
+            name="regime-hmm-invalid-schema",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 2, 27, tzinfo=timezone.utc),
-            symbol='AAPL',
-            timeframe='1Min',
+            symbol="AAPL",
+            timeframe="1Min",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
-                'schema_version': 'hmm_regime_context_v0',
-                'hmm_regime_id': 'R2',
-                'hmm_entropy': '1.23',
-                'hmm_entropy_band': 'medium',
-                'hmm_predicted_next': 'R3',
-                'hmm_artifact': {
-                    'model_id': 'hmm-regime-v1.2.0',
-                    'feature_schema': 'hmm-v1-feature-schema',
-                    'training_run_id': 'trn_2026-02-28',
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
+                "schema_version": "hmm_regime_context_v0",
+                "hmm_regime_id": "R2",
+                "hmm_entropy": "1.23",
+                "hmm_entropy_band": "medium",
+                "hmm_predicted_next": "R3",
+                "hmm_artifact": {
+                    "model_id": "hmm-regime-v1.2.0",
+                    "feature_schema": "hmm-v1-feature-schema",
+                    "training_run_id": "trn_2026-02-28",
                 },
-                'hmm_transition_shock': False,
-                'hmm_duration_ms': 14,
-                'regime_label': 'trend',
+                "hmm_transition_shock": False,
+                "hmm_duration_ms": 14,
+                "regime_label": "trend",
             },
         )
 
@@ -4505,46 +4593,50 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(len(decisions), 1)
         params = decisions[0].params
-        regime_payload = params.get('regime_hmm')
+        regime_payload = params.get("regime_hmm")
         self.assertIsInstance(regime_payload, dict)
-        self.assertEqual(regime_payload.get('schema_version'), 'hmm_regime_context_v0')
-        self.assertEqual(regime_payload.get('artifact', {}).get('model_id'), 'hmm-regime-v1.2.0')
-        self.assertEqual(params.get('route_regime_label'), 'trend')
-        self.assertEqual(params.get('regime_label'), 'trend')
+        self.assertEqual(regime_payload.get("schema_version"), "hmm_regime_context_v0")
+        self.assertEqual(
+            regime_payload.get("artifact", {}).get("model_id"), "hmm-regime-v1.2.0"
+        )
+        self.assertEqual(params.get("route_regime_label"), "trend")
+        self.assertEqual(params.get("regime_label"), "trend")
 
-    def test_decision_params_fallback_with_invalid_posterior_preserves_lineage(self) -> None:
+    def test_decision_params_fallback_with_invalid_posterior_preserves_lineage(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='regime-hmm-invalid-posterior',
+            name="regime-hmm-invalid-posterior",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 2, 27, tzinfo=timezone.utc),
-            symbol='AAPL',
-            timeframe='1Min',
+            symbol="AAPL",
+            timeframe="1Min",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
-                'schema_version': 'hmm_regime_context_v1',
-                'hmm_regime_id': 'R2',
-                'hmm_state_posterior': {'R2': 'not-a-decimal'},
-                'hmm_entropy': '1.23',
-                'hmm_entropy_band': 'medium',
-                'hmm_predicted_next': 'R3',
-                'hmm_artifact': {
-                    'model_id': 'hmm-regime-v1.2.0',
-                    'feature_schema': 'hmm-v1-feature-schema',
-                    'training_run_id': 'trn_2026-02-28',
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
+                "schema_version": "hmm_regime_context_v1",
+                "hmm_regime_id": "R2",
+                "hmm_state_posterior": {"R2": "not-a-decimal"},
+                "hmm_entropy": "1.23",
+                "hmm_entropy_band": "medium",
+                "hmm_predicted_next": "R3",
+                "hmm_artifact": {
+                    "model_id": "hmm-regime-v1.2.0",
+                    "feature_schema": "hmm-v1-feature-schema",
+                    "training_run_id": "trn_2026-02-28",
                 },
-                'hmm_transition_shock': False,
-                'hmm_duration_ms': 14,
-                'regime_label': 'trend',
+                "hmm_transition_shock": False,
+                "hmm_duration_ms": 14,
+                "regime_label": "trend",
             },
         )
 
@@ -4552,46 +4644,54 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(len(decisions), 1)
         params = decisions[0].params
-        regime_payload = params.get('regime_hmm')
+        regime_payload = params.get("regime_hmm")
         self.assertIsInstance(regime_payload, dict)
-        self.assertEqual(regime_payload.get('schema_version'), 'hmm_regime_context_v1')
-        self.assertEqual(regime_payload.get('artifact', {}).get('model_id'), 'hmm-regime-v1.2.0')
-        self.assertEqual(params.get('route_regime_label'), 'trend')
-        self.assertEqual(params.get('regime_label'), 'trend')
+        self.assertEqual(regime_payload.get("schema_version"), "hmm_regime_context_v1")
+        self.assertEqual(
+            regime_payload.get("artifact", {}).get("model_id"), "hmm-regime-v1.2.0"
+        )
+        self.assertEqual(params.get("route_regime_label"), "trend")
+        self.assertEqual(params.get("regime_label"), "trend")
 
-    def test_decision_params_fallback_with_stale_regime_guardrail_preserves_lineage(self) -> None:
+    def test_decision_params_fallback_with_stale_regime_guardrail_preserves_lineage(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='regime-hmm-stale-preserves-lineage',
+            name="regime-hmm-stale-preserves-lineage",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 1, tzinfo=timezone.utc),
-            symbol='AAPL',
-            timeframe='1Min',
+            symbol="AAPL",
+            timeframe="1Min",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
-                'schema_version': 'hmm_regime_context_v1',
-                'hmm_regime_id': 'R2',
-                'hmm_state_posterior': {'R2': '0.75'},
-                'hmm_entropy': '1.23',
-                'hmm_entropy_band': 'medium',
-                'hmm_predicted_next': 'R3',
-                'hmm_artifact': {
-                    'model_id': 'hmm-regime-v1.2.0',
-                    'feature_schema': 'hmm-v1-feature-schema',
-                    'training_run_id': 'trn_2026-03-01',
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
+                "schema_version": "hmm_regime_context_v1",
+                "hmm_regime_id": "R2",
+                "hmm_state_posterior": {"R2": "0.75"},
+                "hmm_entropy": "1.23",
+                "hmm_entropy_band": "medium",
+                "hmm_predicted_next": "R3",
+                "hmm_artifact": {
+                    "model_id": "hmm-regime-v1.2.0",
+                    "feature_schema": "hmm-v1-feature-schema",
+                    "training_run_id": "trn_2026-03-01",
                 },
-                'hmm_guardrail': {'stale': True, 'fallback_to_defensive': False, 'reason': 'aging_output'},
-                'hmm_transition_shock': False,
-                'regime_label': 'trend',
+                "hmm_guardrail": {
+                    "stale": True,
+                    "fallback_to_defensive": False,
+                    "reason": "aging_output",
+                },
+                "hmm_transition_shock": False,
+                "regime_label": "trend",
             },
         )
 
@@ -4599,39 +4699,42 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(len(decisions), 1)
         params = decisions[0].params
-        regime_payload = params.get('regime_hmm')
+        regime_payload = params.get("regime_hmm")
         self.assertIsInstance(regime_payload, dict)
-        self.assertEqual(regime_payload.get('schema_version'), 'hmm_regime_context_v1')
-        self.assertEqual(regime_payload.get('artifact', {}).get('model_id'), 'hmm-regime-v1.2.0')
+        self.assertEqual(regime_payload.get("schema_version"), "hmm_regime_context_v1")
         self.assertEqual(
-            regime_payload.get('hmm_guardrail', {}).get('reason'),
-            'aging_output'
+            regime_payload.get("artifact", {}).get("model_id"), "hmm-regime-v1.2.0"
         )
-        self.assertEqual(params.get('route_regime_label'), 'trend')
-        self.assertEqual(params.get('regime_label'), 'trend')
+        self.assertEqual(
+            regime_payload.get("hmm_guardrail", {}).get("reason"), "aging_output"
+        )
+        self.assertEqual(params.get("route_regime_label"), "trend")
+        self.assertEqual(params.get("regime_label"), "trend")
 
-    def test_decision_regime_route_label_falls_back_to_explicit_regime_label(self) -> None:
+    def test_decision_regime_route_label_falls_back_to_explicit_regime_label(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='regime-hmm-fallback',
+            name="regime-hmm-fallback",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
-            symbol='AAPL',
-            timeframe='1Min',
+            symbol="AAPL",
+            timeframe="1Min",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
-                'regime_label': '  TREND  ',
-                'hmm_regime_id': 'unknown',
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
+                "regime_label": "  TREND  ",
+                "hmm_regime_id": "unknown",
             },
         )
 
@@ -4639,31 +4742,33 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(len(decisions), 1)
         params = decisions[0].params
-        self.assertEqual(params.get('route_regime_label'), 'trend')
-        self.assertEqual(params.get('regime_label'), 'trend')
+        self.assertEqual(params.get("route_regime_label"), "trend")
+        self.assertEqual(params.get("regime_label"), "trend")
 
-    def test_decision_regime_route_label_falls_back_to_nested_legacy_regime(self) -> None:
+    def test_decision_regime_route_label_falls_back_to_nested_legacy_regime(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='regime-hmm-nested-fallback',
+            name="regime-hmm-nested-fallback",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
-            symbol='AAPL',
-            timeframe='1Min',
+            symbol="AAPL",
+            timeframe="1Min",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
-                'regime': {'label': '  TREND  '},
-                'hmm_regime_id': 'not-a-regime-id',
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
+                "regime": {"label": "  TREND  "},
+                "hmm_regime_id": "not-a-regime-id",
             },
         )
 
@@ -4671,37 +4776,37 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(len(decisions), 1)
         params = decisions[0].params
-        self.assertEqual(params.get('route_regime_label'), 'trend')
-        self.assertEqual(params.get('regime_label'), 'trend')
-        regime_payload = params.get('regime_hmm')
+        self.assertEqual(params.get("route_regime_label"), "trend")
+        self.assertEqual(params.get("regime_label"), "trend")
+        regime_payload = params.get("regime_hmm")
         self.assertIsInstance(regime_payload, dict)
-        self.assertEqual(regime_payload.get('regime_id'), 'not-a-regime-id')
+        self.assertEqual(regime_payload.get("regime_id"), "not-a-regime-id")
 
     def test_decision_regime_route_label_falls_back_when_hmm_stale(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='regime-hmm-stale-fallback',
+            name="regime-hmm-stale-fallback",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
-            symbol='AAPL',
-            timeframe='1Min',
+            symbol="AAPL",
+            timeframe="1Min",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
-                'regime_label': '  TREND  ',
-                'hmm_regime_id': 'R2',
-                'hmm_guardrail': {
-                    'stale': True,
-                    'fallback_to_defensive': False,
-                    'reason': 'aging_output',
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
+                "regime_label": "  TREND  ",
+                "hmm_regime_id": "R2",
+                "hmm_guardrail": {
+                    "stale": True,
+                    "fallback_to_defensive": False,
+                    "reason": "aging_output",
                 },
             },
         )
@@ -4710,32 +4815,32 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(len(decisions), 1)
         params = decisions[0].params
-        self.assertEqual(params.get('route_regime_label'), 'trend')
-        self.assertEqual(params.get('regime_label'), 'trend')
+        self.assertEqual(params.get("route_regime_label"), "trend")
+        self.assertEqual(params.get("regime_label"), "trend")
 
     def test_decision_regime_route_label_ignores_transition_shock(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='regime-hmm-transition-shock',
+            name="regime-hmm-transition-shock",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
-            symbol='AAPL',
-            timeframe='1Min',
+            symbol="AAPL",
+            timeframe="1Min",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
-                'regime_label': '  TREND  ',
-                'hmm_regime_id': 'R2',
-                'hmm_transition_shock': True,
-                'hmm_guardrail': {'stale': False, 'fallback_to_defensive': False},
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
+                "regime_label": "  TREND  ",
+                "hmm_regime_id": "R2",
+                "hmm_transition_shock": True,
+                "hmm_guardrail": {"stale": False, "fallback_to_defensive": False},
             },
         )
 
@@ -4743,28 +4848,30 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(len(decisions), 1)
         params = decisions[0].params
-        self.assertEqual(params.get('route_regime_label'), 'trend')
-        self.assertEqual(params.get('regime_label'), 'trend')
+        self.assertEqual(params.get("route_regime_label"), "trend")
+        self.assertEqual(params.get("regime_label"), "trend")
 
-    def test_decision_context_omits_regime_hmm_payload_without_explicit_hmm_input(self) -> None:
+    def test_decision_context_omits_regime_hmm_payload_without_explicit_hmm_input(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='regime-hmm-omitted',
+            name="regime-hmm-omitted",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
-            symbol='AAPL',
-            timeframe='1Min',
+            symbol="AAPL",
+            timeframe="1Min",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
             },
         )
 
@@ -4772,31 +4879,33 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(len(decisions), 1)
         params = decisions[0].params
-        self.assertNotIn('regime_hmm', params)
-        self.assertEqual(params.get('route_regime_label'), 'trend')
+        self.assertNotIn("regime_hmm", params)
+        self.assertEqual(params.get("route_regime_label"), "trend")
 
-    def test_decision_context_omits_regime_hmm_payload_with_placeholder_hmm_fields(self) -> None:
+    def test_decision_context_omits_regime_hmm_payload_with_placeholder_hmm_fields(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='regime-hmm-placeholder',
+            name="regime-hmm-placeholder",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
-            symbol='AAPL',
-            timeframe='1Min',
+            symbol="AAPL",
+            timeframe="1Min",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
-                'regime_hmm': None,
-                'hmm_regime_id': None,
-                'hmm_state_posterior': None,
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
+                "regime_hmm": None,
+                "hmm_regime_id": None,
+                "hmm_state_posterior": None,
             },
         )
 
@@ -4804,35 +4913,37 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(len(decisions), 1)
         params = decisions[0].params
-        self.assertNotIn('regime_hmm', params)
-        self.assertEqual(params.get('route_regime_label'), 'trend')
+        self.assertNotIn("regime_hmm", params)
+        self.assertEqual(params.get("route_regime_label"), "trend")
 
-    def test_decision_regime_route_label_prefers_explicit_route_label_hint(self) -> None:
+    def test_decision_regime_route_label_prefers_explicit_route_label_hint(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='regime-hmm-route-hint',
+            name="regime-hmm-route-hint",
             description=None,
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
-            symbol='AAPL',
-            timeframe='1Min',
+            symbol="AAPL",
+            timeframe="1Min",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
-                'route_regime_label': '  MEAN_REVERT  ',
-                'hmm_regime_id': 'not-a-regime-id',
-                'hmm_guardrail': {
-                    'stale': False,
-                    'fallback_to_defensive': False,
-                    'reason': 'legacy_injection',
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
+                "route_regime_label": "  MEAN_REVERT  ",
+                "hmm_regime_id": "not-a-regime-id",
+                "hmm_guardrail": {
+                    "stale": False,
+                    "fallback_to_defensive": False,
+                    "reason": "legacy_injection",
                 },
             },
         )
@@ -4841,38 +4952,40 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(len(decisions), 1)
         params = decisions[0].params
-        self.assertEqual(params.get('route_regime_label'), 'mean_revert')
-        self.assertEqual(params.get('regime_label'), 'mean_revert')
+        self.assertEqual(params.get("route_regime_label"), "mean_revert")
+        self.assertEqual(params.get("regime_label"), "mean_revert")
 
-    def test_scheduler_runtime_mode_does_not_enable_when_scheduler_disabled(self) -> None:
+    def test_scheduler_runtime_mode_does_not_enable_when_scheduler_disabled(
+        self,
+    ) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
-            name='runtime-disabled-no-flag',
-            description='version=1.0.0',
+            name="runtime-disabled-no-flag",
+            description="version=1.0.0",
             enabled=True,
-            base_timeframe='1Min',
-            universe_type='static',
+            base_timeframe="1Min",
+            universe_type="static",
             universe_symbols=None,
-            max_notional_per_trade=Decimal('500'),
+            max_notional_per_trade=Decimal("500"),
             max_position_pct_equity=None,
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol='AAPL',
-            timeframe='1Min',
+            symbol="AAPL",
+            timeframe="1Min",
             payload={
-                'macd': {'macd': Decimal('1.0'), 'signal': Decimal('0.1')},
-                'rsi14': Decimal('20'),
-                'price': Decimal('100'),
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("100"),
             },
         )
         with (
-            patch.object(settings, 'trading_strategy_runtime_mode', 'scheduler_v3'),
-            patch.object(settings, 'trading_strategy_scheduler_enabled', False),
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", False),
         ):
             decisions = engine.evaluate(signal, [strategy])
             telemetry = engine.consume_runtime_telemetry()
 
         self.assertEqual(len(decisions), 1)
         self.assertFalse(telemetry.runtime_enabled)
-        self.assertEqual(telemetry.mode, 'legacy')
+        self.assertEqual(telemetry.mode, "legacy")
