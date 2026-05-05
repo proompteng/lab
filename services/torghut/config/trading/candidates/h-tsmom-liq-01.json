@@ -23,16 +23,10 @@
     "universe_symbols": [
       "AMAT",
       "AMD",
-      "ASML",
       "AVGO",
       "INTC",
-      "KLAC",
-      "LRCX",
       "MU",
-      "NVDA",
-      "QCOM",
-      "TSM",
-      "TXN"
+      "NVDA"
     ],
     "max_notional_per_trade": "50000",
     "max_position_pct_equity": "3.0",
@@ -65,8 +59,8 @@
     }
   },
   "blocking_risks": [
-    "March 30 through April 2 replay evidence was generated on the previous mixed mega-cap universe and is not profitability proof for the chip-only universe.",
-    "Fresh empirical promotion evidence is required before treating this chip-only candidate as profitable or live-promotable.",
+    "March 30 through April 2 replay evidence was generated on a previous mixed universe and is not profitability proof for the live-signal-covered chip universe.",
+    "Fresh empirical promotion evidence is required before treating this executable chip-only candidate as profitable or live-promotable.",
     "Close-to-close account equity on 2026-04-02 was negative despite positive regular-session equity delta."
   ]
 }

@@ -13,21 +13,15 @@ from app.config import Settings
 from app.trading.llm.dspy_programs.runtime import DSPyReviewRuntime
 
 
-_CHIP_UNIVERSE_TOP_12 = (
+_LIVE_SIGNAL_COVERED_CHIP_UNIVERSE = (
     "AMAT",
     "AMD",
-    "ASML",
     "AVGO",
     "INTC",
-    "KLAC",
-    "LRCX",
     "MU",
     "NVDA",
-    "QCOM",
-    "TSM",
-    "TXN",
 )
-_CHIP_UNIVERSE_SYMBOLS = set(_CHIP_UNIVERSE_TOP_12)
+_CHIP_UNIVERSE_SYMBOLS = set(_LIVE_SIGNAL_COVERED_CHIP_UNIVERSE)
 
 
 def _repo_root() -> Path:
@@ -41,18 +35,20 @@ def _manifest_bool(env: dict[str, object], key: str) -> bool:
     return str(raw).strip().lower() == "true"
 
 
-def _load_torghut_knative_manifest() -> dict[str, object]:
-    manifest_path = (
-        _repo_root() / "argocd" / "applications" / "torghut" / "knative-service.yaml"
-    )
+def _load_yaml_mapping(relative_path: str) -> dict[str, object]:
+    manifest_path = _repo_root() / relative_path
     manifest = safe_load(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(manifest, dict):
-        raise AssertionError("knative-service.yaml did not parse to a mapping")
+        raise AssertionError(f"{relative_path} did not parse to a mapping")
     return manifest
 
 
-def _load_torghut_knative_env() -> dict[str, object]:
-    manifest = _load_torghut_knative_manifest()
+def _load_torghut_knative_manifest() -> dict[str, object]:
+    return _load_yaml_mapping("argocd/applications/torghut/knative-service.yaml")
+
+
+def _load_knative_env(relative_path: str) -> dict[str, object]:
+    manifest = _load_yaml_mapping(relative_path)
     containers = (
         manifest.get("spec", {})
         .get("template", {})
@@ -60,9 +56,7 @@ def _load_torghut_knative_env() -> dict[str, object]:
         .get("containers", [])
     )
     if not containers:
-        raise AssertionError(
-            "knative-service.yaml missing spec.template.spec.containers"
-        )
+        raise AssertionError(f"{relative_path} missing spec.template.spec.containers")
 
     first_container = containers[0]
     env_entries = first_container.get("env", [])
@@ -77,6 +71,10 @@ def _load_torghut_knative_env() -> dict[str, object]:
             raw_value = item["value"]
             env[name] = raw_value if isinstance(raw_value, str) else str(raw_value)
     return env
+
+
+def _load_torghut_knative_env() -> dict[str, object]:
+    return _load_knative_env("argocd/applications/torghut/knative-service.yaml")
 
 
 def _load_torghut_feature_flags() -> dict[str, object]:
@@ -130,6 +128,14 @@ def _load_torghut_strategy_catalog() -> list[dict[str, object]]:
     ]
 
 
+def _csv_symbols(value: object) -> list[str]:
+    return [
+        symbol.strip().upper()
+        for symbol in str(value or "").split(",")
+        if symbol.strip()
+    ]
+
+
 def _strategy_decimal(strategy: Mapping[str, object], key: str) -> Decimal | None:
     value = strategy.get(key)
     if value is None:
@@ -167,7 +173,21 @@ def _assert_chip_universe(
     test_case.assertEqual(
         sorted(set(normalized) - _CHIP_UNIVERSE_SYMBOLS),
         [],
-        f"{context} contains non-chip symbols",
+        f"{context} contains symbols without live chip TA signal coverage",
+    )
+
+
+def _assert_exact_live_signal_universe(
+    test_case: TestCase, symbols: Iterable[object], *, context: str
+) -> None:
+    normalized = [
+        str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
+    ]
+    _assert_chip_universe(test_case, normalized, context=context)
+    test_case.assertEqual(
+        tuple(normalized),
+        _LIVE_SIGNAL_COVERED_CHIP_UNIVERSE,
+        f"{context} does not match the live-signal-covered chip universe",
     )
 
 
@@ -232,11 +252,36 @@ class TestLiveConfigManifestContract(TestCase):
                 list,
                 f"{strategy.get('name')} missing explicit universe_symbols",
             )
-            _assert_chip_universe(
+            _assert_exact_live_signal_universe(
                 self,
                 cast(list[object], raw_symbols),
                 context=f"strategy {strategy.get('name')}",
             )
+
+    def test_runtime_symbol_sources_use_live_signal_universe(self) -> None:
+        live_env = _load_torghut_knative_env()
+        sim_env = _load_knative_env(
+            "argocd/applications/torghut/knative-service-sim.yaml"
+        )
+        ws_config = _load_yaml_mapping("argocd/applications/torghut/ws/configmap.yaml")
+        ws_data = ws_config.get("data")
+        self.assertIsInstance(ws_data, Mapping)
+
+        _assert_exact_live_signal_universe(
+            self,
+            _csv_symbols(live_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS")),
+            context="live static fallback symbols",
+        )
+        _assert_exact_live_signal_universe(
+            self,
+            _csv_symbols(sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS")),
+            context="sim static fallback symbols",
+        )
+        _assert_exact_live_signal_universe(
+            self,
+            _csv_symbols(cast(Mapping[str, object], ws_data).get("SYMBOLS")),
+            context="torghut-ws subscription symbols",
+        )
 
     def test_profitability_sweep_universes_are_chip_only(self) -> None:
         trading_config_dir = (
@@ -263,7 +308,7 @@ class TestLiveConfigManifestContract(TestCase):
                     list,
                     f"{path} universe_symbols[{index}] is not a list",
                 )
-                _assert_chip_universe(
+                _assert_exact_live_signal_universe(
                     self,
                     cast(list[object], raw_symbols),
                     context=f"{path.name} universe_symbols[{index}]",
@@ -292,7 +337,7 @@ class TestLiveConfigManifestContract(TestCase):
                 list,
                 f"{path} missing candidate_strategy.universe_symbols",
             )
-            _assert_chip_universe(
+            _assert_exact_live_signal_universe(
                 self,
                 cast(list[object], raw_symbols),
                 context=f"{path.name} candidate universe",
