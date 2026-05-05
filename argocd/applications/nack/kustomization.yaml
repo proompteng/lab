@@ -12,5 +12,5 @@ helmCharts:
 
 images:
   - name: natsio/jetstream-controller
-    newName: mirror.gcr.io/natsio/jetstream-controller
-    newTag: 0.21.1
+    newName: docker.io/natsio/jetstream-controller
+    digest: sha256:940b1bc0ac23ea62b7daf1c26568acca6e606351d0950902d5e76e36dffc91cd
