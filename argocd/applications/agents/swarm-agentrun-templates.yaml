@@ -191,7 +191,7 @@ spec:
     natsSubjectPrefix: workflow
     targetApplications: agents,jangar
     targetDeployments: agents/agents,agents/agents-controllers,jangar/jangar
-    readinessUrl: http://agents.agents.svc.cluster.local:8080/ready
+    readinessUrl: http://agents.agents.svc.cluster.local/ready
     objective: verify the live Jangar GitOps rollout and control-plane readiness; do not triage, modify, or merge unrelated PRs
   vcsRef:
     name: github
