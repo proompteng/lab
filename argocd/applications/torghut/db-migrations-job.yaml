@@ -40,7 +40,11 @@ spec:
               revision_before_context = '0023_simulation_run_progress'
               context_revision = '0024_simulation_runtime_context'
 
-              engine = create_engine(os.environ['DB_DSN'])
+              dsn = os.environ['DB_DSN']
+              if dsn.startswith('postgresql://'):
+                  dsn = f'postgresql+psycopg://{dsn.removeprefix("postgresql://")}'
+
+              engine = create_engine(dsn)
               with engine.begin() as connection:
                   has_version_table = connection.execute(
                       text("select to_regclass('public.alembic_version') is not null"),
