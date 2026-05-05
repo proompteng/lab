@@ -6,6 +6,58 @@ Base: `main`
 Release branch: `codex/swarm-torghut-quant-verify`
 Audit PRs: #5496 plus follow-ups #5523 and #5533 on the same release branch
 
+## 2026-05-05T20:05Z Rollback Gate
+
+#5549, `chore(torghut): promote image 2c1986ff`, was squash-merged by another release lane at 2026-05-05T19:52:49Z
+with merge commit `18115b33b11e40269e79a28fbbb743d2a2675dec`. All visible PR checks were pass/skipped before merge.
+The PR promoted Torghut runtime, hook, and options images from digest
+`sha256:f183391e56cf5b52ee1d1cf73fbade982d46f357633b7942ebf674e6e8ef4f0a` to
+`sha256:09d93f5440a62f8adc9d24ed504e09655120f116313ce64ba592768ba3b12cbb`.
+
+GitOps sync for `torghut` completed: Argo application-controller logs reported sync to main revision
+`18115b33b11e40269e79a28fbbb743d2a2675dec` succeeded at 2026-05-05T19:56:52Z, then skipped auto-sync because the app
+was already `Synced`. Direct Argo Application reads still fail for `system:serviceaccount:agents:agents-sa` with
+forbidden `applications.argoproj.io` access, so Argo log evidence remains the available sync source.
+
+Workload evidence after #5549:
+
+- Live `torghut-00221-deployment-5844b48579-wn5vg` and sim `torghut-sim-00302-deployment-cbf7c4779-w6vxc` are `2/2
+Running` on digest `sha256:09d93f5440a62f8adc9d24ed504e09655120f116313ce64ba592768ba3b12cbb` with zero restarts.
+- Options catalog `torghut-options-catalog-5645fd65b-n4g8q` is `1/1 Running` on the same digest with zero restarts.
+  `/v1/options/hot-set` returned HTTP 200 with 160 symbols and `generated_at=2026-05-05T20:00:41.107911+00:00`.
+- Options enricher `torghut-options-enricher-55c7df4477-c7qf4` is `0/1 Running` on the same digest with zero restarts.
+  Its `/healthz` returns HTTP 200, but `/readyz` returns HTTP 503 with `ready=false`, `last_success_ts=null`, and no
+  error code or detail.
+- `kubectl wait --for=condition=Ready pod/torghut-options-enricher-55c7df4477-c7qf4 -n torghut --timeout=180s` timed
+  out. Recent events show repeated readiness probe 503s for that pod.
+- The previous options-enricher pod `torghut-options-enricher-75b888bd98-5r2vs` on digest
+  `sha256:f183391e56cf5b52ee1d1cf73fbade982d46f357633b7942ebf674e6e8ef4f0a` remains `1/1 Running`, so this is an
+  incomplete rollout rather than a full options outage.
+- No non-running pods remain in namespace `torghut`.
+
+Endpoint evidence:
+
+- Live `/healthz` and `/trading/status` returned HTTP 200 on active revision `torghut-00221`, version
+  `v0.568.5-51-g2c1986ffe`, commit `2c1986ffef703513aebe5912299dca4277e8e2d3`.
+- Live `/trading/health` returned HTTP 503 because the live submission gate is intentionally closed with
+  `simple_submit_disabled` and capital stage `shadow`.
+- Sim `/healthz`, `/readyz`, `/trading/status`, and `/trading/health` returned HTTP 200 on active revision
+  `torghut-sim-00302`.
+- TA and TA-sim Flink REST `/overview` returned HTTP 200 with one running job and zero failed jobs. Options TA REST
+  returned HTTP 200 but reported zero taskmanagers, zero running jobs, and one failed job; events showed
+  `torghut-options-ta` `JobException` and `JobStatusChanged` to `FAILED` before this rollback decision.
+
+Release judgment: rollback #5549. The trigger is the stuck new options-enricher readiness gate on digest `09d93f`, not
+the expected live-trading no-go under `simple_submit_disabled`. The rollback PR reverts #5549's GitOps image promotion,
+returning runtime, hook, catalog, and enricher manifests to digest `f183391e` and commit
+`59511b6b6af8b160aaf00b9fb5f44b7a62c61c5c`.
+
+Rollback validation target after merge: Argo logs should show `torghut` and `torghut-options` synced to the rollback
+main revision; live, sim, catalog, and enricher pods should all be ready on digest `f183391e`; options catalog and
+enricher `/readyz` should return HTTP 200; options TA must either recover to one running job and zero failed jobs or be
+called out as an independent rollout blocker. If the rollback also fails, stop promotion and open a fix-forward PR
+against the options readiness worker before any further Torghut image promotion.
+
 ## 2026-05-05T18:36Z Refresh
 
 Current gate is still no-go for #5412, `feat(torghut): add evidence epochs and shared live gate`. The PR is open,

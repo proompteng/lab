@@ -1628,6 +1628,24 @@ const hasRolloutEvidenceText = (text: string | null | undefined) => {
   )
 }
 
+const hasReleaseNoGoEvidenceText = (text: string | null | undefined) => {
+  if (!text) {
+    return false
+  }
+  const normalized = text.replace(/\s+/g, ' ')
+  const hasNoGoDecision =
+    /\b(no-go|blocked|held|did not (?:squash[- ]?)?merge|no squash merge|no production rollout|no production mutation)\b/i.test(
+      normalized,
+    )
+  const hasGateReason =
+    /\b(blocker|gate|required|review|quota|usage[- ]limit|rbac|waiver|mergeability|checks?)\b/i.test(normalized)
+  const hasAuditTrail =
+    /\b(audit|evidence|progress comment|rollback|no rollback|no production rollout|no production mutation)\b/i.test(
+      normalized,
+    )
+  return hasNoGoDecision && hasGateReason && hasAuditTrail
+}
+
 const hasGreenChecksEvidenceText = (text: string | null | undefined) => {
   if (!text) {
     return false
@@ -1967,6 +1985,7 @@ type RoleCompletionEvidence = {
   architectMergeEvidence: boolean
   engineerChecksGreen: boolean
   releaseMergeEvidence: boolean
+  releaseNoGoEvidence: boolean
   releaseRolloutEvidence: boolean
 }
 
@@ -2036,6 +2055,7 @@ const evaluateRoleCompletionEvidence = async ({
       }
     }
   }
+  const releaseNoGoEvidence = lane === 'release' && !mergeEvidence && hasReleaseNoGoEvidenceText(lastAssistantMessage)
 
   const explicitChecksGreen = readEvidenceBool(event, ['checksGreen', 'requiredChecksGreen', 'ciGreen'])
   const verifyWithGh = parseBoolean(process.env.CODEX_VERIFY_PR_CHECKS_WITH_GH, true)
@@ -2075,6 +2095,7 @@ const evaluateRoleCompletionEvidence = async ({
     architectMergeEvidence: mergeEvidence,
     engineerChecksGreen,
     releaseMergeEvidence: mergeEvidence,
+    releaseNoGoEvidence,
     releaseRolloutEvidence: rolloutEvidence,
   }
 }
@@ -3820,10 +3841,18 @@ export const runCodexImplementation = async (eventPath: string) => {
       if (shouldEnforceEngineerChecks && !roleCompletionEvidence.engineerChecksGreen) {
         throw new Error('Engineer run completed without verified green required checks for the active pull request')
       }
-      if (executionLane === 'release' && !roleCompletionEvidence.releaseMergeEvidence) {
+      const releaseNoGoDecision =
+        executionLane === 'release' &&
+        !roleCompletionEvidence.releaseMergeEvidence &&
+        roleCompletionEvidence.releaseNoGoEvidence
+      if (executionLane === 'release' && !roleCompletionEvidence.releaseMergeEvidence && !releaseNoGoDecision) {
         throw new Error('Release run completed without merge evidence (merged PR/commit required)')
       }
-      if (executionLane === 'release' && !roleCompletionEvidence.releaseRolloutEvidence) {
+      if (
+        executionLane === 'release' &&
+        roleCompletionEvidence.releaseMergeEvidence &&
+        !roleCompletionEvidence.releaseRolloutEvidence
+      ) {
         throw new Error('Release run completed without healthy rollout evidence')
       }
     }
