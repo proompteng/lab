@@ -76,7 +76,7 @@ jobs:
           oras push \
             ghcr.io/proompteng/charts/agents:artifacthub.io \
             --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
-            artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
+            "${GITHUB_WORKSPACE}/artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml"
 
           bun "${GITHUB_WORKSPACE}/packages/scripts/src/agents/publish-chart.ts" \
             --chart-dir "${tmpdir}/agents-split/charts/agents"
