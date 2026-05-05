@@ -229,8 +229,8 @@ spec:
                 namespace: nack
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
-                automation: manual
-                enabled: "false"
+                automation: auto
+                enabled: "true"
               - name: kubernetes-reflector
                 path: argocd/applications/kubernetes-reflector
                 namespace: kubernetes-reflector

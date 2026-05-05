@@ -9,3 +9,8 @@ helmCharts:
     namespace: nack
     includeCRDs: true
     valuesFile: ./values.yaml
+
+images:
+  - name: natsio/jetstream-controller
+    newName: mirror.gcr.io/natsio/jetstream-controller
+    newTag: 0.21.1

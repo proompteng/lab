@@ -47,9 +47,7 @@ helmGlobals:
   chartHome: ../../../charts
 helmCharts:
   - name: agents
-    repo: oci://ghcr.io/proompteng/charts
     releaseName: agents
     namespace: agents
     valuesFile: values.yaml
-    version: 0.9.9
-    includeCRDs: false
+    includeCRDs: true
