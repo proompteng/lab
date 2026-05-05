@@ -27,16 +27,20 @@ echo "Waiting for Artifact Hub package ${PACKAGE_API_URL} to index version ${cha
 
 while true; do
   body="$(mktemp)"
-  status="$(curl -sS -o "${body}" -w '%{http_code}' "${version_url}" || true)"
+  summary_body="$(mktemp)"
+  status="$(curl -sS -H 'Cache-Control: no-cache' -o "${body}" -w '%{http_code}' "${version_url}" || true)"
+  summary_status="$(curl -sS -H 'Cache-Control: no-cache' -o "${summary_body}" -w '%{http_code}' "${PACKAGE_API_URL}" || true)"
 
-  if [[ "${status}" == "200" ]]; then
-    python3 - "${body}" "${chart_version}" "${chart_license}" <<'PY'
+  if [[ "${status}" == "200" && "${summary_status}" == "200" ]]; then
+    if python3 - "${body}" "${summary_body}" "${chart_version}" "${chart_license}" <<'PY'
 import json
 import sys
 
-body_path, expected_version, expected_license = sys.argv[1:4]
+body_path, summary_body_path, expected_version, expected_license = sys.argv[1:5]
 with open(body_path, encoding="utf-8") as handle:
     package = json.load(handle)
+with open(summary_body_path, encoding="utf-8") as handle:
+    summary = json.load(handle)
 
 actual_version = package.get("version")
 if actual_version != expected_version:
@@ -57,18 +61,44 @@ if package.get("has_values_schema") is not True:
 if package.get("has_changelog") is not True:
     raise SystemExit("Artifact Hub package does not report changelog support")
 
+summary_version = summary.get("version")
+if summary_version != expected_version:
+    versions = [entry.get("version") for entry in summary.get("available_versions", [])]
+    raise SystemExit(
+        "Artifact Hub package summary latest="
+        f"{summary_version!r}; expected {expected_version!r}; "
+        f"available_versions={','.join(v for v in versions if v)}"
+    )
+
+summary_content_url = summary.get("content_url") or ""
+if f":{expected_version}" not in summary_content_url:
+    raise SystemExit(
+        f"Artifact Hub package summary content_url {summary_content_url!r} "
+        f"does not reference {expected_version!r}"
+    )
+
+summary_versions = [entry.get("version") for entry in summary.get("available_versions", [])]
+if expected_version not in summary_versions:
+    raise SystemExit(
+        "Artifact Hub package summary does not list "
+        f"{expected_version!r}; available_versions={','.join(v for v in summary_versions if v)}"
+    )
+
 print(
     "Artifact Hub indexed "
     f"{package.get('name')} {actual_version} at {content_url}; "
-    f"license={package.get('license')}; signed={package.get('signed')}"
+    f"license={package.get('license')}; signed={package.get('signed')}; "
+    f"summary_latest={summary_version}"
 )
 PY
-    rm -f "${body}"
-    exit 0
+    then
+      rm -f "${body}" "${summary_body}"
+      exit 0
+    fi
+  elif [[ "${summary_status}" != "200" ]]; then
+    echo "Artifact Hub summary request returned HTTP ${summary_status}" >&2
   fi
 
-  summary_body="$(mktemp)"
-  summary_status="$(curl -sS -o "${summary_body}" -w '%{http_code}' "${PACKAGE_API_URL}" || true)"
   if [[ "${summary_status}" == "200" ]]; then
     python3 - "${summary_body}" <<'PY'
 import json
@@ -83,8 +113,6 @@ print(
     f"{package.get('version')} available_versions={','.join(v for v in versions if v)}"
 )
 PY
-  else
-    echo "Artifact Hub summary request returned HTTP ${summary_status}" >&2
   fi
   rm -f "${body}" "${summary_body}"
 
