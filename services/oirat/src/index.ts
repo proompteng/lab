@@ -762,7 +762,7 @@ const runBot = async () => {
 
   const shutdown = () => {
     console.log('Shutting down...')
-    client.destroy()
+    void client.destroy()
     process.exit(0)
   }
 

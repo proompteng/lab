@@ -34,5 +34,6 @@ COPY --from=deps-prod /app/node_modules ./node_modules
 COPY --from=build /app/services/oirat ./services/oirat
 COPY --from=build /app/packages/discord/package.json ./packages/discord/package.json
 COPY --from=build /app/packages/discord/dist ./packages/discord/dist
+COPY --from=deps-prod /app/packages/discord/node_modules ./packages/discord/node_modules
 COPY --from=build /app/tsconfig.base.json ./tsconfig.base.json
 CMD ["bun", "services/oirat/src/index.ts"]
