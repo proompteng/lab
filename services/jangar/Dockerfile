@@ -564,6 +564,8 @@ COPY --from=jangar-pty /tmp/node-pty/build /app/services/jangar/.output/server/n
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/server/node_modules/node-pty/prebuilds
 WORKDIR /app
 COPY --from=jangar-build /app/services/bumba ./services/bumba
+RUN rm -rf /app/services/bumba/node_modules \
+  && ln -s /app/node_modules /app/services/bumba/node_modules
 WORKDIR /app/services/jangar
 RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-run \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
@@ -613,6 +615,8 @@ COPY --from=jangar-pty /tmp/node-pty/build /app/services/jangar/.output/server/n
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/server/node_modules/node-pty/prebuilds
 WORKDIR /app
 COPY --from=jangar-build /app/services/bumba ./services/bumba
+RUN rm -rf /app/services/bumba/node_modules \
+  && ln -s /app/node_modules /app/services/bumba/node_modules
 WORKDIR /app/services/jangar
 RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-run \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-start.js /usr/local/bin/cx-workflow-start \

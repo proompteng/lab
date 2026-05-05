@@ -33,6 +33,18 @@ describe('worker entrypoint', () => {
     expect(matches).toHaveLength(2)
   })
 
+  it('exposes hoisted dependencies to the copied bumba workspace in both runtime images', () => {
+    const dockerfile = readFileSync(new URL('../../Dockerfile', import.meta.url), 'utf8')
+    const bumbaCopy = 'COPY --from=jangar-build /app/services/bumba ./services/bumba'
+    const nodeModulesLink = 'ln -s /app/node_modules /app/services/bumba/node_modules'
+
+    const runtimeBumbaCopies = dockerfile.match(new RegExp(bumbaCopy.replaceAll('/', '\\/'), 'g')) ?? []
+    const dependencyLinks = dockerfile.match(new RegExp(nodeModulesLink.replaceAll('/', '\\/'), 'g')) ?? []
+
+    expect(runtimeBumbaCopies).toHaveLength(2)
+    expect(dependencyLinks).toHaveLength(2)
+  })
+
   it('installs workspace tool build dependencies with dev dependencies enabled', () => {
     const dockerfile = readFileSync(new URL('../../Dockerfile', import.meta.url), 'utf8')
     const workspaceToolsStage = dockerfile.match(
