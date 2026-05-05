@@ -156,6 +156,13 @@ describe('smoke fixtures', () => {
     expect(fixture).toContain('defaults:')
     expect(fixture).toContain('systemPrompt:')
   })
+
+  it('keeps the workflow smoke workload off Docker Hub', () => {
+    const fixture = readFileSync(resolve(process.cwd(), 'charts/agents/examples/agentrun-workflow-smoke.yaml'), 'utf8')
+
+    expect(fixture).toContain('image: mirror.gcr.io/library/busybox:1.36')
+    expect(fixture).not.toContain('image: busybox:1.36')
+  })
 })
 
 const readYamlObjects = (path: string) =>
