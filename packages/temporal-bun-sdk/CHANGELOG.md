@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.8.0...temporal-bun-sdk-v0.9.0) (2026-05-05)
+
+
+### Features
+
+* **temporal-bun-sdk:** add production readiness gates ([9eac9df](https://github.com/proompteng/lab/commit/9eac9df1ad09bc600ab600b30a39c71da654ba18))
+
 ## [0.8.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.7.1...temporal-bun-sdk-v0.8.0) (2026-03-20)
 
 
