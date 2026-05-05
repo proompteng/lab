@@ -302,11 +302,6 @@ spec:
                 secretKeyRef:
                   name: torghut-db-app
                   key: password
-            - name: TORGHUT_POSTGRES_ADMIN_URI
-              valueFrom:
-                secretKeyRef:
-                  name: torghut-db-superuser
-                  key: uri
             - name: TORGHUT_SIM_ADMIN_DB_HOST
               valueFrom:
                 secretKeyRef:
@@ -327,6 +322,8 @@ spec:
                 secretKeyRef:
                   name: torghut-db-superuser
                   key: password
+            - name: TORGHUT_POSTGRES_ADMIN_URI
+              value: postgresql://$(TORGHUT_SIM_ADMIN_DB_USER):$(TORGHUT_SIM_ADMIN_DB_PASSWORD)@$(TORGHUT_SIM_ADMIN_DB_HOST):$(TORGHUT_SIM_ADMIN_DB_PORT)/postgres
             - name: TORGHUT_SIM_DB_DSN
               value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
             - name: TORGHUT_SIM_ADMIN_DSN

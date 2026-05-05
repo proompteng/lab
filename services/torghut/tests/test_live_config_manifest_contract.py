@@ -296,19 +296,32 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertTrue(containers)
         container = containers[0]
         args = "\n".join(str(item) for item in container.get("args", []))
+        env = [
+            item
+            for item in container.get("env", [])
+            if isinstance(item, Mapping)
+        ]
         upgrade_to_research_objects = (
             'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini '
             "upgrade 0026_strategy_factory_research_objects"
         )
         upgrade_heads = 'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads'
-        env_names = {
-            item.get("name")
-            for item in container.get("env", [])
-            if isinstance(item, Mapping)
-        }
+        env_names = {item.get("name") for item in env}
+        env_by_name = {item.get("name"): item for item in env}
+        env_order = [item.get("name") for item in env]
 
         self.assertIn("TORGHUT_POSTGRES_ADMIN_URI", env_names)
         self.assertIn("TORGHUT_SIM_ADMIN_DSN", env_names)
+        self.assertLess(
+            env_order.index("TORGHUT_SIM_ADMIN_DB_PASSWORD"),
+            env_order.index("TORGHUT_POSTGRES_ADMIN_URI"),
+        )
+        self.assertEqual(
+            env_by_name["TORGHUT_POSTGRES_ADMIN_URI"].get("value"),
+            "postgresql://$(TORGHUT_SIM_ADMIN_DB_USER):$(TORGHUT_SIM_ADMIN_DB_PASSWORD)@"
+            "$(TORGHUT_SIM_ADMIN_DB_HOST):$(TORGHUT_SIM_ADMIN_DB_PORT)/postgres",
+        )
+        self.assertNotIn("valueFrom", env_by_name["TORGHUT_POSTGRES_ADMIN_URI"])
         self.assertIn("database_url(admin_uri, 'postgres')", args)
         self.assertIn("CREATE DATABASE", args)
         self.assertIn("GRANT ALL PRIVILEGES ON DATABASE", args)
