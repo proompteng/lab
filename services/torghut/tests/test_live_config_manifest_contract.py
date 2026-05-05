@@ -303,14 +303,25 @@ class TestLiveConfigManifestContract(TestCase):
         }
 
         self.assertIn("TORGHUT_POSTGRES_ADMIN_URI", env_names)
+        self.assertIn("TORGHUT_SIM_ADMIN_DSN", env_names)
         self.assertIn("CREATE DATABASE", args)
         self.assertIn("GRANT ALL PRIVILEGES ON DATABASE", args)
         self.assertIn("CREATE EXTENSION IF NOT EXISTS vector", args)
+        self.assertIn("postgresql+psycopg://", args)
+        self.assertIn('DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic', args)
+        self.assertIn("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public", args)
+        self.assertIn("granted simulation runtime privileges", args)
         self.assertLess(
             args.index("CREATE EXTENSION IF NOT EXISTS vector"),
             args.index(
-                'DB_DSN="${TORGHUT_SIM_DB_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads'
+                'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads'
             ),
+        )
+        self.assertLess(
+            args.index(
+                'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads'
+            ),
+            args.index("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public"),
         )
 
     def test_profitability_sweep_universes_are_chip_only(self) -> None:
