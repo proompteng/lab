@@ -5,7 +5,10 @@ from decimal import Decimal
 from unittest import TestCase
 
 from app.trading.models import StrategyDecision
-from app.trading.simple_risk import prepare_simple_decision
+from app.trading.simple_risk import (
+    _buying_power_required_notional,
+    prepare_simple_decision,
+)
 
 
 class TestSimpleRisk(TestCase):
@@ -46,7 +49,9 @@ class TestSimpleRisk(TestCase):
         result = prepare_simple_decision(
             decision=self._decision(qty="1"),
             account={"buying_power": "10000", "equity": "10000", "cash": "10000"},
-            positions=[{"symbol": "AAPL", "qty": "9", "market_value": "950", "side": "long"}],
+            positions=[
+                {"symbol": "AAPL", "qty": "9", "market_value": "950", "side": "long"}
+            ],
             fractional_equities_enabled=False,
             allow_shorts=True,
             max_notional_per_order=None,
@@ -56,7 +61,7 @@ class TestSimpleRisk(TestCase):
         self.assertFalse(result.approved)
         self.assertEqual(result.reject_reason, "max_symbol_exposure_exceeded")
 
-    def test_rejects_when_buying_power_is_insufficient(self) -> None:
+    def test_caps_to_buying_power_when_order_can_be_reduced(self) -> None:
         result = prepare_simple_decision(
             decision=self._decision(qty="5"),
             account={"buying_power": "200", "equity": "10000", "cash": "200"},
@@ -67,8 +72,98 @@ class TestSimpleRisk(TestCase):
             max_notional_per_symbol=None,
         )
 
+        self.assertTrue(result.approved)
+        self.assertEqual(result.decision.qty, Decimal("2"))
+        self.assertEqual(result.notional, Decimal("200"))
+        self.assertEqual(result.diagnostics["buying_power_cap_qty"], "2")
+        self.assertEqual(result.diagnostics["final_qty"], "2")
+        self.assertTrue(result.decision.params["simple_lane"]["capped_by_buying_power"])
+
+    def test_rejects_when_buying_power_cap_leaves_less_than_min_qty(self) -> None:
+        result = prepare_simple_decision(
+            decision=self._decision(qty="5"),
+            account={"buying_power": "50", "equity": "10000", "cash": "50"},
+            positions=[],
+            fractional_equities_enabled=False,
+            allow_shorts=True,
+            max_notional_per_order=None,
+            max_notional_per_symbol=None,
+        )
+
         self.assertFalse(result.approved)
         self.assertEqual(result.reject_reason, "insufficient_buying_power")
+
+    def test_rejects_when_buying_power_is_zero(self) -> None:
+        result = prepare_simple_decision(
+            decision=self._decision(qty="5"),
+            account={"buying_power": "0", "equity": "10000", "cash": "0"},
+            positions=[],
+            fractional_equities_enabled=False,
+            allow_shorts=True,
+            max_notional_per_order=None,
+            max_notional_per_symbol=None,
+        )
+
+        self.assertFalse(result.approved)
+        self.assertEqual(result.reject_reason, "insufficient_buying_power")
+        self.assertEqual(result.diagnostics["buying_power_cap_qty"], "0")
+
+    def test_short_increase_buying_power_cap_counts_only_excess_qty(self) -> None:
+        result = prepare_simple_decision(
+            decision=self._decision(action="sell", qty="5", price="100"),
+            account={"buying_power": "200", "equity": "10000", "cash": "200"},
+            positions=[{"symbol": "AAPL", "qty": "2", "side": "long"}],
+            fractional_equities_enabled=False,
+            allow_shorts=True,
+            max_notional_per_order=None,
+            max_notional_per_symbol=None,
+        )
+
+        self.assertTrue(result.approved)
+        self.assertEqual(result.decision.qty, Decimal("4"))
+        self.assertEqual(result.notional, Decimal("400"))
+        self.assertEqual(result.diagnostics["buying_power_cap_qty"], "4")
+        self.assertEqual(result.diagnostics["buying_power_required_notional"], "200")
+        self.assertTrue(result.decision.params["simple_lane"]["capped_by_buying_power"])
+
+    def test_rejects_short_increase_when_shorts_are_disabled(self) -> None:
+        result = prepare_simple_decision(
+            decision=self._decision(action="sell", qty="2", price="100"),
+            account={"buying_power": "10000", "equity": "10000", "cash": "10000"},
+            positions=[{"symbol": "AAPL", "qty": "1", "side": "long"}],
+            fractional_equities_enabled=False,
+            allow_shorts=False,
+            max_notional_per_order=None,
+            max_notional_per_symbol=None,
+        )
+
+        self.assertFalse(result.approved)
+        self.assertEqual(result.reject_reason, "shorting_not_allowed_for_asset")
+
+    def test_buying_power_required_notional_ignores_non_increasing_exposure(
+        self,
+    ) -> None:
+        zero_qty_sell = self._decision(action="sell", qty="0", price="100")
+        reducing_sell = self._decision(action="sell", qty="1", price="100")
+
+        self.assertEqual(
+            _buying_power_required_notional(
+                decision=zero_qty_sell,
+                qty=Decimal("0"),
+                price=Decimal("100"),
+                current_qty=Decimal("0"),
+            ),
+            Decimal("0"),
+        )
+        self.assertEqual(
+            _buying_power_required_notional(
+                decision=reducing_sell,
+                qty=Decimal("1"),
+                price=Decimal("100"),
+                current_qty=Decimal("2"),
+            ),
+            Decimal("0"),
+        )
 
     def test_rejects_sub_min_qty_after_quantization(self) -> None:
         result = prepare_simple_decision(

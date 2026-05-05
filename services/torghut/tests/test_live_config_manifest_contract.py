@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
+from typing import Mapping, cast
 from unittest import TestCase
 
 from pydantic import ValidationError
@@ -84,6 +86,51 @@ def _load_torghut_feature_flags() -> dict[str, object]:
     return feature_lookup
 
 
+def _load_torghut_strategy_catalog() -> list[dict[str, object]]:
+    manifest_path = (
+        _repo_root() / "argocd" / "applications" / "torghut" / "strategy-configmap.yaml"
+    )
+    manifest = safe_load(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise AssertionError("strategy-configmap.yaml did not parse to a mapping")
+    data = manifest.get("data")
+    if not isinstance(data, dict):
+        raise AssertionError("strategy-configmap.yaml missing data mapping")
+    strategies_yaml = data.get("strategies.yaml")
+    if not isinstance(strategies_yaml, str):
+        raise AssertionError("strategy-configmap.yaml missing strategies.yaml")
+    catalog = safe_load(strategies_yaml)
+    if not isinstance(catalog, dict):
+        raise AssertionError("strategies.yaml did not parse to a mapping")
+    strategies = catalog.get("strategies")
+    if not isinstance(strategies, list):
+        raise AssertionError("strategies.yaml missing strategies list")
+    return [
+        dict(cast(Mapping[str, object], item))
+        for item in strategies
+        if isinstance(item, Mapping)
+    ]
+
+
+def _strategy_decimal(strategy: Mapping[str, object], key: str) -> Decimal | None:
+    value = strategy.get(key)
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
+
+
+def _params(strategy: Mapping[str, object]) -> Mapping[str, object]:
+    raw_params = strategy.get("params")
+    return (
+        cast(Mapping[str, object], raw_params)
+        if isinstance(raw_params, Mapping)
+        else {}
+    )
+
+
 class TestLiveConfigManifestContract(TestCase):
     def test_knative_env_wiring_is_safe_live_defaults(self) -> None:
         env = _load_torghut_knative_env()
@@ -154,9 +201,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(env.get("TRADING_PIPELINE_MODE"), "simple")
         self.assertEqual(env.get("TRADING_UNIVERSE_SOURCE"), "jangar")
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ENABLED"))
-        self.assertFalse(
-            _manifest_bool(env, "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION")
-        )
+        self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION"))
         self.assertFalse(_manifest_bool(env, "TRADING_KILL_SWITCH_ENABLED"))
         self.assertFalse(_manifest_bool(env, "TRADING_EMERGENCY_STOP_ENABLED"))
         self.assertNotIn("TRADING_EXECUTION_ADAPTER_POLICY", env)
@@ -165,9 +210,7 @@ class TestLiveConfigManifestContract(TestCase):
 
     def test_manifest_rollout_toggles_disable_execution_advisor(self) -> None:
         knative_env = _load_torghut_knative_env()
-        self.assertEqual(
-            knative_env.get("TRADING_EXECUTION_ADVISOR_ENABLED"), "false"
-        )
+        self.assertEqual(knative_env.get("TRADING_EXECUTION_ADVISOR_ENABLED"), "false")
         self.assertEqual(
             knative_env.get("TRADING_EXECUTION_ADVISOR_LIVE_APPLY_ENABLED"),
             "false",
@@ -183,10 +226,65 @@ class TestLiveConfigManifestContract(TestCase):
             self.assertIs(raw_flag.get("enabled"), False)
 
         _require_flag_enabled_false("torghut_trading_execution_advisor_enabled")
-        _require_flag_enabled_false("torghut_trading_execution_advisor_live_apply_enabled")
-        _require_flag_enabled_false("torghut_trading_db_schema_graph_allow_divergence_roots")
+        _require_flag_enabled_false(
+            "torghut_trading_execution_advisor_live_apply_enabled"
+        )
+        _require_flag_enabled_false(
+            "torghut_trading_db_schema_graph_allow_divergence_roots"
+        )
         _require_flag_enabled_false("torghut_llm_fail_open_live_approved")
         _require_flag_enabled_false("torghut_llm_shadow_mode")
+
+    def test_strict_daily_profit_strategies_require_executable_live_proof(self) -> None:
+        strategies = _load_torghut_strategy_catalog()
+        strict_daily_profit_strategies = [
+            strategy
+            for strategy in strategies
+            if "strict-daily-profit" in str(strategy.get("description") or "").lower()
+        ]
+        self.assertTrue(strict_daily_profit_strategies)
+
+        for strategy in strict_daily_profit_strategies:
+            if not _manifest_bool(strategy, "enabled"):
+                continue
+
+            params = _params(strategy)
+            evidence_ref = str(
+                params.get("executable_profit_evidence_ref") or ""
+            ).strip()
+            min_daily_net_pnl = params.get("executable_profit_min_daily_net_pnl")
+            target_net_pnl = params.get("executable_profit_target_net_pnl_per_day")
+            replay_buying_power = params.get("executable_replay_account_buying_power")
+            replay_max_notional = params.get("executable_replay_max_notional_per_trade")
+            max_notional_per_trade = _strategy_decimal(
+                strategy, "max_notional_per_trade"
+            )
+
+            self.assertTrue(
+                evidence_ref,
+                f"{strategy.get('name')} is strict-daily-profit live-enabled without executable evidence ref",
+            )
+            self.assertGreaterEqual(
+                Decimal(str(target_net_pnl or "0")),
+                Decimal("300"),
+                f"{strategy.get('name')} is strict-daily-profit live-enabled without $300/day target proof",
+            )
+            self.assertGreaterEqual(
+                Decimal(str(min_daily_net_pnl or "0")),
+                Decimal("300"),
+                f"{strategy.get('name')} is strict-daily-profit live-enabled without every-day $300 proof",
+            )
+            self.assertIsNotNone(max_notional_per_trade)
+            self.assertLessEqual(
+                max_notional_per_trade or Decimal("0"),
+                Decimal(str(replay_max_notional or "0")),
+                f"{strategy.get('name')} live notional exceeds executable replay notional",
+            )
+            self.assertLessEqual(
+                Decimal(str(replay_max_notional or "0")),
+                Decimal(str(replay_buying_power or "0")),
+                f"{strategy.get('name')} replay notional exceeds stated buying power",
+            )
 
     def test_live_pass_through_with_strict_veto_profile_is_rejected(self) -> None:
         env = _load_torghut_knative_env()

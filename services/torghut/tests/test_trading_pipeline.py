@@ -1210,6 +1210,174 @@ class TestTradingPipeline(TestCase):
 
         self.assertEqual(reason, "shorting_not_allowed_for_asset")
 
+    def test_simple_pipeline_projects_remaining_buying_power_after_buy(self) -> None:
+        account = {"buying_power": "150", "equity": "1000", "cash": "150"}
+        decision = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="buying-power-projection",
+            params={"price": "100", "simple_lane": {"notional": "100"}},
+        )
+
+        SimpleTradingPipeline._apply_simple_projected_buying_power(
+            account,
+            [],
+            decision,
+        )
+
+        self.assertEqual(Decimal(account["buying_power"]), Decimal("50"))
+
+    def test_simple_pipeline_projects_short_increase_buying_power_for_excess_qty(
+        self,
+    ) -> None:
+        account = {"buying_power": "150", "equity": "1000", "cash": "150"}
+        positions = [{"symbol": "AAPL", "qty": "1", "side": "long"}]
+        decision = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("3"),
+            rationale="short-increase-projection",
+            params={"price": "50", "simple_lane": {"notional": "150"}},
+        )
+
+        SimpleTradingPipeline._apply_simple_projected_buying_power(
+            account,
+            positions,
+            decision,
+        )
+
+        self.assertEqual(Decimal(account["buying_power"]), Decimal("50"))
+
+    def test_simple_pipeline_skips_buying_power_projection_without_inputs(
+        self,
+    ) -> None:
+        missing_buying_power = {"equity": "1000", "cash": "150"}
+        buy_decision = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="missing-buying-power",
+            params={"price": "100"},
+        )
+
+        SimpleTradingPipeline._apply_simple_projected_buying_power(
+            missing_buying_power,
+            [],
+            buy_decision,
+        )
+
+        self.assertNotIn("buying_power", missing_buying_power)
+
+        missing_notional = {"buying_power": "150", "equity": "1000", "cash": "150"}
+        no_price_decision = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="missing-notional",
+            params={},
+        )
+
+        SimpleTradingPipeline._apply_simple_projected_buying_power(
+            missing_notional,
+            [],
+            no_price_decision,
+        )
+
+        self.assertEqual(Decimal(missing_notional["buying_power"]), Decimal("150"))
+
+    def test_simple_pipeline_projects_notional_from_price_when_lane_missing(
+        self,
+    ) -> None:
+        account = {"buying_power": "150", "equity": "1000", "cash": "150"}
+        decision = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="price-notional-fallback",
+            params={"price": "100"},
+        )
+
+        SimpleTradingPipeline._apply_simple_projected_buying_power(
+            account,
+            [],
+            decision,
+        )
+
+        self.assertEqual(Decimal(account["buying_power"]), Decimal("50"))
+
+    def test_simple_pipeline_skips_projection_when_exposure_does_not_increase(
+        self,
+    ) -> None:
+        reducing_sell_account = {
+            "buying_power": "150",
+            "equity": "1000",
+            "cash": "150",
+        }
+        reducing_sell = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("1"),
+            rationale="reducing-sell",
+            params={"price": "100", "simple_lane": {"notional": "100"}},
+        )
+
+        SimpleTradingPipeline._apply_simple_projected_buying_power(
+            reducing_sell_account,
+            [{"symbol": "AAPL", "qty": "2", "side": "long"}],
+            reducing_sell,
+        )
+
+        self.assertEqual(
+            Decimal(reducing_sell_account["buying_power"]),
+            Decimal("150"),
+        )
+
+        zero_qty_sell_account = {
+            "buying_power": "150",
+            "equity": "1000",
+            "cash": "150",
+        }
+        zero_qty_sell = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("0"),
+            rationale="zero-qty-sell",
+            params={"price": "100", "simple_lane": {"notional": "100"}},
+        )
+
+        SimpleTradingPipeline._apply_simple_projected_buying_power(
+            zero_qty_sell_account,
+            [],
+            zero_qty_sell,
+        )
+
+        self.assertEqual(
+            Decimal(zero_qty_sell_account["buying_power"]),
+            Decimal("150"),
+        )
+
     def test_execution_routing_uses_order_firewall_for_non_simulation_adapter(
         self,
     ) -> None:
