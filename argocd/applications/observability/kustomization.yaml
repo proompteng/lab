@@ -41,6 +41,14 @@ helmCharts:
     namespace: observability
     valuesFile: grafana-values.yaml
 
+images:
+  - name: docker.io/nginxinc/nginx-unprivileged
+    newName: mirror.gcr.io/nginxinc/nginx-unprivileged
+    newTag: 1.29-alpine
+  - name: docker.io/memcached
+    newName: mirror.gcr.io/library/memcached
+    newTag: 1.6.39-alpine
+
 patches:
   - target:
       kind: StatefulSet

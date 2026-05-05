@@ -23,3 +23,11 @@ resources:
   - deployment-posthog-web.yaml
   - deployment-posthog-worker.yaml
   - job-posthog-migrate.yaml
+
+images:
+  - name: clickhouse/clickhouse-keeper
+    newName: mirror.gcr.io/clickhouse/clickhouse-keeper
+    newTag: 25.12.5.44
+  - name: clickhouse/clickhouse-server
+    newName: mirror.gcr.io/clickhouse/clickhouse-server
+    newTag: 25.12.5.44
