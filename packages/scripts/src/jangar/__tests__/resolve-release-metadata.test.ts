@@ -12,7 +12,6 @@ const dddToBfDocsOnlyFiles = ['docs/agents/README.md', 'docs/agents/designs/jang
 const f22ToDddJangarBuildTriggerFiles = [
   'argocd/applications/agents/values.yaml',
   'argocd/applications/jangar/deployment.yaml',
-  'argocd/applications/jangar/jangar-worker-deployment.yaml',
   'argocd/applications/jangar/kustomization.yaml',
   'docs/agents/jangar-controller-design.md',
   'services/jangar/scripts/__tests__/agent-runner.test.ts',

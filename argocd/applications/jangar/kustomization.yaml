@@ -7,7 +7,6 @@ resources:
   - cnpg-jangar-db-objectbucketclaim.yaml
   - market-context-providers-secret.yaml
   - deployment.yaml
-  - jangar-worker-deployment.yaml
   - service.yaml
   - github-token.yaml
   - codex-auth-sealedsecret.yaml
@@ -23,7 +22,6 @@ resources:
   - postgres-scheduled-backup.yaml
   - openwebui-redis.yaml
   - pvc-rwo.yaml
-  - pvc-worker-rwo.yaml
   - vscode-tailscale-service.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml

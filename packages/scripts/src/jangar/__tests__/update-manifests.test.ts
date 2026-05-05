@@ -76,7 +76,6 @@ describe('updateJangarManifests', () => {
       rolloutTimestamp,
       kustomizationPath: relative(repoRoot, fixture.kustomizationPath),
       serviceManifestPath: relative(repoRoot, fixture.serviceManifestPath),
-      workerManifestPath: relative(repoRoot, fixture.workerManifestPath),
     })
 
     const kustomization = YAML.parse(readFileSync(fixture.kustomizationPath, 'utf8')) as {
@@ -85,23 +84,42 @@ describe('updateJangarManifests', () => {
     const serviceManifest = YAML.parse(readFileSync(fixture.serviceManifestPath, 'utf8')) as {
       metadata?: { annotations?: Record<string, string> }
     }
-    const workerManifest = YAML.parse(readFileSync(fixture.workerManifestPath, 'utf8')) as {
-      metadata?: { annotations?: Record<string, string> }
-    }
-
     expect(kustomization.images?.[0]).toEqual({
       name: imageName,
       newTag: 'new-tag',
       digest: 'sha256:newdigest',
     })
     expect(serviceManifest.metadata?.annotations?.['deploy.knative.dev/rollout']).toBe(rolloutTimestamp)
-    expect(workerManifest.metadata?.annotations?.['kubectl.kubernetes.io/restartedAt']).toBe(rolloutTimestamp)
     expect(result.changed).toEqual({
       kustomization: true,
       service: true,
-      worker: true,
+      worker: false,
       agentsValues: false,
     })
+
+    rmSync(fixture.dir, { recursive: true, force: true })
+  })
+
+  it('updates an optional legacy worker rollout annotation when configured', () => {
+    const fixture = createFixture()
+    const rolloutTimestamp = '2026-02-20T06:45:00.000Z'
+
+    const result = updateJangarManifests({
+      imageName,
+      tag: 'new-tag',
+      digest: 'sha256:newdigest',
+      rolloutTimestamp,
+      kustomizationPath: relative(repoRoot, fixture.kustomizationPath),
+      serviceManifestPath: relative(repoRoot, fixture.serviceManifestPath),
+      workerManifestPath: relative(repoRoot, fixture.workerManifestPath),
+    })
+
+    const workerManifest = YAML.parse(readFileSync(fixture.workerManifestPath, 'utf8')) as {
+      metadata?: { annotations?: Record<string, string> }
+    }
+
+    expect(workerManifest.metadata?.annotations?.['kubectl.kubernetes.io/restartedAt']).toBe(rolloutTimestamp)
+    expect(result.changed.worker).toBe(true)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -121,7 +139,6 @@ describe('updateJangarManifests', () => {
       rolloutTimestamp: '2026-02-20T07:00:00.000Z',
       kustomizationPath: relative(repoRoot, fixture.kustomizationPath),
       serviceManifestPath: relative(repoRoot, fixture.serviceManifestPath),
-      workerManifestPath: relative(repoRoot, fixture.workerManifestPath),
     })
 
     const kustomization = YAML.parse(readFileSync(fixture.kustomizationPath, 'utf8')) as {
@@ -147,7 +164,6 @@ describe('updateJangarManifests', () => {
       rolloutTimestamp,
       kustomizationPath: relative(repoRoot, fixture.kustomizationPath),
       serviceManifestPath: relative(repoRoot, fixture.serviceManifestPath),
-      workerManifestPath: relative(repoRoot, fixture.workerManifestPath),
       agentsValuesPath: relative(repoRoot, fixture.agentsValuesPath),
     })
 
@@ -190,7 +206,6 @@ describe('updateJangarManifests', () => {
       rolloutTimestamp: '2026-02-20T08:30:00.000Z',
       kustomizationPath: relative(repoRoot, fixture.kustomizationPath),
       serviceManifestPath: relative(repoRoot, fixture.serviceManifestPath),
-      workerManifestPath: relative(repoRoot, fixture.workerManifestPath),
       agentsValuesPath: relative(repoRoot, fixture.agentsValuesPath),
     })
 

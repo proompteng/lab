@@ -152,14 +152,14 @@ const resolveKustomizeNamespace = (kustomizePath: string) => {
 const resolveDeploymentNames = () => {
   const raw = process.env.JANGAR_K8S_DEPLOYMENTS?.trim()
   if (!raw) {
-    return ['jangar', 'jangar-worker']
+    return ['jangar']
   }
   const names = raw
     .split(',')
     .map((name) => name.trim())
     .filter(Boolean)
 
-  return names.length > 0 ? names : ['jangar', 'jangar-worker']
+  return names.length > 0 ? names : ['jangar']
 }
 
 export const main = async (options: DeployOptions = {}) => {
@@ -187,12 +187,8 @@ export const main = async (options: DeployOptions = {}) => {
     repoRoot,
     options.serviceManifest ?? process.env.JANGAR_SERVICE_MANIFEST ?? 'argocd/applications/jangar/deployment.yaml',
   )
-  const workerManifest = resolve(
-    repoRoot,
-    options.workerManifest ??
-      process.env.JANGAR_WORKER_MANIFEST ??
-      'argocd/applications/jangar/jangar-worker-deployment.yaml',
-  )
+  const workerManifestOption = options.workerManifest ?? process.env.JANGAR_WORKER_MANIFEST
+  const workerManifest = workerManifestOption ? resolve(repoRoot, workerManifestOption) : undefined
 
   // Persist image tag and rollout marker in Git before applying
   updateJangarManifests({

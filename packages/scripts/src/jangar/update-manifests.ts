@@ -14,7 +14,6 @@ const defaultRegistry = 'registry.ide-newton.ts.net'
 const defaultRepository = 'lab/jangar'
 const defaultKustomizationPath = 'argocd/applications/jangar/kustomization.yaml'
 const defaultServiceManifestPath = 'argocd/applications/jangar/deployment.yaml'
-const defaultWorkerManifestPath = 'argocd/applications/jangar/jangar-worker-deployment.yaml'
 
 export type UpdateManifestsOptions = {
   imageName: string
@@ -113,7 +112,7 @@ const updateAgentsValuesManifest = (
 export const updateJangarManifests = (options: UpdateManifestsOptions) => {
   const kustomizationPath = resolvePath(options.kustomizationPath ?? defaultKustomizationPath)
   const serviceManifestPath = resolvePath(options.serviceManifestPath ?? defaultServiceManifestPath)
-  const workerManifestPath = resolvePath(options.workerManifestPath ?? defaultWorkerManifestPath)
+  const workerManifestPath = options.workerManifestPath ? resolvePath(options.workerManifestPath) : null
   const digest = normalizeDigest(options.digest ?? inspectImageDigest(`${options.imageName}:${options.tag}`))
   const controlPlaneDigest = options.controlPlaneDigest ? normalizeDigest(options.controlPlaneDigest) : undefined
   const agentsValuesPath = options.agentsValuesPath ? resolvePath(options.agentsValuesPath) : null
@@ -136,17 +135,17 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
     console.log(`Updated ${serviceManifestPath} annotation deploy.knative.dev/rollout to ${options.rolloutTimestamp}`)
   }
 
-  const workerChanged = updateManifestAnnotation(
-    workerManifestPath,
-    'kubectl.kubernetes.io/restartedAt',
-    options.rolloutTimestamp,
-  )
-  if (!workerChanged) {
-    console.warn('Warning: jangar worker rollout annotation was not updated; manifest may already match.')
-  } else {
-    console.log(
-      `Updated ${workerManifestPath} annotation kubectl.kubernetes.io/restartedAt to ${options.rolloutTimestamp}`,
-    )
+  const workerChanged = workerManifestPath
+    ? updateManifestAnnotation(workerManifestPath, 'kubectl.kubernetes.io/restartedAt', options.rolloutTimestamp)
+    : false
+  if (workerManifestPath) {
+    if (!workerChanged) {
+      console.warn('Warning: jangar worker rollout annotation was not updated; manifest may already match.')
+    } else {
+      console.log(
+        `Updated ${workerManifestPath} annotation kubectl.kubernetes.io/restartedAt to ${options.rolloutTimestamp}`,
+      )
+    }
   }
   const agentsValuesChanged = agentsValuesPath
     ? updateAgentsValuesManifest(
@@ -190,7 +189,7 @@ Options:
   --rollout-timestamp <ISO8601>
   --kustomization-path <path>
   --service-manifest-path <path>
-  --worker-manifest-path <path>
+  --worker-manifest-path <path>      Optional legacy worker manifest to update
   --agents-values-path <path>`)
       process.exit(0)
     }

@@ -23,7 +23,7 @@ describe('verify-deployment', () => {
       '--namespace',
       'jangar',
       '--deployments',
-      'jangar,jangar-worker',
+      'jangar',
       '--require-synced',
       '--expected-revision',
       '0123456789abcdef0123456789abcdef01234567',
@@ -40,7 +40,7 @@ describe('verify-deployment', () => {
     ])
 
     expect(parsed.namespace).toBe('jangar')
-    expect(parsed.deployments).toEqual(['jangar', 'jangar-worker'])
+    expect(parsed.deployments).toEqual(['jangar'])
     expect(parsed.requireSynced).toBe(true)
     expect(parsed.expectedRevision).toBe('0123456789abcdef0123456789abcdef01234567')
     expect(parsed.expectedRevisionMode).toBe('ancestor')

@@ -51,7 +51,7 @@ type ResolvedOptions = {
 const defaultImageName = 'registry.ide-newton.ts.net/lab/jangar'
 const defaultKustomizationPath = 'argocd/applications/jangar/kustomization.yaml'
 const defaultNamespace = 'jangar'
-const defaultDeployments = ['jangar', 'jangar-worker']
+const defaultDeployments = ['jangar']
 const defaultArgoNamespace = 'argocd'
 const defaultArgoApplication = 'jangar'
 const defaultRolloutTimeout = '10m'
@@ -158,7 +158,7 @@ const parseArgs = (argv: string[]): CliOptions => {
 
 Options:
   --namespace <name>                 Kubernetes namespace (default: jangar)
-  --deployments <name1,name2>        Deployments to verify (default: jangar,jangar-worker)
+  --deployments <name1,name2>        Deployments to verify (default: jangar)
   --kustomization-path <path>        Kustomization path with expected digest
   --image-name <registry/repository> Image name in kustomization
   --argo-namespace <name>            Argo CD namespace (default: argocd)
