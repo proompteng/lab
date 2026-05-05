@@ -16,4 +16,14 @@ describe('khoshut Dockerfile', () => {
     expect(dockerfile).toContain('FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS runner')
     expect(dockerfile).not.toMatch(/^FROM oven\/bun:/m)
   })
+
+  test('copies production dependencies after the service source', async () => {
+    const dockerfile = await readFile(dockerfilePath, 'utf8')
+    const sourceCopy = 'COPY --from=build /app/services/khoshut ./services/khoshut'
+    const productionNodeModulesCopy =
+      'COPY --from=deps-prod /app/services/khoshut/node_modules ./services/khoshut/node_modules'
+
+    expect(dockerfile.indexOf(sourceCopy)).toBeGreaterThan(-1)
+    expect(dockerfile.indexOf(productionNodeModulesCopy)).toBeGreaterThan(dockerfile.indexOf(sourceCopy))
+  })
 })
