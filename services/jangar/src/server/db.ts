@@ -13,6 +13,9 @@ export type StoreDbResolution = {
 
 type Timestamp = string | Date
 type JsonValue = Record<string, unknown>
+type PostgresErrorEmitter = {
+  on: (event: 'error', listener: (error: Error) => void) => unknown
+}
 
 type AtlasRepositories = {
   id: Generated<string>
@@ -944,6 +947,15 @@ const resolveSslConfig = (sslmode: string | null, caCertPath?: string) => {
   return { rejectUnauthorized: false }
 }
 
+const attachPostgresClientErrorLogger = (
+  client: PostgresErrorEmitter,
+  logWarning: (message: string, error: unknown) => void = console.warn,
+) => {
+  client.on('error', (error) => {
+    logWarning('[jangar] postgres client error', error)
+  })
+}
+
 const createDbClient = (rawUrl: string): Db => {
   const url = rawUrl.trim()
   const sslmode = resolveEffectiveSslMode(url)
@@ -965,6 +977,9 @@ const createDbClient = (rawUrl: string): Db => {
 
   pool.on('error', (error) => {
     console.warn('[jangar] postgres pool error', error)
+  })
+  pool.on('connect', (client) => {
+    attachPostgresClientErrorLogger(client)
   })
   return new Kysely<Database>({
     dialect: new PostgresDialect({ pool }),
@@ -1009,6 +1024,7 @@ export const resolveStoreDb = (options: { url?: string; createDb?: (url: string)
 }
 
 export const __private = {
+  attachPostgresClientErrorLogger,
   normalizeDbUrl,
   resolveEffectiveSslMode,
   resolveSslConfig,
