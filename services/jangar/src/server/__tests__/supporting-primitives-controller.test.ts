@@ -228,12 +228,9 @@ describe('supporting primitives controller', () => {
     ])
     expect(command).toContain("replaceAll('__JANGAR_DELIVERY_ID__', randomUUID())")
     expect(command).toContain('const targetByKind = {')
-    expect(command).toContain(
-      'const namespace = String(manifest?.metadata?.namespace ?? (readEnv("JANGAR_POD_NAMESPACE") || \'agents\'))',
-    )
     expect(command).toContain("method: 'POST'")
     expect(command).toContain(
-      'const namespace = String((manifest?.metadata?.namespace ?? readEnv("JANGAR_POD_NAMESPACE")) || \'agents\')',
+      'const namespace = String((manifest?.metadata?.namespace ?? readEnv("JANGAR_POD_NAMESPACE")) || \'agents\');',
     )
     expect(command).not.toContain("from 'node:crypto'\nimport")
     expect(command).not.toContain("from 'node:crypto' import")
