@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM eclipse-temurin:21-jdk AS build
+FROM mirror.gcr.io/eclipse-temurin:21-jdk AS build
 WORKDIR /workspace
 
 COPY gradlew gradle.properties settings.gradle.kts build.gradle.kts ./
@@ -13,7 +13,7 @@ COPY flink-integration ./flink-integration
 RUN chmod +x ./gradlew
 RUN ./gradlew :technical-analysis-flink:uberJar --no-daemon
 
-FROM flink:2.0.1-scala_2.12-java21
+FROM mirror.gcr.io/flink:2.0.1-scala_2.12-java21
 WORKDIR /opt/flink/usrlib
 COPY --from=build /workspace/technical-analysis-flink/build/libs/technical-analysis-flink-all.jar /opt/flink/usrlib/app.jar
 RUN mkdir -p /opt/flink/plugins/s3-fs-hadoop \
