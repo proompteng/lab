@@ -249,6 +249,21 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertEqual(
                 selection["proposal_model"]["proposal_stage"], "pre_replay"
             )
+            candidate_specs = [
+                json.loads(line)
+                for line in (output_dir / "candidate-specs.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line
+            ]
+            self.assertTrue(candidate_specs)
+            self.assertTrue(
+                all(
+                    spec["strategy_overrides"]["universe_symbols"]
+                    == ["AAPL", "NVDA", "MSFT", "AMAT"]
+                    for spec in candidate_specs
+                )
+            )
 
             portfolio = payload["best_portfolio_candidate"]
             self.assertTrue(portfolio["objective_scorecard"]["target_met"])
@@ -278,6 +293,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     for row in selection["rows"]
                 )
             )
+
+    def test_rejects_candidate_universe_larger_than_twelve_symbols(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            args = self._args(output_dir)
+            args.symbols = "A,B,C,D,E,F,G,H,I,J,K,L,M"
+
+            payload = runner.run_whitepaper_autoresearch_profit_target(args)
+
+        self.assertEqual(payload["status"], "invalid_universe")
+        self.assertEqual(payload["failure_reason"], "candidate_universe_too_large:13")
+        self.assertFalse((output_dir / "candidate-specs.jsonl").exists())
 
     def test_seed_recent_whitepapers_honors_top_k_and_exploration_budget(
         self,

@@ -106,6 +106,39 @@ class TestCandidateSpecs(TestCase):
             "45",
         )
 
+    def test_explicit_universe_symbols_override_profile_universes(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-chip-universe",
+            claims=[
+                {
+                    "claim_id": "claim-flow",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": "Order-flow clustering can predict short-horizon continuation.",
+                    "data_requirements": ["order_flow_imbalance", "spread_bps"],
+                    "confidence": "0.8",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards,
+            target_net_pnl_per_day=Decimal("300"),
+            universe_symbols=("nvda", " AMD ", "NVDA", "qcom"),
+        )
+
+        self.assertTrue(specs)
+        for spec in specs:
+            self.assertEqual(
+                spec.strategy_overrides["universe_symbols"],
+                ["NVDA", "AMD", "QCOM"],
+            )
+            self.assertEqual(
+                spec.to_vnext_experiment_payload()["template_overrides"][
+                    "universe_symbols"
+                ],
+                ["NVDA", "AMD", "QCOM"],
+            )
+
     def test_microbar_whitepaper_profiles_include_runtime_risk_controls(self) -> None:
         card = HypothesisCard(
             schema_version=HYPOTHESIS_CARD_SCHEMA_VERSION,

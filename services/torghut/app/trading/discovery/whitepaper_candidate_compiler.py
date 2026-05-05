@@ -288,11 +288,13 @@ def compile_whitepaper_candidate_specs(
     target_net_pnl_per_day: Decimal = Decimal("500"),
     family_template_dir: Path | None = None,
     seed_sweep_dir: Path | None = None,
+    universe_symbols: Sequence[str] = (),
 ) -> WhitepaperCandidateCompilation:
     candidate_specs = tuple(
         compile_candidate_specs(
             hypothesis_cards=hypothesis_cards,
             target_net_pnl_per_day=target_net_pnl_per_day,
+            universe_symbols=universe_symbols,
         )
     )
     blockers: list[CandidateCompilationBlocker] = []
@@ -332,6 +334,7 @@ def compile_claim_payloads_to_whitepaper_experiments(
     target_net_pnl_per_day: Decimal = Decimal("500"),
     family_template_dir: Path | None = None,
     seed_sweep_dir: Path | None = None,
+    universe_symbols: Sequence[str] = (),
 ) -> WhitepaperCandidateCompilation:
     cards = build_hypothesis_cards(
         source_run_id=run_id,
@@ -343,4 +346,5 @@ def compile_claim_payloads_to_whitepaper_experiments(
         target_net_pnl_per_day=target_net_pnl_per_day,
         family_template_dir=family_template_dir,
         seed_sweep_dir=seed_sweep_dir,
+        universe_symbols=universe_symbols,
     )
