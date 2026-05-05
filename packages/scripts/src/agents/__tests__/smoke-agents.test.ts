@@ -7,6 +7,7 @@ import {
   buildHelmArgs,
   buildPodHealthProbeArgs,
   createSmokeFailure,
+  defaultSmokeDatabaseImage,
   buildKubectlApplyArgs,
   buildKubectlApplyCrdsArgs,
   buildKubectlWaitForCrdsArgs,
@@ -64,6 +65,12 @@ describe('buildHelmArgs', () => {
 
     expect(args).not.toContain('image.digest=')
     expect(args).not.toContain('--create-namespace')
+  })
+})
+
+describe('smoke database image', () => {
+  it('uses the Google registry mirror for pgvector by default', () => {
+    expect(defaultSmokeDatabaseImage).toBe('mirror.gcr.io/pgvector/pgvector:pg16')
   })
 })
 

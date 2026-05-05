@@ -8,6 +8,7 @@ import process from 'node:process'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+export const defaultSmokeDatabaseImage = 'mirror.gcr.io/pgvector/pgvector:pg16'
 
 const runInherit = async (cmd: string[], env?: Record<string, string | undefined>) => {
   console.log(`$ ${cmd.join(' ')}`.trim())
@@ -512,7 +513,7 @@ const main = async () => {
   const dbName = process.env.AGENTS_DB_NAME ?? 'agents'
   const dbHost = process.env.AGENTS_DB_HOST ?? `${releaseName}-postgres`
   const dbPort = process.env.AGENTS_DB_PORT ?? '5432'
-  const dbImage = process.env.AGENTS_DB_IMAGE ?? 'pgvector/pgvector:pg16'
+  const dbImage = process.env.AGENTS_DB_IMAGE ?? defaultSmokeDatabaseImage
   const agentctlBin = process.env.AGENTCTL_BIN ?? 'agentctl'
   const kubeconfigPath =
     process.env.AGENTCTL_KUBECONFIG ?? process.env.KUBECONFIG ?? resolve(homedir(), '.kube', 'config')
@@ -550,6 +551,7 @@ const main = async () => {
       dbPassword = dbPassword ?? randomBytes(12).toString('hex')
       databaseUrl = `postgresql://${dbUser}:${dbPassword}@${dbHost}:${dbPort}/${dbName}?sslmode=disable`
     }
+    const dbProgressDeadlineSeconds = Math.max(600, Math.ceil(timeoutMs / 1000))
 
     log('Bootstrapping postgres for smoke test...')
     await applyYaml(
@@ -571,6 +573,7 @@ metadata:
   name: ${dbHost}
 spec:
   replicas: 1
+  progressDeadlineSeconds: ${dbProgressDeadlineSeconds}
   selector:
     matchLabels:
       app: ${dbHost}
@@ -599,7 +602,23 @@ spec:
 `,
     )
 
-    await run('kubectl', ['-n', namespace, 'rollout', 'status', `deploy/${dbHost}`, `--timeout=${timeoutFlag}`])
+    {
+      const exitCode = await runInherit([
+        'kubectl',
+        '-n',
+        namespace,
+        'rollout',
+        'status',
+        `deploy/${dbHost}`,
+        `--timeout=${timeoutFlag}`,
+      ])
+      if (exitCode !== 0) {
+        await dumpNamespaceDiagnostics(namespace, dbHost)
+        fatal(
+          `Command failed (${exitCode}): kubectl -n ${namespace} rollout status deploy/${dbHost} --timeout=${timeoutFlag}`,
+        )
+      }
+    }
 
     log('Ensuring required Postgres extensions for Jangar...')
     const podResult = await execCapture([
