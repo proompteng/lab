@@ -4,6 +4,7 @@ metadata:
   name: knative-serving
   namespace: knative-serving
 spec:
+  version: 1.21.0
   ingress:
     istio:
       enabled: true
