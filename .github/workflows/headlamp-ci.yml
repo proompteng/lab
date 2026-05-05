@@ -64,7 +64,7 @@ jobs:
           docker run --rm \
             -v "$PWD":/workspace \
             -w /workspace \
-            golang:1.24.13@sha256:d2d2bc1c84f7e60d7d2438a3836ae7d0c847f4888464e7ec9ba3a1339a1ee804 \
+            mirror.gcr.io/golang:1.24.13@sha256:d2d2bc1c84f7e60d7d2438a3836ae7d0c847f4888464e7ec9ba3a1339a1ee804 \
             sh services/headlamp/scripts/test-upstream.sh
 
       - name: Fetch pinned Headlamp upstream source

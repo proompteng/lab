@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1
 
-ARG IMAGE_BASE=alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412
+ARG IMAGE_BASE=mirror.gcr.io/alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412
+ARG IMAGE_GO=mirror.gcr.io/golang:1.24.13@sha256:d2d2bc1c84f7e60d7d2438a3836ae7d0c847f4888464e7ec9ba3a1339a1ee804
+ARG IMAGE_NODE=mirror.gcr.io/node:22@sha256:4ad2c2b350ab49fb637ab40a269ffe207c61818bb7eb3a4ea122001a0c605e1f
 ARG HEADLAMP_REF=v0.40.1
 ARG HEADLAMP_SHA=434a12263a6bd9d25f86f8bfa00d9992ac2672e3
 ARG LAB_GIT_SHA=dirty
@@ -19,7 +21,7 @@ RUN test -f /src/.codex-upstream-sha \
 
 FROM ${IMAGE_BASE} AS image-base
 
-FROM --platform=${BUILDPLATFORM} golang:1.24.13@sha256:d2d2bc1c84f7e60d7d2438a3836ae7d0c847f4888464e7ec9ba3a1339a1ee804 AS backend-build
+FROM --platform=${BUILDPLATFORM} ${IMAGE_GO} AS backend-build
 
 WORKDIR /headlamp
 
@@ -49,7 +51,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     cd ./backend && go build -o ./headlamp-server ./cmd/
 
-FROM --platform=${BUILDPLATFORM} node:22@sha256:4ad2c2b350ab49fb637ab40a269ffe207c61818bb7eb3a4ea122001a0c605e1f AS frontend-build
+FROM --platform=${BUILDPLATFORM} ${IMAGE_NODE} AS frontend-build
 
 WORKDIR /headlamp
 
