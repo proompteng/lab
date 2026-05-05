@@ -55,13 +55,13 @@ describe('control-plane-empirical-services', () => {
     const fetchMock = vi.fn(
       () =>
         new Promise<Response>((resolve) => {
-          setTimeout(() => resolve(buildJsonResponse(buildTorghutStatusPayload())), 2500)
+          setTimeout(() => resolve(buildJsonResponse(buildTorghutStatusPayload())), 8000)
         }),
     )
     vi.stubGlobal('fetch', fetchMock)
 
     const resultPromise = resolveEmpiricalServices()
-    await vi.advanceTimersByTimeAsync(2500)
+    await vi.advanceTimersByTimeAsync(8000)
     const result = await resultPromise
 
     expect(fetchMock).toHaveBeenCalledWith(

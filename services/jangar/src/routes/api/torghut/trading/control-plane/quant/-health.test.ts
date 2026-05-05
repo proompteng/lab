@@ -101,7 +101,7 @@ describe('getQuantHealthHandler', () => {
     expect(startTorghutQuantRuntime).toHaveBeenCalledTimes(1)
   })
 
-  it('suppresses missing-update alarm outside market hours', async () => {
+  it('suppresses missing-update alarm outside market hours and skips unscoped pipeline health', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-02-22T15:00:00.000Z')) // Sunday
     process.env.JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS = '15'
@@ -124,8 +124,31 @@ describe('getQuantHealthHandler', () => {
     expect(body.status).toBe('ok')
     expect(body.missingUpdateAlarm).toBe(false)
     expect(body.emptyLatestStoreAlarm).toBe(false)
+    expect(body.pipelineHealthScoped).toBe(false)
+    expect(body.pipelineHealthSkippedReason).toBe('account_and_window_required')
     expect(body.stageScopeOmitted).toBe(true)
+  })
+
+  it('skips unscoped pipeline health when only a window is requested', async () => {
+    const { getQuantHealthHandler } = await import('./health')
+
+    getQuantLatestStoreStatus.mockResolvedValueOnce({
+      updatedAt: '2026-02-22T14:58:00.000Z',
+      count: 7,
+    })
+
+    const response = await getQuantHealthHandler(
+      new Request('http://localhost/api/torghut/trading/control-plane/quant/health?window=1h'),
+    )
+
+    expect(response.status).toBe(200)
+    expect(getQuantLatestStoreStatus).toHaveBeenCalledWith({ window: '1h' })
+    expect(listLatestQuantPipelineHealth).not.toHaveBeenCalled()
+    const body = await response.json()
+    expect(body.pipelineHealthScoped).toBe(false)
+    expect(body.pipelineHealthSkippedReason).toBe('account_and_window_required')
     expect(body.stages).toEqual([])
+    expect(body.stageScopeOmitted).toBe(true)
   })
 
   it('returns degraded status when latest store is empty', async () => {
@@ -189,6 +212,7 @@ describe('getQuantHealthHandler', () => {
     expect(body.status).toBe('degraded')
     expect(body.missingUpdateAlarm).toBe(false)
     expect(body.maxStageLagSeconds).toBe(9)
+    expect(body.pipelineHealthScoped).toBe(true)
     expect(body.stageScopeOmitted).toBe(false)
   })
 

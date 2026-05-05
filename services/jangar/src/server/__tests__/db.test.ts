@@ -1,6 +1,9 @@
+import { EventEmitter } from 'node:events'
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { __private } from '../db'
+import { attachPostgresClientErrorLogger } from '../postgres-client-errors'
 
 describe('db ssl config', () => {
   const previousEnv: Record<string, string | undefined> = {}
@@ -70,5 +73,19 @@ describe('db ssl config', () => {
     expect(__private.shouldReuseSharedDb({ url: 'postgresql://user:pass@localhost:5432/db' })).toBe(true)
     expect(__private.shouldReuseSharedDb({ url: 'postgresql://other@localhost:5432/db' })).toBe(false)
     expect(__private.shouldReuseSharedDb({ createDb: () => ({}) as never })).toBe(false)
+  })
+
+  it('keeps checked-out postgres client errors from becoming process-fatal', () => {
+    const client = new EventEmitter()
+    const warnings: [string, unknown][] = []
+    const error = new Error('Connection terminated unexpectedly')
+
+    attachPostgresClientErrorLogger(client as never, (message, observedError) => {
+      warnings.push([message, observedError])
+    })
+
+    expect(client.listenerCount('error')).toBe(1)
+    expect(() => client.emit('error', error)).not.toThrow()
+    expect(warnings).toEqual([['[jangar] postgres client error', error]])
   })
 })

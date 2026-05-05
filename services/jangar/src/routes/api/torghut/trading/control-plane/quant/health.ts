@@ -60,8 +60,8 @@ export const getQuantHealthHandler = async (request: Request) => {
       lagSeconds !== null &&
       lagSeconds > (Number.isFinite(missingUpdateThresholdSeconds) ? missingUpdateThresholdSeconds : 15)
 
-    const stageScopeProvided = Boolean(strategyIdResult.value || (account.length > 0 && windowResult.value))
-    const stages = stageScopeProvided
+    const pipelineHealthScoped = account.length > 0 && windowResult.value !== undefined
+    const stages = pipelineHealthScoped
       ? await listLatestQuantPipelineHealth({
           strategyId: strategyIdResult.value,
           account,
@@ -92,11 +92,13 @@ export const getQuantHealthHandler = async (request: Request) => {
       runtimeComputeIntervalMs: runtime.computeIntervalMs,
       runtimeHeavyComputeIntervalMs: runtime.heavyComputeIntervalMs,
       runtimeStreamHeartbeatMs: runtime.streamHeartbeatMs,
-      stageScopeOmitted: !stageScopeProvided,
+      stageScopeOmitted: !pipelineHealthScoped,
       stageLookbackSeconds,
       stageMinAsOf,
       stages,
       maxStageLagSeconds,
+      pipelineHealthScoped,
+      pipelineHealthSkippedReason: pipelineHealthScoped ? undefined : 'account_and_window_required',
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Quant health failed'
