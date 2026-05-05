@@ -382,7 +382,7 @@ class Settings(BaseSettings):
         ),
     )
     trading_signal_staleness_alert_critical_reasons_raw: Optional[str] = Field(
-        default="cursor_ahead_of_stream,no_signals_in_window,universe_source_unavailable",
+        default="cursor_ahead_of_stream,universe_source_unavailable",
         alias="TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS",
         description="Comma-separated no-signal/staleness reasons treated as critical continuity breaches.",
     )

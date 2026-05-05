@@ -150,6 +150,10 @@ def _csv_symbols(value: object) -> list[str]:
     ]
 
 
+def _csv_values(value: object) -> set[str]:
+    return {item.strip() for item in str(value or "").split(",") if item.strip()}
+
+
 def _strategy_decimal(strategy: Mapping[str, object], key: str) -> Decimal | None:
     value = strategy.get(key)
     if value is None:
@@ -359,6 +363,31 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(
             sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS"),
             "NVDA,AMD,INTC",
+        )
+        self.assertEqual(
+            _csv_values(sim_env.get("TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS")),
+            {"cursor_ahead_of_stream", "universe_source_unavailable"},
+        )
+        self.assertNotIn(
+            "no_signals_in_window",
+            _csv_values(sim_env.get("TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS")),
+        )
+
+    def test_autonomy_config_does_not_treat_normal_no_signal_as_critical(self) -> None:
+        manifest = _load_yaml_mapping(
+            "argocd/applications/torghut/autonomy-configmap.yaml"
+        )
+        data = manifest.get("data")
+        self.assertIsInstance(data, Mapping)
+
+        critical_reasons = _csv_values(
+            cast(Mapping[str, object], data).get(
+                "TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS"
+            )
+        )
+        self.assertEqual(
+            critical_reasons,
+            {"cursor_ahead_of_stream", "universe_source_unavailable"},
         )
 
     def test_clickhouse_replicas_are_not_pinned_to_single_architecture(self) -> None:

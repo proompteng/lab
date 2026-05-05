@@ -775,6 +775,21 @@ class TestConfig(TestCase):
             {"cursor_ahead_of_stream", "universe_source_unavailable"},
         )
 
+    def test_default_signal_staleness_critical_reasons_exclude_normal_tail_states(
+        self,
+    ) -> None:
+        settings = Settings(
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut"
+        )
+        self.assertEqual(
+            settings.trading_signal_staleness_alert_critical_reasons,
+            {"cursor_ahead_of_stream", "universe_source_unavailable"},
+        )
+        self.assertNotIn(
+            "no_signals_in_window",
+            settings.trading_signal_staleness_alert_critical_reasons,
+        )
+
     def test_parses_market_closed_expected_no_signal_reasons(self) -> None:
         settings = Settings(
             TRADING_SIGNAL_MARKET_CLOSED_EXPECTED_REASONS=(
