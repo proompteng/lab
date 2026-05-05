@@ -1,26 +1,30 @@
 # Torghut Quant Release Verification
 
-Timestamp: 2026-05-05T16:04:00Z
+Timestamp: 2026-05-05T16:30:00Z
 Repository: `proompteng/lab`
 Base: `main`
 Release branch: `codex/swarm-torghut-quant-verify`
+Audit PR: #5496
 
 ## Gate Decision
 
-No-go for the remaining Torghut implementation PR.
+Go for the Torghut image promotion that became available during verification; no-go for the remaining large
+implementation PR.
 
-Open Torghut PRs at verification start:
+PR outcomes:
 
-- #5412, `feat(torghut): add evidence epochs and shared live gate`, was clean, non-draft, and green, but changed
-  3,165 total lines. The required large-diff Codex review did not post because `chatgpt-codex-connector` returned a
-  code-review usage-limit message. I did not merge it without a posted Codex review and resolved threads, or an explicit
-  maintainer waiver.
-- #5458, `chore(torghut): promote image 02ffd49f`, was conflict-blocked and superseded by the newer Torghut image
-  already promoted on `main`. I closed it as unsafe to repair because merging it would roll production backward.
-- #5467, `chore(torghut): promote image 0c28a908`, was conflict-blocked and superseded by the newer Torghut image
-  already promoted on `main`. I closed it as unsafe to repair because merging it would roll production backward.
-
-No Torghut PR was squash-merged during this verification pass.
+- #5494, `chore(torghut): promote image 2ea968af`, was a small GitOps image promotion with 44 total changed lines. It
+  was clean, comment-clean, and green across `torghut-ci`, `argo-lint`, `kubeconform`, semantic title, and semantic
+  commit checks. It was squash-merged at 2026-05-05T16:12:33Z with merge commit
+  `2dbe57a9872dac681d6f8cdce021996243f70197`.
+- #5412, `feat(torghut): add evidence epochs and shared live gate`, remains open and no-go. It is clean and green but
+  changes 3,165 total lines, so the large-diff Codex review gate applies. The Codex review request returned a
+  `chatgpt-codex-connector` usage-limit response instead of a posted review. I did not merge it without a posted Codex
+  review and resolved threads, or an explicit maintainer waiver.
+- #5458, `chore(torghut): promote image 02ffd49f`, was conflict-blocked and superseded by newer Torghut images. I closed
+  it as unsafe to repair because merging it would roll production backward.
+- #5467, `chore(torghut): promote image 0c28a908`, was conflict-blocked and superseded by newer Torghut images. I closed
+  it as unsafe to repair because merging it would roll production backward.
 
 ## PR Comment Updates
 
@@ -30,6 +34,8 @@ No Torghut PR was squash-merged during this verification pass.
   https://github.com/proompteng/lab/pull/5458.
 - #5467 closed with a superseded-release comment:
   https://github.com/proompteng/lab/pull/5467.
+- #5496 progress comment updated through `services/jangar/scripts/codex/codex-progress-comment.ts`:
+  https://github.com/proompteng/lab/pull/5496#issuecomment-4380989574.
 
 ## Rollout Evidence
 
@@ -40,50 +46,49 @@ an Argo CD credential with equivalent read access.
 
 GitOps/source parity:
 
+- `origin/main` now contains #5494 at `2dbe57a9872dac681d6f8cdce021996243f70197`.
 - `origin/main` manifest `argocd/applications/torghut/knative-service.yaml` points at
-  `registry.ide-newton.ts.net/lab/torghut@sha256:8e6702020cdfcb633ac2cf28324a8aed93943c25ee584baa766873e37e1dd99d`.
-- The active Torghut pod `torghut-00213-deployment-7bd7f7dcb9-sz9z4` was Running and Ready with user container image
-  digest `sha256:8e6702020cdfcb633ac2cf28324a8aed93943c25ee584baa766873e37e1dd99d`.
-- `origin/main` reports `TORGHUT_VERSION=v0.568.3-2-g90e95ffb0` and
-  `TORGHUT_COMMIT=90e95ffb0ddebf31d0eddd5e59195a8f00786f4f`, matching `/trading/status` from the live service.
+  `registry.ide-newton.ts.net/lab/torghut@sha256:6ee3ec45802d336b0e6626e942d380a9bb47bb375f0901012d80e653f76c127b`.
+- `origin/main` reports `TORGHUT_VERSION=v0.568.4-9-g2ea968afb` and
+  `TORGHUT_COMMIT=2ea968afb40aab74c57016e0f9ecfd3d37ccb05f`.
 
-Workload readiness:
+Workload readiness after #5494:
 
-- Torghut namespace pods were Running and ready at inspection, including active `torghut-00213`, active
-  `torghut-sim-00292`, ClickHouse, CNPG, Symphony, options catalog/enricher, TA, TA sim taskmanagers, and guardrail
-  exporters.
-- Live Torghut `/healthz`, `/readyz`, `/trading/status`, `/trading/health`, and
-  `/trading/profitability/runtime` returned HTTP 200.
-- Sim Torghut `/healthz` returned HTTP 200. Sim `/readyz` returned HTTP 200 with a slower 4.38 second response after an
-  earlier 5 second probe timeout.
-- Options catalog and options enricher `/healthz` endpoints returned HTTP 200.
+- Active live pod `torghut-00214-deployment-5c4d6f4697-pswkt` was Running and Ready on
+  `sha256:6ee3ec45802d336b0e6626e942d380a9bb47bb375f0901012d80e653f76c127b` with zero restarts.
+- Active sim pod `torghut-sim-00293-deployment-6bf6cdc698-mm22b` was Running and Ready on the same digest with zero
+  restarts.
+- Live Torghut `/readyz`, `/trading/status`, and `/trading/health` returned HTTP 200. `/trading/status` reported
+  `v0.568.4-9-g2ea968afb`, commit `2ea968afb40aab74c57016e0f9ecfd3d37ccb05f`, and active revision `torghut-00214`.
+- Sim Torghut `/readyz` returned HTTP 200.
+- `torghut-ta`, `torghut-ta-sim`, and their taskmanager pods were Running and ready after Flink reconciliation.
+- The #5494 migration job reconciled on the new digest and then disappeared after completion/cleanup.
+- Options catalog initially held readiness at HTTP 503, then warmed up and returned HTTP 200 on repeated `/readyz` polls.
+  The pod logged `options catalog provisional hot-set ready pages=1 contracts=10000 hot=160 warm=800`.
+- Options enricher `/readyz` returned HTTP 200 with a fresh success timestamp.
 
-Event and log notes:
+Event notes:
 
-- Recent Torghut events included liveness/readiness probe 503s for `torghut-ws` and `torghut-ws-options`, followed by
-  restarts. Both pods were Ready at inspection, with restart counts 6 and 2 respectively.
-- Recent events also included a Flink `torghut-ta-sim` `JobException` before returning to Running, plus repeated
-  PodDisruptionBudget selection warnings for ClickHouse.
-- `torghut-ws` logs showed Kafka produce success around the inspection time.
-- `torghut-ws-options` logs showed repeated Alpaca message decode warnings while continuing to run.
+- Expected transient rollout warnings appeared while old revisions and Flink jobs were replaced: startup/readiness probe
+  failures, a temporary `torghut-ta-sim` missing job, and old-pod readiness failures during shutdown.
+- Follow-up evidence showed active live/sim pods, TA, TA-sim, and options pods all Running and ready. No new stuck pod or
+  sustained readiness failure remained in the checked surface.
 
 ## Risk And Rollback
 
 Residual risks:
 
-- #5412 remains blocked by missing Codex review capacity, not by CI, conflicts, or review threads. It must not merge until
-  a Codex review posts and all threads resolve, unless a maintainer explicitly waives that gate.
-- Argo Application sync/health is not directly observable from this runner due RBAC. Workload and source parity are
-  available, but direct GitOps health remains an access blocker.
-- Streaming sidecars are currently Ready but have recent probe failures and restarts. Treat another liveness loop or
-  sustained readiness 503 as a rollout-health blocker.
-- Sim readiness is healthy with a longer response time. Treat sustained `/readyz` latency above probe timeout as a
-  rollback trigger for sim-facing promotion.
+- #5412 remains unmerged because Codex review capacity is exhausted. It should stay blocked until a Codex review posts
+  and all resulting threads resolve, or until a maintainer explicitly waives the gate.
+- Direct Argo Application CR reads are blocked for `system:serviceaccount:agents:agents-sa`; use a credential with
+  Application read access for direct sync inspection.
+- Streaming sidecars `torghut-ws` and `torghut-ws-options` were Ready during final inspection but had recent liveness
+  restarts before #5494. Treat another liveness loop or sustained readiness 503 as a rollout-health blocker.
 
 Rollback path:
 
-- For the current main rollout, revert the Torghut image promotion commit `f551d8c7c` or open a new GitOps promotion PR
-  to the last known-good Torghut image, then let Argo CD reconcile.
+- For #5494, revert merge commit `2dbe57a9872dac681d6f8cdce021996243f70197` or open a new GitOps promotion PR to the
+  previous known-good Torghut image, then let Argo CD reconcile.
 - If #5412 later merges and live submission health regresses, revert the shared live-gate code/config change or promote a
   prior image through the normal release PR flow. Preserve append-only evidence epoch, receipt, and profit-window records
   for audit continuity.
@@ -92,14 +97,14 @@ Rollback path:
 
 ## Owner Update Message
 
-Merge gate is no-go. #5412 is clean and green, but it changes 3,165 lines and the required Codex review did not post; the
-connector returned a usage-limit error, so I did not merge it. I closed #5458 and #5467 because main already runs a newer
-Torghut image, and repairing those conflicting PRs would have created a rollback. Current rollout evidence is mostly
-healthy at the workload layer: active Torghut live and sim pods are Running/Ready on the main manifest digest, live and
-sim readiness endpoints returned HTTP 200, and options health endpoints are 200. Residual risk is streaming-sidecar
-instability from recent `torghut-ws` and `torghut-ws-options` probe failures/restarts, plus Argo Application CR access is
-blocked for this runner. Next action is to restore Codex review capacity or provide an explicit maintainer waiver, then
-re-check #5412 review threads, required checks, and Argo/workload health before merge.
+Rollout gate is green for #5494. I squash-merged the small Torghut image promotion after all checks passed, and the
+cluster reconciled active live/sim pods to digest `6ee3ec45` with zero restarts. Live `/readyz`, `/trading/status`, and
+`/trading/health` are 200, sim `/readyz` is 200, TA and TA-sim are Running, and the options catalog holdback cleared after
+the hot-set worker logged provisional readiness for 160 hot and 800 warm contracts. #5412 remains a no-go because the
+required Codex review still has not posted due the connector usage-limit response. Argo Application CR sync/health remains
+an access blocker from this runner, so the direct evidence is source parity plus workload, endpoint, and event checks.
+Rollback for #5494 is a revert of `2dbe57a9872dac681d6f8cdce021996243f70197` or a GitOps promotion PR to the previous
+known-good image.
 
 ## Next Action
 
