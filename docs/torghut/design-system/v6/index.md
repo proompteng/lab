@@ -11,6 +11,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `94-torghut-session-edge-ledger-and-cost-aware-capital-allocator-2026-05-05.md`
+  - `docs/agents/designs/90-jangar-proof-capacity-leases-and-route-slo-governor-2026-05-05.md`
   - `93-torghut-recovery-budget-profit-ladder-and-session-cost-ledger-2026-05-05.md`
   - `docs/agents/designs/89-jangar-action-settlement-windows-and-recovery-budget-governor-2026-05-05.md`
   - `93-torghut-evidence-priced-hypothesis-market-and-capital-ladder-2026-05-05.md`
