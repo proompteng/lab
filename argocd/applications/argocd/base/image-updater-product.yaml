@@ -4,7 +4,6 @@ metadata:
   name: product-image-updater
   namespace: argocd
 spec:
-  namespace: argocd
   commonUpdateSettings:
     updateStrategy: semver
   writeBackConfig:
