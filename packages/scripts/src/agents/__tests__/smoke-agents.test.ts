@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { parseAllDocuments } from 'yaml'
 
 import {
   buildHelmArgs,
@@ -147,6 +148,57 @@ describe('smoke fixtures', () => {
 
     expect(fixture).toContain('defaults:')
     expect(fixture).toContain('systemPrompt:')
+  })
+})
+
+const readYamlObjects = (path: string) =>
+  parseAllDocuments(readFileSync(resolve(process.cwd(), path), 'utf8'))
+    .map((document) => document.toJSON())
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+
+const objectAt = (value: unknown, key: string) =>
+  value && typeof value === 'object' ? ((value as Record<string, unknown>)[key] as unknown) : undefined
+
+describe('scheduled AgentRun templates', () => {
+  it('disable retention so schedules can always resolve their template targets', () => {
+    const manifestPaths = [
+      'argocd/applications/agents/swarm-agentrun-templates.yaml',
+      'argocd/applications/agents/swarm-instances.yaml',
+      'argocd/applications/agents/torghut-market-context-batch.yaml',
+    ]
+    const manifests = manifestPaths.flatMap(readYamlObjects)
+    const scheduledTemplateNames = new Set<string>()
+    for (const schedule of manifests.filter((manifest) => manifest.kind === 'Schedule')) {
+      const name = objectAt(objectAt(objectAt(schedule, 'spec'), 'targetRef'), 'name')
+      if (typeof name === 'string' && name.endsWith('-template')) {
+        scheduledTemplateNames.add(name)
+      }
+    }
+    for (const swarm of manifests.filter((manifest) => manifest.kind === 'Swarm')) {
+      const execution = objectAt(objectAt(swarm, 'spec'), 'execution')
+      if (!execution || typeof execution !== 'object') continue
+      for (const stage of Object.values(execution)) {
+        const name = objectAt(objectAt(stage, 'targetRef'), 'name')
+        if (typeof name === 'string' && name.endsWith('-template')) {
+          scheduledTemplateNames.add(name)
+        }
+      }
+    }
+    const agentRunTemplates = new Map(
+      manifests
+        .filter((manifest) => manifest.kind === 'AgentRun')
+        .map((agentRun) => [objectAt(objectAt(agentRun, 'metadata'), 'name'), agentRun])
+        .filter((entry): entry is [string, Record<string, unknown>] => typeof entry[0] === 'string'),
+    )
+
+    expect([...scheduledTemplateNames].sort()).toEqual([...agentRunTemplates.keys()].sort())
+    for (const name of scheduledTemplateNames) {
+      const template = agentRunTemplates.get(name)
+      expect(objectAt(objectAt(template, 'spec'), 'ttlSecondsAfterFinished')).toBe(0)
+      expect(objectAt(objectAt(objectAt(template, 'metadata'), 'annotations'), 'agents.proompteng.ai/template')).toBe(
+        'true',
+      )
+    }
   })
 })
 

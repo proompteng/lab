@@ -410,6 +410,61 @@ describe('agents controller startup', () => {
     expect(messages.some((message) => message.includes('reconcile_submitted'))).toBe(true)
   })
 
+  it('keeps annotated AgentRun templates inert and clears stale runtime state', async () => {
+    const kube = buildKube({
+      list: vi.fn(async (resource: string, namespace: string, selector: string) => {
+        if (
+          resource === 'jobs.batch' &&
+          namespace === 'agents' &&
+          selector === 'agents.proompteng.ai/agent-run=run-template'
+        ) {
+          return { items: [{ metadata: { name: 'run-template-step-1-attempt-1' } }] }
+        }
+        return { items: [] }
+      }),
+    })
+    const agentRun = buildAgentRun({
+      metadata: {
+        name: 'run-template',
+        namespace: 'agents',
+        generation: 7,
+        finalizers: [finalizer],
+        annotations: {
+          'agents.proompteng.ai/template': 'true',
+        },
+      },
+      status: {
+        phase: 'Failed',
+        runtimeRef: { type: 'workflow', name: 'run-template', runName: 'run-template', namespace: 'agents' },
+        conditions: [
+          {
+            type: 'Failed',
+            status: 'True',
+            reason: 'BackoffLimitExceeded',
+            message: 'stale template execution failed',
+            lastTransitionTime: '2026-01-20T00:00:00.000Z',
+          },
+        ],
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    expect(kube.delete).toHaveBeenCalledWith('job', 'run-template-step-1-attempt-1', 'agents', {
+      wait: false,
+    })
+    expect(kube.patch).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-template', 'agents', {
+      metadata: { finalizers: [] },
+    })
+    expect(kube.apply).not.toHaveBeenCalled()
+
+    const status = getLastStatus(kube as never)
+    expect(status.phase).toBe('Template')
+    expect(findCondition(status, 'Ready')?.status).toBe('True')
+    expect(findCondition(status, 'Ready')?.reason).toBe('Template')
+    expect(findCondition(status, 'Failed')?.status).not.toBe('True')
+  })
+
   it('gates debug adoption logs behind the debug env flag', async () => {
     stopAgentsController()
     const previousDebug = process.env.JANGAR_AGENTS_CONTROLLER_DEBUG_LOGS
