@@ -82,7 +82,7 @@ For fast-path-only decisions, the system may skip LLM invocation but still emits
 Required runtime env:
 
 - `JANGAR_BASE_URL`
-- `LLM_MODEL=gpt-5.3-codex-spark`
+- `LLM_MODEL=gpt-5.5`
 - `LLM_DSPY_ARTIFACT_HASH`
 - `LLM_DSPY_PROGRAM_NAME`
 - `LLM_DSPY_SIGNATURE_VERSION`

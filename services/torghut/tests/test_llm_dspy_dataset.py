@@ -393,7 +393,7 @@ class TestLLMDSPyDatasetBuilder(TestCase):
 
         review = LLMDecisionReview(
             trade_decision_id=decision.id,
-            model="gpt-5.4",
+            model="gpt-5.5",
             prompt_version="v1",
             input_json=request_json,
             response_json={"verdict": verdict, "rationale": "ok"},

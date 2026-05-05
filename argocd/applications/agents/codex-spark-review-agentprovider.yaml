@@ -53,12 +53,11 @@ spec:
     CODEX_STAGE: "{{inputs.stage}}"
     CODEX_CONFIG: /root/.codex/config.toml
     HOME: /root
-    CODEX_MODEL: gpt-5.3-codex-spark
-    CODEX_MODEL_FALLBACKS: gpt-5.4
+    CODEX_MODEL: gpt-5.5
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
-        model = "gpt-5.3-codex-spark"
+        model = "gpt-5.5"
         model_reasoning_summary = "none"
         model_reasoning_effort = "xhigh"
         model_verbosity = "medium"

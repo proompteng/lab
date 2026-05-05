@@ -4,7 +4,7 @@
 
 - Date: `2026-02-27`
 - Maturity: `production design + implementation plan`
-- Scope: finalize DSPy runtime as the only LLM review path, route DSPy live inference through Jangar OpenAI-compatible completions (`gpt-5.3-codex-spark`), and remove legacy runtime LLM call paths without feature-flag gating
+- Scope: finalize DSPy runtime as the only LLM review path, route DSPy live inference through Jangar OpenAI-compatible completions (`gpt-5.5`), and remove legacy runtime LLM call paths without feature-flag gating
 
 ## Objective
 
@@ -35,7 +35,7 @@ Complete the DSPy rollout so Torghut trading review is production-operational wi
 - Torghut runtime env includes:
   - `JANGAR_BASE_URL=http://jangar.jangar.svc.cluster.local`
   - `LLM_PROVIDER=jangar`
-  - `LLM_MODEL=gpt-5.3-codex-spark`
+  - `LLM_MODEL=gpt-5.5`
 - Legacy review path calls Jangar `POST /openai/v1/chat/completions`.
 
 ### 4. DSPy workflow persistence and lane contracts exist
@@ -82,7 +82,7 @@ flowchart TD
 ### Required runtime contract
 
 - `JANGAR_BASE_URL`
-- `LLM_MODEL` (pinned to `gpt-5.3-codex-spark`)
+- `LLM_MODEL` (pinned to `gpt-5.5`)
 - `LLM_DSPY_ARTIFACT_HASH`
 - `LLM_DSPY_PROGRAM_NAME`
 - `LLM_DSPY_SIGNATURE_VERSION`

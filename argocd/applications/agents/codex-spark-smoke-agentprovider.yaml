@@ -11,8 +11,8 @@ spec:
       PROMPT_FILE="$(mktemp /tmp/codex-smoke-prompt.XXXXXX.txt)"
       EVENT_FILE="/workspace/run.json"
       DEFAULT_CONFIG="/root/.codex/config.toml"
-      PRIMARY_MODEL="${CODEX_MODEL:-gpt-5.3-codex-spark}"
-      FALLBACK_MODEL="${CODEX_MODEL_FALLBACKS:-gpt-5.4}"
+      PRIMARY_MODEL="${CODEX_MODEL:-gpt-5.5}"
+      FALLBACK_MODEL="${CODEX_MODEL_FALLBACKS:-}"
       LOG_PATH="/workspace/.agentrun/smoke/codex-exec.log"
 
       python3 - "$EVENT_FILE" "$PROMPT_FILE" <<'PY'
@@ -128,12 +128,11 @@ spec:
     CODEX_CONFIG: /root/.codex/config.toml
     CODEX_DISABLE_RESUME: "1"
     CODEX_MAX_SESSION_ATTEMPTS: "1"
-    CODEX_MODEL: gpt-5.3-codex-spark
-    CODEX_MODEL_FALLBACKS: gpt-5.4
+    CODEX_MODEL: gpt-5.5
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
-        model = "gpt-5.3-codex-spark"
+        model = "gpt-5.5"
         model_reasoning_summary = "none"
         model_reasoning_effort = "xhigh"
         model_verbosity = "medium"

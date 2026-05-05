@@ -8,7 +8,7 @@ spec:
   memoryRef:
     name: default-memory
   config:
-    model: gpt-5.4
+    model: gpt-5.5
   env:
     - name: CODEX_MODE
       value: autonomous

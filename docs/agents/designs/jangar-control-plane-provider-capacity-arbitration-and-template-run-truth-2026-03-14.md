@@ -7,7 +7,7 @@ Docs index: [README](../README.md)
 ## Summary
 
 As of 2026-03-14, live `torghut-swarm-discover-template`, `torghut-swarm-plan-template`, and
-`torghut-swarm-verify-template` AgentRuns are failing within seconds on `gpt-5.3-codex-spark` usage-limit errors,
+`torghut-swarm-verify-template` AgentRuns are failing within seconds on `gpt-5.5` usage-limit errors,
 while the same control plane still runs `jangar-swarm-*` templates against the shared `codex-spark` provider.
 Despite those failures, `GET /api/agents/control-plane/status?namespace=agents` reports:
 
@@ -63,8 +63,8 @@ This document focuses on the live March 14 gap that remains unresolved:
 
 - `kubectl get job -n agents torghut-swarm-discover-template-step-1-attempt-1 -o yaml` shows:
   - `agents.proompteng.ai/provider=codex-spark`
-  - `CODEX_MODEL=gpt-5.3-codex-spark`
-  - `CODEX_MODEL_FALLBACKS=gpt-5.4`
+  - `CODEX_MODEL=gpt-5.5`
+  - `CODEX_MODEL_FALLBACKS=gpt-5.5`
   - `backoffLimit: 0`
   - `status.failed: 1`
 - `kubectl logs -n agents job/torghut-swarm-discover-template-step-1-attempt-1 --tail=200` includes:
@@ -81,8 +81,8 @@ This document focuses on the live March 14 gap that remains unresolved:
 - `argocd/applications/agents/swarm-instances.yaml` defines both `jangar-control-plane` and `torghut-quant` with
   hourly `discover`, `plan`, `implement`, and `verify` cadences, but no provider-lane reservation or weight metadata.
 - `argocd/applications/agents/codex-spark-agentprovider.yaml` configures one shared primary/fallback pair:
-  - primary `gpt-5.3-codex-spark`
-  - fallback `gpt-5.4`
+  - primary `gpt-5.5`
+  - fallback `gpt-5.5`
 
 ### Status and readiness evidence
 
@@ -178,7 +178,7 @@ Define a lane key that reflects the actual scarce resource:
 
 Example lane:
 
-- `codex-spark / gpt-5.3-codex-spark / xhigh / workflow`
+- `codex-spark / gpt-5.5 / xhigh / workflow`
 
 Persist lane state in a durable store owned by the control plane. A database table is the preferred source of truth
 because:

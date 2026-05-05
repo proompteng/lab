@@ -92,6 +92,7 @@ kubectl exec -n jangar deploy/jangar -c app -- sh -c 'curl -fsS "http://127.0.0.
 ```
 
 Acceptance thresholds:
+
 - `failed|partial` batch outcomes <= 40% over 30 minutes.
 - `skipped_market_closed` outcomes should be zero during market-open windows.
 
@@ -110,7 +111,9 @@ Acceptance thresholds:
 3. If Jangar revision is missing `torghut-market-context-agents`:
 
 - Roll out a newer Jangar image/revision containing market-context agent ingest code before further debugging.
+
 4. If `JangarTorghutMarketContextSkippedDuringMarketHours` is active:
+
 - Verify Torghut `/trading/status` `market_session_open` semantics and timezone.
 - Validate pre-open probe schedules are not running after market open due to stale cron/controller time.
 - Treat as canary blocker until skip outcome returns to expected pre-open windows only.
@@ -120,27 +123,31 @@ Acceptance thresholds:
 Use this sequence when dispatch is active but snapshots do not persist:
 
 1. AgentRun runtime service-account key mismatch:
+
 - Symptom: `AgentRun.spec.runtime.config.serviceAccountName` is set, but jobs still launch with default SA.
 - Check: `kubectl get agentrun -n agents <name> -o json | jq '.spec.runtime.config'`
 - Fix landed: runtime resolver accepts both `serviceAccount` and `serviceAccountName`.
 
 2. TokenReview TLS verification failure in Jangar:
+
 - Symptom in Jangar logs: `unable to verify the first certificate` during `service_account_token_review`.
 - Check:
   `kubectl logs -n jangar deploy/jangar -c app --since=30m | rg "market_context_ingest_auth|unable to verify"`
 - Fix landed: fallback TokenReview via direct in-cluster HTTPS (`/apis/authentication.k8s.io/v1/tokenreviews`) using mounted SA token + CA.
 
 3. `codex-spark` provider incompatibility:
+
 - Symptom in agent job logs:
   - `Unsupported parameter: 'reasoning.summary'`
   - `refresh_token_reused`
 - Check:
   `kubectl logs -n agents job/<market-context-job> --tail=200`
 - Fix landed:
-  - `model_reasoning_summary = "none"` for `gpt-5.3-codex-spark`.
+  - `model_reasoning_summary = "none"` for `gpt-5.5`.
   - Provider bootstrap rewrites mounted auth to API-key mode before `codex exec`.
 
 4. Fundamentals/news callback payload malformed:
+
 - Symptom: callback `POST /api/torghut/market-context/ingest` returns `400` from job script.
 - Fix landed: implementation prompts now require Python JSON serialization + `json.tool` and `jq` validation before callback, plus explicit HTTP status/body checks.
 
