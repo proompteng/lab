@@ -352,6 +352,13 @@ export const listLatestQuantPipelineHealth = async (params: {
   if (params.account) filters.push(sql`account = ${params.account}`)
   if (params.window) filters.push(sql`details->>'window' = ${params.window}`)
   const whereSql = filters.length > 0 ? sql`where ${sql.join(filters, sql` and `)}` : sql``
+  const scopedByAccountAndWindow = Boolean(params.account && params.window)
+  const latestPartitionSql = scopedByAccountAndWindow
+    ? sql`account, (details->>'window'), strategy_id, stage`
+    : sql`strategy_id, account, stage, coalesce(details->>'window', '')`
+  const latestOrderSql = scopedByAccountAndWindow
+    ? sql`account asc, (details->>'window') asc, strategy_id asc, stage asc, as_of desc`
+    : sql`strategy_id asc, account asc, stage asc, coalesce(details->>'window', '') asc, as_of desc`
   const result = await sql<{
     strategy_id: string
     account: string
@@ -361,25 +368,20 @@ export const listLatestQuantPipelineHealth = async (params: {
     as_of: Date | string
     details: Record<string, unknown> | null
   }>`
-    with ranked as (
-      select
+    select strategy_id, account, stage, ok, lag_seconds, as_of, details
+    from (
+      select distinct on (${latestPartitionSql})
         strategy_id,
         account,
         stage,
         ok,
         lag_seconds,
         as_of,
-        details,
-        row_number() over (
-          partition by strategy_id, account, stage, coalesce(details->>'window', '')
-          order by as_of desc
-        ) as rn
+        details
       from torghut_control_plane.quant_pipeline_health
       ${whereSql}
-    )
-    select strategy_id, account, stage, ok, lag_seconds, as_of, details
-    from ranked
-    where rn = 1
+      order by ${latestOrderSql}
+    ) latest
     order by stage asc, strategy_id asc, account asc
   `.execute(db)
 

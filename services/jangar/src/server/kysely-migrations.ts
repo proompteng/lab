@@ -27,6 +27,7 @@ import * as agentsControlPlaneComponentHeartbeatsMigration from '~/server/migrat
 import * as torghutSimulationControlPlaneMigration from '~/server/migrations/20260312_torghut_simulation_control_plane'
 import * as torghutSimulationControlPlaneV2Migration from '~/server/migrations/20260312_torghut_simulation_control_plane_v2'
 import * as embeddingDimension4096Migration from '~/server/migrations/20260418_embedding_dimension_4096'
+import * as torghutQuantPipelineHealthWindowIndexMigration from '~/server/migrations/20260505_torghut_quant_pipeline_health_window_index'
 
 type MigrationMap = Record<string, Migration>
 
@@ -66,6 +67,7 @@ const migrations: MigrationMap = {
   '20260312_torghut_simulation_control_plane': torghutSimulationControlPlaneMigration,
   '20260312_torghut_simulation_control_plane_v2': torghutSimulationControlPlaneV2Migration,
   '20260418_embedding_dimension_4096': embeddingDimension4096Migration,
+  '20260505_torghut_quant_pipeline_health_window_index': torghutQuantPipelineHealthWindowIndexMigration,
 }
 
 export const getRegisteredMigrationNames = () => Object.keys(migrations).sort()
