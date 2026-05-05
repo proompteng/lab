@@ -1,9 +1,10 @@
 # syntax=docker/dockerfile:1.7
 ARG BUN_VERSION=1.3.13
+ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 ARG NODE_VERSION=24.11.1
 ARG CODEX_VERSION=latest
 
-FROM oven/bun:${BUN_VERSION} AS deps
+FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS deps
 WORKDIR /app
 ENV HUSKY=0
 
@@ -24,7 +25,7 @@ RUN bun run --cwd packages/codex build
 RUN bun run --cwd packages/otel build
 RUN bun run --cwd services/symphony tsc
 
-FROM oven/bun:${BUN_VERSION} AS runner
+FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS runner
 ARG NODE_VERSION
 ARG CODEX_VERSION
 WORKDIR /app
