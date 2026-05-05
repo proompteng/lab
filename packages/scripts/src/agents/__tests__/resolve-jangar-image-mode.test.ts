@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'bun:test'
 
 import { classifyJangarImageMode } from '../resolve-jangar-image-mode'
@@ -59,5 +61,14 @@ describe('classifyJangarImageMode', () => {
     const result = classifyJangarImageMode(['packages/temporal-bun-sdk/src/index.ts'])
     expect(result.mode).toBe('build-local-image')
     expect(result.matchedPaths).toEqual(['packages/temporal-bun-sdk/src/index.ts'])
+  })
+})
+
+describe('agents-ci workflow local Jangar image build', () => {
+  it('uses the mirrored Bun base image for local CI rebuilds', () => {
+    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+
+    expect(workflow).toContain('--build-arg "BUN_BASE_IMAGE=mirror.gcr.io/oven/bun" \\')
+    expect(workflow).not.toContain('BUN_BASE_IMAGE=docker.io/oven/bun')
   })
 })

@@ -6,10 +6,13 @@ import { parseAllDocuments } from 'yaml'
 import {
   buildHelmArgs,
   buildPodHealthProbeArgs,
+  buildPostgresBootstrapManifest,
+  buildPostgresExtensionArgs,
   createSmokeFailure,
   buildKubectlApplyArgs,
   buildKubectlApplyCrdsArgs,
   buildKubectlWaitForCrdsArgs,
+  defaultPostgresImage,
   isPermissionDeniedKubectlError,
   isTransientKubectlError,
 } from '../smoke-agents'
@@ -142,12 +145,63 @@ describe('buildPodHealthProbeArgs', () => {
   })
 })
 
+describe('postgres smoke bootstrap', () => {
+  it('uses a mirrored pgvector image and a bounded rollout deadline', () => {
+    const manifests = parseAllDocuments(
+      buildPostgresBootstrapManifest({
+        dbHost: 'agents-ci-postgres',
+        dbPort: '5432',
+        dbImage: defaultPostgresImage,
+        dbUser: 'agents',
+        dbPassword: 'secret',
+        dbName: 'agents',
+      }),
+    ).map((document) => document.toJSON()) as Record<string, unknown>[]
+
+    const deployment = manifests.find((manifest) => manifest.kind === 'Deployment')
+    const spec = objectAt(deployment, 'spec') as Record<string, unknown>
+    const podSpec = objectAt(objectAt(objectAt(spec, 'template'), 'spec'), 'containers') as Record<string, unknown>[]
+
+    expect(defaultPostgresImage).toBe('mirror.gcr.io/pgvector/pgvector:pg16')
+    expect(objectAt(spec, 'progressDeadlineSeconds')).toBe(180)
+    expect(objectAt(podSpec[0], 'image')).toBe(defaultPostgresImage)
+    expect(objectAt(podSpec[0], 'imagePullPolicy')).toBe('IfNotPresent')
+  })
+
+  it('execs Postgres extension setup in the selected namespace', () => {
+    expect(buildPostgresExtensionArgs('agents-ci', 'agents-ci-postgres-abc', 'agents', 'agents')).toEqual([
+      'kubectl',
+      '-n',
+      'agents-ci',
+      'exec',
+      'agents-ci-postgres-abc',
+      '--',
+      'psql',
+      '-U',
+      'agents',
+      '-d',
+      'agents',
+      '-v',
+      'ON_ERROR_STOP=1',
+      '-c',
+      'CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pgcrypto;',
+    ])
+  })
+})
+
 describe('smoke fixtures', () => {
   it('keeps the smoke agent fixture aligned with the system prompt policy', () => {
     const fixture = readFileSync(resolve(process.cwd(), 'charts/agents/examples/agent-smoke.yaml'), 'utf8')
 
     expect(fixture).toContain('defaults:')
     expect(fixture).toContain('systemPrompt:')
+  })
+
+  it('keeps workflow smoke workload pulls off Docker Hub', () => {
+    const fixture = readFileSync(resolve(process.cwd(), 'charts/agents/examples/agentrun-workflow-smoke.yaml'), 'utf8')
+
+    expect(fixture).toContain('image: mirror.gcr.io/library/busybox:1.36')
+    expect(fixture).not.toContain('image: busybox:')
   })
 })
 

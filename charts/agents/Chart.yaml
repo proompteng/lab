@@ -5,7 +5,7 @@ home: https://github.com/proompteng/charts/tree/main/charts/agents
 sources:
   - https://github.com/proompteng/charts/tree/main/charts/agents
 type: application
-version: 0.9.7
+version: 0.9.8
 appVersion: '0.9.0'
 icon: https://avatars.githubusercontent.com/u/234536857
 keywords:
