@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: 49e27b93
-  digest: sha256:9a28668ea8b1b63ee9afa3e1ae99dac5fb602b606740e524f38b8ed9cb31775a
+  tag: d17e0457
+  digest: sha256:90b75799cea530ef9b02736db3ae122d28c6ca4448a92e9305c27cf1b9ff7309
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,16 +11,16 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: 49e27b93
-    digest: sha256:e5eb00413c3930968b7ded1bbca4911fca87be71e0f43026dd60dfa7d6dc6030
+    tag: d17e0457
+    digest: sha256:cb354f85e3a405b27d1b7ae6fdc1cdd9c76853c6b08978f3be0fed0483ff99c6
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: 49e27b93
-    digest: sha256:9a28668ea8b1b63ee9afa3e1ae99dac5fb602b606740e524f38b8ed9cb31775a
+    tag: d17e0457
+    digest: sha256:90b75799cea530ef9b02736db3ae122d28c6ca4448a92e9305c27cf1b9ff7309
 argocdHooks:
   enabled: true
   image:
@@ -119,6 +119,22 @@ rbac:
         - ""
       resources:
         - services
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - apps
+      resources:
+        - deployments
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - argoproj.io
+      resources:
+        - applications
       verbs:
         - get
         - list

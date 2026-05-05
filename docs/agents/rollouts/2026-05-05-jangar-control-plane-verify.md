@@ -5,8 +5,60 @@ Swarm: jangar-control-plane
 Branch: codex/swarm-jangar-control-plane-verify
 Base: main
 
+## 2026-05-05 22:23Z Release Update
+
+- #5570 `fix(jangar): index torghut quant health lookup`
+  - Selected as the unblock-first Jangar PR because it was a small production fix under the large-diff review threshold.
+  - Merged at 2026-05-05T22:05:28Z as `49e27b93b72038f9a3a4bee28d9e8e0d041543a3`.
+  - Required PR checks were pass/skipped only before merge: semantic title, semantic commits, `check_changed_files`,
+    `jangar-ci / lint-and-typecheck`, `agents-ci / validate`, and `agents-ci / integration`.
+  - `agents-ci / integration` passed in 13m28s.
+- #5574 `chore(jangar): promote image 49e27b93`
+  - Automated GitOps promotion for #5570.
+  - Merged at 2026-05-05T22:16:24Z as `dd5ca99046541415e04908e4ac675424558297e6`.
+  - Promoted Jangar image tag `49e27b93` with digest
+    `sha256:9a28668ea8b1b63ee9afa3e1ae99dac5fb602b606740e524f38b8ed9cb31775a`.
+  - PR checks were pass/skipped only: semantic title, semantic commits, argo-lint, kubeconform, deploy enable, and
+    `jangar-ci / lint-and-typecheck`.
+  - Post-merge `jangar-post-deploy-verify / verify` passed at 2026-05-05T22:17:53Z after deployment digest health
+    verification and Temporal routing sync.
+  - Main `agents-ci` for `49e27b93` passed in 13m28s.
+- Rollout evidence at 2026-05-05T22:20:55Z:
+  - Pod `jangar-ff5f988cd-rs2rp` was `2/2 Running` on `talos-192-168-1-85` with zero restarts.
+  - Container image ID matched
+    `registry.ide-newton.ts.net/lab/jangar@sha256:9a28668ea8b1b63ee9afa3e1ae99dac5fb602b606740e524f38b8ed9cb31775a`.
+  - Pod conditions were `Ready=True` and `ContainersReady=True` since 2026-05-05T22:17:45Z.
+  - `/health` returned ok.
+  - `/api/agents/control-plane/status?namespace=agents` was reachable; database migration consistency was healthy,
+    with latest registered/applied migration `20260505_torghut_quant_pipeline_health_window_index`.
+  - Jangar events showed successful scale-up, image pull, and start for `jangar-ff5f988cd-rs2rp`; one transient startup
+    readiness miss occurred before the pod became Ready.
+- Residual risk:
+  - Control-plane dependency quorum remained blocked by stale empirical jobs and intermittent Torghut readiness/status
+    degradation; direct Torghut `/trading/status` was reachable on revision `torghut-00224`, but `/readyz` returned 503.
+  - Jangar app logs in the stability window included control-plane heartbeat timeout warnings.
+  - These are runtime dependency risks, not evidence of a failed #5570/#5574 image rollout.
+- Rollback path:
+  - If Jangar readiness, digest verification, or `/health` regresses, open a GitOps PR reverting #5574 changes in
+    `argocd/applications/jangar/kustomization.yaml`, `argocd/applications/jangar/deployment.yaml`, and
+    `argocd/applications/agents/values.yaml` back to the prior `01717359` promotion.
+  - Prior known-good Jangar digest before #5574 was
+    `sha256:a74d815597125bd164f7d4862af98e0f8bf1e50df765ace94d47b66566fb0f85`.
+- Remaining merge gates:
+  - #5454 is clean with pass/skipped checks but remains no-go because it exceeds 1,000 changed lines and no Codex
+    review has posted after usage-limit responses.
+  - #5412 is clean with pass/skipped checks but remains no-go for the same large-diff Codex review blocker.
+
 ## Release PR Inventory
 
+- #5570 `fix(jangar): index torghut quant health lookup`
+  - Selected for Jangar release attention.
+  - State: merged at 2026-05-05T22:05:28Z as `49e27b93b72038f9a3a4bee28d9e8e0d041543a3`.
+  - Rollout: promoted by #5574 and verified healthy by post-deploy verifier and direct pod/HTTP checks.
+- #5574 `chore(jangar): promote image 49e27b93`
+  - Selected as the GitOps promotion PR for #5570.
+  - State: merged at 2026-05-05T22:16:24Z as `dd5ca99046541415e04908e4ac675424558297e6`.
+  - Rollout: `jangar-post-deploy-verify / verify` passed.
 - #5454 `feat(jangar): surface failure-domain lease holdbacks`
   - Selected for Jangar release attention.
   - State: open, non-draft, `MERGEABLE`, `CLEAN`.

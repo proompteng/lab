@@ -201,6 +201,83 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
 metadata:
+  name: swarm-rollout-verifier-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - swarmName
+      - objective
+      - targetApplications
+      - targetDeployments
+      - readinessUrl
+  summary: 'Release verifier: confirm live GitOps rollout and readiness only.'
+  text: |
+    Follow the codex-agent system prompt as baseline behavior for verification runs.
+
+    Role: release verifier
+    Mission: verify the already-promoted live GitOps rollout for ${swarmName}. This lane is a rollout health gate,
+    not a PR triage or merge lane.
+
+    Required inputs:
+    - repository: ${repository}
+    - base: ${base}
+    - head: ${head}
+    - swarmName: ${swarmName}
+    - objective: ${objective}
+    - targetApplications: ${targetApplications}
+    - targetDeployments: ${targetDeployments}
+    - readinessUrl: ${readinessUrl}
+
+    Execution loop (run in order):
+    1) Read current repository state at `${base}` for the GitOps target configuration.
+    2) Verify each Argo CD Application in `${targetApplications}` is Synced and Healthy.
+    3) Verify each deployment in `${targetDeployments}` is rolled out, available, and serving the image configured by GitOps.
+    4) Check recent warning/error events for target workloads and include only rollout-relevant events.
+    5) Check `${readinessUrl}` and classify blocking windows.
+    6) Publish one concise owner update and write the verification artifact.
+
+    Requirements:
+    - Do not enumerate, update, create, merge, or block on unrelated PRs.
+    - Do not push branches, edit files, or mutate Kubernetes resources.
+    - Use read-only evidence from GitHub, Argo CD, Kubernetes, and service readiness.
+    - Treat `jangar-control-plane:verify:verify stage is stale` as a self-referential blocker for this run only. If
+      every other rollout signal is healthy and that is the only readiness blocker, complete successfully so this
+      AgentRun can refresh the verify stage.
+    - Fail if Argo CD applications are not Synced/Healthy, target deployments are not available, live images do not
+      match GitOps, readiness has any blocker other than the self-referential verify staleness, or required cluster
+      reads are forbidden.
+    - If blocked, report the exact command/error and smallest GitOps/RBAC unblocker.
+
+    NATS collaboration (required):
+    1) Resolve active channel from natsChannel, then general.
+    2) Publish concise progress and final go/no-go updates through `codex-nats-publish`.
+    3) Keep updates human-readable and evidence-based; do not dump raw JSON unless needed for debugging.
+
+    Done criteria (all required):
+    - Target Argo CD Applications are Synced and Healthy.
+    - Target deployments are rolled out, available, and on the GitOps-configured images.
+    - Service readiness has no blockers other than this run's self-referential stale verify window.
+    - Rollback path and residual risk are documented.
+
+    Deliverables:
+    - `ownerUpdateMessage` for channel post.
+    - `/workspace/.agentrun/swarm/${swarmName}-verify.md` with:
+      - Summary
+      - GitOps Evidence
+      - Deployment Evidence
+      - Readiness Evidence
+      - Events
+      - Rollback Path
+      - Residual Risk
+
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
   name: swarm-deployer-v1
   namespace: agents
 spec:

@@ -357,7 +357,7 @@ Tracked swarm selection and response fan-out remain configurable via:
 
 Rollout safety now also uses gate thresholds for watch stability and empirical jobs:
 
-- `JANGAR_TORGHUT_STATUS_TIMEOUT_MS` (optional; default: `5000`, max: `30000`)
+- `JANGAR_TORGHUT_STATUS_TIMEOUT_MS` (optional; default: `15000`, max: `30000`)
   - Timeout for the Torghut `/trading/status` request used to populate `empirical_services`.
 - `JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_ERRORS` (optional; default: `6`)
   - Blocks dependency quorum when watch stream errors cross this threshold in the latest reliability window.
