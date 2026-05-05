@@ -81,6 +81,7 @@ describe('getQuantHealthHandler', () => {
       strategyId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       account: 'paper',
       window: '1d',
+      minAsOf: '2026-02-18T14:59:00.000Z',
     })
     expect(getQuantLatestStoreStatus).toHaveBeenCalledWith({
       strategyId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -125,6 +126,7 @@ describe('getQuantHealthHandler', () => {
     expect(body.emptyLatestStoreAlarm).toBe(false)
     expect(body.pipelineHealthScoped).toBe(false)
     expect(body.pipelineHealthSkippedReason).toBe('account_and_window_required')
+    expect(body.stageScopeOmitted).toBe(true)
   })
 
   it('skips unscoped pipeline health when only a window is requested', async () => {
@@ -145,6 +147,8 @@ describe('getQuantHealthHandler', () => {
     const body = await response.json()
     expect(body.pipelineHealthScoped).toBe(false)
     expect(body.pipelineHealthSkippedReason).toBe('account_and_window_required')
+    expect(body.stages).toEqual([])
+    expect(body.stageScopeOmitted).toBe(true)
   })
 
   it('returns degraded status when latest store is empty', async () => {
@@ -197,13 +201,19 @@ describe('getQuantHealthHandler', () => {
 
     expect(response.status).toBe(200)
     expect(getQuantLatestStoreStatus).toHaveBeenCalledWith({ account: 'paper', window: '1d' })
-    expect(listLatestQuantPipelineHealth).toHaveBeenCalledWith({ account: 'paper', window: '1d' })
+    expect(listLatestQuantPipelineHealth).toHaveBeenCalledWith({
+      strategyId: undefined,
+      account: 'paper',
+      window: '1d',
+      minAsOf: '2026-02-18T14:56:00.000Z',
+    })
     const body = await response.json()
     expect(body.ok).toBe(true)
     expect(body.status).toBe('degraded')
     expect(body.missingUpdateAlarm).toBe(false)
     expect(body.maxStageLagSeconds).toBe(9)
     expect(body.pipelineHealthScoped).toBe(true)
+    expect(body.stageScopeOmitted).toBe(false)
   })
 
   it('scopes latest metric freshness check by requested strategy/account/window', async () => {
@@ -240,6 +250,7 @@ describe('getQuantHealthHandler', () => {
       strategyId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
       account: 'paper',
       window: '1d',
+      minAsOf: '2026-02-18T14:59:00.000Z',
     })
     expect(getQuantLatestStoreStatus).toHaveBeenCalledWith({
       strategyId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',

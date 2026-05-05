@@ -20,7 +20,7 @@ type QuantLatestRow = {
   freshness_seconds: number
 }
 
-const toDate = (value: string) => new Date(value)
+const toDate = (value: Date | string) => new Date(value)
 
 export type QuantPipelineHealthStage = 'ingestion' | 'compute' | 'materialization'
 
@@ -345,12 +345,14 @@ export const listLatestQuantPipelineHealth = async (params: {
   strategyId?: string
   account?: string
   window?: string
+  minAsOf?: Date | string
 }) => {
   const db = await ensureQuantStoreReady()
   const filters: Array<unknown> = []
   if (params.strategyId) filters.push(sql`strategy_id = ${params.strategyId}::uuid`)
   if (params.account) filters.push(sql`account = ${params.account}`)
   if (params.window) filters.push(sql`details->>'window' = ${params.window}`)
+  if (params.minAsOf) filters.push(sql`as_of >= ${toDate(params.minAsOf)}`)
   const whereSql = filters.length > 0 ? sql`where ${sql.join(filters, sql` and `)}` : sql``
   const scopedByAccountAndWindow = Boolean(params.account && params.window)
   const latestPartitionSql = scopedByAccountAndWindow

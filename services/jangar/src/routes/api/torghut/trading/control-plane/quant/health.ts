@@ -49,6 +49,11 @@ export const getQuantHealthHandler = async (request: Request) => {
     const lagSeconds = updatedAt ? Math.max(0, Math.floor((Date.now() - Date.parse(updatedAt)) / 1000)) : null
     const emptyLatestStoreAlarm = count === 0
     const missingUpdateThresholdSeconds = resolveTorghutEndpointsConfig(process.env).quantHealthMissingUpdateSeconds
+    const stageLookbackSeconds = Math.max(
+      60,
+      (Number.isFinite(missingUpdateThresholdSeconds) ? missingUpdateThresholdSeconds : 15) * 4,
+    )
+    const stageMinAsOf = new Date(Date.now() - stageLookbackSeconds * 1000).toISOString()
     const duringMarketHours = isMarketHoursNy()
     const missingUpdateAlarm =
       duringMarketHours &&
@@ -61,6 +66,7 @@ export const getQuantHealthHandler = async (request: Request) => {
           strategyId: strategyIdResult.value,
           account,
           window: windowResult.value,
+          minAsOf: stageMinAsOf,
         })
       : []
     const maxStageLagSeconds = stages.reduce((max, stage) => Math.max(max, stage.lagSeconds), 0)
@@ -86,6 +92,9 @@ export const getQuantHealthHandler = async (request: Request) => {
       runtimeComputeIntervalMs: runtime.computeIntervalMs,
       runtimeHeavyComputeIntervalMs: runtime.heavyComputeIntervalMs,
       runtimeStreamHeartbeatMs: runtime.streamHeartbeatMs,
+      stageScopeOmitted: !pipelineHealthScoped,
+      stageLookbackSeconds,
+      stageMinAsOf,
       stages,
       maxStageLagSeconds,
       pipelineHealthScoped,
