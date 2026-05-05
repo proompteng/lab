@@ -29,9 +29,9 @@ _CHIP_UNIVERSE_SYMBOLS = {
     "LRCX",
     "KLAC",
     "MU",
-    "INTC",
+    "TXN",
+    "ADI",
     "QCOM",
-    "MRVL",
 }
 
 

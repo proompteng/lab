@@ -24,15 +24,15 @@
       "NVDA",
       "TSM",
       "AVGO",
-      "INTC",
       "AMD",
       "MU",
+      "TXN",
+      "ADI",
       "LRCX",
       "KLAC",
       "QCOM",
       "AMAT",
-      "ASML",
-      "MRVL"
+      "ASML"
     ],
     "max_notional_per_trade": "50000",
     "max_position_pct_equity": "3.0",

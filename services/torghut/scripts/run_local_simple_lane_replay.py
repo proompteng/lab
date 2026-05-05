@@ -45,15 +45,15 @@ DEFAULT_SYMBOLS = [
     'NVDA',
     'TSM',
     'AVGO',
-    'INTC',
     'AMD',
     'MU',
+    'TXN',
+    'ADI',
     'LRCX',
     'KLAC',
     'QCOM',
     'AMAT',
     'ASML',
-    'MRVL',
 ]
 ALLOWED_REJECT_REASONS = {
     'kill_switch_enabled',
