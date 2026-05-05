@@ -10,6 +10,12 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `77-torghut-profit-admission-cells-and-materialized-evidence-contract-2026-05-05.md`
+  - `docs/agents/designs/72-jangar-materialized-run-proof-and-storage-backed-admission-contract-2026-05-05.md`
+  - `77-torghut-hot-path-proof-projections-and-profit-cell-settlement-2026-05-05.md`
+  - `docs/agents/designs/72-jangar-route-authority-fuses-and-deploy-quarantine-2026-05-05.md`
+  - `76-torghut-profit-projection-consumer-and-route-parity-gates-2026-05-05.md`
+  - `docs/agents/designs/71-jangar-least-privilege-evidence-projection-broker-and-deploy-gates-2026-05-05.md`
   - `75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md`
   - `docs/agents/designs/70-jangar-promotion-authority-ledger-and-rollout-rehearsal-cells-2026-05-05.md`
   - `75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md`
@@ -62,7 +68,16 @@
 - `73-torghut-profit-evidence-clock-and-capital-veto-contract-2026-05-05.md`
 - `75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md`
 - `75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md`
+- `76-torghut-profit-projection-consumer-and-route-parity-gates-2026-05-05.md`
+- `77-torghut-profit-admission-cells-and-materialized-evidence-contract-2026-05-05.md`
+- `77-torghut-hot-path-proof-projections-and-profit-cell-settlement-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/72-jangar-materialized-run-proof-and-storage-backed-admission-contract-2026-05-05.md`
+  - `77-torghut-profit-admission-cells-and-materialized-evidence-contract-2026-05-05.md`
+  - `docs/agents/designs/72-jangar-route-authority-fuses-and-deploy-quarantine-2026-05-05.md`
+  - `77-torghut-hot-path-proof-projections-and-profit-cell-settlement-2026-05-05.md`
+  - `docs/agents/designs/71-jangar-least-privilege-evidence-projection-broker-and-deploy-gates-2026-05-05.md`
+  - `76-torghut-profit-projection-consumer-and-route-parity-gates-2026-05-05.md`
   - `docs/agents/designs/70-jangar-promotion-authority-ledger-and-rollout-rehearsal-cells-2026-05-05.md`
   - `75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md`
   - `docs/agents/designs/70-jangar-evidence-epoch-admission-and-rollout-quarantine-2026-05-05.md`
@@ -218,6 +233,14 @@ Current source-state priority is narrower:
   evidence and selects cross-plane evidence epochs plus hypothesis-local profit cells as the next architecture move:
   Torghut promotion must prove runtime authority, data freshness, image portability, and post-cost contribution in one
   receipt chain before any non-observe capital can advance.
+- `77-torghut-hot-path-proof-projections-and-profit-cell-settlement-2026-05-05.md` now records the latest May 5
+  discover evidence where liveness stayed green but Torghut `/readyz`, Torghut `/trading/status`, Jangar control-plane
+  status, and Jangar quant health breached route budgets; it makes bounded proof projections and settled profit cells
+  the active handoff contract for engineer and deployer stages.
+- `docs/agents/designs/72-jangar-route-authority-fuses-and-deploy-quarantine-2026-05-05.md` now defines the companion
+  Jangar layer: serving can stay available for repair while dispatch, deploy widening, review ingest, and Torghut
+  promotion fail closed on missing runtime kits, route-budget breaches, stale Torghut projections, or unresolved
+  deleted-ref review evidence.
 - `docs/agents/designs/70-jangar-actuation-escrow-and-deploy-proof-lanes-2026-05-05.md` now turns Jangar evidence
   escrow into action-specific dispatch, schedule-launch, deploy-widening, repair-unblock, and Torghut platform promotion
   decisions that work under partial deployer RBAC.
@@ -230,6 +253,16 @@ Current source-state priority is narrower:
 - `docs/agents/designs/70-jangar-promotion-authority-ledger-and-rollout-rehearsal-cells-2026-05-05.md` now defines
   the companion Jangar contract: serving, dispatch, rollout, and Torghut promotion authority must project from a
   durable promotion authority ledger with bounded read budgets and repair cells.
+- `76-torghut-profit-projection-consumer-and-route-parity-gates-2026-05-05.md` now extends the Jangar projection broker
+  direction into Torghut: non-observe capital consumes one Jangar `torghut_profit` projection, all trading routes cite
+  one profit receipt id, and stale market-context domains block only lanes that declare those dependencies.
+- `docs/agents/designs/72-jangar-materialized-run-proof-and-storage-backed-admission-contract-2026-05-05.md` now
+  closes the runnable-work gap after evidence projection: schedules, generated ConfigMaps, runtime kits, workspace
+  PVCs, and Torghut profit-read evidence must be sealed into one materialized proof before dispatch or promotion can
+  proceed.
+- `77-torghut-profit-admission-cells-and-materialized-evidence-contract-2026-05-05.md` now makes Torghut capital
+  authority hypothesis-local: each account/window/lane consumes Jangar materialized proof plus schema, quant,
+  market-context, empirical, signal, and TCA evidence before canary or scale decisions are allowed.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.

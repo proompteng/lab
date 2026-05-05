@@ -170,4 +170,28 @@ describe('verify-deployment', () => {
     expect(status.revision).toBe('de84c71d8719cd781fe63e53e80cacd2642ea9e3')
     expect(status.desiredRevision).toBe('d65e7094ab93b1a9a5ae002c1eccce2a0151fae8')
   })
+
+  it('uses the current sync revision instead of stale history after a failed operation', () => {
+    const status = parseArgoApplicationStatus(
+      JSON.stringify({
+        status: {
+          health: { status: 'Healthy' },
+          history: [{ revision: '8958a06b34ee546e9869ce02a6d4cbc1f97c0a8a' }],
+          operationState: {
+            phase: 'Failed',
+            syncResult: {
+              revision: '400e20256b73e02a9dff60e0d2f238366b0e09a1',
+            },
+          },
+          sync: {
+            status: 'Synced',
+            revision: 'f27b9359a263201cb875633f29a1f36253d823ba',
+          },
+        },
+      }),
+    )
+
+    expect(status.revision).toBe('f27b9359a263201cb875633f29a1f36253d823ba')
+    expect(status.desiredRevision).toBe('f27b9359a263201cb875633f29a1f36253d823ba')
+  })
 })
