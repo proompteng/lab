@@ -10,6 +10,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
+  - `docs/agents/designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md`
   - `53-torghut-kafka-retention-bootstrap-and-archive-backed-profitability-proof-2026-03-27.md`
   - `54-torghut-research-backed-sleeves-and-this-week-holdout-proof-2026-03-27.md`
   - `64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`
@@ -42,7 +44,9 @@
 - `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
 - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 - `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
+- `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md`
   - `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
   - `64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`
   - `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
@@ -150,6 +154,13 @@ Current source-state priority is narrower:
 - `71-torghut-whitepaper-autoresearch-profit-target-strategy-factory-2026-04-21.md` now turns the whitepaper,
   strategy-factory, MLX, portfolio-sleeve, and runtime-closure pieces into one implementation contract for a
   production autoresearch epoch targeting a `$500/day` post-cost portfolio candidate.
+- `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md` now turns the May 5 live assessment into the
+  next architecture contract: route-time proof compilation moves behind a bounded proof exchange, lane-local data
+  firebreaks block only the affected hypotheses, and non-shadow capital requires unexpired proof tied to Jangar
+  runtime-cell receipts.
+- `docs/agents/designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md` now binds Jangar
+  rollout safety to runtime cells, receipt digests, and proof-read backpressure so serving readiness, dispatch,
+  deploy verification, and Torghut promotion stop re-deriving authority from broad route-time status.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.
@@ -334,16 +345,16 @@ This pack is positioned as the next architecture layer above:
 52. `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
 53. `53-torghut-kafka-retention-bootstrap-and-archive-backed-profitability-proof-2026-03-27.md`
 54. `54-torghut-research-backed-sleeves-and-this-week-holdout-proof-2026-03-27.md`
-53. `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
-54. `54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md`
-55. `55-torghut-hypothesis-settlement-exchange-and-lane-capability-leases-2026-03-20.md`
-56. `56-torghut-capability-leases-and-profit-clocks-2026-03-20.md`
-57. `56-torghut-profit-clocks-and-lane-falsification-exchange-2026-03-20.md`
-58. `57-torghut-profit-reserves-forecast-calibration-escrow-and-probe-auction-contract-2026-03-20.md`
-59. `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
-60. `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
-61. `61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`
-62. `62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`
+55. `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
+56. `54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md`
+57. `55-torghut-hypothesis-settlement-exchange-and-lane-capability-leases-2026-03-20.md`
+58. `56-torghut-capability-leases-and-profit-clocks-2026-03-20.md`
+59. `56-torghut-profit-clocks-and-lane-falsification-exchange-2026-03-20.md`
+60. `57-torghut-profit-reserves-forecast-calibration-escrow-and-probe-auction-contract-2026-03-20.md`
+61. `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
+62. `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
+63. `61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`
+64. `62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`
 
 ## Recommended Build Order
 
