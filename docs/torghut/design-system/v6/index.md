@@ -10,6 +10,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md`
+  - `docs/agents/designs/70-jangar-evidence-epoch-admission-and-rollout-quarantine-2026-05-05.md`
   - `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
   - `docs/agents/designs/67-jangar-runtime-evidence-epochs-and-artifact-parity-gates-2026-05-05.md`
   - `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
@@ -54,7 +56,10 @@
 - `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 - `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
 - `73-torghut-profit-evidence-clock-and-capital-veto-contract-2026-05-05.md`
+- `75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/70-jangar-evidence-epoch-admission-and-rollout-quarantine-2026-05-05.md`
+  - `75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md`
   - `docs/agents/designs/67-jangar-runtime-evidence-epochs-and-artifact-parity-gates-2026-05-05.md`
   - `72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
   - `docs/agents/designs/69-jangar-evidence-escrow-and-repair-cell-contract-2026-05-05.md`
@@ -200,6 +205,10 @@ Current source-state priority is narrower:
 - `docs/agents/designs/67-jangar-evidence-epochs-and-proof-cell-rollout-contract-2026-05-05.md` now defines the
   companion Jangar control-plane direction: serving, dispatch, deploy verification, and Torghut promotion project the
   same durable evidence epoch rather than recomputing independent route-time truth.
+- `75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md` now records the May 5 discover
+  evidence and selects cross-plane evidence epochs plus hypothesis-local profit cells as the next architecture move:
+  Torghut promotion must prove runtime authority, data freshness, image portability, and post-cost contribution in one
+  receipt chain before any non-observe capital can advance.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.
