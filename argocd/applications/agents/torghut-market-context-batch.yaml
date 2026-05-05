@@ -175,6 +175,8 @@ kind: AgentRun
 metadata:
   name: torghut-market-context-fundamentals-batch-template
   namespace: agents
+  annotations:
+    agents.proompteng.ai/template: 'true'
 spec:
   agentRef:
     name: torghut-fundamentals-agent
@@ -185,7 +187,7 @@ spec:
     config:
       serviceAccountName: agents-sa
       priorityClassName: torghut-market-context-low
-  ttlSecondsAfterFinished: 1800
+  ttlSecondsAfterFinished: 0
   workload:
     resources:
       requests:
@@ -208,6 +210,8 @@ kind: AgentRun
 metadata:
   name: torghut-market-context-fundamentals-preopen-probe-template
   namespace: agents
+  annotations:
+    agents.proompteng.ai/template: 'true'
 spec:
   agentRef:
     name: torghut-fundamentals-agent
@@ -218,7 +222,7 @@ spec:
     config:
       serviceAccountName: agents-sa
       priorityClassName: torghut-market-context-low
-  ttlSecondsAfterFinished: 900
+  ttlSecondsAfterFinished: 0
   workload:
     resources:
       requests:
@@ -239,6 +243,8 @@ kind: AgentRun
 metadata:
   name: torghut-market-context-news-preopen-probe-template
   namespace: agents
+  annotations:
+    agents.proompteng.ai/template: 'true'
 spec:
   agentRef:
     name: torghut-news-agent
@@ -249,7 +255,7 @@ spec:
     config:
       serviceAccountName: agents-sa
       priorityClassName: torghut-market-context-low
-  ttlSecondsAfterFinished: 900
+  ttlSecondsAfterFinished: 0
   workload:
     resources:
       requests:
@@ -270,6 +276,8 @@ kind: AgentRun
 metadata:
   name: torghut-market-context-news-batch-template
   namespace: agents
+  annotations:
+    agents.proompteng.ai/template: 'true'
 spec:
   agentRef:
     name: torghut-news-agent
@@ -280,7 +288,7 @@ spec:
     config:
       serviceAccountName: agents-sa
       priorityClassName: torghut-market-context-low
-  ttlSecondsAfterFinished: 1800
+  ttlSecondsAfterFinished: 0
   workload:
     resources:
       requests:

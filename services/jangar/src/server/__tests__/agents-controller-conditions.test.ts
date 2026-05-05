@@ -56,6 +56,26 @@ describe('agents controller conditions module', () => {
     expect(degraded?.reason).toBe('SubmitFailed')
   })
 
+  it('derives ready from succeeded phase even when stale running conditions remain', () => {
+    const updates = deriveStandardConditionUpdates(
+      [
+        { type: 'InProgress', status: 'True', reason: 'Running', lastTransitionTime: '2026-02-24T00:00:00.000Z' },
+        { type: 'Ready', status: 'False', reason: 'Reconciled', lastTransitionTime: '2026-02-24T00:00:00.000Z' },
+        { type: 'Progressing', status: 'True', reason: 'Running', lastTransitionTime: '2026-02-24T00:00:00.000Z' },
+        { type: 'Succeeded', status: 'True', reason: 'Completed', lastTransitionTime: '2026-02-24T00:00:00.000Z' },
+      ],
+      'Succeeded',
+    )
+    const ready = updates.find((entry) => entry.type === 'Ready')
+    const progressing = updates.find((entry) => entry.type === 'Progressing')
+    const degraded = updates.find((entry) => entry.type === 'Degraded')
+
+    expect(ready?.status).toBe('True')
+    expect(ready?.reason).toBe('Completed')
+    expect(progressing?.status).toBe('False')
+    expect(degraded?.status).toBe('False')
+  })
+
   it('normalizes unknown statuses and defaults empty reason/message values', () => {
     const nowIso = () => '2026-02-24T00:00:00.000Z'
     const conditions = normalizeConditions(

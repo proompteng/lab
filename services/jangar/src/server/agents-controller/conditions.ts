@@ -90,17 +90,33 @@ export const deriveStandardConditionUpdates = (conditions: Condition[], phase: s
   let degradedReason = failureCondition?.reason
   let degradedMessage = failureCondition?.message
 
-  if (phaseDegraded || failureCondition?.status === 'True') {
+  if (phaseDegraded) {
     degradedStatus = 'True'
     progressingStatus = 'False'
     readyStatus = 'False'
     degradedReason = degradedReason ?? 'Degraded'
-  } else if (phaseProgressing || runningCondition?.status === 'True') {
+  } else if (phaseReady) {
+    readyStatus = 'True'
+    progressingStatus = 'False'
+    degradedStatus = 'False'
+    readyReason = successCondition?.reason ?? readyReason ?? 'Ready'
+    readyMessage = successCondition?.message ?? readyMessage
+  } else if (phaseProgressing) {
     progressingStatus = 'True'
     degradedStatus = 'False'
     readyStatus = 'False'
     progressingReason = progressingReason ?? 'Progressing'
-  } else if (phaseReady || successCondition?.status === 'True' || readyCondition?.status === 'True') {
+  } else if (failureCondition?.status === 'True') {
+    degradedStatus = 'True'
+    progressingStatus = 'False'
+    readyStatus = 'False'
+    degradedReason = degradedReason ?? 'Degraded'
+  } else if (runningCondition?.status === 'True') {
+    progressingStatus = 'True'
+    degradedStatus = 'False'
+    readyStatus = 'False'
+    progressingReason = progressingReason ?? 'Progressing'
+  } else if (successCondition?.status === 'True' || readyCondition?.status === 'True') {
     readyStatus = 'True'
     progressingStatus = 'False'
     degradedStatus = 'False'
