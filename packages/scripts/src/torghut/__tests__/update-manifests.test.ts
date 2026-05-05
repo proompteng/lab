@@ -18,6 +18,7 @@ const createFixture = () => {
   const analysisTeardownManifestPath = join(dir, 'analysis-template-teardown-clean.yaml')
   const analysisArtifactManifestPath = join(dir, 'analysis-template-artifact-bundle.yaml')
   const empiricalBackfillManifestPath = join(dir, 'empirical-jobs-backfill-job.yaml')
+  const whitepaperSemanticBackfillManifestPath = join(dir, 'whitepaper-semantic-backfill-job.yaml')
   const optionsCatalogManifestPath = join(dir, 'options-catalog-deployment.yaml')
   const optionsEnricherManifestPath = join(dir, 'options-enricher-deployment.yaml')
   writeFileSync(
@@ -90,6 +91,7 @@ spec:
     analysisTeardownManifestPath,
     analysisArtifactManifestPath,
     empiricalBackfillManifestPath,
+    whitepaperSemanticBackfillManifestPath,
   ]) {
     writeFileSync(
       path,
@@ -137,6 +139,7 @@ spec:
     analysisTeardownManifestPath,
     analysisArtifactManifestPath,
     empiricalBackfillManifestPath,
+    whitepaperSemanticBackfillManifestPath,
     optionsCatalogManifestPath,
     optionsEnricherManifestPath,
   }
@@ -172,6 +175,16 @@ describe('update-manifests', () => {
     expect(migrationManifest).toContain('dsn = database_url(dsn, database)')
   })
 
+  it('keeps the whitepaper semantic backfill hook on arm64 nodes', () => {
+    const backfillManifest = readFileSync(
+      join(repoRoot, 'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'),
+      'utf8',
+    )
+
+    expect(backfillManifest).toContain('nodeSelector:')
+    expect(backfillManifest).toContain('kubernetes.io/arch: arm64')
+  })
+
   it('updates service and migration image digest, rollout timestamp, and metadata env values', () => {
     const fixture = createFixture()
     const result = __private.updateTorghutManifests({
@@ -190,6 +203,7 @@ describe('update-manifests', () => {
       analysisTeardownManifestPath: relative(repoRoot, fixture.analysisTeardownManifestPath),
       analysisArtifactManifestPath: relative(repoRoot, fixture.analysisArtifactManifestPath),
       empiricalBackfillManifestPath: relative(repoRoot, fixture.empiricalBackfillManifestPath),
+      whitepaperSemanticBackfillManifestPath: relative(repoRoot, fixture.whitepaperSemanticBackfillManifestPath),
       optionsCatalogManifestPath: relative(repoRoot, fixture.optionsCatalogManifestPath),
       optionsEnricherManifestPath: relative(repoRoot, fixture.optionsEnricherManifestPath),
     })
@@ -204,6 +218,7 @@ describe('update-manifests', () => {
     const analysisTeardownManifest = readFileSync(fixture.analysisTeardownManifestPath, 'utf8')
     const analysisArtifactManifest = readFileSync(fixture.analysisArtifactManifestPath, 'utf8')
     const empiricalBackfillManifest = readFileSync(fixture.empiricalBackfillManifestPath, 'utf8')
+    const whitepaperSemanticBackfillManifest = readFileSync(fixture.whitepaperSemanticBackfillManifestPath, 'utf8')
     const optionsCatalogManifest = readFileSync(fixture.optionsCatalogManifestPath, 'utf8')
     const optionsEnricherManifest = readFileSync(fixture.optionsEnricherManifestPath, 'utf8')
     expect(serviceManifest).toContain('client.knative.dev/updateTimestamp: "2026-02-21T04:00:00Z"')
@@ -230,6 +245,7 @@ describe('update-manifests', () => {
       analysisTeardownManifest,
       analysisArtifactManifest,
       empiricalBackfillManifest,
+      whitepaperSemanticBackfillManifest,
     ]) {
       expect(manifest).toContain(
         'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
@@ -246,7 +262,7 @@ describe('update-manifests', () => {
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(12)
+    expect(result.changedPaths.length).toBe(13)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -269,6 +285,7 @@ describe('update-manifests', () => {
       analysisTeardownManifestPath: relative(repoRoot, fixture.analysisTeardownManifestPath),
       analysisArtifactManifestPath: relative(repoRoot, fixture.analysisArtifactManifestPath),
       empiricalBackfillManifestPath: relative(repoRoot, fixture.empiricalBackfillManifestPath),
+      whitepaperSemanticBackfillManifestPath: relative(repoRoot, fixture.whitepaperSemanticBackfillManifestPath),
       optionsCatalogManifestPath: relative(repoRoot, fixture.optionsCatalogManifestPath),
       optionsEnricherManifestPath: relative(repoRoot, fixture.optionsEnricherManifestPath),
     }
