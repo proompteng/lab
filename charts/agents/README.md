@@ -12,7 +12,7 @@ The chart is published on Artifact Hub:
 
 - Artifact Hub: <https://artifacthub.io/packages/helm/agents/agents>
 - OCI chart: `oci://ghcr.io/proompteng/charts/agents`
-- Current chart version: `0.9.9`
+- Current chart version: `0.9.11`
 
 ## Start Here
 
@@ -136,7 +136,7 @@ Install:
 
 ```bash
 helm upgrade --install agents oci://ghcr.io/proompteng/charts/agents \
-  --version 0.9.9 \
+  --version 0.9.11 \
   --namespace agents \
   --values agents-values.yaml \
   --wait
@@ -155,7 +155,7 @@ curl -sf http://127.0.0.1:8080/health
 Run the chart smoke examples from the published package:
 
 ```bash
-helm pull oci://ghcr.io/proompteng/charts/agents --version 0.9.9 --untar
+helm pull oci://ghcr.io/proompteng/charts/agents --version 0.9.11 --untar
 
 kubectl -n agents apply -f agents/examples/agentprovider-smoke.yaml
 kubectl -n agents apply -f agents/examples/agent-smoke.yaml
@@ -170,16 +170,16 @@ kubectl -n agents describe agentrun agents-workflow-smoke
 
 You do not need to understand every CRD before installing the chart. These are the pieces that matter first:
 
-| Concept | What it means | First example |
-| --- | --- | --- |
-| Jangar | The control plane installed by this chart. It watches CRDs and coordinates work. | `Deployment/agents` |
-| AgentRun | One requested unit of work. This is what you create when you want something to run. | `examples/agentrun-workflow-smoke.yaml` |
-| Agent | A reusable worker profile. It points at an AgentProvider and can define defaults. | `examples/agent-smoke.yaml` |
-| AgentProvider | How an agent is executed, such as a command, adapter, or runner entrypoint. | `examples/agentprovider-smoke.yaml` |
-| ImplementationSpec | The task text and required inputs for a run. | `examples/implementationspec-smoke.yaml` |
-| Runner image | The image used by Jobs/Pods launched for an AgentRun. | `runner.image.*` |
-| Memory | Optional storage configuration for agents that need persistent context. | `examples/memory-sample.yaml` |
-| VersionControlProvider | Optional repo access configuration for runs that clone, commit, push, or open PRs. | `examples/versioncontrolprovider-github.yaml` |
+| Concept                | What it means                                                                       | First example                                 |
+| ---------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------- |
+| Jangar                 | The control plane installed by this chart. It watches CRDs and coordinates work.    | `Deployment/agents`                           |
+| AgentRun               | One requested unit of work. This is what you create when you want something to run. | `examples/agentrun-workflow-smoke.yaml`       |
+| Agent                  | A reusable worker profile. It points at an AgentProvider and can define defaults.   | `examples/agent-smoke.yaml`                   |
+| AgentProvider          | How an agent is executed, such as a command, adapter, or runner entrypoint.         | `examples/agentprovider-smoke.yaml`           |
+| ImplementationSpec     | The task text and required inputs for a run.                                        | `examples/implementationspec-smoke.yaml`      |
+| Runner image           | The image used by Jobs/Pods launched for an AgentRun.                               | `runner.image.*`                              |
+| Memory                 | Optional storage configuration for agents that need persistent context.             | `examples/memory-sample.yaml`                 |
+| VersionControlProvider | Optional repo access configuration for runs that clone, commit, push, or open PRs.  | `examples/versioncontrolprovider-github.yaml` |
 
 ## What Gets Installed
 
@@ -208,7 +208,7 @@ That is deliberate. The chart should be safe to install into a namespace and the
 
 ```bash
 helm template agents oci://ghcr.io/proompteng/charts/agents \
-  --version 0.9.9 \
+  --version 0.9.11 \
   --namespace agents \
   --values agents-values.yaml
 ```
@@ -219,7 +219,7 @@ The chart includes an opt-in test Pod that curls the in-cluster health endpoint 
 
 ```bash
 helm upgrade --install agents oci://ghcr.io/proompteng/charts/agents \
-  --version 0.9.9 \
+  --version 0.9.11 \
   --namespace agents \
   --values agents-values.yaml \
   --set tests.enabled=true \
@@ -311,12 +311,12 @@ rbac:
 
 Valid scope patterns:
 
-| Mode | Namespace list | `rbac.clusterScoped` |
-| --- | --- | --- |
-| First install / production readiness | omitted or `["agents"]` | `true` |
-| Namespace Role only, `/health` readiness | omitted or `["agents"]` | `false` |
-| Multiple namespaces | `["team-a", "team-b"]` | `true` |
-| All namespaces | `["*"]` | `true` |
+| Mode                                     | Namespace list          | `rbac.clusterScoped` |
+| ---------------------------------------- | ----------------------- | -------------------- |
+| First install / production readiness     | omitted or `["agents"]` | `true`               |
+| Namespace Role only, `/health` readiness | omitted or `["agents"]` | `false`              |
+| Multiple namespaces                      | `["team-a", "team-b"]`  | `true`               |
+| All namespaces                           | `["*"]`                 | `true`               |
 
 Invalid combinations fail at render time, including empty scope lists, wildcard mixed with real namespace names, and multi-namespace scope with namespaced RBAC.
 
@@ -521,23 +521,23 @@ Frequent render failures:
 
 ### High-Value Values
 
-| Value | Purpose |
-| --- | --- |
-| `image.repository`, `image.tag`, `image.digest` | Control-plane image. |
-| `runner.image.repository`, `runner.image.tag`, `runner.image.digest` | Default image for AgentRun Jobs. |
-| `imagePolicy.requireDigest` | Require immutable image digests for chart-managed images. |
-| `database.secretRef.*` | Existing database URL Secret. |
-| `database.caSecret.*` | Optional Postgres CA certificate Secret. |
-| `controller.namespaces` | Namespaces the main controller watches. |
-| `orchestrationController.namespaces` | Namespaces the orchestration controller watches. |
-| `supportingController.namespaces` | Namespaces supporting controllers watch. |
-| `rbac.clusterScoped` | Use ClusterRole/ClusterRoleBinding instead of namespace Role/RoleBinding. |
-| `controllers.enabled` | Run the controller deployment. |
-| `grpc.enabled` | Expose gRPC support for in-cluster clients and agentctl. |
-| `metrics.serviceMonitor.enabled` | Create a ServiceMonitor. |
-| `podDisruptionBudget.enabled` | Create a PDB for the control plane. |
-| `controllers.podDisruptionBudget.enabled` | Create a PDB for controllers. |
-| `tests.enabled` | Render the optional Helm test Pod. |
+| Value                                                                | Purpose                                                                   |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `image.repository`, `image.tag`, `image.digest`                      | Control-plane image.                                                      |
+| `runner.image.repository`, `runner.image.tag`, `runner.image.digest` | Default image for AgentRun Jobs.                                          |
+| `imagePolicy.requireDigest`                                          | Require immutable image digests for chart-managed images.                 |
+| `database.secretRef.*`                                               | Existing database URL Secret.                                             |
+| `database.caSecret.*`                                                | Optional Postgres CA certificate Secret.                                  |
+| `controller.namespaces`                                              | Namespaces the main controller watches.                                   |
+| `orchestrationController.namespaces`                                 | Namespaces the orchestration controller watches.                          |
+| `supportingController.namespaces`                                    | Namespaces supporting controllers watch.                                  |
+| `rbac.clusterScoped`                                                 | Use ClusterRole/ClusterRoleBinding instead of namespace Role/RoleBinding. |
+| `controllers.enabled`                                                | Run the controller deployment.                                            |
+| `grpc.enabled`                                                       | Expose gRPC support for in-cluster clients and agentctl.                  |
+| `metrics.serviceMonitor.enabled`                                     | Create a ServiceMonitor.                                                  |
+| `podDisruptionBudget.enabled`                                        | Create a PDB for the control plane.                                       |
+| `controllers.podDisruptionBudget.enabled`                            | Create a PDB for controllers.                                             |
+| `tests.enabled`                                                      | Render the optional Helm test Pod.                                        |
 
 See `values.yaml` and `values.schema.json` for the full contract.
 

@@ -1107,12 +1107,7 @@ const resyncAgentRunsForNamespace = async (
   const stallSignature =
     (untouchedRunCount > 0 && oldestUntouchedAgeSeconds !== null && oldestUntouchedAgeSeconds >= warnAfterSeconds) ||
     blindSinceStart
-      ? [
-          untouchedRunCount,
-          oldestUntouchedAgeSeconds ?? 'none',
-          warnAfterSeconds,
-          blindSinceStart ? 'blind' : 'seen',
-        ].join(':')
+      ? [untouchedRunCount, warnAfterSeconds, blindSinceStart ? 'blind' : 'seen'].join(':')
       : null
   if (stallSignature) {
     if (ingestionState.degradedSinceMs === null) {
