@@ -28,6 +28,8 @@ spec:
         value: /tmp/torghut-simulations
   templates:
   - name: run
+    nodeSelector:
+      kubernetes.io/arch: arm64
     inputs:
       parameters:
         - name: runId

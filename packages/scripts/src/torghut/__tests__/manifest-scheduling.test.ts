@@ -1,0 +1,75 @@
+import { describe, expect, it } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import YAML from 'yaml'
+
+import { repoRoot } from '../../shared/cli'
+
+type JsonRecord = Record<string, unknown>
+
+type ManifestCheck = {
+  path: string
+  selectorPath: Array<string | number>
+}
+
+const torghutArm64ImageChecks: ManifestCheck[] = [
+  { path: 'argocd/applications/torghut/knative-service.yaml', selectorPath: ['spec', 'template', 'spec'] },
+  { path: 'argocd/applications/torghut/knative-service-sim.yaml', selectorPath: ['spec', 'template', 'spec'] },
+  { path: 'argocd/applications/torghut/db-migrations-job.yaml', selectorPath: ['spec', 'template', 'spec'] },
+  { path: 'argocd/applications/torghut/empirical-jobs-backfill-job.yaml', selectorPath: ['spec', 'template', 'spec'] },
+  {
+    path: 'argocd/applications/torghut/analysis-template-runtime-ready.yaml',
+    selectorPath: ['spec', 'metrics', 0, 'provider', 'job', 'spec', 'template', 'spec'],
+  },
+  {
+    path: 'argocd/applications/torghut/analysis-template-activity.yaml',
+    selectorPath: ['spec', 'metrics', 0, 'provider', 'job', 'spec', 'template', 'spec'],
+  },
+  {
+    path: 'argocd/applications/torghut/analysis-template-teardown-clean.yaml',
+    selectorPath: ['spec', 'metrics', 0, 'provider', 'job', 'spec', 'template', 'spec'],
+  },
+  {
+    path: 'argocd/applications/torghut/analysis-template-artifact-bundle.yaml',
+    selectorPath: ['spec', 'metrics', 0, 'provider', 'job', 'spec', 'template', 'spec'],
+  },
+  {
+    path: 'argocd/applications/torghut/historical-simulation-workflowtemplate.yaml',
+    selectorPath: ['spec', 'templates', 0],
+  },
+  {
+    path: 'argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml',
+    selectorPath: ['spec', 'templates', 0],
+  },
+  { path: 'argocd/applications/torghut-options/catalog/deployment.yaml', selectorPath: ['spec', 'template', 'spec'] },
+  { path: 'argocd/applications/torghut-options/enricher/deployment.yaml', selectorPath: ['spec', 'template', 'spec'] },
+]
+
+const getAtPath = (root: unknown, selectorPath: Array<string | number>): JsonRecord => {
+  let value = root
+  for (const segment of selectorPath) {
+    if (typeof value !== 'object' || value === null || !(segment in value)) {
+      throw new Error(`Missing manifest selector path segment ${String(segment)}`)
+    }
+    value = (value as Record<string | number, unknown>)[segment]
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Manifest selector path did not resolve to an object')
+  }
+  return value as JsonRecord
+}
+
+const parseManifest = (path: string): JsonRecord => YAML.parse(readFileSync(join(repoRoot, path), 'utf8')) as JsonRecord
+
+describe('Torghut manifest scheduling', () => {
+  it('pins arm64-only Torghut image consumers to arm64 nodes', () => {
+    for (const check of torghutArm64ImageChecks) {
+      const manifest = parseManifest(check.path)
+      const podSpec = getAtPath(manifest, check.selectorPath)
+      expect(podSpec.nodeSelector, check.path).toMatchObject({
+        'kubernetes.io/arch': 'arm64',
+      })
+    }
+  })
+})
