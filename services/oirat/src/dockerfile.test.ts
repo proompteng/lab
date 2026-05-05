@@ -16,4 +16,14 @@ describe('oirat Dockerfile', () => {
     expect(dockerfile).toContain('FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS runner')
     expect(dockerfile).not.toMatch(/^FROM oven\/bun:/m)
   })
+
+  test('copies Discord workspace production dependencies into the runtime image', async () => {
+    const dockerfile = await readFile(dockerfilePath, 'utf8')
+    const distCopy = 'COPY --from=build /app/packages/discord/dist ./packages/discord/dist'
+    const depsCopy = 'COPY --from=deps-prod /app/packages/discord/node_modules ./packages/discord/node_modules'
+
+    expect(dockerfile).toContain(distCopy)
+    expect(dockerfile).toContain(depsCopy)
+    expect(dockerfile.indexOf(depsCopy)).toBeGreaterThan(dockerfile.indexOf(distCopy))
+  })
 })
