@@ -19,6 +19,8 @@ spec:
               spec:
                 serviceAccountName: torghut-runtime
                 restartPolicy: Never
+                nodeSelector:
+                  kubernetes.io/arch: arm64
                 containers:
                   - name: analysis
                     image: registry.ide-newton.ts.net/lab/torghut@sha256:d278a4d4267f011ba559dc51401acc6ac8f43d44a766b61f29a4d01859cce5cf

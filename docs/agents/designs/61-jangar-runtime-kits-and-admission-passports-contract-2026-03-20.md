@@ -355,6 +355,23 @@ This design removes four current failure classes:
   job outcomes;
 - stale freeze and runtime-kit debt can be tracked independently, which reduces accidental global blockage.
 
+## Implementation note: launcher admission gate (2026-05-05)
+
+The first enforcement slice is the stage and requirement launcher gate:
+
+- `services/jangar/src/server/supporting-primitives-controller.ts` now resolves the current stage admission passport
+  before creating schedules or cross-swarm requirement runs.
+- discover and plan schedules consume `swarm_plan`; implement schedules and requirement dispatch consume
+  `swarm_implement`; verify schedules consume `swarm_verify`.
+- blocked or held stage passports delete the matching schedule and set the stage state to `AdmissionBlocked`.
+- blocked or held implement passports prevent requirement dispatch and mark the `RequirementsBridge` condition with
+  `RuntimeAdmissionBlocked`.
+- admitted schedules and requirement runs cite the passport id, admission decision, recovery digest, runtime-kit set
+  digest, required runtime kits, and producer revision in annotations plus run parameters.
+
+This is Phase 4 from the rollout plan for launchers only. It does not remove the existing `/ready` and status passport
+projection surfaces, and it can be rolled back by setting `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false`.
+
 ## Validation and rollout contract
 
 ### Engineer acceptance gates

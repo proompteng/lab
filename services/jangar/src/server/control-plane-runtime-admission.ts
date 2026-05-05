@@ -356,7 +356,7 @@ export const resolveAdmissionPassportConsumerClass = (
   if (normalized === 'verify') {
     return 'swarm_verify'
   }
-  if (normalized === 'implementation' || normalized === 'review') {
+  if (normalized === 'implement' || normalized === 'implementation' || normalized === 'review') {
     return 'swarm_implement'
   }
   return 'swarm_plan'

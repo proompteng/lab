@@ -60,25 +60,59 @@ _FAMILY_TIEBREAK = {
 _MAX_FAMILIES_PER_HYPOTHESIS = 3
 _DEFAULT_PROFILE_COUNT = 3
 
+_SEMICONDUCTOR_TECH_UNIVERSE_TOP_12: tuple[str, ...] = (
+    "AMAT",
+    "AMD",
+    "ASML",
+    "AVGO",
+    "INTC",
+    "KLAC",
+    "LRCX",
+    "MU",
+    "NVDA",
+    "QCOM",
+    "TSM",
+    "TXN",
+)
+_AI_ACCELERATOR_UNIVERSE_PROFILE: tuple[str, ...] = (
+    "NVDA",
+    "AVGO",
+    "TSM",
+    "AMD",
+    "ASML",
+    "MU",
+)
+_EQUIPMENT_FOUNDRY_UNIVERSE_PROFILE: tuple[str, ...] = (
+    "ASML",
+    "AMAT",
+    "KLAC",
+    "LRCX",
+    "TSM",
+    "TXN",
+)
+_BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE: tuple[str, ...] = (
+    _SEMICONDUCTOR_TECH_UNIVERSE_TOP_12
+)
+
 _LARGE_CAP_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
-    ("AAPL", "AMAT", "GOOG", "MSFT", "MU", "NVDA", "SHOP"),
-    ("AAPL", "AMAT", "AMD", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "SHOP"),
-    ("AAPL", "AMD", "GOOG", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"),
+    _AI_ACCELERATOR_UNIVERSE_PROFILE,
+    _EQUIPMENT_FOUNDRY_UNIVERSE_PROFILE,
+    _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _BREAKOUT_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
-    ("AMAT", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"),
-    ("AMAT", "GOOG", "INTC", "MSFT", "MU", "NVDA", "SHOP"),
-    ("AAPL", "AMAT", "AMD", "GOOG", "META", "MSFT", "MU", "NVDA", "SHOP"),
+    _AI_ACCELERATOR_UNIVERSE_PROFILE,
+    ("NVDA", "AVGO", "TSM", "AMD", "ASML", "AMAT", "MU", "KLAC", "LRCX"),
+    _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _REVERSAL_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
-    ("AMD", "INTC", "SHOP", "AMAT", "MU"),
-    ("AMD", "INTC", "SHOP", "AMAT", "MU", "GOOG", "MSFT"),
-    ("AAPL", "AMD", "AMAT", "INTC", "MSFT", "MU", "NVDA", "SHOP"),
+    ("AMD", "INTC", "AMAT", "MU", "QCOM"),
+    ("AMD", "INTC", "AMAT", "MU", "QCOM", "TXN", "AVGO"),
+    ("AMD", "INTC", "AMAT", "MU", "NVDA", "QCOM", "TXN", "AVGO"),
 )
 _TSMOM_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
     ("NVDA",),
-    ("NVDA", "AMAT"),
-    ("NVDA", "AMAT", "AMD"),
+    ("NVDA", "AVGO", "AMD"),
+    ("NVDA", "AVGO", "TSM", "AMD", "ASML", "MU"),
 )
 
 _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
@@ -264,7 +298,7 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
     ),
     "mean_reversion_rebound_v1": (
         {
-            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[1]) + ["PLTR"],
+            "universe_symbols": list(_REVERSAL_UNIVERSE_PROFILES[1]),
             "max_position_pct_equity": "2.0",
             "max_notional_per_trade": "63180",
             "params": {
@@ -284,7 +318,7 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
             },
         },
         {
-            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[1]) + ["PLTR"],
+            "universe_symbols": list(_REVERSAL_UNIVERSE_PROFILES[2]),
             "max_position_pct_equity": "4.0",
             "max_notional_per_trade": "126360",
             "params": {
@@ -429,7 +463,7 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
     ),
     "momentum_pullback_v1": (
         {
-            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[1]) + ["AVGO", "PLTR"],
+            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[2]),
             "max_position_pct_equity": "2.0",
             "max_notional_per_trade": "63180",
             "params": {
@@ -453,7 +487,7 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
             },
         },
         {
-            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[1]) + ["AVGO", "PLTR"],
+            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[2]),
             "max_position_pct_equity": "4.0",
             "max_notional_per_trade": "126360",
             "params": {
@@ -477,7 +511,7 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
             },
         },
         {
-            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[2]) + ["AVGO"],
+            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[2]),
             "max_position_pct_equity": "4.0",
             "max_notional_per_trade": "63180",
             "params": {
@@ -503,7 +537,7 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
     ),
     "late_day_continuation_v1": (
         {
-            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[1]) + ["AVGO", "PLTR"],
+            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[2]),
             "max_position_pct_equity": "3.0",
             "max_notional_per_trade": "94770",
             "params": {
@@ -546,7 +580,7 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
             },
         },
         {
-            "universe_symbols": list(_BREAKOUT_UNIVERSE_PROFILES[0]) + ["AVGO"],
+            "universe_symbols": list(_BREAKOUT_UNIVERSE_PROFILES[0]),
             "max_position_pct_equity": "4.0",
             "max_notional_per_trade": "126360",
             "params": {
@@ -589,7 +623,7 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
             },
         },
         {
-            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[2]) + ["AVGO", "INTC"],
+            "universe_symbols": list(_LARGE_CAP_UNIVERSE_PROFILES[2]),
             "max_position_pct_equity": "3.0",
             "max_notional_per_trade": "94770",
             "params": {
@@ -879,9 +913,7 @@ def _execution_profile_index(
     )
 
 
-def _execution_profile_id(
-    *, family_template_id: str, profile_index: int
-) -> str:
+def _execution_profile_id(*, family_template_id: str, profile_index: int) -> str:
     return f"{family_template_id}:profile-{profile_index + 1}"
 
 
