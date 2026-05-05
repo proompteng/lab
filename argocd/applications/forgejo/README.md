@@ -3,8 +3,8 @@
 This app deploys [Forgejo](https://forgejo.org/) using the official OCI Helm chart:
 
 - Chart: `oci://code.forgejo.org/forgejo-helm/forgejo`
-- Chart version: `16.2.0`
-- App version: `14.0.2`
+- Chart version: `17.0.1`
+- App version: `15.0.1`
 
 ## Current profile
 

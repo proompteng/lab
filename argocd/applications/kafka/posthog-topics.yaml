@@ -1,4 +1,4 @@
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: events-plugin-ingestion
@@ -10,7 +10,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-app-metrics
@@ -22,7 +22,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-app-metrics2
@@ -34,7 +34,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: cohort-membership-changed
@@ -46,7 +46,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: distinct-id-usage-events-json
@@ -58,7 +58,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-ingestion-events-duplicates
@@ -70,7 +70,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-error-tracking-issue-fingerprint
@@ -82,7 +82,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: events-dead-letter-queue
@@ -94,7 +94,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-events-json
@@ -106,7 +106,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-groups
@@ -118,7 +118,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-heatmap-events
@@ -130,7 +130,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-ingestion-warnings
@@ -142,7 +142,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: log-entries
@@ -154,7 +154,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-performance-events
@@ -166,7 +166,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-person
@@ -178,7 +178,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-person-unique-id
@@ -190,7 +190,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-person-distinct-id
@@ -202,7 +202,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-person-override
@@ -214,7 +214,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: plugin-log-entries
@@ -226,7 +226,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-document-embeddings
@@ -238,7 +238,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-prefiltered-events
@@ -250,7 +250,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-precalculated-person-properties
@@ -262,7 +262,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-session-replay-events
@@ -274,7 +274,7 @@ spec:
   partitions: 3
   replicas: 3
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: clickhouse-tophog

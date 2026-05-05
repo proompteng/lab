@@ -7,6 +7,11 @@ monitoring:
   enabled: true
   createPrometheusRules: false
 
+cephImage:
+  repository: quay.io/ceph/ceph
+  tag: v19.2.3
+  allowUnsupported: false
+
 toolbox:
   enabled: true
   resources:
@@ -18,10 +23,6 @@ toolbox:
   priorityClassName: system-cluster-critical
 
 cephClusterSpec:
-  cephVersion:
-    image: quay.io/ceph/ceph:v19.2.3
-    allowUnsupported: false
-
   cephConfig:
     global:
       # This cluster currently runs OSDs on 2 hosts, so the default replicated pool size must be 2.

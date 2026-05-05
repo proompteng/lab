@@ -30,7 +30,7 @@ images:
 helmCharts:
   - name: argo-workflows
     repo: https://argoproj.github.io/argo-helm
-    version: 0.47.4
+    version: 1.0.13
     releaseName: argo-workflows
     namespace: argo-workflows
     valuesInline:
@@ -85,7 +85,7 @@ helmCharts:
           useSDKCreds: false
   - name: argo-events
     repo: https://argoproj.github.io/argo-helm
-    version: 2.4.20
+    version: 2.4.21
     releaseName: argo-events
     namespace: argo-workflows
     valuesInline:
