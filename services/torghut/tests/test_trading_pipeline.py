@@ -1710,6 +1710,137 @@ class TestTradingPipeline(TestCase):
                 "trading_signal_bootstrap_grace_seconds"
             ]
 
+    def test_pipeline_treats_fresh_tail_state_as_expected_staleness(self) -> None:
+        from app import config
+
+        original = {
+            "trading_signal_no_signal_streak_alert_threshold": config.settings.trading_signal_no_signal_streak_alert_threshold,
+            "trading_signal_stale_lag_alert_seconds": config.settings.trading_signal_stale_lag_alert_seconds,
+            "trading_signal_bootstrap_grace_seconds": config.settings.trading_signal_bootstrap_grace_seconds,
+        }
+        config.settings.trading_signal_no_signal_streak_alert_threshold = 1
+        config.settings.trading_signal_stale_lag_alert_seconds = 300
+        config.settings.trading_signal_bootstrap_grace_seconds = 0
+
+        try:
+            state = TradingState()
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=state,
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+            pipeline.record_no_signal_batch(
+                SignalBatch(
+                    signals=[],
+                    cursor_at=datetime(2026, 5, 5, 18, 3, tzinfo=timezone.utc),
+                    cursor_seq=10,
+                    cursor_symbol="NVDA",
+                    no_signal_reason="cursor_tail_stable",
+                    signal_lag_seconds=68,
+                )
+            )
+
+            self.assertFalse(state.last_signal_continuity_actionable)
+            self.assertFalse(state.signal_continuity_alert_active)
+            self.assertEqual(state.metrics.signal_continuity_actionable, 0)
+            self.assertEqual(state.metrics.signal_lag_seconds, 68)
+            self.assertEqual(
+                state.metrics.signal_expected_staleness_total.get("cursor_tail_stable"),
+                1,
+            )
+            self.assertNotIn(
+                "cursor_tail_stable",
+                state.metrics.signal_staleness_alert_total,
+            )
+        finally:
+            config.settings.trading_signal_no_signal_streak_alert_threshold = original[
+                "trading_signal_no_signal_streak_alert_threshold"
+            ]
+            config.settings.trading_signal_stale_lag_alert_seconds = original[
+                "trading_signal_stale_lag_alert_seconds"
+            ]
+            config.settings.trading_signal_bootstrap_grace_seconds = original[
+                "trading_signal_bootstrap_grace_seconds"
+            ]
+
+    def test_pipeline_alerts_when_tail_lag_is_stale(self) -> None:
+        from app import config
+
+        original = {
+            "trading_signal_no_signal_streak_alert_threshold": config.settings.trading_signal_no_signal_streak_alert_threshold,
+            "trading_signal_stale_lag_alert_seconds": config.settings.trading_signal_stale_lag_alert_seconds,
+            "trading_signal_bootstrap_grace_seconds": config.settings.trading_signal_bootstrap_grace_seconds,
+        }
+        config.settings.trading_signal_no_signal_streak_alert_threshold = 1
+        config.settings.trading_signal_stale_lag_alert_seconds = 300
+        config.settings.trading_signal_bootstrap_grace_seconds = 0
+
+        try:
+            state = TradingState()
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=state,
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+            pipeline.record_no_signal_batch(
+                SignalBatch(
+                    signals=[],
+                    cursor_at=datetime(2026, 5, 5, 18, 10, tzinfo=timezone.utc),
+                    cursor_seq=11,
+                    cursor_symbol="NVDA",
+                    no_signal_reason="cursor_tail_stable",
+                    signal_lag_seconds=301,
+                )
+            )
+
+            self.assertTrue(state.last_signal_continuity_actionable)
+            self.assertTrue(state.signal_continuity_alert_active)
+            self.assertEqual(state.signal_continuity_alert_reason, "cursor_tail_stable")
+            self.assertEqual(state.metrics.signal_continuity_actionable, 1)
+            self.assertEqual(state.metrics.signal_lag_seconds, 301)
+            self.assertEqual(
+                state.metrics.signal_actionable_staleness_total.get(
+                    "cursor_tail_stable"
+                ),
+                1,
+            )
+            self.assertEqual(
+                state.metrics.signal_staleness_alert_total.get("cursor_tail_stable"),
+                1,
+            )
+        finally:
+            config.settings.trading_signal_no_signal_streak_alert_threshold = original[
+                "trading_signal_no_signal_streak_alert_threshold"
+            ]
+            config.settings.trading_signal_stale_lag_alert_seconds = original[
+                "trading_signal_stale_lag_alert_seconds"
+            ]
+            config.settings.trading_signal_bootstrap_grace_seconds = original[
+                "trading_signal_bootstrap_grace_seconds"
+            ]
+
     def test_pipeline_quality_gate_uses_allowed_symbol_subset(self) -> None:
         from app import config
 

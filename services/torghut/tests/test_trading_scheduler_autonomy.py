@@ -476,11 +476,11 @@ class TestTradingSchedulerAutonomy(TestCase):
                     priority_id="priority-123",
                 )
 
-            self.assertEqual(
-                deps.call_kwargs["governance_repository"], "acme/lab"
-            )
+            self.assertEqual(deps.call_kwargs["governance_repository"], "acme/lab")
             self.assertEqual(deps.call_kwargs["governance_base"], "release")
-            self.assertEqual(deps.call_kwargs["governance_head"], "manual-autonomy-head")
+            self.assertEqual(
+                deps.call_kwargs["governance_head"], "manual-autonomy-head"
+            )
             self.assertEqual(deps.call_kwargs["priority_id"], "priority-123")
             run_output_dir = Path(deps.call_kwargs["output_dir"])
             self.assertTrue(str(run_output_dir).startswith(str(governance_root)))
@@ -622,9 +622,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 },
                 "artifact_refs": [],
                 "audit": {
-                    "rollback_evidence_missing_checks": [
-                        "killSwitchDryRunFailed"
-                    ],
+                    "rollback_evidence_missing_checks": ["killSwitchDryRunFailed"],
                     "rollback_readiness_readout": {
                         "kill_switch_dry_run_passed": False,
                         "gitops_revert_dry_run_passed": False,
@@ -664,16 +662,18 @@ class TestTradingSchedulerAutonomy(TestCase):
             ):
                 scheduler._run_autonomous_cycle()
 
-            self.assertEqual(
-                scheduler.state.last_autonomy_promotion_action, "promote"
-            )
+            self.assertEqual(scheduler.state.last_autonomy_promotion_action, "promote")
             self.assertTrue(scheduler.state.last_autonomy_promotion_eligible)
             self.assertEqual(
                 scheduler.state.last_autonomy_recommendation_trace_id, "blocked-trace"
             )
             self.assertEqual(scheduler.state.metrics.autonomy_promotions_total, 1)
-            self.assertEqual(scheduler.state.metrics.autonomy_promotion_allowed_total, 0)
-            self.assertEqual(scheduler.state.metrics.autonomy_promotion_blocked_total, 1)
+            self.assertEqual(
+                scheduler.state.metrics.autonomy_promotion_allowed_total, 0
+            )
+            self.assertEqual(
+                scheduler.state.metrics.autonomy_promotion_blocked_total, 1
+            )
             self.assertEqual(
                 scheduler.state.metrics.autonomy_outcome_total.get("blocked_paper"), 1
             )
@@ -725,7 +725,9 @@ class TestTradingSchedulerAutonomy(TestCase):
                 1,
             )
 
-    def test_run_autonomous_cycle_uses_simulation_clock_for_no_signal_window(self) -> None:
+    def test_run_autonomous_cycle_uses_simulation_clock_for_no_signal_window(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler, _deps = self._build_scheduler_with_fixtures(
                 tmpdir,
@@ -912,8 +914,8 @@ class TestTradingSchedulerAutonomy(TestCase):
             scheduler.state.last_autonomy_run_id = "stale-run-id"
             scheduler.state.last_autonomy_candidate_id = "stale-candidate-id"
             scheduler.state.last_autonomy_gates = str(Path(tmpdir) / "stale-gates.json")
-            scheduler.state.last_autonomy_actuation_intent = (
-                str(Path(tmpdir) / "stale-actuation-intent.json")
+            scheduler.state.last_autonomy_actuation_intent = str(
+                Path(tmpdir) / "stale-actuation-intent.json"
             )
             scheduler.state.last_autonomy_patch = str(Path(tmpdir) / "stale-patch.yaml")
             scheduler.state.last_autonomy_recommendation = "paper"
@@ -1005,6 +1007,31 @@ class TestTradingSchedulerAutonomy(TestCase):
                 "signal_staleness_streak_exceeded:cursor_ahead_of_stream:2",
                 scheduler.state.emergency_stop_reason or "",
             )
+
+    def test_safety_controls_suppress_fresh_no_signal_staleness_streak(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            settings.trading_emergency_stop_enabled = True
+            settings.trading_rollback_signal_staleness_alert_streak_limit = 2
+            settings.trading_signal_stale_lag_alert_seconds = 300
+            settings.trading_signal_staleness_alert_critical_reasons_raw = (
+                "no_signals_in_window"
+            )
+            scheduler._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            scheduler.state.metrics.signal_lag_seconds = 68
+            scheduler.state.metrics.no_signal_reason_streak = {
+                "no_signals_in_window": 2
+            }
+            scheduler._evaluate_safety_controls()
+
+            self.assertFalse(scheduler.state.emergency_stop_active)
+            self.assertIsNone(scheduler.state.emergency_stop_reason)
 
     def test_safety_controls_trigger_emergency_stop_when_universe_unavailable(
         self,
@@ -1107,7 +1134,9 @@ class TestTradingSchedulerAutonomy(TestCase):
 
     def test_run_trading_iteration_continues_with_partial_lane_failure(self) -> None:
         scheduler = TradingScheduler()
-        failing_lane = _PipelineIterationStub(account_label="paper-a", run_once_fail=True)
+        failing_lane = _PipelineIterationStub(
+            account_label="paper-a", run_once_fail=True
+        )
         healthy_lane = _PipelineIterationStub(account_label="paper-b")
         scheduler._pipelines = [failing_lane, healthy_lane]
         scheduler._pipeline = failing_lane
@@ -1158,7 +1187,9 @@ class TestTradingSchedulerAutonomy(TestCase):
         self.assertEqual(failing_lane.reconcile_last_error, "reconcile_failed")
         self.assertEqual(healthy_lane.reconcile_last_error, None)
 
-    def test_run_autonomy_iteration_triggers_rollback_when_failure_streak_exceeds_limit(self) -> None:
+    def test_run_autonomy_iteration_triggers_rollback_when_failure_streak_exceeds_limit(
+        self,
+    ) -> None:
         original_emergency_stop = settings.trading_emergency_stop_enabled
         original_autonomy_rollback_limit = (
             settings.trading_rollback_autonomy_failure_streak_limit
@@ -1191,7 +1222,9 @@ class TestTradingSchedulerAutonomy(TestCase):
                     scheduler.state.last_error,
                     "emergency_stop_triggered reasons=autonomy_failure_streak_exceeded:1",
                 )
-                self.assertEqual(scheduler.state.last_autonomy_error, "autonomy-cycle-failed")
+                self.assertEqual(
+                    scheduler.state.last_autonomy_error, "autonomy-cycle-failed"
+                )
                 self.assertEqual(scheduler.state.autonomy_failure_streak, 1)
                 self.assertTrue(scheduler.state.emergency_stop_active)
                 self.assertIn(
@@ -1224,6 +1257,7 @@ class TestTradingSchedulerAutonomy(TestCase):
             pipeline.order_feed_ingestor._default_account_label,  # type: ignore[attr-defined]
             "paper-x",
         )
+
     def test_run_autonomous_cycle_passes_autonomy_execution_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler, deps = self._build_scheduler_with_fixtures(
@@ -1314,9 +1348,15 @@ class TestTradingSchedulerAutonomy(TestCase):
             scheduler.state.rollback_incident_evidence_path = str(
                 Path(tmpdir) / "rollback-evidence.json"
             )
-            Path(scheduler.state.drift_last_detection_path).write_text("{}", encoding="utf-8")
-            Path(scheduler.state.drift_last_action_path).write_text("{}", encoding="utf-8")
-            Path(scheduler.state.drift_last_outcome_path).write_text("{}", encoding="utf-8")
+            Path(scheduler.state.drift_last_detection_path).write_text(
+                "{}", encoding="utf-8"
+            )
+            Path(scheduler.state.drift_last_action_path).write_text(
+                "{}", encoding="utf-8"
+            )
+            Path(scheduler.state.drift_last_outcome_path).write_text(
+                "{}", encoding="utf-8"
+            )
             Path(scheduler.state.rollback_incident_evidence_path).write_text(
                 "{}", encoding="utf-8"
             )
@@ -1374,9 +1414,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 now=datetime(2026, 1, 1, tzinfo=timezone.utc),
             )
 
-            updated_manifest = json.loads(
-                manifest_path.read_text(encoding="utf-8")
-            )
+            updated_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             phases = updated_manifest["phases"]
             self.assertEqual(
                 [phase["name"] for phase in phases],
@@ -1452,10 +1490,16 @@ class TestTradingSchedulerAutonomy(TestCase):
                     },
                     {"name": "drift-gate", "status": "pass", "artifact_refs": []},
                     {"name": "paper-canary", "status": "pass", "artifact_refs": []},
-                    {"name": "runtime-governance", "status": "pass", "artifact_refs": []},
+                    {
+                        "name": "runtime-governance",
+                        "status": "pass",
+                        "artifact_refs": [],
+                    },
                     {"name": "rollback-proof", "status": "pass", "artifact_refs": []},
                 ],
-                "artifact_refs": [str(Path(tmpdir) / "backtest" / "walkforward-results.json")],
+                "artifact_refs": [
+                    str(Path(tmpdir) / "backtest" / "walkforward-results.json")
+                ],
             }
             manifest_path.write_text(
                 json.dumps(manifest_payload, indent=2), encoding="utf-8"
@@ -1472,9 +1516,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 now=datetime(2026, 1, 1, tzinfo=timezone.utc),
             )
 
-            updated_manifest = json.loads(
-                manifest_path.read_text(encoding="utf-8")
-            )
+            updated_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             phases = updated_manifest["phases"]
             self.assertEqual(
                 [phase["name"] for phase in phases],
@@ -1495,14 +1537,24 @@ class TestTradingSchedulerAutonomy(TestCase):
                 updated_manifest["rollback_proof"]["rollback_incident_evidence"],
                 "",
             )
-            self.assertEqual(updated_manifest["runtime_governance"]["reasons"], ["watchlist_signal"])
-            self.assertEqual(updated_manifest["rollback_proof"]["reasons"], ["watchlist_signal"])
+            self.assertEqual(
+                updated_manifest["runtime_governance"]["reasons"], ["watchlist_signal"]
+            )
+            self.assertEqual(
+                updated_manifest["rollback_proof"]["reasons"], ["watchlist_signal"]
+            )
             self.assertIn(
-                {"from": "runtime-governance", "to": "rollback-proof", "status": "fail"},
+                {
+                    "from": "runtime-governance",
+                    "to": "rollback-proof",
+                    "status": "fail",
+                },
                 updated_manifest["phase_transitions"],
             )
 
-    def test_append_runtime_governance_adds_missing_runtime_and_rollback_phases(self) -> None:
+    def test_append_runtime_governance_adds_missing_runtime_and_rollback_phases(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler, _deps = self._build_scheduler_with_fixtures(
                 tmpdir,
@@ -1534,7 +1586,9 @@ class TestTradingSchedulerAutonomy(TestCase):
                     {"name": "drift-gate", "status": "pass", "artifact_refs": []},
                     {"name": "paper-canary", "status": "pass", "artifact_refs": []},
                 ],
-                "artifact_refs": [str(Path(tmpdir) / "backtest" / "walkforward-results.json")],
+                "artifact_refs": [
+                    str(Path(tmpdir) / "backtest" / "walkforward-results.json")
+                ],
             }
             manifest_path.write_text(
                 json.dumps(manifest_payload, indent=2), encoding="utf-8"
@@ -1551,9 +1605,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 now=datetime(2026, 1, 1, tzinfo=timezone.utc),
             )
 
-            updated_manifest = json.loads(
-                manifest_path.read_text(encoding="utf-8")
-            )
+            updated_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(
                 [phase["name"] for phase in updated_manifest["phases"]],
                 [
@@ -1568,8 +1620,12 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
             self.assertEqual(updated_manifest["phases"][5]["status"], "pass")
             self.assertEqual(updated_manifest["phases"][6]["status"], "pass")
-            self.assertEqual(updated_manifest["runtime_governance"]["governance_status"], "pass")
-            self.assertEqual(updated_manifest["rollback_proof"]["rollback_incident_evidence"], "")
+            self.assertEqual(
+                updated_manifest["runtime_governance"]["governance_status"], "pass"
+            )
+            self.assertEqual(
+                updated_manifest["rollback_proof"]["rollback_incident_evidence"], ""
+            )
             phase_transition = {
                 (transition.get("from"), transition.get("to")): transition.get("status")
                 for transition in updated_manifest["phase_transitions"]
@@ -1631,7 +1687,9 @@ class TestTradingSchedulerAutonomy(TestCase):
             assert manifest_path is not None
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             phases_by_name = {
-                phase["name"]: phase for phase in manifest["phases"] if isinstance(phase, dict)
+                phase["name"]: phase
+                for phase in manifest["phases"]
+                if isinstance(phase, dict)
             }
             self.assertEqual(phases_by_name["runtime-governance"]["status"], "fail")
             self.assertEqual(phases_by_name["rollback-proof"]["status"], "pass")
@@ -1644,7 +1702,11 @@ class TestTradingSchedulerAutonomy(TestCase):
                 manifest["artifact_refs"],
             )
             self.assertIn(
-                {"from": "runtime-governance", "to": "rollback-proof", "status": "pass"},
+                {
+                    "from": "runtime-governance",
+                    "to": "rollback-proof",
+                    "status": "pass",
+                },
                 manifest["phase_transitions"],
             )
 
@@ -1687,13 +1749,21 @@ class TestTradingSchedulerAutonomy(TestCase):
             assert manifest_path is not None
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             phases_by_name = {
-                phase["name"]: phase for phase in manifest["phases"] if isinstance(phase, dict)
+                phase["name"]: phase
+                for phase in manifest["phases"]
+                if isinstance(phase, dict)
             }
             self.assertEqual(phases_by_name["runtime-governance"]["status"], "fail")
             self.assertEqual(phases_by_name["rollback-proof"]["status"], "fail")
-            self.assertEqual(manifest["rollback_proof"]["rollback_incident_evidence"], "")
+            self.assertEqual(
+                manifest["rollback_proof"]["rollback_incident_evidence"], ""
+            )
             self.assertIn(
-                {"from": "runtime-governance", "to": "rollback-proof", "status": "fail"},
+                {
+                    "from": "runtime-governance",
+                    "to": "rollback-proof",
+                    "status": "fail",
+                },
                 manifest["phase_transitions"],
             )
 
@@ -1773,11 +1843,15 @@ class TestTradingSchedulerAutonomy(TestCase):
                 str(stale_incident_path),
                 updated_manifest["rollback_proof"]["artifact_refs"],
             )
-            self.assertNotIn(str(stale_incident_path), updated_manifest["artifact_refs"])
+            self.assertNotIn(
+                str(stale_incident_path), updated_manifest["artifact_refs"]
+            )
             self.assertEqual(updated_manifest["phases"][-1]["status"], "pass")
             self.assertEqual(updated_manifest["status"], "pass")
 
-    def test_append_runtime_governance_ignores_non_triggered_payload_rollback_evidence(self) -> None:
+    def test_append_runtime_governance_ignores_non_triggered_payload_rollback_evidence(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler, _deps = self._build_scheduler_with_fixtures(
                 tmpdir,
@@ -1879,7 +1953,9 @@ class TestTradingSchedulerAutonomy(TestCase):
                 approval_token=None,
             )
 
-            def _fake_run_autonomous_lane_with_canary_failure(**kwargs: Any) -> SimpleNamespace:
+            def _fake_run_autonomous_lane_with_canary_failure(
+                **kwargs: Any,
+            ) -> SimpleNamespace:
                 deps.call_kwargs = kwargs
                 deps.call_kwargs["promotion_target"] = kwargs.get("promotion_target")
                 deps.call_kwargs["approval_token"] = kwargs.get("approval_token")
@@ -1946,7 +2022,11 @@ class TestTradingSchedulerAutonomy(TestCase):
                                     "status": "pass",
                                     "artifact_refs": [],
                                 },
-                                {"name": "drift-gate", "status": "pass", "artifact_refs": []},
+                                {
+                                    "name": "drift-gate",
+                                    "status": "pass",
+                                    "artifact_refs": [],
+                                },
                                 {
                                     "name": "paper-canary",
                                     "status": "fail",
@@ -2162,7 +2242,9 @@ class TestTradingSchedulerAutonomy(TestCase):
                     "gate_report_trace_id": "gate-trace-test",
                     "recommendation_reasons": ["unit_test"],
                     "promotion_allowed": bool(
-                        gate_payload.get("promotion_recommendation", {}).get("eligible", True)
+                        gate_payload.get("promotion_recommendation", {}).get(
+                            "eligible", True
+                        )
                     ),
                 },
                 "artifact_refs": [str(gate_report_path)],
@@ -2207,8 +2289,16 @@ class TestTradingSchedulerAutonomy(TestCase):
                                 "status": "pass",
                                 "artifact_refs": [],
                             },
-                            {"name": "drift-gate", "status": "pass", "artifact_refs": []},
-                            {"name": "paper-canary", "status": "pass", "artifact_refs": []},
+                            {
+                                "name": "drift-gate",
+                                "status": "pass",
+                                "artifact_refs": [],
+                            },
+                            {
+                                "name": "paper-canary",
+                                "status": "pass",
+                                "artifact_refs": [],
+                            },
                             {
                                 "name": "runtime-governance",
                                 "status": "pass",

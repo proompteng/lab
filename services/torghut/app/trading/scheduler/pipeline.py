@@ -121,10 +121,12 @@ from .pipeline_helpers import (
     _uncertainty_gate_staleness_reason,
 )
 from .safety import (
+    _FRESH_TAIL_NO_SIGNAL_REASONS,
     _is_market_session_open,
     _latch_signal_continuity_alert_state,
     _record_signal_continuity_recovery_cycle,
     _signal_bootstrap_grace_active,
+    _signal_tail_is_fresh,
 )
 from .state import (
     RuntimeUncertaintyGate,
@@ -906,6 +908,7 @@ class TradingPipeline:
         )
         actionable = self._is_actionable_no_signal_reason(
             reason=normalized_reason,
+            signal_lag_seconds=batch.signal_lag_seconds,
             market_session_open=market_session_open,
         )
         continuity_state = (
@@ -955,19 +958,23 @@ class TradingPipeline:
         self,
         *,
         reason: str,
+        signal_lag_seconds: float | None,
         market_session_open: bool,
     ) -> bool:
         if reason == "cursor_ahead_of_stream":
             return True
-        if reason in {
-            "no_signals_in_window",
-            "cursor_tail_stable",
-            "empty_batch_advanced",
-        } and _signal_bootstrap_grace_active(
-            self.state,
-            grace_seconds=settings.trading_signal_bootstrap_grace_seconds,
-        ):
-            return False
+        if reason in _FRESH_TAIL_NO_SIGNAL_REASONS:
+            if _signal_bootstrap_grace_active(
+                self.state,
+                grace_seconds=settings.trading_signal_bootstrap_grace_seconds,
+            ):
+                return False
+            if _signal_tail_is_fresh(
+                reason,
+                signal_lag_seconds,
+                stale_lag_seconds=settings.trading_signal_stale_lag_alert_seconds,
+            ):
+                return False
         if market_session_open:
             return True
         expected_market_closed_reasons = (

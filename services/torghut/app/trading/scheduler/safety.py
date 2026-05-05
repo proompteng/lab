@@ -11,10 +11,29 @@ from typing import Any
 from ..market_session import market_session_is_open
 
 logger = logging.getLogger(__name__)
+_FRESH_TAIL_NO_SIGNAL_REASONS: frozenset[str] = frozenset(
+    {
+        "no_signals_in_window",
+        "cursor_tail_stable",
+        "empty_batch_advanced",
+    }
+)
 _RECOVERABLE_EMERGENCY_STOP_PREFIXES: tuple[str, ...] = (
     "signal_lag_exceeded:",
     "signal_staleness_streak_exceeded:",
 )
+
+
+def _signal_tail_is_fresh(
+    reason: str,
+    lag_seconds: float | int | None,
+    *,
+    stale_lag_seconds: int,
+) -> bool:
+    if reason not in _FRESH_TAIL_NO_SIGNAL_REASONS or lag_seconds is None:
+        return False
+    return float(lag_seconds) < max(0, int(stale_lag_seconds))
+
 
 def _normalize_emergency_stop_reason_entry(raw: str) -> str:
     normalized = raw.strip()
@@ -51,6 +70,7 @@ def _coerce_recovery_reason_sequence(raw_reasons: Sequence[str] | None) -> list[
     if not raw_reasons:
         return []
     return _merge_emergency_stop_reasons(raw_reasons)
+
 
 def _is_market_session_open(
     trading_client: Any | None,
@@ -127,11 +147,13 @@ def _signal_bootstrap_grace_active(
 
 __all__ = [
     "_coerce_recovery_reason_sequence",
+    "_FRESH_TAIL_NO_SIGNAL_REASONS",
     "_is_market_session_open",
     "_is_recoverable_emergency_stop_reason",
     "_latch_signal_continuity_alert_state",
     "_merge_emergency_stop_reasons",
     "_record_signal_continuity_recovery_cycle",
     "_signal_bootstrap_grace_active",
+    "_signal_tail_is_fresh",
     "_split_emergency_stop_reasons",
 ]
