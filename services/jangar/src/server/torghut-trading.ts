@@ -485,7 +485,7 @@ export const listTorghutTradingRejectedDecisions = async (params: {
   })) satisfies TorghutRejectedDecisionRow[]
 }
 
-export const listTorghutTradingDecisionRows = async (params: {
+const listTorghutTradingDecisionRows = async (params: {
   pool: Pool
   startUtc: string
   endUtc: string
@@ -539,7 +539,7 @@ export const listTorghutTradingDecisionRows = async (params: {
   })) satisfies TorghutDecisionRow[]
 }
 
-export const listTorghutTradingPositionSnapshots = async (params: {
+const listTorghutTradingPositionSnapshots = async (params: {
   pool: Pool
   startUtc: string
   endUtc: string

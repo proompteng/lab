@@ -158,7 +158,7 @@ export const readReleaseContract = (path: string): TorghutReleaseContract => {
   return contract
 }
 
-export const main = (cliOptions?: CliOptions) => {
+const main = (cliOptions?: CliOptions) => {
   const parsed = cliOptions ?? parseArgs(process.argv.slice(2))
   const command = parsed.command
   const path = parsed.path ?? defaultContractPath
@@ -207,10 +207,4 @@ if (import.meta.main) {
   } catch (error) {
     fatal('Failed to process torghut release contract', error)
   }
-}
-
-export const __private = {
-  assertValidContract,
-  normalizeDigest,
-  parseArgs,
 }

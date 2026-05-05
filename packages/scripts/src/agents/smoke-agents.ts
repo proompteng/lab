@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import process from 'node:process'
+import { inspect } from 'node:util'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -67,7 +68,7 @@ const formatErrorMessage = (error: unknown) => {
   try {
     return JSON.stringify(error) ?? ''
   } catch {
-    return String(error)
+    return inspect(error, { depth: 2 })
   }
 }
 
@@ -441,6 +442,24 @@ const dumpNamespaceDiagnostics = async (namespace: string, releaseName: string) 
   await runInherit(['kubectl', '-n', namespace, 'get', 'events', '--sort-by=.metadata.creationTimestamp'])
 }
 
+const waitForDeploymentRollout = async (namespace: string, deployment: string, timeoutFlag: string) => {
+  const exitCode = await runInherit([
+    'kubectl',
+    '-n',
+    namespace,
+    'rollout',
+    'status',
+    `deploy/${deployment}`,
+    `--timeout=${timeoutFlag}`,
+  ])
+  if (exitCode !== 0) {
+    await dumpNamespaceDiagnostics(namespace, deployment)
+    failSmoke(
+      `Command failed (${exitCode}): kubectl -n ${namespace} rollout status deploy/${deployment} --timeout=${timeoutFlag}`,
+    )
+  }
+}
+
 const runDiagnosticsCommand = async (cmd: string[]) => {
   const exitCode = await runInherit(cmd)
   if (exitCode !== 0) {
@@ -646,23 +665,7 @@ const main = async () => {
       }),
     )
 
-    {
-      const exitCode = await runInherit([
-        'kubectl',
-        '-n',
-        namespace,
-        'rollout',
-        'status',
-        `deploy/${dbHost}`,
-        `--timeout=${timeoutFlag}`,
-      ])
-      if (exitCode !== 0) {
-        await dumpNamespaceDiagnostics(namespace, dbHost)
-        fatal(
-          `Command failed (${exitCode}): kubectl -n ${namespace} rollout status deploy/${dbHost} --timeout=${timeoutFlag}`,
-        )
-      }
-    }
+    await waitForDeploymentRollout(namespace, dbHost, timeoutFlag)
 
     log('Ensuring required Postgres extensions for Jangar...')
     const podResult = await execCapture([
@@ -714,23 +717,7 @@ const main = async () => {
   await run('kubectl', buildKubectlWaitForCrdsArgs())
 
   await run('helm', helmArgs)
-  {
-    const exitCode = await runInherit([
-      'kubectl',
-      '-n',
-      namespace,
-      'rollout',
-      'status',
-      `deploy/${releaseName}`,
-      `--timeout=${timeoutFlag}`,
-    ])
-    if (exitCode !== 0) {
-      await dumpNamespaceDiagnostics(namespace, releaseName)
-      fatal(
-        `Command failed (${exitCode}): kubectl -n ${namespace} rollout status deploy/${releaseName} --timeout=${timeoutFlag}`,
-      )
-    }
-  }
+  await waitForDeploymentRollout(namespace, releaseName, timeoutFlag)
 
   await run(
     'kubectl',

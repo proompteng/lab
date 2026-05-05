@@ -40,7 +40,7 @@ const replaceSingle = (source: string, pattern: RegExp, replacement: string, lab
   return source.replace(pattern, replacement)
 }
 
-export const updateWsManifest = (
+const updateWsManifest = (
   imageName: string,
   digest: string,
   version: string,
@@ -143,7 +143,7 @@ Options:
   return options
 }
 
-export const main = (cliOptions?: CliOptions) => {
+const main = (cliOptions?: CliOptions) => {
   const parsed = cliOptions ?? parseArgs(process.argv.slice(2))
   const registry = parsed.registry ?? process.env.TORGHUT_WS_IMAGE_REGISTRY ?? defaultRegistry
   const repository = parsed.repository ?? process.env.TORGHUT_WS_IMAGE_REPOSITORY ?? defaultRepository

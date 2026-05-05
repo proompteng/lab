@@ -108,21 +108,6 @@ const globalState = globalThis as typeof globalThis & {
   }
 }
 
-const resolveBoolean = (value: string | undefined, fallback: boolean) => {
-  if (!value) return fallback
-  const normalized = value.trim().toLowerCase()
-  if (['1', 'true', 'yes', 'y', 'on', 'enabled'].includes(normalized)) return true
-  if (['0', 'false', 'no', 'n', 'off', 'disabled'].includes(normalized)) return false
-  return fallback
-}
-
-const parsePositiveInt = (value: string | undefined, fallback: number) => {
-  if (!value) return fallback
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
-  return parsed
-}
-
 const loadConfig = (): DecisionEngineConfig => resolveTorghutDecisionEngineConfig(process.env)
 
 const ensureGlobal = () => {
