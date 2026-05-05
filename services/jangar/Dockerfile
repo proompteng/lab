@@ -17,6 +17,7 @@ ARG ZOXIDE_VERSION=0.9.8
 ARG KUBECTL_VERSION=1.34.3
 ARG KN_VERSION=1.20.0
 ARG CNPG_VERSION=1.28.0
+ARG NATSCLI_VERSION=v0.4.0
 ARG NEOVIM_VERSION=stable
 ARG DOCKER_CLI_VERSION=29.1.2
 ARG BUILDX_VERSION=0.30.1
@@ -35,6 +36,7 @@ ARG ZOXIDE_VERSION
 ARG KUBECTL_VERSION
 ARG KN_VERSION
 ARG CNPG_VERSION
+ARG NATSCLI_VERSION
 ARG NEOVIM_VERSION
 ARG DOCKER_CLI_VERSION
 ARG BUILDX_VERSION
@@ -327,6 +329,24 @@ RUN set -eux; \
   install -o root -g root -m 0755 /tmp/kubectl-cnpg /usr/local/bin/kubectl-cnpg; \
   rm -f "${TARBALL}" "${CHECKSUMS}" /tmp/kubectl-cnpg; \
   command -v kubectl-cnpg >/dev/null
+
+# Install NATS CLI for swarm communication helpers.
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+  amd64|x86_64) NATS_ARCH=amd64 ;; \
+  arm64|aarch64) NATS_ARCH=arm64 ;; \
+  *) echo "Unsupported arch for nats cli: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  NATS_VERSION="${NATSCLI_VERSION#v}"; \
+  NATS_ARCHIVE="/tmp/nats-${NATS_VERSION}-linux-${NATS_ARCH}.zip"; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+    "https://github.com/nats-io/natscli/releases/download/${NATSCLI_VERSION}/nats-${NATS_VERSION}-linux-${NATS_ARCH}.zip" \
+    -o "${NATS_ARCHIVE}"; \
+  unzip -q "${NATS_ARCHIVE}" -d /tmp; \
+  install -o root -g root -m 0755 "/tmp/nats-${NATS_VERSION}-linux-${NATS_ARCH}/nats" /usr/local/bin/nats; \
+  rm -rf "${NATS_ARCHIVE}" "/tmp/nats-${NATS_VERSION}-linux-${NATS_ARCH}"; \
+  nats --version
 
 # Make `k` available for kubectl (VS Code terminals often prefer `k`).
 RUN set -eux; \
