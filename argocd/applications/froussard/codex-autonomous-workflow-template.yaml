@@ -22,8 +22,8 @@ spec:
             cpu: "100m"
             memory: 128Mi
   synchronization:
-    mutex:
-      name: 'codex-{{=sprig.replace("/", "-", workflow.parameters.repository)}}-{{workflow.parameters.issue_number}}'
+    mutexes:
+      - name: 'codex-{{=sprig.replace("/", "-", workflow.parameters.repository)}}-{{workflow.parameters.issue_number}}'
   entrypoint: codex-loop
   arguments:
     parameters:

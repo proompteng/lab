@@ -8,12 +8,12 @@ metadata:
 spec:
   serviceAccountName: codex-workflow
   synchronization:
-    mutex:
-      name: "codex-{{=sprig.replace(\"/\", \"-\", workflow.parameters.repository)}}-{{workflow.parameters.issue_number}}"
-    semaphore:
-      configMapKeyRef:
-        name: argo-workflows-implementation-semaphore
-        key: max-concurrency
+    mutexes:
+      - name: "codex-{{=sprig.replace(\"/\", \"-\", workflow.parameters.repository)}}-{{workflow.parameters.issue_number}}"
+    semaphores:
+      - configMapKeyRef:
+          name: argo-workflows-implementation-semaphore
+          key: max-concurrency
   entrypoint: implement
   arguments:
     parameters:
