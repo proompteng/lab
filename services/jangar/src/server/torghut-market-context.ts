@@ -86,12 +86,6 @@ export type MarketContextOptions = {
   client?: ClickHouseClient
 }
 
-const FALLBACK_TECHNICAL_FRESHNESS_SECONDS = 60
-const FALLBACK_NEWS_FRESHNESS_SECONDS = 300
-const FALLBACK_NEWS_TRADING_HOURS_FRESHNESS_SECONDS = 600
-const FALLBACK_FUNDAMENTALS_FRESHNESS_SECONDS = 24 * 60 * 60
-const FALLBACK_REGIME_FRESHNESS_SECONDS = 120
-const DEFAULT_MARKET_CONTEXT_ENABLED_FLAG_KEY = 'jangar.market_context.enabled'
 const MARKET_CONTEXT_EXCHANGE_TIMEZONE = 'America/New_York'
 const MARKET_CONTEXT_TRADING_WEEKDAYS = new Set(['Mon', 'Tue', 'Wed', 'Thu', 'Fri'])
 const MARKET_CONTEXT_SESSION_OPEN_MINUTE = 9 * 60 + 30
@@ -104,28 +98,6 @@ const exchangeClockFormatter = new Intl.DateTimeFormat('en-US', {
   minute: '2-digit',
   hour12: false,
 })
-
-const toBoolean = (value: string | undefined, fallback: boolean) => {
-  if (!value) return fallback
-  const normalized = value.trim().toLowerCase()
-  if (['1', 'true', 'yes', 'on', 'enabled'].includes(normalized)) return true
-  if (['0', 'false', 'no', 'off', 'disabled'].includes(normalized)) return false
-  return fallback
-}
-
-const parsePositiveInt = (value: string | undefined, fallback: number) => {
-  if (!value) return fallback
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
-  return parsed
-}
-
-const parseOptionalInt = (value: string | undefined): number | null => {
-  if (!value) return null
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) return null
-  return parsed
-}
 
 const resolveSettings = () => resolveMarketContextRuntimeConfig(process.env)
 

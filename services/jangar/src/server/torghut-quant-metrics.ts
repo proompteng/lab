@@ -10,7 +10,7 @@ import {
 } from './torghut-trading'
 import { computeRealizedPnlAverageCostLongOnly } from './torghut-trading-pnl'
 
-export const TORGHUT_QUANT_FORMULA_VERSION = 'v1.0.0'
+const TORGHUT_QUANT_FORMULA_VERSION = 'v1.0.0'
 
 const LATEST_TA_SIGNAL_CACHE_TTL_MS = 30_000
 const LATEST_TA_SIGNAL_ERROR_LOG_COOLDOWN_MS = 5 * 60_000
@@ -209,7 +209,7 @@ const getLatestContextFreshness = async (params: {
   }
 }
 
-export const getTorghutLatestPositionSnapshot = async (params: {
+const getTorghutLatestPositionSnapshot = async (params: {
   pool: Pool
   account: string
   beforeUtc: string
@@ -251,7 +251,7 @@ export const getTorghutLatestPositionSnapshot = async (params: {
   }
 }
 
-export const listTorghutEquitySeries = async (params: {
+const listTorghutEquitySeries = async (params: {
   pool: Pool
   account: string
   startUtc: string

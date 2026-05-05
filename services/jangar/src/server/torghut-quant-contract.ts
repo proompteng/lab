@@ -46,7 +46,7 @@ export type QuantSnapshotFrame = {
   alerts: QuantAlert[]
 }
 
-export const QUANT_WINDOWS: QuantWindow[] = ['1m', '5m', '15m', '1h', '1d', '5d', '20d']
+const QUANT_WINDOWS: QuantWindow[] = ['1m', '5m', '15m', '1h', '1d', '5d', '20d']
 
 export const isQuantWindow = (value: string | null): value is QuantWindow =>
   Boolean(value && (QUANT_WINDOWS as string[]).includes(value))

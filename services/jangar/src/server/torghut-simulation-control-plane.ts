@@ -1331,7 +1331,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
   }
 }
 
-export const getTorghutSimulationRun = async (runId: string) => {
+const getTorghutSimulationRun = async (runId: string) => {
   const db = await ensureDb()
   const row = await db
     .selectFrom('torghut_control_plane.simulation_runs')

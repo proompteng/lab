@@ -39,7 +39,7 @@ export type QuantLatestStoreStatus = {
   count: number
 }
 
-export const ensureQuantStoreReady = async () => {
+const ensureQuantStoreReady = async () => {
   const db = getDb()
   if (!db) throw new Error('Jangar database is not configured (DATABASE_URL missing)')
   await ensureMigrations(db)

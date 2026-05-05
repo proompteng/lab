@@ -609,7 +609,6 @@ def apply_program_objective(
     *,
     sweep_config: Mapping[str, Any],
     objective: StrategyObjective,
-    train_day_count: int,
     holdout_day_count: int,
     full_window_day_count: int | None = None,
 ) -> dict[str, Any]:

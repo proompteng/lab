@@ -791,7 +791,6 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         seed_sweep = apply_program_objective(
             sweep_config=seed_sweep,
             objective=program.objective,
-            train_day_count=max(1, int(args.train_days)),
             holdout_day_count=max(1, int(args.holdout_days)),
             full_window_day_count=_default_full_window_day_count(args),
         )
@@ -1175,7 +1174,6 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 next_sweep_config = apply_program_objective(
                     sweep_config=next_sweep_config,
                     objective=program.objective,
-                    train_day_count=max(1, int(args.train_days)),
                     holdout_day_count=max(1, int(args.holdout_days)),
                     full_window_day_count=_default_full_window_day_count(args),
                 )

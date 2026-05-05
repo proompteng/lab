@@ -265,7 +265,6 @@ class TestStrategyAutoresearch(TestCase):
             updated = apply_program_objective(
                 sweep_config=sweep_payload,
                 objective=program.objective,
-                train_day_count=6,
                 holdout_day_count=3,
                 full_window_day_count=9,
             )
@@ -457,7 +456,6 @@ class TestStrategyAutoresearch(TestCase):
                 min_regime_slice_pass_rate=Decimal('0.40'),
                 stop_when_objective_met=False,
             ),
-            train_day_count=6,
             holdout_day_count=3,
             full_window_day_count=None,
         )
