@@ -127,6 +127,29 @@ SIMULATION_TORGHUT_ENV_OVERRIDE_ALLOWLIST = frozenset(
         'TRADING_SIGNAL_LOOKBACK_MINUTES',
     }
 )
+SIMULATION_TORGHUT_PATCH_ENV_KEYS = frozenset(
+    {
+        'TA_CLICKHOUSE_PASSWORD',
+        'TA_CLICKHOUSE_URL',
+        'TA_CLICKHOUSE_USERNAME',
+        'TRADING_SIGNAL_ALLOWED_SOURCES',
+    }
+)
+SIMULATION_TORGHUT_RUNTIME_ENV_IGNORE_KEYS = tuple(
+    sorted(
+        set(TORGHUT_ENV_KEYS)
+        | SIMULATION_TORGHUT_ENV_OVERRIDE_ALLOWLIST
+        | SIMULATION_TORGHUT_PATCH_ENV_KEYS
+    )
+)
+SIMULATION_TORGHUT_RUNTIME_ENV_IGNORE_JQ = (
+    '.spec.template.spec.containers[0].env[] | select('
+    + ' or '.join(
+        f'.name == {json.dumps(name)}'
+        for name in SIMULATION_TORGHUT_RUNTIME_ENV_IGNORE_KEYS
+    )
+    + ')'
+)
 SIMULATION_FEATURE_STALENESS_MARGIN_MS = 300_000
 SIMULATION_FEATURE_STALENESS_MIN_MS = 120_000
 US_EQUITIES_REGULAR_PROFILE = 'us_equities_regular'
@@ -2328,7 +2351,7 @@ def _simulation_runtime_argocd_ignore_differences(
             'kind': 'Service',
             'namespace': resources.namespace,
             'name': resources.torghut_service,
-            'jsonPointers': ['/spec/template/spec/containers/0/env'],
+            'jqPathExpressions': [SIMULATION_TORGHUT_RUNTIME_ENV_IGNORE_JQ],
         },
         {
             'group': '',

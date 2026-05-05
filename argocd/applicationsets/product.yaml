@@ -256,8 +256,50 @@ spec:
                     kind: Service
                     namespace: torghut
                     name: torghut-sim
-                    jsonPointers:
-                      - /spec/template/spec/containers/0/env
+                    # Historical simulations patch run-scoped DB/topic/clock env on torghut-sim.
+                    # Keep those isolated, but let Git-tracked service env changes reconcile normally.
+                    jqPathExpressions:
+                      - >-
+                        .spec.template.spec.containers[0].env[] | select(
+                        .name == "DB_DSN" or
+                        .name == "TA_CLICKHOUSE_PASSWORD" or
+                        .name == "TA_CLICKHOUSE_URL" or
+                        .name == "TA_CLICKHOUSE_USERNAME" or
+                        .name == "TRADING_ACCOUNT_LABEL" or
+                        .name == "TRADING_ENABLED" or
+                        .name == "TRADING_FEATURE_FLAGS_ENABLED" or
+                        .name == "TRADING_FEATURE_MAX_DUPLICATE_RATIO" or
+                        .name == "TRADING_FEATURE_MAX_REQUIRED_NULL_RATE" or
+                        .name == "TRADING_FEATURE_MAX_STALENESS_MS" or
+                        .name == "TRADING_FEATURE_QUALITY_ENABLED" or
+                        .name == "TRADING_MODE" or
+                        .name == "TRADING_ORDER_FEED_BOOTSTRAP_SERVERS" or
+                        .name == "TRADING_ORDER_FEED_ENABLED" or
+                        .name == "TRADING_ORDER_FEED_GROUP_ID" or
+                        .name == "TRADING_ORDER_FEED_SASL_MECHANISM" or
+                        .name == "TRADING_ORDER_FEED_SASL_PASSWORD" or
+                        .name == "TRADING_ORDER_FEED_SASL_USERNAME" or
+                        .name == "TRADING_ORDER_FEED_SECURITY_PROTOCOL" or
+                        .name == "TRADING_ORDER_FEED_TOPIC" or
+                        .name == "TRADING_ORDER_FEED_TOPIC_V2" or
+                        .name == "TRADING_PRICE_TABLE" or
+                        .name == "TRADING_SIGNAL_ALLOWED_SOURCES" or
+                        .name == "TRADING_SIGNAL_LOOKBACK_MINUTES" or
+                        .name == "TRADING_SIGNAL_TABLE" or
+                        .name == "TRADING_SIMULATION_CLOCK_MODE" or
+                        .name == "TRADING_SIMULATION_DATASET_ID" or
+                        .name == "TRADING_SIMULATION_ENABLED" or
+                        .name == "TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS" or
+                        .name == "TRADING_SIMULATION_ORDER_UPDATES_SASL_MECHANISM" or
+                        .name == "TRADING_SIMULATION_ORDER_UPDATES_SASL_PASSWORD" or
+                        .name == "TRADING_SIMULATION_ORDER_UPDATES_SASL_USERNAME" or
+                        .name == "TRADING_SIMULATION_ORDER_UPDATES_SECURITY_PROTOCOL" or
+                        .name == "TRADING_SIMULATION_ORDER_UPDATES_TOPIC" or
+                        .name == "TRADING_SIMULATION_RUN_ID" or
+                        .name == "TRADING_SIMULATION_WINDOW_END" or
+                        .name == "TRADING_SIMULATION_WINDOW_START" or
+                        .name == "TRADING_STRATEGY_RUNTIME_MODE" or
+                        .name == "TRADING_STRATEGY_SCHEDULER_ENABLED")
                   - group: ""
                     kind: ConfigMap
                     namespace: torghut
