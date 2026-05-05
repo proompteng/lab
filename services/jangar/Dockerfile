@@ -53,8 +53,8 @@ ENV CODEX_CWD=/workspace/lab \
 ENV BUN_INSTALL_CACHE_DIR=/root/.bun/install/cache
 
 # Tooling needed for builds and VS Code server
-RUN --mount=type=cache,target=/var/cache/apt \
-  --mount=type=cache,target=/var/lib/apt/lists \
+RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
+  --mount=type=cache,sharing=locked,target=/var/lib/apt/lists \
   set -eux; \
   export DEBIAN_FRONTEND=noninteractive; \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
@@ -456,8 +456,8 @@ COPY full/packages/cx-tools ./packages/cx-tools
 RUN bun --cwd=packages/cx-tools run build
 
 FROM tools AS tools-pty
-RUN --mount=type=cache,target=/var/cache/apt \
-  --mount=type=cache,target=/var/lib/apt/lists \
+RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
+  --mount=type=cache,sharing=locked,target=/var/lib/apt/lists \
   set -eux; \
   export DEBIAN_FRONTEND=noninteractive; \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
