@@ -508,6 +508,7 @@ jobs:
           AGENTS_VALUES_FILE: scripts/agents/values-ci.yaml
           AGENTS_CREATE_NAMESPACE: 'true'
           AGENTS_DB_BOOTSTRAP: 'true'
+          AGENTS_DB_IMAGE: mirror.gcr.io/pgvector/pgvector:pg16
           AGENTS_TIMEOUT: 15m
           AGENTS_IMAGE_REPOSITORY: ${{ env.BUILT_JANGAR_IMAGE_REPOSITORY }}
           AGENTS_IMAGE_TAG: ${{ env.BUILT_JANGAR_IMAGE_TAG }}
