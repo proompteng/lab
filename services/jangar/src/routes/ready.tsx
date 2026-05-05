@@ -146,10 +146,11 @@ export const getReadyHandler = async () => {
   const servingPassportReady =
     servingPassport !== undefined && servingPassport.decision !== 'block' && servingPassport.decision !== 'hold'
   const memoryProviderReady = memoryProvider.status !== 'blocked'
-  const ready = controllersOk && agentsControllerReady && servingPassportReady && memoryProviderReady
+  const ready = controllersOk && agentsControllerReady && memoryProviderReady
+  const status = ready && servingPassportReady ? 'ok' : 'degraded'
 
   const body = JSON.stringify({
-    status: ready ? 'ok' : 'degraded',
+    status,
     service: 'jangar' as const,
     leaderElection,
     agentsController,
