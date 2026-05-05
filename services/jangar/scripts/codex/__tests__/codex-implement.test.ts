@@ -1587,6 +1587,45 @@ exit 1
     await expect(runCodexImplementation(eventPath)).resolves.toBeDefined()
   }, 40_000)
 
+  it('passes release lane with a documented no-go gate decision and no merge', async () => {
+    process.env.CODEX_PR_DISCOVERY_ENABLED = 'false'
+    process.env.CODEX_VERIFY_RELEASE_ROLLOUT_WITH_CLUSTER = 'false'
+
+    runCodexSessionMock.mockImplementationOnce(async () => ({
+      agentMessages: [
+        [
+          'Summary:',
+          '- Decision: NO-GO for merge.',
+          '- Blocker: required Codex large-diff review gate did not post because connector usage-limit errors.',
+          '- Evidence: PR #5412 is CLEAN/MERGEABLE and visible checks are passing.',
+          '- No squash merge and no production rollout were performed.',
+          '- Audit artifact: /workspace/.agentrun/swarm/torghut-quant-verify.md.',
+          '- Rollback path: no rollback is required because no merge happened.',
+        ].join('\n'),
+      ],
+      sessionId: 'session-no-go',
+      exitCode: 0,
+      forcedTermination: false,
+    }))
+
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        prompt: 'Release verification run',
+        repository: 'owner/repo',
+        issueNumber: 42,
+        base: 'main',
+        head: 'codex/issue-42',
+        stage: 'implementation',
+        swarmAgentRole: 'deployer',
+        swarmHumanName: 'release-manager',
+      }),
+      'utf8',
+    )
+
+    await expect(runCodexImplementation(eventPath)).resolves.toBeDefined()
+  }, 40_000)
+
   it('fails release lane when ArgoCD app health verification is unhealthy', async () => {
     const binDir = join(workdir, '.bin-kubectl-bad')
     await mkdir(binDir, { recursive: true })

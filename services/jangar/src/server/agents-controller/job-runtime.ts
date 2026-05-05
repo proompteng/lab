@@ -331,6 +331,33 @@ export type SubmitJobRunOptions = {
   systemPromptRef?: SystemPromptRef | null
 }
 
+const getExistingAgentRunJobRef = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  jobName: string,
+  namespace: string,
+  runName: string,
+  runtimeType: 'job' | 'workflow',
+) => {
+  const existing = await kube.get('job', jobName, namespace)
+  if (!existing) return null
+
+  const labels = asRecord(readNested(existing, ['metadata', 'labels'])) ?? {}
+  const existingRunName = asString(labels['agents.proompteng.ai/agent-run'])
+  if (existingRunName !== runName) {
+    throw new Error(
+      `job ${jobName} already exists in ${namespace} but belongs to AgentRun ${existingRunName ?? 'unknown'}`,
+    )
+  }
+
+  return buildRuntimeRef(runtimeType, jobName, namespace, { uid: asString(readNested(existing, ['metadata', 'uid'])) })
+}
+
+const isImmutableJobApplyError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  const normalized = message.toLowerCase()
+  return normalized.includes('job.batch') && normalized.includes('field is immutable')
+}
+
 export const submitJobRun = async (
   kube: ReturnType<typeof createKubernetesClient>,
   agentRun: Record<string, unknown>,
@@ -506,6 +533,9 @@ export const submitJobRun = async (
   const runName = asString(metadata.name) ?? 'agentrun'
   const runUid = asString(metadata.uid)
   const jobName = makeName(runName, options.nameSuffix ?? 'job')
+  const existingJobRef = await getExistingAgentRunJobRef(kube, jobName, namespace, runName, runtimeType)
+  if (existingJobRef) return existingJobRef
+
   const agentName = asString(readNested(agent, ['metadata', 'name']))
   const implName = asString(readNested(agentRun, ['spec', 'implementationSpecRef', 'name']))
   const labels: Record<string, string> = {
@@ -729,6 +759,14 @@ export const submitJobRun = async (
     },
   }
 
-  const applied = await kube.apply(jobResource)
+  let applied: Record<string, unknown>
+  try {
+    applied = await kube.apply(jobResource)
+  } catch (error) {
+    if (!isImmutableJobApplyError(error)) throw error
+    const existingAfterConflict = await getExistingAgentRunJobRef(kube, jobName, namespace, runName, runtimeType)
+    if (existingAfterConflict) return existingAfterConflict
+    throw error
+  }
   return buildRuntimeRef(runtimeType, jobName, namespace, { uid: asString(readNested(applied, ['metadata', 'uid'])) })
 }
