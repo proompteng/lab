@@ -61,9 +61,9 @@ describe('control-plane-config', () => {
   })
 
   it('uses a rollout-safe Torghut status timeout default and bounds overrides', () => {
-    expect(resolveControlPlaneStatusConfig({}).torghutStatusTimeoutMs).toBe(5000)
+    expect(resolveControlPlaneStatusConfig({}).torghutStatusTimeoutMs).toBe(15000)
     expect(resolveControlPlaneStatusConfig({ JANGAR_TORGHUT_STATUS_TIMEOUT_MS: '20' }).torghutStatusTimeoutMs).toBe(
-      5000,
+      15000,
     )
     expect(resolveControlPlaneStatusConfig({ JANGAR_TORGHUT_STATUS_TIMEOUT_MS: '45000' }).torghutStatusTimeoutMs).toBe(
       30000,

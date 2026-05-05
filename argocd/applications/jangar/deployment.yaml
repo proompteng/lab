@@ -273,6 +273,8 @@ spec:
               value: "120"
             - name: JANGAR_TORGHUT_STATUS_URL
               value: http://torghut.torghut.svc.cluster.local/trading/status
+            - name: JANGAR_TORGHUT_STATUS_TIMEOUT_MS
+              value: "15000"
             - name: JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS
               value: "15"
             - name: JANGAR_FEATURE_FLAGS_URL
