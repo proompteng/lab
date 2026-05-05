@@ -25,6 +25,12 @@ resources:
   - job-posthog-migrate.yaml
 
 images:
+  - name: posthog/posthog
+    newName: mirror.gcr.io/posthog/posthog
+    newTag: 7a6ab0d30c88a981a45491ac35f2b02d09d56c0f
+  - name: posthog/posthog-node
+    newName: mirror.gcr.io/posthog/posthog-node
+    newTag: bf60774b71961a8674ca24ed1bd42bed4d670f72
   - name: clickhouse/clickhouse-keeper
     newName: mirror.gcr.io/clickhouse/clickhouse-keeper
     newTag: 25.12.5.44
