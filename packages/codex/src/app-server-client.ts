@@ -147,7 +147,6 @@ const toSandboxPolicy = (mode: SandboxMode): SandboxPolicy => {
     return {
       type: 'workspaceWrite' as const,
       writableRoots: [],
-      readOnlyAccess: { type: 'fullAccess' },
       networkAccess: true,
       excludeTmpdirEnvVar: false,
       excludeSlashTmp: false,
@@ -156,7 +155,6 @@ const toSandboxPolicy = (mode: SandboxMode): SandboxPolicy => {
   if (mode === 'read-only') {
     return {
       type: 'readOnly' as const,
-      access: { type: 'fullAccess' },
       networkAccess: true,
     }
   }
