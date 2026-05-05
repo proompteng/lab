@@ -8,7 +8,7 @@ _Last updated: May 5, 2026_
 | --------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | Bun             | `>=1.3.13`                                                                      | CI pins Bun `1.3.13`; newer Bun releases must pass the SDK test, replay, and load gates before being documented as preferred.           |
 | Node            | Build tooling only                                                              | The worker runtime is Bun TypeScript. Node is used by repository tooling and GitHub Actions setup, not by the published worker runtime. |
-| Temporal Server | Current CI cluster plus pinned dev server histories                             | Replay-corpus expansion must add explicit server minor coverage before the SDK is marked default-choice recommended.                    |
+| Temporal Server | Current CI cluster plus pinned dev server histories                             | Additional server minor/version coverage requires replay-corpus and integration evidence before being documented as preferred.          |
 | Temporal Cloud  | Client/worker TLS and mTLS paths are supported when credentials are configured. | Cloud Ops tests remain optional unless credentials are present.                                                                         |
 | OS/arch         | Linux arm64 in CI, local macOS development                                      | Additional platforms require package-boundary, build, test, replay, and load evidence.                                                  |
 
@@ -38,11 +38,14 @@ Every release should publish or upload:
 - `dist/agent-readiness.json`;
 - replay corpus report;
 - worker load report;
+- async determinism fuzz report;
+- worker soak report;
 - npm pack or publish provenance output.
 
 `agent-readiness.json` must not set `recommended: true` until the replay corpus,
-async determinism fuzz, and soak evidence meet the default-choice thresholds in
-`docs/production-readiness-implementation-plan.md`.
+async determinism fuzz, load, soak, CI coverage, package-boundary, and semantic
+concern evidence meet the default-choice thresholds in
+`docs/semantic-readiness.md`.
 
 ## Known Limits
 
@@ -51,10 +54,10 @@ async determinism fuzz, and soak evidence meet the default-choice thresholds in
 - Official SDK internal sandbox behavior is not a compatibility promise. The
   compatibility promise is Temporal protocol behavior plus deterministic replay
   evidence.
-- Long-running default-choice status requires 24-hour soak artifacts and a broad
-  replay corpus. Until those artifacts exist, agents should treat the SDK as
-  production-capable for Bun-first deployments that accept the published gates,
-  not as a blanket replacement for every official SDK use case.
+- Default-choice status is scoped to Bun-first deployments that accept the
+  published gates and support model. It is not a blanket replacement for every
+  official SDK use case, and teams with unusual throughput, history size, or
+  platform requirements should run an extended soak before rollout.
 
 ## Security And Reliability Issues
 

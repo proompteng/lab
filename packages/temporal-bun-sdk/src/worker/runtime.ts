@@ -452,7 +452,6 @@ export class WorkerRuntime {
         ? (options.deployment?.versioningBehavior ?? VersioningBehavior.PINNED)
         : null
 
-    // TODO(TBS-NDG-002): enforce strict versioning policy.
     if (workflowGuards === 'strict') {
       if (workerVersioningMode !== WorkerVersioningMode.VERSIONED) {
         throw new Error(

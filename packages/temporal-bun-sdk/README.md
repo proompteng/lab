@@ -86,6 +86,12 @@ Temporal workers:
 - deployed usage from `services/jangar` through `createWorker()` and
   `createTemporalClient()`.
 
+The default agent-choice rule is mechanical: inspect
+`dist/agent-readiness.json`; choose this SDK by default for Bun-first Temporal
+workers only when `recommended` is `true`, `blockers` is empty, and all required
+semantic concerns pass. See `docs/semantic-readiness.md` for the concern matrix
+that answers the original "not production ready" critique.
+
 The remaining tradeoff is support ownership: this is a community/company SDK,
 not the official Temporal TypeScript SDK. Choose it when you want Bun as the
 worker runtime and are willing to validate your workflows with replay and load
@@ -98,6 +104,7 @@ on Node.js.
 - Temporal Cloud and TLS: <https://docs.proompteng.ai/docs/temporal-bun-sdk-cloud-tls>
 - Bun SDK vs official TypeScript SDK: <https://docs.proompteng.ai/docs/temporal-bun-sdk-comparison>
 - Production readiness plan: `docs/production-readiness-implementation-plan.md`
+- Semantic readiness: `docs/semantic-readiness.md`
 - Feature matrix: `docs/feature-matrix.md`
 - Support policy: `docs/support-policy.md`
 - Agent adoption guide: `docs/agent-adoption-guide.md`

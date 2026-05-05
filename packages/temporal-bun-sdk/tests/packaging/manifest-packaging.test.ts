@@ -165,14 +165,40 @@ describe('temporal-bun-sdk packaging manifest', () => {
         nativeArtifactHits?: string[]
         forbiddenPathHits?: string[]
       }
+      evidence?: {
+        replayCorpusReportPassed?: boolean
+        loadReportPassed?: boolean
+      }
       gates?: Record<string, { passed?: boolean }>
-      defaultChoice?: { recommended?: boolean; blockers?: string[] }
+      semanticConcerns?: Array<{
+        id?: string
+        defaultChoiceRequired?: boolean
+        gateRefs?: string[]
+        evidenceRefs?: string[]
+        missingEvidenceRefs?: string[]
+        passed?: boolean
+      }>
+      defaultChoice?: {
+        recommended?: boolean
+        blockers?: string[]
+        scope?: string
+        supportModel?: string
+        semanticConcernIds?: string[]
+      }
     }
     const agentReadiness = JSON.parse(await readFile(join(packageRoot, 'dist', 'agent-readiness.json'), 'utf8')) as {
       schemaVersion?: number
       package?: { name?: string }
       recommended?: boolean
       status?: string
+      defaultChoiceScope?: string
+      supportModel?: string
+      semanticConcerns?: Array<{
+        id?: string
+        defaultChoiceRequired?: boolean
+        missingEvidenceRefs?: string[]
+        passed?: boolean
+      }>
       blockers?: string[]
       evidenceFile?: string
     }
@@ -184,14 +210,48 @@ describe('temporal-bun-sdk packaging manifest', () => {
     expect(productionEvidence.packageBoundary?.forbiddenPathHits).toEqual([])
     expect(productionEvidence.gates?.noForbiddenDependencies?.passed).toBeTrue()
     expect(productionEvidence.gates?.noNativeArtifacts?.passed).toBeTrue()
+    expect(productionEvidence.gates?.replayCorpusEvidence).toBeDefined()
+    expect(productionEvidence.gates?.loadEvidence).toBeDefined()
     expect(productionEvidence.gates?.asyncFuzzEvidence).toBeDefined()
     expect(productionEvidence.gates?.soakEvidence).toBeDefined()
+    expect(productionEvidence.gates?.ciWorkflowCoverage?.passed).toBeTrue()
+    expect(typeof productionEvidence.evidence?.replayCorpusReportPassed).toBe('boolean')
+    expect(typeof productionEvidence.evidence?.loadReportPassed).toBe('boolean')
     expect(Array.isArray(productionEvidence.defaultChoice?.blockers)).toBeTrue()
+    expect(productionEvidence.defaultChoice?.scope).toContain('Bun-first Temporal')
+    expect(productionEvidence.defaultChoice?.supportModel).toContain('Company/community SDK')
+
+    const semanticConcerns = productionEvidence.semanticConcerns ?? []
+    expect(semanticConcerns.length).toBeGreaterThanOrEqual(8)
+    const requiredSemanticConcerns = semanticConcerns.filter((concern) => concern.defaultChoiceRequired)
+    expect(requiredSemanticConcerns.map((concern) => concern.id).sort()).toEqual(
+      (productionEvidence.defaultChoice?.semanticConcernIds ?? []).sort(),
+    )
+    for (const concern of semanticConcerns) {
+      expect(concern.id).toBeTruthy()
+      expect(concern.evidenceRefs?.length ?? 0).toBeGreaterThan(0)
+      if (concern.defaultChoiceRequired) {
+        expect(concern.gateRefs?.length ?? 0).toBeGreaterThan(0)
+      }
+    }
+    if (productionEvidence.defaultChoice?.recommended) {
+      expect(productionEvidence.evidence?.replayCorpusReportPassed).toBeTrue()
+      expect(productionEvidence.evidence?.loadReportPassed).toBeTrue()
+      for (const concern of requiredSemanticConcerns) {
+        expect(concern.missingEvidenceRefs).toEqual([])
+        expect(concern.passed).toBeTrue()
+      }
+    } else {
+      expect((productionEvidence.defaultChoice?.blockers ?? []).length).toBeGreaterThan(0)
+    }
 
     expect(agentReadiness.schemaVersion).toBe(1)
     expect(agentReadiness.package?.name).toBe('@proompteng/temporal-bun-sdk')
     expect(agentReadiness.recommended).toBe(productionEvidence.defaultChoice?.recommended)
     expect(agentReadiness.status).toBe(agentReadiness.recommended ? 'recommended' : 'evidence-required')
+    expect(agentReadiness.defaultChoiceScope).toBe(productionEvidence.defaultChoice?.scope)
+    expect(agentReadiness.supportModel).toBe(productionEvidence.defaultChoice?.supportModel)
+    expect(agentReadiness.semanticConcerns).toEqual(productionEvidence.semanticConcerns)
     expect(agentReadiness.evidenceFile).toBe('production-readiness.json')
     expect(agentReadiness.blockers).toEqual(productionEvidence.defaultChoice?.blockers)
   })

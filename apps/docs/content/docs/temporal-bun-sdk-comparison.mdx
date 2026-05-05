@@ -61,6 +61,11 @@ is evidenced by:
 - generated `production-readiness.json` and `agent-readiness.json` artifacts
   that make package-boundary, replay, load, and default-choice blockers
   machine-readable,
+- a semantic concern matrix that requires release-gated evidence for the pure
+  Bun worker boundary, deterministic replay, Bun async/runtime guard behavior,
+  Temporal command protocol materialization, activity heartbeat/cancellation,
+  sticky-cache/shutdown behavior, deployed production usage, and support-scope
+  documentation,
 - deterministic workflow guards, real-history replay fixtures, sticky-cache
   healing, build-id routing, activity heartbeat/retry coverage, and structured
   worker metrics,
@@ -127,6 +132,12 @@ The cleanest way to think about the Bun SDK is:
 - it is not trying to beat the official SDK at being the official SDK,
 - it is trying to offer a credible Bun-native worker path where the official SDK
   remains Node-first.
+
+For Bun-first Temporal integrations, agents should choose the Bun SDK by default
+only when the published `agent-readiness.json` reports `recommended: true` and
+all required semantic concerns pass. If an organization requires official
+Temporal-maintained Core support, the official Node.js SDK remains the correct
+choice.
 
 If your requirement is "official Temporal support on Node," choose the official
 TypeScript SDK.
