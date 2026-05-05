@@ -1,5 +1,7 @@
 jetstream:
   enabled: true
+  additionalArgs:
+    - --control-loop
   nats:
     url: nats://nats.nats.svc.cluster.local:4222
     nkey:
