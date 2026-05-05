@@ -17,3 +17,20 @@ helmCharts:
     releaseName: nats
     namespace: nats
     valuesFile: ./values.yaml
+
+images:
+  - name: nats
+    newName: mirror.gcr.io/library/nats
+    newTag: 2.12.3-alpine
+  - name: natsio/nats-server-config-reloader
+    newName: mirror.gcr.io/natsio/nats-server-config-reloader
+    newTag: 0.21.1
+  - name: natsio/nats-box
+    newName: mirror.gcr.io/natsio/nats-box
+    newTag: 0.19.2
+  - name: docker.io/natsio/prometheus-nats-exporter
+    newName: mirror.gcr.io/natsio/prometheus-nats-exporter
+    newTag: 0.15.0
+  - name: grafana/alloy
+    newName: mirror.gcr.io/grafana/alloy
+    newTag: v1.11.2
