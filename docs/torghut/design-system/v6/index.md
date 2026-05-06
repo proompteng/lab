@@ -11,6 +11,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `119-torghut-evidence-renewal-batches-and-capital-quiescence-gates-2026-05-06.md`
+  - `docs/agents/designs/115-jangar-watch-quiescence-and-evidence-renewal-arbiter-2026-05-06.md`
   - `118-torghut-proof-route-parity-and-options-informed-repair-scheduler-2026-05-06.md`
   - `docs/agents/designs/114-jangar-evidence-transport-ledger-and-watch-restart-circuit-breakers-2026-05-06.md`
   - `117-torghut-contradiction-priced-profit-repair-and-capital-readmission-2026-05-06.md`
