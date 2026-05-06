@@ -196,6 +196,7 @@ class TestHypothesisReadiness(TestCase):
                 'order_count': 45,
                 'avg_abs_slippage_bps': 4,
                 'avg_realized_shortfall_bps': -8,
+                'last_computed_at': '2026-03-06T15:50:00+00:00',
             },
             market_context_status={'last_freshness_seconds': 60},
             jangar_dependency_quorum=JangarDependencyQuorumStatus(
@@ -213,6 +214,44 @@ class TestHypothesisReadiness(TestCase):
         self.assertEqual(cont['capital_multiplier'], '0.25')
         self.assertTrue(cont['promotion_eligible'])
         self.assertEqual(rev['state'], 'canary_live')
+        self.assertEqual(cont['observed']['tca_age_minutes'], 10)
+
+    def test_compile_hypothesis_runtime_statuses_blocks_stale_tca_evidence(self) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=5,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=15,
+            evidence_report={
+                'ok': True,
+                'checked_at': '2026-03-06T15:45:00+00:00',
+            },
+        )
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                'order_count': 45,
+                'avg_abs_slippage_bps': 4,
+                'avg_realized_shortfall_bps': -8,
+                'last_computed_at': '2026-03-06T15:00:00+00:00',
+            },
+            market_context_status={'last_freshness_seconds': 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision='allow',
+                reasons=[],
+                message='ok',
+            ),
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+        )
+
+        cont = next(item for item in statuses if item['hypothesis_id'] == 'H-CONT-01')
+        self.assertEqual(cont['state'], 'shadow')
+        self.assertFalse(cont['promotion_eligible'])
+        self.assertTrue(cont['rollback_required'])
+        self.assertIn('tca_evidence_stale', cont['reasons'])
+        self.assertEqual(cont['observed']['tca_age_minutes'], 60)
 
     def test_compile_hypothesis_runtime_statuses_isolates_dependency_capabilities_between_hypotheses(
         self,
@@ -268,6 +307,7 @@ class TestHypothesisReadiness(TestCase):
                     'order_count': 45,
                     'avg_abs_slippage_bps': 4,
                     'avg_realized_shortfall_bps': -8,
+                    'last_computed_at': '2026-03-06T15:50:00+00:00',
                 },
                 market_context_status={'last_freshness_seconds': 60},
                 jangar_dependency_quorum=JangarDependencyQuorumStatus(

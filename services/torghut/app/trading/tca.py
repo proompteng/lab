@@ -187,7 +187,10 @@ def upsert_execution_tca_metric(
 
 
 def build_tca_gate_inputs(
-    session: Session, *, strategy_id: str | None = None
+    session: Session,
+    *,
+    strategy_id: str | None = None,
+    account_label: str | None = None,
 ) -> dict[str, object]:
     """Build aggregate TCA inputs used by autonomy gate thresholds."""
 
@@ -215,6 +218,11 @@ def build_tca_gate_inputs(
     )
     if strategy_id:
         stmt = stmt.where(ExecutionTCAMetric.strategy_id == strategy_id)
+    normalized_account_label = account_label.strip() if account_label else ""
+    if normalized_account_label:
+        stmt = stmt.where(
+            ExecutionTCAMetric.alpaca_account_label == normalized_account_label
+        )
 
     row = session.execute(stmt).one()
     order_count = int(row[0] or 0)
