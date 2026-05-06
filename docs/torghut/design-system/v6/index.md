@@ -11,6 +11,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `128-torghut-data-plane-disruption-premium-and-freshness-settlement-2026-05-06.md`
+  - `docs/agents/designs/124-jangar-disruption-budget-arbiter-and-data-freshness-settlement-2026-05-06.md`
   - `127-torghut-market-context-claims-and-lane-profit-settlement-2026-05-06.md`
   - `docs/agents/designs/123-jangar-market-context-contradiction-ledger-and-lane-capital-holds-2026-05-06.md`
   - `126-torghut-hypothesis-custody-ledger-and-data-cost-profit-reserve-2026-05-06.md`
