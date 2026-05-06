@@ -643,6 +643,36 @@ describe('control-plane status', () => {
         }),
       ]),
     )
+    expect(status.negative_evidence_router).toMatchObject({
+      mode: 'observe',
+      design_artifact: 'docs/agents/designs/111-jangar-negative-evidence-router-and-action-slo-budgets-2026-05-06.md',
+      evidence_window_minutes: 15,
+    })
+    expect(status.action_slo_budgets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'serve_readonly',
+          decision: 'allow',
+        }),
+        expect.objectContaining({
+          action_class: 'live_micro_canary',
+          decision: 'hold',
+          blocked_reasons: ['torghut_consumer_evidence_missing'],
+        }),
+      ]),
+    )
+    expect(status.torghut_action_slo_budgets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'torghut_observe',
+          decision: 'allow',
+        }),
+        expect.objectContaining({
+          action_class: 'paper_canary',
+          decision: 'shadow_only',
+        }),
+      ]),
+    )
     expect(status.namespaces).toHaveLength(1)
     expect(status.namespaces[0]?.status).toBe('healthy')
     expect(status.namespaces[0]?.degraded_components ?? []).toHaveLength(0)

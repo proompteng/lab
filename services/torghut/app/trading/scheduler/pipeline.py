@@ -143,6 +143,10 @@ _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS = 120
 _RUNTIME_REGIME_CONFIDENCE_DEFAULT_THRESHOLDS = (Decimal("0.75"), Decimal("0.55"))
 
 
+def _normalized_symbol(symbol: object) -> str:
+    return str(symbol or "").strip().upper()
+
+
 class TradingPipeline:
     """Orchestrate ingest -> decide -> risk -> execute for one cycle."""
 
@@ -205,7 +209,7 @@ class TradingPipeline:
             strategies = self._prepare_run_once(session)
             if not strategies:
                 return
-            self._warm_session_context_from_open(session)
+            self._warm_session_context_from_open(session, strategies=strategies)
 
             batch = self.ingestor.fetch_signals(session)
             self._record_ingest_window(batch)
@@ -251,7 +255,13 @@ class TradingPipeline:
             logger.info("No enabled strategies found; skipping trading cycle")
         return strategies
 
-    def _warm_session_context_from_open(self, session: Session) -> None:
+    def _warm_session_context_from_open(
+        self,
+        session: Session,
+        *,
+        strategies: Sequence[Strategy] | None = None,
+        allowed_symbols: set[str] | None = None,
+    ) -> None:
         fetch_with_reason = getattr(self.ingestor, "fetch_signals_with_reason", None)
         get_cursor = getattr(self.ingestor, "_get_cursor", None)
         if not callable(fetch_with_reason) or not callable(get_cursor):
@@ -306,8 +316,17 @@ class TradingPipeline:
             )
             return
 
+        relevant_symbols = self._relevant_signal_symbols(
+            strategies=strategies,
+            allowed_symbols=allowed_symbols,
+        )
         warmed = 0
         for signal in warmup_batch.signals:
+            if (
+                relevant_symbols
+                and _normalized_symbol(signal.symbol) not in relevant_symbols
+            ):
+                continue
             try:
                 warmed_signal = self._ensure_signal_executable_price(signal)
                 self._signal_quote_quality.assess(warmed_signal)
@@ -437,19 +456,52 @@ class TradingPipeline:
         strategies: list[Strategy],
         allowed_symbols: set[str],
     ) -> list[SignalEnvelope]:
+        relevant_symbols = self._relevant_signal_symbols(
+            strategies=strategies,
+            allowed_symbols=allowed_symbols,
+        )
+        if not relevant_symbols:
+            return signals
+        filtered = [
+            signal
+            for signal in signals
+            if _normalized_symbol(signal.symbol) in relevant_symbols
+        ]
+        return filtered
+
+    def _relevant_signal_symbols(
+        self,
+        *,
+        strategies: Sequence[Strategy] | None,
+        allowed_symbols: set[str] | None,
+    ) -> set[str]:
+        if strategies is None:
+            return set()
+        normalized_allowed_symbols = {
+            _normalized_symbol(symbol)
+            for symbol in (
+                allowed_symbols
+                if allowed_symbols is not None
+                else self.universe_resolver.get_resolution().symbols
+            )
+            if _normalized_symbol(symbol)
+        }
         relevant_symbols: set[str] = set()
         for strategy in strategies:
-            strategy_symbols = _coerce_strategy_symbols(strategy.universe_symbols)
-            if strategy_symbols and allowed_symbols:
-                relevant_symbols.update(strategy_symbols & allowed_symbols)
+            if not strategy.enabled:
+                continue
+            strategy_symbols = {
+                _normalized_symbol(symbol)
+                for symbol in _coerce_strategy_symbols(strategy.universe_symbols)
+                if _normalized_symbol(symbol)
+            }
+            if strategy_symbols and normalized_allowed_symbols:
+                relevant_symbols.update(strategy_symbols & normalized_allowed_symbols)
             elif strategy_symbols:
                 relevant_symbols.update(strategy_symbols)
             else:
-                relevant_symbols.update(allowed_symbols)
-        if not relevant_symbols:
-            return signals
-        filtered = [signal for signal in signals if signal.symbol in relevant_symbols]
-        return filtered
+                relevant_symbols.update(normalized_allowed_symbols)
+        return relevant_symbols
 
     def _build_run_context(
         self, session: Session
@@ -618,7 +670,16 @@ class TradingPipeline:
         allowed_symbols: set[str],
     ) -> None:
         allocator = allocator_from_settings(account_snapshot.equity)
+        relevant_symbols = self._relevant_signal_symbols(
+            strategies=strategies,
+            allowed_symbols=allowed_symbols,
+        )
         for signal in batch.signals:
+            if (
+                relevant_symbols
+                and _normalized_symbol(signal.symbol) not in relevant_symbols
+            ):
+                continue
             decisions = self._evaluate_signal_decisions(
                 signal,
                 strategies,
