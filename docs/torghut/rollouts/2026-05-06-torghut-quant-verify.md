@@ -5,6 +5,52 @@ Repository: `proompteng/lab`
 Branch: `codex/swarm-torghut-quant-verify`
 Base: `main`
 
+## 2026-05-06T06:05Z Release Gate Refresh
+
+Gate decision: no-go for #5412; go for this documentation-only audit refresh.
+
+#5412, `feat(torghut): add evidence epochs and shared live gate`, is still the only open Torghut
+quant PR. GitHub reports it non-draft and mergeable/clean at
+`c6147b522832ee04246f35451c88be509f0c8846`, and visible checks are green: Semantic Pull Request,
+Semantic Commits, `check_changed_files`, argo-lint, kubeconform, Torghut Pyright, Torghut quality
+signals, and Torghut bytecode/pytest/coverage. GraphQL reports zero reviews and zero review threads.
+
+The merge blocker is unchanged: #5412 changes 3,138 additions and 27 deletions, so the large-diff
+Codex review gate applies. The latest visible `@codex review` request returned the
+`chatgpt-codex-connector` usage-limit response instead of a posted review. I refreshed the anchored
+`<!-- codex:progress -->` PR comment with that no-go evidence and did not merge #5412.
+
+Current GitOps and cluster evidence for already-merged `main` revision
+`8016fe6d399e4b3bd901ecd01624e8260cc131a7`:
+
+- Argo CD reports `torghut`, `torghut-options`, and `symphony-torghut` `Synced` and `Healthy`.
+- `torghut` synced successfully at 2026-05-06T05:57:21Z and `torghut-options` at
+  2026-05-06T05:54:28Z.
+- `kubectl get pods -n torghut --field-selector=status.phase!=Running,status.phase!=Succeeded`
+  returned no resources.
+- All Torghut deployments with nonzero desired replicas report desired ready and available replicas,
+  including live revision `torghut-00231-deployment`, sim revision `torghut-sim-00312-deployment`,
+  options catalog, options enricher, options TA, TA, TA sim, websocket services, exporters, and
+  `symphony-torghut`.
+- Recent warning events were rollout/transient or residual: startup/readiness probe failures on old
+  and newly created revisions that recovered, an EndpointSlice update timeout for the options
+  enricher service, repeated ClickHouse multiple-PDB selection warnings, and a Flink status update
+  race where the latest status in the event still reported the options TA job `RUNNING`, lifecycle
+  `STABLE`, and job manager `READY`.
+- The verifier service account can read Argo Applications, Pods, Deployments, Jobs, and Events, but
+  it cannot read Knative Service/Revision or FlinkDeployment resources directly; Argo health and
+  workload readiness are the available rollout sources for those controllers.
+
+Rollback path is unchanged. #5412 has no production rollback action because it is unmerged. For the
+current healthy main rollout, revert the relevant squash merge or image promotion PR through GitOps
+if new crash loops, sustained readiness failures, failed post-deploy checks, or trading endpoint
+regressions appear. Do not apply direct cluster mutations outside an emergency.
+
+Next action: restore Codex review capacity, post the required #5412 Codex review, resolve any
+threads, refresh against current `main` if needed, wait for all checks to complete green on the final
+head, then squash-merge and verify Argo sync, workload readiness, and warning/error events for the
+merged commit.
+
 ## Decision
 
 Partial go for audit merge; no-go for the large Torghut implementation merge.
@@ -16,8 +62,7 @@ trading code, or capital controls.
 PR #5412, `feat(torghut): add evidence epochs and shared live gate`, remains blocked. GitHub reports
 the PR mergeable with green visible checks, but the diff is above the 1,000-line Codex review
 threshold and repeated `@codex review` requests returned usage-limit responses rather than a posted
-review. I will not squash-merge #5412 until that review gate is satisfied or explicitly waived by a
-maintainer.
+review. I will not squash-merge #5412 until that review gate is satisfied.
 
 ## PRs touched
 
