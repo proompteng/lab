@@ -9,6 +9,8 @@ import type {
   ExecutionTrustStatus,
   ExecutionTrustSwarm,
   FailureDomainLeaseSet,
+  MaterialActionVerdict,
+  MaterialActionVerdictEpoch,
   MaterialActionActivationReceipt,
   NegativeEvidenceRouterStatus,
   ReconciledActionClock,
@@ -160,6 +162,8 @@ export type ControlPlaneStatus = {
   action_slo_budgets: ActionSloBudget[]
   torghut_action_slo_budgets: ActionSloBudget[]
   control_plane_controller_witness: ControlPlaneControllerWitnessQuorum
+  material_action_verdict_epoch: MaterialActionVerdictEpoch
+  material_action_verdicts: MaterialActionVerdict[]
   material_action_activation_receipts: MaterialActionActivationReceipt[]
   execution_trust: ExecutionTrustStatus
   swarms: ExecutionTrustSwarm[]

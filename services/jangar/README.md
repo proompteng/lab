@@ -282,6 +282,25 @@ refs, max dispatch/runtime/notional limits, expiry, and rollback target. Rollbac
 mode and fall back to the existing dependency-quorum, failure-domain lease, and negative-evidence budget fields while
 continuing to emit receipts for comparison.
 
+## Material action verdict arbiter
+
+Control-plane status also exposes the shadow verdict arbiter from
+`docs/agents/designs/120-jangar-material-action-verdict-arbiter-and-clock-budget-parity-2026-05-06.md`.
+`material_action_verdict_epoch` joins dependency quorum, negative-evidence SLO budgets, reconciled action clocks,
+rollout health, controller witness, watch reliability, database projection, and empirical service state into one final
+decision per material action. A green `reconciled_action_clock` cannot upgrade a held or blocked action SLO budget; a
+disagreement keeps the stricter decision and records a contradiction ref. Paper and live Torghut capital actions use the
+`torghut_capital` clock as diagnostic input, but their final verdicts stay held or blocked when the budget or dependency
+quorum is stricter.
+
+`material_action_activation_receipts` now cite the verdict epoch in transport refs and derive decisions, caps, repair
+actions, and rollback targets from the final verdict when one is present. The first rollout remains shadow-only;
+existing launcher, merge, deploy, and capital enforcement paths do not consume the verdict yet.
+
+Rollback: ignore `material_action_verdict_epoch` and continue reading the existing dependency-quorum,
+failure-domain-lease, action-SLO-budget, and controller-witness fields. If verdicts are too conservative or too
+permissive, revert the status/receipt wiring while preserving the diagnostic inputs for incident review.
+
 ## Workspace storage proof
 
 The supporting-primitives controller reconciles `Workspace` CRs by creating and reading the backing

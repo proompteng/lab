@@ -15,6 +15,25 @@ const localAuthority = {
   message: 'using local controller state',
 }
 
+const dispatchNormalVerdict = {
+  verdict_id: 'material-action-verdict:dispatch_normal:test',
+  epoch_id: 'material-action-verdict:test',
+  action_class: 'dispatch_normal' as const,
+  decision: 'hold' as const,
+  decision_rank: 3,
+  confidence: 'high' as const,
+  allowed_until: '2026-01-20T00:01:00Z',
+  max_dispatches: 0,
+  max_runtime_seconds: 0,
+  max_notional: 0,
+  blocking_reason_codes: ['workflow_artifact.configmap_missing'],
+  downgrade_reason_codes: [],
+  required_repair_actions: ['recreate missing workflow input ConfigMap or rerun affected stage'],
+  rollback_target: 'recreate missing workflow input ConfigMap or rerun affected stage',
+  evidence_refs: [],
+  contradiction_refs: [],
+}
+
 const baseStatus = {
   service: 'jangar',
   generated_at: '2026-01-20T00:00:00Z',
@@ -142,6 +161,29 @@ const baseStatus = {
   },
   action_slo_budgets: [],
   torghut_action_slo_budgets: [],
+  material_action_verdict_epoch: {
+    mode: 'shadow',
+    design_artifact:
+      'docs/agents/designs/120-jangar-material-action-verdict-arbiter-and-clock-budget-parity-2026-05-06.md',
+    epoch_id: 'material-action-verdict:test',
+    generated_at: '2026-01-20T00:00:00Z',
+    expires_at: '2026-01-20T00:01:00Z',
+    namespace: 'agents',
+    producer_revision: '2026-05-06-material-action-verdict-shadow-v1',
+    dependency_quorum_ref: 'dependency_quorum:delay:workflow_backoff_warning',
+    negative_evidence_router_epoch_ref: 'ner:test',
+    action_slo_budget_refs: [],
+    action_clock_refs: [],
+    rollout_health_ref: 'rollout:healthy:0:0',
+    controller_witness_ref: 'controller-witness:test',
+    watch_reliability_ref: 'watch:healthy:0:0:0',
+    database_projection_ref: 'database:healthy:healthy',
+    empirical_services_ref: 'empirical:forecast=healthy:lean=healthy:jobs=healthy',
+    torghut_capital_ref: null,
+    contradiction_refs: [],
+    final_verdicts: [dispatchNormalVerdict],
+  },
+  material_action_verdicts: [dispatchNormalVerdict],
   database: {
     configured: true,
     connected: true,
@@ -254,6 +296,8 @@ describe('ControlPlaneStatusPanel', () => {
     expect(normalizedHtml).toContain('Failure-domain leases')
     expect(normalizedHtml).toContain('Held actions: dispatch_normal')
     expect(normalizedHtml).toContain('workflow_artifact.configmap_missing')
+    expect(normalizedHtml).toContain('Material action verdicts')
+    expect(normalizedHtml).toContain('Blocking verdicts: dispatch_normal=hold')
     expect(normalizedHtml).not.toContain('Top failure reasons: [object Object], [object Object]')
     expect(normalizedHtml).toContain('No segment detail available.')
   })

@@ -85,6 +85,14 @@ const formatLeaseStatusSummary = (status: ControlPlaneStatus) => {
     .join(' · ')
 }
 
+const formatMaterialVerdicts = (status: ControlPlaneStatus) => {
+  const blocking = status.material_action_verdicts.filter((verdict) =>
+    ['hold', 'block', 'contradicted', 'unknown'].includes(verdict.decision),
+  )
+  if (blocking.length === 0) return 'None'
+  return blocking.map((verdict) => `${verdict.action_class}=${verdict.decision}`).join(', ')
+}
+
 const formatAuthority = (authority: {
   mode: string
   source_deployment: string
@@ -291,6 +299,37 @@ export const ControlPlaneStatusPanel = ({
               </ul>
             ) : (
               <div className="text-[11px] text-muted-foreground">No failure-domain leases available.</div>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Material action verdicts
+          </div>
+          <div className="rounded-none border p-2 border-border/60 bg-muted/30 space-y-1">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-medium text-foreground">Final shadow verdict epoch</span>
+              <StatusBadge label={status.material_action_verdict_epoch.mode} />
+            </div>
+            <div className="text-muted-foreground">Epoch: {status.material_action_verdict_epoch.epoch_id}</div>
+            <div className="text-muted-foreground">Blocking verdicts: {formatMaterialVerdicts(status)}</div>
+            {status.material_action_verdict_epoch.contradiction_refs.length > 0 ? (
+              <div className="text-muted-foreground">
+                Contradictions: {status.material_action_verdict_epoch.contradiction_refs.length}
+              </div>
+            ) : null}
+            {status.material_action_verdicts.length > 0 ? (
+              <ul className="space-y-1 pt-1 text-muted-foreground">
+                {status.material_action_verdicts.map((verdict) => (
+                  <li key={verdict.verdict_id} className="text-[11px]">
+                    <span className="font-medium text-foreground">{verdict.action_class}</span> · {verdict.decision}
+                    {verdict.blocking_reason_codes.length > 0 ? ` (${verdict.blocking_reason_codes.join(', ')})` : ''}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-[11px] text-muted-foreground">No material action verdicts available.</div>
             )}
           </div>
         </div>
