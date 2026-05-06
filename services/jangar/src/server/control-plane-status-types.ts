@@ -2,12 +2,14 @@ import type { ControlPlaneWatchReliabilitySummary } from '~/server/control-plane
 import type {
   ActionSloBudget,
   AdmissionPassportStatus,
+  ControlPlaneControllerWitnessQuorum,
   DatabaseMigrationConsistency,
   DependencyQuorumStatus,
   ExecutionTrustStage,
   ExecutionTrustStatus,
   ExecutionTrustSwarm,
   FailureDomainLeaseSet,
+  MaterialActionActivationReceipt,
   NegativeEvidenceRouterStatus,
   RuntimeKitStatus,
   WorkflowsReliabilityStatus,
@@ -155,6 +157,8 @@ export type ControlPlaneStatus = {
   negative_evidence_router: NegativeEvidenceRouterStatus
   action_slo_budgets: ActionSloBudget[]
   torghut_action_slo_budgets: ActionSloBudget[]
+  control_plane_controller_witness: ControlPlaneControllerWitnessQuorum
+  material_action_activation_receipts: MaterialActionActivationReceipt[]
   execution_trust: ExecutionTrustStatus
   swarms: ExecutionTrustSwarm[]
   stages: ExecutionTrustStage[]

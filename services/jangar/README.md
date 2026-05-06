@@ -234,6 +234,23 @@ Rollback: keep the router in observe mode and continue relying on failure-domain
 enforcement. If a budget is wrong, preserve the emitted evidence refs for audit and fix the reducer before enabling any
 action-class enforcement.
 
+## Controller witness receipts
+
+Control-plane status exposes the
+`docs/agents/designs/116-jangar-controller-witness-quorum-and-capital-activation-receipts-2026-05-06.md` witness
+contract in shadow mode. The `control_plane_controller_witness` field separates serving-process controller state,
+controller-process heartbeats, `agents-controllers` rollout evidence, watch epochs, and AgentRun ingestion freshness.
+
+When the serving process is not the controller, a healthy controller heartbeat can satisfy controller self-report. If
+only the controller deployment and watch epoch are current, Jangar records `controller_witness_split`, keeps bounded
+repair dispatch available, and downgrades normal dispatch to `repair_only` until a controller-process ingestion
+witness is current. A true AgentRun ingestion stall records `controller_ingestion_stalled` and holds normal dispatch.
+
+`material_action_activation_receipts` mirror each action SLO budget with controller witness refs, negative evidence
+refs, max dispatch/runtime/notional limits, expiry, and rollback target. Rollback: keep the witness contract in shadow
+mode and fall back to the existing dependency-quorum, failure-domain lease, and negative-evidence budget fields while
+continuing to emit receipts for comparison.
+
 ## Workspace storage proof
 
 The supporting-primitives controller reconciles `Workspace` CRs by creating and reading the backing
