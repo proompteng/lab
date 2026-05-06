@@ -82,18 +82,23 @@ until they are decomposed further.
 
 ## Current control-plane decision contract
 
-The current architecture priority is final material-action authority. Diagnostic surfaces such as dependency quorum,
-negative evidence, action SLO budgets, reconciled action clocks, rollout health, and Torghut readiness remain visible,
-but material consumers should bind to one final verdict per action class.
+The current architecture priority is final material-action authority with run settlement and consumer evidence as
+first-class gates. Diagnostic surfaces such as dependency quorum, negative evidence, action SLO budgets, reconciled
+action clocks, rollout health, controller witnesses, and Torghut readiness remain visible, but material consumers
+should bind to one final verdict per action class.
 
 Current source-of-truth design:
 
-- `docs/agents/designs/120-jangar-material-action-verdict-arbiter-and-clock-budget-parity-2026-05-06.md`
-- `docs/torghut/design-system/v6/124-torghut-capital-action-verdict-consumer-and-profit-hypothesis-settlement-2026-05-06.md`
+- `docs/agents/designs/125-jangar-run-settlement-watermarks-and-consumer-evidence-escrow-2026-05-06.md`
+- `docs/torghut/design-system/v6/129-torghut-proof-carry-watermarks-and-zero-decision-capital-drain-2026-05-06.md`
+- `docs/agents/designs/124-jangar-disruption-budget-arbiter-and-data-freshness-settlement-2026-05-06.md`
+- `docs/torghut/design-system/v6/128-torghut-data-plane-disruption-premium-and-freshness-settlement-2026-05-06.md`
 
-The immediate invariant is that a partial action clock cannot upgrade an action SLO budget hold or block. In the
-current live state, stale Torghut empirical proof holds `merge_ready` and `paper_canary`, blocks live capital, and must
-remain the final verdict until fresh proof and Jangar action authority agree.
+The immediate invariant is that serving readiness, rollout availability, or an action clock `allow` cannot upgrade a
+stricter run-settlement watermark or Torghut consumer-evidence escrow. In the current live state, controller
+self-report is missing, Torghut paper account proof is empty, market-context domains are stale, and live submission is
+disabled; those facts must keep non-repair dispatch, deploy widening, paper, and live capital inside explicit hold or
+observe-only decisions until fresh proof arrives.
 
 ## Ownership map
 
@@ -142,6 +147,8 @@ Current operational docs:
 Historical or design context docs:
 
 - `docs/jangar/current-state.md`
+- `docs/agents/designs/125-jangar-run-settlement-watermarks-and-consumer-evidence-escrow-2026-05-06.md`
+- `docs/agents/designs/124-jangar-disruption-budget-arbiter-and-data-freshness-settlement-2026-05-06.md`
 - `docs/agents/designs/120-jangar-material-action-verdict-arbiter-and-clock-budget-parity-2026-05-06.md`
 - `docs/agents/designs/jangar-application-tech-debt-cleanup-plan-2026-04-08.md`
 
