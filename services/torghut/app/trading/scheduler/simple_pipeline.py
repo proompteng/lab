@@ -302,6 +302,21 @@ class SimpleTradingPipeline(TradingPipeline):
                 submission_stage="blocked_simple_submit_disabled",
             )
             return False
+        if settings.trading_mode == "live":
+            live_submission_gate = self._live_submission_gate(session=session)
+            if not bool(live_submission_gate.get("allowed", False)):
+                self._block_decision_submission(
+                    session=session,
+                    decision=decision,
+                    decision_row=decision_row,
+                    reason=str(
+                        live_submission_gate.get("reason")
+                        or "live_submission_gate_blocked"
+                    ),
+                    submission_stage="blocked_live_submission_gate",
+                    extra_metadata={"live_submission_gate": live_submission_gate},
+                )
+                return False
         if settings.trading_emergency_stop_enabled and self.state.emergency_stop_active:
             self._block_decision_submission(
                 session=session,
