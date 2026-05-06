@@ -192,6 +192,98 @@ render_kustomize() {
 
 render_kustomize
 
+ROOT_DIR="${ROOT_DIR}" python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+import yaml
+
+root = Path(os.environ["ROOT_DIR"])
+agents_dir = root / "argocd" / "applications" / "agents"
+
+
+def load_docs(path: Path):
+    return [doc for doc in yaml.safe_load_all(path.read_text()) if isinstance(doc, dict)]
+
+
+templates = {
+    doc.get("metadata", {}).get("name"): doc
+    for doc in load_docs(agents_dir / "swarm-agentrun-templates.yaml")
+    if doc.get("kind") == "AgentRun"
+}
+implspecs = {
+    doc.get("metadata", {}).get("name"): doc
+    for doc in load_docs(agents_dir / "swarm-implspecs.yaml")
+    if doc.get("kind") == "ImplementationSpec"
+}
+swarms = [doc for doc in load_docs(agents_dir / "swarm-instances.yaml") if doc.get("kind") == "Swarm"]
+
+stage_contract = {
+    "discover": ("architect", "swarm-intelligence-cycle-v1", "read-write"),
+    "plan": ("architect", "swarm-intelligence-cycle-v1", "read-write"),
+    "implement": ("engineer", "swarm-autonomous-implementation-v1", "read-write"),
+    "verify": ("deployer", "swarm-deployer-v1", "read-write"),
+}
+required_coordination_parameters = (
+    "ownerChannel",
+    "natsChannel",
+    "natsSubjectPrefix",
+    "swarmAgentIdentity",
+    "swarmHumanName",
+)
+required_collaboration_terms = ("nats collaboration", "codex-nats-publish", "jangar is the visibility surface")
+
+errors = []
+if not swarms:
+    errors.append("argocd/applications/agents/swarm-instances.yaml must define at least one Swarm.")
+
+for required_implspec in {contract[1] for contract in stage_contract.values()}:
+    if required_implspec not in implspecs:
+        errors.append(f"missing required swarm ImplementationSpec {required_implspec}")
+        continue
+    implspec_text = str(implspecs[required_implspec].get("spec", {}).get("text", "")).lower()
+    for required_term in required_collaboration_terms:
+        if required_term not in implspec_text:
+            errors.append(f"{required_implspec}: missing required collaboration term {required_term!r}")
+
+for swarm in swarms:
+    swarm_name = swarm.get("metadata", {}).get("name")
+    execution = swarm.get("spec", {}).get("execution", {})
+    for stage, (expected_role, expected_implspec, expected_vcs_mode) in stage_contract.items():
+        target_name = execution.get(stage, {}).get("targetRef", {}).get("name")
+        if not target_name:
+            errors.append(f"{swarm_name}: spec.execution.{stage}.targetRef.name is required")
+            continue
+        template = templates.get(target_name)
+        if template is None:
+            errors.append(f"{swarm_name}: {stage} target AgentRun template {target_name} not found")
+            continue
+        parameters = template.get("spec", {}).get("parameters", {})
+        for parameter_name in required_coordination_parameters:
+            parameter_value = parameters.get(parameter_name)
+            if not isinstance(parameter_value, str) or not parameter_value.strip():
+                errors.append(f"{target_name}: missing required coordination parameter {parameter_name}")
+        role = parameters.get("swarmAgentRole")
+        if role != expected_role:
+            errors.append(f"{target_name}: expected swarmAgentRole {expected_role!r}, found {role!r}")
+        implspec = template.get("spec", {}).get("implementationSpecRef", {}).get("name")
+        if implspec != expected_implspec:
+            errors.append(f"{target_name}: expected implementationSpecRef {expected_implspec!r}, found {implspec!r}")
+        vcs_mode = template.get("spec", {}).get("vcsPolicy", {}).get("mode")
+        if vcs_mode != expected_vcs_mode:
+            errors.append(f"{target_name}: expected vcsPolicy.mode {expected_vcs_mode!r}, found {vcs_mode!r}")
+        objective = str(parameters.get("objective", "")).lower()
+        if stage == "verify" and not all(term in objective for term in ("release engineer", "merge", "rollout")):
+            errors.append(f"{target_name}: deployer objective must cover release engineering, merge, and rollout")
+
+if errors:
+    print("Swarm three-role contract validation failed:", file=sys.stderr)
+    for error in errors:
+        print(f" - {error}", file=sys.stderr)
+    sys.exit(1)
+PY
+
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_agents.yaml" agents.proompteng.ai v1alpha1 Agent
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_agentruns.yaml" agents.proompteng.ai v1alpha1 AgentRun
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_agentproviders.yaml" agents.proompteng.ai v1alpha1 AgentProvider

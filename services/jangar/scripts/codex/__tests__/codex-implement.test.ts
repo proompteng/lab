@@ -1184,6 +1184,8 @@ describe('runCodexImplementation', () => {
       swarmRequirementTarget: 'jangar-control-plane',
       swarmAgentWorkerId: 'worker-0027jshz',
       swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027jshz',
+      swarmAgentRole: 'engineer',
+      swarmHumanName: 'Elise Novak',
       swarmRequirementPayload:
         '{"acceptance":["run includes requirement provenance labels and parameters"],"priority":"high"}',
       swarmRequirementPayloadBytes: 142,
@@ -1216,6 +1218,8 @@ describe('runCodexImplementation', () => {
 
     expect(attrs.swarmAgentWorkerId).toBe('worker-0027jshz')
     expect(attrs.swarmAgentIdentity).toBe('vw-jangar-control-plane-implement-worker-0027jshz')
+    expect(attrs.swarmAgentRole).toBe('engineer')
+    expect(attrs.swarmHumanName).toBe('Elise Novak')
   }, 40_000)
 
   it('includes cross-swarm requirement metadata in NATS run-started attrs', async () => {
