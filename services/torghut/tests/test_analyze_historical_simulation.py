@@ -42,6 +42,65 @@ class TestAnalyzeHistoricalSimulation(TestCase):
             captured_queries[0],
         )
 
+    def test_build_last_price_map_falls_back_to_c_field_for_microbars(self) -> None:
+        captured_queries: list[str] = []
+
+        def _fake_clickhouse_query(*, config, query):  # type: ignore[no-untyped-def]
+            _ = config
+            captured_queries.append(query)
+            if 'argMax(close, event_ts)' in query:
+                return 404, 'UNKNOWN_IDENTIFIER'
+            return 200, 'NVDA\t205.55\nAMD\t350.02\n'
+
+        with patch(
+            'scripts.analyze_historical_simulation._http_clickhouse_query',
+            side_effect=_fake_clickhouse_query,
+        ):
+            prices = _build_last_price_map(
+                clickhouse_config=ClickHouseRuntimeConfig(
+                    http_url='http://clickhouse:8123',
+                    username=None,
+                    password=None,
+                ),
+                price_table='torghut_sim_equity.ta_microbars',
+                tca_rows=[],
+                execution_rows=[],
+            )
+
+        self.assertEqual(prices['NVDA'], Decimal('205.55'))
+        self.assertEqual(prices['AMD'], Decimal('350.02'))
+        self.assertEqual(len(captured_queries), 2)
+        self.assertIn('argMax(close, event_ts)', captured_queries[0])
+        self.assertIn('argMax(c, event_ts)', captured_queries[1])
+
+    def test_build_last_price_map_continues_after_clickhouse_error(self) -> None:
+        captured_queries: list[str] = []
+
+        def _fake_clickhouse_query(*, config, query):  # type: ignore[no-untyped-def]
+            _ = config
+            captured_queries.append(query)
+            if 'argMax(close, event_ts)' in query:
+                raise TimeoutError('clickhouse timeout')
+            return 200, 'NVDA\t205.55\n'
+
+        with patch(
+            'scripts.analyze_historical_simulation._http_clickhouse_query',
+            side_effect=_fake_clickhouse_query,
+        ):
+            prices = _build_last_price_map(
+                clickhouse_config=ClickHouseRuntimeConfig(
+                    http_url='http://clickhouse:8123',
+                    username=None,
+                    password=None,
+                ),
+                price_table='torghut_sim_equity.ta_microbars',
+                tca_rows=[],
+                execution_rows=[],
+            )
+
+        self.assertEqual(prices['NVDA'], Decimal('205.55'))
+        self.assertEqual(len(captured_queries), 2)
+
     def test_extract_run_scope_decisions_prefers_matching_simulation_context(self) -> None:
         decisions = [
             {
