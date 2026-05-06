@@ -1,8 +1,8 @@
-# Torghut Design-System Current Source-of-Truth and Priority Guide (updated 2026-05-05)
+# Torghut Design-System Current Source-of-Truth and Priority Guide (updated 2026-05-06)
 
 ## Status
 
-- Date: `2026-05-05`
+- Date: `2026-05-06`
 - Purpose: distinguish live source-of-truth docs from historical milestone records and identify the current highest-priority work
 - Scope: `docs/torghut/design-system/**`, `docs/torghut/**`, `argocd/applications/torghut/**`, `services/torghut/**`, `services/jangar/**`
 
@@ -34,6 +34,8 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v1/historical-dataset-simulation.md`
    - `docs/torghut/design-system/v1/trading-day-simulation-automation.md`
 3. current autonomy/promotion contract source of truth:
+   - `docs/agents/designs/97-jangar-discover-cutover-handoff-and-proof-debt-gates-2026-05-06.md`
+   - `docs/torghut/design-system/v6/101-torghut-proof-debt-retirement-and-shadow-capital-handoff-2026-05-06.md`
    - `docs/agents/designs/89-jangar-brownout-adoption-ladder-and-quant-capital-contract-2026-05-05.md`
    - `docs/torghut/design-system/v6/93-torghut-evidence-priced-hypothesis-market-and-capital-ladder-2026-05-05.md`
    - `docs/agents/designs/88-jangar-negative-evidence-arbiter-and-brownout-governor-2026-05-05.md`
@@ -110,6 +112,14 @@ If the question is "what should I trust right now?", start here:
 ## Current priority, not historical priority
 
 The current highest-priority work is:
+
+The May 6 discover cutover contracts are the current implementation handoff:
+
+- bind Jangar serving, repair, normal dispatch, rollout widening, merge readiness, and Torghut capital to one
+  least-privilege cutover receipt in
+  `docs/agents/designs/97-jangar-discover-cutover-handoff-and-proof-debt-gates-2026-05-06.md`;
+- retire Torghut proof debt through compact receipts before shadow, paper, or live capital can advance in
+  `docs/torghut/design-system/v6/101-torghut-proof-debt-retirement-and-shadow-capital-handoff-2026-05-06.md`.
 
 The May 5 cross-plane contracts are now the latest active architecture layer:
 
