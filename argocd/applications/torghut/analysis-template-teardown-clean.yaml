@@ -13,7 +13,6 @@ spec:
     - name: taConfigmap
     - name: taDeployment
     - name: torghutService
-    - name: forecastService
     - name: signalTable
     - name: priceTable
     - name: postgresDatabase
@@ -54,7 +53,6 @@ spec:
                         --ta-configmap "{{args.taConfigmap}}"
                         --ta-deployment "{{args.taDeployment}}"
                         --torghut-service "{{args.torghutService}}"
-                        --forecast-service "{{args.forecastService}}"
                         --signal-table "{{args.signalTable}}"
                         --price-table "{{args.priceTable}}"
                         --postgres-base-dsn-env DB_DSN

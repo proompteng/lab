@@ -6523,19 +6523,16 @@ def _prepare_argocd_for_run(
         namespace=config.applicationset_namespace,
         app_name=config.root_app_name,
     )
-    child_application_report = _set_argocd_application_sync_policy(
-        config=config,
-        app_name=config.app_name,
-        desired_sync_policy=_manual_argocd_application_sync_policy(
-            cast(Mapping[str, Any] | None, child_sync_state.get('sync_policy'))
-        ),
-    )
     root_application_report = _set_argocd_application_sync_policy(
         config=config,
         app_name=config.root_app_name,
         desired_sync_policy=_manual_argocd_application_sync_policy(
             cast(Mapping[str, Any] | None, root_sync_state.get('sync_policy'))
         ),
+    )
+    applicationset_report = _set_argocd_automation_mode(
+        config=config,
+        desired_mode=config.desired_mode_during_run,
     )
     application_ignore_differences_report = _set_argocd_application_ignore_differences(
         config=config,
@@ -6546,9 +6543,12 @@ def _prepare_argocd_for_run(
             resources=resources,
         ),
     )
-    applicationset_report = _set_argocd_automation_mode(
+    child_application_report = _set_argocd_application_sync_policy(
         config=config,
-        desired_mode=config.desired_mode_during_run,
+        app_name=config.app_name,
+        desired_sync_policy=_manual_argocd_application_sync_policy(
+            cast(Mapping[str, Any] | None, child_sync_state.get('sync_policy'))
+        ),
     )
     application_mode_report = _wait_for_argocd_application_mode(
         config=config,
@@ -6673,6 +6673,10 @@ def _restore_argocd_after_run(
     if restored_mode is None:
         restored_mode = 'auto'
 
+    applicationset_report = _set_argocd_automation_mode(
+        config=config,
+        desired_mode=restored_mode,
+    )
     child_application_report = _set_argocd_application_sync_policy(
         config=config,
         app_name=config.app_name,
@@ -6682,10 +6686,6 @@ def _restore_argocd_after_run(
         config=config,
         app_name=config.app_name,
         desired_ignore_differences=previous_child_ignore_differences,
-    )
-    applicationset_report = _set_argocd_automation_mode(
-        config=config,
-        desired_mode=restored_mode,
     )
     root_application_report = _set_argocd_application_sync_policy(
         config=config,

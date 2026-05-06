@@ -8707,6 +8707,22 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertIn('--signal-table "{{args.signalTable}}"', args_text)
         self.assertIn('--price-table "{{args.priceTable}}"', args_text)
 
+    def test_simulation_analysis_templates_do_not_pass_unsupported_forecast_service_arg(self) -> None:
+        templates_dir = Path(__file__).resolve().parents[3] / 'argocd' / 'applications' / 'torghut'
+        template_names = [
+            'analysis-template-runtime-ready.yaml',
+            'analysis-template-activity.yaml',
+            'analysis-template-teardown-clean.yaml',
+        ]
+        for template_name in template_names:
+            with self.subTest(template_name=template_name):
+                template = yaml.safe_load((templates_dir / template_name).read_text(encoding='utf-8'))
+                spec = template['spec']
+                arg_names = [entry['name'] for entry in spec['args']]
+                args_text = spec['metrics'][0]['provider']['job']['spec']['template']['spec']['containers'][0]['args'][0]
+                self.assertNotIn('forecastService', arg_names)
+                self.assertNotIn('--forecast-service', args_text)
+
     def test_discover_applicationset_entry_finds_nested_element(self) -> None:
         payload = {
             'spec': {
@@ -9006,6 +9022,58 @@ class TestStartHistoricalSimulation(TestCase):
                 'jsonPointers': ['/metadata/annotations'],
             }
         ]
+        call_order: list[str] = []
+
+        def _set_application_sync_policy(
+            *,
+            config: ArgocdAutomationConfig,
+            desired_sync_policy: dict[str, Any] | None,
+            app_name: str | None = None,
+        ) -> dict[str, Any]:
+            del config
+            call_order.append(f'application_sync:{app_name}')
+            return {
+                'previous_sync_policy': {
+                    'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
+                },
+                'current_sync_policy': desired_sync_policy,
+                'changed': True,
+            }
+
+        def _set_applicationset_mode(
+            *,
+            config: ArgocdAutomationConfig,
+            desired_mode: str,
+        ) -> dict[str, Any]:
+            del config
+            call_order.append('applicationset')
+            return {
+                'pointer': '/spec/generators/0/list/elements/0/automation',
+                'previous_mode': 'auto',
+                'desired_mode': desired_mode,
+                'current_mode': desired_mode,
+                'changed': True,
+            }
+
+        def _set_ignore_differences(**kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            call_order.append('ignore_differences')
+            return {
+                'previous_ignore_differences': baseline_ignore_differences,
+                'current_ignore_differences': baseline_ignore_differences,
+                'required_ignore_differences': [],
+                'coverage_complete': True,
+                'changed': True,
+            }
+
+        def _wait_application_mode(**kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            call_order.append('wait_application')
+            return {
+                'app_name': 'torghut',
+                'current_mode': 'manual',
+            }
+
         with (
             patch(
                 'scripts.start_historical_simulation._read_argocd_automation_mode',
@@ -9034,53 +9102,19 @@ class TestStartHistoricalSimulation(TestCase):
             ) as application_read_mock,
             patch(
                 'scripts.start_historical_simulation._set_argocd_application_sync_policy',
-                side_effect=[
-                    {
-                        'previous_sync_policy': {
-                            'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
-                        },
-                        'current_sync_policy': {
-                            'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
-                        },
-                        'changed': True,
-                    },
-                    {
-                        'previous_sync_policy': {
-                            'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
-                        },
-                        'current_sync_policy': {
-                            'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
-                        },
-                        'changed': True,
-                    },
-                ],
+                side_effect=_set_application_sync_policy,
             ) as application_sync_mock,
             patch(
                 'scripts.start_historical_simulation._set_argocd_application_ignore_differences',
-                return_value={
-                    'previous_ignore_differences': baseline_ignore_differences,
-                    'current_ignore_differences': baseline_ignore_differences,
-                    'required_ignore_differences': [],
-                    'coverage_complete': True,
-                    'changed': True,
-                },
+                side_effect=_set_ignore_differences,
             ) as ignore_differences_mock,
             patch(
                 'scripts.start_historical_simulation._set_argocd_automation_mode',
-                return_value={
-                    'pointer': '/spec/generators/0/list/elements/0/automation',
-                    'previous_mode': 'auto',
-                    'desired_mode': 'manual',
-                    'current_mode': 'manual',
-                    'changed': True,
-                },
+                side_effect=_set_applicationset_mode,
             ) as applicationset_mock,
             patch(
                 'scripts.start_historical_simulation._wait_for_argocd_application_mode',
-                return_value={
-                    'app_name': 'torghut',
-                    'current_mode': 'manual',
-                },
+                side_effect=_wait_application_mode,
             ) as application_mode_mock,
         ):
             report = _prepare_argocd_for_run(config=config, resources=resources)
@@ -9092,15 +9126,25 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(application_sync_mock.call_args_list, [
             call(
                 config=config,
-                app_name='torghut',
+                app_name='root',
                 desired_sync_policy={'syncOptions': ['CreateNamespace=true']},
             ),
             call(
                 config=config,
-                app_name='root',
+                app_name='torghut',
                 desired_sync_policy={'syncOptions': ['CreateNamespace=true']},
             ),
         ])
+        self.assertEqual(
+            call_order,
+            [
+                'application_sync:root',
+                'applicationset',
+                'ignore_differences',
+                'application_sync:torghut',
+                'wait_application',
+            ],
+        )
         ignore_differences_mock.assert_called_once_with(
             config=config,
             app_name='torghut',
@@ -9254,52 +9298,74 @@ class TestStartHistoricalSimulation(TestCase):
             'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
             'syncOptions': ['CreateNamespace=true'],
         }
+        call_order: list[str] = []
+
+        def _set_applicationset_mode(
+            *,
+            config: ArgocdAutomationConfig,
+            desired_mode: str,
+        ) -> dict[str, Any]:
+            del config
+            call_order.append('applicationset')
+            return {
+                'pointer': '/spec/generators/0/list/elements/0/automation',
+                'previous_mode': 'manual',
+                'desired_mode': desired_mode,
+                'current_mode': desired_mode,
+                'changed': True,
+            }
+
+        def _set_application_sync_policy(
+            *,
+            config: ArgocdAutomationConfig,
+            desired_sync_policy: dict[str, Any] | None,
+            app_name: str | None = None,
+        ) -> dict[str, Any]:
+            del config
+            call_order.append(f'application_sync:{app_name}')
+            return {
+                'previous_sync_policy': {
+                    'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
+                },
+                'current_sync_policy': desired_sync_policy,
+                'changed': True,
+            }
+
+        def _set_ignore_differences(**kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            call_order.append('ignore_differences')
+            return {
+                'previous_ignore_differences': [{'group': '', 'kind': 'ConfigMap', 'jsonPointers': ['/data']}],
+                'current_ignore_differences': [],
+                'required_ignore_differences': [],
+                'coverage_complete': True,
+                'changed': True,
+            }
+
+        def _wait_application_mode(**kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            call_order.append('wait_application')
+            return {
+                'app_name': 'torghut',
+                'current_mode': 'auto',
+            }
+
         with (
             patch(
                 'scripts.start_historical_simulation._set_argocd_automation_mode',
-                return_value={
-                    'pointer': '/spec/generators/0/list/elements/0/automation',
-                    'previous_mode': 'manual',
-                    'desired_mode': 'auto',
-                    'current_mode': 'auto',
-                    'changed': True,
-                },
+                side_effect=_set_applicationset_mode,
             ) as applicationset_mock,
             patch(
                 'scripts.start_historical_simulation._set_argocd_application_sync_policy',
-                side_effect=[
-                    {
-                        'previous_sync_policy': {
-                            'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
-                        },
-                        'current_sync_policy': previous_sync_policy,
-                        'changed': True,
-                    },
-                    {
-                        'previous_sync_policy': {
-                            'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
-                        },
-                        'current_sync_policy': previous_sync_policy,
-                        'changed': True,
-                    },
-                ],
+                side_effect=_set_application_sync_policy,
             ) as application_mock,
             patch(
                 'scripts.start_historical_simulation._set_argocd_application_ignore_differences',
-                return_value={
-                    'previous_ignore_differences': [{'group': '', 'kind': 'ConfigMap', 'jsonPointers': ['/data']}],
-                    'current_ignore_differences': [],
-                    'required_ignore_differences': [],
-                    'coverage_complete': True,
-                    'changed': True,
-                },
+                side_effect=_set_ignore_differences,
             ) as ignore_differences_mock,
             patch(
                 'scripts.start_historical_simulation._wait_for_argocd_application_mode',
-                return_value={
-                    'app_name': 'torghut',
-                    'current_mode': 'auto',
-                },
+                side_effect=_wait_application_mode,
             ) as application_mode_mock,
         ):
             report = _restore_argocd_after_run(
@@ -9310,7 +9376,28 @@ class TestStartHistoricalSimulation(TestCase):
                 previous_child_ignore_differences=None,
             )
         applicationset_mock.assert_called_once()
-        self.assertEqual(application_mock.call_count, 2)
+        self.assertEqual(application_mock.call_args_list, [
+            call(
+                config=config,
+                app_name='torghut',
+                desired_sync_policy=previous_sync_policy,
+            ),
+            call(
+                config=config,
+                app_name='root',
+                desired_sync_policy=previous_sync_policy,
+            ),
+        ])
+        self.assertEqual(
+            call_order,
+            [
+                'applicationset',
+                'application_sync:torghut',
+                'ignore_differences',
+                'application_sync:root',
+                'wait_application',
+            ],
+        )
         ignore_differences_mock.assert_called_once_with(
             config=config,
             app_name='torghut',
