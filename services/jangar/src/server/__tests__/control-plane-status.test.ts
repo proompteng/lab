@@ -648,6 +648,15 @@ describe('control-plane status', () => {
       design_artifact: 'docs/agents/designs/111-jangar-negative-evidence-router-and-action-slo-budgets-2026-05-06.md',
       evidence_window_minutes: 15,
     })
+    expect(status.control_plane_controller_witness).toMatchObject({
+      mode: 'shadow',
+      design_artifact:
+        'docs/agents/designs/116-jangar-controller-witness-quorum-and-capital-activation-receipts-2026-05-06.md',
+      decision: 'allow',
+      deployment_available: true,
+      watch_epoch_current: true,
+      controller_self_report_current: true,
+    })
     expect(status.action_slo_budgets).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -658,6 +667,15 @@ describe('control-plane status', () => {
           action_class: 'live_micro_canary',
           decision: 'hold',
           blocked_reasons: ['torghut_consumer_evidence_missing'],
+        }),
+      ]),
+    )
+    expect(status.material_action_activation_receipts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_normal',
+          decision: 'allow',
+          controller_witness_refs: status.control_plane_controller_witness.witness_refs,
         }),
       ]),
     )
@@ -916,6 +934,19 @@ describe('control-plane status', () => {
     expect(status.agentrun_ingestion.status).toBe('degraded')
     expect(status.agentrun_ingestion.untouched_run_count).toBe(3)
     expect(status.agentrun_ingestion.oldest_untouched_age_seconds).toBe(180)
+    expect(status.control_plane_controller_witness).toMatchObject({
+      decision: 'hold_material',
+      reason_codes: ['controller_ingestion_stalled'],
+    })
+    expect(status.action_slo_budgets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_normal',
+          decision: 'hold',
+          blocked_reasons: expect.arrayContaining(['controller_ingestion_stalled']),
+        }),
+      ]),
+    )
     expect(status.empirical_services.jobs.status).toBe('degraded')
   })
 
@@ -1492,6 +1523,28 @@ describe('control-plane status', () => {
       reasons: [],
       message: 'Control-plane admission dependencies are healthy.',
     })
+    expect(status.control_plane_controller_witness).toMatchObject({
+      decision: 'allow_with_split',
+      reason_codes: ['controller_process_heartbeat_authoritative'],
+      deployment_available: true,
+      watch_epoch_current: true,
+      controller_self_report_current: true,
+    })
+    expect(status.negative_evidence_router.negative_evidence_refs).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reason: 'agentrun_ingestion_unknown',
+        }),
+      ]),
+    )
+    expect(status.action_slo_budgets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_normal',
+          decision: 'allow',
+        }),
+      ]),
+    )
   })
 
   it('uses healthy agents-controllers rollout when split-topology heartbeats report disabled controllers', async () => {
@@ -1585,6 +1638,50 @@ describe('control-plane status', () => {
       reasons: [],
       message: 'Control-plane admission dependencies are healthy.',
     })
+    expect(status.control_plane_controller_witness).toMatchObject({
+      decision: 'repair_only',
+      reason_codes: ['controller_witness_split'],
+      deployment_available: true,
+      watch_epoch_current: true,
+      controller_self_report_current: false,
+    })
+    expect(status.negative_evidence_router.negative_evidence_refs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'current_runtime_negative',
+          reason: 'controller_witness_split',
+        }),
+      ]),
+    )
+    expect(status.negative_evidence_router.negative_evidence_refs).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reason: 'agentrun_ingestion_unknown',
+        }),
+      ]),
+    )
+    expect(status.action_slo_budgets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_repair',
+          decision: 'allow',
+        }),
+        expect.objectContaining({
+          action_class: 'dispatch_normal',
+          decision: 'repair_only',
+          downgrade_reasons: ['controller_witness_split'],
+        }),
+      ]),
+    )
+    expect(status.material_action_activation_receipts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_normal',
+          decision: 'repair_only',
+          controller_witness_refs: status.control_plane_controller_witness.witness_refs,
+        }),
+      ]),
+    )
   })
 
   it('uses available agents-controllers rollout when split-topology rollout is degraded mid-update', async () => {
