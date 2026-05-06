@@ -117,21 +117,36 @@ jobs:
               SYNC_RESULT_REVISION="$(echo "${STATUS}" | awk '{print $5}')"
               HISTORY_REVISION="$(echo "${STATUS}" | awk '{print $6}')"
               REVISION="${DESIRED_REVISION}"
-              if [ "${OPERATION_PHASE}" = 'Succeeded' ] && [ -n "${SYNC_RESULT_REVISION}" ]; then
+              REVISION_OK='true'
+
+              if [ -n "${EXPECTED_REVISION}" ]; then
+                REVISION_OK='false'
+                for candidate in "${DESIRED_REVISION}" "${SYNC_RESULT_REVISION}" "${HISTORY_REVISION}"; do
+                  if [ -z "${candidate}" ]; then
+                    continue
+                  fi
+                  if [ "${candidate}" = "${EXPECTED_REVISION}" ]; then
+                    REVISION="${candidate}"
+                    REVISION_OK='true'
+                    break
+                  fi
+                  if git merge-base --is-ancestor "${EXPECTED_REVISION}" "${candidate}" >/dev/null 2>&1; then
+                    REVISION="${candidate}"
+                    REVISION_OK='true'
+                    break
+                  fi
+                done
+                if [ "${REVISION_OK}" != 'true' ]; then
+                  if [ -n "${SYNC_RESULT_REVISION}" ]; then
+                    REVISION="${SYNC_RESULT_REVISION}"
+                  elif [ -n "${HISTORY_REVISION}" ]; then
+                    REVISION="${HISTORY_REVISION}"
+                  fi
+                fi
+              elif [ "${OPERATION_PHASE}" = 'Succeeded' ] && [ -n "${SYNC_RESULT_REVISION}" ]; then
                 REVISION="${SYNC_RESULT_REVISION}"
               elif [ -z "${REVISION}" ] && [ -n "${HISTORY_REVISION}" ]; then
                 REVISION="${HISTORY_REVISION}"
-              fi
-
-              REVISION_OK='true'
-              if [ -n "${EXPECTED_REVISION}" ]; then
-                if [ "${REVISION}" = "${EXPECTED_REVISION}" ]; then
-                  REVISION_OK='true'
-                elif git merge-base --is-ancestor "${EXPECTED_REVISION}" "${REVISION}" >/dev/null 2>&1; then
-                  REVISION_OK='true'
-                else
-                  REVISION_OK='false'
-                fi
               fi
 
               if [ "${SYNC_STATUS}" = 'Synced' ] && [ "${HEALTH_STATUS}" = 'Healthy' ] && [ "${REVISION_OK}" = 'true' ]; then
