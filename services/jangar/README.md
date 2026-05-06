@@ -212,6 +212,17 @@ Admitted schedules and requirement runs carry these trace fields in annotations 
 Rollback: set `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` on the control-plane runtime to return launch behavior
 to the previous advisory-only passport mode while keeping status and `/ready` passport projection visible for forensics.
 
+## Workspace storage proof
+
+The supporting-primitives controller reconciles `Workspace` CRs by creating and reading the backing
+`PersistentVolumeClaim` through the shared Kubernetes client resource map. This keeps workspace storage proof on the
+same least-privilege typed path as schedules, swarms, and AgentRuns: a bound PVC sets the workspace phase to `Ready`,
+a pending PVC keeps it `Pending`, and an expired workspace deletes the same PVC alias.
+
+Validation: create or inspect a `Workspace` CR and confirm the controller can read the PVC without an
+`unsupported kubernetes resource: persistentvolumeclaim` error. Rollback is to revert the workspace/PVC proof change or
+temporarily disable the supporting controller; no CRD or data migration is involved.
+
 ## Deployment
 
 ```bash

@@ -217,6 +217,52 @@ describe('supporting primitives controller', () => {
     expect(degraded?.status).toBe('True')
   })
 
+  it('reconciles workspace storage through the persistent volume claim resource alias', async () => {
+    const apply = vi.fn().mockResolvedValue({})
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.PersistentVolumeClaim) {
+        return {
+          apiVersion: 'v1',
+          kind: 'PersistentVolumeClaim',
+          metadata: { name: 'workspace-1', namespace: 'agents' },
+          spec: { volumeName: 'pvc-123' },
+          status: { phase: 'Bound' },
+        }
+      }
+      return null
+    })
+    const kube = { apply, applyStatus, get } as unknown as KubernetesClient
+    const workspace = {
+      apiVersion: 'workspaces.proompteng.ai/v1alpha1',
+      kind: 'Workspace',
+      metadata: { name: 'workspace-1', namespace: 'agents', generation: 3, uid: 'workspace-uid' },
+      spec: {
+        size: '10Gi',
+        accessModes: ['ReadWriteOnce'],
+      },
+    }
+
+    await __test__.reconcileWorkspace(kube, workspace, 'agents')
+
+    expect(get).toHaveBeenCalledWith(RESOURCE_MAP.PersistentVolumeClaim, 'workspace-1', 'agents')
+    expect(apply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiVersion: 'v1',
+        kind: 'PersistentVolumeClaim',
+        metadata: expect.objectContaining({
+          name: 'workspace-1',
+          namespace: 'agents',
+          labels: { 'workspaces.proompteng.ai/workspace': 'workspace-1' },
+        }),
+      }),
+    )
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(status.phase).toBe('Ready')
+    expect(status.volumeName).toBe('pvc-123')
+  })
+
   it('builds schedule runner command with runtime delivery id substitution', async () => {
     const command = __test__.buildScheduleRunnerCommand()
 

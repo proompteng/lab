@@ -112,6 +112,66 @@ describe('primitives-kube', () => {
     expect(objectApiMock.list).not.toHaveBeenCalled()
   })
 
+  it('uses the core object API for persistent volume claim storage proof', async () => {
+    objectApiMock.read.mockResolvedValue({ metadata: { name: 'workspace-1' }, status: { phase: 'Bound' } })
+    objectApiMock.list.mockResolvedValue({ items: [] })
+    objectApiMock.delete.mockResolvedValue({ metadata: { name: 'workspace-1' } })
+
+    const kube = createKubernetesClient()
+    await expect(kube.get(RESOURCE_MAP.PersistentVolumeClaim, 'workspace-1', 'agents')).resolves.toEqual({
+      metadata: { name: 'workspace-1' },
+      status: { phase: 'Bound' },
+    })
+    await expect(
+      kube.list(RESOURCE_MAP.PersistentVolumeClaim, 'agents', 'workspaces.proompteng.ai/workspace=workspace-1'),
+    ).resolves.toEqual({ items: [] })
+    await expect(
+      kube.delete(RESOURCE_MAP.PersistentVolumeClaim, 'workspace-1', 'agents', { wait: false }),
+    ).resolves.toEqual({
+      metadata: { name: 'workspace-1' },
+    })
+
+    expect(objectApiMock.read).toHaveBeenCalledWith({
+      apiVersion: 'v1',
+      kind: 'PersistentVolumeClaim',
+      metadata: {
+        name: 'workspace-1',
+        namespace: 'agents',
+      },
+    })
+    expect(objectApiMock.list).toHaveBeenCalledWith(
+      'v1',
+      'PersistentVolumeClaim',
+      'agents',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'workspaces.proompteng.ai/workspace=workspace-1',
+    )
+    expect(objectApiMock.delete).toHaveBeenCalledWith(
+      {
+        apiVersion: 'v1',
+        kind: 'PersistentVolumeClaim',
+        metadata: {
+          name: 'workspace-1',
+          namespace: 'agents',
+        },
+      },
+      undefined,
+      undefined,
+      0,
+      undefined,
+      'Background',
+      {
+        apiVersion: 'v1',
+        kind: 'DeleteOptions',
+      },
+    )
+    expect(customObjectsMock.getNamespacedCustomObject).not.toHaveBeenCalled()
+    expect(customObjectsMock.listNamespacedCustomObject).not.toHaveBeenCalled()
+  })
+
   it('preserves name and namespace when patching custom resources', async () => {
     customObjectsMock.patchNamespacedCustomObject.mockResolvedValue({ metadata: { name: 'run-1' } })
 
