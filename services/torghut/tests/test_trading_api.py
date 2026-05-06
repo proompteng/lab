@@ -906,6 +906,114 @@ class TestTradingApi(TestCase):
             settings.trading_simple_submit_enabled = original_simple_submit_enabled
             settings.trading_kill_switch_enabled = original_kill_switch_enabled
 
+    def test_trading_status_and_health_include_profitability_proof_floor(
+        self,
+    ) -> None:
+        proof_floor = {
+            "schema_version": "torghut.profitability-proof-floor.v1",
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "repair_ladder": [{"code": "repair_execution_tca"}],
+        }
+
+        with patch(
+            "app.main.build_profitability_proof_floor_receipt",
+            return_value=proof_floor,
+        ):
+            status_response = self.client.get("/trading/status")
+            health_response = self.client.get("/trading/health")
+
+        self.assertEqual(status_response.status_code, 200)
+        self.assertIn(health_response.status_code, {200, 503})
+        self.assertEqual(status_response.json()["proof_floor"], proof_floor)
+        self.assertEqual(health_response.json()["proof_floor"], proof_floor)
+        self.assertEqual(
+            health_response.json()["dependencies"]["profitability_proof_floor"][
+                "detail"
+            ],
+            "repair_only",
+        )
+
+    def test_trading_health_requires_profitability_proof_floor_in_live(self) -> None:
+        original_enabled = settings.trading_enabled
+        original_mode = settings.trading_mode
+        original_source = settings.trading_universe_source
+        original_empirical_required = settings.trading_empirical_jobs_health_required
+        settings.trading_enabled = True
+        settings.trading_mode = "live"
+        settings.trading_universe_source = "static"
+        settings.trading_empirical_jobs_health_required = False
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            app.state.trading_scheduler = scheduler
+
+            with (
+                patch("app.main._check_alpaca", return_value={"ok": True}),
+                patch("app.main._check_clickhouse", return_value={"ok": True}),
+                patch("app.main._check_postgres", return_value={"ok": True}),
+                patch(
+                    "app.main.check_account_scope_invariants",
+                    return_value={
+                        "account_scope_ready": True,
+                        "account_scope_errors": [],
+                    },
+                ),
+                patch(
+                    "app.main.check_schema_current",
+                    return_value={
+                        "schema_current": True,
+                        "current_heads": ["0011_execution_tca_simulator_divergence"],
+                        "expected_heads": ["0011_execution_tca_simulator_divergence"],
+                        "schema_head_signature": "7f8e4d0",
+                    },
+                ),
+                patch(
+                    "app.main._build_live_submission_gate_payload",
+                    return_value={
+                        "allowed": True,
+                        "reason": "ready",
+                        "blocked_reasons": [],
+                        "capital_stage": "live",
+                    },
+                ),
+                patch(
+                    "app.main._empirical_jobs_status",
+                    return_value={"ready": False, "status": "degraded"},
+                ),
+                patch(
+                    "app.main.load_quant_evidence_status",
+                    return_value={
+                        "required": False,
+                        "ok": True,
+                        "status": "not_required",
+                        "reason": "quant_health_not_configured",
+                    },
+                ),
+                patch(
+                    "app.main._build_profitability_proof_floor_payload",
+                    return_value={
+                        "route_state": "repair_only",
+                        "capital_state": "zero_notional",
+                    },
+                ),
+            ):
+                response = self.client.get("/trading/health")
+
+            self.assertEqual(response.status_code, 503)
+            dependency = response.json()["dependencies"]["profitability_proof_floor"]
+            self.assertFalse(dependency["ok"])
+            self.assertEqual(dependency["detail"], "repair_only")
+            self.assertTrue(dependency["required"])
+        finally:
+            settings.trading_enabled = original_enabled
+            settings.trading_mode = original_mode
+            settings.trading_universe_source = original_source
+            settings.trading_empirical_jobs_health_required = (
+                original_empirical_required
+            )
+
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch(
@@ -1230,7 +1338,14 @@ class TestTradingApi(TestCase):
             scheduler.state.last_run_at = datetime.now(timezone.utc)
             app.state.trading_scheduler = scheduler
 
-            response = self.client.get("/trading/health")
+            with patch(
+                "app.main._build_profitability_proof_floor_payload",
+                return_value={
+                    "route_state": "live_micro_candidate",
+                    "capital_state": "live_allowed",
+                },
+            ):
+                response = self.client.get("/trading/health")
 
             self.assertEqual(response.status_code, 200)
             payload = response.json()
@@ -1239,6 +1354,7 @@ class TestTradingApi(TestCase):
             self.assertFalse(payload["dependencies"]["empirical_jobs"]["required"])
             self.assertTrue(payload["dependencies"]["quant_evidence"]["ok"])
             self.assertFalse(payload["dependencies"]["quant_evidence"]["required"])
+            self.assertTrue(payload["dependencies"]["profitability_proof_floor"]["ok"])
         finally:
             settings.trading_enabled = original_enabled
             settings.trading_mode = original_mode

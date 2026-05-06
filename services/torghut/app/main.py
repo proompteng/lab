@@ -68,6 +68,7 @@ from .trading.hypotheses import (
 from .trading.lean_lanes import LeanLaneManager
 from .trading.lean_runtime import lean_authority_status
 from .trading.llm.evaluation import build_llm_evaluation_metrics
+from .trading.proof_floor import build_profitability_proof_floor_receipt
 from .trading.submission_council import (
     build_live_submission_gate_payload,
     build_shadow_first_toggle_parity,
@@ -96,6 +97,7 @@ BUILD_COMMIT = os.getenv("TORGHUT_COMMIT", "unknown")
 BUILD_IMAGE_DIGEST = os.getenv("TORGHUT_IMAGE_DIGEST", "").strip() or None
 RUNTIME_PROFITABILITY_LOOKBACK_HOURS = 72
 RUNTIME_PROFITABILITY_SCHEMA_VERSION = "torghut.runtime-profitability.v1"
+PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS = 86_400
 LEAN_LANE_MANAGER = LeanLaneManager()
 WHITEPAPER_WORKFLOW = WhitepaperWorkflowService()
 _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = Lock()
@@ -588,6 +590,8 @@ def _evaluate_trading_health_payload(
     }
 
     alpha_readiness: dict[str, object]
+    tca_summary: dict[str, object] = {}
+    market_context_status = scheduler.market_context_status()
     _hypothesis_payload: Mapping[str, object] = {}
     try:
         with SessionLocal() as session:
@@ -596,7 +600,7 @@ def _evaluate_trading_health_payload(
             _build_hypothesis_runtime_payload(
                 scheduler,
                 tca_summary=tca_summary,
-                market_context_status=scheduler.market_context_status(),
+                market_context_status=market_context_status,
                 dependency_quorum=dependency_quorum,
             )
         )
@@ -644,6 +648,16 @@ def _evaluate_trading_health_payload(
             dspy_runtime_status=dspy_runtime,
             quant_health_status=quant_evidence,
         )
+    proof_floor = _build_profitability_proof_floor_payload(
+        state=scheduler.state,
+        torghut_revision=BUILD_COMMIT,
+        live_submission_gate=live_submission_gate,
+        hypothesis_payload=_hypothesis_payload,
+        empirical_jobs_status=empirical_jobs,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        tca_summary=tca_summary,
+    )
     live_mode = settings.trading_mode == "live"
     empirical_jobs_required = (
         live_mode and settings.trading_empirical_jobs_health_required
@@ -683,6 +697,16 @@ def _evaluate_trading_health_payload(
         "detail": str(live_submission_gate.get("reason") or "unknown"),
         "capital_stage": live_submission_gate.get("capital_stage"),
     }
+    dependencies["profitability_proof_floor"] = {
+        "ok": (
+            str(proof_floor.get("route_state") or "") != "repair_only"
+            if live_mode
+            else True
+        ),
+        "detail": str(proof_floor.get("route_state") or "unknown"),
+        "capital_state": proof_floor.get("capital_state"),
+        "required": live_mode,
+    }
     dependencies["quant_evidence"] = {
         "ok": (
             bool(quant_evidence.get("ok", True))
@@ -714,6 +738,7 @@ def _evaluate_trading_health_payload(
             "dependencies": dependencies,
             "alpha_readiness": alpha_readiness,
             "live_submission_gate": live_submission_gate,
+            "proof_floor": proof_floor,
             "quant_evidence": quant_evidence,
         },
         status_code,
@@ -1748,6 +1773,18 @@ def trading_status() -> dict[str, object]:
             quant_health_status=quant_evidence,
         )
     simple_lane_reject_reason_totals = _simple_lane_reject_reason_totals(state)
+    simple_lane_status = _build_simple_lane_status_payload()
+    proof_floor = _build_profitability_proof_floor_payload(
+        state=state,
+        torghut_revision=str(shadow_first_runtime["active_revision"]),
+        live_submission_gate=live_submission_gate,
+        hypothesis_payload=hypothesis_payload,
+        empirical_jobs_status=empirical_jobs,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        tca_summary=tca_summary,
+        simple_lane_status=simple_lane_status,
+    )
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -1770,18 +1807,10 @@ def trading_status() -> dict[str, object]:
         },
         "running": state.running,
         "live_submission_gate": live_submission_gate,
+        "proof_floor": proof_floor,
         "quant_evidence": quant_evidence,
         "last_decision_at": last_decision_at,
-        "simple_lane_status": {
-            "enabled": settings.trading_pipeline_mode == "simple",
-            "submit_enabled": settings.trading_simple_submit_enabled,
-            "order_feed_telemetry_enabled": (
-                settings.trading_simple_order_feed_telemetry_enabled
-            ),
-            "max_notional_per_order": settings.trading_simple_max_notional_per_order,
-            "max_notional_per_symbol": settings.trading_simple_max_notional_per_symbol,
-            "allowed_reject_reasons": sorted(_SIMPLE_LANE_ALLOWED_REJECT_REASONS),
-        },
+        "simple_lane_status": simple_lane_status,
         "simple_lane_reject_reason_totals": simple_lane_reject_reason_totals,
         "simple_lane_orders_submitted_total": (
             state.metrics.orders_submitted_total
@@ -3159,6 +3188,50 @@ _SIMPLE_LANE_ALLOWED_REJECT_REASONS = {
     "broker_precheck_failed",
     "broker_submit_failed",
 }
+
+
+def _build_simple_lane_status_payload() -> dict[str, object]:
+    return {
+        "enabled": settings.trading_pipeline_mode == "simple",
+        "submit_enabled": settings.trading_simple_submit_enabled,
+        "order_feed_telemetry_enabled": (
+            settings.trading_simple_order_feed_telemetry_enabled
+        ),
+        "max_notional_per_order": settings.trading_simple_max_notional_per_order,
+        "max_notional_per_symbol": settings.trading_simple_max_notional_per_symbol,
+        "allowed_reject_reasons": sorted(_SIMPLE_LANE_ALLOWED_REJECT_REASONS),
+    }
+
+
+def _build_profitability_proof_floor_payload(
+    *,
+    state: object,
+    torghut_revision: str | None,
+    live_submission_gate: Mapping[str, Any],
+    hypothesis_payload: Mapping[str, Any],
+    empirical_jobs_status: Mapping[str, Any],
+    quant_evidence: Mapping[str, Any],
+    market_context_status: Mapping[str, Any],
+    tca_summary: Mapping[str, Any],
+    simple_lane_status: Mapping[str, Any] | None = None,
+) -> dict[str, object]:
+    return build_profitability_proof_floor_receipt(
+        account_label=settings.trading_account_label,
+        torghut_revision=torghut_revision,
+        trading_mode=settings.trading_mode,
+        market_session_open=cast(
+            bool | None,
+            getattr(state, "market_session_open", None),
+        ),
+        live_submission_gate=live_submission_gate,
+        hypothesis_payload=hypothesis_payload,
+        empirical_jobs_status=empirical_jobs_status,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        tca_summary=tca_summary,
+        simple_lane_status=simple_lane_status or _build_simple_lane_status_payload(),
+        tca_max_age_seconds=PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS,
+    )
 
 
 def _simple_lane_reject_reason_totals(state: object) -> dict[str, int]:
