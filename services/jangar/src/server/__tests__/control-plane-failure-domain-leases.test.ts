@@ -227,23 +227,36 @@ describe('failure-domain lease synthesis', () => {
         pods: [
           pod({
             metadata: {
-              name: 'jangar-control-plane-plan-sched-zczg7-step-1-attempt-1-4dbnk',
+              name: 'jangar-control-plane-plan-sched-cron-29634020-cndb7',
               namespace: 'agents',
               generation: 1,
-              labels: { 'agents.proompteng.ai/agent-run': 'jangar-control-plane-plan-sched-zczg7' },
+              labels: {
+                'agents.proompteng.ai/agent-run': 'jangar-control-plane-plan-sched-cron-29634020',
+                'agents.proompteng.ai/runtime': 'codex',
+              },
               creationTimestamp: '2026-05-05T11:55:00.000Z',
             },
             status: {
-              phase: 'Failed',
+              phase: 'Running',
               conditions: [{ type: 'Ready', status: 'False', reason: null, lastTransitionTime: null }],
-              containerStatuses: [
-                {
-                  name: 'runner',
-                  image: 'registry.ide-newton.ts.net/lab/jangar:0bba2aa8',
-                  ready: false,
-                  state: { terminated: { reason: 'Error', message: null, exitCode: 1 } },
-                },
-              ],
+              containerStatuses: [{ name: 'agent', image: 'jangar:test', ready: true, state: { running: true } }],
+            },
+          }),
+          pod({
+            metadata: {
+              name: 'jangar-control-plane-plan-sched-zczg7-step-1-attempt-1-4dbnk',
+              namespace: 'agents',
+              generation: 1,
+              labels: {
+                'agents.proompteng.ai/agent-run': 'jangar-control-plane-plan-sched-zczg7',
+                'agents.proompteng.ai/runtime': 'codex',
+              },
+              creationTimestamp: '2026-05-05T11:55:00.000Z',
+            },
+            status: {
+              phase: 'Running',
+              conditions: [{ type: 'Ready', status: 'False', reason: null, lastTransitionTime: null }],
+              containerStatuses: [{ name: 'agent', image: 'jangar:test', ready: true, state: { running: true } }],
             },
           }),
         ],

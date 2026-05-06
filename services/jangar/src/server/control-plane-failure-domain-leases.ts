@@ -157,16 +157,19 @@ const buildLease = ({
 
 const conditionIsTrue = (condition: { status: string | null }) => normalizeText(condition.status) === 'true'
 
+const hasDatabaseNameToken = (name: string) => /(^|[-_.])(db|database|postgres|postgresql)($|[-_.0-9])/.test(name)
+
 const isDatabasePod = (pod: KubeGatewayPod) => {
   const name = normalizeText(pod.metadata.name)
   const labels = pod.metadata.labels
-  const hasDatabaseNameToken = /(^|[-_.])(db|database|postgres|postgresql)($|[-_.])/.test(name)
   return (
-    hasDatabaseNameToken ||
+    hasDatabaseNameToken(name) ||
     Boolean(labels['cnpg.io/cluster']) ||
     normalizeText(labels['app.kubernetes.io/name']).includes('postgres') ||
     normalizeText(labels['app.kubernetes.io/name']).includes('database') ||
-    normalizeText(labels['app.kubernetes.io/component']).includes('database')
+    normalizeText(labels['app.kubernetes.io/component']).includes('database') ||
+    normalizeText(labels.app).includes('postgres') ||
+    normalizeText(labels.app).includes('database')
   )
 }
 
