@@ -18,6 +18,14 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Fast Jangar/Torghut live analysis workflow: `designs/jangar-torghut-live-analysis-playbook.md`
 - Autonomous Jangar/Torghut production system design: `designs/autonomous-jangar-torghut-production-system.md`
 - Current Jangar/Torghut architecture contracts:
+  - `designs/106-jangar-proof-repair-clearinghouse-and-brownout-priority-queue-2026-05-06.md`
+  - `../torghut/design-system/v6/110-torghut-evidence-freshness-repair-market-and-capital-reentry-2026-05-06.md`
+  - `designs/105-jangar-evidence-pressure-runways-and-profit-proof-budgets-2026-05-06.md`
+  - `../torghut/design-system/v6/109-torghut-profit-proof-budget-consumer-and-options-runway-2026-05-06.md`
+  - `designs/104-jangar-quant-evidence-clearinghouse-and-capital-action-firewall-2026-05-06.md`
+  - `../torghut/design-system/v6/108-torghut-capital-clearance-market-and-negative-evidence-ledger-2026-05-06.md`
+  - `designs/104-jangar-repair-closure-receipts-and-settlement-finality-2026-05-06.md`
+  - `../torghut/design-system/v6/108-torghut-proof-repair-closure-receipts-and-profit-settlement-2026-05-06.md`
   - `designs/103-jangar-torghut-decision-custody-cells-and-rollout-proof-exchange-2026-05-06.md`
   - `../torghut/design-system/v6/107-torghut-decision-custody-cells-and-capital-reentry-2026-05-06.md`
   - `designs/103-jangar-material-action-settlement-board-and-profit-repair-gates-2026-05-06.md`

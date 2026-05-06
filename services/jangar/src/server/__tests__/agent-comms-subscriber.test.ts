@@ -133,4 +133,25 @@ describe('agent comms subscriber consume', () => {
     expect(workflowComms?.channel).toBe('general')
     expect(workflowComms?.attrs?.runtime).toBe('workflow_comms')
   })
+
+  it('promotes swarm persona attrs into dashboard-visible agent and role fields', () => {
+    const message = __test__.normalizePayload(
+      JSON.stringify({
+        agent_id: 'Unknown',
+        role: 'Assistant',
+        kind: 'run-started',
+        content: 'release started',
+        attrs: {
+          swarmAgentIdentity: 'marco-silva-jangar-deployer',
+          swarmAgentRole: 'deployer',
+          swarmHumanName: 'Marco Silva',
+        },
+      }),
+      'workflow.general.run-started',
+    )
+
+    expect(message?.agentId).toBe('marco-silva-jangar-deployer')
+    expect(message?.role).toBe('deployer')
+    expect(message?.attrs?.swarmHumanName).toBe('Marco Silva')
+  })
 })

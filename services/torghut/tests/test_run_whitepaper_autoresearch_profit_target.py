@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from argparse import Namespace
+from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -308,6 +309,84 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
 
         self.assertEqual(symbols, ("NVDA", "AMAT", "TSM"))
+
+    def test_program_research_sources_feed_whitepaper_claim_compiler(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            args = self._args(Path(tmpdir) / "epoch")
+            args.program = Path(
+                "config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml"
+            )
+            program = runner._load_epoch_program(args)
+            sources = runner._program_whitepaper_sources(program)
+
+        source_ids = {source.run_id for source in sources}
+        self.assertIn("weighted_microprice_momentum_2026", source_ids)
+        self.assertIn("macro_announcement_intraday_momentum_2025", source_ids)
+
+        weighted_microprice = next(
+            source
+            for source in sources
+            if source.run_id == "weighted_microprice_momentum_2026"
+        )
+        claim_types = {str(claim["claim_type"]) for claim in weighted_microprice.claims}
+        self.assertIn("feature_recipe", claim_types)
+        self.assertIn("validation_requirement", claim_types)
+        self.assertTrue(
+            runner.compile_sources_to_hypothesis_cards([weighted_microprice])
+        )
+
+    def test_runtime_closure_replay_is_disabled_when_candidate_already_failed_oracle(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            args = self._args(Path(tmpdir) / "epoch")
+            args.program = Path(
+                "config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml"
+            )
+            program = runner._load_epoch_program(args)
+
+        manifest = runner.MlxSnapshotManifest(
+            snapshot_id="mlx-snap-test",
+            created_at="2026-05-06T00:00:00+00:00",
+            source_window_start="",
+            source_window_end="",
+            train_days=6,
+            holdout_days=3,
+            full_window_days=9,
+            symbols=tuple(_CHIP_UNIVERSE),
+            bar_interval="PT1S",
+            quote_quality_policy_id="scheduler_v3_default",
+            feature_set_id="torghut.mlx-autoresearch.v1",
+            cross_sectional_feature_flags={},
+            prior_day_feature_flags={},
+            tape_freshness_receipts=(),
+            row_counts={},
+            tensor_bundle_paths={},
+            manifest_hash="hash",
+        )
+        portfolio = runner.PortfolioCandidateSpec(
+            schema_version="torghut.portfolio-candidate-spec.v1",
+            portfolio_candidate_id="portfolio-test",
+            source_candidate_ids=("candidate-test",),
+            target_net_pnl_per_day=Decimal("300"),
+            sleeves=(),
+            capital_budget={},
+            correlation_budget={},
+            drawdown_budget={},
+            evidence_refs=(),
+            objective_scorecard={"oracle_passed": False},
+            optimizer_report={},
+        )
+
+        runtime_program = runner._runtime_closure_program_for_candidate(
+            program=program,
+            manifest=manifest,
+            portfolio=portfolio,
+            oracle_candidate_found=False,
+        )
+
+        self.assertFalse(runtime_program.runtime_closure_policy.execute_parity_replay)
+        self.assertFalse(runtime_program.runtime_closure_policy.execute_approval_replay)
 
     def test_candidate_universe_symbols_default_to_chip_coverage_when_empty(
         self,

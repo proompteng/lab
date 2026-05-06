@@ -13,7 +13,6 @@ spec:
     - name: taConfigmap
     - name: taDeployment
     - name: torghutService
-    - name: forecastService
     - name: signalTable
     - name: priceTable
     - name: postgresDatabase
@@ -32,7 +31,7 @@ spec:
                   kubernetes.io/arch: arm64
                 containers:
                   - name: analysis
-                    image: registry.ide-newton.ts.net/lab/torghut@sha256:d5526f8ae0dc090180c1f73391b3b834ba34b7e2bfb43cf8d0600805e9280ff4
+                    image: registry.ide-newton.ts.net/lab/torghut@sha256:9e4146a183a6e73567f0005e3990a7f50aa4f9b3bdbcf8e37cfbf959c647a2d0
                     imagePullPolicy: IfNotPresent
                     env:
                       - name: DB_DSN
@@ -54,7 +53,6 @@ spec:
                         --ta-configmap "{{args.taConfigmap}}"
                         --ta-deployment "{{args.taDeployment}}"
                         --torghut-service "{{args.torghutService}}"
-                        --forecast-service "{{args.forecastService}}"
                         --signal-table "{{args.signalTable}}"
                         --price-table "{{args.priceTable}}"
                         --postgres-base-dsn-env DB_DSN

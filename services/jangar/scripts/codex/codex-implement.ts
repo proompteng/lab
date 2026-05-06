@@ -2431,6 +2431,9 @@ const enrichRunNatsAttrs = (
   if (requirementMetadata.workerRole) {
     attrs.swarmAgentRole = requirementMetadata.workerRole
   }
+  if (requirementMetadata.workerHumanName) {
+    attrs.swarmHumanName = requirementMetadata.workerHumanName
+  }
   if (requirementMetadata.id) {
     attrs.swarmRequirementId = requirementMetadata.id
   }

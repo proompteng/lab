@@ -12,7 +12,6 @@ spec:
     - name: namespace
     - name: torghutService
     - name: taDeployment
-    - name: forecastService
     - name: windowStart
     - name: windowEnd
     - name: signalTable
@@ -42,7 +41,7 @@ spec:
                   kubernetes.io/arch: arm64
                 containers:
                   - name: analysis
-                    image: registry.ide-newton.ts.net/lab/torghut@sha256:d5526f8ae0dc090180c1f73391b3b834ba34b7e2bfb43cf8d0600805e9280ff4
+                    image: registry.ide-newton.ts.net/lab/torghut@sha256:9e4146a183a6e73567f0005e3990a7f50aa4f9b3bdbcf8e37cfbf959c647a2d0
                     imagePullPolicy: IfNotPresent
                     env:
                       - name: DB_DSN
@@ -68,7 +67,6 @@ spec:
                         --namespace "{{args.namespace}}"
                         --torghut-service "{{args.torghutService}}"
                         --ta-deployment "{{args.taDeployment}}"
-                        --forecast-service "{{args.forecastService}}"
                         --window-start "{{args.windowStart}}"
                         --window-end "{{args.windowEnd}}"
                         --signal-table "{{args.signalTable}}"

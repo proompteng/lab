@@ -4,6 +4,14 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/110-torghut-evidence-freshness-repair-market-and-capital-reentry-2026-05-06.md`
+  (current evidence freshness repair market and capital reentry contract)
+- `docs/agents/designs/106-jangar-proof-repair-clearinghouse-and-brownout-priority-queue-2026-05-06.md` (current
+  Jangar proof repair clearinghouse and brownout priority contract)
+- `docs/torghut/design-system/v6/109-torghut-profit-proof-budget-consumer-and-options-runway-2026-05-06.md` (profit
+  proof budget consumer and options runway)
+- `docs/agents/designs/105-jangar-evidence-pressure-runways-and-profit-proof-budgets-2026-05-06.md` (Jangar evidence
+  pressure runways and profit proof budgets)
 - `docs/torghut/design-system/v6/95-torghut-hypothesis-warrant-reclocking-and-profit-repair-contract-2026-05-05.md`
   (current hypothesis-local warrant reclocking and profit repair contract)
 - `docs/agents/designs/91-jangar-evidence-warrants-and-lane-local-quorum-2026-05-05.md` (current Jangar lane-local
