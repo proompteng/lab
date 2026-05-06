@@ -1144,6 +1144,78 @@ const collectLogExcerpts = async (
   }
 }
 
+const normalizeFailureReason = (error: unknown) => {
+  if (!error) return null
+  if (error instanceof Error) {
+    return error.message.trim() || error.name || 'unknown error'
+  }
+  if (typeof error === 'string') {
+    return error.trim() || null
+  }
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}
+
+const firstActionableLogLine = (logs: CodexNotifyLogExcerpt) => {
+  const candidates = [logs.status, logs.runtime, logs.agent, logs.output, logs.events]
+  for (const content of candidates) {
+    if (!content) continue
+    const lines = content
+      .replace(/\r/g, '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    const actionable = [...lines]
+      .reverse()
+      .find((line) => /\b(error|failed|failure|forbidden|denied|timeout|exception|traceback|panic)\b/i.test(line))
+    if (actionable) return actionable
+  }
+  return null
+}
+
+const buildFailureDiagnostics = ({
+  gaps,
+  error,
+  logs,
+  outputPath,
+  runtimeLogPath,
+  statusPath,
+}: {
+  gaps: string[]
+  error: unknown
+  logs: CodexNotifyLogExcerpt
+  outputPath: string
+  runtimeLogPath: string
+  statusPath: string
+}) => {
+  if (gaps.length > 0) {
+    return {
+      gaps,
+      failureReason: normalizeFailureReason(error),
+      logLine: firstActionableLogLine(logs),
+    }
+  }
+
+  const failureReason = normalizeFailureReason(error)
+  const logLine = firstActionableLogLine(logs)
+  const diagnostics: string[] = []
+  if (failureReason) {
+    diagnostics.push(`Failure reason: ${failureReason}`)
+  }
+  if (logLine && (!failureReason || !logLine.includes(failureReason))) {
+    diagnostics.push(`Latest actionable log line: ${logLine}`)
+  }
+  diagnostics.push(`Artifacts: output=${outputPath}; runtime=${runtimeLogPath}; status=${statusPath}`)
+  return {
+    gaps: diagnostics,
+    failureReason,
+    logLine,
+  }
+}
+
 const resolveHeadSha = async (worktree: string, logger: CodexLogger) => {
   try {
     const result = await runCommand('git', ['rev-parse', 'HEAD'], { cwd: worktree })
@@ -3353,6 +3425,7 @@ export const runCodexImplementation = async (eventPath: string) => {
   let lastAssistantMessage: string | null = null
   let memorySoak: MemoryContextPayload | null = null
   let natsContext: NatsContextPayload | null = null
+  let runFailureError: unknown = null
 
   try {
     const systemPromptPath = normalizeOptionalString(sanitizeNullableString(process.env.CODEX_SYSTEM_PROMPT_PATH))
@@ -4067,11 +4140,33 @@ export const runCodexImplementation = async (eventPath: string) => {
       archivePath,
       sessionId: capturedSessionId,
     }
+  } catch (error) {
+    runFailureError = error
+    throw error
   } finally {
     if (!runSucceeded) {
       const summary = extractSummary(lastAssistantMessage)
       const tests = extractTests(lastAssistantMessage)
-      const gaps = extractKnownGaps(lastAssistantMessage)
+      const extractedGaps = extractKnownGaps(lastAssistantMessage)
+      const failureLogExcerpt = await collectLogExcerpts(
+        {
+          outputPath,
+          jsonOutputPath,
+          agentOutputPath,
+          runtimeLogPath,
+          statusPath,
+        },
+        logger,
+      )
+      const failureDiagnostics = buildFailureDiagnostics({
+        gaps: extractedGaps,
+        error: runFailureError,
+        logs: failureLogExcerpt,
+        outputPath,
+        runtimeLogPath,
+        statusPath,
+      })
+      const gaps = failureDiagnostics.gaps
       if (!isBatchTask && activeNatsChannel && swarmCommsArtifacts) {
         const ownerUpdateMessage = buildOwnerUpdateMessage({
           decision: 'failed',
@@ -4127,9 +4222,18 @@ export const runCodexImplementation = async (eventPath: string) => {
       const failureGapAttrs: Record<string, unknown> = {
         stage,
         missingItems: failureMissingItems,
-        suggestedFixes: [],
+        suggestedFixes:
+          extractedGaps.length > 0
+            ? []
+            : ['Use the failure reason and artifact paths from this message to fix the run before retrying.'],
         iteration,
         iterationCycle,
+      }
+      if (failureDiagnostics.failureReason) {
+        failureGapAttrs.failureReason = failureDiagnostics.failureReason
+      }
+      if (failureDiagnostics.logLine) {
+        failureGapAttrs.latestActionableLogLine = failureDiagnostics.logLine
       }
 
       if (!isBatchTask) {
@@ -4148,7 +4252,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       }
       await publishNatsEvent(logger, {
         kind: 'run-gaps',
-        content: gaps.length > 0 ? gaps.join('; ') : 'Run failed before emitting gaps; inspect logs and artifacts.',
+        content: gaps.join('; '),
         attrs: enrichRunNatsAttrs(failureGapAttrs, requirementMetadata),
       })
       await publishNatsEvent(logger, {
@@ -4166,16 +4270,6 @@ export const runCodexImplementation = async (eventPath: string) => {
       })
 
       try {
-        const failureLogExcerpt = await collectLogExcerpts(
-          {
-            outputPath,
-            jsonOutputPath,
-            agentOutputPath,
-            runtimeLogPath,
-            statusPath,
-          },
-          logger,
-        )
         const failureNotifyPayload = buildNotifyPayload({
           repository,
           issueNumber,
