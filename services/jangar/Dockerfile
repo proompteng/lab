@@ -640,6 +640,7 @@ COPY --from=jangar-build /app/services/jangar/src/worker.ts ./src/worker.ts
 COPY --from=jangar-build /app/services/jangar/src/server/runtime-entry-config.ts ./src/server/runtime-entry-config.ts
 COPY --from=jangar-build /app/services/jangar/src/server/runtime-tooling-config.ts ./src/server/runtime-tooling-config.ts
 COPY --from=jangar-build /app/services/jangar/src/server/control-plane-runtime-admission.ts ./src/server/control-plane-runtime-admission.ts
+COPY --from=jangar-build /app/services/jangar/src/server/control-plane-runtime-proof-surface.ts ./src/server/control-plane-runtime-proof-surface.ts
 COPY --from=jangar-pty /tmp/node-pty/build /app/services/jangar/.output/server/node_modules/node-pty/build
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/server/node_modules/node-pty/prebuilds
 WORKDIR /app

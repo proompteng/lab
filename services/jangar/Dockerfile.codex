@@ -124,6 +124,7 @@ COPY services/jangar/scripts/codex/agent-runner.ts /usr/local/bin/agent-runner
 COPY services/jangar/scripts/codex /app/services/jangar/scripts/codex
 COPY services/jangar/src/server/runtime-tooling-config.ts /app/services/jangar/src/server/runtime-tooling-config.ts
 COPY services/jangar/src/server/control-plane-runtime-admission.ts /app/services/jangar/src/server/control-plane-runtime-admission.ts
+COPY services/jangar/src/server/control-plane-runtime-proof-surface.ts /app/services/jangar/src/server/control-plane-runtime-proof-surface.ts
 COPY services/jangar/scripts/codex/codex-research.ts /usr/local/bin/codex-research
 COPY services/jangar/scripts/codex/codex-graf.ts /usr/local/bin/codex-graf
 COPY services/jangar/scripts/codex-nats-publish.ts /usr/local/bin/codex-nats-publish

@@ -12,6 +12,9 @@ describe('codex runner image layout', () => {
       'COPY --from=jangar-build /app/services/jangar/src/server/control-plane-runtime-admission.ts ./src/server/control-plane-runtime-admission.ts',
     )
     expect(runtimeStage).toContain(
+      'COPY --from=jangar-build /app/services/jangar/src/server/control-plane-runtime-proof-surface.ts ./src/server/control-plane-runtime-proof-surface.ts',
+    )
+    expect(runtimeStage).toContain(
       'COPY --from=jangar-build /app/services/jangar/src/server/runtime-tooling-config.ts ./src/server/runtime-tooling-config.ts',
     )
     expect(runtimeStage).toContain('COPY --from=jangar-build /app/services/jangar/scripts/codex ./scripts/codex')
@@ -23,6 +26,9 @@ describe('codex runner image layout', () => {
     expect(dockerfile).toContain('COPY services/jangar/scripts/codex /app/services/jangar/scripts/codex')
     expect(dockerfile).toContain(
       'COPY services/jangar/src/server/control-plane-runtime-admission.ts /app/services/jangar/src/server/control-plane-runtime-admission.ts',
+    )
+    expect(dockerfile).toContain(
+      'COPY services/jangar/src/server/control-plane-runtime-proof-surface.ts /app/services/jangar/src/server/control-plane-runtime-proof-surface.ts',
     )
     expect(dockerfile).toContain(
       'COPY services/jangar/src/server/runtime-tooling-config.ts /app/services/jangar/src/server/runtime-tooling-config.ts',
