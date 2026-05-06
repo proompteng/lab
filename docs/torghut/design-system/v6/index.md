@@ -13,6 +13,8 @@
 - Evidence (current next-work priority):
   - `132-torghut-dependency-quorum-rehydration-and-profit-inventory-handoff-2026-05-06.md`
   - `docs/agents/designs/128-jangar-runtime-convergence-ledger-and-capital-gate-receipts-2026-05-06.md`
+  - `132-torghut-forecast-profit-tournament-and-capital-reentry-guardrails-2026-05-06.md`
+  - `docs/agents/designs/128-jangar-terminal-run-settlement-and-forecast-reentry-admission-2026-05-06.md`
   - `131-torghut-active-profit-inventory-and-quant-carry-fuses-2026-05-06.md`
   - `docs/agents/designs/127-jangar-activation-inventory-ledger-and-product-gap-fuses-2026-05-06.md`
   - `131-torghut-session-capital-bonds-and-profit-rehearsal-exchange-2026-05-06.md`
