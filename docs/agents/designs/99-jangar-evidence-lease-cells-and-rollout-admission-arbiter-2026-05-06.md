@@ -74,7 +74,7 @@ unset.
 - Argo CD reported `agents`, `agents-ci`, `jangar`, `symphony-jangar`, `symphony-torghut`, `torghut`, and
   `torghut-options` as `Synced` and `Healthy`.
 - RBAC prevented broad CNPG introspection and pod exec: `clusters.postgresql.cnpg.io is forbidden` and `pods/exec is
-  forbidden`. The service account could read the specific app DB secrets needed for read-only SQL.
+forbidden`. The service account could read the specific app DB secrets needed for read-only SQL.
 
 ### Source Evidence
 
@@ -272,14 +272,14 @@ Default action mapping for the current evidence:
 
 ### Failure-Mode Reduction
 
-| Failure mode | Current evidence | Lease response | Reduced behavior |
-| --- | --- | --- | --- |
-| New work launched while failed-run debt grows | 30 failed pods; 141 failed `agent_runs` | `schedule_launch=repair_only` | repair jobs allowed, normal schedules held |
-| Storage proof mismatch | PVC used by supporting controller but not primitive resolver | `workspace_storage=hold` until resolver and tests pass | PVC read/list/delete/watch can share one target |
-| Watch/list pressure hidden behind green readiness | Jangar logs show AgentRun and SignalDelivery 429s | `cluster_watch=hold` for widen | no scope widening until watch budget recovers |
-| Metrics exporter noise ignored | Agents logs show OTLP failures to Mimir path | `observability_export=hold` for widen | deployer must fix or consciously waive metric export |
-| Merge readiness with missing source refs | review ingest cannot resolve active refs | `source_ref=hold` for merge-ready automation | ref freshness becomes explicit |
-| Torghut capital from route liveness | Torghut services running but proof tables empty | `torghut_profit=shadow_only` | capital stays closed while repair continues |
+| Failure mode                                      | Current evidence                                             | Lease response                                         | Reduced behavior                                     |
+| ------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------ | ---------------------------------------------------- |
+| New work launched while failed-run debt grows     | 30 failed pods; 141 failed `agent_runs`                      | `schedule_launch=repair_only`                          | repair jobs allowed, normal schedules held           |
+| Storage proof mismatch                            | PVC used by supporting controller but not primitive resolver | `workspace_storage=hold` until resolver and tests pass | PVC read/list/delete/watch can share one target      |
+| Watch/list pressure hidden behind green readiness | Jangar logs show AgentRun and SignalDelivery 429s            | `cluster_watch=hold` for widen                         | no scope widening until watch budget recovers        |
+| Metrics exporter noise ignored                    | Agents logs show OTLP failures to Mimir path                 | `observability_export=hold` for widen                  | deployer must fix or consciously waive metric export |
+| Merge readiness with missing source refs          | review ingest cannot resolve active refs                     | `source_ref=hold` for merge-ready automation           | ref freshness becomes explicit                       |
+| Torghut capital from route liveness               | Torghut services running but proof tables empty              | `torghut_profit=shadow_only`                           | capital stays closed while repair continues          |
 
 ## Engineer Scope
 

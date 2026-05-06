@@ -20,20 +20,7 @@
     "strategy_name": "intraday-tsmom-profit-v3",
     "strategy_id": "intraday_tsmom_v1@paper",
     "enabled": false,
-    "universe_symbols": [
-      "NVDA",
-      "TSM",
-      "AVGO",
-      "AMD",
-      "MU",
-      "TXN",
-      "ADI",
-      "LRCX",
-      "KLAC",
-      "QCOM",
-      "AMAT",
-      "ASML"
-    ],
+    "universe_symbols": ["NVDA", "TSM", "AVGO", "AMD", "MU", "TXN", "ADI", "LRCX", "KLAC", "QCOM", "AMAT", "ASML"],
     "max_notional_per_trade": "50000",
     "max_position_pct_equity": "3.0",
     "params": {
