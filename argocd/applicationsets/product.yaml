@@ -282,7 +282,9 @@ spec:
                         .name == "TRADING_ORDER_FEED_SECURITY_PROTOCOL" or
                         .name == "TRADING_ORDER_FEED_TOPIC" or
                         .name == "TRADING_ORDER_FEED_TOPIC_V2" or
+                        .name == "TRADING_ORDER_FEED_AUTO_OFFSET_RESET" or
                         .name == "TRADING_PRICE_TABLE" or
+                        .name == "TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED" or
                         .name == "TRADING_SIGNAL_ALLOWED_SOURCES" or
                         .name == "TRADING_SIGNAL_LOOKBACK_MINUTES" or
                         .name == "TRADING_SIGNAL_TABLE" or

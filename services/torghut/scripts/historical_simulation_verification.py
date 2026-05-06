@@ -1183,11 +1183,13 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
     )
     expected_topics = _as_mapping(_resource_attr(resources, 'simulation_topic_by_role'))
     warm_lane_enabled = bool(_resource_attr(resources, 'warm_lane_enabled', default=False))
+    pipeline_mode = _env_value('TRADING_PIPELINE_MODE')
     runtime_mode = _env_value('TRADING_STRATEGY_RUNTIME_MODE')
     scheduler_enabled = _env_value('TRADING_STRATEGY_SCHEDULER_ENABLED') == 'true'
     strategy_runtime_active = runtime_mode == 'plugin_v3' or (
         runtime_mode == 'scheduler_v3' and scheduler_enabled
     )
+    simple_pipeline = pipeline_mode == 'simple'
     trading_config = {
         'trading_enabled': _env_value('TRADING_ENABLED') == 'true',
         'simulation_enabled': _env_value('TRADING_SIMULATION_ENABLED') == 'true',
@@ -1199,6 +1201,14 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
         == _as_text(_resource_attr(resources, 'clickhouse_price_table')),
         'order_feed_enabled': _env_value('TRADING_ORDER_FEED_ENABLED') == 'true',
         'order_feed_topic': _env_value('TRADING_ORDER_FEED_TOPIC') == expected_order_updates_topic,
+        'order_feed_auto_offset_reset': (
+            not simple_pipeline
+            or _env_value('TRADING_ORDER_FEED_AUTO_OFFSET_RESET') == 'earliest'
+        ),
+        'simple_order_feed_telemetry': (
+            not simple_pipeline
+            or _env_value('TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED') == 'true'
+        ),
         'simulation_order_updates_topic': _env_value('TRADING_SIMULATION_ORDER_UPDATES_TOPIC')
         == expected_order_updates_topic,
         'simulation_run_id': warm_lane_enabled

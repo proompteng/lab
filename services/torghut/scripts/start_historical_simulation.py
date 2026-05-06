@@ -101,6 +101,8 @@ TORGHUT_ENV_KEYS = [
     'TRADING_ORDER_FEED_TOPIC',
     'TRADING_ORDER_FEED_TOPIC_V2',
     'TRADING_ORDER_FEED_GROUP_ID',
+    'TRADING_ORDER_FEED_AUTO_OFFSET_RESET',
+    'TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED',
     'TRADING_SIMULATION_ENABLED',
     'TRADING_SIMULATION_RUN_ID',
     'TRADING_SIMULATION_DATASET_ID',
@@ -4840,6 +4842,8 @@ def _torghut_service_env_for_simulation(
         'TRADING_ORDER_FEED_TOPIC': resources.simulation_topic_by_role['order_updates'],
         'TRADING_ORDER_FEED_TOPIC_V2': '',
         'TRADING_ORDER_FEED_GROUP_ID': resources.order_feed_group_id,
+        'TRADING_ORDER_FEED_AUTO_OFFSET_RESET': 'earliest',
+        'TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED': 'true',
         'TRADING_SIMULATION_ENABLED': 'true',
         'TRADING_SIMULATION_RUN_ID': '' if warm_lane_enabled else resources.run_id,
         'TRADING_SIMULATION_DATASET_ID': '' if warm_lane_enabled else resources.dataset_id,
@@ -6902,6 +6906,47 @@ def _wait_for_runtime_verify(
     return report
 
 
+def _torghut_service_revision_ready(
+    *,
+    resources: SimulationResources,
+) -> dict[str, Any]:
+    service = _kubectl_json(
+        resources.namespace,
+        ['get', 'kservice', resources.torghut_service, '-o', 'json'],
+    )
+    service_status = _as_mapping(service.get('status'))
+    latest_created_revision = _as_text(service_status.get('latestCreatedRevisionName'))
+    latest_ready_revision = _as_text(service_status.get('latestReadyRevisionName'))
+    ready_condition = _condition_status(service_status, condition_type='Ready')
+    revision_settled = (
+        latest_created_revision is None
+        or latest_ready_revision == latest_created_revision
+    )
+    return {
+        'ready': ready_condition == 'True' and revision_settled,
+        'condition_ready': ready_condition,
+        'latest_created_revision': latest_created_revision,
+        'latest_ready_revision': latest_ready_revision,
+        'revision_settled': revision_settled,
+    }
+
+
+def _wait_for_torghut_service_revision_ready(
+    *,
+    resources: SimulationResources,
+    timeout_seconds: int,
+    poll_seconds: int,
+) -> dict[str, Any]:
+    deadline = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
+    report = _torghut_service_revision_ready(resources=resources)
+    while not report.get('ready'):
+        if datetime.now(timezone.utc) >= deadline:
+            return report
+        time.sleep(poll_seconds)
+        report = _torghut_service_revision_ready(resources=resources)
+    return report
+
+
 def _run_rollouts_analysis(
     *,
     resources: SimulationResources,
@@ -7428,6 +7473,7 @@ def _run_full_lifecycle(
     fill_price_error_budget_report: dict[str, Any] | None = None
     autonomy_report: dict[str, Any] | None = None
     teardown_report: dict[str, Any] | None = None
+    teardown_settle_report: dict[str, Any] | None = None
     rollouts_report: dict[str, Any] = {
         'enabled': bool(
             rollouts_config.enabled
@@ -7898,7 +7944,42 @@ def _run_full_lifecycle(
             teardown_succeeded
             and not report_only
             and bool(rollouts_report['enabled'])
+            and argocd_config.manage_automation
+            and resources.target_mode == 'dedicated_service'
             and not any(error.startswith('argocd_restore:') for error in errors)
+        ):
+            _update_run_state(resources=resources, phase='teardown_settle', status='running')
+            teardown_settle_report = _wait_for_torghut_service_revision_ready(
+                resources=resources,
+                timeout_seconds=rollouts_config.verify_timeout_seconds,
+                poll_seconds=rollouts_config.verify_poll_seconds,
+            )
+            rollouts_report['teardown_settle'] = teardown_settle_report
+            if teardown_report is None:
+                teardown_report = {}
+            teardown_report['service_revision_settle'] = teardown_settle_report
+            if teardown_settle_report.get('ready'):
+                _update_run_state(
+                    resources=resources,
+                    phase='teardown_settle',
+                    status='ok',
+                    details=teardown_settle_report,
+                )
+            else:
+                errors.append('teardown_settle:runtime_not_ready')
+                _update_run_state(
+                    resources=resources,
+                    phase='teardown_settle',
+                    status='error',
+                    details=teardown_settle_report,
+                )
+
+        if (
+            teardown_succeeded
+            and not report_only
+            and bool(rollouts_report['enabled'])
+            and not any(error.startswith('argocd_restore:') for error in errors)
+            and not any(error.startswith('teardown_settle:') for error in errors)
         ):
             try:
                 teardown_analysis_run = _run_rollouts_analysis(
