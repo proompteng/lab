@@ -160,7 +160,7 @@ spec:
   agentRef:
     name: codex-spark-agent
   implementationSpecRef:
-    name: swarm-rollout-verifier-v1
+    name: swarm-deployer-v1
   runtime:
     type: workflow
     config:
@@ -176,7 +176,7 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: main
+    head: codex/swarm-jangar-control-plane-verify
     issueNumber: swarm-jangar-control-plane-verify
     issueTitle: Jangar Engineering verify mission
     swarmName: jangar-control-plane
@@ -192,12 +192,12 @@ spec:
     targetApplications: agents,jangar
     targetDeployments: agents/agents,agents/agents-controllers,jangar/jangar
     readinessUrl: http://agents.agents.svc.cluster.local/ready
-    objective: verify the live Jangar GitOps rollout and control-plane readiness; do not triage, modify, or merge unrelated PRs
+    objective: as release engineer, make Jangar PRs production-ready by fixing blockers until all required checks are green, then squash-merge and verify in-cluster GitOps rollout health
   vcsRef:
     name: github
   vcsPolicy:
     required: true
-    mode: read-only
+    mode: read-write
   secrets:
     - github-token
     - codex-auth

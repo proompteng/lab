@@ -142,7 +142,12 @@ const normalizePayload = (raw: string, subject: string): AgentMessageInput | nul
     coerceNonEmptyString(payload.timestamp ?? payload.sent_at ?? payload.created_at ?? payload.createdAt) ??
     new Date().toISOString()
   const kind = coerceNonEmptyString(payload.kind) ?? subjectInfo?.kind ?? 'message'
-  const role = coerceNonEmptyString(payload.role) ?? (kind === 'status' || kind === 'error' ? 'system' : 'assistant')
+  const payloadRole = coerceNonEmptyString(payload.role)
+  const swarmAgentRole = coerceNonEmptyString(attrsPayload.swarmAgentRole)
+  const role =
+    payloadRole && payloadRole.toLowerCase() !== 'assistant'
+      ? payloadRole
+      : (swarmAgentRole ?? payloadRole ?? (kind === 'status' || kind === 'error' ? 'system' : 'assistant'))
   const content =
     coerceNonEmptyString(payload.content ?? payload.text ?? payload.message ?? payload.status ?? payload.error) ??
     (kind === 'status' ? 'status update' : null)
@@ -161,7 +166,13 @@ const normalizePayload = (raw: string, subject: string): AgentMessageInput | nul
   const stepId = coerceNonEmptyString(
     payload.step_id ?? payload.stepId ?? payload.workflow_step ?? payload.workflowStep,
   )
-  const agentId = coerceNonEmptyString(payload.agent_id ?? payload.agentId) ?? subjectInfo?.agentId ?? null
+  const payloadAgentId = coerceNonEmptyString(payload.agent_id ?? payload.agentId)
+  const swarmAgentIdentity = coerceNonEmptyString(attrsPayload.swarmAgentIdentity)
+  const swarmHumanName = coerceNonEmptyString(attrsPayload.swarmHumanName)
+  const agentId =
+    payloadAgentId && payloadAgentId.toLowerCase() !== 'unknown'
+      ? payloadAgentId
+      : (swarmAgentIdentity ?? swarmHumanName ?? subjectInfo?.agentId ?? payloadAgentId ?? null)
   const channel = coerceNonEmptyString(payload.channel) ?? subjectInfo?.channel ?? null
   const stage = coerceNonEmptyString(payload.stage ?? payload.workflow_stage ?? payload.workflowStage)
 
