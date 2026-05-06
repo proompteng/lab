@@ -15,6 +15,7 @@ resources:
   - zero-ingressroute.yaml
   - postgres-cluster.yaml
   - object-storage-configmap.yaml
+  - runtime-network-policy.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
   - alloy-rbac.yaml

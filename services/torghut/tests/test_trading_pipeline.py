@@ -852,6 +852,14 @@ class TestTradingPipeline(TestCase):
                 seq=2,
                 payload={"feature_schema_version": "3.0.0", "price": 101},
             ),
+            SignalEnvelope(
+                event_ts=datetime(2026, 3, 26, 14, 10, tzinfo=timezone.utc),
+                ingest_ts=datetime(2026, 3, 26, 14, 10, 1, tzinfo=timezone.utc),
+                symbol="MSFT",
+                timeframe="1Min",
+                seq=3,
+                payload={"feature_schema_version": "3.0.0", "price": 250},
+            ),
         ]
         cursor_at = datetime(2026, 3, 26, 14, 30, tzinfo=timezone.utc)
         ingestor = WarmupIngestor(
@@ -2081,11 +2089,13 @@ class TestTradingPipeline(TestCase):
                     "macd": {"macd": 1.2, "signal": 0.5},
                     "rsi14": 25,
                     "price": 100,
+                    "spread": 1,
                 },
             )
 
             alpaca_client = FakeAlpacaClient()
             execution_adapter = FakeAlpacaClient()
+            decision_engine = RecordingDecisionEngine()
             ingestor = FakeIngestor(
                 [fresh_allowed_signal, stale_out_of_universe_signal]
             )
@@ -2094,7 +2104,7 @@ class TestTradingPipeline(TestCase):
                 alpaca_client=alpaca_client,
                 order_firewall=OrderFirewall(alpaca_client),
                 ingestor=ingestor,
-                decision_engine=DecisionEngine(),
+                decision_engine=decision_engine,
                 risk_engine=RiskEngine(),
                 executor=OrderExecutor(),
                 execution_adapter=execution_adapter,
@@ -2113,6 +2123,7 @@ class TestTradingPipeline(TestCase):
             self.assertLessEqual(state.metrics.feature_staleness_ms_p95, 1_000)
             self.assertEqual(len(alpaca_client.submitted), 1)
             self.assertEqual(alpaca_client.submitted[0]["symbol"], "AAPL")
+            self.assertNotIn("MSFT", decision_engine.observed_symbols)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]

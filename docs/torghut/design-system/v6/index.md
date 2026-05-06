@@ -11,6 +11,12 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `117-torghut-contradiction-priced-profit-repair-and-capital-readmission-2026-05-06.md`
+  - `docs/agents/designs/113-jangar-contradiction-settlement-and-profit-repair-auction-2026-05-06.md`
+  - `116-torghut-session-scoped-alpha-ledger-and-replay-capital-scheduler-2026-05-06.md`
+  - `docs/agents/designs/112-jangar-session-scoped-proof-settlement-and-stale-alert-netting-2026-05-06.md`
+  - `115-torghut-proof-spend-market-and-negative-evidence-consumer-2026-05-06.md`
+  - `docs/agents/designs/111-jangar-negative-evidence-router-and-action-slo-budgets-2026-05-06.md`
   - `114-torghut-convergence-bound-proof-replay-and-capital-readmission-2026-05-06.md`
   - `docs/agents/designs/110-jangar-gitops-convergence-escrow-and-promotion-evidence-ledger-2026-05-06.md`
   - `113-torghut-live-sim-parity-and-empirical-proof-replay-escrow-2026-05-06.md`
@@ -724,6 +730,7 @@ This pack is positioned as the next architecture layer above:
 55. `98-torghut-repair-dividend-ledger-and-capital-reentry-guard-2026-05-05.md`
 56. `99-torghut-hypothesis-repair-council-and-evidence-credit-ladder-2026-05-05.md`
 57. `115-torghut-proof-spend-market-and-negative-evidence-consumer-2026-05-06.md`
+58. `117-torghut-contradiction-priced-profit-repair-and-capital-readmission-2026-05-06.md`
 
 ## Why This Sequence
 
@@ -796,3 +803,7 @@ This pack is positioned as the next architecture layer above:
   router because the current state has enough status to hold capital, but not enough economic structure to choose the
   next proof repair. It turns stale market context, scoped quant alerts, empirical debt, rollback-required hypotheses,
   and data-plane rollout ambiguity into ranked proof-spend bids before paper or live capital can reenter.
+- `117-torghut-contradiction-priced-profit-repair-and-capital-readmission-2026-05-06.md` follows the Jangar
+  contradiction-settlement ledger because the current state has recovered control-plane rollout health but still has
+  conflicting capital evidence. It prices proof repairs by the Jangar settlement they close and keeps live notional at
+  zero until empirical replay, account/window quant proof, market-context freshness, and settlement receipts are current.

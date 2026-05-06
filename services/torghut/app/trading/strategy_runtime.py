@@ -137,6 +137,13 @@ def _microbar_exit_minute_after_open(params: dict[str, Any]) -> int | None:
         return None
 
 
+def _microbar_entry_window_minutes(params: dict[str, Any]) -> int:
+    resolved = _decimal(params.get("entry_window_minutes"))
+    if resolved is None:
+        return 0
+    return max(0, int(resolved))
+
+
 def _microbar_universe_size(
     *,
     context: "StrategyContext",
@@ -186,7 +193,9 @@ def _microbar_rank_universe_size(
     features: FeatureVectorV3,
     rank_feature: str,
 ) -> int:
-    executable_universe_size = _decimal(features.values.get(f"{rank_feature}_universe_size"))
+    executable_universe_size = _decimal(
+        features.values.get(f"{rank_feature}_universe_size")
+    )
     if executable_universe_size is not None and executable_universe_size > 0:
         return max(1, int(executable_universe_size))
     return _microbar_universe_size(context=context, params=params)
@@ -216,6 +225,10 @@ def _evaluate_microbar_cross_sectional(
         0, int(_decimal(params.get("entry_minute_after_open")) or Decimal("0"))
     )
     exit_minute = _microbar_exit_minute_after_open(params)
+    entry_window_minutes = _microbar_entry_window_minutes(params)
+    entry_window_end = entry_minute + entry_window_minutes
+    if exit_minute is not None:
+        entry_window_end = min(entry_window_end, max(entry_minute, exit_minute - 1))
     if exit_minute is not None and minutes_elapsed >= exit_minute:
         rationale = (
             "microbar_time_exit",
@@ -251,7 +264,7 @@ def _evaluate_microbar_cross_sectional(
             ),
         )
 
-    if minutes_elapsed != entry_minute:
+    if minutes_elapsed < entry_minute or minutes_elapsed > entry_window_end:
         return PluginEvaluationResult(
             intent=None,
             trace=_generic_plugin_trace(
@@ -261,6 +274,8 @@ def _evaluate_microbar_cross_sectional(
                 gate_context={
                     "minutes_elapsed": minutes_elapsed,
                     "entry_minute_after_open": entry_minute,
+                    "entry_window_minutes": entry_window_minutes,
+                    "entry_window_end_minute_after_open": entry_window_end,
                 },
             ),
         )
@@ -414,6 +429,8 @@ def _evaluate_microbar_cross_sectional(
         gate_context={
             "minutes_elapsed": minutes_elapsed,
             "entry_minute_after_open": entry_minute,
+            "entry_window_minutes": entry_window_minutes,
+            "entry_window_end_minute_after_open": entry_window_end,
             "selection_mode": selection_mode,
             "top_n": top_n,
             "universe_size": universe_size,

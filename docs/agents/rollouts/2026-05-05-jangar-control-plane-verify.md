@@ -5,6 +5,60 @@ Swarm: jangar-control-plane
 Branch: codex/swarm-jangar-control-plane-verify
 Base: main
 
+## 2026-05-06 11:00Z Release Update
+
+- Open PR inventory:
+  - #5412 `feat(torghut): add evidence epochs and shared live gate` is the only currently open
+    Jangar-impacting implementation PR. It is open, non-draft, and GitHub reports it as mergeable on
+    head `5bfeae14eab03c14bc6d98887362d566913b8c7c`.
+  - #5316 `chore(release/735ddbc): automated release PR` is open, clean, and green/skipped, but only
+    updates the docs image tag in `argocd/applications/docs/kustomization.yaml`; it is outside this
+    Jangar-control-plane release gate.
+- #5412 gate decision:
+  - No-go for merge. The PR has 3,138 additions and 27 deletions, so the required large-diff Codex
+    review gate applies.
+  - Current-head checks are pass/skipped only: Semantic Pull Request, Semantic Commits,
+    `check_changed_files`, `kubeconform/validate`, `argo-lint/lint`, `torghut-ci/Pyright`,
+    `torghut-ci/Quality signals (complexity + security)`, and
+    `torghut-ci/Bytecode + pytest + coverage`.
+  - GraphQL reports zero posted reviews and zero review threads.
+  - The latest current-head `@codex review` request at 2026-05-06T10:48Z returned the Codex
+    connector usage-limit response, so the mandatory review has not posted.
+  - Updated the anchored #5412 progress comment using
+    `services/jangar/scripts/codex/codex-progress-comment.ts`:
+    https://github.com/proompteng/lab/pull/5412#issuecomment-4378206627.
+- GitOps and rollout evidence at 2026-05-06T10:56Z:
+  - Argo CD `agents` and `jangar` are `Synced` and `Healthy` at revision
+    `1310f43365b873980b6c4129094a49a9cb6a44f0`, with last operation phase `Succeeded`.
+  - `deployment/agents` is generation 162 observed, 1/1 ready, image
+    `registry.ide-newton.ts.net/lab/jangar-control-plane:856f5579@sha256:a296b3a8e23b3adeb87abb1882a1d2e26df40a98bd84c848130b457624ebda54`.
+  - `deployment/agents-controllers` is generation 189 observed, 2/2 ready, image
+    `registry.ide-newton.ts.net/lab/jangar:856f5579@sha256:ddcf27ec8bc22bdef4cc53309845452a6416236b8cd83d57185b7fb252cec45c`.
+  - `deployment/jangar` is generation 308 observed, 1/1 ready, image
+    `registry.ide-newton.ts.net/lab/jangar:856f5579@sha256:ddcf27ec8bc22bdef4cc53309845452a6416236b8cd83d57185b7fb252cec45c`.
+  - Current pods `agents-8665748649-8zkrj`, `agents-controllers-69b9f9dd59-7krc7`,
+    `agents-controllers-69b9f9dd59-jcvg7`, and `jangar-8667d6449-8ktm9` are Running and Ready with
+    zero restarts.
+  - `kubectl rollout status` succeeded for `deployment/agents`, `deployment/agents-controllers`, and
+    `deployment/jangar`.
+  - `http://jangar.jangar.svc.cluster.local/health`,
+    `http://agents.agents.svc.cluster.local/health`, and `http://agents.agents.svc.cluster.local/ready`
+    returned ok.
+  - Jangar control-plane status reports database healthy, migration consistency healthy, execution trust
+    healthy, rollout health healthy, watch reliability healthy, zero recent workflow failures in the
+    15-minute window, and `jangar-control-plane` `Active` / `Ready=True` / `requirements_pending=0`.
+- Residual risk:
+  - Dependency quorum is still blocked by `empirical_jobs_degraded`, with stale empirical jobs
+    `benchmark_parity`, `foundation_router_parity`, `janus_event_car`, and `janus_hgrm_reward`.
+  - Recent agents and Jangar warning events show transient readiness probe failures during the latest
+    rollout. Target deployments recovered and are currently Ready with zero restarts.
+  - Jangar app logs still show GitHub review-ingest snapshot refresh failures for #5412 because the
+    service cannot resolve ref `codex/swarm-torghut-quant`.
+- Rollback path:
+  - No #5412 runtime rollback exists in this pass because #5412 was not merged.
+  - If the current 856f5579 Jangar lane regresses, open a GitOps PR reverting the latest Jangar image
+    promotion back to the previous healthy promotion recorded in this document and let Argo CD reconcile.
+
 ## 2026-05-06 09:25Z Release Update
 
 - Open PR inventory:

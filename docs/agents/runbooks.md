@@ -132,6 +132,9 @@ curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.runtime_kits'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.admission_passports'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.failure_domain_leases'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.negative_evidence_router'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.action_slo_budgets'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.torghut_action_slo_budgets'
 curl -fsS http://localhost:8080/ready | jq '{status, serving_passport_id, runtime_kits, admission_passports}'
 kubectl api-resources --api-group=argoproj.io --no-headers || true
 kubectl -n agents get workflows.argoproj.io 2>/dev/null || true
@@ -154,6 +157,14 @@ Expected outcomes:
 - `failure_domain_leases.mode` is `shadow` during Phase 0 and includes a `lease_set_digest`, per-domain
   lease `status`, `reason_codes`, and per-action holdback decisions for `dispatch_normal`,
   `dispatch_repair`, `deploy_widen`, `merge_ready`, and Torghut action classes.
+- `negative_evidence_router.mode` is `observe`; the router cites design doc 111, current positive/negative evidence
+  refs, and the failure-domain lease ids it consumed.
+- `action_slo_budgets` includes `serve_readonly`, `dispatch_repair`, `dispatch_normal`, `deploy_widen`, `merge_ready`,
+  `torghut_observe`, `paper_canary`, `live_micro_canary`, and `live_scale` budgets with `fresh_until` no more than the
+  status evidence window.
+- `torghut_action_slo_budgets` is the filtered consumer view for Torghut sizing decisions. Read-only
+  `torghut_observe` can remain allowed while stale market context, open quant alerts, or readiness debt hold/block
+  paper and live capital budgets.
 - If collaboration is degraded or blocked because a runtime helper is missing, `/ready` stays `200` as
   long as the `serving` passport is still `allow` or `degrade`; the blocked `swarm_*` passport surfaces
   the missing component in `reason_codes`.
@@ -181,6 +192,13 @@ admission switch. A `hold` decision with `database.service_refused`, `database.p
 until the next lease set supersedes it with fresh evidence. Rollback is to keep lease enforcement disabled
 and use the existing dependency quorum/runtime passport gates while preserving the lease digest in the PR or
 handoff notes.
+
+During negative-evidence router observe mode, treat `action_slo_budgets[]` as an operator/deployer contract rather than
+an admission switch. A retained historical failed AgentRun should not block `serve_readonly` or bounded
+`dispatch_repair`. Current controller probe failures should reduce `dispatch_normal`; rollout ambiguity should hold
+`deploy_widen`; stale market context or open quant alerts should hold or block Torghut capital budgets while preserving
+`torghut_observe`. Rollback is to keep enforcement disabled and fall back to failure-domain leases plus dependency
+quorum while preserving the emitted `router_epoch_id` and evidence refs.
 
 If a cross-swarm stage refuses launch before NATS collaboration initialization, verify the passport debt first:
 
