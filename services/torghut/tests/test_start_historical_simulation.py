@@ -1088,6 +1088,7 @@ class TestStartHistoricalSimulation(TestCase):
                 'torghut_env_overrides': {
                     'TRADING_FEATURE_MAX_STALENESS_MS': 43200000,
                     'TRADING_FEATURE_QUALITY_ENABLED': 'true',
+                    'TRADING_SIMULATION_FETCH_WINDOW_SECONDS': 20,
                 }
             }
         )
@@ -1096,6 +1097,7 @@ class TestStartHistoricalSimulation(TestCase):
             {
                 'TRADING_FEATURE_MAX_STALENESS_MS': '43200000',
                 'TRADING_FEATURE_QUALITY_ENABLED': 'true',
+                'TRADING_SIMULATION_FETCH_WINDOW_SECONDS': '20',
             },
         )
 

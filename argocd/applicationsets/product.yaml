@@ -289,6 +289,7 @@ spec:
                         .name == "TRADING_SIMULATION_CLOCK_MODE" or
                         .name == "TRADING_SIMULATION_DATASET_ID" or
                         .name == "TRADING_SIMULATION_ENABLED" or
+                        .name == "TRADING_SIMULATION_FETCH_WINDOW_SECONDS" or
                         .name == "TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS" or
                         .name == "TRADING_SIMULATION_ORDER_UPDATES_SASL_MECHANISM" or
                         .name == "TRADING_SIMULATION_ORDER_UPDATES_SASL_PASSWORD" or
