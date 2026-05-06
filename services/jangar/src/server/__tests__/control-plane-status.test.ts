@@ -643,6 +643,25 @@ describe('control-plane status', () => {
         }),
       ]),
     )
+    expect(status.reconciled_action_clocks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'serve_readonly',
+          decision: 'allow',
+          conflict_class: 'none',
+        }),
+        expect.objectContaining({
+          action_class: 'dispatch_repair',
+          decision: 'allow',
+          conflict_class: 'none',
+        }),
+        expect.objectContaining({
+          action_class: 'torghut_capital',
+          decision: 'allow',
+          producer_revision: '2026-05-06-action-clock-shadow-v1',
+        }),
+      ]),
+    )
     expect(status.negative_evidence_router).toMatchObject({
       mode: 'observe',
       design_artifact: 'docs/agents/designs/111-jangar-negative-evidence-router-and-action-slo-budgets-2026-05-06.md',

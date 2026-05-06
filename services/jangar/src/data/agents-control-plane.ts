@@ -379,6 +379,35 @@ export type FailureDomainLeaseSet = {
   holdbacks: FailureDomainHoldbackDecision[]
 }
 
+export type ReconciledActionClockDecision = 'allow' | 'observe_only' | 'repair_only' | 'hold' | 'block'
+
+export type ReconciledActionClockConflictClass =
+  | 'none'
+  | 'stale_negative'
+  | 'contradictory_positive_negative'
+  | 'missing_authority'
+  | 'consumer_debt'
+
+export type ReconciledActionClockConfidence = 'high' | 'medium' | 'low'
+
+export type ReconciledActionClock = {
+  clock_id: string
+  namespace: string
+  action_class: FailureDomainActionClass
+  decision: ReconciledActionClockDecision
+  conflict_class: ReconciledActionClockConflictClass
+  confidence: ReconciledActionClockConfidence
+  observed_at: string
+  fresh_until: string
+  positive_lease_ids: string[]
+  negative_lease_ids: string[]
+  blocking_reason_codes: string[]
+  required_repair_actions: string[]
+  rollback_target: string | null
+  producer_revision: string
+  evidence_refs: string[]
+}
+
 export type NegativeEvidenceKind =
   | 'current_runtime_negative'
   | 'retained_audit_negative'
@@ -622,6 +651,7 @@ export type ControlPlaneStatus = {
   workflows: WorkflowsReliabilityStatus
   dependency_quorum: DependencyQuorumStatus
   failure_domain_leases: FailureDomainLeaseSet
+  reconciled_action_clocks: ReconciledActionClock[]
   negative_evidence_router: NegativeEvidenceRouterStatus
   action_slo_budgets: ActionSloBudget[]
   torghut_action_slo_budgets: ActionSloBudget[]
