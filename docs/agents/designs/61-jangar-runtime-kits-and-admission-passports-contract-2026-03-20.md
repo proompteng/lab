@@ -369,6 +369,8 @@ The first enforcement slice is the stage and requirement launcher gate:
   `block`.
 - blocked or held implement passports prevent requirement dispatch and mark the `RequirementsBridge` condition with
   `RuntimeAdmissionBlocked`.
+- degraded authority or runtime-kit evidence keeps the serving passport non-blocking as `degrade`, but compiles
+  launch-capable swarm passports as `hold`, which the launcher gate treats the same as `block`.
 - admitted schedules, schedule runner templates, and requirement runs cite the passport id, admission decision, recovery
   digest, runtime-kit set digest, required runtime kits, and producer revision in annotations plus run parameters.
 - command-style runtime components are admitted only when the resolved command path is executable; a file that exists

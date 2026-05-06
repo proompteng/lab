@@ -132,4 +132,52 @@ describe('buildRuntimeAdmissionSnapshot', () => {
       ]),
     )
   })
+
+  it('holds collaboration admission while degraded authority keeps serving non-blocking', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'runtime-admission-'))
+    const binDir = join(tempDir, 'bin')
+    await mkdir(binDir, { recursive: true })
+    const natsPath = join(binDir, 'nats')
+    await writeFile(natsPath, '#!/usr/bin/env bash\nexit 0\n', 'utf8')
+    await chmod(natsPath, 0o755)
+    process.env.PATH = `${binDir}:${process.env.PATH ?? ''}`
+    process.env.NATS_URL = 'nats://nats.nats.svc.cluster.local:4222'
+
+    const snapshot = buildRuntimeAdmissionSnapshot({
+      worktree: REPO_ROOT,
+      natsUrl: 'nats://nats.nats.svc.cluster.local:4222',
+      executionTrust: {
+        status: 'degraded',
+        reason: 'requirements are degraded on jangar-control-plane: pending=5',
+        last_evaluated_at: '2026-03-21T00:30:01.000Z',
+        blocking_windows: [],
+        evidence_summary: ['requirements pending=5'],
+      },
+    })
+
+    expect(snapshot.admissionPassports).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          consumer_class: 'serving',
+          decision: 'degrade',
+          reason_codes: expect.arrayContaining(['execution_trust_degraded']),
+        }),
+        expect.objectContaining({
+          consumer_class: 'swarm_plan',
+          decision: 'hold',
+          reason_codes: expect.arrayContaining(['execution_trust_degraded']),
+        }),
+        expect.objectContaining({
+          consumer_class: 'swarm_implement',
+          decision: 'hold',
+          reason_codes: expect.arrayContaining(['execution_trust_degraded']),
+        }),
+        expect.objectContaining({
+          consumer_class: 'swarm_verify',
+          decision: 'hold',
+          reason_codes: expect.arrayContaining(['execution_trust_degraded']),
+        }),
+      ]),
+    )
+  })
 })
