@@ -1,6 +1,6 @@
 # Jangar Application Architecture
 
-This is the authoritative architecture index for the Jangar application as of 2026-04-10.
+This is the authoritative architecture index for the Jangar application as of 2026-05-06.
 
 Use this document together with:
 
@@ -80,6 +80,21 @@ Module size is also guarded in CI:
 New application modules must stay at or below 800 lines. Existing oversized modules are frozen at their current caps
 until they are decomposed further.
 
+## Current control-plane decision contract
+
+The current architecture priority is final material-action authority. Diagnostic surfaces such as dependency quorum,
+negative evidence, action SLO budgets, reconciled action clocks, rollout health, and Torghut readiness remain visible,
+but material consumers should bind to one final verdict per action class.
+
+Current source-of-truth design:
+
+- `docs/agents/designs/120-jangar-material-action-verdict-arbiter-and-clock-budget-parity-2026-05-06.md`
+- `docs/torghut/design-system/v6/124-torghut-capital-action-verdict-consumer-and-profit-hypothesis-settlement-2026-05-06.md`
+
+The immediate invariant is that a partial action clock cannot upgrade an action SLO budget hold or block. In the
+current live state, stale Torghut empirical proof holds `merge_ready` and `paper_canary`, blocks live capital, and must
+remain the final verdict until fresh proof and Jangar action authority agree.
+
 ## Ownership map
 
 These ownership lanes are the operational review boundaries for Jangar changes.
@@ -127,6 +142,7 @@ Current operational docs:
 Historical or design context docs:
 
 - `docs/jangar/current-state.md`
+- `docs/agents/designs/120-jangar-material-action-verdict-arbiter-and-clock-budget-parity-2026-05-06.md`
 - `docs/agents/designs/jangar-application-tech-debt-cleanup-plan-2026-04-08.md`
 
 Generated inventory should be treated as factual structure. This document is the human-maintained index that explains how to interpret it.
