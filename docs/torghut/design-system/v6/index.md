@@ -7,10 +7,12 @@
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-06T13:12Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-06T14:25Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `124-torghut-capital-action-verdict-consumer-and-profit-hypothesis-settlement-2026-05-06.md`
+  - `docs/agents/designs/120-jangar-material-action-verdict-arbiter-and-clock-budget-parity-2026-05-06.md`
   - `124-torghut-data-plane-proof-quarantine-and-profit-renewal-fuse-2026-05-06.md`
   - `docs/agents/designs/120-jangar-data-plane-proof-quarantine-and-profit-repair-fuse-2026-05-06.md`
   - `123-torghut-empirical-profit-claims-and-shadow-capital-settlement-2026-05-06.md`
