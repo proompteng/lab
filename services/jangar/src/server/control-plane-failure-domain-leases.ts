@@ -157,7 +157,7 @@ const buildLease = ({
 
 const conditionIsTrue = (condition: { status: string | null }) => normalizeText(condition.status) === 'true'
 
-const hasDatabaseNameToken = (name: string) => /(^|[-_.])(db|database|postgres|postgresql)($|[-_.0-9])/.test(name)
+const hasDatabaseNameToken = (name: string) => /(^|[-_.])(db|database|postgres|postgresql)($|[-_.])/.test(name)
 
 const isDatabasePod = (pod: KubeGatewayPod) => {
   const name = normalizeText(pod.metadata.name)
