@@ -57,6 +57,10 @@ class TestGenerateHistoricalProfitabilityManifests(TestCase):
                 'torghut_sim_2026_03_02_full_day_a9c60e5e',
             )
             self.assertEqual(payload['model_refs'], ['rules/intraday_tsmom_v1'])
+            self.assertEqual(
+                payload['torghut_env_overrides']['TRADING_SIMULATION_FETCH_WINDOW_SECONDS'],
+                '20',
+            )
 
             index_payload = json.loads((output_dir / 'manifest-index.json').read_text(encoding='utf-8'))
             self.assertEqual(index_payload['schema_version'], 'torghut.historical-profitability-manifest-index.v1')

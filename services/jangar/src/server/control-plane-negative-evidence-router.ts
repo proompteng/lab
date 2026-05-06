@@ -4,6 +4,7 @@ import type {
   ActionSloBudget,
   ActionSloBudgetActionClass,
   ActionSloBudgetDecision,
+  ControlPlaneControllerWitnessQuorum,
   DependencyQuorumStatus,
   EmpiricalServicesStatus,
   ExecutionTrustStatus,
@@ -58,6 +59,7 @@ export type NegativeEvidenceRouterInput = {
   empiricalServices: EmpiricalServicesStatus
   executionTrust: ExecutionTrustStatus
   runtimeKits: RuntimeKitStatus[]
+  controllerWitness?: ControlPlaneControllerWitnessQuorum
   retainedAuditFailureRefs?: string[]
   torghut?: TorghutNegativeEvidenceInput
 }
@@ -200,6 +202,12 @@ const buildPositiveRefs = (input: NegativeEvidenceRouterInput) => {
   if (input.executionTrust.status === 'healthy') {
     refs.push('execution_trust:healthy')
   }
+  if (
+    input.controllerWitness &&
+    (input.controllerWitness.decision === 'allow' || input.controllerWitness.decision === 'allow_with_split')
+  ) {
+    refs.push(input.controllerWitness.quorum_id)
+  }
   refs.push(...input.runtimeKits.filter((kit) => kit.decision === 'healthy').map((kit) => kit.runtime_kit_id))
   refs.push(
     ...input.failureDomainLeases.leases.filter((lease) => lease.status === 'valid').map((lease) => lease.lease_id),
@@ -218,9 +226,26 @@ const buildNegativeEvidenceRefs = (input: NegativeEvidenceRouterInput) => {
   }
 
   if (input.agentRunIngestion.status !== 'healthy') {
-    addEvidence(evidence, 'current_runtime_negative', `agentrun_ingestion_${input.agentRunIngestion.status}`, [
-      `agentrun_ingestion:${input.agentRunIngestion.namespace}`,
-    ])
+    if (input.controllerWitness?.reason_codes.includes('controller_witness_split')) {
+      addEvidence(evidence, 'current_runtime_negative', 'controller_witness_split', [
+        input.controllerWitness.quorum_id,
+        ...input.controllerWitness.witness_refs,
+      ])
+    } else if (input.controllerWitness?.reason_codes.includes('controller_ingestion_stalled')) {
+      addEvidence(evidence, 'current_runtime_negative', 'controller_ingestion_stalled', [
+        input.controllerWitness.quorum_id,
+        ...input.controllerWitness.witness_refs,
+      ])
+    } else if (
+      input.controllerWitness &&
+      (input.controllerWitness.decision === 'allow' || input.controllerWitness.decision === 'allow_with_split')
+    ) {
+      // The controller witness is authoritative for this split-topology process.
+    } else {
+      addEvidence(evidence, 'current_runtime_negative', `agentrun_ingestion_${input.agentRunIngestion.status}`, [
+        `agentrun_ingestion:${input.agentRunIngestion.namespace}`,
+      ])
+    }
   }
 
   if (input.workflows.recent_failed_jobs > 0) {
@@ -322,6 +347,9 @@ const buildRequiredRepairs = (reasons: string[]) =>
       if (reason.includes('quant_alert')) return 'resolve or supersede open quant alerts'
       if (reason.includes('torghut_readiness')) return 'restore Torghut readiness before capital action'
       if (reason.includes('watch_reliability')) return 'stabilize controller watch streams'
+      if (reason.includes('controller_witness_split')) return 'publish a fresh controller-process ingestion witness'
+      if (reason.includes('controller_ingestion_stalled'))
+        return 'repair stalled AgentRun ingestion before normal dispatch'
       if (reason.includes('agentrun_ingestion')) return 'restore AgentRun ingestion freshness'
       if (reason.includes('workflow')) return 'repair recent workflow failure window'
       if (reason.includes('source_schema')) return 'align source and applied schema projections'
@@ -368,9 +396,12 @@ const decisionForBudget = (input: {
   }
 
   if (actionClass === 'dispatch_normal') {
-    if (holdbackReasonsValue.length > 0) {
+    if (holdbackReasonsValue.length > 0 || currentRuntimeReasons.includes('controller_ingestion_stalled')) {
       decision = 'hold'
-      blockedReasons = holdbackReasonsValue
+      blockedReasons = uniqueStrings([
+        ...holdbackReasonsValue,
+        ...(currentRuntimeReasons.includes('controller_ingestion_stalled') ? ['controller_ingestion_stalled'] : []),
+      ])
     } else if (currentRuntimeReasons.length > 0) {
       decision = 'repair_only'
       downgradeReasons = currentRuntimeReasons
@@ -529,6 +560,8 @@ export const buildNegativeEvidenceRouterStatus = (input: NegativeEvidenceRouterI
     generated_at: input.now.toISOString(),
     positive_evidence_refs: positiveEvidenceRefs,
     negative_evidence_refs: negativeEvidenceRefs,
+    controller_witness_quorum_id: input.controllerWitness?.quorum_id ?? null,
+    controller_witness_decision: input.controllerWitness?.decision ?? null,
     failure_domain_lease_set_digest: input.failureDomainLeases.lease_set_digest,
     dependency_quorum: input.dependencyQuorum.decision,
   })}`
@@ -559,7 +592,9 @@ export const buildNegativeEvidenceRouterStatus = (input: NegativeEvidenceRouterI
       evidence_window_minutes: evidenceWindowMinutes,
       positive_evidence_refs: positiveEvidenceRefs,
       negative_evidence_refs: negativeEvidenceRefs,
-      contradiction_refs: [],
+      contradiction_refs: input.controllerWitness?.reason_codes.includes('controller_witness_split')
+        ? [input.controllerWitness.quorum_id]
+        : [],
       source_schema_ref: evidenceRef(
         'source_schema:latest_registered',
         input.database.migration_consistency.latest_registered,

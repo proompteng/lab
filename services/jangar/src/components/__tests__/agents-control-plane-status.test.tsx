@@ -15,7 +15,7 @@ const localAuthority = {
   message: 'using local controller state',
 }
 
-const baseStatus: ControlPlaneStatus = {
+const baseStatus = {
   service: 'jangar',
   generated_at: '2026-01-20T00:00:00Z',
   leader_election: {
@@ -237,7 +237,7 @@ const baseStatus: ControlPlaneStatus = {
       degraded_components: [],
     },
   ],
-}
+} as unknown as ControlPlaneStatus
 
 describe('ControlPlaneStatusPanel', () => {
   it('renders workflow failure reasons as reason/count pairs', () => {

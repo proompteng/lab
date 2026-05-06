@@ -5,6 +5,77 @@ Swarm: jangar-control-plane
 Branch: codex/swarm-jangar-control-plane-verify
 Base: main
 
+## 2026-05-06 13:00Z Release Update
+
+- Open PR inventory:
+  - #5412 `feat(torghut): add evidence epochs and shared live gate` is the only open Jangar-impacting
+    candidate found in the current PR inventory. It is open, non-draft, and GitHub reports
+    `mergeStateStatus=CLEAN` and GraphQL `mergeable=MERGEABLE` on head
+    `707efa5d96e860c9223e9dae127a800f088628ee`.
+  - #5316 `chore(release/735ddbc): automated release PR` is open, clean, and green/skipped, but it
+    only updates the docs image tag in `argocd/applications/docs/kustomization.yaml`; it is outside
+    this Jangar-control-plane release gate.
+- #5412 gate decision:
+  - No-go for merge. The PR has 3,138 additions and 27 deletions, so the required large-diff Codex
+    review gate applies.
+  - Current-head checks are pass/skipped only: Semantic Pull Request, Semantic Commits,
+    `check_changed_files`, `kubeconform/validate`, `argo-lint/lint`, `torghut-ci/Pyright`,
+    `torghut-ci/Quality signals (complexity + security)`, and
+    `torghut-ci/Bytecode + pytest + coverage`.
+  - GraphQL reports zero posted reviews, zero review requests, and zero review threads.
+  - The current-head `@codex review` request at
+    https://github.com/proompteng/lab/pull/5412#issuecomment-4387785867 returned the Codex
+    connector usage-limit response at
+    https://github.com/proompteng/lab/pull/5412#issuecomment-4387786832, so the mandatory review has
+    not posted.
+  - Updated the anchored #5412 progress comment using
+    `services/jangar/scripts/codex/codex-progress-comment.ts`:
+    https://github.com/proompteng/lab/pull/5412#issuecomment-4378206627.
+- Merge outcome:
+  - No Jangar-impacting PR was merged in this pass. #5412 remains held until Codex review capacity
+    returns and any resulting review threads are resolved, or a maintainer explicitly waives the
+    large-diff review gate.
+- GitOps and rollout evidence at 2026-05-06T12:58Z:
+  - Current `origin/main` is `86b8432b68e7abb2b036f03ccf6c30ed28de727c`
+    (`docs(jangar): define controller witness activation receipts (#5681)`).
+  - Argo CD `jangar`, `agents`, `torghut`, `symphony-jangar`, and `symphony-torghut` are all
+    `Synced` and `Healthy` at revision `86b8432b68e7abb2b036f03ccf6c30ed28de727c`.
+  - Last observed Argo operations succeeded for `jangar` at 2026-05-06T12:09:53Z, `agents` at
+    2026-05-06T12:12:54Z, and `torghut` at 2026-05-06T12:19:19Z.
+  - Jangar namespace deployments are ready: `deployment/jangar` 1/1,
+    `deployment/jangar-alloy` 1/1, `deployment/bumba` 1/1, `deployment/symphony` 1/1, and
+    `deployment/symphony-jangar` 1/1.
+  - Agents namespace deployments are ready: `deployment/agents` 1/1 and
+    `deployment/agents-controllers` 2/2. The active control-plane image is
+    `registry.ide-newton.ts.net/lab/jangar-control-plane:89d740d3@sha256:24bf1e805e6026be318ad2659c39bae83de36f3cf6aa47bba4be773da45d37f0`.
+  - Torghut app deployments and live pods are ready. Active Knative live and sim revisions
+    `torghut-00237-deployment` and `torghut-sim-00325-deployment` are 1/1, while older revisions are
+    scaled to desired 0.
+  - Current running Jangar, agents, and Torghut pods report ready containers. The active Jangar
+    runtime image is
+    `registry.ide-newton.ts.net/lab/jangar:89d740d3@sha256:c897e060175fd53ae055ad4a4f2f1ceeae5d3ae3e97d130c7d556af096d2e035`.
+- Error-event and visibility notes:
+  - Jangar warning events showed transient readiness/liveness probe failures during the latest
+    rollout; current pods recovered and are ready.
+  - Agents warning events showed transient readiness failures, including one
+    `agents-controllers` readiness timeout roughly seven minutes before inspection; current
+    selected agents pods are running and ready with zero restarts.
+  - Torghut warning events showed recent simulation analysis/backoff failures and startup/readiness
+    probe failures around the sim rollout. Argo still reports `torghut` `Synced` and `Healthy`, and
+    current Torghut pods are ready.
+  - The in-cluster service account cannot read Argo Rollouts `AnalysisRun` resources in `torghut`,
+    so those sim-analysis details remain a visibility gap.
+- Rollback path:
+  - #5412 has no runtime rollback action in this pass because it remains unmerged.
+  - If the current Jangar 89d740d3 promotion regresses readiness, digest verification, or control-plane
+    status, open a GitOps PR reverting #5677 (`chore(jangar): promote image 89d740d3`) back to the
+    previously documented 856f5579 promotion and let Argo CD reconcile. If the source change
+    `89d740d3b` is implicated, revert it via normal PR after the image rollback stabilizes.
+- Next action:
+  - Keep #5412 blocked until Codex review capacity is available and the required review posts, then
+    re-check mergeability, checks, review threads, and Torghut/Jangar rollout health before any
+    squash merge.
+
 ## 2026-05-06 11:00Z Release Update
 
 - Open PR inventory:

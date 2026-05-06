@@ -440,6 +440,85 @@ export type ActionSloBudget = {
   evidence_refs: string[]
 }
 
+export type ControllerWitnessSurface =
+  | 'serving_process'
+  | 'controller_process'
+  | 'kubernetes_deployment'
+  | 'watch_epoch'
+  | 'agentrun_ingestion'
+
+export type ControllerWitnessDecision = 'allow' | 'allow_with_split' | 'repair_only' | 'hold_material' | 'block'
+
+export type ControlPlaneControllerWitness = {
+  witness_id: string
+  generated_at: string
+  expires_at: string
+  namespace: string
+  controller_surface: ControllerWitnessSurface
+  deployment_ref: string | null
+  pod_uid: string | null
+  image_ref: string | null
+  leader_identity: string | null
+  controller_started: boolean | null
+  deployment_available: boolean | null
+  watch_epoch_id: string | null
+  ingestion_epoch_id: string | null
+  last_watch_event_at: string | null
+  last_resync_at: string | null
+  observed_run_count: number | null
+  untouched_run_count: number | null
+  decision: ControllerWitnessDecision
+  reason_codes: string[]
+}
+
+export type ControlPlaneControllerWitnessQuorum = {
+  mode: 'shadow' | 'enforced'
+  design_artifact: string
+  quorum_id: string
+  generated_at: string
+  expires_at: string
+  namespace: string
+  decision: ControllerWitnessDecision
+  reason_codes: string[]
+  message: string
+  witness_refs: string[]
+  deployment_available: boolean
+  watch_epoch_current: boolean
+  controller_self_report_current: boolean
+  witnesses: ControlPlaneControllerWitness[]
+  rollback_target: string | null
+}
+
+export type MaterialActionActivationReceiptCapitalStage =
+  | 'none'
+  | 'observe'
+  | 'shadow'
+  | 'paper'
+  | 'live_micro'
+  | 'live_scale'
+
+export type MaterialActionActivationReceiptDecision = 'allow' | 'observe_only' | 'repair_only' | 'hold' | 'block'
+
+export type MaterialActionActivationReceipt = {
+  receipt_id: string
+  generated_at: string
+  expires_at: string
+  action_class: ActionSloBudgetActionClass
+  scope: string
+  controller_witness_refs: string[]
+  transport_contract_refs: string[]
+  proof_freshness_refs: string[]
+  positive_authority_refs: string[]
+  negative_authority_refs: string[]
+  capital_stage: MaterialActionActivationReceiptCapitalStage
+  decision: MaterialActionActivationReceiptDecision
+  max_dispatches: number | null
+  max_runtime_seconds: number | null
+  max_notional: number | null
+  required_repairs: string[]
+  rollback_target: string | null
+}
+
 export type DeploymentRolloutStatus = {
   name: string
   namespace: string
@@ -546,6 +625,8 @@ export type ControlPlaneStatus = {
   negative_evidence_router: NegativeEvidenceRouterStatus
   action_slo_budgets: ActionSloBudget[]
   torghut_action_slo_budgets: ActionSloBudget[]
+  control_plane_controller_witness: ControlPlaneControllerWitnessQuorum
+  material_action_activation_receipts: MaterialActionActivationReceipt[]
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability

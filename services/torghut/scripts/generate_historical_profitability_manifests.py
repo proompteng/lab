@@ -228,6 +228,9 @@ def _manifest_payload(
             'commission_bps': '0',
             'per_trade_fee': '0',
         },
+        'torghut_env_overrides': {
+            'TRADING_SIMULATION_FETCH_WINDOW_SECONDS': '20',
+        },
     }
 
 

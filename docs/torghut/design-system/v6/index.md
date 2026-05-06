@@ -7,10 +7,22 @@
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-06T09:15Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-06T13:12Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `122-torghut-profit-renewal-bids-and-capital-shadow-ledger-2026-05-06.md`
+  - `docs/agents/designs/118-jangar-repair-admission-governor-and-profit-renewal-bids-2026-05-06.md`
+  - `121-torghut-opening-bell-proof-ladder-and-account-scoped-alpha-reentry-2026-05-06.md`
+  - `docs/agents/designs/117-jangar-opening-proof-reconciliation-and-account-scope-capital-veto-2026-05-06.md`
+  - `121-torghut-evidence-debt-tranches-and-profit-unblock-ladder-2026-05-06.md`
+  - `docs/agents/designs/117-jangar-evidence-debt-tranches-and-capital-unblock-ledger-2026-05-06.md`
+  - `120-torghut-capital-activation-receipts-and-shadow-profit-proof-queue-2026-05-06.md`
+  - `docs/agents/designs/116-jangar-controller-witness-quorum-and-capital-activation-receipts-2026-05-06.md`
+  - `119-torghut-evidence-renewal-batches-and-capital-quiescence-gates-2026-05-06.md`
+  - `docs/agents/designs/115-jangar-watch-quiescence-and-evidence-renewal-arbiter-2026-05-06.md`
+  - `118-torghut-proof-route-parity-and-options-informed-repair-scheduler-2026-05-06.md`
+  - `docs/agents/designs/114-jangar-evidence-transport-ledger-and-watch-restart-circuit-breakers-2026-05-06.md`
   - `117-torghut-contradiction-priced-profit-repair-and-capital-readmission-2026-05-06.md`
   - `docs/agents/designs/113-jangar-contradiction-settlement-and-profit-repair-auction-2026-05-06.md`
   - `116-torghut-session-scoped-alpha-ledger-and-replay-capital-scheduler-2026-05-06.md`

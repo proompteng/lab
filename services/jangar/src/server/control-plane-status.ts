@@ -3,6 +3,10 @@ import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
 import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/agents-controller'
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
 import {
+  buildControllerWitnessQuorum,
+  buildMaterialActionActivationReceipts,
+} from '~/server/control-plane-controller-witness'
+import {
   createControlPlaneHeartbeatStore,
   isHeartbeatFresh,
   type ControlPlaneHeartbeatRow,
@@ -186,6 +190,49 @@ const buildAgentRunIngestionStatus = (namespace: string, health: ControllerHealt
     last_resync_at: assessment.lastResyncAt,
     untouched_run_count: assessment.untouchedRunCount,
     oldest_untouched_age_seconds: assessment.oldestUntouchedAgeSeconds,
+  }
+}
+
+const buildServingProcessControllerStatus = (
+  namespace: string,
+  health: ControllerHealth,
+  now: Date,
+): ControllerStatus => {
+  const status =
+    health.started && health.crdsReady !== false
+      ? 'healthy'
+      : health.crdsReady === false
+        ? 'degraded'
+        : health.enabled
+          ? 'unknown'
+          : 'disabled'
+
+  return {
+    name: 'agents-controller',
+    enabled: health.enabled,
+    started: health.started,
+    scope_namespaces: Array.isArray(health.namespaces) ? health.namespaces : [],
+    crds_ready: health.crdsReady === true,
+    missing_crds: health.missingCrds,
+    last_checked_at: health.lastCheckedAt ?? '',
+    status,
+    message:
+      status === 'healthy'
+        ? 'serving process controller state is current'
+        : status === 'disabled'
+          ? 'serving process controller disabled'
+          : status === 'degraded'
+            ? 'serving process controller degraded'
+            : 'serving process controller not started',
+    authority: {
+      mode: 'local',
+      namespace,
+      source_deployment: '',
+      source_pod: '',
+      observed_at: now.toISOString(),
+      fresh: true,
+      message: 'serving process local controller state',
+    },
   }
 }
 
@@ -535,6 +582,26 @@ export const buildControlPlaneStatus = async (
   const isWorkflowsWarning = workflows.backoff_limit_exceeded_jobs >= warningBackoffThreshold
   const isWorkflowsDegraded = workflows.backoff_limit_exceeded_jobs >= degradedBackoffThreshold
   const agentRunIngestion = buildAgentRunIngestionStatus(options.namespace, agentsHealth)
+  const servingProcessController = buildServingProcessControllerStatus(options.namespace, agentsHealth, now)
+  const effectiveAgentsController =
+    effectiveControllers.find((controller) => controller.name === 'agents-controller') ?? agentsController
+  const controllerWitness = buildControllerWitnessQuorum({
+    now,
+    namespace: options.namespace,
+    servingController: servingProcessController,
+    effectiveController: effectiveAgentsController,
+    rolloutHealth,
+    watchReliability: {
+      status: watchReliability.status,
+      window_minutes: watchReliability.window_minutes,
+      observed_streams: watchReliability.observed_streams,
+      total_events: watchReliability.total_events,
+      total_errors: watchReliability.total_errors,
+      total_restarts: watchReliability.total_restarts,
+      streams: watchReliability.streams,
+    },
+    agentRunIngestion,
+  })
   const dependencyQuorum = buildDependencyQuorum({
     controllers: effectiveControllers,
     runtimeAdapters: effectiveRuntimeAdapters,
@@ -572,6 +639,14 @@ export const buildControlPlaneStatus = async (
     empiricalServices,
     executionTrust: executionTrust.executionTrust,
     runtimeKits: runtimeAdmission.runtimeKits,
+    controllerWitness,
+  })
+  const materialActionActivationReceipts = buildMaterialActionActivationReceipts({
+    now,
+    scope: `${options.namespace}/${service}`,
+    controllerWitness,
+    router: negativeEvidenceRouter.router,
+    budgets: negativeEvidenceRouter.budgets,
   })
 
   const leaderElection = getLeaderElectionStatus()
@@ -644,6 +719,8 @@ export const buildControlPlaneStatus = async (
     negative_evidence_router: negativeEvidenceRouter.router,
     action_slo_budgets: negativeEvidenceRouter.budgets,
     torghut_action_slo_budgets: negativeEvidenceRouter.torghutBudgets,
+    control_plane_controller_witness: controllerWitness,
+    material_action_activation_receipts: materialActionActivationReceipts,
     empirical_services: empiricalServices,
     namespaces: [
       {
