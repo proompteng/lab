@@ -231,6 +231,9 @@ const baseStatus = {
   runtime_kits: [],
   admission_passports: [],
   serving_passport_id: null,
+  recovery_warrants: [],
+  runtime_proof_cells: [],
+  projection_watermarks: [],
   rollout_health: {
     status: 'healthy',
     observed_deployments: 0,
