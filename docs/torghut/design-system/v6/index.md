@@ -11,6 +11,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `103-torghut-hypothesis-rehydration-and-proof-gap-auction-2026-05-06.md`
+  - `docs/agents/designs/99-jangar-proof-gap-auction-and-hypothesis-rehydration-runway-2026-05-06.md`
   - `102-torghut-profit-proof-exchange-and-capital-slo-budget-2026-05-06.md`
   - `docs/agents/designs/98-jangar-action-slo-budget-and-profit-proof-exchange-2026-05-06.md`
   - `101-torghut-proof-debt-retirement-and-shadow-capital-handoff-2026-05-06.md`
