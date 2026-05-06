@@ -658,6 +658,7 @@ export const RESOURCE_MAP = {
   Swarm: 'swarms.swarm.proompteng.ai',
   Artifact: 'artifacts.artifacts.proompteng.ai',
   Workspace: 'workspaces.workspaces.proompteng.ai',
+  PersistentVolumeClaim: 'persistentvolumeclaims',
 } as const
 
 export const getNativeKubeClients = getKubeClients

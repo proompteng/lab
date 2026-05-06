@@ -159,6 +159,21 @@ Expected outcomes:
   the missing component in `reason_codes`.
 - The Argo Workflows resource check returns empty output (no CRD or no workflows).
 
+Workspace storage proof uses the same Kubernetes client path as the supporting controller. If a workspace-backed run is
+stuck before dispatch, verify the PVC directly through the least-privilege API surface:
+
+```bash
+kubectl -n agents get pvc -l workspaces.proompteng.ai/workspace
+kubectl -n agents get workspaces.workspaces.proompteng.ai
+```
+
+Expected outcomes:
+
+- each active `Workspace` has a same-named PVC labeled `workspaces.proompteng.ai/workspace=<workspace-name>`;
+- `Workspace.status.phase=Ready` requires the backing PVC to be `Bound`;
+- an `unsupported kubernetes resource: persistentvolumeclaim` controller log means the Jangar image is missing the
+  first-class PVC resource alias and should be rolled back or upgraded before relying on storage proof.
+
 During shadow lease synthesis, treat `failure_domain_leases.holdbacks[]` as deployer evidence, not an
 admission switch. A `hold` decision with `database.service_refused`, `database.pod_disruption_target`,
 `route.unreachable`, `registry.image_pull_timeout`, `storage.mount_conflict`, or
