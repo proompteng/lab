@@ -21,20 +21,23 @@ Extends:
 I am choosing a **typed evidence authority with readiness-debt gates** as the next Jangar control-plane architecture
 step.
 
-The read-only evidence from this run shows a specific contradiction. The Jangar application database path is healthy:
-the status route reports `configured=true`, `connected=true`, 22 ms latency, and 28 registered plus 28 applied Kysely
-migrations with no drift. The same status route marks the database failure-domain lease `expired` and marks
-`source_schema` `unknown` with `source_schema.database_unroutable`.
+The first read-only evidence snapshot from this run showed a specific contradiction. The Jangar application database
+path was healthy: the status route reported `configured=true`, `connected=true`, 22 ms latency, and 28 registered plus
+28 applied Kysely migrations with no drift. The same status route marked the database failure-domain lease `expired`
+and marked `source_schema` `unknown` with `source_schema.database_unroutable`.
 
 The evidence refs explain the mismatch. The lease projector used AgentRun pod names
 `jangar-control-plane-plan-sched-cron-29634020-cndb7` and
 `jangar-control-plane-plan-sched-zczg7-step-1-attempt-1-4dbnk` as database evidence because their generated suffixes
 contained `db`. Those are not database pods. The actual Jangar database pod is `jangar-db-1`, and it is `1/1 Running`.
 
-That is not a database outage. It is an evidence typing failure. I am tightening the classifier now, but the
-architecture lesson is broader: Jangar cannot let arbitrary resource-name substrings act as authority for material
-action gates. Every material gate needs typed evidence provenance, a conflict policy, a debt window, and a clear answer
-for whether the action is allowed, repair-only, observed, held, or blocked.
+That was not a database outage. It was an evidence typing failure. A later refresh at `2026-05-06T05:22:54.509Z`
+showed the desired steady state when the reducer cites typed facts: the database and `source_schema` leases were both
+`valid`, `merge_ready` and `torghut_capital` were allowed, and only `deploy_widen` remained held by registry
+image-pull debt. I am tightening the classifier now, but the architecture lesson is broader: Jangar cannot let
+arbitrary resource-name substrings act as authority for material action gates. Every material gate needs typed evidence
+provenance, a conflict policy, a debt window, and a clear answer for whether the action is allowed, repair-only,
+observed, held, or blocked.
 
 The tradeoff is stricter projector complexity. I accept that because the alternative is worse: a least-privilege
 deployer sees a projected holdback and has no reliable way to distinguish a real database outage from a bad evidence
@@ -58,17 +61,17 @@ No Kubernetes resources or database rows were mutated while collecting this evid
 ### Cluster And Rollout Evidence
 
 - `kubectl auth whoami` resolved to `system:serviceaccount:agents:agents-sa`.
-- `kubectl get pods -n jangar -o wide` showed `jangar-d75944dff-4msq2` at `2/2 Running` and `jangar-db-1` at
+- `kubectl get pods -n jangar -o wide` later showed `jangar-bb95b96c9-s6r4j` at `2/2 Running` and `jangar-db-1` at
   `1/1 Running`.
 - `kubectl rollout status deploy/jangar -n jangar` returned `deployment "jangar" successfully rolled out`.
-- `kubectl get deploy -n agents -o wide` showed `agents` at `1/1` and `agents-controllers` at `2/2`, both on image
-  digest `0bba2aa8`.
+- `kubectl get deploy -n agents -o wide` showed `agents` at `1/1` and `agents-controllers` at `2/2`, both rolled out on
+  image digest `8eb6d0f7`.
 - `kubectl rollout status deploy/agents -n agents` and
   `kubectl rollout status deploy/agents-controllers -n agents` both returned successfully rolled out.
-- `kubectl get pods -n agents --no-headers` counted `Running 7`, `Completed 92`, and `Error 30`.
+- `kubectl get pods -n agents --no-headers` counted `Running 8`, `Completed 100`, and `Error 30`.
 - `kubectl get jobs -n agents -o json` counted 26 failed Jobs retained from earlier plan/verify/discover attempts.
-- Recent events still included readiness probe deadline failures for `agents-5578648768-bgw4l` and
-  `agents-controllers-954b77448-*` about 23 minutes before this evidence snapshot.
+- Recent events still included readiness probe deadline failures for `agents-76879f7d96-gsl9r` and
+  `agents-controllers-76df495b84-*` inside the active rollout-debt window.
 
 ### Database And Data Evidence
 
@@ -82,8 +85,13 @@ No Kubernetes resources or database rows were mutated while collecting this evid
   - `source_schema` was `unknown` with reason `source_schema.database_unroutable`.
   - `dispatch_normal`, `deploy_widen`, `merge_ready`, and `torghut_capital` were held.
   - `serve_readonly`, `dispatch_repair`, and `torghut_observe` were allowed.
-- Direct database exec and secret reads are not available to this service account, so the deployer contract must rely on
-  projected status that is correct enough for least-privilege operation.
+- A refreshed status payload at `2026-05-06T05:22:54.509Z` reported healthy database status with 26 ms latency, 28/28
+  migrations, valid `database` and `source_schema` leases, and allowed `merge_ready` plus `torghut_capital`.
+- The same refreshed payload held `deploy_widen` on `registry.image_pull_timeout`, proving retained rollout debt still
+  needs typed currentness even after database/source-schema evidence is clean.
+- Direct CNPG cluster reads are not available to this service account:
+  `clusters.postgresql.cnpg.io is forbidden` for `system:serviceaccount:agents:agents-sa` in namespace `jangar`.
+  The deployer contract must therefore rely on projected status that is correct enough for least-privilege operation.
 
 ### Source Evidence
 
@@ -107,10 +115,13 @@ No Kubernetes resources or database rows were mutated while collecting this evid
 - Live Torghut `/readyz` returned HTTP 503 with healthy Postgres and ClickHouse, schema head
   `0029_whitepaper_embedding_dimension_4096`, zero promotion eligibility, three rollback-required hypotheses, and live
   submission blocked on `simple_submit_disabled`.
-- Simulation Torghut `/readyz` returned HTTP 200, but only because it is non-live paper mode. It still had zero
-  promotion eligibility and dependency quorum fetch/quant freshness gaps.
+- Simulation Torghut `/readyz` later returned HTTP 503 despite non-live paper mode because universe evaluation was not
+  ready and quant latest metrics were empty. It still had zero promotion eligibility and three rollback-required
+  hypotheses.
 - Jangar dependency quorum remained `block` on `empirical_jobs_degraded`, with stale `benchmark_parity`,
   `foundation_router_parity`, `janus_event_car`, and `janus_hgrm_reward`.
+- Jangar failure-domain leases allowed both `torghut_observe` and `torghut_capital` after the database/source-schema
+  evidence refreshed cleanly; the Torghut side still needs its own proof-debt feed before capital should reopen.
 
 ## Problem
 

@@ -23,13 +23,17 @@ I am choosing a **capital reentry evidence feed with readiness-debt netting** fo
 The current Torghut state is operationally alive but not capital-authoritative. Live `/readyz` returned HTTP 503 with
 healthy Postgres, healthy ClickHouse, active broker credentials, current Alembic head
 `0029_whitepaper_embedding_dimension_4096`, and live submission blocked by `simple_submit_disabled`. Simulation
-`/readyz` returned HTTP 200 because it is non-live paper mode, not because proof is ready. Both live and simulation had
-three hypotheses, zero promotion-eligible hypotheses, and three rollback-required hypotheses.
+`/readyz` initially returned HTTP 200 because it is non-live paper mode, not because proof is ready; a later refresh on
+revision `torghut-sim-00311` returned HTTP 503 because universe evaluation was not ready and quant latest metrics were
+empty. Both live and simulation had three hypotheses, zero promotion-eligible hypotheses, and three rollback-required
+hypotheses.
 
 At the same time, Jangar had its own evidence-quality issue: a database holdback was caused by non-database AgentRun
 pod names that contained `db` in generated suffixes. Torghut must not treat a broad Jangar holdback as a trading
 truth. It needs a typed Jangar evidence feed and a local netting rule that separates operational readiness debt from
-profitability proof debt.
+profitability proof debt. A refreshed Jangar status payload later reported valid database/source-schema leases and
+allowed `torghut_capital`, which strengthens the point: Jangar operational evidence can recover before Torghut proof
+quality does.
 
 The selected design makes capital reentry a bounded exchange: Torghut consumes Jangar typed evidence, nets it with its
 own proof-expiry clock, and emits one capital decision per account, hypothesis, and window. The tradeoff is slower
@@ -42,15 +46,14 @@ No Kubernetes resources, database rows, or trading settings were mutated.
 
 ### Cluster And Route Evidence
 
-- `kubectl get pods -n torghut -o wide` showed new live revision `torghut-00229` and simulation revision
-  `torghut-sim-00310` running after the `37d1fb2b` image rollout.
+- `kubectl get pods -n torghut -o wide` showed live revision `torghut-00230` and simulation revision
+  `torghut-sim-00311` running after the current image rollout.
 - ClickHouse, Keeper, Torghut Postgres, websocket, Alloy, guardrail exporter, options catalog, options enricher, and
   options TA pods were running or rolling through the new revision.
 - Recent Torghut events showed startup/readiness probe failures during Knative revision startup, then
-  `LatestReadyRevisionName` updates to `torghut-00229` and `torghut-sim-00310`.
-- Events also showed `MultiplePodDisruptionBudgets` warnings for ClickHouse pods and a Flink status-update conflict
-  warning for `torghut-options-ta`.
-- `torghut-db-migrations` completed successfully for the current rollout.
+  `LatestReadyRevisionName` updates to `torghut-00230` and `torghut-sim-00311`.
+- The current refresh showed Torghut empirical, semantic, and whitepaper bootstrap Jobs completing during rollout. Older
+  evidence still carried ClickHouse PDB ambiguity and Flink status-conflict debt as data-plane risks to keep scoped.
 
 ### Live Torghut Evidence
 
@@ -70,13 +73,14 @@ No Kubernetes resources, database rows, or trading settings were mutated.
 
 ### Simulation Evidence
 
-- `curl http://torghut-sim.torghut.svc.cluster.local/readyz` returned HTTP 200 with `"status":"ok"`.
+- `curl http://torghut-sim.torghut.svc.cluster.local/readyz` returned HTTP 503 with `"status":"degraded"` in the later
+  refresh.
 - Simulation uses capital stage `paper`; live submission was allowed only because the mode is non-live.
 - Simulation schema head matched live.
-- Simulation dependency quorum reported `jangar_status_fetch_failed` due timeout.
+- Simulation dependency quorum still reported `block` on `empirical_jobs_degraded`.
 - Quant evidence was informational but not current: source URL pointed to Jangar quant health for account
-  `TORGHUT_SIM`, status was `unknown`, reason `quant_health_fetch_failed`, message `timed out`, and latest metrics
-  counts were null.
+  `TORGHUT_SIM`, status was `degraded`, reason `quant_latest_metrics_empty`, latest metrics count was `0`, stage count
+  was `0`, and the empty latest-store alarm was true.
 - Alpha readiness matched live: three hypotheses, zero promotion eligible, and three rollback required.
 
 ### Jangar Consumer Evidence
@@ -84,7 +88,8 @@ No Kubernetes resources, database rows, or trading settings were mutated.
 - Jangar dependency quorum was `block` on `empirical_jobs_degraded`.
 - Jangar empirical services named stale `benchmark_parity`, `foundation_router_parity`, `janus_event_car`, and
   `janus_hgrm_reward`.
-- Jangar failure-domain leases allowed `torghut_observe` but held `torghut_capital`.
+- Jangar failure-domain leases later allowed both `torghut_observe` and `torghut_capital` after database/source-schema
+  evidence refreshed cleanly, while `deploy_widen` remained held by registry image-pull debt.
 - The companion Jangar contract fixes a false database evidence match and requires typed authority before Torghut uses
   Jangar holdbacks for capital decisions.
 
@@ -92,7 +97,7 @@ No Kubernetes resources, database rows, or trading settings were mutated.
 
 Torghut has enough signals to be safe, but not enough structure to be profit-authoritative:
 
-1. HTTP 200 simulation readiness can coexist with zero promotion eligibility.
+1. Non-live simulation submission allowance can coexist with degraded proof readiness and zero promotion eligibility.
 2. HTTP 503 live readiness can coexist with healthy storage and broker dependencies.
 3. Stale empirical jobs and missing quant health are visible, but they are not netted into a current capital reentry
    decision.
