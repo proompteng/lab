@@ -380,6 +380,24 @@ The first enforcement slice is the stage and requirement launcher gate:
 This is Phase 4 from the rollout plan for launchers only. It does not remove the existing `/ready` and status passport
 projection surfaces, and it can be rolled back by setting `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false`.
 
+## Implementation note: deploy verification passport parity (2026-05-06)
+
+The deploy-verification slice closes the next runtime gate from this contract:
+
+- `packages/scripts/src/jangar/verify-deployment.ts` now reads the live control-plane status projection after Argo,
+  rollout, and deployment image digest checks pass.
+- the verifier requires `serving`, `swarm_plan`, and `swarm_implement` passports by default, with
+  `--admission-passport-consumers` available for narrower or wider promotion gates.
+- each required passport must be fresh, `allow`, cite a runtime-kit set digest, and cite runtime kits present in the
+  same status payload.
+- each cited runtime kit must be fresh, `healthy`, and report an `image_ref` containing the expected promoted image
+  digest.
+- `argocd/applications/jangar/deployment.yaml` now carries `JANGAR_RUNTIME_IMAGE`, and
+  `packages/scripts/src/jangar/update-manifests.ts` keeps that env value synchronized with the promoted image tag and
+  digest.
+- emergency rollback for deployer verification is `--skip-admission-passport-verification` or
+  `JANGAR_VERIFY_ADMISSION_PASSPORTS=false`; the runtime-kit and passport status surfaces remain visible.
+
 ## Validation and rollout contract
 
 ### Engineer acceptance gates

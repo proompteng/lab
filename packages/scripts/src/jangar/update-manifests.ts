@@ -8,7 +8,11 @@ import YAML from 'yaml'
 import { fatal, repoRoot } from '../shared/cli'
 import { inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
-import { updateKustomizationImage, updateManifestAnnotation } from './manifest-contract'
+import {
+  updateKustomizationImage,
+  updateManifestAnnotation,
+  upsertDeploymentContainerEnvValue,
+} from './manifest-contract'
 
 const defaultRegistry = 'registry.ide-newton.ts.net'
 const defaultRepository = 'lab/jangar'
@@ -135,6 +139,19 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
     console.log(`Updated ${serviceManifestPath} annotation deploy.knative.dev/rollout to ${options.rolloutTimestamp}`)
   }
 
+  const runtimeImageRef = `${options.imageName}:${options.tag}@${digest}`
+  const runtimeImageEnvChanged = upsertDeploymentContainerEnvValue(
+    serviceManifestPath,
+    'app',
+    'JANGAR_RUNTIME_IMAGE',
+    runtimeImageRef,
+  )
+  if (!runtimeImageEnvChanged) {
+    console.warn('Warning: jangar runtime image env was not updated; manifest may already match.')
+  } else {
+    console.log(`Updated ${serviceManifestPath} env JANGAR_RUNTIME_IMAGE to ${runtimeImageRef}`)
+  }
+
   const workerChanged = workerManifestPath
     ? updateManifestAnnotation(workerManifestPath, 'kubectl.kubernetes.io/restartedAt', options.rolloutTimestamp)
     : false
@@ -166,6 +183,7 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
     changed: {
       kustomization: kustomizationChanged,
       service: serviceChanged,
+      runtimeImageEnv: runtimeImageEnvChanged,
       worker: workerChanged,
       agentsValues: agentsValuesChanged,
     },
