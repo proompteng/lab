@@ -41,6 +41,7 @@ data class ForwarderConfig(
   val alpacaMarketDataChannels: List<String>,
   val jangarSymbolsUrl: String?,
   val staticSymbols: List<String>,
+  val symbolAllowlist: Set<String>,
   val symbolsPollIntervalMs: Long,
   val subscribeBatchSize: Int,
   val shardCount: Int,
@@ -73,12 +74,26 @@ data class ForwarderConfig(
       if (symbolsPollIntervalMs <= 0) error("SYMBOLS_POLL_INTERVAL_MS must be > 0")
       if (subscribeBatchSize <= 0) error("SUBSCRIBE_BATCH_SIZE must be > 0")
 
-      val staticSymbols =
+      val symbolAllowlist =
+        mergedEnv["SYMBOLS_ALLOWLIST"]
+          ?.split(",")
+          ?.map { it.trim().uppercase() }
+          ?.filter { it.isNotEmpty() }
+          ?.toSet()
+          ?: emptySet()
+      if (symbolAllowlist.size > 12) error("SYMBOLS_ALLOWLIST must include no more than 12 symbols")
+      val configuredStaticSymbols =
         mergedEnv["SYMBOLS"]
           ?.split(",")
           ?.map { it.trim() }
           ?.filter { it.isNotEmpty() }
           ?: emptyList()
+      val staticSymbols =
+        if (symbolAllowlist.isEmpty()) {
+          configuredStaticSymbols
+        } else {
+          configuredStaticSymbols.filter { it.trim().uppercase() in symbolAllowlist }
+        }
       val alpacaMarketType =
         when (mergedEnv["ALPACA_MARKET_TYPE"]?.trim()?.lowercase() ?: "equity") {
           "equity" -> AlpacaMarketType.EQUITY
@@ -196,6 +211,7 @@ data class ForwarderConfig(
         alpacaMarketDataChannels = alpacaMarketDataChannels,
         jangarSymbolsUrl = jangarSymbolsUrl,
         staticSymbols = staticSymbols,
+        symbolAllowlist = symbolAllowlist,
         symbolsPollIntervalMs = symbolsPollIntervalMs,
         subscribeBatchSize = subscribeBatchSize,
         shardCount = shardCount,

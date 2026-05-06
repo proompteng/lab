@@ -13,8 +13,9 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import SessionLocal, ensure_schema
 from app.models import Strategy
+from app.trading.semiconductor_universe import SEMICONDUCTOR_TECH_UNIVERSE_CSV
 
-DEFAULT_CHIP_UNIVERSE = "NVDA,TSM,AVGO,AMD,MU,TXN,ADI,LRCX,KLAC,QCOM,AMAT,ASML"
+DEFAULT_CHIP_UNIVERSE = SEMICONDUCTOR_TECH_UNIVERSE_CSV
 
 
 def parse_args() -> argparse.Namespace:
