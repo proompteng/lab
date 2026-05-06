@@ -217,6 +217,21 @@ Admitted schedules and requirement runs carry these trace fields in annotations 
 Rollback: set `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` on the control-plane runtime to return launch behavior
 to the previous advisory-only passport mode while keeping status and `/ready` passport projection visible for forensics.
 
+## Lease reconciliation action clocks
+
+Control-plane status projects shadow `reconciled_action_clocks` from the contract in
+`docs/agents/designs/100-jangar-lease-reconciliation-clock-and-dispatch-expiry-contract-2026-05-06.md`. The reducer
+consumes failure-domain leases, database health, rollout health, workflow reliability, watch reliability, and Torghut
+empirical-service evidence, then emits one current clock per action class.
+
+The first rollout is projection-only. It keeps `serve_readonly`, `dispatch_repair`, and `torghut_observe` independent
+from material-action holds where possible, while `dispatch_normal`, `deploy_widen`, `merge_ready`, and
+`torghut_capital` carry explicit `blocking_reason_codes`, `conflict_class`, `fresh_until`, repair actions, and rollback
+targets when source-schema, rollout, workflow, or consumer proof evidence disagrees.
+
+Rollback: revert the status projection or ignore `reconciled_action_clocks` consumers. The reducer does not change
+schedule admission, requirement dispatch, or existing failure-domain lease enforcement in this release.
+
 ## Negative evidence router
 
 Control-plane status exposes the `docs/agents/designs/111-jangar-negative-evidence-router-and-action-slo-budgets-2026-05-06.md`

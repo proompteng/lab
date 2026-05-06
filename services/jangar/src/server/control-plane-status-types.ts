@@ -11,6 +11,7 @@ import type {
   FailureDomainLeaseSet,
   MaterialActionActivationReceipt,
   NegativeEvidenceRouterStatus,
+  ReconciledActionClock,
   RuntimeKitStatus,
   WorkflowsReliabilityStatus,
 } from '~/data/agents-control-plane'
@@ -154,6 +155,7 @@ export type ControlPlaneStatus = {
   workflows: WorkflowsReliabilityStatus
   dependency_quorum: DependencyQuorumStatus
   failure_domain_leases: FailureDomainLeaseSet
+  reconciled_action_clocks: ReconciledActionClock[]
   negative_evidence_router: NegativeEvidenceRouterStatus
   action_slo_budgets: ActionSloBudget[]
   torghut_action_slo_budgets: ActionSloBudget[]
