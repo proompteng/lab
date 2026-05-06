@@ -9,6 +9,10 @@ from decimal import Decimal
 from typing import Any, Literal, Mapping, Sequence, cast
 
 from app.trading.discovery.hypothesis_cards import HypothesisCard
+from app.trading.semiconductor_universe import (
+    LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE as LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE,
+    RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE,
+)
 
 
 CANDIDATE_SPEC_SCHEMA_VERSION = "torghut.candidate-spec.v1"
@@ -60,34 +64,6 @@ _FAMILY_TIEBREAK = {
 _MAX_FAMILIES_PER_HYPOTHESIS = 3
 _DEFAULT_PROFILE_COUNT = 3
 
-RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE: tuple[str, ...] = (
-    "NVDA",
-    "TSM",
-    "AVGO",
-    "AMD",
-    "MU",
-    "TXN",
-    "ADI",
-    "LRCX",
-    "KLAC",
-    "QCOM",
-    "AMAT",
-    "ASML",
-)
-LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE: tuple[str, ...] = (
-    "NVDA",
-    "TSM",
-    "AVGO",
-    "AMD",
-    "MU",
-    "TXN",
-    "ADI",
-    "LRCX",
-    "KLAC",
-    "QCOM",
-    "AMAT",
-    "ASML",
-)
 _RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE = RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE
 _AI_ACCELERATOR_UNIVERSE_PROFILE: tuple[str, ...] = (
     "NVDA",

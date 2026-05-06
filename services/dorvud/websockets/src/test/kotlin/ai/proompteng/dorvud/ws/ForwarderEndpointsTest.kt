@@ -26,6 +26,7 @@ class ForwarderEndpointsTest {
       alpacaMarketDataChannels = defaultAlpacaMarketDataChannels(marketType),
       jangarSymbolsUrl = "http://jangar/api/torghut/symbols",
       staticSymbols = emptyList(),
+      symbolAllowlist = emptySet(),
       symbolsPollIntervalMs = 30_000,
       subscribeBatchSize = 200,
       shardCount = 1,

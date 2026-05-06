@@ -18,13 +18,18 @@ class TestUniverseResolver(TestCase):
         self._original_autonomy = config.settings.trading_autonomy_enabled
         self._original_mode = config.settings.trading_mode
         self._original_crypto_enabled = config.settings.trading_crypto_enabled
-        self._original_max_stale_seconds = config.settings.trading_universe_max_stale_seconds
+        self._original_max_stale_seconds = (
+            config.settings.trading_universe_max_stale_seconds
+        )
         self._original_cache_seconds = config.settings.trading_universe_cache_seconds
         self._original_static_fallback_enabled = (
             config.settings.trading_universe_static_fallback_enabled
         )
         self._original_static_fallback_symbols = (
             config.settings.trading_universe_static_fallback_symbols_raw
+        )
+        self._original_symbol_allowlist = (
+            config.settings.trading_universe_symbol_allowlist_raw
         )
         self._original_simulation_enabled = config.settings.trading_simulation_enabled
 
@@ -36,13 +41,18 @@ class TestUniverseResolver(TestCase):
         config.settings.trading_autonomy_enabled = self._original_autonomy
         config.settings.trading_mode = self._original_mode
         config.settings.trading_crypto_enabled = self._original_crypto_enabled
-        config.settings.trading_universe_max_stale_seconds = self._original_max_stale_seconds
+        config.settings.trading_universe_max_stale_seconds = (
+            self._original_max_stale_seconds
+        )
         config.settings.trading_universe_cache_seconds = self._original_cache_seconds
         config.settings.trading_universe_static_fallback_enabled = (
             self._original_static_fallback_enabled
         )
         config.settings.trading_universe_static_fallback_symbols_raw = (
             self._original_static_fallback_symbols
+        )
+        config.settings.trading_universe_symbol_allowlist_raw = (
+            self._original_symbol_allowlist
         )
         config.settings.trading_simulation_enabled = self._original_simulation_enabled
 
@@ -98,6 +108,59 @@ class TestUniverseResolver(TestCase):
             )
             self.assertEqual(resolution.symbols, {"MSFT", "NVDA"})
 
+    def test_jangar_payload_is_limited_to_symbol_allowlist(self) -> None:
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_jangar_symbols_url = "http://example"
+        config.settings.trading_universe_cache_seconds = 0
+        config.settings.trading_universe_symbol_allowlist_raw = "NVDA,AVGO"
+
+        resolver = UniverseResolver()
+
+        sample_payload = json.dumps(["AAPL", "NVDA", "MSFT", "AVGO"])
+        with patch("app.trading.universe.urlopen") as mock_urlopen:
+            response = mock_urlopen.return_value.__enter__.return_value
+            response.read.return_value = sample_payload.encode()
+            resolution = resolver.get_resolution()
+
+        self.assertEqual(resolution.status, "ok")
+        self.assertEqual(resolution.reason, "jangar_fetch_ok")
+        self.assertEqual(resolution.symbols, {"NVDA", "AVGO"})
+
+    def test_jangar_payload_with_no_allowlisted_symbols_uses_static_fallback(
+        self,
+    ) -> None:
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_jangar_symbols_url = "http://example"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "NVDA,AVGO"
+        config.settings.trading_universe_symbol_allowlist_raw = "NVDA,AVGO"
+
+        resolver = UniverseResolver()
+
+        sample_payload = json.dumps(["AAPL", "MSFT"])
+        with patch("app.trading.universe.urlopen") as mock_urlopen:
+            response = mock_urlopen.return_value.__enter__.return_value
+            response.read.return_value = sample_payload.encode()
+            resolution = resolver.get_resolution()
+
+        self.assertEqual(resolution.status, "degraded")
+        self.assertEqual(
+            resolution.reason,
+            "jangar_payload_no_allowed_symbols_using_static_fallback",
+        )
+        self.assertEqual(resolution.symbols, {"NVDA", "AVGO"})
+
+    def test_symbol_allowlist_over_twelve_symbols_fails_closed(self) -> None:
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "NVDA,AVGO"
+        config.settings.trading_universe_symbol_allowlist_raw = (
+            "A,B,C,D,E,F,G,H,I,J,K,L,M"
+        )
+
+        resolver = UniverseResolver()
+
+        self.assertEqual(resolver.get_symbols(), set())
+
     def test_jangar_failure_uses_cached_symbols_warning_backoff(self) -> None:
         config.settings.trading_universe_source = "jangar"
         config.settings.trading_jangar_symbols_url = "http://example"
@@ -109,9 +172,12 @@ class TestUniverseResolver(TestCase):
             fetched_at=datetime.now(timezone.utc) - timedelta(seconds=2),
         )
 
-        with patch("app.trading.universe.logger.warning") as mock_warning, patch(
-            "app.trading.universe.urlopen",
-            side_effect=RuntimeError("boom"),
+        with (
+            patch("app.trading.universe.logger.warning") as mock_warning,
+            patch(
+                "app.trading.universe.urlopen",
+                side_effect=RuntimeError("boom"),
+            ),
         ):
             self.assertEqual(resolver.get_symbols(), {"MSFT"})
             self.assertEqual(resolver.get_symbols(), {"MSFT"})
@@ -134,7 +200,9 @@ class TestUniverseResolver(TestCase):
             self.assertEqual(resolution.reason, "jangar_fetch_failed_cache_stale")
             self.assertEqual(resolution.symbols, set())
 
-    def test_jangar_failure_without_cache_uses_static_fallback_when_enabled(self) -> None:
+    def test_jangar_failure_without_cache_uses_static_fallback_when_enabled(
+        self,
+    ) -> None:
         config.settings.trading_universe_source = "jangar"
         config.settings.trading_jangar_symbols_url = "http://example"
         config.settings.trading_universe_static_fallback_enabled = True
@@ -153,7 +221,9 @@ class TestUniverseResolver(TestCase):
             )
             self.assertEqual(resolution.symbols, {"AAPL", "MSFT"})
 
-    def test_jangar_failure_with_stale_cache_uses_static_fallback_when_enabled(self) -> None:
+    def test_jangar_failure_with_stale_cache_uses_static_fallback_when_enabled(
+        self,
+    ) -> None:
         config.settings.trading_universe_source = "jangar"
         config.settings.trading_jangar_symbols_url = "http://example"
         config.settings.trading_universe_static_fallback_enabled = True
@@ -229,7 +299,9 @@ class TestUniverseResolver(TestCase):
             self.assertEqual(resolution.reason, "jangar_payload_empty_cache_stale")
             self.assertEqual(resolution.symbols, set())
 
-    def test_jangar_resolution_reason_transitions_from_ok_to_degraded_and_stale(self) -> None:
+    def test_jangar_resolution_reason_transitions_from_ok_to_degraded_and_stale(
+        self,
+    ) -> None:
         config.settings.trading_universe_source = "jangar"
         config.settings.trading_jangar_symbols_url = "http://example"
         config.settings.trading_universe_cache_seconds = 1
@@ -278,7 +350,10 @@ class TestUniverseResolver(TestCase):
 
         resolver = UniverseResolver()
         with (
-            patch("app.trading.universe.trading_now", return_value=datetime(2026, 3, 6, 18, 15, tzinfo=timezone.utc)),
+            patch(
+                "app.trading.universe.trading_now",
+                return_value=datetime(2026, 3, 6, 18, 15, tzinfo=timezone.utc),
+            ),
             patch("app.trading.universe.urlopen") as mock_urlopen,
         ):
             response = mock_urlopen.return_value.__enter__.return_value

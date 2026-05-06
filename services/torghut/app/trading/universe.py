@@ -13,6 +13,7 @@ from urllib.parse import urlencode, urlsplit
 
 from ..config import settings
 from .clickhouse import normalize_symbol
+from .semiconductor_universe import MAX_RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE_SIZE
 from .time_source import trading_now
 
 logger = logging.getLogger(__name__)
@@ -53,10 +54,12 @@ class _HttpRequest:
 
 
 class _HttpResponseHandle:
-    def __init__(self, connection: HTTPConnection | HTTPSConnection, response: Any) -> None:
+    def __init__(
+        self, connection: HTTPConnection | HTTPSConnection, response: Any
+    ) -> None:
         self._connection = connection
         self._response = response
-        self.status = int(getattr(response, 'status', 200))
+        self.status = int(getattr(response, "status", 200))
 
     def read(self) -> bytes:
         return cast(bytes, self._response.read())
@@ -75,14 +78,14 @@ class _HttpResponseHandle:
 def urlopen(request: _HttpRequest, timeout: int) -> _HttpResponseHandle:
     parsed = urlsplit(request.full_url)
     scheme = parsed.scheme.lower()
-    if scheme not in {'http', 'https'}:
-        raise ValueError(f'unsupported_url_scheme:{scheme or "missing"}')
+    if scheme not in {"http", "https"}:
+        raise ValueError(f"unsupported_url_scheme:{scheme or 'missing'}")
     if not parsed.hostname:
-        raise ValueError('missing_url_host')
-    request_path = parsed.path or '/'
+        raise ValueError("missing_url_host")
+    request_path = parsed.path or "/"
     if parsed.query:
-        request_path = f'{request_path}?{parsed.query}'
-    connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+        request_path = f"{request_path}?{parsed.query}"
+    connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
     connection = connection_class(parsed.hostname, parsed.port, timeout=max(timeout, 1))
     try:
         connection.request(request.method, request_path, headers=request.headers)
@@ -102,8 +105,8 @@ class UniverseResolver:
         self._last_resolution: UniverseResolution = UniverseResolution(
             symbols=set(),
             source=settings.trading_universe_source,
-            status='unknown',
-            reason='not_evaluated',
+            status="unknown",
+            reason="not_evaluated",
             fetched_at=None,
             cache_age_seconds=None,
         )
@@ -128,13 +131,10 @@ class UniverseResolver:
         return self.get_resolution().symbols
 
     def get_resolution(self) -> UniverseResolution:
-        if (
-            settings.trading_universe_source != "jangar"
-            and (
-                settings.trading_enabled
-                or settings.trading_autonomy_enabled
-                or settings.trading_mode == "live"
-            )
+        if settings.trading_universe_source != "jangar" and (
+            settings.trading_enabled
+            or settings.trading_autonomy_enabled
+            or settings.trading_mode == "live"
         ):
             logger.error(
                 "Invalid universe source for active trading/autonomy: source=%s",
@@ -143,8 +143,8 @@ class UniverseResolver:
             resolution = UniverseResolution(
                 symbols=set(),
                 source=str(settings.trading_universe_source),
-                status='error',
-                reason='invalid_universe_source_for_active_trading',
+                status="error",
+                reason="invalid_universe_source_for_active_trading",
                 fetched_at=None,
                 cache_age_seconds=None,
             )
@@ -152,12 +152,12 @@ class UniverseResolver:
             return resolution
         if settings.trading_universe_source == "static":
             symbols = set(settings.trading_static_symbols)
-            filtered = _filter_symbols(symbols)
+            filtered = self._apply_symbol_allowlist(_filter_symbols(symbols))
             resolution = UniverseResolution(
                 symbols=filtered,
-                source='static',
-                status='ok' if filtered else 'empty',
-                reason='static_symbols_loaded' if filtered else 'static_symbols_empty',
+                source="static",
+                status="ok" if filtered else "empty",
+                reason="static_symbols_loaded" if filtered else "static_symbols_empty",
                 fetched_at=None,
                 cache_age_seconds=None,
             )
@@ -181,12 +181,14 @@ class UniverseResolver:
             resolution = self._resolve_from_jangar()
             self._last_resolution = resolution
             return resolution
-        logger.warning("Unknown trading universe source: %s", settings.trading_universe_source)
+        logger.warning(
+            "Unknown trading universe source: %s", settings.trading_universe_source
+        )
         resolution = UniverseResolution(
             symbols=set(),
             source=str(settings.trading_universe_source),
-            status='error',
-            reason='unknown_universe_source',
+            status="error",
+            reason="unknown_universe_source",
             fetched_at=None,
             cache_age_seconds=None,
         )
@@ -209,17 +211,34 @@ class UniverseResolver:
         if not url:
             return self._fallback_from_cache(
                 now=now,
-                reason='jangar_url_missing',
+                reason="jangar_url_missing",
                 cause=RuntimeError("jangar_url_missing"),
             )
 
         cache_ttl = timedelta(seconds=settings.trading_universe_cache_seconds)
         if self._cache and now - self._cache.fetched_at < cache_ttl:
+            cached_symbols = self._apply_symbol_allowlist(set(self._cache.symbols))
+            static_fallback_symbols = self._resolve_static_fallback_symbols()
+            if not cached_symbols and static_fallback_symbols:
+                return UniverseResolution(
+                    symbols=static_fallback_symbols,
+                    source="jangar",
+                    status="degraded",
+                    reason="jangar_cache_hit_no_allowed_symbols_using_static_fallback",
+                    fetched_at=self._cache.fetched_at,
+                    cache_age_seconds=int(
+                        (now - self._cache.fetched_at).total_seconds()
+                    ),
+                )
             return UniverseResolution(
-                symbols=set(self._cache.symbols),
-                source='jangar',
-                status='ok',
-                reason='jangar_cache_hit',
+                symbols=cached_symbols,
+                source="jangar",
+                status="ok" if cached_symbols else "error",
+                reason=(
+                    "jangar_cache_hit"
+                    if cached_symbols
+                    else "jangar_cache_hit_no_allowed_symbols"
+                ),
                 fetched_at=self._cache.fetched_at,
                 cache_age_seconds=int((now - self._cache.fetched_at).total_seconds()),
             )
@@ -227,32 +246,33 @@ class UniverseResolver:
         request_url = url
         if settings.trading_simulation_enabled:
             delimiter = "&" if "?" in request_url else "?"
-            request_url = (
-                f'{request_url}{delimiter}'
-                + urlencode({"asOf": now.astimezone(timezone.utc).isoformat()})
+            request_url = f"{request_url}{delimiter}" + urlencode(
+                {"asOf": now.astimezone(timezone.utc).isoformat()}
             )
         request = _HttpRequest(
             full_url=request_url,
-            method='GET',
-            headers={'accept': 'application/json'},
+            method="GET",
+            headers={"accept": "application/json"},
         )
-        payload = ''
+        payload = ""
         try:
-            with urlopen(request, settings.trading_universe_timeout_seconds) as response:
-                raw_status = getattr(response, 'status', 200)
+            with urlopen(
+                request, settings.trading_universe_timeout_seconds
+            ) as response:
+                raw_status = getattr(response, "status", 200)
                 status = raw_status if isinstance(raw_status, int) else 200
                 if status < 200 or status >= 300:
                     return self._fallback_from_cache(
                         now=now,
-                        reason='jangar_http_error',
-                        cause=RuntimeError(f'jangar_http_status_{status}'),
+                        reason="jangar_http_error",
+                        cause=RuntimeError(f"jangar_http_status_{status}"),
                     )
                 payload = response.read().decode("utf-8")
         except ValueError as exc:
             message = str(exc)
-            reason = 'jangar_url_invalid_scheme'
-            if message == 'missing_url_host':
-                reason = 'jangar_url_invalid_host'
+            reason = "jangar_url_invalid_scheme"
+            if message == "missing_url_host":
+                reason = "jangar_url_invalid_host"
             return self._fallback_from_cache(
                 now=now,
                 reason=reason,
@@ -261,7 +281,7 @@ class UniverseResolver:
         except Exception as exc:
             return self._fallback_from_cache(
                 now=now,
-                reason='jangar_fetch_failed',
+                reason="jangar_fetch_failed",
                 cause=exc,
             )
         try:
@@ -269,22 +289,27 @@ class UniverseResolver:
         except json.JSONDecodeError as exc:
             return self._fallback_from_cache(
                 now=now,
-                reason='jangar_payload_decode_failed',
+                reason="jangar_payload_decode_failed",
                 cause=exc,
             )
 
-        symbols = _filter_symbols(_parse_symbols(data))
+        parsed_symbols = _filter_symbols(_parse_symbols(data))
+        symbols = self._apply_symbol_allowlist(parsed_symbols)
         if not symbols:
             return self._fallback_from_cache(
                 now=now,
-                reason='jangar_payload_empty',
+                reason=(
+                    "jangar_payload_no_allowed_symbols"
+                    if parsed_symbols and self._has_symbol_allowlist()
+                    else "jangar_payload_empty"
+                ),
             )
         self._cache = UniverseCache(symbols=symbols, fetched_at=now)
         return UniverseResolution(
             symbols=symbols,
-            source='jangar',
-            status='ok',
-            reason='jangar_fetch_ok',
+            source="jangar",
+            status="ok",
+            reason="jangar_fetch_ok",
             fetched_at=now,
             cache_age_seconds=0,
         )
@@ -308,7 +333,7 @@ class UniverseResolver:
             logger.exception("Simulation universe snapshot invalid path=%s", path)
             self._simulation_symbols_cache = set()
             return set()
-        symbols = _filter_symbols(_parse_symbols(payload))
+        symbols = self._apply_symbol_allowlist(_filter_symbols(_parse_symbols(payload)))
         self._simulation_symbols_cache = set(symbols)
         return set(symbols)
 
@@ -337,8 +362,8 @@ class UniverseResolver:
                     )
                 return UniverseResolution(
                     symbols=static_fallback_symbols,
-                    source='jangar',
-                    status='degraded',
+                    source="jangar",
+                    status="degraded",
                     reason=fallback_reason,
                     fetched_at=None,
                     cache_age_seconds=None,
@@ -356,8 +381,8 @@ class UniverseResolver:
                 )
             return UniverseResolution(
                 symbols=set(),
-                source='jangar',
-                status='error',
+                source="jangar",
+                status="error",
                 reason=reason,
                 fetched_at=None,
                 cache_age_seconds=None,
@@ -365,7 +390,33 @@ class UniverseResolver:
         age_seconds = int((now - self._cache.fetched_at).total_seconds())
         max_stale_seconds = max(1, settings.trading_universe_max_stale_seconds)
         if age_seconds <= max_stale_seconds:
-            warning_reason = f'{reason}_using_stale_cache'
+            cached_symbols = self._apply_symbol_allowlist(set(self._cache.symbols))
+            if not cached_symbols:
+                if static_fallback_symbols:
+                    fallback_reason = f"{reason}_using_static_fallback"
+                    if self._should_emit_stale_cache_warning(fallback_reason, now):
+                        logger.warning(
+                            "Cached Jangar universe has no allowed symbols; using static fallback reason=%s symbols=%s",
+                            reason,
+                            len(static_fallback_symbols),
+                        )
+                    return UniverseResolution(
+                        symbols=static_fallback_symbols,
+                        source="jangar",
+                        status="degraded",
+                        reason=fallback_reason,
+                        fetched_at=self._cache.fetched_at,
+                        cache_age_seconds=age_seconds,
+                    )
+                return UniverseResolution(
+                    symbols=set(),
+                    source="jangar",
+                    status="error",
+                    reason=f"{reason}_stale_cache_no_allowed_symbols",
+                    fetched_at=self._cache.fetched_at,
+                    cache_age_seconds=age_seconds,
+                )
+            warning_reason = f"{reason}_using_stale_cache"
             if self._should_emit_stale_cache_warning(warning_reason, now):
                 logger.warning(
                     "Reusing cached Jangar universe after fetch failure reason=%s age_seconds=%s symbols=%s",
@@ -380,10 +431,10 @@ class UniverseResolver:
                     age_seconds,
                 )
             return UniverseResolution(
-                symbols=set(self._cache.symbols),
-                source='jangar',
-                status='degraded',
-                reason=f'{reason}_using_stale_cache',
+                symbols=cached_symbols,
+                source="jangar",
+                status="degraded",
+                reason=f"{reason}_using_stale_cache",
                 fetched_at=self._cache.fetched_at,
                 cache_age_seconds=age_seconds,
             )
@@ -410,17 +461,17 @@ class UniverseResolver:
                 )
             return UniverseResolution(
                 symbols=static_fallback_symbols,
-                source='jangar',
-                status='degraded',
+                source="jangar",
+                status="degraded",
                 reason=fallback_reason,
                 fetched_at=self._cache.fetched_at,
                 cache_age_seconds=age_seconds,
             )
         return UniverseResolution(
             symbols=set(),
-            source='jangar',
-            status='error',
-            reason=f'{reason}_cache_stale',
+            source="jangar",
+            status="error",
+            reason=f"{reason}_cache_stale",
             fetched_at=self._cache.fetched_at,
             cache_age_seconds=age_seconds,
         )
@@ -429,7 +480,27 @@ class UniverseResolver:
         if not settings.trading_universe_static_fallback_enabled:
             return set()
         configured = set(settings.trading_universe_static_fallback_symbols)
-        return _filter_symbols(configured)
+        return self._apply_symbol_allowlist(_filter_symbols(configured))
+
+    def _has_symbol_allowlist(self) -> bool:
+        return bool(settings.trading_universe_symbol_allowlist)
+
+    def _apply_symbol_allowlist(self, symbols: set[str]) -> set[str]:
+        allowlist = {
+            normalized
+            for symbol in settings.trading_universe_symbol_allowlist
+            if (normalized := normalize_symbol(symbol))
+        }
+        if len(allowlist) > MAX_RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE_SIZE:
+            logger.error(
+                "Trading universe allowlist exceeds maximum size max=%s actual=%s",
+                MAX_RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE_SIZE,
+                len(allowlist),
+            )
+            return set()
+        if not allowlist:
+            return set(symbols)
+        return {symbol for symbol in symbols if symbol in allowlist}
 
 
 def _parse_symbols(payload: object) -> set[str]:

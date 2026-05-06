@@ -39,57 +39,45 @@ from app.trading.reconcile import Reconciler
 from app.trading.risk import RiskEngine
 from app.trading.scheduler.simple_pipeline import SimpleTradingPipeline
 from app.trading.scheduler.state import TradingState
+from app.trading.semiconductor_universe import (
+    LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE,
+)
 from app.trading.universe import UniverseResolver
 
-DEFAULT_SYMBOLS = [
-    'NVDA',
-    'TSM',
-    'AVGO',
-    'AMD',
-    'MU',
-    'TXN',
-    'ADI',
-    'LRCX',
-    'KLAC',
-    'QCOM',
-    'AMAT',
-    'ASML',
-]
+DEFAULT_SYMBOLS = list(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
 ALLOWED_REJECT_REASONS = {
-    'kill_switch_enabled',
-    'invalid_qty_increment',
-    'qty_below_min_after_clamp',
-    'insufficient_buying_power',
-    'max_notional_exceeded',
-    'max_symbol_exposure_exceeded',
-    'shorting_not_allowed_for_asset',
-    'broker_precheck_failed',
-    'broker_submit_failed',
+    "kill_switch_enabled",
+    "invalid_qty_increment",
+    "qty_below_min_after_clamp",
+    "insufficient_buying_power",
+    "max_notional_exceeded",
+    "max_symbol_exposure_exceeded",
+    "shorting_not_allowed_for_asset",
+    "broker_precheck_failed",
+    "broker_submit_failed",
 }
-DEFAULT_START = '2026-03-26T13:30:00Z'
-DEFAULT_END = '2026-03-26T20:00:00Z'
-DEFAULT_OUTPUT_DIR = (
-    REPO_ROOT / 'artifacts/torghut/simulations/local-simple-20260326'
-)
-DEFAULT_CLICKHOUSE_URL = 'http://torghut-clickhouse.torghut.svc.cluster.local:8123'
-DEFAULT_CLICKHOUSE_NAMESPACE = 'torghut'
-DEFAULT_CLICKHOUSE_POD = 'chi-torghut-clickhouse-default-0-0-0'
+DEFAULT_START = "2026-03-26T13:30:00Z"
+DEFAULT_END = "2026-03-26T20:00:00Z"
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "artifacts/torghut/simulations/local-simple-20260326"
+DEFAULT_CLICKHOUSE_URL = "http://torghut-clickhouse.torghut.svc.cluster.local:8123"
+DEFAULT_CLICKHOUSE_NAMESPACE = "torghut"
+DEFAULT_CLICKHOUSE_POD = "chi-torghut-clickhouse-default-0-0-0"
 ESSENTIAL_SIGNAL_COLUMNS = [
-    'event_ts',
-    'ingest_ts',
-    'symbol',
-    'window_size',
-    'window_step',
-    'seq',
-    'source',
-    'macd',
-    'macd_signal',
-    'rsi14',
-    'vwap_session',
-    'vwap_w5m',
+    "event_ts",
+    "ingest_ts",
+    "symbol",
+    "window_size",
+    "window_step",
+    "seq",
+    "source",
+    "macd",
+    "macd_signal",
+    "rsi14",
+    "vwap_session",
+    "vwap_w5m",
 ]
 
-logger = logging.getLogger('torghut.simple_replay')
+logger = logging.getLogger("torghut.simple_replay")
 
 
 @dataclass
@@ -121,7 +109,7 @@ class BucketReplayIngestor:
                 cursor_at=None,
                 cursor_seq=None,
                 cursor_symbol=None,
-                no_signal_reason='replay_complete',
+                no_signal_reason="replay_complete",
             )
         signals = self._buckets[self._cursor]
         cursor_at = signals[-1].event_ts if signals else None
@@ -134,7 +122,7 @@ class BucketReplayIngestor:
             cursor_symbol=cursor_symbol,
             query_start=signals[0].event_ts if signals else None,
             query_end=signals[-1].event_ts if signals else None,
-            no_signal_reason=None if signals else 'empty_bucket',
+            no_signal_reason=None if signals else "empty_bucket",
         )
 
     def commit_cursor(self, session: Session, batch: SignalBatch) -> None:
@@ -160,9 +148,9 @@ class LocalSimulationBroker:
 
     def get_account(self) -> dict[str, Any]:
         positions = self.list_positions()
-        net_market_value = Decimal('0')
+        net_market_value = Decimal("0")
         for position in positions:
-            raw_market_value = position.get('market_value')
+            raw_market_value = position.get("market_value")
             if raw_market_value is None:
                 continue
             try:
@@ -170,12 +158,12 @@ class LocalSimulationBroker:
             except Exception:
                 continue
         equity = self._cash + net_market_value
-        buying_power = max(self._cash, equity, Decimal('0'))
+        buying_power = max(self._cash, equity, Decimal("0"))
         return {
-            'equity': str(equity),
-            'cash': str(self._cash),
-            'buying_power': str(buying_power),
-            'shorting_enabled': self._allow_shorts,
+            "equity": str(equity),
+            "cash": str(self._cash),
+            "buying_power": str(buying_power),
+            "shorting_enabled": self._allow_shorts,
         }
 
     def list_positions(self) -> list[dict[str, Any]]:
@@ -183,9 +171,9 @@ class LocalSimulationBroker:
 
     def get_asset(self, symbol_or_asset_id: str) -> dict[str, Any]:
         return {
-            'symbol': symbol_or_asset_id,
-            'tradable': True,
-            'shortable': self._allow_shorts,
+            "symbol": symbol_or_asset_id,
+            "tradable": True,
+            "shortable": self._allow_shorts,
         }
 
     def submit_order(
@@ -212,10 +200,10 @@ class LocalSimulationBroker:
             stop_price=stop_price,
             extra_params=extra_params,
         )
-        filled_qty = Decimal(str(order.get('filled_qty') or order.get('qty') or '0'))
-        fill_price = Decimal(str(order.get('filled_avg_price') or '0'))
+        filled_qty = Decimal(str(order.get("filled_qty") or order.get("qty") or "0"))
+        fill_price = Decimal(str(order.get("filled_avg_price") or "0"))
         cash_delta = filled_qty * fill_price
-        if side.strip().lower() == 'buy':
+        if side.strip().lower() == "buy":
             self._cash -= cash_delta
         else:
             self._cash += cash_delta
@@ -238,53 +226,55 @@ class LocalSimulationBroker:
         _ = firewall_token
         return self._adapter.cancel_all_orders()
 
-    def get_order_by_client_order_id(self, client_order_id: str) -> dict[str, Any] | None:
+    def get_order_by_client_order_id(
+        self, client_order_id: str
+    ) -> dict[str, Any] | None:
         return self._adapter.get_order_by_client_order_id(client_order_id)
 
     def get_order(self, alpaca_order_id: str) -> dict[str, Any]:
         return self._adapter.get_order(alpaca_order_id)
 
-    def list_orders(self, status: str = 'all') -> list[dict[str, Any]]:
+    def list_orders(self, status: str = "all") -> list[dict[str, Any]]:
         return self._adapter.list_orders(status=status)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description='Replay a trading session through the simple execution lane.',
+        description="Replay a trading session through the simple execution lane.",
     )
-    parser.add_argument('--start', default=DEFAULT_START)
-    parser.add_argument('--end', default=DEFAULT_END)
-    parser.add_argument('--symbols', default=','.join(DEFAULT_SYMBOLS))
-    parser.add_argument('--output-dir', default=str(DEFAULT_OUTPUT_DIR))
+    parser.add_argument("--start", default=DEFAULT_START)
+    parser.add_argument("--end", default=DEFAULT_END)
+    parser.add_argument("--symbols", default=",".join(DEFAULT_SYMBOLS))
+    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument(
-        '--strategy-config',
-        default=str(REPO_ROOT / 'argocd/applications/torghut/strategy-configmap.yaml'),
+        "--strategy-config",
+        default=str(REPO_ROOT / "argocd/applications/torghut/strategy-configmap.yaml"),
     )
-    parser.add_argument('--clickhouse-url', default=DEFAULT_CLICKHOUSE_URL)
-    parser.add_argument('--clickhouse-username', default='torghut')
-    parser.add_argument('--clickhouse-password', required=True)
-    parser.add_argument('--clickhouse-table', default='torghut.ta_signals')
+    parser.add_argument("--clickhouse-url", default=DEFAULT_CLICKHOUSE_URL)
+    parser.add_argument("--clickhouse-username", default="torghut")
+    parser.add_argument("--clickhouse-password", required=True)
+    parser.add_argument("--clickhouse-table", default="torghut.ta_signals")
     parser.add_argument(
-        '--clickhouse-transport',
-        choices=['kubectl', 'http'],
-        default='kubectl',
+        "--clickhouse-transport",
+        choices=["kubectl", "http"],
+        default="kubectl",
     )
     parser.add_argument(
-        '--clickhouse-namespace',
+        "--clickhouse-namespace",
         default=DEFAULT_CLICKHOUSE_NAMESPACE,
     )
     parser.add_argument(
-        '--clickhouse-pod',
+        "--clickhouse-pod",
         default=DEFAULT_CLICKHOUSE_POD,
     )
-    parser.add_argument('--initial-cash', type=Decimal, default=Decimal('10000'))
-    parser.add_argument('--bucket-seconds', type=int, default=60)
-    parser.add_argument('--min-split-seconds', type=int, default=60)
-    parser.add_argument('--max-notional-per-order', type=Decimal, default=None)
-    parser.add_argument('--max-notional-per-symbol', type=Decimal, default=None)
-    parser.add_argument('--allow-shorts', action='store_true', default=True)
-    parser.add_argument('--disable-shorts', dest='allow_shorts', action='store_false')
-    parser.add_argument('--verbose', action='store_true')
+    parser.add_argument("--initial-cash", type=Decimal, default=Decimal("10000"))
+    parser.add_argument("--bucket-seconds", type=int, default=60)
+    parser.add_argument("--min-split-seconds", type=int, default=60)
+    parser.add_argument("--max-notional-per-order", type=Decimal, default=None)
+    parser.add_argument("--max-notional-per-symbol", type=Decimal, default=None)
+    parser.add_argument("--allow-shorts", action="store_true", default=True)
+    parser.add_argument("--disable-shorts", dest="allow_shorts", action="store_false")
+    parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
 
 
@@ -292,11 +282,13 @@ def main() -> int:
     args = parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
-        format='%(asctime)s %(levelname)s %(message)s',
+        format="%(asctime)s %(levelname)s %(message)s",
     )
     start = _parse_timestamp(args.start)
     end = _parse_timestamp(args.end)
-    symbols = [symbol.strip().upper() for symbol in args.symbols.split(',') if symbol.strip()]
+    symbols = [
+        symbol.strip().upper() for symbol in args.symbols.split(",") if symbol.strip()
+    ]
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -309,7 +301,7 @@ def main() -> int:
     )
     strategy_defs = _load_enabled_strategies(Path(args.strategy_config))
     if not strategy_defs:
-        raise RuntimeError('No enabled strategies found in strategy config')
+        raise RuntimeError("No enabled strategies found in strategy config")
 
     signal_fetch_counts: dict[str, int] = {}
     all_signals: list[SignalEnvelope] = []
@@ -329,21 +321,21 @@ def main() -> int:
         )
         signal_fetch_counts[symbol] = len(signals)
         all_signals.extend(signals)
-        logger.info('Fetched %s signals for %s', len(signals), symbol)
+        logger.info("Fetched %s signals for %s", len(signals), symbol)
 
     all_signals.sort(key=_signal_sort_key)
     buckets = _bucket_signals(all_signals, bucket_seconds=args.bucket_seconds)
     logger.info(
-        'Loaded %s total signals across %s symbols into %s replay buckets',
+        "Loaded %s total signals across %s symbols into %s replay buckets",
         len(all_signals),
         len(symbols),
         len(buckets),
     )
 
-    db_path = output_dir / 'replay.sqlite3'
+    db_path = output_dir / "replay.sqlite3"
     if db_path.exists():
         db_path.unlink()
-    engine = create_engine(f'sqlite+pysqlite:///{db_path}', future=True)
+    engine = create_engine(f"sqlite+pysqlite:///{db_path}", future=True)
     Base.metadata.create_all(engine)
     session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     _seed_strategies(session_local, strategy_defs)
@@ -360,10 +352,10 @@ def main() -> int:
         sasl_mechanism=None,
         sasl_username=None,
         sasl_password=None,
-        topic='torghut.sim.trade-updates.v1',
-        account_label='paper',
-        simulation_run_id='local-simple-20260326',
-        dataset_id='local-clickhouse-march26',
+        topic="torghut.sim.trade-updates.v1",
+        account_label="paper",
+        simulation_run_id="local-simple-20260326",
+        dataset_id="local-clickhouse-march26",
     )
     broker = LocalSimulationBroker(
         adapter=broker_adapter,
@@ -382,7 +374,7 @@ def main() -> int:
         reconciler=Reconciler(),
         universe_resolver=UniverseResolver(),
         state=TradingState(),
-        account_label='paper',
+        account_label="paper",
         session_factory=session_local,
     )
     pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
@@ -405,19 +397,19 @@ def main() -> int:
     )
     _write_artifacts(output_dir=output_dir, artifacts=artifacts)
     logger.info(
-        'Replay complete executions=%s submitted=%s rejected=%s blocked=%s',
-        artifacts.replay_report['executions_total'],
-        artifacts.replay_report['orders_submitted_total'],
-        artifacts.replay_report['rejected_total'],
-        artifacts.replay_report['blocked_total'],
+        "Replay complete executions=%s submitted=%s rejected=%s blocked=%s",
+        artifacts.replay_report["executions_total"],
+        artifacts.replay_report["orders_submitted_total"],
+        artifacts.replay_report["rejected_total"],
+        artifacts.replay_report["blocked_total"],
     )
-    return 0 if artifacts.run_summary['acceptance']['passed'] else 1
+    return 0 if artifacts.run_summary["acceptance"]["passed"] else 1
 
 
 def _parse_timestamp(value: str) -> datetime:
     normalized = value.strip()
-    if normalized.endswith('Z'):
-        normalized = normalized[:-1] + '+00:00'
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
     parsed = datetime.fromisoformat(normalized)
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
@@ -428,20 +420,20 @@ def _load_enabled_strategies(path: Path) -> list[dict[str, Any]]:
     payload = yaml.safe_load(path.read_text())
     if not isinstance(payload, dict):
         return []
-    raw_catalog = payload.get('data', {}).get('strategies.yaml')
+    raw_catalog = payload.get("data", {}).get("strategies.yaml")
     if not isinstance(raw_catalog, str):
         return []
     catalog = yaml.safe_load(raw_catalog)
     if not isinstance(catalog, dict):
         return []
-    raw_strategies = catalog.get('strategies')
+    raw_strategies = catalog.get("strategies")
     if not isinstance(raw_strategies, list):
         return []
     enabled: list[dict[str, Any]] = []
     for entry in raw_strategies:
         if not isinstance(entry, dict):
             continue
-        if not bool(entry.get('enabled', False)):
+        if not bool(entry.get("enabled", False)):
             continue
         enabled.append(entry)
     return enabled
@@ -455,17 +447,17 @@ def _seed_strategies(
         for definition in strategy_defs:
             session.add(
                 Strategy(
-                    name=str(definition.get('name') or 'strategy'),
-                    description=str(definition.get('description') or ''),
+                    name=str(definition.get("name") or "strategy"),
+                    description=str(definition.get("description") or ""),
                     enabled=True,
-                    base_timeframe=str(definition.get('base_timeframe') or '1Sec'),
-                    universe_type=str(definition.get('universe_type') or 'static'),
-                    universe_symbols=definition.get('universe_symbols'),
+                    base_timeframe=str(definition.get("base_timeframe") or "1Sec"),
+                    universe_type=str(definition.get("universe_type") or "static"),
+                    universe_symbols=definition.get("universe_symbols"),
                     max_position_pct_equity=_optional_decimal(
-                        definition.get('max_position_pct_equity')
+                        definition.get("max_position_pct_equity")
                     ),
                     max_notional_per_trade=_optional_decimal(
-                        definition.get('max_notional_per_trade')
+                        definition.get("max_notional_per_trade")
                     ),
                 )
             )
@@ -480,9 +472,9 @@ def _configure_replay_settings(
     allow_shorts: bool,
 ) -> None:
     config.settings.trading_enabled = True
-    config.settings.trading_mode = 'paper'
+    config.settings.trading_mode = "paper"
     config.settings.trading_live_enabled = False
-    config.settings.trading_pipeline_mode = 'simple'
+    config.settings.trading_pipeline_mode = "simple"
     config.settings.trading_simple_submit_enabled = True
     config.settings.trading_simple_order_feed_telemetry_enabled = False
     config.settings.trading_simple_max_notional_per_order = (
@@ -493,14 +485,14 @@ def _configure_replay_settings(
     )
     config.settings.trading_kill_switch_enabled = False
     config.settings.trading_emergency_stop_enabled = False
-    config.settings.trading_universe_source = 'jangar'
+    config.settings.trading_universe_source = "jangar"
     config.settings.trading_universe_static_fallback_enabled = True
-    config.settings.trading_universe_static_fallback_symbols_raw = ','.join(symbols)
+    config.settings.trading_universe_static_fallback_symbols_raw = ",".join(symbols)
     config.settings.trading_allow_shorts = allow_shorts
     config.settings.trading_fractional_equities_enabled = True
     config.settings.trading_feature_quality_enabled = False
     config.settings.trading_strategy_scheduler_enabled = False
-    config.settings.trading_strategy_runtime_mode = 'scheduler_v3'
+    config.settings.trading_strategy_runtime_mode = "scheduler_v3"
     config.settings.llm_enabled = False
 
 
@@ -535,13 +527,13 @@ def _fetch_signals_adaptive(
         window_seconds = int((end - start).total_seconds())
         if window_seconds <= min_split_seconds:
             raise RuntimeError(
-                f'Failed to fetch {symbol} signals for {start.isoformat()}..{end.isoformat()}'
+                f"Failed to fetch {symbol} signals for {start.isoformat()}..{end.isoformat()}"
             ) from exc
         midpoint = start + timedelta(seconds=window_seconds // 2)
         if midpoint <= start or midpoint >= end:
             raise
         logger.warning(
-            'Splitting %s window %s..%s after fetch failure: %s',
+            "Splitting %s window %s..%s after fetch failure: %s",
             symbol,
             start.isoformat(),
             end.isoformat(),
@@ -589,7 +581,7 @@ def _fetch_signals_window(
     clickhouse_password: str,
     clickhouse_table: str,
 ) -> list[SignalEnvelope]:
-    if clickhouse_transport == 'http':
+    if clickhouse_transport == "http":
         return ingestor.fetch_signals_between(start, end, symbol=symbol)
     rows = _fetch_rows_via_kubectl(
         symbol=symbol,
@@ -607,7 +599,9 @@ def _fetch_signals_window(
         if signal is None:
             continue
         signals.append(signal)
-    return ingestor._sorted_signals(ingestor._filter_signals(ingestor._dedupe_signals(signals)))
+    return ingestor._sorted_signals(
+        ingestor._filter_signals(ingestor._dedupe_signals(signals))
+    )
 
 
 def _fetch_rows_via_kubectl(
@@ -623,7 +617,7 @@ def _fetch_rows_via_kubectl(
 ) -> list[dict[str, Any]]:
     start_literal = _to_ch_datetime64(start)
     end_literal = _to_ch_datetime64(end)
-    select_expr = ', '.join(ESSENTIAL_SIGNAL_COLUMNS)
+    select_expr = ", ".join(ESSENTIAL_SIGNAL_COLUMNS)
     query = (
         f"SELECT {select_expr} "
         f"FROM {clickhouse_table} "
@@ -635,18 +629,18 @@ def _fetch_rows_via_kubectl(
     )
     result = subprocess.run(
         [
-            'kubectl',
-            'exec',
-            '-n',
+            "kubectl",
+            "exec",
+            "-n",
             clickhouse_namespace,
             clickhouse_pod,
-            '--',
-            'clickhouse-client',
-            '--user',
+            "--",
+            "clickhouse-client",
+            "--user",
             clickhouse_username,
-            '--password',
+            "--password",
             clickhouse_password,
-            '--query',
+            "--query",
             query,
         ],
         check=False,
@@ -666,7 +660,7 @@ def _fetch_rows_via_kubectl(
 
 
 def _to_ch_datetime64(value: datetime) -> str:
-    timestamp = value.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+    timestamp = value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     return f"toDateTime64('{timestamp}', 3, 'UTC')"
 
 
@@ -733,116 +727,115 @@ def _build_artifacts(
     submit_paths = Counter()
     for decision in decisions:
         payload = _mapping(decision.decision_json)
-        params = _mapping(payload.get('params'))
-        lane_values.update([str(params.get('execution_lane') or '')])
-        submit_paths.update([str(params.get('submit_path') or '')])
-        reject_reasons.update(_string_list(payload.get('risk_reasons')))
-        if payload.get('submission_block_reason'):
-            block_reasons.update([str(payload['submission_block_reason'])])
+        params = _mapping(payload.get("params"))
+        lane_values.update([str(params.get("execution_lane") or "")])
+        submit_paths.update([str(params.get("submit_path") or "")])
+        reject_reasons.update(_string_list(payload.get("risk_reasons")))
+        if payload.get("submission_block_reason"):
+            block_reasons.update([str(payload["submission_block_reason"])])
     governance_blockers = sorted(
-        reason
-        for reason in block_reasons
-        if _is_governance_block_reason(reason)
+        reason for reason in block_reasons if _is_governance_block_reason(reason)
     )
     invalid_reject_reasons = sorted(
-        reason
-        for reason in reject_reasons
-        if reason not in ALLOWED_REJECT_REASONS
+        reason for reason in reject_reasons if reason not in ALLOWED_REJECT_REASONS
     )
     runtime_verify = {
-        'runtime_state': 'ready',
-        'pipeline_mode': config.settings.trading_pipeline_mode,
-        'execution_lane': 'simple',
-        'submit_path': 'direct_alpaca',
-        'window_start': start.isoformat(),
-        'window_end': end.isoformat(),
-        'strategy_names': [str(item.get('name')) for item in strategies],
-        'strategy_count': len(strategies),
-        'symbols': symbols,
-        'signal_fetch_counts': signal_fetch_counts,
-        'signals_total': total_signals,
-        'replay_bucket_count': replay_buckets,
-        'output_dir': str(output_dir),
+        "runtime_state": "ready",
+        "pipeline_mode": config.settings.trading_pipeline_mode,
+        "execution_lane": "simple",
+        "submit_path": "direct_alpaca",
+        "window_start": start.isoformat(),
+        "window_end": end.isoformat(),
+        "strategy_names": [str(item.get("name")) for item in strategies],
+        "strategy_count": len(strategies),
+        "symbols": symbols,
+        "signal_fetch_counts": signal_fetch_counts,
+        "signals_total": total_signals,
+        "replay_bucket_count": replay_buckets,
+        "output_dir": str(output_dir),
     }
     replay_report = {
-        'pipeline_mode': config.settings.trading_pipeline_mode,
-        'execution_lane': 'simple',
-        'signals_total': total_signals,
-        'decision_total': len(decisions),
-        'orders_submitted_total': decision_status_totals.get('submitted', 0),
-        'rejected_total': decision_status_totals.get('rejected', 0),
-        'blocked_total': decision_status_totals.get('blocked', 0),
-        'executions_total': len(executions),
-        'decision_status_totals': dict(decision_status_totals),
-        'execution_status_totals': dict(execution_status_totals),
-        'reject_reason_totals': dict(reject_reasons),
-        'block_reason_totals': dict(block_reasons),
-        'reconcile_updates': reconcile_updates,
-        'metrics': {
-            'orders_submitted_total': pipeline.state.metrics.orders_submitted_total,
-            'orders_rejected_total': pipeline.state.metrics.orders_rejected_total,
-            'decisions_total': pipeline.state.metrics.decisions_total,
-            'reconcile_updates_total': pipeline.state.metrics.reconcile_updates_total,
+        "pipeline_mode": config.settings.trading_pipeline_mode,
+        "execution_lane": "simple",
+        "signals_total": total_signals,
+        "decision_total": len(decisions),
+        "orders_submitted_total": decision_status_totals.get("submitted", 0),
+        "rejected_total": decision_status_totals.get("rejected", 0),
+        "blocked_total": decision_status_totals.get("blocked", 0),
+        "executions_total": len(executions),
+        "decision_status_totals": dict(decision_status_totals),
+        "execution_status_totals": dict(execution_status_totals),
+        "reject_reason_totals": dict(reject_reasons),
+        "block_reason_totals": dict(block_reasons),
+        "reconcile_updates": reconcile_updates,
+        "metrics": {
+            "orders_submitted_total": pipeline.state.metrics.orders_submitted_total,
+            "orders_rejected_total": pipeline.state.metrics.orders_rejected_total,
+            "decisions_total": pipeline.state.metrics.decisions_total,
+            "reconcile_updates_total": pipeline.state.metrics.reconcile_updates_total,
         },
     }
     decision_activity = {
-        'pipeline_mode': 'simple',
-        'trade_decisions': len(decisions),
-        'decision_status_totals': dict(decision_status_totals),
-        'reject_reason_totals': dict(reject_reasons),
-        'block_reason_totals': dict(block_reasons),
-        'execution_lane_totals': {
+        "pipeline_mode": "simple",
+        "trade_decisions": len(decisions),
+        "decision_status_totals": dict(decision_status_totals),
+        "reject_reason_totals": dict(reject_reasons),
+        "block_reason_totals": dict(block_reasons),
+        "execution_lane_totals": {
             key: value for key, value in lane_values.items() if key
         },
-        'submit_path_totals': {
+        "submit_path_totals": {
             key: value for key, value in submit_paths.items() if key
         },
     }
     execution_activity = {
-        'pipeline_mode': 'simple',
-        'executions': len(executions),
-        'execution_status_totals': dict(execution_status_totals),
-        'reconcile_updates': reconcile_updates,
+        "pipeline_mode": "simple",
+        "executions": len(executions),
+        "execution_status_totals": dict(execution_status_totals),
+        "reconcile_updates": reconcile_updates,
     }
     acceptance = {
-        'executions_non_zero': len(executions) > 0,
-        'capital_stage_shadow_blocks_zero': block_reasons.get('capital_stage_shadow', 0) == 0,
-        'alpha_readiness_blocks_zero': not any(
-            reason.startswith('alpha_readiness_') for reason in block_reasons
+        "executions_non_zero": len(executions) > 0,
+        "capital_stage_shadow_blocks_zero": block_reasons.get("capital_stage_shadow", 0)
+        == 0,
+        "alpha_readiness_blocks_zero": not any(
+            reason.startswith("alpha_readiness_") for reason in block_reasons
         ),
-        'dependency_quorum_blocks_zero': not any(
-            reason.startswith('dependency_quorum_') for reason in block_reasons
+        "dependency_quorum_blocks_zero": not any(
+            reason.startswith("dependency_quorum_") for reason in block_reasons
         ),
-        'market_context_blocks_zero': not any(
-            reason.startswith('market_context') for reason in block_reasons
+        "market_context_blocks_zero": not any(
+            reason.startswith("market_context") for reason in block_reasons
         ),
-        'llm_blocks_zero': not any(reason.startswith('llm_') for reason in block_reasons),
-        'reject_reasons_within_simple_allowlist': not invalid_reject_reasons,
-        'reconciliation_updates_persisted': reconcile_updates >= 0,
-        'governance_blockers': governance_blockers,
-        'invalid_reject_reasons': invalid_reject_reasons,
+        "llm_blocks_zero": not any(
+            reason.startswith("llm_") for reason in block_reasons
+        ),
+        "reject_reasons_within_simple_allowlist": not invalid_reject_reasons,
+        "reconciliation_updates_persisted": reconcile_updates >= 0,
+        "governance_blockers": governance_blockers,
+        "invalid_reject_reasons": invalid_reject_reasons,
     }
-    acceptance['passed'] = all(
+    acceptance["passed"] = all(
         bool(value)
         for key, value in acceptance.items()
-        if key not in {'governance_blockers', 'invalid_reject_reasons'}
+        if key not in {"governance_blockers", "invalid_reject_reasons"}
     )
     run_summary = {
-        'run_token': 'local-simple-20260326',
-        'window_start': start.isoformat(),
-        'window_end': end.isoformat(),
-        'pipeline_mode': 'simple',
-        'execution_lane': 'simple',
-        'signals_total': total_signals,
-        'decision_total': len(decisions),
-        'executions_total': len(executions),
-        'acceptance': acceptance,
-        'artifacts': {
-            'runtime_verify_path': str(output_dir / 'runtime-verify.json'),
-            'replay_report_path': str(output_dir / 'replay-report.json'),
-            'decision_activity_path': str(output_dir / 'decision-activity.json'),
-            'execution_activity_path': str(output_dir / 'execution-activity.json'),
-            'run_summary_path': str(output_dir / 'run-summary.json'),
+        "run_token": "local-simple-20260326",
+        "window_start": start.isoformat(),
+        "window_end": end.isoformat(),
+        "pipeline_mode": "simple",
+        "execution_lane": "simple",
+        "signals_total": total_signals,
+        "decision_total": len(decisions),
+        "executions_total": len(executions),
+        "acceptance": acceptance,
+        "artifacts": {
+            "runtime_verify_path": str(output_dir / "runtime-verify.json"),
+            "replay_report_path": str(output_dir / "replay-report.json"),
+            "decision_activity_path": str(output_dir / "decision-activity.json"),
+            "execution_activity_path": str(output_dir / "execution-activity.json"),
+            "run_summary_path": str(output_dir / "run-summary.json"),
         },
     }
     return ReplayArtifacts(
@@ -855,15 +848,15 @@ def _build_artifacts(
 
 
 def _write_artifacts(*, output_dir: Path, artifacts: ReplayArtifacts) -> None:
-    _write_json(output_dir / 'runtime-verify.json', artifacts.runtime_verify)
-    _write_json(output_dir / 'replay-report.json', artifacts.replay_report)
-    _write_json(output_dir / 'decision-activity.json', artifacts.decision_activity)
-    _write_json(output_dir / 'execution-activity.json', artifacts.execution_activity)
-    _write_json(output_dir / 'run-summary.json', artifacts.run_summary)
+    _write_json(output_dir / "runtime-verify.json", artifacts.runtime_verify)
+    _write_json(output_dir / "replay-report.json", artifacts.replay_report)
+    _write_json(output_dir / "decision-activity.json", artifacts.decision_activity)
+    _write_json(output_dir / "execution-activity.json", artifacts.execution_activity)
+    _write_json(output_dir / "run-summary.json", artifacts.run_summary)
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -889,13 +882,13 @@ def _optional_decimal(value: Any) -> Decimal | None:
 
 def _is_governance_block_reason(reason: str) -> bool:
     return (
-        reason == 'capital_stage_shadow'
-        or reason.startswith('alpha_readiness_')
-        or reason.startswith('dependency_quorum_')
-        or reason.startswith('market_context')
-        or reason.startswith('llm_')
+        reason == "capital_stage_shadow"
+        or reason.startswith("alpha_readiness_")
+        or reason.startswith("dependency_quorum_")
+        or reason.startswith("market_context")
+        or reason.startswith("llm_")
     )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     raise SystemExit(main())

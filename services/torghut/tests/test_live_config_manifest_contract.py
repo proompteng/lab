@@ -345,13 +345,28 @@ class TestLiveConfigManifestContract(TestCase):
         )
         _assert_exact_live_execution_chip_universe(
             self,
+            _csv_symbols(live_env.get("TRADING_UNIVERSE_SYMBOL_ALLOWLIST")),
+            context="live runtime universe allowlist",
+        )
+        _assert_exact_live_execution_chip_universe(
+            self,
             _csv_symbols(sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS")),
             context="sim static fallback symbols",
         )
         _assert_exact_live_execution_chip_universe(
             self,
+            _csv_symbols(sim_env.get("TRADING_UNIVERSE_SYMBOL_ALLOWLIST")),
+            context="sim runtime universe allowlist",
+        )
+        _assert_exact_live_execution_chip_universe(
+            self,
             _csv_symbols(cast(Mapping[str, object], ws_data).get("SYMBOLS")),
             context="torghut-ws subscription symbols",
+        )
+        _assert_exact_live_execution_chip_universe(
+            self,
+            _csv_symbols(cast(Mapping[str, object], ws_data).get("SYMBOLS_ALLOWLIST")),
+            context="torghut-ws subscription allowlist",
         )
 
     def test_sim_manifest_runs_paper_live_signal_profile(self) -> None:

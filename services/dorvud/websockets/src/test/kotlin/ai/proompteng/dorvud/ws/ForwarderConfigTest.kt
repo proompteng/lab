@@ -21,6 +21,7 @@ class ForwarderConfigTest {
 
     assertEquals("http://jangar.test/api/torghut/symbols", cfg.jangarSymbolsUrl)
     assertEquals(emptyList(), cfg.staticSymbols)
+    assertEquals(emptySet(), cfg.symbolAllowlist)
     assertEquals(30_000, cfg.symbolsPollIntervalMs)
     assertEquals(200, cfg.subscribeBatchSize)
     assertEquals(1, cfg.shardCount)
@@ -39,6 +40,39 @@ class ForwarderConfigTest {
     assertEquals("us", cfg.alpacaCryptoLocation)
     assertEquals(listOf("trades", "quotes", "bars", "updatedBars"), cfg.alpacaMarketDataChannels)
     assertEquals("torghut.trades.v1", cfg.topics.trades)
+  }
+
+  @Test
+  fun `filters static symbols with configured allowlist`() {
+    val cfg =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "SYMBOLS" to "AAPL,NVDA,MSFT,AVGO",
+          "SYMBOLS_ALLOWLIST" to "NVDA,AVGO",
+        ),
+      )
+
+    assertEquals(listOf("NVDA", "AVGO"), cfg.staticSymbols)
+    assertEquals(setOf("NVDA", "AVGO"), cfg.symbolAllowlist)
+  }
+
+  @Test
+  fun `rejects symbol allowlists over twelve names`() {
+    val err =
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(
+          mapOf(
+            "ALPACA_KEY_ID" to "key",
+            "ALPACA_SECRET_KEY" to "secret",
+            "SYMBOLS" to "NVDA",
+            "SYMBOLS_ALLOWLIST" to "A,B,C,D,E,F,G,H,I,J,K,L,M",
+          ),
+        )
+      }
+
+    assertEquals("SYMBOLS_ALLOWLIST must include no more than 12 symbols", err.message)
   }
 
   @Test
