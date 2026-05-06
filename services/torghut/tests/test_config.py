@@ -754,6 +754,7 @@ class TestConfig(TestCase):
             TRADING_PIPELINE_MODE="simple",
             TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER=250.0,
             TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL=750.0,
+            TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS=50.0,
             TRADING_SIMPLE_SUBMIT_ENABLED=True,
             TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED=True,
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
@@ -762,6 +763,7 @@ class TestConfig(TestCase):
         self.assertEqual(settings.trading_pipeline_mode, "simple")
         self.assertEqual(settings.trading_simple_max_notional_per_order, 250.0)
         self.assertEqual(settings.trading_simple_max_notional_per_symbol, 750.0)
+        self.assertEqual(settings.trading_simple_buying_power_reserve_bps, 50.0)
         self.assertTrue(settings.trading_simple_submit_enabled)
         self.assertTrue(settings.trading_simple_order_feed_telemetry_enabled)
 

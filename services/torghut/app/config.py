@@ -1312,6 +1312,15 @@ class Settings(BaseSettings):
         alias="TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL",
         description="Simple-lane absolute exposure cap per symbol.",
     )
+    trading_simple_buying_power_reserve_bps: float = Field(
+        default=25.0,
+        alias="TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS",
+        description=(
+            "Simple-lane buying-power reserve in basis points before quantity "
+            "clamping, to avoid broker rejects from quote drift, fees, or cost-basis "
+            "rounding."
+        ),
+    )
     trading_simple_submit_enabled: bool = Field(
         default=False,
         alias="TRADING_SIMPLE_SUBMIT_ENABLED",
@@ -2213,6 +2222,10 @@ class Settings(BaseSettings):
             (
                 self.trading_simple_max_notional_per_symbol,
                 "TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL must be >= 0",
+            ),
+            (
+                self.trading_simple_buying_power_reserve_bps,
+                "TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS must be >= 0",
             ),
             (
                 self.trading_readiness_dependency_cache_stale_tolerance_seconds,

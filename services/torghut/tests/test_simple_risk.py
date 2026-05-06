@@ -79,6 +79,28 @@ class TestSimpleRisk(TestCase):
         self.assertEqual(result.diagnostics["final_qty"], "2")
         self.assertTrue(result.decision.params["simple_lane"]["capped_by_buying_power"])
 
+    def test_buying_power_reserve_keeps_capped_order_below_available_cash(self) -> None:
+        result = prepare_simple_decision(
+            decision=self._decision(qty="120.7481", price="414.085"),
+            account={"buying_power": "373.80", "equity": "10000", "cash": "373.80"},
+            positions=[],
+            fractional_equities_enabled=True,
+            allow_shorts=True,
+            max_notional_per_order=None,
+            max_notional_per_symbol=None,
+            buying_power_reserve_bps=Decimal("25"),
+        )
+
+        self.assertTrue(result.approved)
+        self.assertTrue(result.decision.params["simple_lane"]["capped_by_buying_power"])
+        self.assertLess(result.decision.qty, Decimal("0.9027"))
+        self.assertEqual(result.diagnostics["buying_power_reserve_bps"], "25")
+        self.assertEqual(result.diagnostics["buying_power_after_reserve"], "372.865500")
+        self.assertLessEqual(
+            Decimal(result.diagnostics["buying_power_required_notional"]),
+            Decimal(result.diagnostics["buying_power_after_reserve"]),
+        )
+
     def test_rejects_when_buying_power_cap_leaves_less_than_min_qty(self) -> None:
         result = prepare_simple_decision(
             decision=self._decision(qty="5"),
