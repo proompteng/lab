@@ -7,6 +7,7 @@ import {
   buildControllerWitnessQuorum,
   buildMaterialActionActivationReceipts,
 } from '~/server/control-plane-controller-witness'
+import { buildMaterialActionVerdictEpoch } from '~/server/control-plane-material-action-verdict'
 import {
   createControlPlaneHeartbeatStore,
   isHeartbeatFresh,
@@ -660,12 +661,34 @@ export const buildControlPlaneStatus = async (
     runtimeKits: runtimeAdmission.runtimeKits,
     controllerWitness,
   })
+  const materialActionVerdictEpoch = buildMaterialActionVerdictEpoch({
+    now,
+    namespace: options.namespace,
+    dependencyQuorum,
+    negativeEvidenceRouter: negativeEvidenceRouter.router,
+    actionSloBudgets: negativeEvidenceRouter.budgets,
+    reconciledActionClocks,
+    rolloutHealth,
+    controllerWitness,
+    database,
+    watchReliability: {
+      status: watchReliability.status,
+      window_minutes: watchReliability.window_minutes,
+      observed_streams: watchReliability.observed_streams,
+      total_events: watchReliability.total_events,
+      total_errors: watchReliability.total_errors,
+      total_restarts: watchReliability.total_restarts,
+      streams: watchReliability.streams,
+    },
+    empiricalServices,
+  })
   const materialActionActivationReceipts = buildMaterialActionActivationReceipts({
     now,
     scope: `${options.namespace}/${service}`,
     controllerWitness,
     router: negativeEvidenceRouter.router,
     budgets: negativeEvidenceRouter.budgets,
+    materialActionVerdictEpoch,
   })
 
   const leaderElection = getLeaderElectionStatus()
@@ -740,6 +763,8 @@ export const buildControlPlaneStatus = async (
     action_slo_budgets: negativeEvidenceRouter.budgets,
     torghut_action_slo_budgets: negativeEvidenceRouter.torghutBudgets,
     control_plane_controller_witness: controllerWitness,
+    material_action_verdict_epoch: materialActionVerdictEpoch,
+    material_action_verdicts: materialActionVerdictEpoch.final_verdicts,
     material_action_activation_receipts: materialActionActivationReceipts,
     empirical_services: empiricalServices,
     namespaces: [

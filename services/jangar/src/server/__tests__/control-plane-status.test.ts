@@ -689,6 +689,26 @@ describe('control-plane status', () => {
         }),
       ]),
     )
+    expect(status.material_action_verdict_epoch).toMatchObject({
+      mode: 'shadow',
+      design_artifact:
+        'docs/agents/designs/120-jangar-material-action-verdict-arbiter-and-clock-budget-parity-2026-05-06.md',
+      negative_evidence_router_epoch_ref: status.negative_evidence_router.router_epoch_id,
+      controller_witness_ref: status.control_plane_controller_witness.quorum_id,
+    })
+    expect(status.material_action_verdicts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'serve_readonly',
+          decision: 'allow',
+        }),
+        expect.objectContaining({
+          action_class: 'live_micro_canary',
+          decision: 'hold',
+          blocking_reason_codes: ['torghut_consumer_evidence_missing'],
+        }),
+      ]),
+    )
     expect(status.material_action_activation_receipts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
