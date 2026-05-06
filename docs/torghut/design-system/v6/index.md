@@ -11,6 +11,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `113-torghut-live-sim-parity-and-empirical-proof-replay-escrow-2026-05-06.md`
+  - `docs/agents/designs/109-jangar-promotion-escrow-replay-cells-and-consumer-parity-gates-2026-05-06.md`
   - `112-torghut-dual-key-capital-clearance-and-intraday-proof-loop-2026-05-06.md`
   - `docs/agents/designs/108-jangar-action-class-capital-clearance-and-proof-clock-arbiter-2026-05-06.md`
   - `111-torghut-reciprocal-evidence-authority-and-profit-escrow-2026-05-06.md`
