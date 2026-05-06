@@ -221,6 +221,13 @@ Admitted schedules and requirement runs carry these trace fields in annotations 
 - `swarmRequiredRuntimeKits`
 - `swarmAdmissionProducerRevision`
 
+The runtime-admission compiler also emits Phase 0 recovery-warrant evidence from the same passport snapshot.
+`/ready` and `/api/agents/control-plane/status` include shadow `recovery_warrants`, `runtime_proof_cells`, and
+`projection_watermarks`. A missing required helper or config value becomes a broken warrant with a missing proof cell,
+while the existing passport launcher gate remains the enforcement path. This is write-only rollout evidence for the
+runtime proof-cell contract; rollback is to stop consuming the new fields while keeping `runtime_kits` and
+`admission_passports` intact.
+
 Deploy verification also consumes the runtime-admission projection. After Argo, rollout, and image digest checks pass,
 `packages/scripts/src/jangar/verify-deployment.ts` reads
 `/api/agents/control-plane/status?namespace=agents` through the Kubernetes service proxy and requires the configured

@@ -91,6 +91,37 @@ describe('buildRuntimeAdmissionSnapshot', () => {
         }),
       ]),
     )
+    expect(snapshot.recoveryWarrants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          execution_class: 'plan',
+          status: 'sealed',
+          admission_passport_id: expect.stringContaining('passport:swarm_plan:'),
+        }),
+      ]),
+    )
+    expect(snapshot.runtimeProofCells).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          proof_kind: 'helper_asset',
+          proof_subject: expect.stringContaining('codex-nats-publish'),
+          status: 'healthy',
+        }),
+        expect.objectContaining({
+          proof_kind: 'config_digest',
+          proof_subject: 'service_url:NATS_URL',
+          status: 'healthy',
+        }),
+      ]),
+    )
+    expect(snapshot.projectionWatermarks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          consumer_key: 'deploy_verification',
+          status: 'fresh',
+        }),
+      ]),
+    )
   })
 
   it('blocks collaboration admission when the NATS CLI path is present but not executable', async () => {
@@ -182,6 +213,34 @@ describe('buildRuntimeAdmissionSnapshot', () => {
         expect.objectContaining({
           consumer_class: 'swarm_implement',
           decision: 'block',
+          reason_codes: expect.arrayContaining(['runtime_kit_component_missing:codex_nats_publish']),
+        }),
+      ]),
+    )
+    expect(snapshot.runtimeProofCells).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          proof_kind: 'helper_asset',
+          proof_subject: expect.stringContaining(publishPath),
+          status: 'missing',
+          reason_codes: expect.arrayContaining(['runtime_kit_component_missing:codex_nats_publish']),
+        }),
+      ]),
+    )
+    expect(snapshot.recoveryWarrants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          execution_class: 'implement',
+          status: 'broken',
+          reason_codes: expect.arrayContaining(['runtime_kit_component_missing:codex_nats_publish']),
+        }),
+      ]),
+    )
+    expect(snapshot.projectionWatermarks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          recovery_warrant_id: expect.stringContaining('recovery-warrant:implement:'),
+          status: 'degraded',
           reason_codes: expect.arrayContaining(['runtime_kit_component_missing:codex_nats_publish']),
         }),
       ]),

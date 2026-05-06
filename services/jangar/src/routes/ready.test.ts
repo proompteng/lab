@@ -76,11 +76,65 @@ const buildAdmissionPassport = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
+const buildRecoveryWarrant = (overrides: Record<string, unknown> = {}) => ({
+  recovery_warrant_id: 'recovery-warrant:serving:1',
+  recovery_epoch_id: 'recovery-epoch:serving:1',
+  swarm_name: 'jangar-control-plane',
+  execution_class: 'serving',
+  admitted_revision: 'shadow-v1',
+  admitted_image_digest: null,
+  runtime_kit_digest: 'runtime-1',
+  admission_passport_id: 'passport:serving:1',
+  required_proof_cell_ids: ['runtime-proof-cell:serving:1'],
+  active_backlog_seat_count: 0,
+  projection_watermark_ids: ['projection-watermark:ready:1'],
+  status: 'sealed',
+  opened_at: '2026-03-08T21:00:00Z',
+  sealed_at: '2026-03-08T21:00:00Z',
+  superseded_at: null,
+  reason_codes: [],
+  ...overrides,
+})
+
+const buildRuntimeProofCell = (overrides: Record<string, unknown> = {}) => ({
+  runtime_proof_cell_id: 'runtime-proof-cell:serving:1',
+  recovery_warrant_id: 'recovery-warrant:serving:1',
+  runtime_kit_id: 'runtime-kit:serving:1',
+  proof_kind: 'runtime_kit',
+  proof_subject: 'runtime-kit:serving:1',
+  expected_ref: 'digest-serving',
+  observed_ref: 'healthy',
+  artifact_ref: 'jangar:/ready',
+  content_hash: 'digest-serving',
+  status: 'healthy',
+  required: true,
+  reason_codes: [],
+  observed_at: '2026-03-08T21:00:00Z',
+  expires_at: '2026-03-08T21:05:00Z',
+  ...overrides,
+})
+
+const buildProjectionWatermark = (overrides: Record<string, unknown> = {}) => ({
+  projection_watermark_id: 'projection-watermark:ready:1',
+  consumer_key: 'jangar_ready',
+  recovery_warrant_id: 'recovery-warrant:serving:1',
+  projection_digest: 'projection-digest-1',
+  source_ref: 'admission-passport:passport:serving:1',
+  observed_at: '2026-03-08T21:00:00Z',
+  expires_at: '2026-03-08T21:05:00Z',
+  status: 'fresh',
+  reason_codes: [],
+  ...overrides,
+})
+
 const buildRuntimeAdmissionSnapshot = (
   overrides: Partial<{
     runtimeKits: Array<Record<string, unknown>>
     admissionPassports: Array<Record<string, unknown>>
     servingPassportId: string | null
+    recoveryWarrants: Array<Record<string, unknown>>
+    runtimeProofCells: Array<Record<string, unknown>>
+    projectionWatermarks: Array<Record<string, unknown>>
   }> = {},
 ) => ({
   runtimeKits: overrides.runtimeKits ?? [
@@ -102,6 +156,38 @@ const buildRuntimeAdmissionSnapshot = (
     }),
   ],
   servingPassportId: overrides.servingPassportId ?? 'passport:serving:1',
+  recoveryWarrants: overrides.recoveryWarrants ?? [
+    buildRecoveryWarrant(),
+    buildRecoveryWarrant({
+      recovery_warrant_id: 'recovery-warrant:implement:1',
+      execution_class: 'implement',
+      runtime_kit_digest: 'runtime-2',
+      admission_passport_id: 'passport:swarm_implement:1',
+      required_proof_cell_ids: ['runtime-proof-cell:implement:1'],
+      projection_watermark_ids: ['projection-watermark:status:1'],
+    }),
+  ],
+  runtimeProofCells: overrides.runtimeProofCells ?? [
+    buildRuntimeProofCell(),
+    buildRuntimeProofCell({
+      runtime_proof_cell_id: 'runtime-proof-cell:implement:1',
+      recovery_warrant_id: 'recovery-warrant:implement:1',
+      runtime_kit_id: 'runtime-kit:collaboration:1',
+      proof_subject: 'runtime-kit:collaboration:1',
+      expected_ref: 'digest-collaboration',
+      content_hash: 'digest-collaboration',
+      artifact_ref: 'jangar:codex:nats-collaboration',
+    }),
+  ],
+  projectionWatermarks: overrides.projectionWatermarks ?? [
+    buildProjectionWatermark(),
+    buildProjectionWatermark({
+      projection_watermark_id: 'projection-watermark:status:1',
+      consumer_key: 'control_plane_status',
+      recovery_warrant_id: 'recovery-warrant:implement:1',
+      source_ref: 'admission-passport:passport:swarm_implement:1',
+    }),
+  ],
 })
 
 describe('getReadyHandler', () => {
@@ -200,6 +286,8 @@ describe('getReadyHandler', () => {
     expect(body.memory_provider).toMatchObject({
       status: 'healthy',
     })
+    expect(body.serving_recovery_warrant_id).toBe('recovery-warrant:serving:1')
+    expect(body.serving_runtime_proof_cells_healthy).toBe(true)
   })
 
   it('returns 200 and exposes a serving passport when only collaboration runtime debt is blocked', async () => {
@@ -238,6 +326,8 @@ describe('getReadyHandler', () => {
     const body = await response.json()
     expect(body.status).toBe('ok')
     expect(body.serving_passport_id).toBe('passport:serving:1')
+    expect(body.serving_recovery_warrant_id).toBe('recovery-warrant:serving:1')
+    expect(body.serving_runtime_proof_cells_healthy).toBe(true)
     expect(body.runtime_kits).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

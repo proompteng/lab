@@ -285,6 +285,85 @@ export type AdmissionPassportStatus = {
   producer_revision: string
 }
 
+export type RecoveryWarrantExecutionClass =
+  | 'serving'
+  | 'collaboration'
+  | 'discover'
+  | 'plan'
+  | 'implement'
+  | 'verify'
+  | 'torghut_quant'
+
+export type RecoveryWarrantStatusValue = 'draft' | 'active' | 'sealed' | 'superseded' | 'broken' | 'quarantined'
+
+export type RuntimeProofKind =
+  | 'image_digest'
+  | 'runtime_kit'
+  | 'helper_asset'
+  | 'config_digest'
+  | 'secret_binding'
+  | 'network_identity'
+
+export type RuntimeProofCellStatusValue = 'healthy' | 'degraded' | 'missing' | 'expired' | 'quarantined'
+
+export type RuntimeProofCellStatus = {
+  runtime_proof_cell_id: string
+  recovery_warrant_id: string | null
+  runtime_kit_id: string
+  proof_kind: RuntimeProofKind
+  proof_subject: string
+  expected_ref: string | null
+  observed_ref: string | null
+  artifact_ref: string | null
+  content_hash: string | null
+  status: RuntimeProofCellStatusValue
+  required: boolean
+  reason_codes: string[]
+  observed_at: string
+  expires_at: string
+}
+
+export type ProjectionWatermarkStatusValue = 'fresh' | 'degraded' | 'expired' | 'quarantined'
+
+export type ProjectionWatermarkConsumerKey =
+  | 'jangar_ready'
+  | 'control_plane_status'
+  | 'deploy_verification'
+  | 'torghut_dependency_quorum'
+  | 'torghut_quant_health'
+  | 'torghut_market_context'
+
+export type ProjectionWatermarkStatus = {
+  projection_watermark_id: string
+  consumer_key: ProjectionWatermarkConsumerKey
+  recovery_warrant_id: string
+  projection_digest: string
+  source_ref: string
+  observed_at: string
+  expires_at: string
+  status: ProjectionWatermarkStatusValue
+  reason_codes: string[]
+}
+
+export type RecoveryWarrantStatus = {
+  recovery_warrant_id: string
+  recovery_epoch_id: string
+  swarm_name: string
+  execution_class: RecoveryWarrantExecutionClass
+  admitted_revision: string
+  admitted_image_digest: string | null
+  runtime_kit_digest: string
+  admission_passport_id: string | null
+  required_proof_cell_ids: string[]
+  active_backlog_seat_count: number
+  projection_watermark_ids: string[]
+  status: RecoveryWarrantStatusValue
+  opened_at: string
+  sealed_at: string | null
+  superseded_at: string | null
+  reason_codes: string[]
+}
+
 export type DependencyQuorumDecision = 'allow' | 'delay' | 'block' | 'unknown'
 
 export type DependencyQuorumSegmentStatus = 'healthy' | 'degraded' | 'blocked'
@@ -711,6 +790,9 @@ export type ControlPlaneStatus = {
   runtime_kits: RuntimeKitStatus[]
   admission_passports: AdmissionPassportStatus[]
   serving_passport_id: string | null
+  recovery_warrants: RecoveryWarrantStatus[]
+  runtime_proof_cells: RuntimeProofCellStatus[]
+  projection_watermarks: ProjectionWatermarkStatus[]
   rollout_health: ControlPlaneRolloutHealth
   empirical_services: EmpiricalServicesStatus
   execution_trust: ExecutionTrustStatus

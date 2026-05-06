@@ -9,10 +9,14 @@ import type {
   AdmissionPassportStatus,
   AdmissionPassportSubjectStatus,
   ExecutionTrustStatus,
+  ProjectionWatermarkStatus,
+  RecoveryWarrantStatus,
   RuntimeKitComponentStatus,
   RuntimeKitDecision,
   RuntimeKitStatus,
+  RuntimeProofCellStatus,
 } from '~/data/agents-control-plane'
+import { buildRuntimeProofSurface } from './control-plane-runtime-proof-surface'
 import { resolveCodexNatsHelperPathCandidatesFromConfig, resolveRuntimeAdmissionConfig } from './runtime-tooling-config'
 
 const DEFAULT_WORKTREE = '/workspace/lab'
@@ -26,6 +30,9 @@ export type RuntimeAdmissionSnapshot = {
   runtimeKits: RuntimeKitStatus[]
   admissionPassports: AdmissionPassportStatus[]
   servingPassportId: string | null
+  recoveryWarrants: RecoveryWarrantStatus[]
+  runtimeProofCells: RuntimeProofCellStatus[]
+  projectionWatermarks: ProjectionWatermarkStatus[]
 }
 
 type RuntimeAdmissionInput = {
@@ -482,11 +489,18 @@ export const buildRuntimeAdmissionSnapshot = (input: RuntimeAdmissionInput = {})
       }),
     ),
   ]
+  const runtimeProofSurface = buildRuntimeProofSurface({
+    runtimeKits,
+    admissionPassports,
+  })
 
   return {
     runtimeKits,
     admissionPassports,
     servingPassportId:
       admissionPassports.find((passport) => passport.consumer_class === 'serving')?.admission_passport_id ?? null,
+    recoveryWarrants: runtimeProofSurface.recoveryWarrants,
+    runtimeProofCells: runtimeProofSurface.runtimeProofCells,
+    projectionWatermarks: runtimeProofSurface.projectionWatermarks,
   }
 }
