@@ -37,6 +37,17 @@ describe('verify-deployment', () => {
       '8',
       '--digest-interval-seconds',
       '4',
+      '--status-service-namespace',
+      'jangar',
+      '--status-service-name',
+      'jangar',
+      '--status-service-port',
+      '80',
+      '--control-plane-status-namespace',
+      'agents',
+      '--admission-passport-consumers',
+      'serving,swarm_plan',
+      '--skip-admission-passport-verification',
     ])
 
     expect(parsed.namespace).toBe('jangar')
@@ -48,6 +59,158 @@ describe('verify-deployment', () => {
     expect(parsed.healthIntervalSeconds).toBe(5)
     expect(parsed.digestAttempts).toBe(8)
     expect(parsed.digestIntervalSeconds).toBe(4)
+    expect(parsed.statusServiceNamespace).toBe('jangar')
+    expect(parsed.statusServiceName).toBe('jangar')
+    expect(parsed.statusServicePort).toBe('80')
+    expect(parsed.controlPlaneStatusNamespace).toBe('agents')
+    expect(parsed.admissionPassportConsumers).toEqual(['serving', 'swarm_plan'])
+    expect(parsed.skipAdmissionPassportVerification).toBe(true)
+  })
+
+  it('builds the control-plane status service proxy path', () => {
+    expect(
+      __private.buildControlPlaneStatusProxyPath({
+        statusServiceNamespace: 'jangar',
+        statusServiceName: 'jangar',
+        statusServicePort: '80',
+        controlPlaneStatusNamespace: 'agents',
+      }),
+    ).toBe('/api/v1/namespaces/jangar/services/jangar:80/proxy/api/agents/control-plane/status?namespace=agents')
+  })
+
+  it('rejects unknown admission passport consumers', () => {
+    expect(() => __private.parseAdmissionPassportConsumers('serving,deploy_verify')).toThrow(
+      "Unknown admission passport consumer 'deploy_verify'",
+    )
+  })
+
+  it('accepts runtime image refs that cite the expected rollout digest', () => {
+    expect(
+      __private.imageRefMatchesExpectedDigest(
+        'registry.ide-newton.ts.net/lab/jangar:000d3b97@sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
+        'sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
+      ),
+    ).toBe(true)
+    expect(
+      __private.imageRefMatchesExpectedDigest(
+        'runtime:local',
+        'sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
+      ),
+    ).toBe(false)
+  })
+
+  it('verifies allowed passport digests against runtime kits on the promoted image digest', () => {
+    const evidence = __private.verifyAdmissionPassportParity({
+      status: {
+        serving_passport_id: 'passport:serving:1',
+        runtime_kits: [
+          {
+            runtime_kit_id: 'runtime-kit:serving:1',
+            image_ref:
+              'registry.ide-newton.ts.net/lab/jangar:000d3b97@sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
+            decision: 'healthy',
+            fresh_until: '2999-01-01T00:00:00.000Z',
+          },
+          {
+            runtime_kit_id: 'runtime-kit:collaboration:1',
+            image_ref:
+              'registry.ide-newton.ts.net/lab/jangar:000d3b97@sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
+            decision: 'healthy',
+            fresh_until: '2999-01-01T00:00:00.000Z',
+          },
+        ],
+        admission_passports: [
+          {
+            admission_passport_id: 'passport:serving:1',
+            consumer_class: 'serving',
+            decision: 'allow',
+            runtime_kit_set_digest: 'runtime-serving',
+            required_runtime_kits: ['runtime-kit:serving:1'],
+            fresh_until: '2999-01-01T00:00:00.000Z',
+          },
+          {
+            admission_passport_id: 'passport:swarm_plan:1',
+            consumer_class: 'swarm_plan',
+            decision: 'allow',
+            runtime_kit_set_digest: 'runtime-collaboration',
+            required_runtime_kits: ['runtime-kit:collaboration:1'],
+            fresh_until: '2999-01-01T00:00:00.000Z',
+          },
+        ],
+      },
+      expectedDigest: 'sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
+      consumers: ['serving', 'swarm_plan'],
+      now: new Date('2026-05-06T00:00:00.000Z'),
+    })
+
+    expect(evidence.passportIds).toEqual(['passport:serving:1', 'passport:swarm_plan:1'])
+    expect(evidence.runtimeKitSetDigests).toEqual(['runtime-serving', 'runtime-collaboration'])
+    expect(evidence.runtimeKitIds).toEqual(['runtime-kit:serving:1', 'runtime-kit:collaboration:1'])
+  })
+
+  it('fails verification when a required runtime kit is from another image digest', () => {
+    expect(() =>
+      __private.verifyAdmissionPassportParity({
+        status: {
+          serving_passport_id: 'passport:serving:1',
+          runtime_kits: [
+            {
+              runtime_kit_id: 'runtime-kit:serving:1',
+              image_ref:
+                'registry.ide-newton.ts.net/lab/jangar:old@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+              decision: 'healthy',
+              fresh_until: '2999-01-01T00:00:00.000Z',
+            },
+          ],
+          admission_passports: [
+            {
+              admission_passport_id: 'passport:serving:1',
+              consumer_class: 'serving',
+              decision: 'allow',
+              runtime_kit_set_digest: 'runtime-serving',
+              required_runtime_kits: ['runtime-kit:serving:1'],
+              fresh_until: '2999-01-01T00:00:00.000Z',
+            },
+          ],
+        },
+        expectedDigest: 'sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
+        consumers: ['serving'],
+        now: new Date('2026-05-06T00:00:00.000Z'),
+      }),
+    ).toThrow('does not match expected rollout digest')
+  })
+
+  it('fails verification when a required passport is held', () => {
+    expect(() =>
+      __private.verifyAdmissionPassportParity({
+        status: {
+          serving_passport_id: 'passport:serving:1',
+          runtime_kits: [
+            {
+              runtime_kit_id: 'runtime-kit:serving:1',
+              image_ref:
+                'registry.ide-newton.ts.net/lab/jangar:000d3b97@sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
+              decision: 'healthy',
+              fresh_until: '2999-01-01T00:00:00.000Z',
+            },
+          ],
+          admission_passports: [
+            {
+              admission_passport_id: 'passport:serving:1',
+              consumer_class: 'serving',
+              decision: 'hold',
+              reason_codes: ['execution_trust_degraded'],
+              runtime_kit_set_digest: 'runtime-serving',
+              required_runtime_kits: ['runtime-kit:serving:1'],
+              fresh_until: '2999-01-01T00:00:00.000Z',
+            },
+          ],
+        },
+        expectedDigest: 'sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
+        consumers: ['serving'],
+        now: new Date('2026-05-06T00:00:00.000Z'),
+      }),
+    ).toThrow('is not allow')
   })
 
   it('waits while Argo revision is not the expected revision', () => {

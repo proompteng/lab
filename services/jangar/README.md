@@ -214,6 +214,15 @@ Admitted schedules and requirement runs carry these trace fields in annotations 
 - `swarmRequiredRuntimeKits`
 - `swarmAdmissionProducerRevision`
 
+Deploy verification also consumes the runtime-admission projection. After Argo, rollout, and image digest checks pass,
+`packages/scripts/src/jangar/verify-deployment.ts` reads
+`/api/agents/control-plane/status?namespace=agents` through the Kubernetes service proxy and requires the configured
+passport consumers (`serving`, `swarm_plan`, and `swarm_implement` by default) to be `allow`, fresh, backed by present
+runtime kits, and running on the same image digest as the promoted deployment. The deployment manifest sets
+`JANGAR_RUNTIME_IMAGE` to the promoted tag and digest so runtime-kit `image_ref` can be compared directly. Emergency
+rollback for the verifier gate is `--skip-admission-passport-verification` or
+`JANGAR_VERIFY_ADMISSION_PASSPORTS=false`; keep the status projection enabled for forensics.
+
 Rollback: set `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` on the control-plane runtime to return launch behavior
 to the previous advisory-only passport mode while keeping status and `/ready` passport projection visible for forensics.
 

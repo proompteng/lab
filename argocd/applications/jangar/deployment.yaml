@@ -56,6 +56,8 @@ spec:
               value: production
             - name: UI_PORT
               value: "8080"
+            - name: JANGAR_RUNTIME_IMAGE
+              value: registry.ide-newton.ts.net/lab/jangar:000d3b97@sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: "120"
             - name: JANGAR_BUMBA_TASK_QUEUE

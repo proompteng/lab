@@ -30,6 +30,14 @@ const createFixture = () => {
     `metadata:
   annotations:
     deploy.knative.dev/rollout: "2025-01-01T00:00:00.000Z"
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          env:
+            - name: JANGAR_RUNTIME_IMAGE
+              value: registry.ide-newton.ts.net/lab/jangar:old-tag@sha256:old
 `,
     'utf8',
   )
@@ -83,6 +91,7 @@ describe('updateJangarManifests', () => {
     }
     const serviceManifest = YAML.parse(readFileSync(fixture.serviceManifestPath, 'utf8')) as {
       metadata?: { annotations?: Record<string, string> }
+      spec?: { template?: { spec?: { containers?: Array<{ env?: Array<{ name?: string; value?: string }> }> } } }
     }
     expect(kustomization.images?.[0]).toEqual({
       name: imageName,
@@ -90,9 +99,14 @@ describe('updateJangarManifests', () => {
       digest: 'sha256:newdigest',
     })
     expect(serviceManifest.metadata?.annotations?.['deploy.knative.dev/rollout']).toBe(rolloutTimestamp)
+    expect(serviceManifest.spec?.template?.spec?.containers?.[0]?.env).toContainEqual({
+      name: 'JANGAR_RUNTIME_IMAGE',
+      value: 'registry.ide-newton.ts.net/lab/jangar:new-tag@sha256:newdigest',
+    })
     expect(result.changed).toEqual({
       kustomization: true,
       service: true,
+      runtimeImageEnv: true,
       worker: false,
       agentsValues: false,
     })
