@@ -441,6 +441,8 @@ class TestSessionContextTracker(TestCase):
         self.assertEqual(leader_payload['cross_section_macd_hist_rank'], Decimal('1'))
         self.assertEqual(leader_payload['cross_section_recent_15m_return_rank'], Decimal('1'))
         self.assertEqual(leader_payload['cross_section_microbar_volume_rank'], Decimal('1'))
+        self.assertEqual(leader_payload['cross_section_microbar_volume_rank_universe_size'], 2)
+        self.assertEqual(leader_payload['cross_section_continuation_rank_universe_size'], 2)
         self.assertGreater(cast(Decimal, leader_payload['recent_15m_return_bps']), Decimal('200'))
         self.assertGreater(
             cast(Decimal, leader_payload['cross_section_vwap_w5m_stretch_rank']),
@@ -454,6 +456,58 @@ class TestSessionContextTracker(TestCase):
             cast(Decimal, loser_payload['cross_section_reversal_rank']),
             cast(Decimal, leader_payload['cross_section_reversal_rank']),
         )
+
+    def test_tracker_excludes_invalid_quotes_from_executable_rank_universe(self) -> None:
+        tracker = SessionContextTracker()
+        event_ts = datetime(2026, 3, 24, 14, 0, 0, tzinfo=timezone.utc)
+        tracker.enrich_signal_payload(
+            _signal(
+                event_ts=event_ts,
+                symbol='NVDA',
+                price='100.00',
+                spread='0.02',
+                bid_sz='4200',
+                ask_sz='3800',
+                microbar_volume='100',
+            )
+        )
+        tracker.enrich_signal_payload(
+            _signal(
+                event_ts=event_ts,
+                symbol='AAPL',
+                price='100.00',
+                spread='0.02',
+                bid_sz='4200',
+                ask_sz='3800',
+                microbar_volume='200',
+            )
+        )
+        tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 14, 5, 0, tzinfo=timezone.utc),
+                symbol='NVDA',
+                price='100.00',
+                spread='2.00',
+                bid_sz='4200',
+                ask_sz='3800',
+                microbar_volume='10000',
+            )
+        )
+
+        executable_payload = tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 14, 5, 1, tzinfo=timezone.utc),
+                symbol='AAPL',
+                price='100.01',
+                spread='0.02',
+                bid_sz='4200',
+                ask_sz='3800',
+                microbar_volume='300',
+            )
+        )
+
+        self.assertEqual(executable_payload['cross_section_microbar_volume_rank'], Decimal('1'))
+        self.assertEqual(executable_payload['cross_section_microbar_volume_rank_universe_size'], 2)
 
     def test_tracker_emits_quote_instability_and_microprice_bias_features(self) -> None:
         tracker = SessionContextTracker()

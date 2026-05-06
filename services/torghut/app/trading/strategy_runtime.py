@@ -179,6 +179,19 @@ def _microbar_rank_thresholds(
     return (low_threshold, high_threshold)
 
 
+def _microbar_rank_universe_size(
+    *,
+    context: "StrategyContext",
+    params: dict[str, Any],
+    features: FeatureVectorV3,
+    rank_feature: str,
+) -> int:
+    executable_universe_size = _decimal(features.values.get(f"{rank_feature}_universe_size"))
+    if executable_universe_size is not None and executable_universe_size > 0:
+        return max(1, int(executable_universe_size))
+    return _microbar_universe_size(context=context, params=params)
+
+
 def _evaluate_microbar_cross_sectional(
     *,
     context: "StrategyContext",
@@ -334,7 +347,12 @@ def _evaluate_microbar_cross_sectional(
 
     selection_mode = str(params.get("selection_mode") or "continuation").strip().lower()
     top_n = max(1, int(_decimal(params.get("top_n")) or Decimal("1")))
-    universe_size = _microbar_universe_size(context=context, params=params)
+    universe_size = _microbar_rank_universe_size(
+        context=context,
+        params=params,
+        features=features,
+        rank_feature=rank_feature,
+    )
     low_threshold, high_threshold = _microbar_rank_thresholds(
         universe_size=universe_size,
         top_n=top_n,

@@ -5621,6 +5621,31 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
         assert continuation_skip.trace is not None
         self.assertEqual(continuation_skip.trace.first_failed_gate, "rank_selection")
 
+        executable_universe_buy = _evaluate_microbar_cross_sectional(
+            context=self._context(
+                params={
+                    "entry_minute_after_open": "60",
+                    "signal_motif": "high_volume_intraday_continuation_long_top2",
+                    "rank_feature": "cross_section_microbar_volume_rank",
+                    "selection_mode": "continuation",
+                    "top_n": "2",
+                    "universe_size": "12",
+                }
+            ),
+            features=_test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_microbar_volume_rank": Decimal("0.75"),
+                    "cross_section_microbar_volume_rank_universe_size": Decimal("5"),
+                }
+            ),
+            entry_action="buy",
+            exit_action="sell",
+        )
+        self.assertIsNotNone(executable_universe_buy.intent)
+        assert executable_universe_buy.trace is not None
+        self.assertEqual(executable_universe_buy.trace.gates[0].context["universe_size"], 5)
+
         reversal_buy = _evaluate_microbar_cross_sectional(
             context=self._context(
                 params={
