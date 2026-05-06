@@ -488,6 +488,8 @@ class TradingPipeline:
         }
         relevant_symbols: set[str] = set()
         for strategy in strategies:
+            if not strategy.enabled:
+                continue
             strategy_symbols = {
                 _normalized_symbol(symbol)
                 for symbol in _coerce_strategy_symbols(strategy.universe_symbols)

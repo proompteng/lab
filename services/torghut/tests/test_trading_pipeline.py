@@ -1125,6 +1125,82 @@ class TestTradingPipeline(TestCase):
             self.assertEqual(execution_audit.get("execution_lane"), "simple")
             self.assertEqual(execution_audit.get("submit_path"), "direct_alpaca")
 
+    def test_simple_pipeline_skips_out_of_strategy_universe_signals_before_quote_quality(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.trading_kill_switch_enabled = False
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="simple-universe-filter",
+                description="simple lane universe filter regression",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+
+        allowed_signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 13, 30, 5, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Min",
+            seq=1,
+            payload={
+                "feature_schema_version": "3.0.0",
+                "macd": {"macd": 1.2, "signal": 0.5},
+                "rsi14": 25,
+                "price": 100,
+            },
+        )
+        out_of_universe_signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 13, 30, 1, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 13, 30, 6, tzinfo=timezone.utc),
+            symbol="MSFT",
+            timeframe="1Min",
+            seq=2,
+            payload={
+                "feature_schema_version": "3.0.0",
+                "macd": {"macd": 1.2, "signal": 0.5},
+                "rsi14": 25,
+                "price": 100,
+                "spread": 1,
+            },
+        )
+
+        alpaca_client = FakeAlpacaClient()
+        decision_engine = RecordingDecisionEngine()
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([allowed_signal, out_of_universe_signal]),
+            decision_engine=decision_engine,
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        pipeline.run_once()
+
+        self.assertNotIn("MSFT", decision_engine.observed_symbols)
+
     def test_simple_pipeline_reconcile_updates_execution_status(self) -> None:
         from app import config
 
@@ -2043,6 +2119,39 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_kill_switch_enabled = original[
                 "trading_kill_switch_enabled"
             ]
+
+    def test_relevant_signal_symbols_ignore_disabled_strategies(self) -> None:
+        enabled_strategy = Strategy(
+            name="enabled-filter-source",
+            description="enabled source",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+        )
+        disabled_strategy = Strategy(
+            name="disabled-filter-source",
+            description="disabled source",
+            enabled=False,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["MSFT"],
+        )
+
+        pipeline = self._build_warmup_pipeline(
+            ingestor=WarmupIngestor(
+                warmup_signals=[],
+                signals=[],
+                cursor_at=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+            )
+        )
+
+        relevant_symbols = pipeline._relevant_signal_symbols(
+            strategies=[enabled_strategy, disabled_strategy],
+            allowed_symbols={"AAPL", "MSFT"},
+        )
+
+        self.assertEqual(relevant_symbols, {"AAPL"})
 
     def test_pipeline_continues_when_feature_quality_has_warning_only_null_rate(
         self,
