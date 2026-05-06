@@ -457,6 +457,58 @@ describe('supporting primitives controller', () => {
     expect(String(ready?.message)).toContain('runtime_kit_component_missing:nats_cli')
   })
 
+  it('fails closed and deletes schedule runners when admission snapshots are unavailable', async () => {
+    process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT = '1'
+    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockImplementation(() => {
+      throw new Error('runtime admission database unavailable')
+    })
+
+    const apply = vi.fn().mockResolvedValue({})
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue(null)
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { apply, applyStatus, get, delete: deleteFn } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-plan-sched',
+        namespace: 'agents',
+        generation: 4,
+        labels: {
+          'swarm.proompteng.ai/name': 'jangar-control-plane',
+          'swarm.proompteng.ai/stage': 'plan',
+        },
+        annotations: {
+          'swarm.proompteng.ai/nats-url': 'nats://nats.nats.svc.cluster.local:4222',
+          'swarm.proompteng.ai/admission-passport-id': 'passport:swarm_plan:stale',
+        },
+      },
+      spec: {
+        cron: '*/10 * * * *',
+        targetRef: { kind: 'AgentRun', name: 'agentrun-plan-template', namespace: 'agents' },
+      },
+    }
+
+    await __test__.reconcileSchedule(kube, schedule, 'agents')
+
+    expect(apply).not.toHaveBeenCalled()
+    expect(deleteFn).toHaveBeenCalledWith('configmap', 'jangar-control-plane-plan-sched-template', 'agents', {
+      wait: false,
+    })
+    expect(deleteFn).toHaveBeenCalledWith('cronjob', 'jangar-control-plane-plan-sched-cron', 'agents', {
+      wait: false,
+    })
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(status.phase).toBe('AdmissionBlocked')
+    const ready = (Array.isArray(status.conditions) ? status.conditions : []).find(
+      (condition) => condition.type === 'Ready',
+    )
+    expect(ready?.reason).toBe('RuntimeAdmissionUnavailable')
+    expect(String(ready?.message)).toContain('runtime admission database unavailable')
+  })
+
   it('refreshes swarm schedule run templates with the current stage passport', async () => {
     process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT = '1'
     runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(
@@ -1615,6 +1667,120 @@ describe('supporting primitives controller', () => {
     expect(bridge?.status).toBe('False')
     expect(bridge?.reason).toBe('RuntimeAdmissionBlocked')
     expect(String(bridge?.message)).toContain('runtime_kit_component_missing:nats_cli')
+  })
+
+  it('fails closed for stage schedules and requirement dispatch when admission snapshots are unavailable', async () => {
+    process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT = '1'
+    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockImplementation(() => {
+      throw new Error('runtime admission database unavailable')
+    })
+
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-implement-template', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+          },
+        }
+      }
+      return null
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'torghut-risk-handoff-admission-unavailable',
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'workflow.general.requirement',
+                payload: { priority: 'critical' },
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const appliedKinds = apply.mock.calls.map((call) => (call[0] as Record<string, unknown>).kind)
+    expect(appliedKinds).not.toContain('Schedule')
+    expect(appliedKinds).not.toContain('AgentRun')
+    expect(deleteFn).toHaveBeenCalledWith(RESOURCE_MAP.Schedule, expect.stringContaining('discover-sched'), 'agents', {
+      wait: false,
+    })
+    expect(deleteFn).toHaveBeenCalledWith(RESOURCE_MAP.Schedule, expect.stringContaining('plan-sched'), 'agents', {
+      wait: false,
+    })
+    expect(deleteFn).toHaveBeenCalledWith(RESOURCE_MAP.Schedule, expect.stringContaining('implement-sched'), 'agents', {
+      wait: false,
+    })
+    expect(deleteFn).toHaveBeenCalledWith(RESOURCE_MAP.Schedule, expect.stringContaining('verify-sched'), 'agents', {
+      wait: false,
+    })
+
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    const stageStates = (status.stageStates ?? {}) as Record<string, Record<string, unknown>>
+    expect(stageStates.discover?.phase).toBe('AdmissionBlocked')
+    expect(stageStates.plan?.phase).toBe('AdmissionBlocked')
+    expect(stageStates.implement?.phase).toBe('AdmissionBlocked')
+    expect(stageStates.verify?.phase).toBe('AdmissionBlocked')
+    expect(stageStates.implement?.reason).toBe('RuntimeAdmissionUnavailable')
+
+    const requirements = (status.requirements ?? {}) as Record<string, unknown>
+    expect(requirements.pending).toBe(1)
+    expect(requirements.dispatched).toBe(0)
+    expect(requirements.blocked).toBe(1)
+    expect(requirements.admissionBlocked).toBe(1)
+    expect((requirements.admission as Record<string, unknown> | undefined)?.reason).toBe('RuntimeAdmissionUnavailable')
+
+    const conditions = Array.isArray(status.conditions) ? status.conditions : []
+    const bridge = conditions.find((condition) => condition.type === 'RequirementsBridge') as
+      | Record<string, unknown>
+      | undefined
+    expect(bridge?.status).toBe('False')
+    expect(bridge?.reason).toBe('RuntimeAdmissionUnavailable')
+    expect(String(bridge?.message)).toContain('runtime admission database unavailable')
   })
 
   it('annotates admitted requirement runs with the implement admission passport', async () => {

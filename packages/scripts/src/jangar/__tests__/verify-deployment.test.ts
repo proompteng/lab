@@ -374,6 +374,37 @@ describe('verify-deployment', () => {
     expect(calls).toContain(`merge-base --is-ancestor ${expectedRevision} ${statusRevision}`)
   })
 
+  it('deepens fetched synced revision history before rejecting ancestor mode', async () => {
+    const expectedRevision = '0123456789abcdef0123456789abcdef01234567'
+    const statusRevision = 'abcdef0123456789abcdef0123456789abcdef01'
+    const calls: string[] = []
+    let historyDeepened = false
+
+    const runner = async (_command: string, args: string[]) => {
+      calls.push(args.join(' '))
+      if (args[0] === 'cat-file') {
+        return { stdout: '', stderr: '', exitCode: 0 }
+      }
+      if (args[0] === 'fetch' && args[2] === '--deepen=1000' && args[4] === statusRevision) {
+        historyDeepened = true
+        return { stdout: '', stderr: '', exitCode: 0 }
+      }
+      if (args[0] === 'merge-base') {
+        return { stdout: '', stderr: '', exitCode: historyDeepened ? 0 : 1 }
+      }
+
+      return { stdout: '', stderr: `unexpected git command: ${args.join(' ')}`, exitCode: 1 }
+    }
+
+    const satisfied = await __private.isExpectedRevisionSatisfied(statusRevision, expectedRevision, 'ancestor', runner)
+
+    expect(satisfied).toBe(true)
+    expect(calls).toContain(`fetch --no-tags --deepen=1000 origin ${statusRevision}`)
+    expect(
+      calls.filter((call) => call === `merge-base --is-ancestor ${expectedRevision} ${statusRevision}`),
+    ).toHaveLength(2)
+  })
+
   it('keeps waiting instead of throwing when an unknown revision cannot be fetched', async () => {
     const expectedRevision = '0123456789abcdef0123456789abcdef01234567'
     const statusRevision = 'abcdef0123456789abcdef0123456789abcdef01'

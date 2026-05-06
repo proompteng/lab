@@ -1459,11 +1459,42 @@ def _resolve_submission_simulation_context(
             str(key): value
             for key, value in cast(Mapping[object, Any], source_context).items()
         }
+    simulated_fill_price = _resolve_decision_simulated_fill_price(decision)
+    if simulated_fill_price is not None:
+        if source_context_payload is None:
+            source_context_payload = {}
+        rendered_price = str(simulated_fill_price)
+        source_context_payload.setdefault("simulated_fill_price", rendered_price)
+        source_context_payload.setdefault("arrival_price", rendered_price)
     return resolve_simulation_context(
         source=source_context_payload,
         decision_id=str(decision_row.id),
         decision_hash=decision_row.decision_hash,
     )
+
+
+def _resolve_decision_simulated_fill_price(
+    decision: StrategyDecision,
+) -> Decimal | None:
+    for candidate in (
+        decision.limit_price,
+        decision.stop_price,
+        decision.params.get("simulated_fill_price"),
+        decision.params.get("fill_price"),
+        decision.params.get("arrival_price"),
+        decision.params.get("price"),
+    ):
+        value = _positive_decimal(candidate)
+        if value is not None:
+            return value
+
+    price_snapshot = decision.params.get("price_snapshot")
+    if isinstance(price_snapshot, Mapping):
+        snapshot_payload = cast(Mapping[object, Any], price_snapshot)
+        value = _positive_decimal(snapshot_payload.get("price"))
+        if value is not None:
+            return value
+    return None
 
 
 def _attach_execution_policy_context(execution: Execution, context: dict[str, Any]) -> None:
@@ -1607,6 +1638,15 @@ def _optional_decimal(value: Any) -> Decimal | None:
         return Decimal(str(value))
     except Exception:
         return None
+
+
+def _positive_decimal(value: Any) -> Decimal | None:
+    parsed = _optional_decimal(value)
+    if parsed is None:
+        return None
+    if parsed.is_finite() and parsed > 0:
+        return parsed
+    return None
 
 
 __all__ = ["OrderExecutor"]

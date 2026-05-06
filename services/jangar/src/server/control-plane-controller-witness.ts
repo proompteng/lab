@@ -5,6 +5,9 @@ import type {
   ControlPlaneControllerWitness,
   ControlPlaneControllerWitnessQuorum,
   ControllerWitnessDecision,
+  MaterialActionVerdict,
+  MaterialActionVerdictDecision,
+  MaterialActionVerdictEpoch,
   MaterialActionActivationReceipt,
   MaterialActionActivationReceiptCapitalStage,
   MaterialActionActivationReceiptDecision,
@@ -357,6 +360,15 @@ const receiptDecisionFromBudget = (budget: ActionSloBudget): MaterialActionActiv
   return 'hold'
 }
 
+const receiptDecisionFromVerdict = (
+  decision: MaterialActionVerdictDecision,
+): MaterialActionActivationReceiptDecision => {
+  if (decision === 'allow') return 'allow'
+  if (decision === 'repair_only') return 'repair_only'
+  if (decision === 'block') return 'block'
+  return 'hold'
+}
+
 const capitalStageForAction = (
   actionClass: ActionSloBudget['action_class'],
 ): MaterialActionActivationReceiptCapitalStage => {
@@ -385,14 +397,19 @@ export const buildMaterialActionActivationReceipts = (input: {
   controllerWitness: ControlPlaneControllerWitnessQuorum
   router: NegativeEvidenceRouterStatus
   budgets: ActionSloBudget[]
+  materialActionVerdictEpoch?: MaterialActionVerdictEpoch
 }): MaterialActionActivationReceipt[] =>
   input.budgets.map((budget) => {
-    const decision = receiptDecisionFromBudget(budget)
+    const verdict = input.materialActionVerdictEpoch?.final_verdicts.find(
+      (entry: MaterialActionVerdict) => entry.action_class === budget.action_class,
+    )
+    const decision = verdict ? receiptDecisionFromVerdict(verdict.decision) : receiptDecisionFromBudget(budget)
     const receiptSource = {
       action_class: budget.action_class,
       budget_id: budget.budget_id,
       controller_quorum_id: input.controllerWitness.quorum_id,
       router_epoch_id: input.router.router_epoch_id,
+      material_action_verdict_epoch_id: input.materialActionVerdictEpoch?.epoch_id ?? null,
       decision,
       scope: input.scope,
     }
@@ -407,17 +424,21 @@ export const buildMaterialActionActivationReceipts = (input: {
       transport_contract_refs: [
         input.router.router_epoch_id,
         input.controllerWitness.quorum_id,
+        ...(input.materialActionVerdictEpoch ? [input.materialActionVerdictEpoch.epoch_id] : []),
         ...input.router.failure_domain_lease_refs,
       ],
       proof_freshness_refs: proofFreshnessRefs(input.router),
       positive_authority_refs: input.router.positive_evidence_refs,
-      negative_authority_refs: flattenNegativeEvidenceRefs(input.router),
+      negative_authority_refs: uniqueStrings([
+        ...flattenNegativeEvidenceRefs(input.router),
+        ...(input.materialActionVerdictEpoch?.contradiction_refs ?? []),
+      ]),
       capital_stage: capitalStageForAction(budget.action_class),
       decision,
-      max_dispatches: budget.max_dispatches,
-      max_runtime_seconds: budget.max_runtime_seconds,
-      max_notional: budget.max_notional,
-      required_repairs: budget.required_repairs,
-      rollback_target: budget.rollback_target ?? input.controllerWitness.rollback_target,
+      max_dispatches: verdict ? verdict.max_dispatches : budget.max_dispatches,
+      max_runtime_seconds: verdict ? verdict.max_runtime_seconds : budget.max_runtime_seconds,
+      max_notional: verdict ? verdict.max_notional : budget.max_notional,
+      required_repairs: verdict ? verdict.required_repair_actions : budget.required_repairs,
+      rollback_target: verdict?.rollback_target ?? budget.rollback_target ?? input.controllerWitness.rollback_target,
     }
   })

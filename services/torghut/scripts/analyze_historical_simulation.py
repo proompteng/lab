@@ -210,17 +210,19 @@ def _build_last_price_map(
 ) -> dict[str, Decimal]:
     prices: dict[str, Decimal] = {}
     if clickhouse_config is not None and clickhouse_config.http_url and price_table:
-        query = (
-            f'SELECT symbol, toString(argMax(close, event_ts)) '
-            f'FROM {price_table} '
-            f'GROUP BY symbol FORMAT TabSeparated'
-        )
-        try:
-            status, body = _http_clickhouse_query(config=clickhouse_config, query=query)
-        except Exception:
-            status = 0
-            body = ''
-        if 200 <= status < 300 and body:
+        for close_field in ('close', 'c'):
+            query = (
+                f'SELECT symbol, toString(argMax({close_field}, event_ts)) '
+                f'FROM {price_table} '
+                f'GROUP BY symbol FORMAT TabSeparated'
+            )
+            try:
+                status, body = _http_clickhouse_query(config=clickhouse_config, query=query)
+            except Exception:
+                status = 0
+                body = ''
+            if not (200 <= status < 300 and body):
+                continue
             for line in body.splitlines():
                 parts = line.split('\t')
                 if len(parts) != 2:
@@ -229,6 +231,8 @@ def _build_last_price_map(
                 price = _as_decimal(parts[1])
                 if symbol and price is not None:
                     prices[symbol] = price
+            if prices:
+                break
 
     if not prices:
         for row in reversed(tca_rows):

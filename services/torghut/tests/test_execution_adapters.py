@@ -176,6 +176,69 @@ class TestExecutionAdapters(TestCase):
         fetched = adapter.get_order(order_id)
         self.assertEqual(fetched.get('status'), 'filled')
 
+    def test_simulation_adapter_uses_simulation_context_fill_price(self) -> None:
+        adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+            topic='torghut.sim.trade-updates.v1',
+            account_label='paper',
+            simulation_run_id='sim-2026-02-27-01',
+            dataset_id='dataset-1',
+        )
+
+        payload = adapter.submit_order(
+            symbol='NVDA',
+            side='buy',
+            qty=2.0,
+            order_type='market',
+            time_in_force='day',
+            extra_params={
+                'client_order_id': 'decision-context-fill',
+                'simulation_context': {
+                    'simulated_fill_price': '197.055',
+                    'signal_event_ts': '2026-05-05T17:25:06+00:00',
+                },
+            },
+        )
+
+        self.assertEqual(payload.get('status'), 'filled')
+        self.assertEqual(payload.get('filled_avg_price'), '197.055')
+        self.assertEqual(payload.get('filled_qty'), '2')
+
+    def test_simulation_adapter_uses_price_snapshot_fill_price(self) -> None:
+        adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+            topic='torghut.sim.trade-updates.v1',
+            account_label='paper',
+            simulation_run_id='sim-2026-02-27-01',
+            dataset_id='dataset-1',
+        )
+
+        payload = adapter.submit_order(
+            symbol='NVDA',
+            side='buy',
+            qty=1.0,
+            order_type='market',
+            time_in_force='day',
+            extra_params={
+                'client_order_id': 'decision-price-snapshot-fill',
+                'simulation_context': {
+                    'price_snapshot': {'price': '197.34'},
+                    'signal_event_ts': '2026-05-05T17:25:06+00:00',
+                },
+            },
+        )
+
+        self.assertEqual(payload.get('status'), 'filled')
+        self.assertEqual(payload.get('filled_avg_price'), '197.34')
+
     def test_simulation_adapter_tracks_synthetic_positions(self) -> None:
         adapter = SimulationExecutionAdapter(
             bootstrap_servers=None,

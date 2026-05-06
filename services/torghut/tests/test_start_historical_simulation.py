@@ -1089,6 +1089,7 @@ class TestStartHistoricalSimulation(TestCase):
                 'torghut_env_overrides': {
                     'TRADING_FEATURE_MAX_STALENESS_MS': 43200000,
                     'TRADING_FEATURE_QUALITY_ENABLED': 'true',
+                    'TRADING_SIGNAL_ALLOWED_SOURCES': 'rest,ws,ta',
                     'TRADING_SIMULATION_FETCH_WINDOW_SECONDS': 20,
                 }
             }
@@ -1098,6 +1099,7 @@ class TestStartHistoricalSimulation(TestCase):
             {
                 'TRADING_FEATURE_MAX_STALENESS_MS': '43200000',
                 'TRADING_FEATURE_QUALITY_ENABLED': 'true',
+                'TRADING_SIGNAL_ALLOWED_SOURCES': 'rest,ws,ta',
                 'TRADING_SIMULATION_FETCH_WINDOW_SECONDS': '20',
             },
         )
@@ -3327,6 +3329,7 @@ class TestStartHistoricalSimulation(TestCase):
                     'TRADING_FEATURE_QUALITY_ENABLED': 'true',
                     'TRADING_STRATEGY_RUNTIME_MODE': 'plugin_v3',
                     'TRADING_STRATEGY_SCHEDULER_ENABLED': 'false',
+                    'TRADING_SIGNAL_ALLOWED_SOURCES': 'rest,ws,ta',
                 },
             )
 
@@ -3364,6 +3367,10 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(
             env_by_name['TRADING_STRATEGY_SCHEDULER_ENABLED'].get('value'),
             'false',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_SIGNAL_ALLOWED_SOURCES'].get('value'),
+            'rest,ws,ta',
         )
 
     def test_configure_torghut_service_allows_explicit_runtime_override(self) -> None:

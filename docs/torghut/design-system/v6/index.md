@@ -7,10 +7,26 @@
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-06T15:12Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-06T19:16Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `132-torghut-dependency-quorum-rehydration-and-profit-inventory-handoff-2026-05-06.md`
+  - `docs/agents/designs/128-jangar-runtime-convergence-ledger-and-capital-gate-receipts-2026-05-06.md`
+  - `131-torghut-active-profit-inventory-and-quant-carry-fuses-2026-05-06.md`
+  - `docs/agents/designs/127-jangar-activation-inventory-ledger-and-product-gap-fuses-2026-05-06.md`
+  - `131-torghut-session-capital-bonds-and-profit-rehearsal-exchange-2026-05-06.md`
+  - `docs/agents/designs/127-jangar-session-rehearsal-conductor-and-capital-settlement-gates-2026-05-06.md`
+  - `130-torghut-evidence-product-order-book-and-profit-carry-ladder-2026-05-06.md`
+  - `docs/agents/designs/126-jangar-projection-witness-exchange-and-material-evidence-products-2026-05-06.md`
+  - `129-torghut-proof-carry-watermarks-and-zero-decision-capital-drain-2026-05-06.md`
+  - `docs/agents/designs/125-jangar-run-settlement-watermarks-and-consumer-evidence-escrow-2026-05-06.md`
+  - `128-torghut-data-plane-disruption-premium-and-freshness-settlement-2026-05-06.md`
+  - `docs/agents/designs/124-jangar-disruption-budget-arbiter-and-data-freshness-settlement-2026-05-06.md`
+  - `127-torghut-market-context-claims-and-lane-profit-settlement-2026-05-06.md`
+  - `docs/agents/designs/123-jangar-market-context-contradiction-ledger-and-lane-capital-holds-2026-05-06.md`
+  - `126-torghut-hypothesis-custody-ledger-and-data-cost-profit-reserve-2026-05-06.md`
+  - `docs/agents/designs/122-jangar-evidence-pressure-governor-and-data-cost-rollout-cells-2026-05-06.md`
   - `125-torghut-profit-priced-evidence-renewal-and-capital-reentry-ledger-2026-05-06.md`
   - `docs/agents/designs/121-jangar-material-action-repair-clearing-lane-and-profit-proof-ledger-2026-05-06.md`
   - `125-torghut-proof-renewal-train-and-capital-reentry-sequencer-2026-05-06.md`
@@ -854,3 +870,8 @@ This pack is positioned as the next architecture layer above:
   material-action contracts because the image/platform failure recovered, but normal dispatch still depends on a
   missing controller self-report while empirical, quant, and context proof remain stale. It sequences repair work so
   capital reentry is blocked by predecessor receipts instead of by manually interpreted status fragments.
+- `129-torghut-bidirectional-quant-proof-receipts-and-profit-reentry-ledger-2026-05-06.md` follows the Jangar quant
+  proof replication firebreak because the current cluster has recovered serving and rollout health while paper/live
+  capital still lacks durable Torghut consumer evidence. It makes Torghut emit account/window/hypothesis receipts,
+  persists hypothesis custody and zero-notional proof windows, and requires Jangar to agree on quant freshness before
+  paper or live capital can reenter.

@@ -167,6 +167,7 @@ type SwarmLaunchAdmission = {
     | 'RuntimeAdmissionDisabled'
     | 'RuntimeAdmissionAllowed'
     | 'AdmissionPassportMissing'
+    | 'RuntimeAdmissionUnavailable'
     | 'RuntimeAdmissionBlocked'
   message: string
   annotations: Record<string, string>
@@ -216,6 +217,24 @@ const summarizePassportBlock = (passport: AdmissionPassportStatus | null) => {
   const reasons = passport.reason_codes.length > 0 ? `: ${passport.reason_codes.join(', ')}` : ''
   return `stage admission passport ${passport.admission_passport_id} is ${passport.decision}${reasons}`
 }
+
+const summarizeRuntimeAdmissionError = (error: unknown) => {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message
+  }
+  return String(error)
+}
+
+const buildRuntimeAdmissionUnavailable = (stage: StageName, errorMessage: string): SwarmLaunchAdmission => ({
+  enforced: true,
+  admitted: false,
+  consumerClass: resolveAdmissionPassportConsumerClass(stage),
+  passport: null,
+  reason: 'RuntimeAdmissionUnavailable',
+  message: `runtime admission snapshot unavailable: ${errorMessage}`,
+  annotations: {},
+  parameters: {},
+})
 
 const resolveLaunchAdmission = (input: {
   stage: StageName
@@ -305,7 +324,20 @@ const resolveScheduleLaunchAdmission = (schedule: Record<string, unknown>): Swar
   const enforced = shouldEnforceSwarmRuntimeAdmission()
   const annotations = asRecord(readNested(schedule, ['metadata', 'annotations'])) ?? {}
   const natsUrl = asString(annotations[SWARM_SCHEDULE_ANNOTATION_NATS_URL]) ?? undefined
-  const snapshot = enforced ? buildRuntimeAdmissionSnapshot({ now: new Date(Date.now()), natsUrl }) : null
+  let snapshot: ReturnType<typeof buildRuntimeAdmissionSnapshot> | null = null
+  if (enforced) {
+    try {
+      snapshot = buildRuntimeAdmissionSnapshot({ now: new Date(Date.now()), natsUrl })
+    } catch (error) {
+      const message = summarizeRuntimeAdmissionError(error)
+      console.warn('[jangar] runtime admission snapshot unavailable for schedule launcher', {
+        schedule: asString(readNested(schedule, ['metadata', 'name'])) ?? 'schedule',
+        stage,
+        error: message,
+      })
+      return buildRuntimeAdmissionUnavailable(stage, message)
+    }
+  }
   return resolveLaunchAdmission({ stage, snapshot, enforced })
 }
 
@@ -1618,18 +1650,34 @@ const reconcileSwarm = async (
 
   const nowMs = Date.now()
   const runtimeAdmissionEnforced = shouldEnforceSwarmRuntimeAdmission()
-  const runtimeAdmissionSnapshot = runtimeAdmissionEnforced
-    ? buildRuntimeAdmissionSnapshot({ now: new Date(nowMs), natsUrl: nats.url })
-    : null
+  let runtimeAdmissionSnapshot: ReturnType<typeof buildRuntimeAdmissionSnapshot> | null = null
+  let runtimeAdmissionUnavailableMessage: string | null = null
+  if (runtimeAdmissionEnforced) {
+    try {
+      runtimeAdmissionSnapshot = buildRuntimeAdmissionSnapshot({ now: new Date(nowMs), natsUrl: nats.url })
+    } catch (error) {
+      runtimeAdmissionUnavailableMessage = summarizeRuntimeAdmissionError(error)
+      console.warn('[jangar] runtime admission snapshot unavailable for swarm launchers', {
+        swarm: swarmName,
+        namespace: swarmNamespace,
+        error: runtimeAdmissionUnavailableMessage,
+      })
+    }
+  }
   const launchAdmissions = Object.fromEntries(
-    STAGE_NAMES.map((stage) => [
-      stage,
-      resolveLaunchAdmission({
+    STAGE_NAMES.map((stage) => {
+      if (runtimeAdmissionUnavailableMessage) {
+        return [stage, buildRuntimeAdmissionUnavailable(stage, runtimeAdmissionUnavailableMessage)]
+      }
+      return [
         stage,
-        snapshot: runtimeAdmissionSnapshot,
-        enforced: runtimeAdmissionEnforced,
-      }),
-    ]),
+        resolveLaunchAdmission({
+          stage,
+          snapshot: runtimeAdmissionSnapshot,
+          enforced: runtimeAdmissionEnforced,
+        }),
+      ]
+    }),
   ) as Record<StageName, SwarmLaunchAdmission>
   const existingFreezeUntil = asString(readNested(status, ['freeze', 'until']))
   const existingFreezeReason = asString(readNested(status, ['freeze', 'reason']))
@@ -2292,7 +2340,7 @@ const reconcileSwarm = async (
         : requirementStats.paused
           ? 'AgentRunIngestionDegraded'
           : requirementStats.admissionBlocked > 0
-            ? 'RuntimeAdmissionBlocked'
+            ? requirementAdmission.reason
             : !requirementsHealthy
               ? 'RequirementsBridgeDegraded'
               : unhealthyStages.length > 0
@@ -2337,7 +2385,7 @@ const reconcileSwarm = async (
     conditions = upsertCondition(conditions, {
       type: 'RequirementsBridge',
       status: 'False',
-      reason: 'RuntimeAdmissionBlocked',
+      reason: requirementAdmission.reason,
       message: requirementAdmission.message,
     })
   } else if (requirementStats.duplicates > 0) {

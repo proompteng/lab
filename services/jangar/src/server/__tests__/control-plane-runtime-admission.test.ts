@@ -10,6 +10,7 @@ import { buildRuntimeAdmissionSnapshot } from '~/server/control-plane-runtime-ad
 const REPO_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url))
 
 const ORIGINAL_ENV = { ...process.env }
+const ORIGINAL_CWD = process.cwd()
 
 const resetEnv = () => {
   for (const key of Object.keys(process.env)) {
@@ -26,6 +27,7 @@ describe('buildRuntimeAdmissionSnapshot', () => {
   let tempDir: string | undefined
 
   afterEach(async () => {
+    process.chdir(ORIGINAL_CWD)
     if (tempDir) {
       await rm(tempDir, { recursive: true, force: true })
       tempDir = undefined
@@ -128,6 +130,59 @@ describe('buildRuntimeAdmissionSnapshot', () => {
           consumer_class: 'swarm_implement',
           decision: 'block',
           reason_codes: expect.arrayContaining(['runtime_kit_component_missing:nats_cli']),
+        }),
+      ]),
+    )
+  })
+
+  it('blocks collaboration admission when a resolved Codex NATS helper is not executable', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'runtime-admission-'))
+    const scriptsDir = join(tempDir, 'services', 'jangar', 'scripts')
+    const binDir = join(tempDir, 'bin')
+    await mkdir(scriptsDir, { recursive: true })
+    await mkdir(binDir, { recursive: true })
+
+    const natsPath = join(binDir, 'nats')
+    await writeFile(natsPath, '#!/usr/bin/env bash\nexit 0\n', 'utf8')
+    await chmod(natsPath, 0o755)
+
+    const publishPath = join(scriptsDir, 'codex-nats-publish.ts')
+    const soakPath = join(scriptsDir, 'codex-nats-soak.ts')
+    await writeFile(publishPath, '#!/usr/bin/env bun\n', 'utf8')
+    await writeFile(soakPath, '#!/usr/bin/env bun\n', 'utf8')
+    await chmod(publishPath, 0o644)
+    await chmod(soakPath, 0o755)
+
+    process.chdir(tempDir)
+    process.env.PATH = binDir
+    process.env.NATS_URL = 'nats://nats.nats.svc.cluster.local:4222'
+
+    const snapshot = buildRuntimeAdmissionSnapshot({
+      worktree: tempDir,
+      natsUrl: 'nats://nats.nats.svc.cluster.local:4222',
+    })
+
+    const collaborationKit = snapshot.runtimeKits.find((kit) => kit.kit_class === 'collaboration')
+    expect(collaborationKit).toMatchObject({
+      decision: 'blocked',
+      reason_codes: expect.arrayContaining(['runtime_kit_component_missing:codex_nats_publish']),
+    })
+    expect(collaborationKit?.components).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          component_ref: publishPath,
+          present: false,
+          reason_code: 'runtime_kit_component_missing:codex_nats_publish',
+        }),
+      ]),
+    )
+
+    expect(snapshot.admissionPassports).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          consumer_class: 'swarm_implement',
+          decision: 'block',
+          reason_codes: expect.arrayContaining(['runtime_kit_component_missing:codex_nats_publish']),
         }),
       ]),
     )

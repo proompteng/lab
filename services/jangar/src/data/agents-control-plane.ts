@@ -548,6 +548,51 @@ export type MaterialActionActivationReceipt = {
   rollback_target: string | null
 }
 
+export type MaterialActionVerdictDecision = 'allow' | 'repair_only' | 'hold' | 'block' | 'contradicted' | 'unknown'
+
+export type MaterialActionVerdictConfidence = 'high' | 'medium' | 'low' | 'unknown'
+
+export type MaterialActionVerdict = {
+  verdict_id: string
+  epoch_id: string
+  action_class: ActionSloBudgetActionClass
+  decision: MaterialActionVerdictDecision
+  decision_rank: number
+  confidence: MaterialActionVerdictConfidence
+  allowed_until: string
+  max_dispatches: number | null
+  max_runtime_seconds: number | null
+  max_notional: number | null
+  blocking_reason_codes: string[]
+  downgrade_reason_codes: string[]
+  required_repair_actions: string[]
+  rollback_target: string | null
+  evidence_refs: string[]
+  contradiction_refs: string[]
+}
+
+export type MaterialActionVerdictEpoch = {
+  mode: 'shadow' | 'warn' | 'enforce'
+  design_artifact: string
+  epoch_id: string
+  generated_at: string
+  expires_at: string
+  namespace: string
+  producer_revision: string
+  dependency_quorum_ref: string
+  negative_evidence_router_epoch_ref: string
+  action_slo_budget_refs: string[]
+  action_clock_refs: string[]
+  rollout_health_ref: string
+  controller_witness_ref: string
+  watch_reliability_ref: string
+  database_projection_ref: string
+  empirical_services_ref: string
+  torghut_capital_ref: string | null
+  contradiction_refs: string[]
+  final_verdicts: MaterialActionVerdict[]
+}
+
 export type DeploymentRolloutStatus = {
   name: string
   namespace: string
@@ -656,6 +701,8 @@ export type ControlPlaneStatus = {
   action_slo_budgets: ActionSloBudget[]
   torghut_action_slo_budgets: ActionSloBudget[]
   control_plane_controller_witness: ControlPlaneControllerWitnessQuorum
+  material_action_verdict_epoch: MaterialActionVerdictEpoch
+  material_action_verdicts: MaterialActionVerdict[]
   material_action_activation_receipts: MaterialActionActivationReceipt[]
   database: DatabaseStatus
   grpc: GrpcStatus

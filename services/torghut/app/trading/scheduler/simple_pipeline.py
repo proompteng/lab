@@ -191,6 +191,10 @@ class SimpleTradingPipeline(TradingPipeline):
             allow_shorts=settings.trading_allow_shorts,
             max_notional_per_order=max_notional_per_order,
             max_notional_per_symbol=max_notional_per_symbol,
+            buying_power_reserve_bps=_optional_decimal(
+                settings.trading_simple_buying_power_reserve_bps
+            )
+            or Decimal("0"),
         )
         self.executor.sync_decision_state(session, decision_row, preparation.decision)
         if preparation.diagnostics:

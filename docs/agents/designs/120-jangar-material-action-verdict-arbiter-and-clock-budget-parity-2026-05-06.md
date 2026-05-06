@@ -369,3 +369,16 @@ Deployer acceptance gates:
 - Required CI is green before PR merge and post-deploy verify is green before widening enforcement.
 - In the live stale empirical-proof state, no merge or capital gate reports final `allow`.
 - Rollback is documented in the release handoff with the exact env flag or revert PR path.
+
+## Implementation Note: Shadow Verdict Projection (2026-05-06)
+
+The first engineer slice adds `services/jangar/src/server/control-plane-material-action-verdict.ts` and emits
+`material_action_verdict_epoch` plus flattened `material_action_verdicts` from `/api/agents/control-plane/status`.
+The pure shadow reducer consumes the existing status inputs, keeps action SLO budgets as mandatory lower bounds, records
+contradiction refs when clocks are greener than budgets, and maps paper/live actions through the diagnostic
+`torghut_capital` clock without letting that clock upgrade stricter budgets or dependency quorum.
+
+Activation receipts now cite the verdict epoch in `transport_contract_refs` and derive decision, caps, repairs, and
+rollback target from the final verdict when present. Enforcement remains unchanged; rollback is to ignore the verdict
+fields or revert the status/receipt wiring while keeping existing dependency quorum, failure-domain lease, action-SLO,
+and controller-witness surfaces visible.
