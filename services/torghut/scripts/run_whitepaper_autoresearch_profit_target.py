@@ -1550,22 +1550,32 @@ def _real_replay_result_from_factory_payload(
         top = _list_of_mappings(result_payload.get("top"))
         if not top:
             continue
-        candidate = dict(top[0])
-        candidate_spec_id = _string(item.get("candidate_spec_id")) or _string(
-            candidate.get("candidate_spec_id")
+        experiment_spec_id = _string(item.get("candidate_spec_id"))
+        fallback_spec_id = str(
+            item.get("experiment_id") or item.get("top_candidate_id") or ""
         )
-        if candidate_spec_id:
-            candidate["candidate_spec_id"] = candidate_spec_id
-        candidate["promotion_readiness"] = item.get("promotion_readiness")
-        evidence_bundles.append(
-            evidence_bundle_from_frontier_candidate(
-                candidate_spec_id=candidate_spec_id
-                or str(item.get("experiment_id") or item.get("top_candidate_id") or ""),
-                candidate=candidate,
-                dataset_snapshot_id=str(item.get("dataset_snapshot_id") or ""),
-                result_path=result_path,
+        dataset_snapshot_id = str(item.get("dataset_snapshot_id") or "")
+        experiment_promotion_readiness = item.get("promotion_readiness")
+        for frontier_candidate in top:
+            candidate = dict(frontier_candidate)
+            candidate_spec_id = experiment_spec_id or _string(
+                candidate.get("candidate_spec_id")
             )
-        )
+            if candidate_spec_id:
+                candidate["candidate_spec_id"] = candidate_spec_id
+            if (
+                not candidate.get("promotion_readiness")
+                and experiment_promotion_readiness
+            ):
+                candidate["promotion_readiness"] = experiment_promotion_readiness
+            evidence_bundles.append(
+                evidence_bundle_from_frontier_candidate(
+                    candidate_spec_id=candidate_spec_id or fallback_spec_id,
+                    candidate=candidate,
+                    dataset_snapshot_id=dataset_snapshot_id,
+                    result_path=result_path,
+                )
+            )
     return EpochReplayResult(
         evidence_bundles=tuple(evidence_bundles), replay_results=(factory_payload,)
     )

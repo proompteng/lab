@@ -14,7 +14,9 @@ class TestStrategySeed(TestCase):
     def setUp(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
         Base.metadata.create_all(engine)
-        self.session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        self.session_local = sessionmaker(
+            bind=engine, expire_on_commit=False, future=True
+        )
 
     def test_upsert_strategy(self) -> None:
         seed_strategy.ensure_schema = lambda: None  # type: ignore[assignment]

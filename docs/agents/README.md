@@ -18,6 +18,12 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Fast Jangar/Torghut live analysis workflow: `designs/jangar-torghut-live-analysis-playbook.md`
 - Autonomous Jangar/Torghut production system design: `designs/autonomous-jangar-torghut-production-system.md`
 - Current Jangar/Torghut architecture contracts:
+  - `designs/97-jangar-discover-cutover-handoff-and-proof-debt-gates-2026-05-06.md`
+  - `../torghut/design-system/v6/101-torghut-proof-debt-retirement-and-shadow-capital-handoff-2026-05-06.md`
+  - `designs/96-jangar-session-proof-train-and-capital-authority-separation-2026-05-06.md`
+  - `../torghut/design-system/v6/100-torghut-session-proof-train-and-profitability-warrants-2026-05-06.md`
+  - `designs/96-jangar-observed-action-authority-and-negative-evidence-reclocking-2026-05-06.md`
+  - `../torghut/design-system/v6/100-torghut-market-context-negative-evidence-and-shadow-capital-router-2026-05-06.md`
   - `designs/95-jangar-evidence-settlement-slo-and-launch-escrow-runway-2026-05-05.md`
   - `../torghut/design-system/v6/99-torghut-profit-proof-escrow-and-repair-dividend-slo-2026-05-05.md`
   - `designs/94-jangar-proof-backed-rollout-brake-and-repair-debt-ledger-2026-05-05.md`

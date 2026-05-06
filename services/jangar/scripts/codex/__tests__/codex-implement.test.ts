@@ -1587,6 +1587,63 @@ exit 1
     await expect(runCodexImplementation(eventPath)).resolves.toBeDefined()
   }, 40_000)
 
+  it('passes read-only verify lane with healthy rollout evidence and no merge evidence', async () => {
+    process.env.CODEX_PR_DISCOVERY_ENABLED = 'false'
+    process.env.VCS_PULL_REQUESTS_ENABLED = 'false'
+    process.env.VCS_WRITE_ENABLED = 'false'
+
+    const binDir = join(workdir, '.bin-readonly-verify')
+    await mkdir(binDir, { recursive: true })
+    const kubectlPath = join(binDir, 'kubectl')
+    await writeFile(
+      kubectlPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "get" && "$2" == "applications.argoproj.io" && ( "$3" == "agents" || "$3" == "jangar" ) ]]; then
+  echo '{"status":{"sync":{"status":"Synced"},"health":{"status":"Healthy"}}}'
+  exit 0
+fi
+echo "unexpected kubectl invocation: $*" >&2
+exit 1
+`,
+      'utf8',
+    )
+    await chmod(kubectlPath, 0o755)
+    process.env.PATH = `${binDir}:${ORIGINAL_ENV.PATH ?? process.env.PATH ?? ''}`
+
+    runCodexSessionMock.mockImplementationOnce(async () => ({
+      agentMessages: [
+        [
+          'Summary:',
+          '- GO: rollout verification passed.',
+          '- Argo is Synced/Healthy for agents and jangar.',
+          '- No PR was opened or merged because this is a read-only verification lane.',
+        ].join('\n'),
+      ],
+      sessionId: 'session-readonly-verify',
+      exitCode: 0,
+      forcedTermination: false,
+    }))
+
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        prompt: 'Read-only rollout verification run',
+        repository: 'owner/repo',
+        issueNumber: 'swarm-jangar-control-plane-verify',
+        base: 'main',
+        head: 'main',
+        stage: 'verify',
+        swarmAgentRole: 'deployer',
+        swarmHumanName: 'release-verifier',
+        swarmName: 'jangar-control-plane',
+      }),
+      'utf8',
+    )
+
+    await expect(runCodexImplementation(eventPath)).resolves.toBeDefined()
+  }, 40_000)
+
   it('passes release lane with a documented no-go gate decision and no merge', async () => {
     process.env.CODEX_PR_DISCOVERY_ENABLED = 'false'
     process.env.CODEX_VERIFY_RELEASE_ROLLOUT_WITH_CLUSTER = 'false'

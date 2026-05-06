@@ -1049,7 +1049,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                                     "active_day_ratio": "1.0",
                                     "positive_day_ratio": "0.8",
                                 },
-                            }
+                            },
+                            {
+                                "candidate_id": "cand-real-diversifier",
+                                "objective_scorecard": {
+                                    "net_pnl_per_day": "175",
+                                    "active_day_ratio": "1.0",
+                                    "positive_day_ratio": "0.8",
+                                },
+                            },
                         ]
                     }
                 ),
@@ -1080,8 +1088,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     self._args(output_dir), output_dir=output_dir
                 )
 
-        self.assertEqual(len(result.evidence_bundles), 1)
+        self.assertEqual(len(result.evidence_bundles), 2)
         self.assertEqual(result.evidence_bundles[0].candidate_spec_id, "spec-real")
+        self.assertEqual(result.evidence_bundles[1].candidate_spec_id, "spec-real")
+        self.assertEqual(
+            result.evidence_bundles[1].candidate_id, "cand-real-diversifier"
+        )
         self.assertEqual(result.evidence_bundles[0].dataset_snapshot_id, "snap-real")
 
     def test_main_returns_nonzero_without_sources(self) -> None:
