@@ -15,6 +15,8 @@
   - `docs/agents/designs/102-jangar-dual-authority-dispatch-ledger-and-capital-proof-firewall-2026-05-06.md`
   - `105-torghut-proof-provenance-firewall-and-profit-lease-graduation-2026-05-06.md`
   - `docs/agents/designs/101-jangar-evidence-provenance-firewall-and-lease-graduation-contract-2026-05-06.md`
+  - `105-torghut-capital-reentry-evidence-feed-and-readiness-debt-netting-2026-05-06.md`
+  - `docs/agents/designs/101-jangar-typed-evidence-authority-and-readiness-debt-gates-2026-05-06.md`
   - `105-torghut-account-scoped-hypothesis-liquidity-and-options-bootstrap-2026-05-06.md`
   - `docs/agents/designs/101-jangar-account-scoped-proof-liquidity-and-query-budget-2026-05-06.md`
   - `104-torghut-proof-expiry-clock-and-hypothesis-rehydration-lanes-2026-05-06.md`
