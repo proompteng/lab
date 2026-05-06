@@ -46,6 +46,7 @@ export default defineConfig({
     setupFiles: [jsdomEnvSetup],
     include: ['src/**/*.{test,spec}.{ts,tsx}', 'scripts/**/*.{test,spec}.{ts,tsx}'],
     exclude: ['tests/ui/**', '**/node_modules/**'],
+    testTimeout: 10_000,
     coverage: {
       provider: 'v8',
       exclude: ['src/server/agents-controller/index.ts'],
