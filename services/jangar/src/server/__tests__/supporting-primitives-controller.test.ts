@@ -172,6 +172,9 @@ describe('supporting primitives controller', () => {
     process.env.JANGAR_AGENT_RUNNER_IMAGE = TEST_RUNNER_IMAGE
     delete process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR
     delete process.env.JANGAR_SCHEDULE_RUNNER_NODE_SELECTOR
+    delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK
+    delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL
+    delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY
     delete process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT
@@ -185,6 +188,9 @@ describe('supporting primitives controller', () => {
     delete process.env.JANGAR_AGENT_RUNNER_IMAGE
     delete process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR
     delete process.env.JANGAR_SCHEDULE_RUNNER_NODE_SELECTOR
+    delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK
+    delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL
+    delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS
     delete process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT
   })
 
@@ -277,6 +283,10 @@ describe('supporting primitives controller', () => {
       "  const { request } = await import('node:https');",
     ])
     expect(command).toContain("replaceAll('__JANGAR_DELIVERY_ID__', randomUUID())")
+    expect(command).toContain('JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK')
+    expect(command).toContain('JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL')
+    expect(command).toContain('stale schedule admission passport')
+    expect(command).toContain('current schedule admission runtime kit')
     expect(command).toContain('const targetByKind = {')
     expect(command).toContain("method: 'POST'")
     expect(command).toContain(
@@ -624,6 +634,66 @@ describe('supporting primitives controller', () => {
     )?.spec as Record<string, unknown> | undefined
 
     expect(podSpec?.nodeSelector).toEqual({ 'kubernetes.io/arch': 'arm64' })
+  })
+
+  it('passes fire-time admission check settings to schedule runner cronjobs', async () => {
+    process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK = 'false'
+    process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL =
+      'http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status'
+    process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS = '2500'
+
+    const target = {
+      kind: 'AgentRun',
+      metadata: { name: 'agentrun-plan-template', namespace: 'agents' },
+      spec: {
+        agentRef: { name: 'codex-spark-agent' },
+        runtime: { type: 'job' },
+      },
+    }
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) return target
+      return null
+    })
+    const apply = vi.fn().mockResolvedValue({})
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const kube = { get, apply, applyStatus } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-plan-sched',
+        namespace: 'agents',
+        generation: 5,
+      },
+      spec: {
+        cron: '*/10 * * * *',
+        targetRef: { kind: 'AgentRun', name: 'agentrun-plan-template', namespace: 'agents' },
+      },
+    }
+
+    await __test__.reconcileSchedule(kube, schedule, 'agents')
+
+    const cronJob = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((payload) => payload.kind === 'CronJob') as { spec?: Record<string, unknown> } | undefined
+    const podSpec = (
+      ((cronJob?.spec?.jobTemplate as Record<string, unknown> | undefined)?.spec as Record<string, unknown> | undefined)
+        ?.template as Record<string, unknown> | undefined
+    )?.spec as Record<string, unknown> | undefined
+    const containers = Array.isArray(podSpec?.containers) ? (podSpec.containers as Record<string, unknown>[]) : []
+    const env = containers.find((container) => container.name === 'schedule-runner')?.env
+
+    expect(env).toEqual(
+      expect.arrayContaining([
+        { name: 'JANGAR_SCHEDULE_NAMESPACE', value: 'agents' },
+        { name: 'JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK', value: 'false' },
+        {
+          name: 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL',
+          value: 'http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status',
+        },
+        { name: 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS', value: '2500' },
+      ]),
+    )
   })
 
   it('skips apply for equivalent schedule resources', async () => {

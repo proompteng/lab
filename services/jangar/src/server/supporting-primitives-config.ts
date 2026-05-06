@@ -38,6 +38,9 @@ export type SupportingPrimitivesConfig = {
   swarmRequirementMaxPayloadBytes: number
   swarmRequirementMaxAttempts: number
   swarmRuntimeAdmissionEnforcement: boolean
+  scheduleRunnerAdmissionCheck: boolean
+  scheduleRunnerAdmissionStatusUrl: string
+  scheduleRunnerAdmissionStatusTimeoutMs: number
   swarmDefaultNatsUrl: string
   swarmDefaultNatsSubjectPrefix: string
   swarmDefaultNatsChannel: string
@@ -54,6 +57,14 @@ export const resolveSupportingPrimitivesConfig = (env: EnvSource = process.env):
   swarmRequirementMaxPayloadBytes: parsePositiveInt(env.JANGAR_SWARM_REQUIREMENT_MAX_PAYLOAD_BYTES, 16_384),
   swarmRequirementMaxAttempts: parsePositiveInt(env.JANGAR_SWARM_REQUIREMENT_MAX_ATTEMPTS, 3),
   swarmRuntimeAdmissionEnforcement: parseBoolean(env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT, true),
+  scheduleRunnerAdmissionCheck: parseBoolean(env.JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK, true),
+  scheduleRunnerAdmissionStatusUrl:
+    normalizeNonEmpty(env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL) ??
+    'http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status',
+  scheduleRunnerAdmissionStatusTimeoutMs: parsePositiveInt(
+    env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS,
+    5_000,
+  ),
   swarmDefaultNatsUrl:
     normalizeNonEmpty(env.JANGAR_SWARM_NATS_URL) ??
     normalizeNonEmpty(env.NATS_URL) ??
