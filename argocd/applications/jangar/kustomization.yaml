@@ -29,6 +29,7 @@ resources:
   - alloy-deployment.yaml
   - serviceaccount.yaml
   - codex-workflow-rbac.yaml
+  - post-deploy-verifier-rbac.yaml
   - clusterrolebinding.yaml
   - workflow-completions-rbac.yaml
   - jangar-primitives-agentprovider.yaml
@@ -58,5 +59,5 @@ helmCharts:
     valuesFile: openwebui-values.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: 94a6b857
-    digest: sha256:9a3075fce336fa72f45668d0a0b2c18febe5c22276305415c7b1ea4b2a2b8aea
+    newTag: c6131651
+    digest: sha256:ebbb25bb7de0747ffcbaf6f93a9afa5ae787ce6f5d4fc2500836e51daf80116e

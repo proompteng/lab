@@ -906,6 +906,19 @@ describe('runCodexImplementation', () => {
       swarmRequirementId: '00gc1i45',
       swarmRequirementChannel: 'workflow.general.requirement',
     })
+
+    const runGaps = findCapturedNatsPublish(captured, 'run-gaps')
+    expect(runGaps).toBeDefined()
+    if (!runGaps) throw new Error('Expected a failed run-gaps publish call')
+    const runGapContent = contentFromCapturedNatsPublish(runGaps)
+    expect(runGapContent).toContain('Failure reason: session failed')
+    expect(runGapContent).toContain('Artifacts:')
+    expect(runGapContent).not.toContain('Run failed before emitting gaps')
+    expect(attrsFromCapturedNatsPublish(runGaps)).toMatchObject({
+      stage: 'implementation',
+      failureReason: 'session failed',
+      missingItems: expect.arrayContaining(['Failure reason: session failed']),
+    })
   }, 40_000)
 
   it('accepts worker identity metadata from parameters map', async () => {

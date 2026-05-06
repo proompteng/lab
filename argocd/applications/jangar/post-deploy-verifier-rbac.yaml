@@ -1,0 +1,29 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: post-deploy-verifier
+  namespace: jangar
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - services/proxy
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: post-deploy-verifier
+  namespace: jangar
+subjects:
+  - kind: ServiceAccount
+    name: arc-arm64-gha-rs-kube-mode
+    namespace: arc
+  - kind: ServiceAccount
+    name: agents-sa
+    namespace: agents
+roleRef:
+  kind: Role
+  name: post-deploy-verifier
+  apiGroup: rbac.authorization.k8s.io

@@ -15,6 +15,11 @@ type CliOptions = {
   imageName?: string
   argoNamespace?: string
   argoApplication?: string
+  statusServiceNamespace?: string
+  statusServiceName?: string
+  statusServicePort?: string
+  controlPlaneStatusNamespace?: string
+  admissionPassportConsumers?: AdmissionPassportConsumer[]
   rolloutTimeout?: string
   healthAttempts?: number
   healthIntervalSeconds?: number
@@ -23,6 +28,7 @@ type CliOptions = {
   digestAttempts?: number
   digestIntervalSeconds?: number
   requireSynced?: boolean
+  skipAdmissionPassportVerification?: boolean
 }
 
 type CommandResult = {
@@ -40,6 +46,11 @@ type ResolvedOptions = {
   imageName: string
   argoNamespace: string
   argoApplication: string
+  statusServiceNamespace: string
+  statusServiceName: string
+  statusServicePort: string
+  controlPlaneStatusNamespace: string
+  admissionPassportConsumers: AdmissionPassportConsumer[]
   rolloutTimeout: string
   healthAttempts: number
   healthIntervalSeconds: number
@@ -48,6 +59,7 @@ type ResolvedOptions = {
   digestAttempts: number
   digestIntervalSeconds: number
   requireSynced: boolean
+  skipAdmissionPassportVerification: boolean
 }
 
 const defaultImageName = 'registry.ide-newton.ts.net/lab/jangar'
@@ -56,6 +68,9 @@ const defaultNamespace = 'jangar'
 const defaultDeployments = ['jangar']
 const defaultArgoNamespace = 'argocd'
 const defaultArgoApplication = 'jangar'
+const defaultStatusServiceName = 'jangar'
+const defaultStatusServicePort = '80'
+const defaultControlPlaneStatusNamespace = 'agents'
 const defaultRolloutTimeout = '10m'
 const defaultHealthAttempts = 60
 const defaultHealthIntervalSeconds = 10
@@ -65,8 +80,103 @@ const defaultRemoteBranch = 'main'
 const shaPattern = /^[0-9a-f]{40}$/i
 const supportedRevisionModes = ['exact', 'ancestor'] as const
 type ExpectedRevisionMode = (typeof supportedRevisionModes)[number]
+const supportedAdmissionPassportConsumers = ['serving', 'swarm_plan', 'swarm_implement', 'swarm_verify'] as const
+type AdmissionPassportConsumer = (typeof supportedAdmissionPassportConsumers)[number]
+const defaultAdmissionPassportConsumers: AdmissionPassportConsumer[] = ['serving', 'swarm_plan', 'swarm_implement']
+
+type RuntimeKitStatus = {
+  runtime_kit_id?: unknown
+  image_ref?: unknown
+  component_digest?: unknown
+  decision?: unknown
+  fresh_until?: unknown
+}
+
+type AdmissionPassportStatus = {
+  admission_passport_id?: unknown
+  consumer_class?: unknown
+  runtime_kit_set_digest?: unknown
+  decision?: unknown
+  required_runtime_kits?: unknown
+  fresh_until?: unknown
+  reason_codes?: unknown
+}
+
+type ControlPlaneStatusPayload = {
+  runtime_kits?: unknown
+  admission_passports?: unknown
+  serving_passport_id?: unknown
+}
+
+type AdmissionPassportParityEvidence = {
+  consumers: AdmissionPassportConsumer[]
+  passportIds: string[]
+  runtimeKitSetDigests: string[]
+  runtimeKitIds: string[]
+  runtimeImageRefs: string[]
+}
 
 const resolvePath = (path: string) => resolve(repoRoot, path)
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
+
+const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
+
+const asString = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value.trim() : null)
+
+const uniqueStrings = (values: string[]) => [...new Set(values)]
+
+const parseBoolean = (value: string | undefined, fallback: boolean) => {
+  const normalized = value?.trim().toLowerCase()
+  if (!normalized) return fallback
+  if (['1', 'true', 'yes', 'on', 'enabled'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'off', 'disabled'].includes(normalized)) return false
+  return fallback
+}
+
+const parseAdmissionPassportConsumers = (value: string | undefined): AdmissionPassportConsumer[] | undefined => {
+  if (!value) return undefined
+  const consumers = value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+
+  if (consumers.length === 0) {
+    return []
+  }
+
+  for (const consumer of consumers) {
+    if (!supportedAdmissionPassportConsumers.includes(consumer as AdmissionPassportConsumer)) {
+      throw new Error(
+        `Unknown admission passport consumer '${consumer}'. Expected: ${supportedAdmissionPassportConsumers.join(
+          ', ',
+        )}`,
+      )
+    }
+  }
+
+  return consumers as AdmissionPassportConsumer[]
+}
+
+const runtimeKitId = (kit: RuntimeKitStatus) => asString(kit.runtime_kit_id)
+const admissionPassportConsumer = (passport: AdmissionPassportStatus) =>
+  asString(passport.consumer_class) as AdmissionPassportConsumer | null
+
+const parseFreshUntilMs = (value: unknown, context: string) => {
+  const text = asString(value)
+  if (!text) {
+    throw new Error(`${context} does not include fresh_until`)
+  }
+  const parsed = Date.parse(text)
+  if (Number.isNaN(parsed)) {
+    throw new Error(`${context} has invalid fresh_until '${text}'`)
+  }
+  return parsed
+}
+
+const imageRefMatchesExpectedDigest = (imageRef: string, expectedDigest: string) =>
+  imageRef === expectedDigest || imageRef.includes(`@${expectedDigest}`) || imageRef.endsWith(expectedDigest)
 
 export const extractExpectedDigest = (kustomizationSource: string, imageName: string): string => {
   return extractImageDigestFromKustomizationSource(kustomizationSource, imageName)
@@ -191,6 +301,15 @@ Options:
   --image-name <registry/repository> Image name in kustomization
   --argo-namespace <name>            Argo CD namespace (default: argocd)
   --argo-application <name>          Argo CD Application name (default: jangar)
+  --status-service-namespace <name>  Namespace hosting the Jangar HTTP Service for status checks
+  --status-service-name <name>       Jangar HTTP Service name for status checks (default: jangar)
+  --status-service-port <port>       Jangar HTTP Service port for status checks (default: 80)
+  --control-plane-status-namespace <name>
+                                      Namespace passed to /api/agents/control-plane/status (default: agents)
+  --admission-passport-consumers <csv>
+                                      Required passport consumers (default: serving,swarm_plan,swarm_implement)
+  --skip-admission-passport-verification
+                                      Skip runtime admission passport parity verification
   --rollout-timeout <duration>       kubectl rollout timeout (default: 10m)
   --health-attempts <number>         Argo health polling attempts (default: 60)
   --health-interval-seconds <number> Argo health polling interval seconds (default: 10)
@@ -204,6 +323,10 @@ Options:
 
     if (arg === '--require-synced') {
       options.requireSynced = true
+      continue
+    }
+    if (arg === '--skip-admission-passport-verification') {
+      options.skipAdmissionPassportVerification = true
       continue
     }
 
@@ -241,6 +364,21 @@ Options:
         break
       case '--argo-application':
         options.argoApplication = value
+        break
+      case '--status-service-namespace':
+        options.statusServiceNamespace = value
+        break
+      case '--status-service-name':
+        options.statusServiceName = value
+        break
+      case '--status-service-port':
+        options.statusServicePort = value
+        break
+      case '--control-plane-status-namespace':
+        options.controlPlaneStatusNamespace = value
+        break
+      case '--admission-passport-consumers':
+        options.admissionPassportConsumers = parseAdmissionPassportConsumers(value)
         break
       case '--rollout-timeout':
         options.rolloutTimeout = value
@@ -374,19 +512,191 @@ const verifyDeploymentDigests = async (
   }
 }
 
+const buildControlPlaneStatusProxyPath = (options: {
+  statusServiceNamespace: string
+  statusServiceName: string
+  statusServicePort: string
+  controlPlaneStatusNamespace: string
+}) =>
+  `/api/v1/namespaces/${options.statusServiceNamespace}/services/${options.statusServiceName}:${
+    options.statusServicePort
+  }/proxy/api/agents/control-plane/status?namespace=${encodeURIComponent(options.controlPlaneStatusNamespace)}`
+
+const readControlPlaneStatus = async (options: ResolvedOptions): Promise<ControlPlaneStatusPayload> => {
+  const status = await runCommand('kubectl', [
+    'get',
+    '--raw',
+    buildControlPlaneStatusProxyPath({
+      statusServiceNamespace: options.statusServiceNamespace,
+      statusServiceName: options.statusServiceName,
+      statusServicePort: options.statusServicePort,
+      controlPlaneStatusNamespace: options.controlPlaneStatusNamespace,
+    }),
+  ])
+
+  const payload = asRecord(JSON.parse(status.stdout))
+  if (!payload) {
+    throw new Error('Control-plane status response was not a JSON object')
+  }
+  return payload as ControlPlaneStatusPayload
+}
+
+const verifyAdmissionPassportParity = (input: {
+  status: ControlPlaneStatusPayload
+  expectedDigest: string
+  consumers: AdmissionPassportConsumer[]
+  now?: Date
+}): AdmissionPassportParityEvidence => {
+  const nowMs = (input.now ?? new Date()).getTime()
+  const runtimeKits = asArray(input.status.runtime_kits)
+    .map((entry) => asRecord(entry) as RuntimeKitStatus | null)
+    .filter((entry): entry is RuntimeKitStatus => Boolean(entry))
+  const admissionPassports = asArray(input.status.admission_passports)
+    .map((entry) => asRecord(entry) as AdmissionPassportStatus | null)
+    .filter((entry): entry is AdmissionPassportStatus => Boolean(entry))
+
+  if (runtimeKits.length === 0) {
+    throw new Error('Control-plane status did not include runtime_kits')
+  }
+  if (admissionPassports.length === 0) {
+    throw new Error('Control-plane status did not include admission_passports')
+  }
+
+  const runtimeKitById = new Map<string, RuntimeKitStatus>()
+  for (const kit of runtimeKits) {
+    const id = runtimeKitId(kit)
+    if (id) runtimeKitById.set(id, kit)
+  }
+
+  const passportByConsumer = new Map<AdmissionPassportConsumer, AdmissionPassportStatus>()
+  for (const passport of admissionPassports) {
+    const consumer = admissionPassportConsumer(passport)
+    if (consumer && supportedAdmissionPassportConsumers.includes(consumer)) {
+      passportByConsumer.set(consumer, passport)
+    }
+  }
+
+  const requiredRuntimeKitIds: string[] = []
+  const passportIds: string[] = []
+  const runtimeKitSetDigests: string[] = []
+
+  for (const consumer of input.consumers) {
+    const passport = passportByConsumer.get(consumer)
+    if (!passport) {
+      throw new Error(`Missing admission passport for consumer ${consumer}`)
+    }
+
+    const passportId = asString(passport.admission_passport_id)
+    if (!passportId) {
+      throw new Error(`Admission passport for consumer ${consumer} does not include admission_passport_id`)
+    }
+    if (consumer === 'serving' && asString(input.status.serving_passport_id) !== passportId) {
+      throw new Error(
+        `Serving passport mismatch: status.serving_passport_id=${asString(
+          input.status.serving_passport_id,
+        )} passport=${passportId}`,
+      )
+    }
+
+    const decision = asString(passport.decision)
+    if (decision !== 'allow') {
+      const reasons = asArray(passport.reason_codes)
+        .map((entry) => asString(entry))
+        .filter((entry): entry is string => Boolean(entry))
+      throw new Error(
+        `Admission passport ${passportId} for ${consumer} is not allow: decision=${decision ?? 'missing'} reasons=${
+          reasons.join(',') || 'none'
+        }`,
+      )
+    }
+
+    const runtimeKitSetDigest = asString(passport.runtime_kit_set_digest)
+    if (!runtimeKitSetDigest) {
+      throw new Error(`Admission passport ${passportId} for ${consumer} does not include runtime_kit_set_digest`)
+    }
+    if (parseFreshUntilMs(passport.fresh_until, `Admission passport ${passportId}`) <= nowMs) {
+      throw new Error(`Admission passport ${passportId} for ${consumer} is stale`)
+    }
+
+    const passportRuntimeKitIds = asArray(passport.required_runtime_kits)
+      .map((entry) => asString(entry))
+      .filter((entry): entry is string => Boolean(entry))
+    if (passportRuntimeKitIds.length === 0) {
+      throw new Error(`Admission passport ${passportId} for ${consumer} does not cite required_runtime_kits`)
+    }
+
+    passportIds.push(passportId)
+    runtimeKitSetDigests.push(runtimeKitSetDigest)
+    requiredRuntimeKitIds.push(...passportRuntimeKitIds)
+  }
+
+  const runtimeImageRefs: string[] = []
+  for (const runtimeKitId of uniqueStrings(requiredRuntimeKitIds)) {
+    const runtimeKit = runtimeKitById.get(runtimeKitId)
+    if (!runtimeKit) {
+      throw new Error(`Admission passport cites missing runtime kit ${runtimeKitId}`)
+    }
+
+    const decision = asString(runtimeKit.decision)
+    if (decision !== 'healthy') {
+      throw new Error(`Runtime kit ${runtimeKitId} is not healthy: decision=${decision ?? 'missing'}`)
+    }
+    if (parseFreshUntilMs(runtimeKit.fresh_until, `Runtime kit ${runtimeKitId}`) <= nowMs) {
+      throw new Error(`Runtime kit ${runtimeKitId} is stale`)
+    }
+
+    const imageRef = asString(runtimeKit.image_ref)
+    if (!imageRef) {
+      throw new Error(`Runtime kit ${runtimeKitId} does not include image_ref`)
+    }
+    if (!imageRefMatchesExpectedDigest(imageRef, input.expectedDigest)) {
+      throw new Error(
+        `Runtime kit ${runtimeKitId} image_ref ${imageRef} does not match expected rollout digest ${
+          input.expectedDigest
+        }`,
+      )
+    }
+    runtimeImageRefs.push(imageRef)
+  }
+
+  return {
+    consumers: input.consumers,
+    passportIds,
+    runtimeKitSetDigests: uniqueStrings(runtimeKitSetDigests),
+    runtimeKitIds: uniqueStrings(requiredRuntimeKitIds),
+    runtimeImageRefs: uniqueStrings(runtimeImageRefs),
+  }
+}
+
 export const main = async (cliOptions?: CliOptions) => {
   ensureCli('kubectl')
 
   const parsed = cliOptions ?? parseArgs(process.argv.slice(2))
   const expectedRevision = parsed.expectedRevision?.trim() || undefined
   const expectedRevisionMode = validateExpectedRevisionMode(parsed.expectedRevisionMode)
+  const namespace = parsed.namespace ?? defaultNamespace
+  const verifyAdmissionPassports = parseBoolean(process.env.JANGAR_VERIFY_ADMISSION_PASSPORTS, true)
   const resolvedOptions: ResolvedOptions = {
-    namespace: parsed.namespace ?? defaultNamespace,
+    namespace,
     deployments: parsed.deployments?.length ? parsed.deployments : [...defaultDeployments],
     kustomizationPath: parsed.kustomizationPath ?? defaultKustomizationPath,
     imageName: parsed.imageName ?? defaultImageName,
     argoNamespace: parsed.argoNamespace ?? defaultArgoNamespace,
     argoApplication: parsed.argoApplication ?? defaultArgoApplication,
+    statusServiceNamespace:
+      parsed.statusServiceNamespace ?? process.env.JANGAR_VERIFY_STATUS_SERVICE_NAMESPACE ?? namespace,
+    statusServiceName:
+      parsed.statusServiceName ?? process.env.JANGAR_VERIFY_STATUS_SERVICE_NAME ?? defaultStatusServiceName,
+    statusServicePort:
+      parsed.statusServicePort ?? process.env.JANGAR_VERIFY_STATUS_SERVICE_PORT ?? defaultStatusServicePort,
+    controlPlaneStatusNamespace:
+      parsed.controlPlaneStatusNamespace ??
+      process.env.JANGAR_VERIFY_CONTROL_PLANE_STATUS_NAMESPACE ??
+      defaultControlPlaneStatusNamespace,
+    admissionPassportConsumers: parsed.admissionPassportConsumers ??
+      parseAdmissionPassportConsumers(process.env.JANGAR_VERIFY_ADMISSION_PASSPORT_CONSUMERS) ?? [
+        ...defaultAdmissionPassportConsumers,
+      ],
     rolloutTimeout: parsed.rolloutTimeout ?? defaultRolloutTimeout,
     healthAttempts: parsed.healthAttempts ?? defaultHealthAttempts,
     healthIntervalSeconds: parsed.healthIntervalSeconds ?? defaultHealthIntervalSeconds,
@@ -395,6 +705,7 @@ export const main = async (cliOptions?: CliOptions) => {
     digestAttempts: parsed.digestAttempts ?? defaultDigestAttempts,
     digestIntervalSeconds: parsed.digestIntervalSeconds ?? defaultDigestIntervalSeconds,
     requireSynced: parsed.requireSynced ?? false,
+    skipAdmissionPassportVerification: parsed.skipAdmissionPassportVerification ?? !verifyAdmissionPassports,
   }
 
   if (!Number.isInteger(resolvedOptions.healthAttempts) || resolvedOptions.healthAttempts <= 0) {
@@ -418,6 +729,12 @@ export const main = async (cliOptions?: CliOptions) => {
       `expectedRevision must be a full 40-character commit SHA, received ${resolvedOptions.expectedRevision}`,
     )
   }
+  if (!resolvedOptions.statusServicePort.trim()) {
+    throw new Error('statusServicePort must be non-empty')
+  }
+  if (!resolvedOptions.skipAdmissionPassportVerification && resolvedOptions.admissionPassportConsumers.length === 0) {
+    throw new Error('admissionPassportConsumers must include at least one consumer')
+  }
 
   const kustomizationPath = resolvePath(resolvedOptions.kustomizationPath)
   const kustomizationSource = readFileSync(kustomizationPath, 'utf8')
@@ -436,6 +753,21 @@ export const main = async (cliOptions?: CliOptions) => {
     resolvedOptions.digestAttempts,
     resolvedOptions.digestIntervalSeconds,
   )
+
+  if (resolvedOptions.skipAdmissionPassportVerification) {
+    console.log('Admission passport verification skipped by operator flag.')
+    return
+  }
+
+  const controlPlaneStatus = await readControlPlaneStatus(resolvedOptions)
+  const passportEvidence = verifyAdmissionPassportParity({
+    status: controlPlaneStatus,
+    expectedDigest,
+    consumers: resolvedOptions.admissionPassportConsumers,
+  })
+  console.log(`Admission passports verified: ${passportEvidence.passportIds.join(', ')}`)
+  console.log(`Runtime kit set digests: ${passportEvidence.runtimeKitSetDigests.join(', ')}`)
+  console.log(`Runtime kit image refs: ${passportEvidence.runtimeImageRefs.join(', ')}`)
 }
 
 if (import.meta.main) {
@@ -445,7 +777,11 @@ if (import.meta.main) {
 export const __private = {
   ensureRevisionAvailable,
   extractExpectedDigest,
+  buildControlPlaneStatusProxyPath,
   getArgoWaitReason,
+  imageRefMatchesExpectedDigest,
   isExpectedRevisionSatisfied,
   parseArgs,
+  parseAdmissionPassportConsumers,
+  verifyAdmissionPassportParity,
 }

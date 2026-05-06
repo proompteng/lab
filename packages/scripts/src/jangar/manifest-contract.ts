@@ -22,6 +22,8 @@ const readImageEntries = (document: AnyRecord) => (Array.isArray(document.images
 const findImageEntry = (document: AnyRecord, imageName: string) =>
   readImageEntries(document).find((entry) => asString(asRecord(entry)?.name) === imageName)
 
+const readArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
+
 const normalizeDigest = (value: string) => {
   const trimmed = value.trim()
   if (!trimmed) return trimmed
@@ -74,6 +76,45 @@ export const updateManifestAnnotation = (path: string, annotationKey: string, va
   annotations[annotationKey] = value
   metadata.annotations = annotations
   document.metadata = metadata
+
+  const updated = stringifyYamlRecord(document)
+  if (source === updated) {
+    return false
+  }
+
+  writeFileSync(path, updated, 'utf8')
+  return true
+}
+
+export const upsertDeploymentContainerEnvValue = (
+  path: string,
+  containerName: string,
+  envName: string,
+  value: string,
+): boolean => {
+  const source = readFileSync(path, 'utf8')
+  const document = parseYamlRecord(source)
+  const spec = asRecord(document.spec)
+  const template = asRecord(spec?.template)
+  const templateSpec = asRecord(template?.spec)
+  const containers = readArray(templateSpec?.containers)
+  const container = containers.map((entry) => asRecord(entry)).find((entry) => asString(entry?.name) === containerName)
+
+  if (!container) {
+    throw new Error(`Unable to find container '${containerName}' in deployment manifest '${path}'`)
+  }
+
+  const env = readArray(container.env)
+  let envEntry = env.map((entry) => asRecord(entry)).find((entry) => asString(entry?.name) === envName)
+  if (!envEntry) {
+    envEntry = { name: envName }
+    env.push(envEntry)
+  }
+
+  envEntry.name = envName
+  envEntry.value = value
+  delete envEntry.valueFrom
+  container.env = env
 
   const updated = stringifyYamlRecord(document)
   if (source === updated) {

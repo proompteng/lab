@@ -1,6 +1,7 @@
 import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
 
 import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/agents-controller'
+import { buildReconciledActionClocks } from '~/server/control-plane-action-clock'
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
 import {
   buildControllerWitnessQuorum,
@@ -575,6 +576,24 @@ export const buildControlPlaneStatus = async (
     runtimeKits: runtimeAdmission.runtimeKits,
     kubernetesEvidence: failureDomainKubernetesEvidence,
   })
+  const reconciledActionClocks = buildReconciledActionClocks({
+    now,
+    namespace: options.namespace,
+    failureDomainLeases,
+    database,
+    rolloutHealth,
+    workflows,
+    watchReliability: {
+      status: watchReliability.status,
+      window_minutes: watchReliability.window_minutes,
+      observed_streams: watchReliability.observed_streams,
+      total_events: watchReliability.total_events,
+      total_errors: watchReliability.total_errors,
+      total_restarts: watchReliability.total_restarts,
+      streams: watchReliability.streams,
+    },
+    empiricalServices,
+  })
 
   const isWorkflowsDataUnknown = workflows.data_confidence === 'unknown'
   const isWorkflowsDataDegraded = workflows.data_confidence === 'degraded'
@@ -716,6 +735,7 @@ export const buildControlPlaneStatus = async (
     workflows,
     dependency_quorum: dependencyQuorum,
     failure_domain_leases: failureDomainLeases,
+    reconciled_action_clocks: reconciledActionClocks,
     negative_evidence_router: negativeEvidenceRouter.router,
     action_slo_budgets: negativeEvidenceRouter.budgets,
     torghut_action_slo_budgets: negativeEvidenceRouter.torghutBudgets,

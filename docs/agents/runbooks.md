@@ -219,6 +219,24 @@ Expected outcomes:
 - rollback is runtime-local: restore the missing helper/config/secret in the admitted image or revert the
   change that introduced the incompatible runtime contract, then redeploy and re-check the same passport ids.
 
+Jangar deploy verification now checks the same passport surface after rollout digest checks:
+
+```bash
+bun run packages/scripts/src/jangar/verify-deployment.ts \
+  --require-synced \
+  --expected-revision "$(git rev-parse HEAD)" \
+  --expected-revision-mode ancestor
+```
+
+Expected outcomes:
+
+- the verifier prints the admitted passport ids, runtime-kit set digest set, and runtime-kit image refs for
+  `serving`, `swarm_plan`, and `swarm_implement`;
+- verification fails if any required passport is stale, missing, held, blocked, or backed by a runtime kit whose
+  `image_ref` does not include the promoted digest from `argocd/applications/jangar/kustomization.yaml`;
+- emergency rollback for deploy verification only is `--skip-admission-passport-verification` or
+  `JANGAR_VERIFY_ADMISSION_PASSPORTS=false`; leave `/ready` and status passport projections enabled while debugging.
+
 ## Native workflow e2e proof
 
 This runbook validates the native workflow runtime end-to-end (AgentProvider → Agent → ImplementationSpec → AgentRun)

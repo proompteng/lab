@@ -18,6 +18,14 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Fast Jangar/Torghut live analysis workflow: `designs/jangar-torghut-live-analysis-playbook.md`
 - Autonomous Jangar/Torghut production system design: `designs/autonomous-jangar-torghut-production-system.md`
 - Current Jangar/Torghut architecture contracts:
+  - `designs/121-jangar-material-action-repair-clearing-lane-and-profit-proof-ledger-2026-05-06.md`
+  - `../torghut/design-system/v6/125-torghut-profit-priced-evidence-renewal-and-capital-reentry-ledger-2026-05-06.md`
+  - `designs/121-jangar-controller-witness-uplink-and-proof-renewal-train-2026-05-06.md`
+  - `../torghut/design-system/v6/125-torghut-proof-renewal-train-and-capital-reentry-sequencer-2026-05-06.md`
+  - `designs/120-jangar-material-action-verdict-arbiter-and-clock-budget-parity-2026-05-06.md`
+  - `../torghut/design-system/v6/124-torghut-capital-action-verdict-consumer-and-profit-hypothesis-settlement-2026-05-06.md`
+  - `designs/120-jangar-data-plane-proof-quarantine-and-profit-repair-fuse-2026-05-06.md`
+  - `../torghut/design-system/v6/124-torghut-data-plane-proof-quarantine-and-profit-renewal-fuse-2026-05-06.md`
   - `designs/116-jangar-controller-witness-quorum-and-capital-activation-receipts-2026-05-06.md`
   - `../torghut/design-system/v6/120-torghut-capital-activation-receipts-and-shadow-profit-proof-queue-2026-05-06.md`
   - `designs/115-jangar-watch-quiescence-and-evidence-renewal-arbiter-2026-05-06.md`
