@@ -72,19 +72,33 @@ FEATURE_VECTOR_V3_VALUE_FIELDS = (
     'recent_15m_return_bps',
     'microbar_volume',
     'cross_section_session_open_rank',
+    'cross_section_session_open_rank_universe_size',
     'cross_section_prev_session_close_rank',
+    'cross_section_prev_session_close_rank_universe_size',
     'cross_section_opening_window_return_rank',
+    'cross_section_opening_window_return_rank_universe_size',
     'cross_section_opening_window_return_from_prev_close_rank',
+    'cross_section_opening_window_return_from_prev_close_rank_universe_size',
     'cross_section_prev_day_open45_return_rank',
+    'cross_section_prev_day_open45_return_rank_universe_size',
     'cross_section_prev_day_open60_return_rank',
+    'cross_section_prev_day_open60_return_rank_universe_size',
     'cross_section_range_position_rank',
+    'cross_section_range_position_rank_universe_size',
     'cross_section_vwap_w5m_rank',
+    'cross_section_vwap_w5m_rank_universe_size',
     'cross_section_vwap_w5m_stretch_rank',
+    'cross_section_vwap_w5m_stretch_rank_universe_size',
     'cross_section_recent_15m_return_rank',
+    'cross_section_recent_15m_return_rank_universe_size',
     'cross_section_microbar_volume_rank',
+    'cross_section_microbar_volume_rank_universe_size',
     'cross_section_recent_imbalance_rank',
+    'cross_section_recent_imbalance_rank_universe_size',
     'cross_section_rsi14_rank',
+    'cross_section_rsi14_rank_universe_size',
     'cross_section_macd_hist_rank',
+    'cross_section_macd_hist_rank_universe_size',
     'cross_section_positive_session_open_ratio',
     'cross_section_positive_prev_session_close_ratio',
     'cross_section_positive_opening_window_return_ratio',
@@ -95,7 +109,9 @@ FEATURE_VECTOR_V3_VALUE_FIELDS = (
     'cross_section_positive_recent_imbalance_ratio',
     'cross_section_continuation_breadth',
     'cross_section_continuation_rank',
+    'cross_section_continuation_rank_universe_size',
     'cross_section_reversal_rank',
+    'cross_section_reversal_rank_universe_size',
     'session_minutes_elapsed',
     'signal_quality_flag',
     'hmm_state_posterior',
@@ -421,33 +437,75 @@ def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
         'recent_15m_return_bps': optional_decimal(payload.get('recent_15m_return_bps')),
         'microbar_volume': optional_decimal(payload.get('microbar_volume')),
         'cross_section_session_open_rank': optional_decimal(payload.get('cross_section_session_open_rank')),
+        'cross_section_session_open_rank_universe_size': optional_decimal(
+            payload.get('cross_section_session_open_rank_universe_size')
+        ),
         'cross_section_prev_session_close_rank': optional_decimal(
             payload.get('cross_section_prev_session_close_rank')
         ),
+        'cross_section_prev_session_close_rank_universe_size': optional_decimal(
+            payload.get('cross_section_prev_session_close_rank_universe_size')
+        ),
         'cross_section_opening_window_return_rank': optional_decimal(payload.get('cross_section_opening_window_return_rank')),
+        'cross_section_opening_window_return_rank_universe_size': optional_decimal(
+            payload.get('cross_section_opening_window_return_rank_universe_size')
+        ),
         'cross_section_opening_window_return_from_prev_close_rank': optional_decimal(
             payload.get('cross_section_opening_window_return_from_prev_close_rank')
+        ),
+        'cross_section_opening_window_return_from_prev_close_rank_universe_size': optional_decimal(
+            payload.get('cross_section_opening_window_return_from_prev_close_rank_universe_size')
         ),
         'cross_section_prev_day_open45_return_rank': optional_decimal(
             payload.get('cross_section_prev_day_open45_return_rank')
         ),
+        'cross_section_prev_day_open45_return_rank_universe_size': optional_decimal(
+            payload.get('cross_section_prev_day_open45_return_rank_universe_size')
+        ),
         'cross_section_prev_day_open60_return_rank': optional_decimal(
             payload.get('cross_section_prev_day_open60_return_rank')
         ),
+        'cross_section_prev_day_open60_return_rank_universe_size': optional_decimal(
+            payload.get('cross_section_prev_day_open60_return_rank_universe_size')
+        ),
         'cross_section_range_position_rank': optional_decimal(payload.get('cross_section_range_position_rank')),
+        'cross_section_range_position_rank_universe_size': optional_decimal(
+            payload.get('cross_section_range_position_rank_universe_size')
+        ),
         'cross_section_vwap_w5m_rank': optional_decimal(payload.get('cross_section_vwap_w5m_rank')),
+        'cross_section_vwap_w5m_rank_universe_size': optional_decimal(
+            payload.get('cross_section_vwap_w5m_rank_universe_size')
+        ),
         'cross_section_vwap_w5m_stretch_rank': optional_decimal(
             payload.get('cross_section_vwap_w5m_stretch_rank')
+        ),
+        'cross_section_vwap_w5m_stretch_rank_universe_size': optional_decimal(
+            payload.get('cross_section_vwap_w5m_stretch_rank_universe_size')
         ),
         'cross_section_recent_15m_return_rank': optional_decimal(
             payload.get('cross_section_recent_15m_return_rank')
         ),
+        'cross_section_recent_15m_return_rank_universe_size': optional_decimal(
+            payload.get('cross_section_recent_15m_return_rank_universe_size')
+        ),
         'cross_section_microbar_volume_rank': optional_decimal(
             payload.get('cross_section_microbar_volume_rank')
         ),
+        'cross_section_microbar_volume_rank_universe_size': optional_decimal(
+            payload.get('cross_section_microbar_volume_rank_universe_size')
+        ),
         'cross_section_recent_imbalance_rank': optional_decimal(payload.get('cross_section_recent_imbalance_rank')),
+        'cross_section_recent_imbalance_rank_universe_size': optional_decimal(
+            payload.get('cross_section_recent_imbalance_rank_universe_size')
+        ),
         'cross_section_rsi14_rank': optional_decimal(payload.get('cross_section_rsi14_rank')),
+        'cross_section_rsi14_rank_universe_size': optional_decimal(
+            payload.get('cross_section_rsi14_rank_universe_size')
+        ),
         'cross_section_macd_hist_rank': optional_decimal(payload.get('cross_section_macd_hist_rank')),
+        'cross_section_macd_hist_rank_universe_size': optional_decimal(
+            payload.get('cross_section_macd_hist_rank_universe_size')
+        ),
         'cross_section_positive_session_open_ratio': optional_decimal(payload.get('cross_section_positive_session_open_ratio')),
         'cross_section_positive_prev_session_close_ratio': optional_decimal(
             payload.get('cross_section_positive_prev_session_close_ratio')
@@ -470,7 +528,13 @@ def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
         ),
         'cross_section_continuation_breadth': optional_decimal(payload.get('cross_section_continuation_breadth')),
         'cross_section_continuation_rank': optional_decimal(payload.get('cross_section_continuation_rank')),
+        'cross_section_continuation_rank_universe_size': optional_decimal(
+            payload.get('cross_section_continuation_rank_universe_size')
+        ),
         'cross_section_reversal_rank': optional_decimal(payload.get('cross_section_reversal_rank')),
+        'cross_section_reversal_rank_universe_size': optional_decimal(
+            payload.get('cross_section_reversal_rank_universe_size')
+        ),
         'session_minutes_elapsed': _optional_int(payload.get('session_minutes_elapsed')),
         'signal_quality_flag': payload.get('signal_quality_flag'),
         'hmm_state_posterior': regime_context.posterior,

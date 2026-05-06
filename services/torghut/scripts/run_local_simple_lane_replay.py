@@ -29,6 +29,7 @@ if str(SERVICE_ROOT) not in sys.path:
 
 from app import config
 from app.models import Base, Execution, Strategy, TradeDecision
+from app.strategies.catalog import StrategyConfig, _compose_strategy_description
 from app.trading.decisions import DecisionEngine
 from app.trading.execution import OrderExecutor
 from app.trading.execution_adapters import SimulationExecutionAdapter
@@ -453,20 +454,17 @@ def _seed_strategies(
 ) -> None:
     with session_local() as session:
         for definition in strategy_defs:
+            config_entry = StrategyConfig.model_validate(definition)
             session.add(
                 Strategy(
-                    name=str(definition.get('name') or 'strategy'),
-                    description=str(definition.get('description') or ''),
+                    name=str(config_entry.name or 'strategy'),
+                    description=_compose_strategy_description(config_entry),
                     enabled=True,
-                    base_timeframe=str(definition.get('base_timeframe') or '1Sec'),
-                    universe_type=str(definition.get('universe_type') or 'static'),
-                    universe_symbols=definition.get('universe_symbols'),
-                    max_position_pct_equity=_optional_decimal(
-                        definition.get('max_position_pct_equity')
-                    ),
-                    max_notional_per_trade=_optional_decimal(
-                        definition.get('max_notional_per_trade')
-                    ),
+                    base_timeframe=str(config_entry.base_timeframe or '1Sec'),
+                    universe_type=str(config_entry.universe_type or 'static'),
+                    universe_symbols=config_entry.universe_symbols,
+                    max_position_pct_equity=config_entry.max_position_pct_equity,
+                    max_notional_per_trade=config_entry.max_notional_per_trade,
                 )
             )
         session.commit()

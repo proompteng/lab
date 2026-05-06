@@ -5578,6 +5578,40 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(report['effective_terminal_signal_ts'], '2026-03-11T13:34:58+00:00')
         self.assertEqual(report['dataset_alignment'], 'window_declared_beyond_dataset')
 
+    def test_activity_state_treats_subsecond_terminal_cursor_gap_as_reached(self) -> None:
+        state = historical_simulation_verification._activity_state(
+            manifest={
+                'window': {
+                    'start': '2026-05-05T13:30:00Z',
+                    'end': '2026-05-05T20:00:00Z',
+                },
+                'monitor': {
+                    'cursor_terminal_tolerance_seconds': 1,
+                    'min_trade_decisions': 1,
+                    'min_executions': 1,
+                    'min_execution_tca_metrics': 1,
+                    'min_execution_order_events': 0,
+                },
+            },
+            runtime_verify={'runtime_state': 'ready'},
+            snapshot={
+                'signal_rows': 100,
+                'price_rows': 100,
+                'trade_decisions': 0,
+                'executions': 0,
+                'execution_tca_metrics': 0,
+                'execution_order_events': 0,
+                'cursor_at': '2026-05-05T19:59:59Z',
+                'last_signal_ts': '2026-05-05T19:59:59.990Z',
+                'last_price_ts': '2026-05-05T19:59:59.990Z',
+                'last_source_ts': '2026-05-05T19:59:59.990Z',
+            },
+        )
+
+        self.assertTrue(state['terminal_reached'])
+        self.assertEqual(state['activity_classification'], 'decisions_absent')
+        self.assertLess(state['cursor_gap_seconds'], 1)
+
     def test_current_activity_report_prefers_terminal_success_over_runtime_flap(self) -> None:
         postgres_config = PostgresRuntimeConfig(
             admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
