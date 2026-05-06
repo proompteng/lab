@@ -200,9 +200,10 @@ Schedule reconciliation also re-checks the current stage passport before it writ
 This keeps pre-existing schedules from launching with stale allowed passport annotations after the collaboration runtime
 kit moves to `hold` or `block`.
 
-Degraded authority or runtime-kit evidence keeps the serving passport non-blocking (`degrade`) but moves
-launch-capable swarm passports to `hold`. The supporting-primitives controller treats both `hold` and `block` as
-non-admitted decisions for discover, plan, implement, verify, and cross-swarm requirement launches.
+Degraded authority or degraded runtime-kit evidence keeps the serving passport non-blocking (`degrade`) but moves
+launch-capable swarm passports to `hold`. Missing required runtime-kit evidence still moves launch-capable passports to
+`block`. The supporting-primitives controller treats both `hold` and `block` as non-admitted decisions for discover,
+plan, implement, verify, and cross-swarm requirement launches.
 
 Admitted schedules and requirement runs carry these trace fields in annotations and run parameters:
 
