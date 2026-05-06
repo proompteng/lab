@@ -160,10 +160,12 @@ const conditionIsTrue = (condition: { status: string | null }) => normalizeText(
 const isDatabasePod = (pod: KubeGatewayPod) => {
   const name = normalizeText(pod.metadata.name)
   const labels = pod.metadata.labels
+  const hasDatabaseNameToken = /(^|[-_.])(db|database|postgres|postgresql)($|[-_.])/.test(name)
   return (
-    name.includes('db') ||
+    hasDatabaseNameToken ||
     Boolean(labels['cnpg.io/cluster']) ||
     normalizeText(labels['app.kubernetes.io/name']).includes('postgres') ||
+    normalizeText(labels['app.kubernetes.io/name']).includes('database') ||
     normalizeText(labels['app.kubernetes.io/component']).includes('database')
   )
 }

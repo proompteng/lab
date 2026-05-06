@@ -11,6 +11,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `105-torghut-proof-provenance-firewall-and-profit-lease-graduation-2026-05-06.md`
+  - `docs/agents/designs/101-jangar-evidence-provenance-firewall-and-lease-graduation-contract-2026-05-06.md`
   - `105-torghut-account-scoped-hypothesis-liquidity-and-options-bootstrap-2026-05-06.md`
   - `docs/agents/designs/101-jangar-account-scoped-proof-liquidity-and-query-budget-2026-05-06.md`
   - `104-torghut-proof-expiry-clock-and-hypothesis-rehydration-lanes-2026-05-06.md`
@@ -390,6 +392,13 @@ proof, and blocked market time should be spent through zero-notional session pro
   evidence and selects cross-plane evidence epochs plus hypothesis-local profit cells as the next architecture move:
   Torghut promotion must prove runtime authority, data freshness, image portability, and post-cost contribution in one
   receipt chain before any non-observe capital can advance.
+- `105-torghut-proof-provenance-firewall-and-profit-lease-graduation-2026-05-06.md` now makes proof source identity a
+  capital gate: fresh equity TA can support observation, but paper/live promotion needs current empirical jobs, non-empty
+  quant/profit proof, measured rejection drag, options data readiness when relevant, and a matching Jangar action lease.
+- `docs/agents/designs/101-jangar-evidence-provenance-firewall-and-lease-graduation-contract-2026-05-06.md` now records
+  the companion Jangar control-plane rule: failure-domain leases may only hold dispatch, rollout, merge, or Torghut
+  capital when the evidence resource is source-qualified, so arbitrary runner pod suffixes cannot masquerade as
+  database outage evidence.
 - `77-torghut-hot-path-proof-projections-and-profit-cell-settlement-2026-05-05.md` now records the latest May 5
   discover evidence where liveness stayed green but Torghut `/readyz`, Torghut `/trading/status`, Jangar control-plane
   status, and Jangar quant health breached route budgets; it makes bounded proof projections and settled profit cells

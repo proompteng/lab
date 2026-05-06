@@ -221,6 +221,52 @@ describe('failure-domain lease synthesis', () => {
     })
   })
 
+  it('does not treat arbitrary runner pod suffixes containing db as database evidence', () => {
+    const result = leaseSet({
+      kubernetesEvidence: {
+        pods: [
+          pod({
+            metadata: {
+              name: 'jangar-control-plane-plan-sched-zczg7-step-1-attempt-1-4dbnk',
+              namespace: 'agents',
+              generation: 1,
+              labels: { 'agents.proompteng.ai/agent-run': 'jangar-control-plane-plan-sched-zczg7' },
+              creationTimestamp: '2026-05-05T11:55:00.000Z',
+            },
+            status: {
+              phase: 'Failed',
+              conditions: [{ type: 'Ready', status: 'False', reason: null, lastTransitionTime: null }],
+              containerStatuses: [
+                {
+                  name: 'runner',
+                  image: 'registry.ide-newton.ts.net/lab/jangar:0bba2aa8',
+                  ready: false,
+                  state: { terminated: { reason: 'Error', message: null, exitCode: 1 } },
+                },
+              ],
+            },
+          }),
+        ],
+        events: [],
+        collection_errors: [],
+      },
+    })
+
+    expect(findLease(result.leases, 'database')).toMatchObject({
+      status: 'valid',
+      reason_codes: [],
+      evidence_refs: ['database:probe:select_1'],
+    })
+    expect(findLease(result.leases, 'source_schema')).toMatchObject({
+      status: 'valid',
+      reason_codes: [],
+    })
+    expect(findHoldback(result.holdbacks, 'merge_ready')).toMatchObject({
+      decision: 'allow',
+      reason_codes: [],
+    })
+  })
+
   it('holds normal dispatch and Torghut capital on route refusal while repair dispatch remains allowed', () => {
     const result = leaseSet({
       routeProbe: routeProbe({
