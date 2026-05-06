@@ -11,6 +11,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `104-torghut-proof-expiry-clock-and-hypothesis-rehydration-lanes-2026-05-06.md`
+  - `docs/agents/designs/100-jangar-lease-reconciliation-clock-and-dispatch-expiry-contract-2026-05-06.md`
   - `103-torghut-hypothesis-lease-arbiter-and-options-profit-runway-2026-05-06.md`
   - `docs/agents/designs/99-jangar-evidence-lease-cells-and-rollout-admission-arbiter-2026-05-06.md`
   - `103-torghut-hypothesis-rehydration-and-proof-gap-auction-2026-05-06.md`
