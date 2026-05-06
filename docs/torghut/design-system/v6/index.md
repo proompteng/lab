@@ -11,6 +11,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `101-torghut-proof-debt-retirement-and-shadow-capital-handoff-2026-05-06.md`
+  - `docs/agents/designs/97-jangar-discover-cutover-handoff-and-proof-debt-gates-2026-05-06.md`
   - `100-torghut-session-proof-train-and-profitability-warrants-2026-05-06.md`
   - `docs/agents/designs/96-jangar-session-proof-train-and-capital-authority-separation-2026-05-06.md`
   - `100-torghut-market-context-negative-evidence-and-shadow-capital-router-2026-05-06.md`
