@@ -1950,10 +1950,20 @@ class TestTradingApi(TestCase):
     ) -> None:
         original = settings.trading_enabled
         original_source = settings.trading_universe_source
+        original_require_non_empty = settings.trading_universe_require_non_empty_jangar
         settings.trading_enabled = True
         settings.trading_universe_source = "jangar"
+        settings.trading_universe_require_non_empty_jangar = True
         try:
             scheduler = TradingScheduler()
+            scheduler.universe_resolver = SimpleNamespace(
+                get_resolution=lambda: SimpleNamespace(
+                    symbols={"AMD", "NVDA"},
+                    status="ok",
+                    reason="jangar_fetch_ok",
+                    cache_age_seconds=0,
+                ),
+            )
             scheduler.state.running = True
             scheduler.state.last_run_at = datetime.now(timezone.utc)
             app.state.trading_scheduler = scheduler
@@ -1967,9 +1977,13 @@ class TestTradingApi(TestCase):
             self.assertIn("checked_at", payload["dependencies"]["database"])
             self.assertIn("universe", payload["dependencies"])
             self.assertTrue(payload["dependencies"]["universe"]["ok"])
+            self.assertEqual(payload["dependencies"]["universe"]["symbols_count"], 2)
         finally:
             settings.trading_enabled = original
             settings.trading_universe_source = original_source
+            settings.trading_universe_require_non_empty_jangar = (
+                original_require_non_empty
+            )
 
     @patch(
         "app.main.check_account_scope_invariants",
