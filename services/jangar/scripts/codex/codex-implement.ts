@@ -3764,8 +3764,10 @@ export const runCodexImplementation = async (eventPath: string) => {
     prUrl = prUrlRaw ? prUrlRaw : null
     if (!isBatchTask) {
       const pullRequestsEnabled = parseBoolean(process.env.VCS_PULL_REQUESTS_ENABLED, false)
+      const vcsWriteEnabled = parseBoolean(process.env.VCS_WRITE_ENABLED, false)
       const requirePullRequestConfigured = parseBoolean(process.env.CODEX_REQUIRE_PULL_REQUEST, pullRequestsEnabled)
       const isReleaseLikeExecution = isReleaseManagerLikeExecution(requirementMetadata)
+      const isReadOnlyVerificationExecution = stage === 'verify' && !vcsWriteEnabled && !pullRequestsEnabled
       const requirePullRequest = isReleaseLikeExecution ? false : requirePullRequestConfigured
       const pullRequestDiscoveryEnabled = parseBoolean(process.env.CODEX_PR_DISCOVERY_ENABLED, true)
       const shouldRecoverMissingPrMetadata = requirePullRequest && (!prUrl || !prNumber)
@@ -3846,12 +3848,13 @@ export const runCodexImplementation = async (eventPath: string) => {
         executionLane === 'release' &&
         !roleCompletionEvidence.releaseMergeEvidence &&
         roleCompletionEvidence.releaseNoGoEvidence
-      if (executionLane === 'release' && !roleCompletionEvidence.releaseMergeEvidence && !releaseNoGoDecision) {
+      const releaseRequiresMergeEvidence = executionLane === 'release' && !isReadOnlyVerificationExecution
+      if (releaseRequiresMergeEvidence && !roleCompletionEvidence.releaseMergeEvidence && !releaseNoGoDecision) {
         throw new Error('Release run completed without merge evidence (merged PR/commit required)')
       }
       if (
         executionLane === 'release' &&
-        roleCompletionEvidence.releaseMergeEvidence &&
+        (roleCompletionEvidence.releaseMergeEvidence || isReadOnlyVerificationExecution) &&
         !roleCompletionEvidence.releaseRolloutEvidence
       ) {
         throw new Error('Release run completed without healthy rollout evidence')
