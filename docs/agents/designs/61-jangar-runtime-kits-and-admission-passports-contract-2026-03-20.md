@@ -369,6 +369,9 @@ The first enforcement slice is the stage and requirement launcher gate:
   `block`.
 - blocked or held implement passports prevent requirement dispatch and mark the `RequirementsBridge` condition with
   `RuntimeAdmissionBlocked`.
+- if the current admission snapshot cannot be compiled, launch admission fails closed as
+  `RuntimeAdmissionUnavailable`, deletes stale schedule runner resources, and records the unavailable passport state in
+  stage and requirement status.
 - degraded authority or degraded runtime-kit evidence keeps the serving passport non-blocking as `degrade`, but compiles
   launch-capable swarm passports as `hold`; missing required runtime-kit evidence still compiles launch-capable
   passports as `block`, and the launcher gate treats both non-admitted decisions as launch stops.
