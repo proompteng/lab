@@ -51,7 +51,7 @@ vi.mock('@kubernetes/client-node', () => ({
 }))
 
 import { __private as transportPrivate } from '~/server/kubernetes-bun-transport'
-import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import { createKubernetesClient, RESOURCE_MAP, resolveKubernetesResourceTarget } from '~/server/primitives-kube'
 
 describe('primitives-kube', () => {
   beforeEach(() => {
@@ -145,6 +145,49 @@ describe('primitives-kube', () => {
       }),
     )
     expect(objectApiMock.patch).not.toHaveBeenCalled()
+  })
+
+  it('resolves PersistentVolumeClaim aliases through the core v1 resource target', () => {
+    for (const alias of ['persistentvolumeclaim', 'persistentvolumeclaims', 'pvc', 'pvcs']) {
+      expect(resolveKubernetesResourceTarget(alias)).toEqual({
+        apiVersion: 'v1',
+        kind: 'PersistentVolumeClaim',
+        plural: 'persistentvolumeclaims',
+        namespaceScoped: true,
+      })
+    }
+  })
+
+  it('uses KubernetesObjectApi for PersistentVolumeClaim reads and lists', async () => {
+    objectApiMock.read.mockResolvedValue({ metadata: { name: 'workspace-pvc' } })
+    objectApiMock.list.mockResolvedValue({ items: [] })
+
+    const kube = createKubernetesClient()
+    const pvc = await kube.get('persistentvolumeclaim', 'workspace-pvc', 'agents')
+    const pvcs = await kube.list('persistentvolumeclaims', 'agents', 'workspaces.proompteng.ai/name=workspace-pvc')
+
+    expect(pvc).toEqual({ metadata: { name: 'workspace-pvc' } })
+    expect(pvcs).toEqual({ items: [] })
+    expect(objectApiMock.read).toHaveBeenCalledWith({
+      apiVersion: 'v1',
+      kind: 'PersistentVolumeClaim',
+      metadata: {
+        name: 'workspace-pvc',
+        namespace: 'agents',
+      },
+    })
+    expect(objectApiMock.list).toHaveBeenCalledWith(
+      'v1',
+      'PersistentVolumeClaim',
+      'agents',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'workspaces.proompteng.ai/name=workspace-pvc',
+    )
+    expect(customObjectsMock.getNamespacedCustomObject).not.toHaveBeenCalled()
+    expect(customObjectsMock.listNamespacedCustomObject).not.toHaveBeenCalled()
   })
 
   it('patches custom resource status through CustomObjectsApi with the current resourceVersion', async () => {
