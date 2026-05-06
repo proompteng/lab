@@ -196,7 +196,7 @@ jobs:
           set -euo pipefail
 
           HEAD_MESSAGE="$(git log -1 --pretty=%s)"
-          if [[ "${HEAD_MESSAGE}" == rollback\(torghut\):* ]]; then
+          if [[ "${HEAD_MESSAGE}" == rollback\(torghut\):* || "${HEAD_MESSAGE}" == revert\(torghut\):* ]]; then
             echo "Skipping rollback PR because current commit is already a rollback"
             echo "should_rollback=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -211,7 +211,7 @@ jobs:
           git checkout --quiet HEAD^ -- \
             argocd/applications/torghut
 
-          if git diff --quiet -- \
+          if git diff --quiet HEAD -- \
             argocd/applications/torghut; then
             echo "No rollback diff detected"
             echo "should_rollback=false" >> "$GITHUB_OUTPUT"
@@ -227,8 +227,8 @@ jobs:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/torghut-rollback-${{ github.run_id }}-${{ github.run_attempt }}
           base: main
-          title: 'rollback(torghut): revert failed promotion ${{ github.sha }}'
-          commit-message: 'rollback(torghut): revert failed promotion ${{ github.sha }}'
+          title: 'revert(torghut): rollback failed promotion ${{ github.sha }}'
+          commit-message: 'revert(torghut): rollback failed promotion ${{ github.sha }}'
           delete-branch: true
           add-paths: |
             argocd/applications/torghut
