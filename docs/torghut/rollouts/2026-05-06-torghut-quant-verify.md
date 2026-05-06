@@ -5,26 +5,24 @@ Repository: `proompteng/lab`
 Branch: `codex/swarm-torghut-quant-verify`
 Base: `main`
 Owner channel: `swarm://owner/trading`
-Last refreshed: 2026-05-06T08:44Z
+Last refreshed: 2026-05-06T08:55Z
 
 ## Owner update message
 
-I merged the small Torghut unblocker #5649 after all visible checks passed and local merge-tree
-validation showed no conflicts. GitOps rollout is healthy: Argo CD has both `torghut` and
-`torghut-options` Synced/Healthy at #5649 merge commit `cfeb86f5cd0d70a74b4d5ed4aecfb4123282a5c9`,
-the Torghut deployments are rolled out, promoted pods are ready with zero restarts, and service probes
-are green except the known live-capital shadow gate. I am still holding #5412: it is conflict-free and
-green in CI, but it is a 3,165-line large diff with zero posted reviews, and the latest Codex review
-request returned the usage-limit blocker. That remains a hard no-go until Codex review capacity is
-restored or a maintainer explicitly waives the large-diff gate.
+No-go on the Torghut release gate. The small Torghut unblocker #5649 and the prior audit PR #5646 are
+already merged, and the latest open Torghut runtime PR is still #5412. PR #5412 is conflict-free and
+green in CI on head `df361911e250fa315002c776e8ac4a53dc781e69`, but it is a 3,165-line large diff
+with zero posted reviews and zero review threads. The latest current-head Codex review request returned
+the usage-limit blocker, so I did not merge and did not start a #5412 rollout.
 
 ## Open PR enumeration
 
 - #5412, `feat(torghut): add evidence epochs and shared live gate`, is the primary Torghut quant
   runtime PR. It is selected and held.
-- #5649, `fix(torghut): unblock historical simulation proof setup`, appeared during this verification
+- #5649, `fix(torghut): unblock historical simulation proof setup`, appeared during the verification
   window. It was selected as a small unblocker PR, verified, and merged.
-- #5646, `docs(torghut): refresh quant verify gate`, is this audit PR on the required verify branch.
+- #5646, `docs(torghut): refresh quant verify gate`, was the previous audit PR on the required verify
+  branch and is now merged.
 - #5594 is Jangar-scoped and outside the Torghut quant release gate.
 - #5316 is an older automated release PR and was not selected for Torghut quant promotion work.
 
@@ -39,8 +37,9 @@ restored or a maintainer explicitly waives the large-diff gate.
 - `gh pr checks 5412` reports Torghut CI, Pyright, pytest/coverage, quality signals, argo-lint,
   kubeconform, semantic PR title, semantic commits, and changed-file checks as passing; unrelated app
   and deploy gates are skipped.
-- The latest `@codex review` request on head `d7eb2f1dbe5855209d8fd27a78bbadfe8fc4fc94` returned the
-  Codex usage-limit response at 2026-05-06T06:48:50Z, so no Codex review has posted.
+- Current head is `df361911e250fa315002c776e8ac4a53dc781e69`.
+- The latest current-head `@codex review` request returned the Codex usage-limit response at
+  2026-05-06T08:46:58Z, so no Codex review has posted.
 
 #5649 was go for merge:
 
@@ -58,7 +57,8 @@ restored or a maintainer explicitly waives the large-diff gate.
   posted.
 - #5649: selected, verified, and squash-merged to main at
   `cfeb86f5cd0d70a74b4d5ed4aecfb4123282a5c9`.
-- #5646: refreshed as the durable audit artifact for this release gate.
+- #5646: refreshed as the prior durable audit artifact for this release gate and merged at
+  `bbfa3f8eb0a5511928b736c5b7c8f3cac0e51954`.
 - #5638 and #5635: previously merged Torghut image promotions used as pre-existing rollout baseline;
   neither was modified during this refresh.
 
@@ -68,21 +68,20 @@ restored or a maintainer explicitly waives the large-diff gate.
 - #5649 had no comments, no review requests, zero review threads, and a clean local merge-tree result.
 - The #5412 progress comment remains anchored with `<!-- codex:progress -->` and documents the
   Codex review usage-limit blocker.
-- This #5646 audit PR progress comment is updated through
-  `services/jangar/scripts/codex/codex-progress-comment.ts`.
+- The progress comment is updated through `services/jangar/scripts/codex/codex-progress-comment.ts`.
 
 ## Merge outcomes
 
 - #5649: merged by squash at `cfeb86f5cd0d70a74b4d5ed4aecfb4123282a5c9`.
 - #5412: held, not merged.
-- #5646: audit PR refreshed for merge after checks pass on this updated head.
+- #5646: audit PR merged by squash at `bbfa3f8eb0a5511928b736c5b7c8f3cac0e51954`.
 
 ## Validation
 
 - PASS: `/usr/local/bin/codex-nats-soak` wrote `.codex-nats-context.json`; it fetched 25 recent
   general-channel messages and found no matching branch/run messages.
-- PASS: `gh pr list -R proompteng/lab --state open --search "torghut in:title,body"` identified
-  #5412, #5646, and #5649 during the release gate.
+- PASS: `gh pr list -R proompteng/lab --state open --limit 100` identified #5412 as the only open
+  Torghut candidate during the latest refresh; #5646 and #5649 are merged.
 - PASS: `gh pr checks 5412 -R proompteng/lab` showed all visible #5412 checks passing or skipped.
 - PASS: `gh pr checks 5649 -R proompteng/lab` showed all visible #5649 checks passing or skipped.
 - PASS: `git merge-tree --write-tree origin/main refs/remotes/origin/pr/5649`.
@@ -164,6 +163,6 @@ Events and RBAC:
 
 ## Next action
 
-Merge this audit PR after its checks pass. Keep #5412 open and blocked; re-request Codex review only
-after review quota is restored, then resolve any threads, refresh against current main, wait for all
-checks to pass, squash-merge, and repeat GitOps/workload/event verification.
+Keep #5412 open and blocked; re-request Codex review only after review quota is restored, then resolve
+any threads, refresh against current main, wait for all checks to pass, squash-merge, and repeat
+GitOps/workload/event verification.
