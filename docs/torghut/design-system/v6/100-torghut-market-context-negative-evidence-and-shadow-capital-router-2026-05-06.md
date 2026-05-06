@@ -35,6 +35,47 @@ and scoped execution proof is not an experiment; it is unpriced exposure.
 
 All evidence for this pass was read-only.
 
+### Plan-Lane Refresh (2026-05-06T00:25Z)
+
+I rechecked Torghut from the required Jangar plan lane after the first version of this document merged. The decision
+remains the same: market-context negative evidence plus a shadow-capital router. The new evidence makes the profit path
+narrower and clearer. Torghut is operationally serving and schema-current, but profitability evidence is not yet
+trade-ready, and the options lane is reporting a ready route without useful catalog data.
+
+Read-only evidence from this refresh:
+
+- Active live and sim revisions recovered to ready: `torghut-00225` and `torghut-sim-00306` were both `1/1`.
+- Torghut `/db-check` returned `ok=true`, `schema_current=true`, current and expected Alembic head
+  `0029_whitepaper_embedding_dimension_4096`, no missing heads, no unexpected heads, one current head, one expected head,
+  lineage ready, and the known parent-fork warnings.
+- Torghut `/readyz` and `/trading/health` returned HTTP 503 `status=degraded`, but the dependency details were specific:
+  Postgres, ClickHouse, Alpaca, and schema were OK; live submission was blocked by `simple_submit_disabled`; capital stage
+  was `shadow`; empirical jobs were degraded; DSPy live runtime was not active; quant health was not configured as a
+  required blocker.
+- Alpha readiness still had three hypotheses, zero promotion-eligible hypotheses, and three rollback-required hypotheses.
+  This means capital reentry is not merely waiting on a deployer toggle.
+- `/trading/empirical-jobs` reported `ready=false`, `status=degraded`, `authority=blocked`, candidate
+  `intraday_tsmom_v1@prod`, dataset snapshot `torghut-full-day-20260318-884bec35`, and four stale completed jobs with S3
+  artifact refs: `benchmark_parity`, `foundation_router_parity`, `janus_event_car`, and `janus_hgrm_reward`.
+- `/trading/profitability/runtime` reported schema `torghut.runtime-profitability.v1`; the 72-hour window had 8 decisions,
+  all rejected across AAPL, AMD, INTC, and NVDA, with 0 executions and 0 TCA samples.
+- `torghut-options-catalog` `/healthz` returned `ready=true`, `status=ok`, `last_success_ts=null`, `last_error=null`, and
+  `symbols=0`. A ready route with an empty catalog cannot be used as market-context proof.
+- ClickHouse guardrail metrics had both replicas up, free-disk ratios around 0.97, no read-only replicated tables, fresh TA
+  timestamps, and nonzero historical low-memory/fallback counters (`ta_signals=1`, `ta_microbars=186`). The router should
+  price these counters as route cost evidence instead of treating ClickHouse as a binary pass.
+
+Plan-lane consequence:
+
+- `torghut_observe` can remain allowed from serving/schema/route evidence.
+- `torghut_repair` should rank the four stale empirical jobs first because each names a dataset snapshot, candidate, and
+  artifact refs. The repair dividend must include route cost and a falsification check, not just expected freshness gain.
+- `torghut_paper_capital` and `torghut_live_capital` stay blocked until empirical jobs are fresh or explicitly waived by a
+  current proof escrow, scoped account/window proof exists, execution count is nonzero, TCA samples are nonzero, and live
+  submission is no longer blocked by `simple_submit_disabled`.
+- Options-market work is repair-only until the catalog route can prove a non-empty symbol set with a fresh success
+  timestamp.
+
 - Torghut namespace workloads were broadly up: active live and sim revisions were `1/1`, options catalog/enricher/TA
   services were running, ClickHouse pods were running, and `torghut-db-1` was running.
 - Torghut `/db-check` returned `ok=true`, current/expected Alembic head
@@ -236,12 +277,19 @@ Deployer stage:
 - Verify `torghut_observe` remains allowed, `torghut_repair` is ranked, and paper/live capital remain blocked under the
   current evidence.
 - Verify Jangar observed-action authority consumes only scoped proof for paper/live capital.
+- Under the plan-lane evidence above, verify the first shadow route classifies the four stale empirical jobs as repair
+  candidates, treats options catalog `ready=true` plus `symbols=0` as negative evidence, and blocks both paper and live
+  capital.
 
 ## Validation Gates
 
 - Unit tests prove missing fundamentals/news and error technicals/regime create negative evidence with affected
   hypotheses.
 - Unit tests prove `stageScopeOmitted=true` cannot satisfy paper or live capital proof.
+- Unit tests prove options catalog `ready=true` with `last_success_ts=null` and `symbols=0` cannot satisfy options context
+  proof.
+- Unit tests prove a 72-hour runtime window with 8 rejected decisions, 0 executions, and 0 TCA samples blocks paper/live
+  capital even when schema and broker connectivity are healthy.
 - Unit tests prove a positive repair dividend can open `torghut_repair` while `torghut_live_capital` remains blocked.
 - Runtime validation samples `/readyz`, `/db-check`, quant health with and without account/window, market-context health,
   and the new router route.

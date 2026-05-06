@@ -37,9 +37,64 @@ because the current operational risk is not lack of automation. The risk is conf
 
 All evidence for this pass was read-only. No Kubernetes resources or database rows were mutated.
 
+### Plan-Lane Refresh (2026-05-06T00:25Z)
+
+I rechecked the plan lane after PR #5590 merged because the required branch for this work is
+`codex/swarm-jangar-control-plane-plan`, not the earlier discover branch. The decision remains Option C: observed-action
+authority with negative-evidence reclocking. The refresh changes the immediate handoff emphasis: the system is no longer
+showing a clean all-healthy control plane. It is showing healthy serving and rollout surfaces beside degraded execution
+trust, blocked dependency quorum, and stale Torghut proof.
+
+Read-only evidence from this refresh:
+
+- The local worktree is on `codex/swarm-jangar-control-plane-plan` at `origin/main`; the remote branch had been removed
+  after prior merges and must be recreated for this follow-up PR.
+- The in-cluster identity is still `system:serviceaccount:agents:agents-sa`. It can list pods, Services, Deployments, and
+  AgentRuns in the required namespaces, but CNPG cluster listing and Knative revision listing remain forbidden. Routine
+  action authority must therefore be derived from least-privilege route/object evidence, not privileged database or Argo
+  reads.
+- `agents` namespace serving Deployments are healthy (`agents` `1/1`, `agents-controllers` `2/2`), but the namespace also
+  has 30 failed pods, 7 running pods, and 60 succeeded pods in the sampled window. Recent events include
+  `BackoffLimitExceeded` verify jobs and short readiness probe timeouts on both API and controller pods.
+- Jangar `/api/agents/control-plane/status?namespace=agents` at `2026-05-06T00:24:39Z` reported database
+  `connected=true`, migration consistency healthy at 28 registered and 28 applied migrations, and rollout health healthy
+  for both `agents` Deployments. The same payload reported dependency quorum `block` for `empirical_jobs_degraded` and
+  execution trust `degraded` for `jangar-control-plane:verify:verify consecutive failures`.
+- `http://agents.agents.svc.cluster.local/ready` returned `status=ok`, but execution trust was `degraded`, one blocking
+  window was present, and four admission passports were denied. This is exactly the surface the authority reconciler must
+  explain: serving can be OK while material launch classes are not.
+- `services/jangar/src/server/supporting-primitives-controller.ts` remains the actuation choke point at 2,878 lines and
+  already removes or withholds schedule-runner resources when runtime admission fails. It is still the right enforcement
+  insertion point, but only after authority receipts are visible in shadow mode.
+- `services/jangar/src/server/control-plane-status.ts` remains the right aggregator for the first authority builder. It
+  already computes database, rollout, empirical-services, execution-trust, watch, and admission surfaces; the missing
+  piece is not another health bit, but typed receipts that name which action class may spend which clock.
+- Torghut live revision `torghut-00225` and sim revision `torghut-sim-00306` were both ready, and Torghut `/db-check`
+  reported schema current at Alembic head `0029_whitepaper_embedding_dimension_4096` with lineage ready and only the
+  known parent-fork warnings.
+- Torghut `/readyz` and `/trading/health` still returned HTTP 503 `status=degraded`: Postgres, ClickHouse, Alpaca, and
+  database schema checks were OK, but `live_submission_gate` was blocked by `simple_submit_disabled`, capital stage was
+  `shadow`, empirical jobs were degraded, three hypotheses existed, zero were promotion eligible, and three required
+  rollback.
+- Torghut `/trading/empirical-jobs` named four stale completed jobs with artifact refs:
+  `benchmark_parity`, `foundation_router_parity`, `janus_event_car`, and `janus_hgrm_reward`. Runtime profitability over
+  72 hours had 8 decisions, 0 executions, and 0 TCA samples.
+- Torghut options catalog `/healthz` returned `ready=true` with `last_success_ts=null` and `symbols=0`. ClickHouse
+  guardrail metrics showed both replicas up, free-disk ratio around 0.97, no read-only replicated tables, and nonzero
+  historical low-memory/fallback counters.
+
+Plan-lane consequence:
+
+- `serve_readonly` may stay allowed from route and Deployment evidence.
+- `dispatch_normal`, `deploy_widen`, and `merge_ready` must be capped or delayed while verify failures and dependency
+  quorum blocks persist, even when rollout health is green.
+- `dispatch_repair` should stay open only with a launch escrow receipt that names a bounded debt-reduction target.
+- `torghut_repair` may be admitted for stale empirical proof repair; `torghut_paper_capital` and `torghut_live_capital`
+  remain blocked until scoped proof, executions, and TCA samples are nonzero and live submission is explicitly enabled.
+
 ### Cluster And Rollout Evidence
 
-- The run used the requested branch `codex/swarm-jangar-control-plane-discover`, freshly fetched from `origin/main`.
+- The earlier discovery pass used branch `codex/swarm-jangar-control-plane-discover`, freshly fetched from `origin/main`.
 - `kubectl config current-context` was unset; the workspace was bootstrapped to the documented in-cluster context and
   authenticated as `system:serviceaccount:agents:agents-sa`.
 - `agents` namespace Deployments were ready: `agents` `1/1` and `agents-controllers` `2/2`, both on image
@@ -271,12 +326,19 @@ Deployer stage:
 - Verify the new route is read-only, low-latency, and available without CNPG or Argo privileges.
 - Compare authority decisions against existing failure-domain leases in shadow mode for at least one full swarm cadence.
 - Do not enforce hard holdbacks from the new authority until false positive quarantines are visible in status and logs.
+- Under the plan-lane evidence above, require the route to emit `serve_readonly=allow`, `dispatch_normal=delay`,
+  `dispatch_repair=allow_with_escrow`, `merge_ready=delay`, `torghut_repair=allow_with_escrow`,
+  `torghut_paper_capital=block`, and `torghut_live_capital=block`.
 
 ## Validation Gates
 
 - Unit tests prove the random-suffix database false positive cannot hold dispatch or merge.
 - Unit tests prove stale Swarm stages do not block `serve_readonly` but do cap or hold stage launch classes.
 - Unit tests prove market-context `down` blocks capital while allowing bounded repair.
+- Unit tests prove `rollout_health=healthy` plus `execution_trust=degraded` and `dependency_quorum=block` cannot produce
+  `dispatch_normal=allow` or `merge_ready=allow`.
+- Unit tests prove Torghut schema-current plus `simple_submit_disabled`, zero executions, and zero TCA samples cannot
+  produce paper/live capital authority.
 - Local validation runs `bunx oxfmt --check` on the new docs and targeted TypeScript tests when code lands.
 - Runtime validation samples `/ready`, `/api/agents/control-plane/status`, `/api/agents/control-plane/authority`, the
   Jangar Swarm CR, and Torghut `/readyz`, `/db-check`, quant health, and market-context health.
