@@ -5,6 +5,69 @@ Swarm: jangar-control-plane
 Branch: codex/swarm-jangar-control-plane-verify
 Base: main
 
+## 2026-05-06 09:25Z Release Update
+
+- Open PR inventory:
+  - #5656 `fix(torghut): accept disabled teardown baseline` is open on `codex/swarm-torghut-quant-verify`; not
+    selected for this Jangar-control-plane gate.
+  - #5412 `feat(torghut): add evidence epochs and shared live gate` is open, clean, and green/skipped, but remains
+    no-go because it is a 3,165-line Torghut/shared-live-gate diff with no Codex review or review threads. The latest
+    current-head `@codex review` response is still the Codex review usage-limit blocker.
+  - #5316 `chore(release/735ddbc): automated release PR` is open and outside the selected Jangar-control-plane lane.
+- Selected Jangar release path:
+  - #5364, #5376, and #5387 remain merged on `main`.
+  - #5454 `feat(jangar): surface failure-domain lease holdbacks` is merged at
+    `a4c52389366f74e58e0adfaa68be2e2c70e0dbab`. The large-diff review gate was later satisfied by a Codex review
+    with no major issues before merge.
+  - #5594 `fix(jangar): add pvc storage proof resource alias` is merged at
+    `9fd86916dedc192827d0a46b34ffdc4b2a094148`.
+  - #5655 `chore(jangar): promote image 9fd86916` is merged at
+    `c2dc6d43e6711bb84a8f575148e002176d8eac3b`.
+- GitHub validation:
+  - #5655 PR checks were pass/skipped only before merge: semantic commits, semantic PR title, argo-lint, kubeconform,
+    `jangar-ci / lint-and-typecheck`, and the deploy-automerge enable gate.
+  - Post-merge `jangar-post-deploy-verify` for `c2dc6d43e6711bb84a8f575148e002176d8eac3b` succeeded. The job verified
+    deployment health and image digest, then synced Temporal routing, completing at 2026-05-06T09:20:58Z.
+- GitOps and rollout evidence at 2026-05-06T09:24Z:
+  - Argo CD `agents`: `Synced` and `Healthy` at revision `c2dc6d43e6711bb84a8f575148e002176d8eac3b`; last operation
+    succeeded at 2026-05-06T09:17:23Z.
+  - Argo CD `jangar`: `Synced` and `Healthy` at revision `c2dc6d43e6711bb84a8f575148e002176d8eac3b`; last operation
+    succeeded at 2026-05-06T09:19:53Z.
+  - Final recheck at 2026-05-06T09:31Z showed both applications still `Synced` and `Healthy` after current `main`
+    advanced to docs-only #5657 at `368bf92b5f33c007dc7888ff4d406ce0a21c6904`; live 9fd86916 workload images were
+    unchanged.
+  - `deployment/agents` rolled out with generation 161 observed, 1/1 ready, image
+    `registry.ide-newton.ts.net/lab/jangar-control-plane:9fd86916@sha256:5c76f272ab5b0f16d4b798530fbcb6ceb4c4b1cf56466e358c77a1dc434f323b`.
+  - `deployment/agents-controllers` rolled out with generation 188 observed, 2/2 ready, image
+    `registry.ide-newton.ts.net/lab/jangar:9fd86916@sha256:4d6e590666381d128713dcc1439aadbf7ef565ecf09233d01167a855d3dc4dd7`.
+  - `deployment/jangar` rolled out with generation 307 observed, 1/1 ready, image
+    `registry.ide-newton.ts.net/lab/jangar:9fd86916@sha256:4d6e590666381d128713dcc1439aadbf7ef565ecf09233d01167a855d3dc4dd7`.
+  - Live pods `agents-66c77c678f-8l6fl`, `agents-controllers-785bcd8b8c-276jx`,
+    `agents-controllers-785bcd8b8c-2lx7v`, and `jangar-6ddcf8759c-4mtmq` were Running, Ready, and at zero restarts.
+  - `http://jangar.jangar.svc.cluster.local/health` returned ok.
+  - `http://agents.agents.svc.cluster.local/health` and `/ready` returned ok.
+  - Jangar control-plane status reported database healthy, migration consistency healthy, execution trust healthy,
+    rollout health healthy, zero degraded deployments, zero recent workflow failures in the 15-minute window, and all
+    Jangar swarm stages active and not stale.
+- Residual risk:
+  - Jangar dependency quorum remains blocked by `empirical_jobs_degraded`; this is a Torghut empirical-job freshness
+    risk, not a failed rollout of the merged Jangar image.
+  - Recent events show transient readiness warnings during rollout for old and current agents/Jangar pods; all target
+    pods became Ready and stayed at zero restarts.
+  - Recent agents and agents-controller logs include OTLP metrics export socket failures. Service readiness and the
+    Jangar status projector remain healthy, but observability path health should be watched.
+  - Recent Jangar logs include a worktree snapshot refresh failure for missing ref `codex/swarm-torghut-quant-discover`.
+    This is tied to adjacent open PR metadata, not the #5655 rollout.
+- Rollback path:
+  - If the 9fd86916 promotion regresses runtime health, open a GitOps PR reverting #5655 to `a7c7e68a` in
+    `argocd/applications/agents/values.yaml`, `argocd/applications/jangar/kustomization.yaml`, and the Jangar rollout
+    annotation in `argocd/applications/jangar/deployment.yaml`.
+  - Previous image digests were Jangar runtime
+    `sha256:c0643139d0598cb82a17f2195bc20bebc71e09d69f08371881ca662da82e72b1` and control-plane
+    `sha256:97946a7b753bf880b86aeef41ed9ace461d48bd98f79adf88cde39dbbdd9ac12`.
+  - If the source behavior from #5594 is implicated after image rollback, revert
+    `9fd86916dedc192827d0a46b34ffdc4b2a094148` and let Argo CD reconcile through the normal PR path.
+
 ## 2026-05-05 22:23Z Release Update
 
 - #5570 `fix(jangar): index torghut quant health lookup`
