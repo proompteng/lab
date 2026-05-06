@@ -23,6 +23,7 @@ data:
         max_position_pct_equity: 2.0
         params:
           entry_minute_after_open: "235"
+          entry_window_minutes: "30"
           exit_minute_after_open: "265"
           signal_motif: high_volume_intraday_continuation_long_top2
           rank_feature: cross_section_microbar_volume_rank
@@ -44,6 +45,7 @@ data:
         max_position_pct_equity: 2.0
         params:
           entry_minute_after_open: "60"
+          entry_window_minutes: "30"
           exit_minute_after_open: "270"
           signal_motif: prev_day_open45_low_reversal_long_top1
           rank_feature: cross_section_prev_day_open45_return_rank
