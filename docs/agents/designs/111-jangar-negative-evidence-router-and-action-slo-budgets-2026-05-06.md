@@ -337,6 +337,16 @@ Runtime gates:
 4. Enforce `paper_canary` after Torghut consumes the budget and proves fresh account/window quant evidence.
 5. Enforce `live_micro_canary` and `live_scale` only after paper settlement and rollback rehearsal.
 
+## Implementation Note: Observe-Mode Status Projection (2026-05-06)
+
+The first engineer slice adds the pure reducer and observe-only status projection only. The reducer emits
+`negative_evidence_router`, `action_slo_budgets`, and filtered `torghut_action_slo_budgets`; no launcher, deploy,
+merge, or capital enforcement path consumes these budgets yet.
+
+Retained audit failures are recorded without blocking `serve_readonly` or bounded `dispatch_repair`. Current runtime
+negatives downgrade `dispatch_normal`, rollout ambiguity holds `deploy_widen`, and Torghut readiness, market-context,
+or quant-alert debt holds or blocks paper/live capital while preserving `torghut_observe` for proof collection.
+
 ## Rollback
 
 - Disable enforcement through one feature flag, returning budgets to observe-only projection.
