@@ -71,6 +71,7 @@ from scripts.start_historical_simulation import (
     _set_argocd_automation_mode,
     _runtime_verify,
     _run_migrations,
+    _wait_for_torghut_service_revision_ready,
     _torghut_env_overrides_from_manifest,
     _validate_dump_coverage,
     _validate_window_policy,
@@ -3201,6 +3202,14 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(
             env_by_name['TRADING_ORDER_FEED_SASL_PASSWORD'].get('value'),
             'secret',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_ORDER_FEED_AUTO_OFFSET_RESET'].get('value'),
+            'earliest',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED'].get('value'),
+            'true',
         )
         self.assertEqual(
             env_by_name['TRADING_SIMULATION_ORDER_UPDATES_SECURITY_PROTOCOL'].get('value'),
@@ -7011,6 +7020,8 @@ class TestStartHistoricalSimulation(TestCase):
                                 'name': 'user-container',
                                 'env': [
                                     {'name': 'TRADING_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_PIPELINE_MODE', 'value': 'simple'},
+                                    {'name': 'TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED', 'value': 'true'},
                                     {'name': 'TRADING_SIMULATION_ENABLED', 'value': 'true'},
                                     {'name': 'TRADING_STRATEGY_RUNTIME_MODE', 'value': 'scheduler_v3'},
                                     {'name': 'TRADING_STRATEGY_SCHEDULER_ENABLED', 'value': 'true'},
@@ -7018,6 +7029,7 @@ class TestStartHistoricalSimulation(TestCase):
                                     {'name': 'TRADING_PRICE_TABLE', 'value': 'torghut_sim_sim_2026_03_06_open_hour.ta_microbars'},
                                     {'name': 'TRADING_ORDER_FEED_ENABLED', 'value': 'true'},
                                     {'name': 'TRADING_ORDER_FEED_TOPIC', 'value': 'torghut.sim.trade-updates.v1.sim_2026_03_06_open_hour'},
+                                    {'name': 'TRADING_ORDER_FEED_AUTO_OFFSET_RESET', 'value': 'earliest'},
                                     {'name': 'TRADING_SIMULATION_ORDER_UPDATES_TOPIC', 'value': 'torghut.sim.trade-updates.v1.sim_2026_03_06_open_hour'},
                                     {'name': 'TRADING_SIMULATION_RUN_ID', 'value': 'sim-2026-03-06-open-hour'},
                                     {'name': 'TRADING_SIGNAL_ALLOWED_SOURCES', 'value': 'ws,ta'},
@@ -7080,6 +7092,145 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(report['environment_state'], 'complete')
         self.assertEqual(report['torghut_service']['name'], 'torghut-sim')
         self.assertTrue(all(report['ta_runtime_config'].values()))
+
+    def test_runtime_verify_rejects_simple_sim_runtime_without_order_feed_telemetry(self) -> None:
+        manifest = {
+            'window': {
+                'start': '2026-03-06T14:30:00Z',
+                'end': '2026-03-06T15:30:00Z',
+            }
+        }
+        resources = _build_resources(
+            'sim-2026-03-06-open-hour',
+            {
+                'dataset_id': 'dataset-a',
+                'runtime': {
+                    'target_mode': 'dedicated_service',
+                    'namespace': 'torghut',
+                    'ta_configmap': 'torghut-ta-sim-config',
+                    'ta_deployment': 'torghut-ta-sim',
+                    'torghut_service': 'torghut-sim',
+                },
+            },
+        )
+        kservice_payload = {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [
+                            {
+                                'name': 'user-container',
+                                'env': [
+                                    {'name': 'TRADING_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_PIPELINE_MODE', 'value': 'simple'},
+                                    {'name': 'TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED', 'value': 'false'},
+                                    {'name': 'TRADING_SIMULATION_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_STRATEGY_RUNTIME_MODE', 'value': 'scheduler_v3'},
+                                    {'name': 'TRADING_STRATEGY_SCHEDULER_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_SIGNAL_TABLE', 'value': resources.clickhouse_signal_table},
+                                    {'name': 'TRADING_PRICE_TABLE', 'value': resources.clickhouse_price_table},
+                                    {'name': 'TRADING_ORDER_FEED_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_ORDER_FEED_TOPIC', 'value': resources.simulation_topic_by_role['order_updates']},
+                                    {'name': 'TRADING_ORDER_FEED_AUTO_OFFSET_RESET', 'value': 'latest'},
+                                    {'name': 'TRADING_SIMULATION_ORDER_UPDATES_TOPIC', 'value': resources.simulation_topic_by_role['order_updates']},
+                                    {'name': 'TRADING_SIMULATION_RUN_ID', 'value': resources.run_id},
+                                    {'name': 'TRADING_SIGNAL_ALLOWED_SOURCES', 'value': 'ws,ta'},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            },
+            'status': {
+                'latestReadyRevisionName': 'torghut-sim-00001',
+                'conditions': [{'type': 'Ready', 'status': 'True'}],
+            },
+        }
+        ta_configmap_payload = {
+            'data': {
+                'TA_TRADES_TOPIC': resources.simulation_topic_by_role['trades'],
+                'TA_QUOTES_TOPIC': resources.simulation_topic_by_role['quotes'],
+                'TA_BARS1M_TOPIC': resources.simulation_topic_by_role['bars'],
+                'TA_MICROBARS_TOPIC': resources.simulation_topic_by_role['ta_microbars'],
+                'TA_SIGNALS_TOPIC': resources.simulation_topic_by_role['ta_signals'],
+                'TA_CLICKHOUSE_URL': f'jdbc:clickhouse://clickhouse/{resources.clickhouse_db}',
+            }
+        }
+
+        with (
+            patch(
+                'scripts.historical_simulation_verification._kubectl_json',
+                side_effect=[kservice_payload, ta_configmap_payload],
+            ),
+            patch(
+                'scripts.historical_simulation_verification._deployment_replica_health',
+                return_value={
+                    'name': 'torghut-sim-00001-deployment',
+                    'ready_replicas': 1,
+                    'available_replicas': 1,
+                    'replicas': 1,
+                },
+            ),
+            patch(
+                'scripts.historical_simulation_verification._flink_runtime_health',
+                return_value={
+                    'name': 'torghut-ta-sim',
+                    'desired_state': 'running',
+                    'lifecycle_state': 'RUNNING',
+                    'job_manager_status': 'DEPLOYED',
+                },
+            ),
+        ):
+            report = _runtime_verify(resources=resources, manifest=manifest)
+
+        trading_config = report['torghut_service']['trading_config']
+        self.assertEqual(report['runtime_state'], 'not_ready')
+        self.assertFalse(trading_config['simple_order_feed_telemetry'])
+        self.assertFalse(trading_config['order_feed_auto_offset_reset'])
+
+    def test_wait_for_torghut_service_revision_ready_waits_for_created_revision(self) -> None:
+        resources = _build_resources(
+            'sim-teardown-settle',
+            {
+                'dataset_id': 'dataset-a',
+                'runtime': {
+                    'target_mode': 'dedicated_service',
+                    'namespace': 'torghut',
+                    'torghut_service': 'torghut-sim',
+                },
+            },
+        )
+        pending_service = {
+            'status': {
+                'latestCreatedRevisionName': 'torghut-sim-00002',
+                'latestReadyRevisionName': 'torghut-sim-00001',
+                'conditions': [{'type': 'Ready', 'status': 'Unknown'}],
+            }
+        }
+        ready_service = {
+            'status': {
+                'latestCreatedRevisionName': 'torghut-sim-00002',
+                'latestReadyRevisionName': 'torghut-sim-00002',
+                'conditions': [{'type': 'Ready', 'status': 'True'}],
+            }
+        }
+
+        with (
+            patch(
+                'scripts.start_historical_simulation._kubectl_json',
+                side_effect=[pending_service, ready_service],
+            ),
+            patch('scripts.start_historical_simulation.time.sleep', return_value=None) as sleep_mock,
+        ):
+            report = _wait_for_torghut_service_revision_ready(
+                resources=resources,
+                timeout_seconds=30,
+                poll_seconds=5,
+            )
+
+        self.assertTrue(report['ready'])
+        self.assertEqual(report['latest_ready_revision'], 'torghut-sim-00002')
+        sleep_mock.assert_called_once_with(5)
 
     def test_runtime_verify_requires_exact_clickhouse_database_match(self) -> None:
         manifest = {
@@ -8985,6 +9136,8 @@ class TestStartHistoricalSimulation(TestCase):
         ]
         ignore_jq = runtime_ignore_differences[0]['jqPathExpressions'][0]
         self.assertIn('DB_DSN', ignore_jq)
+        self.assertIn('TRADING_ORDER_FEED_AUTO_OFFSET_RESET', ignore_jq)
+        self.assertIn('TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED', ignore_jq)
         self.assertIn('TRADING_SIMULATION_ORDER_UPDATES_TOPIC', ignore_jq)
         self.assertNotIn('TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS', ignore_jq)
         with (
