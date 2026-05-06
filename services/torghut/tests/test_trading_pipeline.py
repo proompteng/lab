@@ -1046,7 +1046,7 @@ class TestTradingPipeline(TestCase):
             datetime(2026, 3, 26, tzinfo=timezone.utc).date(),
         )
 
-    def test_simple_pipeline_submits_live_order_without_shadow_gate_and_persists_lane_metadata(
+    def test_simple_pipeline_submits_live_order_when_shared_gate_allows_and_persists_lane_metadata(
         self,
     ) -> None:
         from app import config
@@ -1105,7 +1105,18 @@ class TestTradingPipeline(TestCase):
         )
         pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
 
-        pipeline.run_once()
+        with patch.object(
+            SimpleTradingPipeline,
+            "_live_submission_gate",
+            return_value={
+                "allowed": True,
+                "reason": "promotion_certificate_valid",
+                "blocked_reasons": [],
+                "capital_stage": "live",
+                "capital_state": "live",
+            },
+        ):
+            pipeline.run_once()
 
         self.assertEqual(len(alpaca_client.submitted), 1)
         with self.session_local() as session:
@@ -1124,6 +1135,92 @@ class TestTradingPipeline(TestCase):
             self.assertEqual(control_plane.get("pipeline_mode"), "simple")
             self.assertEqual(execution_audit.get("execution_lane"), "simple")
             self.assertEqual(execution_audit.get("submit_path"), "direct_alpaca")
+
+    def test_simple_pipeline_blocks_live_order_when_shared_gate_blocks(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "AAPL"
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="simple-live-blocked",
+                description="simple live lane blocked by shared gate",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 13, 30, 5, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Min",
+            seq=1,
+            payload={
+                "feature_schema_version": "3.0.0",
+                "macd": {"macd": 1.2, "signal": 0.5},
+                "rsi14": 25,
+                "price": 100,
+            },
+        )
+
+        alpaca_client = FakeAlpacaClient()
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([signal]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        with patch.object(
+            SimpleTradingPipeline,
+            "_live_submission_gate",
+            return_value={
+                "allowed": False,
+                "reason": "profit_window_underfunded",
+                "blocked_reasons": ["profit_window_underfunded"],
+                "capital_stage": "shadow",
+                "capital_state": "observe",
+            },
+        ):
+            pipeline.run_once()
+
+        self.assertEqual(len(alpaca_client.submitted), 0)
+        with self.session_local() as session:
+            decision = session.execute(select(TradeDecision)).scalar_one()
+            decision_json = cast(dict[str, Any], decision.decision_json)
+            control_plane = cast(
+                dict[str, Any], decision_json.get("control_plane_snapshot")
+            )
+            gate = cast(dict[str, Any], control_plane.get("live_submission_gate"))
+            self.assertEqual(decision.status, "blocked")
+            self.assertEqual(
+                decision_json.get("submission_block_reason"),
+                "profit_window_underfunded",
+            )
+            self.assertEqual(gate.get("reason"), "profit_window_underfunded")
 
     def test_simple_pipeline_skips_out_of_strategy_universe_signals_before_quote_quality(
         self,
