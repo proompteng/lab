@@ -862,3 +862,8 @@ This pack is positioned as the next architecture layer above:
   material-action contracts because the image/platform failure recovered, but normal dispatch still depends on a
   missing controller self-report while empirical, quant, and context proof remain stale. It sequences repair work so
   capital reentry is blocked by predecessor receipts instead of by manually interpreted status fragments.
+- `129-torghut-bidirectional-quant-proof-receipts-and-profit-reentry-ledger-2026-05-06.md` follows the Jangar quant
+  proof replication firebreak because the current cluster has recovered serving and rollout health while paper/live
+  capital still lacks durable Torghut consumer evidence. It makes Torghut emit account/window/hypothesis receipts,
+  persists hypothesis custody and zero-notional proof windows, and requires Jangar to agree on quant freshness before
+  paper or live capital can reenter.
