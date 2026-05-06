@@ -11,6 +11,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `124-torghut-data-plane-proof-quarantine-and-profit-renewal-fuse-2026-05-06.md`
+  - `docs/agents/designs/120-jangar-data-plane-proof-quarantine-and-profit-repair-fuse-2026-05-06.md`
   - `123-torghut-empirical-profit-claims-and-shadow-capital-settlement-2026-05-06.md`
   - `docs/agents/designs/119-jangar-empirical-proof-renewal-clearinghouse-and-capital-reentry-settlement-2026-05-06.md`
   - `122-torghut-profit-renewal-bids-and-capital-shadow-ledger-2026-05-06.md`
@@ -745,6 +747,10 @@ This pack is positioned as the next architecture layer above:
 56. `99-torghut-hypothesis-repair-council-and-evidence-credit-ladder-2026-05-05.md`
 57. `115-torghut-proof-spend-market-and-negative-evidence-consumer-2026-05-06.md`
 58. `117-torghut-contradiction-priced-profit-repair-and-capital-readmission-2026-05-06.md`
+59. `121-torghut-evidence-debt-tranches-and-profit-unblock-ladder-2026-05-06.md`
+60. `122-torghut-profit-renewal-bids-and-capital-shadow-ledger-2026-05-06.md`
+61. `123-torghut-empirical-profit-claims-and-shadow-capital-settlement-2026-05-06.md`
+62. `124-torghut-data-plane-proof-quarantine-and-profit-renewal-fuse-2026-05-06.md`
 
 ## Why This Sequence
 
@@ -821,6 +827,8 @@ This pack is positioned as the next architecture layer above:
   contradiction-settlement ledger because the current state has recovered control-plane rollout health but still has
   conflicting capital evidence. It prices proof repairs by the Jangar settlement they close and keeps live notional at
   zero until empirical replay, account/window quant proof, market-context freshness, and settlement receipts are current.
+- `121-torghut-evidence-debt-tranches-and-profit-unblock-ladder-2026-05-06.md` turns contradictory stale proof
+  surfaces into debt tranches that Jangar can rank, repair, and retire before material action.
 - `122-torghut-profit-renewal-bids-and-capital-shadow-ledger-2026-05-06.md` follows the Jangar repair admission
   governor because the current system can allow bounded repair while still holding material authority. It makes proof
   repairs compete as zero-notional bids and records their shadow capital impact before any paper or live readmission.
@@ -828,3 +836,6 @@ This pack is positioned as the next architecture layer above:
   renewal clearinghouse because the current blocker has narrowed to stale empirical proof after rollout and watch
   reliability recovered. It turns stale jobs, empty account/window quant health, stale market context, and sim proof
   lane debt into typed claims and closure receipts before capital gates can move.
+- `124-torghut-data-plane-proof-quarantine-and-profit-renewal-fuse-2026-05-06.md` follows the profit-renewal bid
+  contract because the current cluster has a concrete downstream image/platform failure. Profit repairs now need
+  data-plane image, runtime, route, and freshness witnesses before they can unlock paper or live capital.
