@@ -26,6 +26,8 @@ from app.models import (
     VNextExperimentSpec,
 )
 from app.trading.discovery.autoresearch import (
+    ResearchClaim,
+    ResearchSource,
     StrategyAutoresearchProgram,
     load_strategy_autoresearch_program,
     run_id,
@@ -76,6 +78,7 @@ import scripts.run_strategy_factory_v2 as strategy_factory_runner
 
 
 _DEFAULT_CHIP_UNIVERSE_CSV = ",".join(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
+_PROGRAM_SOURCE_DEFAULT_CONFIDENCE = "0.70"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -190,6 +193,125 @@ def _write_jsonl(path: Path, rows: Sequence[Mapping[str, Any]]) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _program_claim_type(claim: ResearchClaim) -> str:
+    text = f"{claim.summary} {claim.implication}".lower()
+    if any(
+        token in text
+        for token in (
+            "validate",
+            "validation",
+            "held-out",
+            "replay",
+            "shadow",
+            "gate",
+            "stress",
+            "reject",
+            "penalize",
+        )
+    ):
+        return "validation_requirement"
+    if any(
+        token in text
+        for token in (
+            "risk",
+            "liquidity",
+            "cost",
+            "spread",
+            "drawdown",
+            "inventory",
+            "sizing",
+        )
+    ):
+        return "risk_constraint"
+    if any(
+        token in text
+        for token in (
+            "feature",
+            "normalization",
+            "microprice",
+            "order-flow",
+            "order flow",
+            "imbalance",
+            "volume",
+        )
+    ):
+        return "feature_recipe"
+    return "signal_mechanism"
+
+
+def _program_research_source_to_whitepaper_source(
+    source: ResearchSource,
+) -> WhitepaperResearchSource | None:
+    run_id = str(source.source_id or "").strip()
+    if not run_id:
+        return None
+    claims: list[dict[str, Any]] = []
+    for claim in source.claims:
+        claim_id = str(claim.claim_id or "").strip()
+        claim_text = ". ".join(
+            part
+            for part in (
+                str(claim.summary or "").strip(),
+                str(claim.implication or "").strip(),
+            )
+            if part
+        )
+        if not claim_id or not claim_text:
+            continue
+        claim_type = _program_claim_type(claim)
+        claims.append(
+            {
+                "claim_id": claim_id,
+                "claim_type": claim_type,
+                "claim_text": claim_text,
+                "asset_scope": "us_equities_intraday",
+                "horizon_scope": "intraday_microstructure",
+                "expected_direction": "neutral"
+                if claim_type in {"risk_constraint", "validation_requirement"}
+                else "positive",
+                "confidence": _PROGRAM_SOURCE_DEFAULT_CONFIDENCE,
+                "metadata": {
+                    "program_source_id": run_id,
+                    "program_implication": str(claim.implication or "").strip(),
+                },
+            }
+        )
+    if not claims:
+        return None
+    return WhitepaperResearchSource(
+        run_id=run_id,
+        title=str(source.title or "").strip() or run_id,
+        source_url=str(source.url or "").strip(),
+        published_at=str(source.published_at or "").strip(),
+        claims=tuple(claims),
+    )
+
+
+def _program_whitepaper_sources(
+    program: StrategyAutoresearchProgram,
+) -> tuple[WhitepaperResearchSource, ...]:
+    sources: list[WhitepaperResearchSource] = []
+    for source in program.research_sources:
+        converted = _program_research_source_to_whitepaper_source(source)
+        if converted is not None:
+            sources.append(converted)
+    return tuple(sources)
+
+
+def _dedupe_whitepaper_sources(
+    sources: Sequence[WhitepaperResearchSource],
+) -> list[WhitepaperResearchSource]:
+    resolved: list[WhitepaperResearchSource] = []
+    seen_run_ids: set[str] = set()
+    for source in sources:
+        run_id = str(source.run_id or "").strip()
+        if not run_id or run_id in seen_run_ids:
+            continue
+        seen_run_ids.add(run_id)
+        resolved.append(source)
+    return resolved
 
 
 def _resolve_existing_path(path: Path) -> Path:
@@ -1791,6 +1913,29 @@ def _runtime_closure_payload(
     ).to_payload()
 
 
+def _runtime_closure_program_for_candidate(
+    *,
+    program: StrategyAutoresearchProgram,
+    manifest: MlxSnapshotManifest,
+    portfolio: PortfolioCandidateSpec | None,
+    oracle_candidate_found: bool,
+) -> StrategyAutoresearchProgram:
+    if portfolio is None or (
+        oracle_candidate_found
+        and bool(manifest.source_window_start)
+        and bool(manifest.source_window_end)
+    ):
+        return program
+    return replace(
+        program,
+        runtime_closure_policy=replace(
+            program.runtime_closure_policy,
+            execute_parity_replay=False,
+            execute_approval_replay=False,
+        ),
+    )
+
+
 def run_whitepaper_autoresearch_profit_target(
     args: argparse.Namespace,
 ) -> dict[str, Any]:
@@ -1868,12 +2013,21 @@ def run_whitepaper_autoresearch_profit_target(
     )
     target = _decimal(args.target_net_pnl_per_day, default="500")
     oracle_policy = _oracle_policy_from_args(args)
-    sources = []
+    explicit_source_inputs = bool(
+        args.seed_recent_whitepapers
+        or getattr(args, "source_jsonl", [])
+        or getattr(args, "paper_run_id", [])
+    )
+    sources = (
+        list(_program_whitepaper_sources(program)) if not explicit_source_inputs else []
+    )
     if args.seed_recent_whitepapers:
+        sources.extend(_program_whitepaper_sources(program))
         sources.extend(RECENT_WHITEPAPER_SEEDS)
     for source_jsonl in getattr(args, "source_jsonl", []):
         sources.extend(sources_from_jsonl(source_jsonl))
     sources.extend(_load_sources_from_db(args.paper_run_id))
+    sources = _dedupe_whitepaper_sources(sources)
     if not sources:
         return _write_failure_summary(
             output_dir=output_dir,
@@ -2117,14 +2271,6 @@ def run_whitepaper_autoresearch_profit_target(
     write_mlx_snapshot_manifest(
         output_dir / "mlx-snapshot-manifest.json", mlx_snapshot_manifest
     )
-    runtime_closure = _runtime_closure_payload(
-        args=args,
-        output_dir=output_dir,
-        epoch_id=epoch_id,
-        program=program,
-        manifest=mlx_snapshot_manifest,
-        portfolio=portfolio,
-    )
     oracle_candidate_found = bool(
         portfolio is not None
         and portfolio.objective_scorecard.get("oracle_passed") is True
@@ -2133,6 +2279,20 @@ def run_whitepaper_autoresearch_profit_target(
         portfolio.objective_scorecard.get("profit_target_oracle")
         if portfolio is not None
         else None
+    )
+    runtime_closure_program = _runtime_closure_program_for_candidate(
+        program=program,
+        manifest=mlx_snapshot_manifest,
+        portfolio=portfolio,
+        oracle_candidate_found=oracle_candidate_found,
+    )
+    runtime_closure = _runtime_closure_payload(
+        args=args,
+        output_dir=output_dir,
+        epoch_id=epoch_id,
+        program=runtime_closure_program,
+        manifest=mlx_snapshot_manifest,
+        portfolio=portfolio,
     )
     status = "ok" if oracle_candidate_found else "no_profit_target_candidate"
     status_reason = None
