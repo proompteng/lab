@@ -11,6 +11,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `130-torghut-evidence-product-order-book-and-profit-carry-ladder-2026-05-06.md`
+  - `docs/agents/designs/126-jangar-projection-witness-exchange-and-material-evidence-products-2026-05-06.md`
   - `129-torghut-proof-carry-watermarks-and-zero-decision-capital-drain-2026-05-06.md`
   - `docs/agents/designs/125-jangar-run-settlement-watermarks-and-consumer-evidence-escrow-2026-05-06.md`
   - `128-torghut-data-plane-disruption-premium-and-freshness-settlement-2026-05-06.md`
