@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'argocd/applications/torghut/**'
+      - 'argocd/applications/torghut-options/**'
   workflow_dispatch:
     inputs:
       expected_revision:
@@ -107,7 +108,19 @@ jobs:
             git fetch --no-tags --depth=200 origin main
           fi
 
-          for app in torghut; do
+          ensure_revision_known() {
+            local revision="$1"
+            if [ -z "${revision}" ]; then
+              return 1
+            fi
+            if git cat-file -e "${revision}^{commit}" >/dev/null 2>&1; then
+              return 0
+            fi
+            git fetch --no-tags --depth=200 origin main >/dev/null 2>&1 || true
+            git cat-file -e "${revision}^{commit}" >/dev/null 2>&1
+          }
+
+          for app in torghut torghut-options; do
             for attempt in $(seq 1 90); do
               STATUS="$(kubectl get application "${app}" -n argocd -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision} {.status.operationState.phase} {.status.operationState.syncResult.revision} {.status.history[-1].revision}')"
               SYNC_STATUS="$(echo "${STATUS}" | awk '{print $1}')"
@@ -130,7 +143,8 @@ jobs:
                     REVISION_OK='true'
                     break
                   fi
-                  if git merge-base --is-ancestor "${EXPECTED_REVISION}" "${candidate}" >/dev/null 2>&1; then
+                  if ensure_revision_known "${candidate}" &&
+                    git merge-base --is-ancestor "${EXPECTED_REVISION}" "${candidate}" >/dev/null 2>&1; then
                     REVISION="${candidate}"
                     REVISION_OK='true'
                     break
@@ -196,7 +210,7 @@ jobs:
           set -euo pipefail
 
           HEAD_MESSAGE="$(git log -1 --pretty=%s)"
-          if [[ "${HEAD_MESSAGE}" == rollback\(torghut\):* ]]; then
+          if [[ "${HEAD_MESSAGE}" == rollback\(torghut\):* || "${HEAD_MESSAGE}" == revert\(torghut\):* ]]; then
             echo "Skipping rollback PR because current commit is already a rollback"
             echo "should_rollback=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -209,10 +223,12 @@ jobs:
           fi
 
           git checkout --quiet HEAD^ -- \
-            argocd/applications/torghut
+            argocd/applications/torghut \
+            argocd/applications/torghut-options
 
-          if git diff --quiet -- \
-            argocd/applications/torghut; then
+          if git diff --quiet HEAD -- \
+            argocd/applications/torghut \
+            argocd/applications/torghut-options; then
             echo "No rollback diff detected"
             echo "should_rollback=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -227,11 +243,12 @@ jobs:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/torghut-rollback-${{ github.run_id }}-${{ github.run_attempt }}
           base: main
-          title: 'rollback(torghut): revert failed promotion ${{ github.sha }}'
-          commit-message: 'rollback(torghut): revert failed promotion ${{ github.sha }}'
+          title: 'revert(torghut): rollback failed promotion ${{ github.sha }}'
+          commit-message: 'revert(torghut): rollback failed promotion ${{ github.sha }}'
           delete-branch: true
           add-paths: |
             argocd/applications/torghut
+            argocd/applications/torghut-options
           body: |
             ## Summary
             Automatic rollback created because `torghut-post-deploy-verify` failed on `main`.

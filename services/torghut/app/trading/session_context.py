@@ -129,6 +129,13 @@ def _ratio_decimal(values: list[bool]) -> Decimal | None:
     return Decimal(positive) / Decimal(len(values))
 
 
+def _rank_universe_size(values: list[int]) -> int:
+    executable_values = [value for value in values if value > 0]
+    if not executable_values:
+        return 0
+    return min(executable_values)
+
+
 def _percentile_rank(
     values: dict[str, Decimal],
     *,
@@ -196,6 +203,7 @@ class _SymbolSessionState:
     latest_vwap_w5m_stretch_bps: Decimal | None = None
     latest_rsi14: Decimal | None = None
     latest_macd_hist: Decimal | None = None
+    latest_executable_metric_ts: datetime | None = None
     last_valid_quote_price: Decimal | None = None
     opening_45_return_bps: Decimal | None = None
     opening_60_return_bps: Decimal | None = None
@@ -380,85 +388,90 @@ class SessionContextTracker:
             else None
         )
 
-        state.latest_price_vs_session_open_bps = price_vs_session_open_bps
-        state.latest_price_vs_prev_session_close_bps = price_vs_prev_session_close_bps
-        state.latest_price_position_in_session_range = position_in_range
-        state.latest_recent_15m_return_bps = recent_15m_return_bps
-        state.latest_microbar_volume = microbar_volume
-        state.latest_price_vs_vwap_w5m_bps = price_vs_vwap_w5m_bps
-        state.latest_opening_window_return_bps = opening_window_return_bps
-        state.latest_opening_window_return_from_prev_close_bps = (
-            opening_window_return_from_prev_close_bps
-        )
-        state.latest_recent_imbalance_pressure_avg = recent_imbalance_pressure_avg
-        state.latest_recent_quote_invalid_ratio = recent_quote_invalid_ratio
-        state.latest_recent_quote_jump_bps_avg = recent_quote_jump_bps_avg
-        state.latest_recent_quote_jump_bps_max = recent_quote_jump_bps_max
-        state.latest_recent_microprice_bias_bps_avg = recent_microprice_bias_bps_avg
-        state.latest_vwap_w5m_stretch_bps = vwap_w5m_stretch_bps
-        state.latest_rsi14 = rsi14
-        state.latest_macd_hist = macd_hist
-        if minutes_elapsed >= 45 and state.opening_45_return_bps is None:
-            state.opening_45_return_bps = price_vs_session_open_bps
-        if minutes_elapsed >= 60 and state.opening_60_return_bps is None:
-            state.opening_60_return_bps = price_vs_session_open_bps
+        if quote_quality.valid:
+            state.latest_price_vs_session_open_bps = price_vs_session_open_bps
+            state.latest_price_vs_prev_session_close_bps = price_vs_prev_session_close_bps
+            state.latest_price_position_in_session_range = position_in_range
+            state.latest_recent_15m_return_bps = recent_15m_return_bps
+            state.latest_microbar_volume = microbar_volume
+            state.latest_price_vs_vwap_w5m_bps = price_vs_vwap_w5m_bps
+            state.latest_opening_window_return_bps = opening_window_return_bps
+            state.latest_opening_window_return_from_prev_close_bps = (
+                opening_window_return_from_prev_close_bps
+            )
+            state.latest_recent_imbalance_pressure_avg = recent_imbalance_pressure_avg
+            state.latest_recent_quote_invalid_ratio = recent_quote_invalid_ratio
+            state.latest_recent_quote_jump_bps_avg = recent_quote_jump_bps_avg
+            state.latest_recent_quote_jump_bps_max = recent_quote_jump_bps_max
+            state.latest_recent_microprice_bias_bps_avg = recent_microprice_bias_bps_avg
+            state.latest_vwap_w5m_stretch_bps = vwap_w5m_stretch_bps
+            state.latest_rsi14 = rsi14
+            state.latest_macd_hist = macd_hist
+            state.latest_executable_metric_ts = signal_ts_utc
+            if minutes_elapsed >= 45 and state.opening_45_return_bps is None:
+                state.opening_45_return_bps = price_vs_session_open_bps
+            if minutes_elapsed >= 60 and state.opening_60_return_bps is None:
+                state.opening_60_return_bps = price_vs_session_open_bps
 
-        session_open_rank = self._rank_latest_metric(
+        session_open_rank, session_open_rank_universe_size = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
             accessor='latest_price_vs_session_open_bps',
         )
-        range_position_rank = self._rank_latest_metric(
+        range_position_rank, range_position_rank_universe_size = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
             accessor='latest_price_position_in_session_range',
         )
-        vwap_w5m_rank = self._rank_latest_metric(
+        vwap_w5m_rank, vwap_w5m_rank_universe_size = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
             accessor='latest_price_vs_vwap_w5m_bps',
         )
-        vwap_w5m_stretch_rank = self._rank_latest_metric(
+        vwap_w5m_stretch_rank, vwap_w5m_stretch_rank_universe_size = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
             accessor='latest_vwap_w5m_stretch_bps',
         )
-        recent_15m_return_rank = self._rank_latest_metric(
+        recent_15m_return_rank, recent_15m_return_rank_universe_size = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
             accessor='latest_recent_15m_return_bps',
         )
-        microbar_volume_rank = self._rank_latest_metric(
+        microbar_volume_rank, microbar_volume_rank_universe_size = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
             accessor='latest_microbar_volume',
         )
-        recent_imbalance_rank = self._rank_latest_metric(
+        recent_imbalance_rank, recent_imbalance_rank_universe_size = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
             accessor='latest_recent_imbalance_pressure_avg',
         )
-        rsi14_rank = self._rank_latest_metric(
+        rsi14_rank, rsi14_rank_universe_size = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
             accessor='latest_rsi14',
         )
-        macd_hist_rank = self._rank_latest_metric(
+        macd_hist_rank, macd_hist_rank_universe_size = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
             accessor='latest_macd_hist',
         )
-        opening_window_return_rank = self._rank_latest_metric(
+        opening_window_return_rank, opening_window_return_rank_universe_size = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
             accessor='latest_opening_window_return_bps',
         )
-        prev_session_close_rank = self._rank_latest_metric(
+        prev_session_close_rank, prev_session_close_rank_universe_size = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
             accessor='latest_price_vs_prev_session_close_bps',
         )
-        opening_window_prev_close_return_rank = self._rank_latest_metric(
+        (
+            opening_window_prev_close_return_rank,
+            opening_window_prev_close_return_rank_universe_size,
+        ) = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
             accessor='latest_opening_window_return_from_prev_close_bps',
@@ -467,10 +480,12 @@ class SessionContextTracker:
             self._last_opening_45_return_by_symbol,
             symbol=symbol,
         )
+        prev_day_open45_return_rank_universe_size = len(self._last_opening_45_return_by_symbol)
         prev_day_open60_return_rank = _percentile_rank(
             self._last_opening_60_return_by_symbol,
             symbol=symbol,
         )
+        prev_day_open60_return_rank_universe_size = len(self._last_opening_60_return_by_symbol)
         positive_session_open_ratio = self._positive_ratio_latest_metric(
             current_day=session_day,
             accessor='latest_price_vs_session_open_bps',
@@ -540,6 +555,25 @@ class SessionContextTracker:
                 recent_imbalance_rank,
             ]
         )
+        effective_session_drive_rank_universe_size = (
+            prev_session_close_rank_universe_size
+            if prev_session_close_rank is not None
+            else session_open_rank_universe_size
+        )
+        effective_opening_window_return_rank_universe_size = (
+            opening_window_prev_close_return_rank_universe_size
+            if opening_window_prev_close_return_rank is not None
+            else opening_window_return_rank_universe_size
+        )
+        cross_section_continuation_rank_universe_size = _rank_universe_size(
+            [
+                effective_session_drive_rank_universe_size,
+                effective_opening_window_return_rank_universe_size,
+                range_position_rank_universe_size,
+                vwap_w5m_rank_universe_size,
+                recent_imbalance_rank_universe_size,
+            ]
+        )
         cross_section_reversal_rank = _average_decimal(
             [
                 (
@@ -565,6 +599,7 @@ class SessionContextTracker:
                 recent_imbalance_rank,
             ]
         )
+        cross_section_reversal_rank_universe_size = cross_section_continuation_rank_universe_size
 
         payload.update(
             {
@@ -600,21 +635,37 @@ class SessionContextTracker:
                 'recent_15m_return_bps': recent_15m_return_bps,
                 'microbar_volume': microbar_volume,
                 'cross_section_session_open_rank': session_open_rank,
+                'cross_section_session_open_rank_universe_size': session_open_rank_universe_size,
                 'cross_section_prev_session_close_rank': prev_session_close_rank,
+                'cross_section_prev_session_close_rank_universe_size': prev_session_close_rank_universe_size,
                 'cross_section_opening_window_return_rank': opening_window_return_rank,
+                'cross_section_opening_window_return_rank_universe_size': opening_window_return_rank_universe_size,
                 'cross_section_opening_window_return_from_prev_close_rank': (
                     opening_window_prev_close_return_rank
                 ),
+                'cross_section_opening_window_return_from_prev_close_rank_universe_size': (
+                    opening_window_prev_close_return_rank_universe_size
+                ),
                 'cross_section_prev_day_open45_return_rank': prev_day_open45_return_rank,
+                'cross_section_prev_day_open45_return_rank_universe_size': prev_day_open45_return_rank_universe_size,
                 'cross_section_prev_day_open60_return_rank': prev_day_open60_return_rank,
+                'cross_section_prev_day_open60_return_rank_universe_size': prev_day_open60_return_rank_universe_size,
                 'cross_section_range_position_rank': range_position_rank,
+                'cross_section_range_position_rank_universe_size': range_position_rank_universe_size,
                 'cross_section_vwap_w5m_rank': vwap_w5m_rank,
+                'cross_section_vwap_w5m_rank_universe_size': vwap_w5m_rank_universe_size,
                 'cross_section_vwap_w5m_stretch_rank': vwap_w5m_stretch_rank,
+                'cross_section_vwap_w5m_stretch_rank_universe_size': vwap_w5m_stretch_rank_universe_size,
                 'cross_section_recent_15m_return_rank': recent_15m_return_rank,
+                'cross_section_recent_15m_return_rank_universe_size': recent_15m_return_rank_universe_size,
                 'cross_section_microbar_volume_rank': microbar_volume_rank,
+                'cross_section_microbar_volume_rank_universe_size': microbar_volume_rank_universe_size,
                 'cross_section_recent_imbalance_rank': recent_imbalance_rank,
+                'cross_section_recent_imbalance_rank_universe_size': recent_imbalance_rank_universe_size,
                 'cross_section_rsi14_rank': rsi14_rank,
+                'cross_section_rsi14_rank_universe_size': rsi14_rank_universe_size,
                 'cross_section_macd_hist_rank': macd_hist_rank,
+                'cross_section_macd_hist_rank_universe_size': macd_hist_rank_universe_size,
                 'cross_section_positive_session_open_ratio': positive_session_open_ratio,
                 'cross_section_positive_prev_session_close_ratio': positive_prev_session_close_ratio,
                 'cross_section_positive_opening_window_return_ratio': positive_opening_window_return_ratio,
@@ -631,7 +682,9 @@ class SessionContextTracker:
                 'cross_section_positive_recent_imbalance_ratio': positive_recent_imbalance_ratio,
                 'cross_section_continuation_breadth': cross_section_continuation_breadth,
                 'cross_section_continuation_rank': cross_section_continuation_rank,
+                'cross_section_continuation_rank_universe_size': cross_section_continuation_rank_universe_size,
                 'cross_section_reversal_rank': cross_section_reversal_rank,
+                'cross_section_reversal_rank_universe_size': cross_section_reversal_rank_universe_size,
                 'session_minutes_elapsed': minutes_elapsed,
             }
         )
@@ -660,16 +713,18 @@ class SessionContextTracker:
         current_day: date,
         symbol: str,
         accessor: str,
-    ) -> Decimal | None:
+    ) -> tuple[Decimal | None, int]:
         values: dict[str, Decimal] = {}
         for candidate_symbol, state in self._state_by_symbol.items():
             if state.session_day != current_day:
+                continue
+            if state.latest_executable_metric_ts is None:
                 continue
             raw_value = getattr(state, accessor)
             if raw_value is None:
                 continue
             values[candidate_symbol] = raw_value
-        return _percentile_rank(values, symbol=symbol)
+        return _percentile_rank(values, symbol=symbol), len(values)
 
     def _positive_ratio_latest_metric(
         self,
@@ -680,6 +735,8 @@ class SessionContextTracker:
         values: list[bool] = []
         for state in self._state_by_symbol.values():
             if state.session_day != current_day:
+                continue
+            if state.latest_executable_metric_ts is None:
                 continue
             raw_value = getattr(state, accessor)
             if raw_value is None:

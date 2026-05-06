@@ -65,6 +65,7 @@ DEFAULT_RUN_MONITOR_MIN_EXECUTIONS = 1
 DEFAULT_RUN_MONITOR_MIN_TCA = 1
 DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS = 0
 DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS = 120
+DEFAULT_RUN_MONITOR_CURSOR_TERMINAL_TOLERANCE_SECONDS = 1
 DEFAULT_HTTP_PROBE_TIMEOUT_SECONDS = 5
 DEFAULT_RUN_MONITOR_PROFILE = 'smoke'
 DEFAULT_WARM_LANE_SIMULATION_DATABASE = 'torghut_sim_default'
@@ -706,6 +707,10 @@ def _monitor_settings(manifest: Mapping[str, Any]) -> dict[str, int | str]:
         monitor.get('cursor_grace_seconds'),
         default=defaults.get('cursor_grace_seconds', DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS),
     )
+    cursor_terminal_tolerance_seconds = _safe_int(
+        monitor.get('cursor_terminal_tolerance_seconds'),
+        default=DEFAULT_RUN_MONITOR_CURSOR_TERMINAL_TOLERANCE_SECONDS,
+    )
     if timeout_seconds <= 0:
         raise RuntimeError('monitor.timeout_seconds must be > 0')
     if poll_seconds <= 0:
@@ -714,6 +719,8 @@ def _monitor_settings(manifest: Mapping[str, Any]) -> dict[str, int | str]:
         raise RuntimeError('monitor minimum thresholds cannot be negative')
     if cursor_grace_seconds < 0:
         raise RuntimeError('monitor.cursor_grace_seconds cannot be negative')
+    if cursor_terminal_tolerance_seconds < 0:
+        raise RuntimeError('monitor.cursor_terminal_tolerance_seconds cannot be negative')
     return {
         'profile': profile,
         'timeout_seconds': timeout_seconds,
@@ -723,6 +730,7 @@ def _monitor_settings(manifest: Mapping[str, Any]) -> dict[str, int | str]:
         'min_execution_tca_metrics': min_tca,
         'min_execution_order_events': min_order_events,
         'cursor_grace_seconds': cursor_grace_seconds,
+        'cursor_terminal_tolerance_seconds': cursor_terminal_tolerance_seconds,
     }
 
 
@@ -1008,11 +1016,23 @@ def _clickhouse_database_from_table_name(table_name: str | None) -> str | None:
     return database or None
 
 
+def _cursor_reached_terminal(
+    cursor_at: datetime | None,
+    effective_terminal_signal_ts: datetime,
+    *,
+    tolerance_seconds: int,
+) -> bool:
+    if cursor_at is None:
+        return False
+    return cursor_at + timedelta(seconds=max(0, tolerance_seconds)) >= effective_terminal_signal_ts
+
+
 def _classify_activity_snapshot(
     *,
     runtime_ready: bool,
     snapshot: Mapping[str, Any],
     effective_terminal_signal_ts: datetime,
+    cursor_terminal_tolerance_seconds: int = DEFAULT_RUN_MONITOR_CURSOR_TERMINAL_TOLERANCE_SECONDS,
 ) -> str:
     cursor_at = _parse_optional_rfc3339_timestamp(_as_text(snapshot.get('cursor_at')))
     cursor_at_raw = snapshot.get('cursor_at')
@@ -1021,7 +1041,11 @@ def _classify_activity_snapshot(
     executions = _safe_int(snapshot.get('executions'))
     execution_tca_metrics = _safe_int(snapshot.get('execution_tca_metrics'))
     execution_order_events = _safe_int(snapshot.get('execution_order_events'))
-    cursor_terminal_reached = cursor_at is not None and cursor_at >= effective_terminal_signal_ts
+    cursor_terminal_reached = _cursor_reached_terminal(
+        cursor_at,
+        effective_terminal_signal_ts,
+        tolerance_seconds=cursor_terminal_tolerance_seconds,
+    )
     has_terminal_success_snapshot = (
         signal_rows > 0
         and cursor_terminal_reached
@@ -1038,7 +1062,7 @@ def _classify_activity_snapshot(
         return 'signals_absent'
     if cursor_at_raw is None or cursor_at is None:
         return 'cursor_not_advancing'
-    if cursor_at < effective_terminal_signal_ts:
+    if not cursor_terminal_reached:
         return 'cursor_stalled_before_terminal_signal'
     if trade_decisions <= 0:
         return 'decisions_absent'
@@ -1061,6 +1085,10 @@ def _activity_state(
     last_price_ts = _parse_optional_rfc3339_timestamp(_as_text(snapshot.get('last_price_ts')))
     last_source_ts = _parse_optional_rfc3339_timestamp(_as_text(snapshot.get('last_source_ts')))
     cursor_at = _parse_optional_rfc3339_timestamp(_as_text(snapshot.get('cursor_at')))
+    cursor_terminal_tolerance_seconds = _safe_int(
+        _as_mapping(manifest.get('monitor')).get('cursor_terminal_tolerance_seconds'),
+        default=DEFAULT_RUN_MONITOR_CURSOR_TERMINAL_TOLERANCE_SECONDS,
+    )
     effective_terminal_signal_ts = _effective_terminal_signal_ts(
         window_end=end,
         last_signal_ts=last_signal_ts,
@@ -1084,11 +1112,16 @@ def _activity_state(
         )
     )
     order_event_contract_met = executions <= 0 or execution_order_events > 0
-    terminal_reached = cursor_at is not None and cursor_at >= effective_terminal_signal_ts
+    terminal_reached = _cursor_reached_terminal(
+        cursor_at,
+        effective_terminal_signal_ts,
+        tolerance_seconds=cursor_terminal_tolerance_seconds,
+    )
     classification = _classify_activity_snapshot(
         runtime_ready=runtime_ready,
         snapshot=snapshot,
         effective_terminal_signal_ts=effective_terminal_signal_ts,
+        cursor_terminal_tolerance_seconds=cursor_terminal_tolerance_seconds,
     )
     cursor_gap_seconds: float | None = None
     if cursor_at is not None:
@@ -1107,6 +1140,7 @@ def _activity_state(
         'last_source_ts': last_source_ts.isoformat() if last_source_ts is not None else None,
         'cursor_at': cursor_at.isoformat() if cursor_at is not None else None,
         'cursor_gap_seconds': cursor_gap_seconds,
+        'cursor_terminal_tolerance_seconds': cursor_terminal_tolerance_seconds,
         'thresholds_met': thresholds_met,
         'order_event_contract_met': order_event_contract_met,
         'terminal_reached': terminal_reached,
@@ -1452,6 +1486,10 @@ def _monitor_run_completion(
         settings.get('cursor_grace_seconds'),
         default=DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS,
     )
+    cursor_terminal_tolerance_seconds = _safe_int(
+        settings.get('cursor_terminal_tolerance_seconds'),
+        default=DEFAULT_RUN_MONITOR_CURSOR_TERMINAL_TOLERANCE_SECONDS,
+    )
     deadline = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
     polls: list[dict[str, Any]] = []
     cursor_reached_at: datetime | None = None
@@ -1474,7 +1512,11 @@ def _monitor_run_completion(
             label='effective_terminal_signal_ts',
         )
         cursor_at = _parse_optional_rfc3339_timestamp(_as_text(activity_state.get('cursor_at')))
-        cursor_reached = cursor_at is not None and cursor_at >= effective_terminal_signal_ts
+        cursor_reached = _cursor_reached_terminal(
+            cursor_at,
+            effective_terminal_signal_ts,
+            tolerance_seconds=cursor_terminal_tolerance_seconds,
+        )
         completion_ready = bool(activity_state.get('thresholds_met')) and bool(activity_state.get('order_event_contract_met'))
 
         if cursor_reached and cursor_reached_at is None:
@@ -1757,6 +1799,7 @@ def _artifact_bundle(
 __all__ = [
     'DEFAULT_COVERAGE_STRICT_RATIO',
     'DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS',
+    'DEFAULT_RUN_MONITOR_CURSOR_TERMINAL_TOLERANCE_SECONDS',
     'DEFAULT_RUN_MONITOR_MIN_DECISIONS',
     'DEFAULT_RUN_MONITOR_MIN_EXECUTIONS',
     'DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS',
