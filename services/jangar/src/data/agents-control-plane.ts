@@ -379,6 +379,67 @@ export type FailureDomainLeaseSet = {
   holdbacks: FailureDomainHoldbackDecision[]
 }
 
+export type NegativeEvidenceKind =
+  | 'current_runtime_negative'
+  | 'retained_audit_negative'
+  | 'data_freshness_negative'
+  | 'source_schema_negative'
+  | 'rollout_ambiguity_negative'
+
+export type ActionSloBudgetActionClass =
+  | 'serve_readonly'
+  | 'dispatch_repair'
+  | 'dispatch_normal'
+  | 'deploy_widen'
+  | 'merge_ready'
+  | 'torghut_observe'
+  | 'paper_canary'
+  | 'live_micro_canary'
+  | 'live_scale'
+
+export type ActionSloBudgetDecision = 'allow' | 'observe_only' | 'repair_only' | 'shadow_only' | 'hold' | 'block'
+
+export type NegativeEvidenceRef = {
+  kind: NegativeEvidenceKind
+  reason: string
+  evidence_refs: string[]
+}
+
+export type NegativeEvidenceRouterStatus = {
+  mode: 'observe' | 'enforced'
+  design_artifact: string
+  router_epoch_id: string
+  generated_at: string
+  evidence_window_minutes: number
+  positive_evidence_refs: string[]
+  negative_evidence_refs: NegativeEvidenceRef[]
+  contradiction_refs: string[]
+  source_schema_ref: string | null
+  database_projection_ref: string | null
+  gitops_convergence_ref: string | null
+  failure_domain_lease_refs: string[]
+  consumer_refs: string[]
+}
+
+export type ActionSloBudget = {
+  budget_id: string
+  router_epoch_id: string
+  action_class: ActionSloBudgetActionClass
+  consumer: 'jangar' | 'agents' | 'torghut' | 'torghut-sim' | 'deployer' | 'engineer'
+  scope: string
+  decision: ActionSloBudgetDecision
+  max_dispatches: number | null
+  max_runtime_seconds: number | null
+  max_notional: number | null
+  max_error_budget_spend: number | null
+  fresh_until: string
+  downgrade_reasons: string[]
+  blocked_reasons: string[]
+  required_repairs: string[]
+  rollback_target: string | null
+  evidence_refs: string[]
+}
+
 export type DeploymentRolloutStatus = {
   name: string
   namespace: string
@@ -482,6 +543,9 @@ export type ControlPlaneStatus = {
   workflows: WorkflowsReliabilityStatus
   dependency_quorum: DependencyQuorumStatus
   failure_domain_leases: FailureDomainLeaseSet
+  negative_evidence_router: NegativeEvidenceRouterStatus
+  action_slo_budgets: ActionSloBudget[]
+  torghut_action_slo_budgets: ActionSloBudget[]
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability

@@ -25,6 +25,7 @@ import {
   type FailureDomainKubernetesEvidence,
   type FailureDomainRouteProbe,
 } from '~/server/control-plane-failure-domain-leases'
+import { buildNegativeEvidenceRouterStatus } from '~/server/control-plane-negative-evidence-router'
 import {
   buildRolloutHealth,
   maybeUseSplitTopologyControllerRollout,
@@ -549,6 +550,29 @@ export const buildControlPlaneStatus = async (
     watchReliabilityBlockRestartsThreshold,
     executionTrust: executionTrust.executionTrust,
   })
+  const negativeEvidenceRouter = buildNegativeEvidenceRouterStatus({
+    now,
+    namespace: options.namespace,
+    service,
+    workflows,
+    watchReliability: {
+      status: watchReliability.status,
+      window_minutes: watchReliability.window_minutes,
+      observed_streams: watchReliability.observed_streams,
+      total_events: watchReliability.total_events,
+      total_errors: watchReliability.total_errors,
+      total_restarts: watchReliability.total_restarts,
+      streams: watchReliability.streams,
+    },
+    agentRunIngestion,
+    database,
+    rolloutHealth,
+    dependencyQuorum,
+    failureDomainLeases,
+    empiricalServices,
+    executionTrust: executionTrust.executionTrust,
+    runtimeKits: runtimeAdmission.runtimeKits,
+  })
 
   const leaderElection = getLeaderElectionStatus()
 
@@ -617,6 +641,9 @@ export const buildControlPlaneStatus = async (
     workflows,
     dependency_quorum: dependencyQuorum,
     failure_domain_leases: failureDomainLeases,
+    negative_evidence_router: negativeEvidenceRouter.router,
+    action_slo_budgets: negativeEvidenceRouter.budgets,
+    torghut_action_slo_budgets: negativeEvidenceRouter.torghutBudgets,
     empirical_services: empiricalServices,
     namespaces: [
       {

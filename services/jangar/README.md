@@ -217,6 +217,23 @@ Admitted schedules and requirement runs carry these trace fields in annotations 
 Rollback: set `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` on the control-plane runtime to return launch behavior
 to the previous advisory-only passport mode while keeping status and `/ready` passport projection visible for forensics.
 
+## Negative evidence router
+
+Control-plane status exposes the `docs/agents/designs/111-jangar-negative-evidence-router-and-action-slo-budgets-2026-05-06.md`
+router in observe mode. The `negative_evidence_router` field records the evidence epoch, positive and negative evidence
+refs, and the source lease/status inputs. `action_slo_budgets` then scopes that evidence by action class:
+`serve_readonly`, `dispatch_repair`, `dispatch_normal`, `deploy_widen`, `merge_ready`, `torghut_observe`,
+`paper_canary`, `live_micro_canary`, and `live_scale`.
+
+The router is not an enforcement switch yet. It keeps read-only serving independent from retained audit failures,
+leaves bounded repair dispatch open where possible, downgrades normal dispatch during current runtime failure windows,
+and holds or blocks Torghut capital budgets when market, quant, readiness, or rollout ambiguity evidence is negative.
+Torghut consumers can read the filtered `torghut_action_slo_budgets` field without parsing deployer or engineer budgets.
+
+Rollback: keep the router in observe mode and continue relying on failure-domain leases plus dependency quorum for
+enforcement. If a budget is wrong, preserve the emitted evidence refs for audit and fix the reducer before enabling any
+action-class enforcement.
+
 ## Workspace storage proof
 
 The supporting-primitives controller reconciles `Workspace` CRs by creating and reading the backing
