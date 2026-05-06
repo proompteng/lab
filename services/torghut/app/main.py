@@ -751,6 +751,9 @@ def _evaluate_trading_health_payload(
             "alpha_readiness": alpha_readiness,
             "live_submission_gate": live_submission_gate,
             "quant_evidence": quant_evidence,
+            "profit_lease_projection": live_submission_gate.get(
+                "profit_lease_projection"
+            ),
         },
         status_code,
     )
@@ -1806,6 +1809,7 @@ def trading_status() -> dict[str, object]:
         },
         "running": state.running,
         "live_submission_gate": live_submission_gate,
+        "profit_lease_projection": live_submission_gate.get("profit_lease_projection"),
         "quant_evidence": quant_evidence,
         "last_decision_at": last_decision_at,
         "simple_lane_status": {

@@ -180,6 +180,10 @@ Testing rules for the trading core:
   escrow state for quant health, ClickHouse freshness, empirical jobs, market context, forecast/feature coverage, and
   schema lineage so status, readiness, runtime-profitability, and decision metadata can cite the same lane-local
   authority snapshot.
+- `GET /trading/status` and `GET /readyz` also surface `profit_lease_projection`, a shadow-only
+  `torghut.profit-lease-provenance.v1` payload for Jangar `torghut_capital` consumers. It source-qualifies proof by
+  empirical job freshness, quant metrics, relevant data readiness, promotion-table presence, rejection drag, and the
+  Jangar action lease before emitting `observe_only`, `repair_only`, `paper_candidate`, or `live_candidate`.
 - The simple direct-submit lane is no longer an authority bypass in live mode. Before submitting to Alpaca it evaluates
   the same live-submission gate as the scheduler path and persists the gate payload in decision metadata when a
   submission is blocked. Paper-mode simple execution remains unchanged.

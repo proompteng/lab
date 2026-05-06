@@ -2274,6 +2274,15 @@ class TestTradingApi(TestCase):
         self.assertIn("forecast_service", payload)
         self.assertIn("lean_authority", payload)
         self.assertIn("empirical_jobs", payload)
+        self.assertIn("profit_lease_projection", payload)
+        self.assertEqual(
+            payload["profit_lease_projection"]["schema_version"],
+            "torghut.profit-lease-provenance.v1",
+        )
+        self.assertEqual(
+            payload["profit_lease_projection"]["jangar_consumer"]["action_class"],
+            "torghut_capital",
+        )
         evaluation = payload["llm_evaluation"]
         self.assertTrue(evaluation["ok"])
         self.assertGreaterEqual(evaluation["metrics"]["total_reviews"], 1)
