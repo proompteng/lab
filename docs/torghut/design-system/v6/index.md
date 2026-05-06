@@ -10,7 +10,9 @@
   `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-06T19:16Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-06T21:09Z`):
+- Evidence (current next-work priority, refreshed `2026-05-06T21:13Z`):
+  - `135-torghut-capital-qualified-alpha-router-and-execution-repair-ladder-2026-05-06.md`
+  - `docs/agents/designs/131-jangar-capital-qualification-receipts-and-rollout-repair-arbiter-2026-05-06.md`
   - `135-torghut-forecast-evidence-bonds-and-capital-reentry-escrow-2026-05-06.md`
   - `docs/agents/designs/131-jangar-cross-plane-evidence-custody-and-dispatch-escrow-2026-05-06.md`
   - `134-torghut-profitability-proof-floor-and-evidence-repair-market-2026-05-06.md`
