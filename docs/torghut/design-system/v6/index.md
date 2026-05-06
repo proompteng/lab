@@ -7,10 +7,12 @@
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-06T06:10Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-06T07:07Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `108-torghut-proof-repair-closure-receipts-and-profit-settlement-2026-05-06.md`
+  - `docs/agents/designs/104-jangar-repair-closure-receipts-and-settlement-finality-2026-05-06.md`
   - `107-torghut-decision-custody-cells-and-capital-reentry-2026-05-06.md`
   - `docs/agents/designs/103-jangar-torghut-decision-custody-cells-and-rollout-proof-exchange-2026-05-06.md`
   - `107-torghut-profit-repair-roi-ledger-and-capital-settlement-gates-2026-05-06.md`
@@ -341,6 +343,12 @@ proof, and blocked market time should be spent through zero-notional session pro
   data-availability reality into one concrete proof program: Kafka retention is the bounded bootstrap source,
   immutable replay bundles are the durable truth surface, and `>= $250/day` remains blocked until archive-backed
   historical and paper gates pass.
+- `108-torghut-proof-repair-closure-receipts-and-profit-settlement-2026-05-06.md` now makes repair finality explicit:
+  empirical backfills, quant republishes, submission rehearsals, hypothesis requalification, and TCA refreshes only
+  retire capital blocks when Torghut emits before/after proof receipts that Jangar can consume.
+- `docs/agents/designs/104-jangar-repair-closure-receipts-and-settlement-finality-2026-05-06.md` now adds the companion
+  Jangar rule: completed repair jobs move proof gaps to receipt-pending, not settled, until source-qualified closure
+  receipts recompute the material-action settlement board.
 - `54-torghut-research-backed-sleeves-and-this-week-holdout-proof-2026-03-27.md` now turns the retained March 16
   through March 27 ClickHouse surface into one concrete strategy-and-proof contract: separate continuation,
   breakout, and rebound sleeves, a frozen March 23 through March 27 holdout week, and a safe query discipline that
