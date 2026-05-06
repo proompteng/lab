@@ -221,6 +221,65 @@ describe('failure-domain lease synthesis', () => {
     })
   })
 
+  it('does not treat arbitrary runner pod suffixes containing db as database evidence', () => {
+    const result = leaseSet({
+      kubernetesEvidence: {
+        pods: [
+          pod({
+            metadata: {
+              name: 'jangar-control-plane-plan-sched-cron-29634020-cndb7',
+              namespace: 'agents',
+              generation: 1,
+              labels: {
+                'agents.proompteng.ai/agent-run': 'jangar-control-plane-plan-sched-cron-29634020',
+                'agents.proompteng.ai/runtime': 'codex',
+              },
+              creationTimestamp: '2026-05-05T11:55:00.000Z',
+            },
+            status: {
+              phase: 'Running',
+              conditions: [{ type: 'Ready', status: 'False', reason: null, lastTransitionTime: null }],
+              containerStatuses: [{ name: 'agent', image: 'jangar:test', ready: true, state: { running: true } }],
+            },
+          }),
+          pod({
+            metadata: {
+              name: 'jangar-control-plane-plan-sched-zczg7-step-1-attempt-1-4dbnk',
+              namespace: 'agents',
+              generation: 1,
+              labels: {
+                'agents.proompteng.ai/agent-run': 'jangar-control-plane-plan-sched-zczg7',
+                'agents.proompteng.ai/runtime': 'codex',
+              },
+              creationTimestamp: '2026-05-05T11:55:00.000Z',
+            },
+            status: {
+              phase: 'Running',
+              conditions: [{ type: 'Ready', status: 'False', reason: null, lastTransitionTime: null }],
+              containerStatuses: [{ name: 'agent', image: 'jangar:test', ready: true, state: { running: true } }],
+            },
+          }),
+        ],
+        events: [],
+        collection_errors: [],
+      },
+    })
+
+    expect(findLease(result.leases, 'database')).toMatchObject({
+      status: 'valid',
+      reason_codes: [],
+      evidence_refs: ['database:probe:select_1'],
+    })
+    expect(findLease(result.leases, 'source_schema')).toMatchObject({
+      status: 'valid',
+      reason_codes: [],
+    })
+    expect(findHoldback(result.holdbacks, 'merge_ready')).toMatchObject({
+      decision: 'allow',
+      reason_codes: [],
+    })
+  })
+
   it('holds normal dispatch and Torghut capital on route refusal while repair dispatch remains allowed', () => {
     const result = leaseSet({
       routeProbe: routeProbe({

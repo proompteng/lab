@@ -76,6 +76,13 @@ def _truthful_empirical_payload(
     }
 
 
+def _install_pipeline_universe_resolver(
+    scheduler: TradingScheduler,
+    resolver: object,
+) -> None:
+    setattr(scheduler, "_pipeline", SimpleNamespace(universe_resolver=resolver))
+
+
 class TestTradingApi(TestCase):
     def setUp(self) -> None:
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
@@ -1025,6 +1032,141 @@ class TestTradingApi(TestCase):
             settings.trading_mode = original_mode
             settings.trading_universe_source = original_source
 
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True, "account_scope_errors": []},
+    )
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+        },
+    )
+    def test_trading_health_resolves_jangar_universe_before_reporting_ok(
+        self,
+        _mock_schema: object,
+        _mock_account_scope: object,
+        _mock_clickhouse: object,
+        _mock_alpaca: object,
+    ) -> None:
+        original = settings.trading_enabled
+        original_mode = settings.trading_mode
+        original_source = settings.trading_universe_source
+        original_require_non_empty = settings.trading_universe_require_non_empty_jangar
+        settings.trading_enabled = True
+        settings.trading_mode = "paper"
+        settings.trading_universe_source = "jangar"
+        settings.trading_universe_require_non_empty_jangar = True
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            scheduler.state.universe_source_status = "not_evaluated"
+            scheduler.state.universe_symbols_count = 0
+            _install_pipeline_universe_resolver(
+                scheduler,
+                SimpleNamespace(
+                    get_resolution=lambda: SimpleNamespace(
+                        symbols={"AMD", "NVDA"},
+                        status="ok",
+                        reason="jangar_fetch_ok",
+                        cache_age_seconds=0,
+                    )
+                ),
+            )
+            app.state.trading_scheduler = scheduler
+
+            response = self.client.get("/trading/health")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            universe_dependency = payload["dependencies"]["universe"]
+            self.assertTrue(universe_dependency["ok"])
+            self.assertEqual(universe_dependency["status"], "ok")
+            self.assertEqual(universe_dependency["symbols_count"], 2)
+            self.assertEqual(scheduler.state.universe_symbols_count, 2)
+        finally:
+            settings.trading_enabled = original
+            settings.trading_mode = original_mode
+            settings.trading_universe_source = original_source
+            settings.trading_universe_require_non_empty_jangar = (
+                original_require_non_empty
+            )
+
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True, "account_scope_errors": []},
+    )
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+        },
+    )
+    def test_trading_health_fails_closed_when_universe_probe_is_empty(
+        self,
+        _mock_schema: object,
+        _mock_account_scope: object,
+        _mock_postgres: object,
+        _mock_clickhouse: object,
+        _mock_alpaca: object,
+    ) -> None:
+        original = settings.trading_enabled
+        original_mode = settings.trading_mode
+        original_source = settings.trading_universe_source
+        original_require_non_empty = settings.trading_universe_require_non_empty_jangar
+        settings.trading_enabled = True
+        settings.trading_mode = "paper"
+        settings.trading_universe_source = "jangar"
+        settings.trading_universe_require_non_empty_jangar = True
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            scheduler.state.universe_source_status = "not_evaluated"
+            scheduler.state.universe_symbols_count = 0
+            _install_pipeline_universe_resolver(
+                scheduler,
+                SimpleNamespace(
+                    get_resolution=lambda: SimpleNamespace(
+                        symbols=set(),
+                        status="empty",
+                        reason="jangar_empty_response_cache_stale",
+                        cache_age_seconds=None,
+                    )
+                ),
+            )
+            app.state.trading_scheduler = scheduler
+
+            response = self.client.get("/trading/health")
+
+            self.assertEqual(response.status_code, 503)
+            payload = response.json()
+            universe_dependency = payload["dependencies"]["universe"]
+            self.assertFalse(universe_dependency["ok"])
+            self.assertEqual(universe_dependency["status"], "empty")
+            self.assertEqual(universe_dependency["detail"], "jangar universe empty")
+            self.assertEqual(scheduler.state.universe_symbols_count, 0)
+            self.assertTrue(scheduler.state.universe_fail_safe_blocked)
+        finally:
+            settings.trading_enabled = original
+            settings.trading_mode = original_mode
+            settings.trading_universe_source = original_source
+            settings.trading_universe_require_non_empty_jangar = (
+                original_require_non_empty
+            )
+
     @patch("app.main.load_quant_evidence_status")
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
@@ -1892,10 +2034,23 @@ class TestTradingApi(TestCase):
     ) -> None:
         original = settings.trading_enabled
         original_source = settings.trading_universe_source
+        original_require_non_empty = settings.trading_universe_require_non_empty_jangar
         settings.trading_enabled = True
         settings.trading_universe_source = "jangar"
+        settings.trading_universe_require_non_empty_jangar = True
         try:
             scheduler = TradingScheduler()
+            _install_pipeline_universe_resolver(
+                scheduler,
+                SimpleNamespace(
+                    get_resolution=lambda: SimpleNamespace(
+                        symbols={"AMD", "NVDA"},
+                        status="ok",
+                        reason="jangar_fetch_ok",
+                        cache_age_seconds=0,
+                    ),
+                ),
+            )
             scheduler.state.running = True
             scheduler.state.last_run_at = datetime.now(timezone.utc)
             app.state.trading_scheduler = scheduler
@@ -1909,9 +2064,13 @@ class TestTradingApi(TestCase):
             self.assertIn("checked_at", payload["dependencies"]["database"])
             self.assertIn("universe", payload["dependencies"])
             self.assertTrue(payload["dependencies"]["universe"]["ok"])
+            self.assertEqual(payload["dependencies"]["universe"]["symbols_count"], 2)
         finally:
             settings.trading_enabled = original
             settings.trading_universe_source = original_source
+            settings.trading_universe_require_non_empty_jangar = (
+                original_require_non_empty
+            )
 
     @patch(
         "app.main.check_account_scope_invariants",

@@ -7,10 +7,26 @@
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-06T01:10Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-06T06:10Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `107-torghut-decision-custody-cells-and-capital-reentry-2026-05-06.md`
+  - `docs/agents/designs/103-jangar-torghut-decision-custody-cells-and-rollout-proof-exchange-2026-05-06.md`
+  - `107-torghut-profit-repair-roi-ledger-and-capital-settlement-gates-2026-05-06.md`
+  - `docs/agents/designs/103-jangar-material-action-settlement-board-and-profit-repair-gates-2026-05-06.md`
+  - `106-torghut-live-proof-recovery-ledger-and-options-data-firewall-2026-05-06.md`
+  - `docs/agents/designs/102-jangar-dual-authority-dispatch-ledger-and-capital-proof-firewall-2026-05-06.md`
+  - `105-torghut-proof-provenance-firewall-and-profit-lease-graduation-2026-05-06.md`
+  - `docs/agents/designs/101-jangar-evidence-provenance-firewall-and-lease-graduation-contract-2026-05-06.md`
+  - `105-torghut-capital-reentry-evidence-feed-and-readiness-debt-netting-2026-05-06.md`
+  - `docs/agents/designs/101-jangar-typed-evidence-authority-and-readiness-debt-gates-2026-05-06.md`
+  - `105-torghut-account-scoped-hypothesis-liquidity-and-options-bootstrap-2026-05-06.md`
+  - `docs/agents/designs/101-jangar-account-scoped-proof-liquidity-and-query-budget-2026-05-06.md`
+  - `104-torghut-proof-expiry-clock-and-hypothesis-rehydration-lanes-2026-05-06.md`
+  - `docs/agents/designs/100-jangar-lease-reconciliation-clock-and-dispatch-expiry-contract-2026-05-06.md`
+  - `103-torghut-hypothesis-lease-arbiter-and-options-profit-runway-2026-05-06.md`
+  - `docs/agents/designs/99-jangar-evidence-lease-cells-and-rollout-admission-arbiter-2026-05-06.md`
   - `103-torghut-hypothesis-rehydration-and-proof-gap-auction-2026-05-06.md`
   - `docs/agents/designs/99-jangar-proof-gap-auction-and-hypothesis-rehydration-runway-2026-05-06.md`
   - `102-torghut-profit-proof-exchange-and-capital-slo-budget-2026-05-06.md`
@@ -384,6 +400,13 @@ proof, and blocked market time should be spent through zero-notional session pro
   evidence and selects cross-plane evidence epochs plus hypothesis-local profit cells as the next architecture move:
   Torghut promotion must prove runtime authority, data freshness, image portability, and post-cost contribution in one
   receipt chain before any non-observe capital can advance.
+- `105-torghut-proof-provenance-firewall-and-profit-lease-graduation-2026-05-06.md` now makes proof source identity a
+  capital gate: fresh equity TA can support observation, but paper/live promotion needs current empirical jobs, non-empty
+  quant/profit proof, measured rejection drag, options data readiness when relevant, and a matching Jangar action lease.
+- `docs/agents/designs/101-jangar-evidence-provenance-firewall-and-lease-graduation-contract-2026-05-06.md` now records
+  the companion Jangar control-plane rule: failure-domain leases may only hold dispatch, rollout, merge, or Torghut
+  capital when the evidence resource is source-qualified, so arbitrary runner pod suffixes cannot masquerade as
+  database outage evidence.
 - `77-torghut-hot-path-proof-projections-and-profit-cell-settlement-2026-05-05.md` now records the latest May 5
   discover evidence where liveness stayed green but Torghut `/readyz`, Torghut `/trading/status`, Jangar control-plane
   status, and Jangar quant health breached route budgets; it makes bounded proof projections and settled profit cells

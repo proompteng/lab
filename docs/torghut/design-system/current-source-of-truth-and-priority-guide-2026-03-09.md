@@ -113,7 +113,21 @@ If the question is "what should I trust right now?", start here:
 
 The current highest-priority work is:
 
-The May 6 discover cutover contracts are the current implementation handoff:
+The May 6 provenance and lease-graduation contracts are the current implementation handoff:
+
+- make Jangar failure-domain leases source-qualified so arbitrary runner pod suffixes cannot masquerade as database
+  outage evidence in
+  `docs/agents/designs/101-jangar-evidence-provenance-firewall-and-lease-graduation-contract-2026-05-06.md`;
+- make Torghut profit promotion depend on source-qualified proof, current empirical jobs, non-empty relevant data
+  planes, rejection-drag measurement, and a matching Jangar action lease in
+  `docs/torghut/design-system/v6/105-torghut-proof-provenance-firewall-and-profit-lease-graduation-2026-05-06.md`;
+- reconcile Jangar healthy route/database checks with shadow failure-domain holdbacks through one action-class clock in
+  `docs/agents/designs/100-jangar-lease-reconciliation-clock-and-dispatch-expiry-contract-2026-05-06.md`;
+- expire stale Torghut proof and route hypotheses into explicit rehydration lanes before paper or live capital can
+  advance in
+  `docs/torghut/design-system/v6/104-torghut-proof-expiry-clock-and-hypothesis-rehydration-lanes-2026-05-06.md`.
+
+The earlier May 6 discover cutover contracts remain the preceding implementation handoff:
 
 - bind Jangar serving, repair, normal dispatch, rollout widening, merge readiness, and Torghut capital to one
   least-privilege cutover receipt in
