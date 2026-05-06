@@ -103,6 +103,9 @@ jobs:
           elif [ -n "${EXPECTED_REVISION_INPUT}" ]; then
             EXPECTED_REVISION="${EXPECTED_REVISION_INPUT}"
           fi
+          if [ -n "${EXPECTED_REVISION}" ]; then
+            git fetch --no-tags --depth=200 origin main
+          fi
 
           for app in torghut; do
             for attempt in $(seq 1 90); do
