@@ -8388,6 +8388,86 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertFalse(any(report['run_scoped_markers_present'].values()))
         self.assertTrue(all(report['dedicated_service_baseline'].values()))
 
+    def test_teardown_clean_accepts_disabled_dedicated_service_baseline(self) -> None:
+        resources = _build_resources(
+            'sim-teardown-clean-dedicated-service-disabled',
+            {
+                'dataset_id': 'dataset-a',
+                'runtime': {
+                    'target_mode': 'dedicated_service',
+                    'namespace': 'torghut',
+                    'ta_configmap': 'torghut-ta-sim-config',
+                    'ta_deployment': 'torghut-ta-sim',
+                    'torghut_service': 'torghut-sim',
+                },
+            },
+        )
+        kservice_payload = {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [
+                            {
+                                'name': 'user-container',
+                                'env': [
+                                    {
+                                        'name': 'DB_DSN',
+                                        'value': (
+                                            'postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)'
+                                            '@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default'
+                                        ),
+                                    },
+                                    {'name': 'TRADING_SIMULATION_ENABLED', 'value': 'false'},
+                                    {'name': 'TRADING_ORDER_FEED_TOPIC', 'value': 'torghut.sim.trade-updates.v1'},
+                                    {'name': 'TRADING_ORDER_FEED_GROUP_ID', 'value': 'torghut-order-feed-sim-default'},
+                                    {
+                                        'name': 'TRADING_SIMULATION_ORDER_UPDATES_TOPIC',
+                                        'value': 'torghut.sim.trade-updates.v1',
+                                    },
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        ta_configmap_payload = {
+            'data': {
+                'TA_GROUP_ID': 'torghut-ta-sim-default',
+                'TA_CLICKHOUSE_URL': 'jdbc:clickhouse://clickhouse/torghut_sim_default',
+            }
+        }
+
+        with (
+            patch(
+                'scripts.historical_simulation_verification._kubectl_json',
+                side_effect=[kservice_payload, ta_configmap_payload],
+            ),
+            patch(
+                'scripts.historical_simulation_verification._flink_runtime_health',
+                return_value={
+                    'name': 'torghut-ta-sim',
+                    'desired_state': 'running',
+                    'lifecycle_state': 'RUNNING',
+                    'job_manager_status': 'READY',
+                },
+            ),
+        ):
+            report = historical_simulation_verification._teardown_clean(
+                resources=resources,
+                postgres_config=SimpleNamespace(
+                    torghut_runtime_dsn='postgresql://torghut@db/torghut_sim_2026_03_18_full_day_884bec35'
+                ),
+            )
+
+        self.assertEqual(report['status'], 'ok')
+        self.assertEqual(report['activity_classification'], 'success')
+        self.assertTrue(report['restored'])
+        self.assertFalse(report['warm_lane_enabled'])
+        self.assertFalse(any(report['run_scoped_markers_present'].values()))
+        self.assertFalse(any(report['simulation_markers_present'].values()))
+        self.assertTrue(all(report['dedicated_service_disabled_baseline'].values()))
+
     def test_teardown_clean_rejects_run_scoped_markers_on_warm_lane(self) -> None:
         resources = _build_resources(
             'sim-teardown-clean-warm-lane-dirty',

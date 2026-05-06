@@ -7,10 +7,16 @@
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-06T07:29Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-06T09:15Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `112-torghut-dual-key-capital-clearance-and-intraday-proof-loop-2026-05-06.md`
+  - `docs/agents/designs/108-jangar-action-class-capital-clearance-and-proof-clock-arbiter-2026-05-06.md`
+  - `111-torghut-reciprocal-evidence-authority-and-profit-escrow-2026-05-06.md`
+  - `docs/agents/designs/107-jangar-reciprocal-evidence-authority-and-contradiction-escrow-2026-05-06.md`
+  - `110-torghut-options-hypothesis-leases-and-capital-reentry-ladder-2026-05-06.md`
+  - `docs/agents/designs/106-jangar-proof-debt-retirement-exchange-and-experiment-lease-arbiter-2026-05-06.md`
   - `109-torghut-profit-proof-budget-consumer-and-options-runway-2026-05-06.md`
   - `docs/agents/designs/105-jangar-evidence-pressure-runways-and-profit-proof-budgets-2026-05-06.md`
   - `108-torghut-capital-clearance-market-and-negative-evidence-ledger-2026-05-06.md`

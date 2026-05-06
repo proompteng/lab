@@ -775,7 +775,7 @@ const resolveComparableResource = (kind: string) => {
   if (kind === 'Schedule') return RESOURCE_MAP.Schedule
   if (kind === 'ConfigMap') return 'configmap'
   if (kind === 'CronJob') return 'cronjob'
-  if (kind === 'PersistentVolumeClaim') return 'persistentvolumeclaim'
+  if (kind === 'PersistentVolumeClaim') return RESOURCE_MAP.PersistentVolumeClaim
   return null
 }
 
@@ -2414,7 +2414,7 @@ const reconcileWorkspace = async (
   }
   await applyResourceIfChanged(kube, pvc)
 
-  const pvcResource = await kube.get('persistentvolumeclaim', workspaceName, namespace)
+  const pvcResource = await kube.get(RESOURCE_MAP.PersistentVolumeClaim, workspaceName, namespace)
   const pvcPhase = asString(readNested(pvcResource ?? {}, ['status', 'phase'])) ?? 'Pending'
   const pvcVolumeName = asString(readNested(pvcResource ?? {}, ['spec', 'volumeName'])) ?? undefined
 
@@ -2423,7 +2423,7 @@ const reconcileWorkspace = async (
     if (createdAt) {
       const expiresAt = new Date(createdAt).getTime() + ttlSeconds * 1000
       if (Number.isFinite(expiresAt) && Date.now() > expiresAt) {
-        await kube.delete('persistentvolumeclaim', workspaceName, namespace)
+        await kube.delete(RESOURCE_MAP.PersistentVolumeClaim, workspaceName, namespace)
         const conditions = upsertCondition(
           normalizeConditions(status.conditions),
           buildReadyCondition(false, 'Expired', 'workspace TTL expired'),
@@ -2796,7 +2796,7 @@ export const startSupportingPrimitivesController = async () => {
       )
       handles.push(
         startResourceWatch({
-          resource: 'persistentvolumeclaim',
+          resource: RESOURCE_MAP.PersistentVolumeClaim,
           namespace,
           labelSelector: 'workspaces.proompteng.ai/workspace',
           onEvent: (event) => void handleWorkspaceVolumeEvent(kube, namespace, event),
@@ -2869,6 +2869,7 @@ export const __test__ = {
   reconcileSchedule,
   reconcileScheduleRunnerStatus,
   reconcileTool,
+  reconcileWorkspace,
   reconcileSwarm,
   resolveRequirementPriorityScore,
   resolveSwarmRunSecrets,

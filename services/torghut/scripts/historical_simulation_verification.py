@@ -1646,6 +1646,8 @@ def _teardown_clean(
         == simulation_clickhouse_db,
     }
 
+    dedicated_service_disabled_baseline = {}
+
     if warm_lane_enabled:
         warm_lane_baseline = {
             'trading_simulation_enabled': env_value('TRADING_SIMULATION_ENABLED') == 'true',
@@ -1686,7 +1688,29 @@ def _teardown_clean(
             )
             == DEFAULT_WARM_LANE_SIMULATION_DATABASE,
         }
-        restored = all(dedicated_service_baseline.values()) and not any(run_scoped_markers_present.values())
+        dedicated_service_disabled_baseline = {
+            'trading_simulation_disabled': env_value('TRADING_SIMULATION_ENABLED') != 'true',
+            'trading_simulation_run_id_cleared': not env_value('TRADING_SIMULATION_RUN_ID'),
+            'trading_simulation_dataset_id_cleared': not env_value('TRADING_SIMULATION_DATASET_ID'),
+            'db_dsn_database': runtime_database == DEFAULT_WARM_LANE_SIMULATION_DATABASE,
+            'order_feed_topic': env_value('TRADING_ORDER_FEED_TOPIC') == lane_default_order_updates_topic,
+            'simulation_order_updates_topic': (
+                env_value('TRADING_SIMULATION_ORDER_UPDATES_TOPIC') == lane_default_order_updates_topic
+            ),
+            'order_feed_group_id': env_value('TRADING_ORDER_FEED_GROUP_ID') == DEFAULT_SIMULATION_ORDER_FEED_GROUP_ID,
+            'ta_group_id': _as_text(ta_data.get(lane_contract.ta_group_id_key)) == DEFAULT_SIMULATION_TA_GROUP_ID,
+            'ta_clickhouse_database': _clickhouse_database_from_jdbc_url(
+                _as_text(ta_data.get(lane_contract.ta_clickhouse_url_key))
+            )
+            == DEFAULT_WARM_LANE_SIMULATION_DATABASE,
+        }
+        restored = (
+            (
+                all(dedicated_service_baseline.values())
+                or (all(dedicated_service_disabled_baseline.values()) and not any(simulation_markers_present.values()))
+            )
+            and not any(run_scoped_markers_present.values())
+        )
     else:
         warm_lane_baseline = {}
         dedicated_service_baseline = {}
@@ -1702,6 +1726,7 @@ def _teardown_clean(
         'simulation_markers_present': simulation_markers_present,
         'warm_lane_baseline': warm_lane_baseline,
         'dedicated_service_baseline': dedicated_service_baseline,
+        'dedicated_service_disabled_baseline': dedicated_service_disabled_baseline,
     }
 
 
