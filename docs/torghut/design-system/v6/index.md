@@ -7,12 +7,14 @@
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-06T14:25Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-06T15:12Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
   - `125-torghut-profit-priced-evidence-renewal-and-capital-reentry-ledger-2026-05-06.md`
   - `docs/agents/designs/121-jangar-material-action-repair-clearing-lane-and-profit-proof-ledger-2026-05-06.md`
+  - `125-torghut-proof-renewal-train-and-capital-reentry-sequencer-2026-05-06.md`
+  - `docs/agents/designs/121-jangar-controller-witness-uplink-and-proof-renewal-train-2026-05-06.md`
   - `124-torghut-capital-action-verdict-consumer-and-profit-hypothesis-settlement-2026-05-06.md`
   - `docs/agents/designs/120-jangar-material-action-verdict-arbiter-and-clock-budget-parity-2026-05-06.md`
   - `124-torghut-data-plane-proof-quarantine-and-profit-renewal-fuse-2026-05-06.md`
@@ -755,6 +757,8 @@ This pack is positioned as the next architecture layer above:
 60. `122-torghut-profit-renewal-bids-and-capital-shadow-ledger-2026-05-06.md`
 61. `123-torghut-empirical-profit-claims-and-shadow-capital-settlement-2026-05-06.md`
 62. `124-torghut-data-plane-proof-quarantine-and-profit-renewal-fuse-2026-05-06.md`
+63. `125-torghut-profit-priced-evidence-renewal-and-capital-reentry-ledger-2026-05-06.md`
+64. `125-torghut-proof-renewal-train-and-capital-reentry-sequencer-2026-05-06.md`
 
 ## Why This Sequence
 
@@ -843,3 +847,10 @@ This pack is positioned as the next architecture layer above:
 - `124-torghut-data-plane-proof-quarantine-and-profit-renewal-fuse-2026-05-06.md` follows the profit-renewal bid
   contract because the current cluster has a concrete downstream image/platform failure. Profit repairs now need
   data-plane image, runtime, route, and freshness witnesses before they can unlock paper or live capital.
+- `125-torghut-profit-priced-evidence-renewal-and-capital-reentry-ledger-2026-05-06.md` follows the material-action
+  repair-clearing lane because stale empirical proof, empty account/window quant health, and market-context drift must
+  be priced as capital decisions before repair work can safely compete for scarce launch capacity.
+- `125-torghut-proof-renewal-train-and-capital-reentry-sequencer-2026-05-06.md` follows the controller-witness and
+  material-action contracts because the image/platform failure recovered, but normal dispatch still depends on a
+  missing controller self-report while empirical, quant, and context proof remain stale. It sequences repair work so
+  capital reentry is blocked by predecessor receipts instead of by manually interpreted status fragments.
