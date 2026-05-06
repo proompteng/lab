@@ -77,6 +77,7 @@ const defaultHealthIntervalSeconds = 10
 const defaultDigestAttempts = 30
 const defaultDigestIntervalSeconds = 10
 const defaultRemoteBranch = 'main'
+const ancestorFetchDepth = 1000
 const shaPattern = /^[0-9a-f]{40}$/i
 const supportedRevisionModes = ['exact', 'ancestor'] as const
 type ExpectedRevisionMode = (typeof supportedRevisionModes)[number]
@@ -220,6 +221,20 @@ const ensureRevisionAvailable = async (revision: string, runner: CommandRunner =
   return branchFetchedCommit.exitCode === 0
 }
 
+const deepenRevisionHistory = async (revision: string, runner: CommandRunner = runCommand): Promise<boolean> => {
+  const deepenedRevision = await runner(
+    'git',
+    ['fetch', '--no-tags', `--deepen=${ancestorFetchDepth}`, 'origin', revision],
+    true,
+  )
+  if (deepenedRevision.exitCode === 0) {
+    return true
+  }
+
+  const branchFetchedRevision = await runner('git', ['fetch', '--no-tags', 'origin', defaultRemoteBranch], true)
+  return branchFetchedRevision.exitCode === 0
+}
+
 const getArgoWaitReason = (
   status: ArgoStatus,
   options: ResolvedOptions,
@@ -270,7 +285,13 @@ const isExpectedRevisionSatisfied = async (
     return true
   }
   if (ancestry.exitCode === 1) {
-    return false
+    const historyAvailable = await deepenRevisionHistory(statusRevision, runner)
+    if (!historyAvailable) {
+      return false
+    }
+
+    const retriedAncestry = await runner('git', ['merge-base', '--is-ancestor', expectedRevision, statusRevision], true)
+    return retriedAncestry.exitCode === 0
   }
 
   return false
