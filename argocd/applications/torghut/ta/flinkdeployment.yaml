@@ -106,8 +106,6 @@ spec:
         app: torghut-ta
     spec:
       serviceAccountName: torghut-runtime
-      nodeSelector:
-        kubernetes.io/arch: arm64
       containers:
         - name: flink-main-container
           envFrom:
