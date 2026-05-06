@@ -91,6 +91,7 @@ def prepare_simple_decision(
     allow_shorts: bool,
     max_notional_per_order: Decimal | None,
     max_notional_per_symbol: Decimal | None,
+    buying_power_reserve_bps: Decimal = Decimal("0"),
 ) -> SimpleRiskPreparation:
     price = _extract_decision_price(decision)
     current_qty = position_qty_for_symbol(positions, decision.symbol)
@@ -222,13 +223,19 @@ def prepare_simple_decision(
             str(buying_power) if buying_power is not None else None
         )
         if buying_power is not None:
-            if buying_power <= 0:
+            effective_buying_power = _buying_power_after_reserve(
+                buying_power=buying_power,
+                reserve_bps=buying_power_reserve_bps,
+            )
+            diagnostics["buying_power_reserve_bps"] = str(buying_power_reserve_bps)
+            diagnostics["buying_power_after_reserve"] = str(effective_buying_power)
+            if effective_buying_power <= 0:
                 buying_power_cap_qty = Decimal("0")
             else:
                 buying_power_cap_qty = _buying_power_cap_qty(
                     decision=decision,
                     price=price,
-                    buying_power=buying_power,
+                    buying_power=effective_buying_power,
                     current_qty=current_qty,
                     fractional_allowed=resolution.fractional_allowed,
                 )
@@ -278,7 +285,18 @@ def prepare_simple_decision(
             current_qty=current_qty,
         )
         diagnostics["buying_power_required_notional"] = str(buying_power_required)
-        if buying_power is not None and buying_power_required > buying_power:
+        effective_buying_power = (
+            _buying_power_after_reserve(
+                buying_power=buying_power,
+                reserve_bps=buying_power_reserve_bps,
+            )
+            if buying_power is not None
+            else None
+        )
+        if (
+            effective_buying_power is not None
+            and buying_power_required > effective_buying_power
+        ):
             return SimpleRiskPreparation(
                 approved=False,
                 decision=decision,
@@ -350,6 +368,19 @@ def _buying_power_cap_qty(
         buying_power_qty,
         fractional_equities_enabled=fractional_allowed,
     )
+
+
+def _buying_power_after_reserve(
+    *,
+    buying_power: Decimal,
+    reserve_bps: Decimal,
+) -> Decimal:
+    if reserve_bps <= 0:
+        return buying_power
+    reserve_multiplier = Decimal("1") - (reserve_bps / Decimal("10000"))
+    if reserve_multiplier <= 0:
+        return Decimal("0")
+    return buying_power * reserve_multiplier
 
 
 def _buying_power_required_notional(
