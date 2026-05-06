@@ -11,6 +11,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `123-torghut-empirical-profit-claims-and-shadow-capital-settlement-2026-05-06.md`
+  - `docs/agents/designs/119-jangar-empirical-proof-renewal-clearinghouse-and-capital-reentry-settlement-2026-05-06.md`
   - `122-torghut-profit-renewal-bids-and-capital-shadow-ledger-2026-05-06.md`
   - `docs/agents/designs/118-jangar-repair-admission-governor-and-profit-renewal-bids-2026-05-06.md`
   - `121-torghut-opening-bell-proof-ladder-and-account-scoped-alpha-reentry-2026-05-06.md`
@@ -819,3 +821,10 @@ This pack is positioned as the next architecture layer above:
   contradiction-settlement ledger because the current state has recovered control-plane rollout health but still has
   conflicting capital evidence. It prices proof repairs by the Jangar settlement they close and keeps live notional at
   zero until empirical replay, account/window quant proof, market-context freshness, and settlement receipts are current.
+- `122-torghut-profit-renewal-bids-and-capital-shadow-ledger-2026-05-06.md` follows the Jangar repair admission
+  governor because the current system can allow bounded repair while still holding material authority. It makes proof
+  repairs compete as zero-notional bids and records their shadow capital impact before any paper or live readmission.
+- `123-torghut-empirical-profit-claims-and-shadow-capital-settlement-2026-05-06.md` follows the Jangar empirical proof
+  renewal clearinghouse because the current blocker has narrowed to stale empirical proof after rollout and watch
+  reliability recovered. It turns stale jobs, empty account/window quant health, stale market context, and sim proof
+  lane debt into typed claims and closure receipts before capital gates can move.
