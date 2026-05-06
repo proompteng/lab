@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from datetime import datetime, timedelta, timezone
 from unittest import TestCase
 from unittest.mock import patch
 
 from app import config
-from app.trading.universe import UniverseCache, UniverseResolver
+from app.trading.universe import _HttpRequest, UniverseCache, UniverseResolver, urlopen
 
 
 class TestUniverseResolver(TestCase):
@@ -32,6 +34,9 @@ class TestUniverseResolver(TestCase):
             config.settings.trading_universe_symbol_allowlist_raw
         )
         self._original_simulation_enabled = config.settings.trading_simulation_enabled
+        self._original_simulation_symbols_path = (
+            config.settings.trading_simulation_universe_symbols_path
+        )
 
     def tearDown(self) -> None:
         config.settings.trading_universe_source = self._original_source
@@ -55,6 +60,9 @@ class TestUniverseResolver(TestCase):
             self._original_symbol_allowlist
         )
         config.settings.trading_simulation_enabled = self._original_simulation_enabled
+        config.settings.trading_simulation_universe_symbols_path = (
+            self._original_simulation_symbols_path
+        )
 
     def test_static_universe_fails_closed_on_empty(self) -> None:
         config.settings.trading_universe_source = "static"
@@ -363,3 +371,171 @@ class TestUniverseResolver(TestCase):
         request = mock_urlopen.call_args.args[0]
         self.assertIn("asOf=2026-03-06T18%3A15%3A00%2B00%3A00", request.full_url)
         self.assertEqual(resolution.status, "ok")
+
+    def test_unknown_universe_source_records_error_resolution(self) -> None:
+        config.settings.trading_universe_source = "unknown"
+
+        resolver = UniverseResolver()
+        resolution = resolver.get_resolution()
+
+        self.assertEqual(resolution.status, "error")
+        self.assertEqual(resolution.reason, "unknown_universe_source")
+        self.assertEqual(resolution.symbols, set())
+
+    def test_urlopen_rejects_invalid_url_inputs(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported_url_scheme:ftp"):
+            urlopen(_HttpRequest(full_url="ftp://example/symbols", method="GET"), 1)
+
+        with self.assertRaisesRegex(ValueError, "missing_url_host"):
+            urlopen(_HttpRequest(full_url="http:///symbols", method="GET"), 1)
+
+    def test_urlopen_sends_query_path_and_closes_response(self) -> None:
+        class _Response:
+            status = 200
+
+            def read(self) -> bytes:
+                return b"[]"
+
+        class _Connection:
+            request_path = ""
+            closed = False
+
+            def __init__(self, host: str, port: int | None, timeout: int) -> None:
+                self.host = host
+                self.port = port
+                self.timeout = timeout
+
+            def request(
+                self,
+                method: str,
+                path: str,
+                *,
+                headers: dict[str, str],
+            ) -> None:
+                _ = (method, headers)
+                type(self).request_path = path
+
+            def getresponse(self) -> _Response:
+                return _Response()
+
+            def close(self) -> None:
+                type(self).closed = True
+
+        with patch("app.trading.universe.HTTPConnection", _Connection):
+            handle = urlopen(
+                _HttpRequest(
+                    full_url="http://example.test/symbols?limit=12",
+                    method="GET",
+                ),
+                0,
+            )
+            self.assertEqual(_Connection.request_path, "/symbols?limit=12")
+            self.assertEqual(handle.status, 200)
+            handle.close()
+            self.assertTrue(_Connection.closed)
+
+    def test_fresh_cache_without_allowed_symbols_uses_static_fallback(self) -> None:
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_jangar_symbols_url = "http://example"
+        config.settings.trading_universe_cache_seconds = 60
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "NVDA,AVGO"
+        config.settings.trading_universe_symbol_allowlist_raw = "NVDA,AVGO"
+        resolver = UniverseResolver()
+        resolver._cache = UniverseCache(
+            symbols={"AAPL"},
+            fetched_at=datetime.now(timezone.utc),
+        )
+
+        resolution = resolver.get_resolution()
+
+        self.assertEqual(resolution.status, "degraded")
+        self.assertEqual(
+            resolution.reason,
+            "jangar_cache_hit_no_allowed_symbols_using_static_fallback",
+        )
+        self.assertEqual(resolution.symbols, {"NVDA", "AVGO"})
+
+    def test_stale_cache_without_allowed_symbols_uses_static_fallback(self) -> None:
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_jangar_symbols_url = "http://example"
+        config.settings.trading_universe_cache_seconds = 1
+        config.settings.trading_universe_max_stale_seconds = 120
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "NVDA,AVGO"
+        config.settings.trading_universe_symbol_allowlist_raw = "NVDA,AVGO"
+        resolver = UniverseResolver()
+        resolver._cache = UniverseCache(
+            symbols={"AAPL"},
+            fetched_at=datetime.now(timezone.utc) - timedelta(seconds=5),
+        )
+
+        with patch("app.trading.universe.urlopen", side_effect=RuntimeError("boom")):
+            resolution = resolver.get_resolution()
+
+        self.assertEqual(resolution.status, "degraded")
+        self.assertEqual(
+            resolution.reason,
+            "jangar_fetch_failed_using_static_fallback",
+        )
+        self.assertEqual(resolution.symbols, {"NVDA", "AVGO"})
+
+    def test_invalid_jangar_host_records_specific_resolution_reason(self) -> None:
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_jangar_symbols_url = "http:///symbols"
+        config.settings.trading_universe_static_fallback_enabled = False
+
+        resolver = UniverseResolver()
+        resolution = resolver.get_resolution()
+
+        self.assertEqual(resolution.status, "error")
+        self.assertEqual(resolution.reason, "jangar_url_invalid_host")
+        self.assertEqual(resolution.symbols, set())
+
+    def test_stale_cache_without_allowed_symbols_fails_closed_without_fallback(
+        self,
+    ) -> None:
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_jangar_symbols_url = "http://example"
+        config.settings.trading_universe_cache_seconds = 1
+        config.settings.trading_universe_max_stale_seconds = 120
+        config.settings.trading_universe_static_fallback_enabled = False
+        config.settings.trading_universe_symbol_allowlist_raw = "NVDA,AVGO"
+        resolver = UniverseResolver()
+        resolver._cache = UniverseCache(
+            symbols={"AAPL"},
+            fetched_at=datetime.now(timezone.utc) - timedelta(seconds=5),
+        )
+
+        with patch("app.trading.universe.urlopen", side_effect=RuntimeError("boom")):
+            resolution = resolver.get_resolution()
+
+        self.assertEqual(resolution.status, "error")
+        self.assertEqual(
+            resolution.reason,
+            "jangar_fetch_failed_stale_cache_no_allowed_symbols",
+        )
+        self.assertEqual(resolution.symbols, set())
+
+    def test_simulation_snapshot_loads_and_caches_allowed_symbols(self) -> None:
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_simulation_enabled = True
+        config.settings.trading_universe_symbol_allowlist_raw = "NVDA,AVGO"
+
+        with TemporaryDirectory() as root:
+            path = Path(root) / "symbols.json"
+            path.write_text(json.dumps(["AAPL", "NVDA", "AVGO"]), encoding="utf-8")
+            config.settings.trading_simulation_universe_symbols_path = str(path)
+
+            resolver = UniverseResolver()
+            with patch(
+                "app.trading.universe.trading_now",
+                return_value=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            ):
+                first_resolution = resolver.get_resolution()
+                path.write_text(json.dumps(["AAPL"]), encoding="utf-8")
+                second_resolution = resolver.get_resolution()
+
+        self.assertEqual(first_resolution.source, "simulation_snapshot")
+        self.assertEqual(first_resolution.symbols, {"NVDA", "AVGO"})
+        self.assertEqual(second_resolution.symbols, {"NVDA", "AVGO"})
