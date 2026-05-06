@@ -259,11 +259,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 if line
             ]
             self.assertTrue(candidate_specs)
+            candidate_universes = [
+                spec["strategy_overrides"]["universe_symbols"]
+                for spec in candidate_specs
+            ]
             self.assertTrue(
                 all(
-                    spec["strategy_overrides"]["universe_symbols"] == _CHIP_UNIVERSE
-                    for spec in candidate_specs
+                    set(symbols) <= set(_CHIP_UNIVERSE)
+                    for symbols in candidate_universes
                 )
+            )
+            self.assertTrue(
+                any(symbols != _CHIP_UNIVERSE for symbols in candidate_universes)
             )
 
             portfolio = payload["best_portfolio_candidate"]
@@ -310,6 +317,28 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
 
         self.assertEqual(symbols, tuple(_CHIP_UNIVERSE))
+
+    def test_full_chip_universe_is_compile_allowlist_not_profile_override(
+        self,
+    ) -> None:
+        self.assertEqual(
+            runner._candidate_universe_symbols_for_compilation(
+                Namespace(symbols=",".join(_CHIP_UNIVERSE))
+            ),
+            (),
+        )
+        self.assertEqual(
+            runner._candidate_universe_symbols_for_compilation(
+                Namespace(symbols="AAPL,MSFT,SHOP")
+            ),
+            (),
+        )
+        self.assertEqual(
+            runner._candidate_universe_symbols_for_compilation(
+                Namespace(symbols="NVDA,AMAT,AAPL")
+            ),
+            ("NVDA", "AMAT"),
+        )
 
     def test_rejects_candidate_universe_larger_than_twelve_symbols(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -402,9 +431,22 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             for row in selection["rows"]
             if row["selected_for_replay"] and row["selection_reason"] == "exploitation"
         ]
+        replay_rows = sorted(
+            [row for row in selection["rows"] if row["selected_for_replay"]],
+            key=lambda row: row["replay_order"],
+        )
         self.assertEqual(len(exploitation_rows), 3)
         self.assertGreater(
             len({row["family_template_id"] for row in exploitation_rows}),
+            1,
+        )
+        self.assertEqual(
+            selection["selected_candidate_spec_ids"],
+            [row["candidate_spec_id"] for row in replay_rows],
+        )
+        self.assertEqual([row["replay_order"] for row in replay_rows], [1, 2, 3])
+        self.assertGreater(
+            len({row["family_template_id"] for row in replay_rows[:2]}),
             1,
         )
 
@@ -1095,6 +1137,67 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             result.evidence_bundles[1].candidate_id, "cand-real-diversifier"
         )
         self.assertEqual(result.evidence_bundles[0].dataset_snapshot_id, "snap-real")
+
+    def test_real_replay_uses_spec_universe_instead_of_global_symbols(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            result_path = output_dir / "result.json"
+            result_path.parent.mkdir(parents=True)
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "top": [
+                            {
+                                "candidate_id": "cand-real",
+                                "objective_scorecard": {
+                                    "net_pnl_per_day": "1",
+                                    "active_day_ratio": "1",
+                                    "positive_day_ratio": "1",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            factory_payload = {
+                "experiments": [
+                    {
+                        "experiment_id": "spec-real-exp",
+                        "dataset_snapshot_id": "snap-real",
+                        "result_path": str(result_path),
+                    }
+                ]
+            }
+            captured_symbols: list[str] = []
+
+            def fake_run(
+                factory_args: Namespace, *, source_specs: object
+            ) -> dict[str, object]:
+                captured_symbols.append(str(factory_args.symbols))
+                return factory_payload
+
+            with patch.object(
+                runner.strategy_factory_runner,
+                "run_strategy_factory_v2_from_specs",
+                side_effect=fake_run,
+            ):
+                cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
+                    [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                )
+                compilation = runner.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
+                result = runner._run_real_replay(
+                    self._args(output_dir),
+                    output_dir=output_dir,
+                    specs=compilation.executable_specs[:1],
+                )
+
+        self.assertEqual(captured_symbols, [""])
+        self.assertEqual(len(result.evidence_bundles), 1)
 
     def test_main_returns_nonzero_without_sources(self) -> None:
         with (
