@@ -864,7 +864,7 @@ def _refresh_universe_state_for_readiness(
     scheduler: TradingScheduler,
     state: object,
 ) -> None:
-    resolver = getattr(scheduler, "universe_resolver", None)
+    resolver = _resolve_universe_resolver_for_readiness(scheduler)
     if resolver is None:
         return
     try:
@@ -910,6 +910,15 @@ def _refresh_universe_state_for_readiness(
             symbols_count=symbols_count,
             cache_age_seconds=resolution.cache_age_seconds,
         )
+
+
+def _resolve_universe_resolver_for_readiness(scheduler: TradingScheduler) -> Any | None:
+    pipeline = getattr(scheduler, "_pipeline", None)
+    pipeline_resolver = getattr(pipeline, "universe_resolver", None)
+    if callable(getattr(pipeline_resolver, "get_resolution", None)):
+        return pipeline_resolver
+
+    return None
 
 
 def _evaluate_database_contract(session: Session) -> dict[str, object]:

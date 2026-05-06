@@ -75,6 +75,13 @@ def _truthful_empirical_payload(
     }
 
 
+def _install_pipeline_universe_resolver(
+    scheduler: TradingScheduler,
+    resolver: object,
+) -> None:
+    setattr(scheduler, "_pipeline", SimpleNamespace(universe_resolver=resolver))
+
+
 class TestTradingApi(TestCase):
     def setUp(self) -> None:
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
@@ -990,13 +997,16 @@ class TestTradingApi(TestCase):
             scheduler.state.last_run_at = datetime.now(timezone.utc)
             scheduler.state.universe_source_status = "not_evaluated"
             scheduler.state.universe_symbols_count = 0
-            scheduler.universe_resolver = SimpleNamespace(
-                get_resolution=lambda: SimpleNamespace(
-                    symbols={"AMD", "NVDA"},
-                    status="ok",
-                    reason="jangar_fetch_ok",
-                    cache_age_seconds=0,
-                )
+            _install_pipeline_universe_resolver(
+                scheduler,
+                SimpleNamespace(
+                    get_resolution=lambda: SimpleNamespace(
+                        symbols={"AMD", "NVDA"},
+                        status="ok",
+                        reason="jangar_fetch_ok",
+                        cache_age_seconds=0,
+                    )
+                ),
             )
             app.state.trading_scheduler = scheduler
 
@@ -1055,13 +1065,16 @@ class TestTradingApi(TestCase):
             scheduler.state.last_run_at = datetime.now(timezone.utc)
             scheduler.state.universe_source_status = "not_evaluated"
             scheduler.state.universe_symbols_count = 0
-            scheduler.universe_resolver = SimpleNamespace(
-                get_resolution=lambda: SimpleNamespace(
-                    symbols=set(),
-                    status="empty",
-                    reason="jangar_empty_response_cache_stale",
-                    cache_age_seconds=None,
-                )
+            _install_pipeline_universe_resolver(
+                scheduler,
+                SimpleNamespace(
+                    get_resolution=lambda: SimpleNamespace(
+                        symbols=set(),
+                        status="empty",
+                        reason="jangar_empty_response_cache_stale",
+                        cache_age_seconds=None,
+                    )
+                ),
             )
             app.state.trading_scheduler = scheduler
 
@@ -1956,12 +1969,15 @@ class TestTradingApi(TestCase):
         settings.trading_universe_require_non_empty_jangar = True
         try:
             scheduler = TradingScheduler()
-            scheduler.universe_resolver = SimpleNamespace(
-                get_resolution=lambda: SimpleNamespace(
-                    symbols={"AMD", "NVDA"},
-                    status="ok",
-                    reason="jangar_fetch_ok",
-                    cache_age_seconds=0,
+            _install_pipeline_universe_resolver(
+                scheduler,
+                SimpleNamespace(
+                    get_resolution=lambda: SimpleNamespace(
+                        symbols={"AMD", "NVDA"},
+                        status="ok",
+                        reason="jangar_fetch_ok",
+                        cache_age_seconds=0,
+                    ),
                 ),
             )
             scheduler.state.running = True
