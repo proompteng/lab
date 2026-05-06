@@ -6,6 +6,63 @@ Base: `main`
 Release branch: `codex/swarm-torghut-quant-verify`
 Audit PRs: #5496 plus follow-ups #5523 and #5533 on the same release branch
 
+## 2026-05-06T01:16Z Torghut Autoresearch Promotion
+
+Gate decision: go for #5597, no-go for #5412.
+
+#5595, `fix(torghut): include all autoresearch replay candidates`, was merged at 2026-05-06T00:53:30Z with merge
+commit `bc400c7709cc114f52d6e90f53c014e2574887ba`. It had green Torghut PR checks before merge. The main-branch
+`torghut-build-push` workflow succeeded for `bc400c77`, and `torghut-release` opened #5597 to promote
+`registry.ide-newton.ts.net/lab/torghut@sha256:5174534c6c70f872bb20c00be0356718f6eb84fa889d3603aa88f79ff6b89ee4`.
+
+#5597, `chore(torghut): promote image bc400c77`, was non-draft, clean, comment-clean, and under the large-diff review
+threshold at 22 additions and 22 deletions. All applicable checks were pass/skipped before merge: semantic title,
+semantic commits, argo-lint, kubeconform, Torghut Pyright, Torghut bytecode/pytest/coverage, and Torghut quality
+signals. I squash-merged #5597 at 2026-05-06T01:04:24Z with merge commit
+`24e97c9eb26aa1bac0ed0722ab37b74e42f9c512`.
+
+#5412, `feat(torghut): add evidence epochs and shared live gate`, remains open and unmerged. It is still mergeable and
+CI-green, with zero reviews and zero review threads, but it changes 3,165 total lines. The required Codex review has not
+posted; repeated `@codex review` requests returned `chatgpt-codex-connector` usage-limit responses. I did not merge it
+without the required large-diff review.
+
+Deployment evidence after #5597:
+
+- `torghut-post-deploy-verify` on merge commit `24e97c9eb26aa1bac0ed0722ab37b74e42f9c512` passed at
+  2026-05-06T01:12:31Z.
+- `torghut-ci` on the same merge commit passed, including Pyright, bytecode/pytest/coverage, and quality signals.
+- Argo reported `torghut`, `torghut-options`, and `symphony-torghut` `Synced` and `Healthy` at revision
+  `8a50e9da22b83b9795db52b721d99248be59554a`. That revision is a descendant of #5597's merge commit and includes the
+  #5597 GitOps promotion.
+- Live pod `torghut-00226-deployment-55998f8b99-9pffb`, sim pod
+  `torghut-sim-00307-deployment-bdbbfc8dd-fcdpx`, options catalog pod `torghut-options-catalog-5685c6796b-x9csw`, and
+  options enricher pod `torghut-options-enricher-6c5f6f95c5-7fs5j` were all Running and ready with zero restarts on
+  digest `sha256:5174534c6c70f872bb20c00be0356718f6eb84fa889d3603aa88f79ff6b89ee4`.
+- Recent Torghut events showed expected transient startup/readiness probe failures while Knative revisions
+  `torghut-00226` and `torghut-sim-00307` became ready, followed by `RevisionReady` and `LatestReadyUpdate` events.
+  Remaining warnings were pre-existing ClickHouse multiple-PDB selection and old revision shutdown probe failures.
+- Hook jobs `torghut-db-migrations`, `torghut-empirical-jobs-backfill`, `torghut-whitepaper-semantic-backfill`, and
+  `torghut-whitepapers-bootstrap` completed successfully.
+
+Rollback path:
+
+- For #5597, revert merge commit `24e97c9eb26aa1bac0ed0722ab37b74e42f9c512` or open a GitOps promotion PR back to the
+  previous Torghut digest `sha256:18d356dfad7c570340444916885babbc8bc8b9649aef01791b66b9186c3f28b7`.
+- Rollback trigger is new crash loops, failed post-deploy verification, sustained non-ready live/sim/options pods, or a
+  new endpoint regression beyond the known live-trading no-go posture.
+- #5412 has no runtime rollback action in this run because it remains unmerged. If it later merges and live submission
+  health regresses, revert the shared live-gate change or promote the prior Torghut image through normal GitOps.
+
+Owner update message:
+
+I merged the generated Torghut promotion #5597 after green checks and verified the rollout. #5595 is now deployed via
+image digest `5174534c`; Argo reports Torghut, Torghut options, and Symphony Torghut Synced/Healthy, and live, sim,
+catalog, and enricher pods are ready with zero restarts. The post-deploy verifier passed at 2026-05-06T01:12Z. The only
+remaining Torghut PR gate is #5412, which stays no-go until the required Codex review posts and any resulting threads
+are resolved.
+
+Next action: keep #5412 blocked on Codex review capacity, and monitor the #5597 digest for normal health regressions.
+
 ## 2026-05-05T20:05Z Rollback Gate
 
 #5549, `chore(torghut): promote image 2c1986ff`, was squash-merged by another release lane at 2026-05-05T19:52:49Z
