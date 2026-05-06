@@ -818,6 +818,15 @@ class Settings(BaseSettings):
             "TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED=true and Jangar resolution is unavailable."
         ),
     )
+    trading_universe_symbol_allowlist_raw: Optional[str] = Field(
+        default=None,
+        alias="TRADING_UNIVERSE_SYMBOL_ALLOWLIST",
+        description=(
+            "Optional comma-separated symbol allowlist applied to all resolved equity universes. "
+            "Configured live/paper deployments use this to prevent broader Jangar feeds from "
+            "expanding beyond the researched semiconductor/technology universe."
+        ),
+    )
     trading_universe_max_stale_seconds: int = Field(
         default=900,
         alias="TRADING_UNIVERSE_MAX_STALE_SECONDS",
@@ -2491,6 +2500,16 @@ class Settings(BaseSettings):
                 if symbol.strip()
             ]
         return self.trading_static_symbols
+
+    @property
+    def trading_universe_symbol_allowlist(self) -> list[str]:
+        if not self.trading_universe_symbol_allowlist_raw:
+            return []
+        return [
+            symbol.strip().upper()
+            for symbol in self.trading_universe_symbol_allowlist_raw.split(",")
+            if symbol.strip()
+        ]
 
     @property
     def trading_forecast_service_allowed_model_families(self) -> set[str]:

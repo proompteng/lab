@@ -41,6 +41,13 @@ class BrokerCredentials:
     base_url: str | None
 
 
+@dataclass(frozen=True)
+class PriceLookup:
+    reference_price: float
+    source: str
+    error: str | None = None
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -95,11 +102,22 @@ def _resolve_broker_credentials(mode: str, account_label: str | None) -> BrokerC
     raise SystemExit(f'broker_credentials_unavailable:mode={normalized_mode}')
 
 
-def _load_reference_price(client: TorghutAlpacaClient, symbol: str) -> float:
-    bars = client.get_bars(symbols=[symbol], timeframe='1Min', lookback_bars=1)
+def _load_reference_price(client: TorghutAlpacaClient, symbol: str) -> PriceLookup:
+    try:
+        bars = client.get_bars(symbols=[symbol], timeframe='1Min', lookback_bars=1)
+    except Exception as exc:
+        return PriceLookup(
+            reference_price=1.0,
+            source='fallback_default',
+            error=f'{type(exc).__name__}:{exc}',
+        )
     symbol_bars = bars.get(symbol) or []
     if not symbol_bars:
-        return 1.0
+        return PriceLookup(
+            reference_price=1.0,
+            source='fallback_default',
+            error='bars_empty',
+        )
     latest = cast(Mapping[str, Any], symbol_bars[-1])
     for key in ('close', 'c'):
         raw = latest.get(key)
@@ -110,8 +128,34 @@ def _load_reference_price(client: TorghutAlpacaClient, symbol: str) -> float:
         except (TypeError, ValueError):
             continue
         if price > 0:
-            return price
-    return 1.0
+            return PriceLookup(reference_price=price, source='alpaca_bars')
+    return PriceLookup(
+        reference_price=1.0,
+        source='fallback_default',
+        error='valid_close_missing',
+    )
+
+
+def _resolve_price_lookup(
+    client: TorghutAlpacaClient, symbol: str, explicit_limit_price: float | None
+) -> PriceLookup:
+    if explicit_limit_price is not None:
+        return PriceLookup(
+            reference_price=explicit_limit_price,
+            source='explicit_limit_price',
+        )
+    return _load_reference_price(client, symbol)
+
+
+def _resolve_limit_price(
+    client: TorghutAlpacaClient,
+    symbol: str,
+    explicit_limit_price: float | None,
+    limit_discount: float,
+) -> tuple[float, PriceLookup]:
+    price_lookup = _resolve_price_lookup(client, symbol, explicit_limit_price)
+    limit_price = round(max(1.0, price_lookup.reference_price * max(0.05, limit_discount)), 2)
+    return limit_price, price_lookup
 
 
 def _write_output(path: Path, payload: Mapping[str, Any]) -> None:
@@ -134,6 +178,7 @@ def _proof_payload(
     snapshot_id: str | None,
     persisted_execution_id: str | None,
     persist_db: bool,
+    price_lookup: PriceLookup,
 ) -> dict[str, Any]:
     return {
         'proof_timestamp': _utc_now(),
@@ -145,6 +190,9 @@ def _proof_payload(
         'symbol': symbol,
         'qty': qty,
         'limit_price': limit_price,
+        'reference_price': price_lookup.reference_price,
+        'price_source': price_lookup.source,
+        'price_error': price_lookup.error,
         'order_id': order_id,
         'client_order_id': client_order_id,
         'persist_db': persist_db,
@@ -160,7 +208,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--mode', choices=('paper', 'live'), default='paper')
     parser.add_argument('--account-label', default=None)
-    parser.add_argument('--symbol', default='AAPL')
+    parser.add_argument('--symbol', default='NVDA')
     parser.add_argument('--qty', type=float, default=1.0)
     parser.add_argument('--limit-price', type=float, default=None)
     parser.add_argument('--limit-discount', type=float, default=0.5)
@@ -205,8 +253,12 @@ def main() -> None:
         }
     )
 
-    reference_price = args.limit_price or _load_reference_price(client, args.symbol)
-    limit_price = round(max(1.0, reference_price * max(0.05, args.limit_discount)), 2)
+    limit_price, price_lookup = _resolve_limit_price(
+        client,
+        args.symbol,
+        args.limit_price,
+        args.limit_discount,
+    )
     client_order_id = f'torghut-broker-proof-{int(time.time())}'
     if args.persist_db:
         with SessionLocal() as session:
@@ -304,6 +356,7 @@ def main() -> None:
         snapshot_id=snapshot_id,
         persisted_execution_id=persisted_execution_id,
         persist_db=args.persist_db,
+        price_lookup=price_lookup,
     )
     if args.output:
         _write_output(Path(args.output), payload)

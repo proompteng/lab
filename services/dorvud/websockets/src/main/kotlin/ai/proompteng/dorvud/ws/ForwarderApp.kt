@@ -745,6 +745,7 @@ class ForwarderApp(
     symbols
       .map { it.trim().uppercase() }
       .filter { it.isNotEmpty() }
+      .filter { config.symbolAllowlist.isEmpty() || it in config.symbolAllowlist }
       .filter { ownsSymbol(it) }
       .distinct()
 

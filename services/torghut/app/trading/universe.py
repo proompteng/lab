@@ -13,6 +13,7 @@ from urllib.parse import urlencode, urlsplit
 
 from ..config import settings
 from .clickhouse import normalize_symbol
+from .semiconductor_universe import MAX_RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE_SIZE
 from .time_source import trading_now
 
 logger = logging.getLogger(__name__)
@@ -152,7 +153,7 @@ class UniverseResolver:
             return resolution
         if settings.trading_universe_source == "static":
             symbols = set(settings.trading_static_symbols)
-            filtered = _filter_symbols(symbols)
+            filtered = self._apply_symbol_allowlist(_filter_symbols(symbols))
             resolution = UniverseResolution(
                 symbols=filtered,
                 source='static',
@@ -215,11 +216,24 @@ class UniverseResolver:
 
         cache_ttl = timedelta(seconds=settings.trading_universe_cache_seconds)
         if self._cache and now - self._cache.fetched_at < cache_ttl:
+            cached_symbols = self._apply_symbol_allowlist(set(self._cache.symbols))
+            static_fallback_symbols = self._resolve_static_fallback_symbols()
+            if not cached_symbols and static_fallback_symbols:
+                return UniverseResolution(
+                    symbols=static_fallback_symbols,
+                    source='jangar',
+                    status='degraded',
+                    reason='jangar_cache_hit_no_allowed_symbols_using_static_fallback',
+                    fetched_at=self._cache.fetched_at,
+                    cache_age_seconds=int((now - self._cache.fetched_at).total_seconds()),
+                )
             return UniverseResolution(
-                symbols=set(self._cache.symbols),
+                symbols=cached_symbols,
                 source='jangar',
-                status='ok',
-                reason='jangar_cache_hit',
+                status='ok' if cached_symbols else 'error',
+                reason='jangar_cache_hit'
+                if cached_symbols
+                else 'jangar_cache_hit_no_allowed_symbols',
                 fetched_at=self._cache.fetched_at,
                 cache_age_seconds=int((now - self._cache.fetched_at).total_seconds()),
             )
@@ -273,11 +287,14 @@ class UniverseResolver:
                 cause=exc,
             )
 
-        symbols = _filter_symbols(_parse_symbols(data))
+        parsed_symbols = _filter_symbols(_parse_symbols(data))
+        symbols = self._apply_symbol_allowlist(parsed_symbols)
         if not symbols:
             return self._fallback_from_cache(
                 now=now,
-                reason='jangar_payload_empty',
+                reason='jangar_payload_no_allowed_symbols'
+                if parsed_symbols and self._has_symbol_allowlist()
+                else 'jangar_payload_empty',
             )
         self._cache = UniverseCache(symbols=symbols, fetched_at=now)
         return UniverseResolution(
@@ -308,7 +325,7 @@ class UniverseResolver:
             logger.exception("Simulation universe snapshot invalid path=%s", path)
             self._simulation_symbols_cache = set()
             return set()
-        symbols = _filter_symbols(_parse_symbols(payload))
+        symbols = self._apply_symbol_allowlist(_filter_symbols(_parse_symbols(payload)))
         self._simulation_symbols_cache = set(symbols)
         return set(symbols)
 
@@ -365,6 +382,32 @@ class UniverseResolver:
         age_seconds = int((now - self._cache.fetched_at).total_seconds())
         max_stale_seconds = max(1, settings.trading_universe_max_stale_seconds)
         if age_seconds <= max_stale_seconds:
+            cached_symbols = self._apply_symbol_allowlist(set(self._cache.symbols))
+            if not cached_symbols:
+                if static_fallback_symbols:
+                    fallback_reason = f"{reason}_using_static_fallback"
+                    if self._should_emit_stale_cache_warning(fallback_reason, now):
+                        logger.warning(
+                            "Cached Jangar universe has no allowed symbols; using static fallback reason=%s symbols=%s",
+                            reason,
+                            len(static_fallback_symbols),
+                        )
+                    return UniverseResolution(
+                        symbols=static_fallback_symbols,
+                        source='jangar',
+                        status='degraded',
+                        reason=fallback_reason,
+                        fetched_at=self._cache.fetched_at,
+                        cache_age_seconds=age_seconds,
+                    )
+                return UniverseResolution(
+                    symbols=set(),
+                    source='jangar',
+                    status='error',
+                    reason=f'{reason}_stale_cache_no_allowed_symbols',
+                    fetched_at=self._cache.fetched_at,
+                    cache_age_seconds=age_seconds,
+                )
             warning_reason = f'{reason}_using_stale_cache'
             if self._should_emit_stale_cache_warning(warning_reason, now):
                 logger.warning(
@@ -380,7 +423,7 @@ class UniverseResolver:
                     age_seconds,
                 )
             return UniverseResolution(
-                symbols=set(self._cache.symbols),
+                symbols=cached_symbols,
                 source='jangar',
                 status='degraded',
                 reason=f'{reason}_using_stale_cache',
@@ -429,7 +472,27 @@ class UniverseResolver:
         if not settings.trading_universe_static_fallback_enabled:
             return set()
         configured = set(settings.trading_universe_static_fallback_symbols)
-        return _filter_symbols(configured)
+        return self._apply_symbol_allowlist(_filter_symbols(configured))
+
+    def _has_symbol_allowlist(self) -> bool:
+        return bool(settings.trading_universe_symbol_allowlist)
+
+    def _apply_symbol_allowlist(self, symbols: set[str]) -> set[str]:
+        allowlist = {
+            normalized
+            for symbol in settings.trading_universe_symbol_allowlist
+            if (normalized := normalize_symbol(symbol))
+        }
+        if len(allowlist) > MAX_RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE_SIZE:
+            logger.error(
+                "Trading universe allowlist exceeds maximum size max=%s actual=%s",
+                MAX_RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE_SIZE,
+                len(allowlist),
+            )
+            return set()
+        if not allowlist:
+            return set(symbols)
+        return {symbol for symbol in symbols if symbol in allowlist}
 
 
 def _parse_symbols(payload: object) -> set[str]:
