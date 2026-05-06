@@ -95,7 +95,12 @@ class SimpleTradingPipeline(TradingPipeline):
         positions: list[dict[str, Any]],
         allowed_symbols: set[str],
     ) -> None:
-        for signal in batch.signals:
+        filtered_signals = self._quality_gate_signals(
+            signals=batch.signals,
+            strategies=strategies,
+            allowed_symbols=allowed_symbols,
+        )
+        for signal in filtered_signals:
             decisions = self._evaluate_signal_decisions(
                 signal,
                 strategies,
