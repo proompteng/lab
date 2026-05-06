@@ -205,6 +205,30 @@ describe('failure-domain lease synthesis', () => {
               containerStatuses: [{ name: 'postgres', image: 'postgres:test', ready: true, state: { running: true } }],
             },
           }),
+          pod({
+            metadata: {
+              name: 'torghut-quant-verify-sched-cron-29634232-db7gp',
+              namespace: 'agents',
+              generation: 1,
+              labels: {
+                'agents.proompteng.ai/agent-run': 'torghut-quant-verify-sched-cron-29634232',
+                'agents.proompteng.ai/runtime': 'codex',
+              },
+              creationTimestamp: '2026-05-05T11:55:00.000Z',
+            },
+            status: {
+              phase: 'Failed',
+              conditions: [{ type: 'Ready', status: 'False', reason: null, lastTransitionTime: null }],
+              containerStatuses: [
+                {
+                  name: 'agent',
+                  image: 'jangar:test',
+                  ready: false,
+                  state: { terminated: { reason: 'Error', message: null, exitCode: 1 } },
+                },
+              ],
+            },
+          }),
         ],
         events: [],
         collection_errors: [],
