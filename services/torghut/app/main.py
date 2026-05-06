@@ -749,6 +749,14 @@ def _evaluate_universe_dependency(
         }
 
     universe_status = getattr(state, "universe_source_status", None)
+    universe_symbols_count = getattr(state, "universe_symbols_count", None)
+    if universe_status in {"unknown", "not_evaluated", None} or (
+        settings.trading_universe_require_non_empty_jangar
+        and not universe_symbols_count
+    ):
+        _refresh_universe_state_for_readiness(scheduler=scheduler, state=state)
+
+    universe_status = getattr(state, "universe_source_status", None)
     universe_reason = getattr(state, "universe_source_reason", None)
     universe_symbols_count = getattr(state, "universe_symbols_count", None)
     universe_cache_age_seconds = getattr(state, "universe_cache_age_seconds", None)
@@ -814,7 +822,7 @@ def _evaluate_universe_dependency(
 
     if universe_status in {"unknown", "not_evaluated", None}:
         return {
-            "ok": True,
+            "ok": not settings.trading_universe_require_non_empty_jangar,
             "detail": "universe not yet evaluated",
             "source": settings.trading_universe_source,
             "status": universe_status,
@@ -849,6 +857,59 @@ def _evaluate_universe_dependency(
         "max_stale_seconds": max_stale_seconds,
         "require_non_empty": settings.trading_universe_require_non_empty_jangar,
     }
+
+
+def _refresh_universe_state_for_readiness(
+    *,
+    scheduler: TradingScheduler,
+    state: object,
+) -> None:
+    resolver = getattr(scheduler, "universe_resolver", None)
+    if resolver is None:
+        return
+    try:
+        resolution = resolver.get_resolution()
+    except Exception as exc:  # pragma: no cover - defensive readiness surface
+        setattr(state, "universe_source_status", "error")
+        setattr(
+            state,
+            "universe_source_reason",
+            f"jangar_readiness_probe_failed:{type(exc).__name__}",
+        )
+        setattr(state, "universe_symbols_count", 0)
+        setattr(state, "universe_cache_age_seconds", None)
+        setattr(state, "universe_fail_safe_blocked", True)
+        setattr(
+            state,
+            "universe_fail_safe_block_reason",
+            f"jangar_readiness_probe_failed:{type(exc).__name__}",
+        )
+        return
+
+    symbols_count = len(resolution.symbols)
+    setattr(state, "universe_source_status", resolution.status)
+    setattr(state, "universe_source_reason", resolution.reason)
+    setattr(state, "universe_symbols_count", symbols_count)
+    setattr(state, "universe_cache_age_seconds", resolution.cache_age_seconds)
+    fail_safe_blocked = (
+        settings.trading_universe_source == "jangar"
+        and settings.trading_universe_require_non_empty_jangar
+        and symbols_count == 0
+    )
+    setattr(state, "universe_fail_safe_blocked", fail_safe_blocked)
+    setattr(
+        state,
+        "universe_fail_safe_block_reason",
+        resolution.reason if fail_safe_blocked else None,
+    )
+    metrics = getattr(state, "metrics", None)
+    if metrics is not None:
+        metrics.record_universe_resolution(
+            status=resolution.status,
+            reason=resolution.reason,
+            symbols_count=symbols_count,
+            cache_age_seconds=resolution.cache_age_seconds,
+        )
 
 
 def _evaluate_database_contract(session: Session) -> dict[str, object]:
