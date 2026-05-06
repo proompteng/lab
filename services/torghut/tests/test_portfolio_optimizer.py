@@ -115,6 +115,65 @@ class TestPortfolioOptimizer(TestCase):
         with self.assertRaisesRegex(ValueError, "portfolio_candidate_schema_invalid"):
             portfolio_candidate_from_payload({"schema_version": "bad"})
 
+    def test_optimizer_keeps_research_candidate_blocked_on_scheduler_approval(
+        self,
+    ) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-approval-blocked",
+            candidate={
+                "candidate_id": "cand-approval-blocked",
+                "runtime_family": "momentum_pullback_consistent",
+                "runtime_strategy_name": "momentum-pullback-long-v1",
+                "family_template_id": "momentum_pullback_v1",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "325",
+                    "active_day_ratio": "0.50",
+                    "positive_day_ratio": "0.50",
+                    "worst_day_loss": "10",
+                    "max_drawdown": "15",
+                    "best_day_share": "0.75",
+                    "avg_filled_notional_per_day": "150000",
+                    "regime_slice_pass_rate": "0.55",
+                    "posterior_edge_lower": "0.01",
+                    "daily_net": {
+                        "2026-02-23": "650",
+                        "2026-02-24": "0",
+                    },
+                    "daily_filled_notional": {
+                        "2026-02-23": "300000",
+                        "2026-02-24": "0",
+                    },
+                },
+                "promotion_readiness": {
+                    "stage": "research_candidate",
+                    "status": "blocked_pending_runtime_parity",
+                    "promotable": False,
+                    "blockers": [
+                        "scheduler_v3_parity_missing",
+                        "scheduler_v3_approval_missing",
+                        "shadow_validation_missing",
+                    ],
+                },
+            },
+            dataset_snapshot_id="snapshot-approval-blocked",
+            result_path="/tmp/spec-approval-blocked.json",
+        )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[bundle],
+            target_net_pnl_per_day=Decimal("300"),
+            portfolio_size_min=1,
+            portfolio_size_max=1,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertFalse(portfolio.objective_scorecard["oracle_passed"])
+        self.assertEqual(
+            portfolio.sleeves[0]["promotion_status"],
+            "blocked_pending_runtime_parity",
+        )
+
     def test_portfolio_optimizer_counts_missing_trading_days_against_oracle(
         self,
     ) -> None:

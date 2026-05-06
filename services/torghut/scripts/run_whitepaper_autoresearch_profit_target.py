@@ -273,6 +273,17 @@ def _candidate_universe_symbols_from_args(args: argparse.Namespace) -> tuple[str
     return tuple(filtered_symbols)
 
 
+def _candidate_universe_symbols_for_compilation(
+    args: argparse.Namespace,
+) -> tuple[str, ...]:
+    symbols = _candidate_universe_symbols_from_args(args)
+    if set(symbols) == set(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE) and len(
+        symbols
+    ) == len(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE):
+        return ()
+    return symbols
+
+
 def _mapping(value: Any) -> dict[str, Any]:
     return (
         {str(key): item for key, item in value.items()}
@@ -1271,12 +1282,11 @@ def _select_candidate_specs_for_replay(
     selected_reason.update(
         {item.candidate_spec_id: "budget_backfill" for item in backfill}
     )
-    selected_ids = {
-        item.candidate_spec_id for item in (*exploitation, *exploration, *backfill)
+    selected = [*exploitation, *exploration, *backfill]
+    selected_ids = {item.candidate_spec_id for item in selected}
+    replay_order_by_spec = {
+        item.candidate_spec_id: index for index, item in enumerate(selected, start=1)
     }
-    selected = [
-        item for item in ordered_unique if item.candidate_spec_id in selected_ids
-    ]
 
     def row_selection_reason(spec: CandidateSpec) -> str:
         if spec.candidate_spec_id in selected_reason:
@@ -1305,11 +1315,13 @@ def _select_candidate_specs_for_replay(
             "rank": index,
             "selected_for_replay": spec.candidate_spec_id in selected_ids,
             "selection_reason": row_selection_reason(spec),
+            "replay_order": replay_order_by_spec.get(spec.candidate_spec_id),
             "selection_hash": _stable_hash(
                 {
                     "candidate_spec_id": spec.candidate_spec_id,
                     "score": str(_pre_replay_candidate_score(spec)),
                     "selected": spec.candidate_spec_id in selected_ids,
+                    "replay_order": replay_order_by_spec.get(spec.candidate_spec_id),
                 }
             ),
         }
@@ -1327,6 +1339,7 @@ def _select_candidate_specs_for_replay(
             "selected_count": len(selected),
             "compiled_candidate_count": len(specs),
             "unique_execution_signature_count": len(ordered_unique),
+            "replay_order_policy": "diversity_pick_order",
         },
         "proposal_score_confidence": model_confidence,
         "selected_candidate_spec_ids": [item.candidate_spec_id for item in selected],
@@ -1512,7 +1525,7 @@ def _run_real_replay(
         clickhouse_password=args.clickhouse_password,
         start_equity=args.start_equity,
         chunk_minutes=args.chunk_minutes,
-        symbols=args.symbols,
+        symbols="" if source_specs else args.symbols,
         progress_log_seconds=args.progress_log_seconds,
         train_days=args.train_days,
         holdout_days=args.holdout_days,
@@ -1794,7 +1807,7 @@ def run_whitepaper_autoresearch_profit_target(
     program = _load_epoch_program(args)
     objective = program.objective
     try:
-        candidate_universe_symbols = _candidate_universe_symbols_from_args(args)
+        candidate_universe_symbols = _candidate_universe_symbols_for_compilation(args)
     except ValueError as exc:
         return _write_failure_summary(
             output_dir=output_dir,

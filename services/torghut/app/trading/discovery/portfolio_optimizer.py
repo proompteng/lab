@@ -75,7 +75,11 @@ def _candidate_passes_minimums(bundle: CandidateEvidenceBundle) -> bool:
         return True
     blockers = cast(Sequence[Any], bundle.promotion_readiness.get("blockers") or [])
     blocking = {str(item) for item in blockers}
-    allowed_blockers = {"scheduler_v3_parity_missing", "shadow_validation_missing"}
+    allowed_blockers = {
+        "scheduler_v3_parity_missing",
+        "scheduler_v3_approval_missing",
+        "shadow_validation_missing",
+    }
     if blocking - allowed_blockers:
         return False
     return _net_per_day(bundle) > 0 and _active_ratio(bundle) >= Decimal("0.50")
