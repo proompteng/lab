@@ -589,6 +589,7 @@ const deriveStandardConditionUpdates = (conditions: Condition[], phase: string |
   const runningCondition = findCondition(conditions, ['Running', 'InProgress', 'Progressing'])
   const successCondition = findCondition(conditions, ['Succeeded', 'Completed'])
   const readyCondition = findCondition(conditions, ['Ready'])
+  const degradedCondition = findCondition(conditions, ['Degraded'])
 
   const phaseReady = ['ready', 'active', 'succeeded', 'success', 'completed'].includes(normalizedPhase)
   const phaseProgressing = ['pending', 'running', 'progressing', 'inprogress', 'queued'].includes(normalizedPhase)
@@ -601,8 +602,8 @@ const deriveStandardConditionUpdates = (conditions: Condition[], phase: string |
   let readyMessage = readyCondition?.message
   let progressingReason = runningCondition?.reason
   const progressingMessage = runningCondition?.message
-  let degradedReason = failureCondition?.reason
-  let degradedMessage = failureCondition?.message
+  let degradedReason = failureCondition?.reason ?? degradedCondition?.reason
+  let degradedMessage = failureCondition?.message ?? degradedCondition?.message
 
   if (phaseDegraded || failureCondition?.status === 'True') {
     degradedStatus = 'True'
@@ -646,7 +647,7 @@ const deriveStandardConditionUpdates = (conditions: Condition[], phase: string |
     {
       type: 'Degraded',
       status: degradedStatus,
-      reason: degradedReason ?? 'Degraded',
+      reason: degradedReason ?? (degradedStatus === 'False' ? 'Healthy' : 'Degraded'),
       message: degradedMessage,
     },
   ] satisfies Array<Omit<Condition, 'lastTransitionTime'>>
@@ -2099,12 +2100,15 @@ const reconcileSwarm = async (
     const cadenceMs = stageConfig.every ? parseDurationToMs(stageConfig.every) : null
     const latestRunMs = parseTimeOrNull(lastRunTime)
     const latestSuccessMs = resolveLatestSuccessfulRunTime(stageRuns)
+    const latestActivityMs = [latestRunMs, latestSuccessMs]
+      .filter((value): value is number => value !== null)
+      .reduce((latest, value) => Math.max(latest, value), Number.NEGATIVE_INFINITY)
     const consecutiveStageFailures = countConsecutiveFailures(stageRuns)
     const freshnessWindowMs = cadenceMs === null ? null : cadenceMs * 2
     const fresh =
       freshnessWindowMs === null
-        ? Boolean(lastRunTime)
-        : latestRunMs !== null && nowMs - latestRunMs <= freshnessWindowMs
+        ? Number.isFinite(latestActivityMs)
+        : Number.isFinite(latestActivityMs) && nowMs - latestActivityMs <= freshnessWindowMs
     const recentSuccess =
       freshnessWindowMs === null
         ? latestSuccessMs !== null
