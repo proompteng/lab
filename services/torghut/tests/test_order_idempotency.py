@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models import Base, Execution, ExecutionOrderEvent, ExecutionTCAMetric, Strategy, TradeDecision
 from app.config import settings
-from app.trading.execution_adapters import LeanExecutionAdapter
+from app.trading.execution_adapters import LeanExecutionAdapter, SimulationExecutionAdapter
 from app.trading.execution import OrderExecutor
 from app.trading.models import StrategyDecision, decision_hash
 from app.trading.reconcile import Reconciler
@@ -671,6 +671,192 @@ class TestOrderIdempotency(TestCase):
             self.assertIsNone(tca.expected_shortfall_bps_p50)
             self.assertIsNone(tca.expected_shortfall_bps_p95)
             self.assertIsNone(tca.divergence_bps)
+
+    def test_simulation_submit_order_uses_decision_price_for_fill_and_tca(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo-simulation",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["NVDA"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="NVDA",
+                event_ts=datetime(2026, 5, 5, 17, 25, 6, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("2"),
+                order_type="market",
+                time_in_force="day",
+                params={
+                    "price": Decimal("197.055"),
+                    "simulation_context": {
+                        "simulation_run_id": "sim-2026-05-05-chip",
+                        "dataset_id": "dataset-chip",
+                        "signal_event_ts": "2026-05-05T17:25:06+00:00",
+                    },
+                },
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+            adapter = SimulationExecutionAdapter(
+                bootstrap_servers=None,
+                security_protocol=None,
+                sasl_mechanism=None,
+                sasl_username=None,
+                sasl_password=None,
+                topic="torghut.sim.trade-updates.v1",
+                account_label="paper",
+                simulation_run_id="sim-2026-05-05-chip",
+                dataset_id="dataset-chip",
+            )
+
+            execution = executor.submit_order(
+                session,
+                adapter,
+                decision,
+                decision_row,
+                "paper",
+            )
+            assert execution is not None
+
+            self.assertEqual(execution.status, "filled")
+            self.assertEqual(execution.avg_fill_price, Decimal("197.055"))
+            raw_order = execution.raw_order
+            assert isinstance(raw_order, dict)
+            simulation_context = raw_order.get("simulation_context")
+            assert isinstance(simulation_context, dict)
+            self.assertEqual(simulation_context.get("simulated_fill_price"), "197.055")
+            self.assertEqual(simulation_context.get("arrival_price"), "197.055")
+
+            tca = session.execute(
+                select(ExecutionTCAMetric).where(
+                    ExecutionTCAMetric.execution_id == execution.id
+                )
+            ).scalar_one()
+            self.assertEqual(tca.arrival_price, Decimal("197.055"))
+            self.assertEqual(tca.avg_fill_price, Decimal("197.055"))
+            self.assertEqual(tca.slippage_bps, Decimal("0"))
+            self.assertEqual(tca.shortfall_notional, Decimal("0"))
+
+    def test_simulation_submit_order_uses_price_snapshot_without_context(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo-simulation-snapshot",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["NVDA"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="NVDA",
+                event_ts=datetime(2026, 5, 5, 17, 25, 6, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+                order_type="market",
+                time_in_force="day",
+                params={"price_snapshot": {"price": "197.34"}},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+            adapter = SimulationExecutionAdapter(
+                bootstrap_servers=None,
+                security_protocol=None,
+                sasl_mechanism=None,
+                sasl_username=None,
+                sasl_password=None,
+                topic="torghut.sim.trade-updates.v1",
+                account_label="paper",
+                simulation_run_id="sim-2026-05-05-chip",
+                dataset_id="dataset-chip",
+            )
+
+            execution = executor.submit_order(
+                session,
+                adapter,
+                decision,
+                decision_row,
+                "paper",
+            )
+            assert execution is not None
+
+            self.assertEqual(execution.avg_fill_price, Decimal("197.34"))
+            raw_order = execution.raw_order
+            assert isinstance(raw_order, dict)
+            simulation_context = raw_order.get("simulation_context")
+            assert isinstance(simulation_context, dict)
+            self.assertEqual(simulation_context.get("simulated_fill_price"), "197.34")
+            self.assertEqual(simulation_context.get("arrival_price"), "197.34")
+
+    def test_simulation_submit_order_without_price_keeps_legacy_fallback(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo-simulation-no-price",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["NVDA"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="NVDA",
+                event_ts=datetime(2026, 5, 5, 17, 25, 6, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+                order_type="market",
+                time_in_force="day",
+                params={},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+            adapter = SimulationExecutionAdapter(
+                bootstrap_servers=None,
+                security_protocol=None,
+                sasl_mechanism=None,
+                sasl_username=None,
+                sasl_password=None,
+                topic="torghut.sim.trade-updates.v1",
+                account_label="paper",
+                simulation_run_id="sim-2026-05-05-chip",
+                dataset_id="dataset-chip",
+            )
+
+            execution = executor.submit_order(
+                session,
+                adapter,
+                decision,
+                decision_row,
+                "paper",
+            )
+            assert execution is not None
+
+            self.assertEqual(execution.avg_fill_price, Decimal("1"))
+            raw_order = execution.raw_order
+            assert isinstance(raw_order, dict)
+            simulation_context = raw_order.get("simulation_context")
+            assert isinstance(simulation_context, dict)
+            self.assertNotIn("simulated_fill_price", simulation_context)
+            self.assertNotIn("arrival_price", simulation_context)
 
     def test_submit_order_persists_advice_provenance_and_simulator_expectations(self) -> None:
         with self.session_local() as session:
