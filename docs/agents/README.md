@@ -18,6 +18,14 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Fast Jangar/Torghut live analysis workflow: `designs/jangar-torghut-live-analysis-playbook.md`
 - Autonomous Jangar/Torghut production system design: `designs/autonomous-jangar-torghut-production-system.md`
 - Current Jangar/Torghut architecture contracts:
+  - `designs/103-jangar-torghut-decision-custody-cells-and-rollout-proof-exchange-2026-05-06.md`
+  - `../torghut/design-system/v6/107-torghut-decision-custody-cells-and-capital-reentry-2026-05-06.md`
+  - `designs/103-jangar-material-action-settlement-board-and-profit-repair-gates-2026-05-06.md`
+  - `../torghut/design-system/v6/107-torghut-profit-repair-roi-ledger-and-capital-settlement-gates-2026-05-06.md`
+  - `designs/102-jangar-dual-authority-dispatch-ledger-and-capital-proof-firewall-2026-05-06.md`
+  - `../torghut/design-system/v6/106-torghut-live-proof-recovery-ledger-and-options-data-firewall-2026-05-06.md`
+  - `designs/101-jangar-typed-evidence-authority-and-readiness-debt-gates-2026-05-06.md`
+  - `../torghut/design-system/v6/105-torghut-capital-reentry-evidence-feed-and-readiness-debt-netting-2026-05-06.md`
   - `designs/101-jangar-evidence-provenance-firewall-and-lease-graduation-contract-2026-05-06.md`
   - `../torghut/design-system/v6/105-torghut-proof-provenance-firewall-and-profit-lease-graduation-2026-05-06.md`
   - `designs/101-jangar-account-scoped-proof-liquidity-and-query-budget-2026-05-06.md`
