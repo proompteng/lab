@@ -18,6 +18,10 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Fast Jangar/Torghut live analysis workflow: `designs/jangar-torghut-live-analysis-playbook.md`
 - Autonomous Jangar/Torghut production system design: `designs/autonomous-jangar-torghut-production-system.md`
 - Current Jangar/Torghut architecture contracts:
+  - `designs/129-jangar-heartbeat-lane-escrow-and-material-verdict-stability-2026-05-06.md`
+  - `../torghut/design-system/v6/133-torghut-stable-jangar-receipts-and-closed-session-capital-hold-2026-05-06.md`
+  - `designs/128-jangar-terminal-run-settlement-and-forecast-reentry-admission-2026-05-06.md`
+  - `../torghut/design-system/v6/132-torghut-forecast-profit-tournament-and-capital-reentry-guardrails-2026-05-06.md`
   - `designs/128-jangar-runtime-convergence-ledger-and-capital-gate-receipts-2026-05-06.md`
   - `../torghut/design-system/v6/132-torghut-dependency-quorum-rehydration-and-profit-inventory-handoff-2026-05-06.md`
   - `designs/127-jangar-activation-inventory-ledger-and-product-gap-fuses-2026-05-06.md`
