@@ -251,6 +251,7 @@ class SimulationExecutionAdapter:
         fill_price = _resolve_simulated_fill_price(
             limit_price=limit_price,
             stop_price=stop_price,
+            simulation_context=simulation_context,
         )
         qty_value = max(float(qty), 0.0)
         order: dict[str, Any] = {
@@ -1080,16 +1081,23 @@ def _resolve_simulated_fill_price(
     *,
     limit_price: float | None,
     stop_price: float | None,
+    simulation_context: Mapping[str, Any] | None = None,
 ) -> float:
     for candidate in (limit_price, stop_price):
-        if candidate is None:
-            continue
-        try:
-            value = float(candidate)
-        except Exception:
-            continue
-        if value > 0:
-            return value
+        value = _positive_decimal(candidate)
+        if value is not None:
+            return float(value)
+    if isinstance(simulation_context, Mapping):
+        for key in ('simulated_fill_price', 'fill_price', 'arrival_price', 'price'):
+            value = _positive_decimal(simulation_context.get(key))
+            if value is not None:
+                return float(value)
+        price_snapshot = simulation_context.get('price_snapshot')
+        if isinstance(price_snapshot, Mapping):
+            snapshot_payload = cast(Mapping[object, Any], price_snapshot)
+            value = _positive_decimal(snapshot_payload.get('price'))
+            if value is not None:
+                return float(value)
     return 1.0
 
 
@@ -1146,6 +1154,15 @@ def _optional_decimal(value: Any) -> Decimal | None:
         return Decimal(str(value))
     except Exception:
         return None
+
+
+def _positive_decimal(value: Any) -> Decimal | None:
+    parsed = _optional_decimal(value)
+    if parsed is None:
+        return None
+    if parsed.is_finite() and parsed > 0:
+        return parsed
+    return None
 
 
 def _signed_position_market_value(position: Mapping[str, Any], *, side: str) -> Decimal | None:
