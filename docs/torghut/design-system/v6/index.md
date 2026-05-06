@@ -723,6 +723,7 @@ This pack is positioned as the next architecture layer above:
 54. `97-torghut-proof-sample-settlement-and-repair-close-loop-2026-05-05.md`
 55. `98-torghut-repair-dividend-ledger-and-capital-reentry-guard-2026-05-05.md`
 56. `99-torghut-hypothesis-repair-council-and-evidence-credit-ladder-2026-05-05.md`
+57. `115-torghut-proof-spend-market-and-negative-evidence-consumer-2026-05-06.md`
 
 ## Why This Sequence
 
@@ -791,3 +792,7 @@ This pack is positioned as the next architecture layer above:
   current cluster state. It ranks zero-notional repairs by expected information value while keeping paper and live
   capital blocked until Jangar credits, empirical jobs, account-scoped quant health, signal lag, rejection attribution,
   and options proof are fresh.
+- `115-torghut-proof-spend-market-and-negative-evidence-consumer-2026-05-06.md` follows the Jangar negative-evidence
+  router because the current state has enough status to hold capital, but not enough economic structure to choose the
+  next proof repair. It turns stale market context, scoped quant alerts, empirical debt, rollback-required hypotheses,
+  and data-plane rollout ambiguity into ranked proof-spend bids before paper or live capital can reenter.
