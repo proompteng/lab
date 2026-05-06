@@ -199,6 +199,9 @@ allowing repeated opaque job retries.
 Schedule reconciliation also re-checks the current stage passport before it writes runner ConfigMaps or CronJobs.
 This keeps pre-existing schedules from launching with stale allowed passport annotations after the collaboration runtime
 kit moves to `hold` or `block`.
+If the admission snapshot cannot be compiled, launch admission fails closed as `RuntimeAdmissionUnavailable`, deletes the
+matching runner resources, and records the unavailable passport state in swarm status instead of leaving stale CronJobs
+armed.
 
 Binary runtime-kit components must be executable, not just present on disk. The source Codex NATS helpers and the
 installed `/usr/local/bin/codex-nats-*` wrappers both satisfy that command-path contract; a non-executable helper keeps
