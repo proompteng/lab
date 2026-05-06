@@ -125,15 +125,18 @@ const buildRuntimeKitComponent = (input: {
   reasonCode?: string
   evidenceRef?: string
 }) => {
-  if (input.path && existsSync(input.path)) {
+  const path = input.path
+  const present = path !== undefined && existsSync(path) && (input.componentKind !== 'binary' || isExecutablePath(path))
+
+  if (present) {
     return {
       component_kind: input.componentKind,
       component_ref: input.componentRef,
       required: input.required,
       present: true,
-      digest: buildFileDigest(input.path),
+      digest: buildFileDigest(path),
       reason_code: null,
-      evidence_ref: input.path,
+      evidence_ref: path,
     } satisfies RuntimeKitComponentStatus
   }
 

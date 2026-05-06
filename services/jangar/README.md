@@ -200,6 +200,10 @@ Schedule reconciliation also re-checks the current stage passport before it writ
 This keeps pre-existing schedules from launching with stale allowed passport annotations after the collaboration runtime
 kit moves to `hold` or `block`.
 
+Binary runtime-kit components must be executable, not just present on disk. The source Codex NATS helpers and the
+installed `/usr/local/bin/codex-nats-*` wrappers both satisfy that command-path contract; a non-executable helper keeps
+the collaboration kit blocked with `runtime_kit_component_missing:*` evidence.
+
 Degraded authority or degraded runtime-kit evidence keeps the serving passport non-blocking (`degrade`) but moves
 launch-capable swarm passports to `hold`. Missing required runtime-kit evidence still moves launch-capable passports to
 `block`. The supporting-primitives controller treats both `hold` and `block` as non-admitted decisions for discover,
