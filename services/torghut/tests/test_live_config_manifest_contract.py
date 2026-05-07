@@ -314,6 +314,7 @@ class TestLiveConfigManifestContract(TestCase):
                 "microbar-volume-continuation-long-top2-chip-v1",
                 "microbar-prev-day-open45-reversal-long-top1-chip-v1",
                 "intraday-tsmom-profit-v3",
+                "breakout-continuation-long-v1",
             },
         )
 
@@ -340,9 +341,8 @@ class TestLiveConfigManifestContract(TestCase):
                     Decimal("2.0"),
                 )
                 self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
-            else:
+            elif str(strategy.get("strategy_type")) == "intraday_tsmom_v1":
                 self.assertEqual(name, "intraday-tsmom-profit-v3")
-                self.assertEqual(strategy.get("strategy_type"), "intraday_tsmom_v1")
                 self.assertEqual(
                     _strategy_decimal(strategy, "max_notional_per_trade"),
                     Decimal("50000"),
@@ -352,6 +352,21 @@ class TestLiveConfigManifestContract(TestCase):
                     Decimal("3.0"),
                 )
                 self.assertEqual(params.get("max_spread_bps"), "20")
+            else:
+                self.assertEqual(name, "breakout-continuation-long-v1")
+                self.assertEqual(
+                    strategy.get("strategy_type"), "breakout_continuation_long_v1"
+                )
+                self.assertEqual(
+                    _strategy_decimal(strategy, "max_notional_per_trade"),
+                    Decimal("50000"),
+                )
+                self.assertEqual(
+                    _strategy_decimal(strategy, "max_position_pct_equity"),
+                    Decimal("3.0"),
+                )
+                self.assertEqual(params.get("max_spread_bps"), "20")
+                self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
 
     def test_runtime_symbol_sources_use_live_signal_universe(self) -> None:
         live_env = _load_torghut_knative_env()
