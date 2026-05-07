@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from app.models import Base, TradeCursor
 from app.config import settings
 from app.trading.ingest import ClickHouseSignalIngestor
+from app.trading.quote_quality import assess_signal_quote_quality
 
 
 class CapturingIngestor(ClickHouseSignalIngestor):
@@ -122,6 +123,40 @@ class TestSignalIngest(TestCase):
         self.assertEqual(signal.symbol, "AAPL")
         self.assertEqual(signal.payload.get("rsi14"), 22)
         self.assertEqual(signal.timeframe, "1Min")
+
+    def test_parse_envelope_row_backfills_flat_executable_quote_fields(self) -> None:
+        ingestor = ClickHouseSignalIngestor(schema="envelope", fast_forward_stale_cursor=False)
+        row = {
+            "event_ts": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "ingest_ts": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "symbol": "NVDA",
+            "payload": {
+                "macd": {"macd": 0.5, "signal": 0.2},
+                "price": None,
+                "imbalance": {"bid_px": None, "ask_px": None, "spread": None},
+            },
+            "window": {"size": "PT1M"},
+            "seq": 10,
+            "source": "ta",
+            "imbalance_bid_px": 125.70,
+            "imbalance_ask_px": 125.80,
+            "imbalance_spread": 0.10,
+        }
+        signal = ingestor.parse_row(row)
+        self.assertIsNotNone(signal)
+        assert signal is not None
+        self.assertEqual(signal.payload.get("price"), 125.75)
+        self.assertEqual(signal.payload.get("imbalance_bid_px"), 125.70)
+        self.assertEqual(signal.payload.get("imbalance_ask_px"), 125.80)
+        self.assertEqual(signal.payload.get("imbalance", {}).get("bid_px"), 125.70)
+        self.assertEqual(signal.payload.get("imbalance", {}).get("ask_px"), 125.80)
+        self.assertEqual(signal.payload.get("imbalance", {}).get("spread"), 0.10)
+
+        quote_status = assess_signal_quote_quality(
+            signal=signal,
+            previous_price=None,
+        )
+        self.assertTrue(quote_status.valid, quote_status.reason)
 
     def test_parse_flat_row(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="flat", fast_forward_stale_cursor=False)

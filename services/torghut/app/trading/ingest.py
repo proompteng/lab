@@ -791,6 +791,8 @@ class ClickHouseSignalIngestor:
             payload = _normalize_payload(row.get("payload"))
             if not payload:
                 payload = _payload_from_flat_row(row)
+            else:
+                _merge_flat_row_fallbacks(payload, row)
             payload = _attach_simulation_context(payload=payload, row=row, event_ts=event_ts)
             return SignalEnvelope(
                 event_ts=event_ts,
@@ -1342,6 +1344,17 @@ def _payload_from_flat_row(row: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _merge_flat_row_fallbacks(payload: dict[str, Any], row: dict[str, Any]) -> None:
+    _merge_microstructure_signal_payload(payload, row)
+    _copy_row_values_if_missing(payload, row, ("rsi", "rsi14"))
+    _copy_row_value_if_missing(payload, row, "ema")
+    _copy_row_value_if_missing(payload, row, "vwap")
+    _copy_row_values_if_missing(payload, row, ("price", "close"))
+    _ensure_price_value(payload, row)
+    _merge_imbalance_payload(payload, row)
+    _copy_extended_ta_fields(payload, row)
+
+
 def _merge_signal_json_payload(payload: dict[str, Any], row: dict[str, Any]) -> None:
     signal_json = row.get("signal_json")
     if not isinstance(signal_json, str):
@@ -1380,12 +1393,12 @@ def _copy_row_values_if_missing(
 
 def _copy_row_value_if_missing(payload: dict[str, Any], row: dict[str, Any], key: str) -> None:
     value = row.get(key)
-    if value is not None and key not in payload:
+    if value is not None and payload.get(key) is None:
         payload[key] = value
 
 
 def _ensure_price_value(payload: dict[str, Any], row: dict[str, Any]) -> None:
-    if "price" in payload:
+    if payload.get("price") is not None:
         return
     bid_px = row.get("imbalance_bid_px")
     ask_px = row.get("imbalance_ask_px")
@@ -1419,15 +1432,16 @@ def _merge_imbalance_payload(payload: dict[str, Any], row: dict[str, Any]) -> No
     ):
         payload["imbalance"] = {}
 
-    imbalance = payload.get("imbalance")
-    if not isinstance(imbalance, dict):
+    raw_imbalance = payload.get("imbalance")
+    if not isinstance(raw_imbalance, dict):
         return
+    imbalance = cast(dict[str, Any], raw_imbalance)
 
-    if bid_px is not None and "bid_px" not in imbalance:
+    if bid_px is not None and imbalance.get("bid_px") is None:
         imbalance["bid_px"] = bid_px
-    if ask_px is not None and "ask_px" not in imbalance:
+    if ask_px is not None and imbalance.get("ask_px") is None:
         imbalance["ask_px"] = ask_px
-    if spread_value is not None and "spread" not in imbalance:
+    if spread_value is not None and imbalance.get("spread") is None:
         imbalance["spread"] = spread_value
 
 
@@ -1458,6 +1472,8 @@ def _copy_extended_ta_fields(payload: dict[str, Any], row: dict[str, Any]) -> No
         "boll_mid",
         "boll_upper",
         "boll_lower",
+        "imbalance_bid_px",
+        "imbalance_ask_px",
         "imbalance_spread",
         "vol_realized_w60s",
         "microbar_volume",
