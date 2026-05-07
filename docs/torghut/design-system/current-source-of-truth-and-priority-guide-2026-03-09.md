@@ -34,6 +34,10 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v1/historical-dataset-simulation.md`
    - `docs/torghut/design-system/v1/trading-day-simulation-automation.md`
 3. current autonomy/promotion contract source of truth:
+   - `docs/agents/designs/148-jangar-source-rollout-truth-exchange-and-proof-floor-settlement-2026-05-07.md`
+   - `docs/torghut/design-system/v6/152-torghut-proof-floor-settlement-bonds-and-tca-repair-auction-2026-05-07.md`
+   - `docs/agents/designs/147-jangar-hypothesis-scoped-capital-adjudication-ledger-2026-05-07.md`
+   - `docs/torghut/design-system/v6/151-torghut-hypothesis-scoped-capital-adjudication-and-profit-gates-2026-05-07.md`
    - `docs/torghut/design-system/v6/137-torghut-renewal-bond-profit-escrow-and-evidence-carry-2026-05-07.md`
    - `docs/agents/designs/133-jangar-in-flight-stage-renewal-bonds-and-controller-ingestion-settlement-2026-05-07.md`
    - `docs/torghut/design-system/v6/136-torghut-stage-coherent-profit-escrow-and-proof-age-arbitrage-2026-05-07.md`
@@ -121,7 +125,16 @@ If the question is "what should I trust right now?", start here:
 
 The current highest-priority work is:
 
-The May 7 renewal-bond and stage-coherence contracts are the current implementation handoff:
+The May 7 source-rollout and proof-floor settlement contracts are the current implementation handoff:
+
+- settle Jangar source head, Argo revision, desired image, live image, controller heartbeat, route status, database
+  projection, watch cache, and Torghut proof-floor evidence into one action-class receipt in
+  `docs/agents/designs/148-jangar-source-rollout-truth-exchange-and-proof-floor-settlement-2026-05-07.md`;
+- price Torghut proof-floor blockers as settlement bonds, distinguish stale TCA recompute from bad TCA policy repair,
+  and keep capital zero-notional until closure receipts and Jangar source-rollout settlement agree in
+  `docs/torghut/design-system/v6/152-torghut-proof-floor-settlement-bonds-and-tca-repair-auction-2026-05-07.md`.
+
+The May 7 renewal-bond and stage-coherence contracts remain the preceding implementation handoff:
 
 - make Torghut preserve fresh empirical proof as evidence carry while Jangar stage renewal, stale TCA, market-context
   contradictions, quant ingestion lag, or alpha-readiness blockers keep paper/live notional at zero in
@@ -134,7 +147,7 @@ The May 7 renewal-bond and stage-coherence contracts are the current implementat
 - reclock Jangar stage freshness into explicit capital-authority inputs in
   `docs/agents/designs/132-jangar-stage-freshness-escrow-and-capital-authority-reclocking-2026-05-07.md`.
 
-The May 6 provenance and lease-graduation contracts are the current implementation handoff:
+The May 6 provenance and lease-graduation contracts remain the preceding implementation handoff:
 
 - make Jangar failure-domain leases source-qualified so arbitrary runner pod suffixes cannot masquerade as database
   outage evidence in
