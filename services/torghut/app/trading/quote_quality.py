@@ -63,11 +63,17 @@ def assess_signal_quote_quality(
     ask = _extract_ask(signal)
     if price is None or price <= 0:
         return QuoteQualityStatus(valid=False, reason='non_positive_price')
-    if bid is not None and bid <= 0:
+    if bid is None and ask is None:
+        return QuoteQualityStatus(valid=False, reason='missing_executable_quote')
+    if bid is None:
+        return QuoteQualityStatus(valid=False, reason='missing_bid')
+    if ask is None:
+        return QuoteQualityStatus(valid=False, reason='missing_ask')
+    if bid <= 0:
         return QuoteQualityStatus(valid=False, reason='non_positive_bid')
-    if ask is not None and ask <= 0:
+    if ask <= 0:
         return QuoteQualityStatus(valid=False, reason='non_positive_ask')
-    if bid is not None and ask is not None and ask < bid:
+    if ask < bid:
         return QuoteQualityStatus(valid=False, reason='crossed_quote')
 
     spread_bps = _signal_spread_bps(signal=signal, price=price)

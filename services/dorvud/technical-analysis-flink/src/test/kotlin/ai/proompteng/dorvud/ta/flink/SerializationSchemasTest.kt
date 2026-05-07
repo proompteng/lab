@@ -8,6 +8,7 @@ import ai.proompteng.dorvud.ta.stream.MicroBarPayload
 import ai.proompteng.dorvud.ta.stream.MicrostructureSignalArtifact
 import ai.proompteng.dorvud.ta.stream.MicrostructureSignalV1
 import ai.proompteng.dorvud.ta.stream.OptionsContractBarPayload
+import ai.proompteng.dorvud.ta.stream.QuotePayload
 import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
 import ai.proompteng.dorvud.ta.stream.TradePayload
 import kotlinx.serialization.json.Json
@@ -195,6 +196,26 @@ class SerializationSchemasTest {
   fun `session accumulator state supports kryo copy`() {
     val serializer = KryoSerializer(SessionAccumulatorState::class.java, SerializerConfigImpl())
     val original = SessionAccumulatorState(pv = 10.5, vol = 2.0)
+    val copy = serializer.copy(original)
+    assertEquals(original, copy)
+    assertTrue(original !== copy)
+  }
+
+  @Test
+  fun `timed quote state supports kryo copy`() {
+    val serializer = KryoSerializer(TimedQuoteState::class.java, SerializerConfigImpl())
+    val original =
+      TimedQuoteState(
+        eventTs = Instant.EPOCH,
+        payload =
+          QuotePayload(
+            bp = 100.0,
+            bs = 10.0,
+            ap = 100.02,
+            `as` = 12.0,
+            t = Instant.EPOCH,
+          ),
+      )
     val copy = serializer.copy(original)
     assertEquals(original, copy)
     assertTrue(original !== copy)
