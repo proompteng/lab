@@ -35,6 +35,16 @@ const extractInputFileContent = (manifest: string, path: string): string => {
 }
 
 describe('torghut market-context AgentProvider manifest', () => {
+  it('retries fundamentals batches during the regular market session', async () => {
+    const manifest = await readFile(
+      resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-batch.yaml'),
+      'utf8',
+    )
+
+    expect(manifest).toContain('name: torghut-market-context-fundamentals-batch')
+    expect(manifest).toContain('cron: "35 9-15/2 * * 1-5"')
+  })
+
   it('uses a bearer token for lifecycle start/progress requests', async () => {
     const manifest = await readFile(
       resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
@@ -57,6 +67,73 @@ describe('torghut market-context AgentProvider manifest', () => {
     expect(manifest).toContain("output.decode('utf-8', errors='replace')")
     expect(manifest).toContain('_write_process_output(sys.stdout, error.stdout)')
     expect(manifest).toContain('_write_process_output(sys.stderr, error.stderr)')
+    expect(manifest).toContain('CODEX_MARKET_CONTEXT_PREFLIGHT_TIMEOUT_SECONDS: "10"')
+  })
+
+  it('preflights closed market sessions before running Codex attempts', async () => {
+    const manifest = await readFile(
+      resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
+      'utf8',
+    )
+    const runner = extractInputFileContent(manifest, '/root/.codex/market-context-provider-runner.py')
+    const tempDir = await mkdtemp(resolve(tmpdir(), 'market-context-runner-'))
+    const runnerPath = resolve(tempDir, 'market-context-provider-runner.py')
+    const eventPath = resolve(tempDir, 'event.json')
+    const probePath = resolve(tempDir, 'probe.py')
+    await writeFile(runnerPath, runner)
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        parameters: {
+          domain: 'fundamentals',
+          executionMode: 'batch_task',
+          tradingStatusUrl: 'http://torghut.test/trading/status',
+        },
+      }),
+    )
+    await writeFile(
+      probePath,
+      `
+import importlib.util
+import sys
+from pathlib import Path
+
+runner_path = Path(sys.argv[1])
+event_path = Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location('runner', runner_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+class FakeResponse:
+  def __enter__(self):
+    return self
+
+  def __exit__(self, exc_type, exc, tb):
+    return False
+
+  def read(self):
+    return b'{"signal_continuity":{"market_session_open":false}}'
+
+def fake_urlopen(request, timeout=0):
+  assert timeout == 10
+  assert request.full_url == 'http://torghut.test/trading/status'
+  return FakeResponse()
+
+def fail_run(*args, **kwargs):
+  raise AssertionError('codex attempt should not run while market is closed')
+
+module.urllib.request.urlopen = fake_urlopen
+module.subprocess.run = fail_run
+sys.argv = ['market-context-provider-runner.py', str(event_path)]
+exit_code = module.main()
+assert exit_code == 0, exit_code
+`,
+    )
+
+    const { stdout } = await execFileAsync('python3', [probePath, runnerPath, eventPath], { timeout: 10_000 })
+
+    expect(stdout).toContain('market_session_closed_noop')
   })
 
   it('handles byte output from timed-out provider attempts', async () => {
