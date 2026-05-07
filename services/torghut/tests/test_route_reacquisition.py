@@ -3,7 +3,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
-from app.trading.route_reacquisition import build_route_reacquisition_book
+from app.trading.route_reacquisition import (
+    _dimension,
+    _hypothesis_ids,
+    _int,
+    _next_action,
+    _receipt_id,
+    build_route_reacquisition_book,
+)
 
 
 def test_empty_proof_floor_builds_zero_value_repair_book() -> None:
@@ -23,6 +30,55 @@ def test_empty_proof_floor_builds_zero_value_repair_book() -> None:
     assert book["records"] == []
     summary = cast(Mapping[str, Any], book["summary"])
     assert summary["expected_unblock_value"] == 0
+
+
+def test_route_book_helpers_normalize_repair_inputs() -> None:
+    assert _int(True) == 1
+    assert _int(2.9) == 2
+    assert _int("7.8") == 7
+    assert _int("not-a-number", default=42) == 42
+    assert _dimension({"proof_dimensions": [{"dimension": "market_context"}]}, "execution_tca") == {}
+    assert _receipt_id({"last_receipt_id": "receipt-1"}, "receipt_id", "last_receipt_id") == "receipt-1"
+    assert _hypothesis_ids({"hypothesis_ids": ["H-2", ""], "candidate_ids": ["H-1", "H-2"]}) == [
+        "H-1",
+        "H-2",
+    ]
+    assert (
+        _next_action(state="blocked", reason="slippage_guardrail")
+        == "reduce_execution_slippage_before_route_reentry"
+    )
+    assert _next_action(state="retired", reason="manual_override") == "retire_symbol_until_evidence_returns"
+
+
+def test_route_book_skips_malformed_symbol_rows() -> None:
+    book = build_route_reacquisition_book(
+        proof_floor_receipt={
+            "generated_at": "2026-05-07T16:00:00+00:00",
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "proof_dimensions": [
+                {
+                    "dimension": "execution_tca",
+                    "state": "fail",
+                    "source_ref": {
+                        "symbol_routes": {
+                            "routeable_symbols": [{"symbol": ""}],
+                            "blocked_symbols": [{"symbol": "  "}],
+                            "missing_symbols": ["", None],
+                        }
+                    },
+                }
+            ],
+        },
+        trading_mode="live",
+        market_session_open=False,
+    )
+
+    assert book["records"] == []
+    summary = cast(Mapping[str, Any], book["summary"])
+    assert summary["routeable_symbol_count"] == 0
+    assert summary["blocked_symbol_count"] == 0
+    assert summary["missing_symbol_count"] == 0
 
 
 def test_route_book_normalizes_receipts_ids_and_malformed_symbol_rows() -> None:
