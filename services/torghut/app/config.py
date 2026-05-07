@@ -358,6 +358,19 @@ class Settings(BaseSettings):
     trading_signal_lookback_minutes: int = Field(
         default=15, alias="TRADING_SIGNAL_LOOKBACK_MINUTES"
     )
+    trading_session_context_warmup_max_seconds: int = Field(
+        default=300,
+        alias="TRADING_SESSION_CONTEXT_WARMUP_MAX_SECONDS",
+        description=(
+            "Maximum lookback for scheduler session-context warmup. This bounds the "
+            "startup replay so a full-session ClickHouse scan cannot block live polling."
+        ),
+    )
+    trading_session_context_warmup_max_signals: int = Field(
+        default=1000,
+        alias="TRADING_SESSION_CONTEXT_WARMUP_MAX_SIGNALS",
+        description="Maximum signal rows to replay during scheduler session-context warmup.",
+    )
     trading_signal_empty_batch_advance_seconds: int = Field(
         default=60,
         alias="TRADING_SIGNAL_EMPTY_BATCH_ADVANCE_SECONDS",

@@ -152,6 +152,10 @@ spec:
               value: torghut.ta_microbars
             - name: TRADING_EXECUTABLE_QUOTE_LOOKBACK_SECONDS
               value: "60"
+            - name: TRADING_SESSION_CONTEXT_WARMUP_MAX_SECONDS
+              value: "300"
+            - name: TRADING_SESSION_CONTEXT_WARMUP_MAX_SIGNALS
+              value: "1000"
             - name: TRADING_SIGNAL_ALLOWED_SOURCES
               value: ta
             - name: TRADING_SIGNAL_LOOKBACK_MINUTES
