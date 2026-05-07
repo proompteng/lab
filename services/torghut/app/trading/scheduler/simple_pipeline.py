@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Optional, cast
 
@@ -50,6 +50,7 @@ _SIMPLE_ALLOWED_REJECT_REASONS = {
     "broker_submit_failed",
 }
 _PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS = 86_400
+_SIMPLE_MARKET_CONTEXT_RETRY_INTERVAL = timedelta(seconds=30)
 
 
 class SimpleTradingPipeline(TradingPipeline):
@@ -281,6 +282,7 @@ class SimpleTradingPipeline(TradingPipeline):
 
     def _profitability_proof_floor(self, *, session: Session) -> Mapping[str, object]:
         try:
+            self._refresh_market_context_for_proof_floor()
             market_context_status = build_submission_gate_market_context_status(
                 self.state
             )
@@ -341,6 +343,82 @@ class SimpleTradingPipeline(TradingPipeline):
                     f"profitability_proof_floor_unavailable:{type(exc).__name__}"
                 ],
             }
+
+    def _refresh_market_context_for_proof_floor(self) -> None:
+        """Keep simple-lane proof-floor market context fresh without the LLM path.
+
+        The legacy pipeline records market context while building LLM review
+        requests. Simple mode can run with LLM disabled, so the proof floor must
+        refresh the same state explicitly before alpha-readiness checks.
+        """
+
+        if not settings.trading_market_context_url:
+            return
+
+        now = datetime.now(timezone.utc)
+        self._age_market_context_freshness(now)
+        if self._market_context_refresh_recent(now):
+            return
+        freshness_seconds = self.state.last_market_context_freshness_seconds
+        if (
+            freshness_seconds is not None
+            and freshness_seconds <= settings.trading_market_context_max_staleness_seconds
+            and not self.state.market_context_alert_active
+        ):
+            return
+
+        symbol = self._market_context_probe_symbol()
+        if not symbol:
+            return
+        market_context, market_context_error = self._fetch_market_context(symbol)
+        self._record_market_context_observation(
+            symbol=symbol,
+            market_context=market_context,
+            market_context_error=market_context_error,
+        )
+
+    def _age_market_context_freshness(self, now: datetime) -> None:
+        as_of = self.state.last_market_context_as_of
+        if as_of is None:
+            return
+        if as_of.tzinfo is None:
+            as_of = as_of.replace(tzinfo=timezone.utc)
+        freshness_seconds = max(
+            0,
+            int(
+                (
+                    now.astimezone(timezone.utc) - as_of.astimezone(timezone.utc)
+                ).total_seconds()
+            ),
+        )
+        self.state.last_market_context_freshness_seconds = freshness_seconds
+
+    def _market_context_refresh_recent(self, now: datetime) -> bool:
+        checked_at = self.state.last_market_context_checked_at
+        if checked_at is None:
+            return False
+        if checked_at.tzinfo is None:
+            checked_at = checked_at.replace(tzinfo=timezone.utc)
+        return (
+            now.astimezone(timezone.utc) - checked_at.astimezone(timezone.utc)
+        ) < _SIMPLE_MARKET_CONTEXT_RETRY_INTERVAL
+
+    def _market_context_probe_symbol(self) -> str | None:
+        existing_symbol = (
+            str(self.state.last_market_context_symbol or "").strip().upper()
+        )
+        if existing_symbol:
+            return existing_symbol
+        try:
+            symbols = self.universe_resolver.get_resolution().symbols
+        except Exception:
+            logger.exception("Simple-lane market context probe symbol unavailable")
+            return None
+        for raw_symbol in symbols:
+            symbol = str(raw_symbol).strip().upper()
+            if symbol:
+                return symbol
+        return None
 
     @staticmethod
     def _proof_floor_submission_block_reason(
