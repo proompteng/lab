@@ -81,19 +81,21 @@ jobs:
 
           if [ "${EVENT_NAME}" = 'workflow_run' ]; then
             CONTRACT_PATH='.artifacts/torghut/torghut-release-contract.json'
-            if [ ! -f "${CONTRACT_PATH}" ]; then
-              echo "Release contract artifact is missing at ${CONTRACT_PATH}"
-              exit 1
-            fi
+            if [ -f "${CONTRACT_PATH}" ]; then
+              SOURCE_SHA="$(bun run packages/scripts/src/torghut/release-contract.ts get --path "${CONTRACT_PATH}" --field sourceSha)"
+              TAG="$(bun run packages/scripts/src/torghut/release-contract.ts get --path "${CONTRACT_PATH}" --field tag)"
+              CONTRACT_DIGEST="$(bun run packages/scripts/src/torghut/release-contract.ts get --path "${CONTRACT_PATH}" --field digest)"
+              CONTRACT_IMAGE="$(bun run packages/scripts/src/torghut/release-contract.ts get --path "${CONTRACT_PATH}" --field image)"
 
-            SOURCE_SHA="$(bun run packages/scripts/src/torghut/release-contract.ts get --path "${CONTRACT_PATH}" --field sourceSha)"
-            TAG="$(bun run packages/scripts/src/torghut/release-contract.ts get --path "${CONTRACT_PATH}" --field tag)"
-            CONTRACT_DIGEST="$(bun run packages/scripts/src/torghut/release-contract.ts get --path "${CONTRACT_PATH}" --field digest)"
-            CONTRACT_IMAGE="$(bun run packages/scripts/src/torghut/release-contract.ts get --path "${CONTRACT_PATH}" --field image)"
-
-            if [ "${CONTRACT_IMAGE}" != "${IMAGE}" ]; then
-              echo "Release contract image mismatch: expected ${IMAGE}, got ${CONTRACT_IMAGE}"
-              exit 1
+              if [ "${CONTRACT_IMAGE}" != "${IMAGE}" ]; then
+                echo "Release contract image mismatch: expected ${IMAGE}, got ${CONTRACT_IMAGE}"
+                exit 1
+              fi
+            else
+              echo "::warning::Release contract artifact is missing at ${CONTRACT_PATH}; falling back to workflow_run head SHA and registry digest inspection."
+              SOURCE_SHA="${WORKFLOW_RUN_HEAD_SHA}"
+              TAG="$(git rev-parse --short=8 "${SOURCE_SHA}")"
+              CONTRACT_DIGEST=''
             fi
 
             if [ "${SOURCE_SHA}" != "${WORKFLOW_RUN_HEAD_SHA}" ]; then
@@ -250,6 +252,7 @@ jobs:
             argocd/applications/torghut/analysis-template-teardown-clean.yaml \
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml \
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml \
+            argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml \
             argocd/applications/torghut-options/catalog/deployment.yaml \
             argocd/applications/torghut-options/enricher/deployment.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -269,8 +272,8 @@ jobs:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/torghut-release-${{ steps.meta.outputs.tag }}
           base: main
-          title: 'chore(torghut): promote image ${{ steps.meta.outputs.tag }}'
-          commit-message: 'chore(torghut): promote image ${{ steps.meta.outputs.tag }}'
+          title: "chore(torghut): promote image ${{ steps.meta.outputs.tag }}"
+          commit-message: "chore(torghut): promote image ${{ steps.meta.outputs.tag }}"
           delete-branch: true
           labels: do-not-automerge
           draft: true
@@ -285,6 +288,7 @@ jobs:
             argocd/applications/torghut/analysis-template-teardown-clean.yaml
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml
+            argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml
             argocd/applications/torghut-options/catalog/deployment.yaml
             argocd/applications/torghut-options/enricher/deployment.yaml
           body: |
@@ -309,8 +313,8 @@ jobs:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/torghut-release-${{ steps.meta.outputs.tag }}
           base: main
-          title: 'chore(torghut): promote image ${{ steps.meta.outputs.tag }}'
-          commit-message: 'chore(torghut): promote image ${{ steps.meta.outputs.tag }}'
+          title: "chore(torghut): promote image ${{ steps.meta.outputs.tag }}"
+          commit-message: "chore(torghut): promote image ${{ steps.meta.outputs.tag }}"
           delete-branch: true
           add-paths: |
             argocd/applications/torghut/knative-service.yaml
@@ -323,6 +327,7 @@ jobs:
             argocd/applications/torghut/analysis-template-teardown-clean.yaml
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml
+            argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml
             argocd/applications/torghut-options/catalog/deployment.yaml
             argocd/applications/torghut-options/enricher/deployment.yaml
           body: |
