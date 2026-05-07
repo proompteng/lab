@@ -1356,6 +1356,17 @@ const deleteScheduleRunnerResources = async (
   ])
 }
 
+const deleteStageScheduleAndRunnerResources = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  scheduleName: string,
+  namespace: string,
+) => {
+  await Promise.allSettled([
+    kube.delete(RESOURCE_MAP.Schedule, scheduleName, namespace, { wait: false }),
+    deleteScheduleRunnerResources(kube, scheduleName, namespace),
+  ])
+}
+
 const setScheduleAdmissionBlockedStatus = async (
   kube: ReturnType<typeof createKubernetesClient>,
   schedule: Record<string, unknown>,
@@ -1684,11 +1695,7 @@ const reconcileSwarm = async (
   if (errors.length > 0) {
     clearSwarmUnfreezeTimer(swarmNamespace, swarmName)
     for (const stageConfig of stageConfigs) {
-      try {
-        await kube.delete(RESOURCE_MAP.Schedule, stageConfig.scheduleName, swarmNamespace, { wait: false })
-      } catch {
-        // best effort
-      }
+      await deleteStageScheduleAndRunnerResources(kube, stageConfig.scheduleName, swarmNamespace)
     }
 
     const conditions = upsertCondition(conditionsBase, buildReadyCondition(false, 'InvalidSpec', errors.join('; ')))
@@ -1761,11 +1768,7 @@ const reconcileSwarm = async (
   if (errors.length > 0) {
     clearSwarmUnfreezeTimer(swarmNamespace, swarmName)
     for (const stageConfig of stageConfigs) {
-      try {
-        await kube.delete(RESOURCE_MAP.Schedule, stageConfig.scheduleName, swarmNamespace, { wait: false })
-      } catch {
-        // best effort
-      }
+      await deleteStageScheduleAndRunnerResources(kube, stageConfig.scheduleName, swarmNamespace)
     }
 
     const conditions = upsertCondition(conditionsBase, buildReadyCondition(false, 'InvalidSpec', errors.join('; ')))
@@ -2188,11 +2191,7 @@ const reconcileSwarm = async (
     }
 
     if (!stageConfig.enabled || freezeActive) {
-      try {
-        await kube.delete(RESOURCE_MAP.Schedule, stageConfig.scheduleName, swarmNamespace, { wait: false })
-      } catch {
-        // best effort
-      }
+      await deleteStageScheduleAndRunnerResources(kube, stageConfig.scheduleName, swarmNamespace)
       stageStates[stageConfig.stage] = {
         ...baseState,
         phase: freezeActive ? 'Frozen' : 'Disabled',
@@ -2201,11 +2200,7 @@ const reconcileSwarm = async (
     }
 
     if (!stageAdmission.admitted) {
-      try {
-        await kube.delete(RESOURCE_MAP.Schedule, stageConfig.scheduleName, swarmNamespace, { wait: false })
-      } catch {
-        // best effort
-      }
+      await deleteStageScheduleAndRunnerResources(kube, stageConfig.scheduleName, swarmNamespace)
       stageStates[stageConfig.stage] = {
         ...baseState,
         phase: 'AdmissionBlocked',
