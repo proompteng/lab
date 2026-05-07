@@ -1,4 +1,4 @@
-# 141. Torghut State-Coherent Profit Auction And TCA Renewal Governor (2026-05-07)
+# 144. Torghut State-Coherent Profit Auction And TCA Renewal Governor (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
 Date: 2026-05-07
@@ -8,7 +8,7 @@ coverage, Jangar state exchange consumption, validation, rollout, and rollback.
 
 Companion Jangar contract:
 
-- `docs/agents/designs/137-jangar-watch-reliability-state-exchange-and-capital-action-governor-2026-05-07.md`
+- `docs/agents/designs/140-jangar-watch-reliability-state-exchange-and-capital-action-governor-2026-05-07.md`
 
 Extends:
 
@@ -23,18 +23,18 @@ I am selecting **a state-coherent profit auction with a TCA renewal governor** a
 step.
 
 The current system has enough positive evidence to keep learning, but not enough to spend capital. Torghut live
-revision `torghut-00251` is Running in `mode=live`; Postgres, ClickHouse, Alpaca, and the Jangar universe dependency
-are healthy; empirical jobs are fresh and promotion-authority eligible; and the current quant latest store is not
-empty. That supports observation and zero-notional repair.
+revision `torghut-00252` is Running in `mode=live`; the matching sim revision `torghut-sim-00352` is also Running;
+Postgres, ClickHouse, Alpaca, and the Jangar universe dependency are healthy; empirical jobs are fresh enough for
+repair priority; and the current quant latest store is not empty. That supports observation and zero-notional repair.
 
-It does not support paper or live capital. At `2026-05-07T08:26Z`, Torghut proof floor was `repair_only`,
+It does not support paper or live capital. At `2026-05-07T09:29Z`, Torghut proof floor was `repair_only`,
 `capital_state=zero_notional`, with blocking reasons `alpha_readiness_not_promotion_eligible`,
-`execution_tca_stale`, and `simple_submit_disabled`. TCA was last computed on `2026-04-02T20:59:45.136640Z` and
-average absolute slippage was about `568.61` bps against an `8` bps guardrail. All three hypotheses were shadow or
-blocked with capital multiplier `0`, zero promotion eligible, and three rollback required. Feature batch rows, drift
-checks, and evidence continuity checks were all `0`. Forecast authority was blocked with `registry_empty`; LEAN
-authority was disabled as a deterministic scaffold. Jangar dependency quorum was blocked by
-`watch_reliability_blocked`.
+`execution_tca_stale`, and `simple_submit_disabled`. TCA was last computed on `2026-04-02T20:59:45.136640Z`, average
+absolute slippage was about `568.61` bps against an `8` bps guardrail, and expected shortfall coverage was `0`. All
+three hypotheses were shadow or blocked with capital multiplier `0`, zero promotion eligible, and three rollback
+required. Feature batch rows, drift checks, and evidence continuity checks were all `0`. Forecast authority was blocked
+with `registry_empty`; LEAN authority was disabled as a deterministic scaffold. Jangar dependency quorum was delayed or
+blocked by watch reliability, depending on the control-plane route sampled.
 
 I am not choosing a blanket freeze. I am also not choosing opportunistic paper promotion from fresh empirical jobs. I am
 choosing a state-coherent auction: every repair bid must name the capital state it can unlock, the fresh Jangar state
@@ -67,17 +67,18 @@ state, trading flags, GitOps resources, empirical artifacts, or AgentRun records
 
 ### Cluster And Rollout Evidence
 
-- `kubectl get pods -n torghut -o wide` showed the current live revision `torghut-00251-deployment` and simulation
-  revision `torghut-sim-00351-deployment` `2/2` Running.
+- `kubectl get pods -n torghut -o wide` showed the current live revision `torghut-00252-deployment` and simulation
+  revision `torghut-sim-00352-deployment` `2/2` Running.
 - ClickHouse, Keeper, Postgres, TA, sim TA, options TA, options catalog, options enricher, WebSocket services,
   guardrail exporters, Alloy, and Symphony were Running.
-- Older live revisions `torghut-00246` through `torghut-00250` and older sim revisions `torghut-sim-00346` through
-  `torghut-sim-00350` were scaled to `0/0`.
+- Older live revisions `torghut-00247` through `torghut-00251` and older sim revisions `torghut-sim-00347` through
+  `torghut-sim-00351` were scaled to `0/0`.
+- Torghut events showed database migrations and whitepaper/empirical backfill jobs completed during the rollout, and
+  the `torghut-00252` and `torghut-sim-00352` revisions became ready after transient startup/readiness probe failures.
 - Torghut events repeatedly reported `MultiplePodDisruptionBudgets` for ClickHouse pods, which means disruption
   policy is ambiguous even though ClickHouse pods are Running.
-- The runtime service account cannot exec into Postgres or ClickHouse pods and cannot list CNPG clusters, PDBs,
-  Knative services, or StatefulSets in Torghut. Direct database/data inspection is therefore limited to typed runtime
-  status routes and source schema artifacts in this run.
+- The runtime service account cannot exec into Postgres or ClickHouse pods and cannot get CNPG clusters. Direct
+  database/data inspection is therefore limited to typed runtime status routes and source schema artifacts in this run.
 
 ### Runtime And Data Evidence
 
@@ -86,19 +87,20 @@ state, trading flags, GitOps resources, empirical artifacts, or AgentRun records
 - The dependency block showed Postgres `ok`, ClickHouse `ok`, Alpaca `ok`, universe `ok`, empirical jobs `ok`, DSPy
   runtime informational, and quant evidence informational.
 - Alpha readiness reported `hypotheses_total=3`, state totals `blocked=1` and `shadow=2`,
-  `promotion_eligible_total=0`, `rollback_required_total=3`, and dependency quorum blocked by
-  `watch_reliability_blocked`.
+  `promotion_eligible_total=0`, `rollback_required_total=3`, and dependency quorum delayed by
+  `watch_reliability_degraded`.
 - Live submission gate was closed for `simple_submit_disabled`, with capital stage `shadow`.
 - Profitability proof floor was `repair_only`, capital state `zero_notional`, and max notional `0`.
-- Proof dimensions showed empirical jobs passing, quant ingestion informational because stages are missing, market
+- Proof dimensions showed empirical jobs passing, quant ingestion informational because ingestion lag was stale, market
   context passing in this closed-session sample, and execution TCA stale.
 - TCA had `13775` orders, average slippage about `-13.78` bps, average absolute slippage about `568.61` bps,
   expected shortfall sample count `0`, and last computed timestamp `2026-04-02T20:59:45.136640Z`.
-- Quant evidence had `latest_metrics_count=144`, latest update `2026-05-07T08:26:13.437Z`, pipeline lag `42`
-  seconds, but `stage_count=0` and `stages=[]`.
+- Quant evidence had `latest_metrics_count=144`, latest update `2026-05-07T09:29:21.477Z`, pipeline lag `8` seconds,
+  `stage_count=3`, and max stage lag `56,689` seconds because ingestion was stale while compute and materialization
+  were current.
 - `GET /trading/status` showed `feature_batch_rows_total=0`, `drift_detection_checks_total=0`,
-  `evidence_continuity_checks_total=0`, `no_signal_windows_total=1073`, and signal lag around `41299` seconds during
-  a closed market session.
+  `evidence_continuity_checks_total=0`, `no_signal_windows_total=218`, and signal lag around `45,051` seconds during a
+  closed market session.
 - Forecast service was degraded with authority `blocked`, message `registry_empty`, no registry ref, and no
   promotion-authority eligible models.
 - LEAN authority was disabled and explicitly marked `deterministic scaffold only`.
