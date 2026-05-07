@@ -301,7 +301,7 @@ class TestLiveConfigManifestContract(TestCase):
                 context=f"strategy {strategy.get('name')}",
             )
 
-    def test_paper_microbar_sleeves_are_long_only_chip_universe(self) -> None:
+    def test_enabled_paper_sleeves_are_chip_universe_with_safe_profiles(self) -> None:
         strategies = _load_torghut_strategy_catalog()
         enabled = {
             str(strategy.get("name")): strategy
@@ -313,6 +313,7 @@ class TestLiveConfigManifestContract(TestCase):
             {
                 "microbar-volume-continuation-long-top2-chip-v1",
                 "microbar-prev-day-open45-reversal-long-top1-chip-v1",
+                "intraday-tsmom-profit-v3",
             },
         )
 
@@ -321,24 +322,36 @@ class TestLiveConfigManifestContract(TestCase):
             params = _params(strategy)
             raw_symbols = strategy.get("universe_symbols")
 
-            self.assertEqual(
-                strategy.get("strategy_type"), "microbar_cross_sectional_long_v1"
-            )
             self.assertIn("paper-only", description)
             self.assertIn("$300/day", description)
-            self.assertEqual(
-                _strategy_decimal(strategy, "max_notional_per_trade"), Decimal("50000")
-            )
-            self.assertEqual(
-                _strategy_decimal(strategy, "max_position_pct_equity"), Decimal("2.0")
-            )
             self.assertIsInstance(raw_symbols, list)
             _assert_exact_live_execution_chip_universe(
                 self,
                 cast(list[object], raw_symbols),
                 context=f"{name} universe",
             )
-            self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
+            if str(strategy.get("strategy_type")) == "microbar_cross_sectional_long_v1":
+                self.assertEqual(
+                    _strategy_decimal(strategy, "max_notional_per_trade"),
+                    Decimal("50000"),
+                )
+                self.assertEqual(
+                    _strategy_decimal(strategy, "max_position_pct_equity"),
+                    Decimal("2.0"),
+                )
+                self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
+            else:
+                self.assertEqual(name, "intraday-tsmom-profit-v3")
+                self.assertEqual(strategy.get("strategy_type"), "intraday_tsmom_v1")
+                self.assertEqual(
+                    _strategy_decimal(strategy, "max_notional_per_trade"),
+                    Decimal("50000"),
+                )
+                self.assertEqual(
+                    _strategy_decimal(strategy, "max_position_pct_equity"),
+                    Decimal("3.0"),
+                )
+                self.assertEqual(params.get("max_spread_bps"), "20")
 
     def test_runtime_symbol_sources_use_live_signal_universe(self) -> None:
         live_env = _load_torghut_knative_env()

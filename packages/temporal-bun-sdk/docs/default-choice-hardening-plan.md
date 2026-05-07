@@ -153,3 +153,22 @@ acceptance criteria are satisfied.
   records heartbeat, start-to-close, schedule-to-start, and
   schedule-to-close budgets in the load report so release soak evidence is
   measuring worker/runtime behavior instead of an undersized synthetic timeout.
+- May 7, 2026: moved worker-load completion verification off the Temporal CLI
+  describe loop and onto the SDK's native `DescribeWorkflowExecution` RPC path
+  with bounded describe concurrency. The failed publish soak completed two full
+  passes of every failure mode and passed memory-slope checks, but the 11th
+  iteration timed out while the external CLI verifier was describing 1,000
+  workflows. Release-soak evidence now measures SDK worker/client behavior
+  instead of the throughput of a shell-based verifier.
+- May 7, 2026: isolated the signal/query and query-only integration suites onto
+  UUID-suffixed task queues by default. The shared remote Temporal namespace had
+  stale `temporal-bun-integration` workflow tasks from previous runs, so workers
+  could pick up unrelated failed executions before exercising the current test.
+  Remote CI evidence now distinguishes SDK behavior from namespace/task-queue
+  contamination.
+- May 7, 2026: fixed a real signal/query determinism blocker exposed by the
+  remote CI gate. Query-handler records and query-time logs are no longer
+  persisted into the workflow determinism state for normal workflow tasks,
+  because Temporal queries are not history events. A regression test now covers
+  the sequence that failed in CI: query while blocked, then process a signal and
+  query the updated state without tripping nondeterminism.

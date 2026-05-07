@@ -315,7 +315,11 @@ class SimpleTradingPipeline(TradingPipeline):
                 empirical_jobs_status=empirical_jobs_status,
                 quant_evidence=quant_evidence,
                 market_context_status=market_context_status,
-                tca_summary=build_tca_gate_inputs(session=session),
+                tca_summary=build_tca_gate_inputs(
+                    session=session,
+                    account_label=self.account_label,
+                    symbols=self.universe_resolver.get_resolution().symbols,
+                ),
                 simple_lane_status={
                     "enabled": settings.trading_pipeline_mode == "simple",
                     "submit_enabled": settings.trading_simple_submit_enabled,

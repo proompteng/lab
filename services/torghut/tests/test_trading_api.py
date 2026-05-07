@@ -753,7 +753,7 @@ class TestTradingApi(TestCase):
             call_order.append("llm_evaluation")
             return {"ok": True, "metrics": {"total_reviews": 1}}
 
-        def _load_tca(_session: Session) -> dict[str, object]:
+        def _load_tca(_session: Session, **_kwargs: object) -> dict[str, object]:
             call_order.append("tca")
             return {}
 
@@ -782,7 +782,7 @@ class TestTradingApi(TestCase):
             observed_sessions.append(session)
             return {"ok": True, "metrics": {"total_reviews": 1}}
 
-        def _load_tca(session: Session) -> dict[str, object]:
+        def _load_tca(session: Session, **_kwargs: object) -> dict[str, object]:
             observed_sessions.append(session)
             return {}
 

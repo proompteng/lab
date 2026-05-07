@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -261,9 +261,11 @@ def build_tca_gate_inputs(
     *,
     strategy_id: str | None = None,
     account_label: str | None = None,
+    symbols: Collection[str] | None = None,
 ) -> dict[str, object]:
     """Build aggregate TCA inputs used by autonomy gate thresholds."""
 
+    normalized_symbols = _normalize_tca_symbols(symbols)
     stmt = select(
         func.count(ExecutionTCAMetric.id),
         func.avg(ExecutionTCAMetric.slippage_bps),
@@ -293,15 +295,19 @@ def build_tca_gate_inputs(
         stmt = stmt.where(
             ExecutionTCAMetric.alpaca_account_label == normalized_account_label
         )
+    if normalized_symbols:
+        stmt = stmt.where(ExecutionTCAMetric.symbol.in_(normalized_symbols))
 
     row = session.execute(stmt).one()
     execution_stmt = _tca_execution_coverage_stmt(
         strategy_id=strategy_id,
         account_label=normalized_account_label,
+        symbols=normalized_symbols,
     )
     unsettled_execution_stmt = _tca_execution_coverage_stmt(
         strategy_id=strategy_id,
         account_label=normalized_account_label,
+        symbols=normalized_symbols,
         only_unsettled=True,
     )
     execution_count, latest_execution_created_at = session.execute(execution_stmt).one()
@@ -326,7 +332,16 @@ def build_tca_gate_inputs(
     expected_shortfall_coverage = (
         Decimal(expected_count) / Decimal(order_count) if order_count > 0 else None
     )
+    symbol_breakdown = _build_tca_symbol_breakdown(
+        session,
+        strategy_id=strategy_id,
+        account_label=normalized_account_label,
+        symbols=normalized_symbols,
+    )
     return {
+        "account_label": normalized_account_label or None,
+        "scope_symbols": list(normalized_symbols),
+        "scope_symbol_count": len(normalized_symbols),
         "order_count": order_count,
         "avg_slippage_bps": avg_slippage if avg_slippage is not None else Decimal("0"),
         "avg_abs_slippage_bps": avg_abs_slippage
@@ -364,6 +379,7 @@ def build_tca_gate_inputs(
         "filled_execution_count": int(execution_count or 0),
         "latest_execution_created_at": latest_execution_created_at,
         "unsettled_execution_count": unsettled_execution_count,
+        "symbol_breakdown": symbol_breakdown,
     }
 
 
@@ -371,6 +387,7 @@ def _tca_execution_coverage_stmt(
     *,
     strategy_id: str | None,
     account_label: str,
+    symbols: tuple[str, ...],
     only_unsettled: bool = False,
 ) -> Any:
     if only_unsettled:
@@ -395,7 +412,72 @@ def _tca_execution_coverage_stmt(
         stmt = stmt.where(TradeDecision.strategy_id == strategy_id)
     if account_label:
         stmt = stmt.where(Execution.alpaca_account_label == account_label)
+    if symbols:
+        stmt = stmt.where(Execution.symbol.in_(symbols))
     return stmt
+
+
+def _normalize_tca_symbols(symbols: Collection[str] | None) -> tuple[str, ...]:
+    if symbols is None:
+        return ()
+    return tuple(
+        sorted(
+            {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
+        )
+    )
+
+
+def _build_tca_symbol_breakdown(
+    session: Session,
+    *,
+    strategy_id: str | None,
+    account_label: str,
+    symbols: tuple[str, ...],
+) -> list[dict[str, object]]:
+    if not symbols:
+        return []
+
+    stmt = (
+        select(
+            ExecutionTCAMetric.symbol,
+            func.count(ExecutionTCAMetric.id),
+            func.avg(func.abs(ExecutionTCAMetric.slippage_bps)),
+            func.max(func.abs(ExecutionTCAMetric.slippage_bps)),
+            func.max(ExecutionTCAMetric.computed_at),
+        )
+        .where(ExecutionTCAMetric.symbol.in_(symbols))
+        .group_by(ExecutionTCAMetric.symbol)
+    )
+    if strategy_id:
+        stmt = stmt.where(ExecutionTCAMetric.strategy_id == strategy_id)
+    if account_label:
+        stmt = stmt.where(ExecutionTCAMetric.alpaca_account_label == account_label)
+
+    rows_by_symbol = {str(row[0]).upper(): row for row in session.execute(stmt).all()}
+    breakdown: list[dict[str, object]] = []
+    for symbol in symbols:
+        row = rows_by_symbol.get(symbol)
+        if row is None:
+            breakdown.append(
+                {
+                    "symbol": symbol,
+                    "order_count": 0,
+                    "avg_abs_slippage_bps": None,
+                    "max_abs_slippage_bps": None,
+                    "last_computed_at": None,
+                }
+            )
+            continue
+        breakdown.append(
+            {
+                "symbol": symbol,
+                "order_count": int(row[1] or 0),
+                "avg_abs_slippage_bps": _decimal_or_none(row[2]),
+                "max_abs_slippage_bps": _decimal_or_none(row[3]),
+                "last_computed_at": row[4],
+            }
+        )
+    return breakdown
 
 
 def derive_adaptive_execution_policy(

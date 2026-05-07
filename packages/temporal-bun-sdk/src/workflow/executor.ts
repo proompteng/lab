@@ -268,22 +268,31 @@ export class WorkflowExecutor {
       }
     }
 
-    const queryResults = await runWithWorkflowLogContext(
-      logContext,
-      async () => await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests),
-    )
+    const executionError = Exit.isFailure(exit) ? this.#resolveError(exit.cause) : undefined
+    const nondeterminismError = executionError
+      ? unwrapWorkflowError(executionError, WorkflowNondeterminismError)
+      : undefined
+    if (nondeterminismError) {
+      throw nondeterminismError
+    }
 
     if (executionMode !== 'query') {
       guard.assertReplayComplete()
     }
+    const workflowDeterminismState = snapshotToDeterminismState(guard.snapshot)
+    const queryResults = await runWithWorkflowLogContext(
+      logContext,
+      async () => await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests),
+    )
+    const resultDeterminismState =
+      executionMode === 'query' ? snapshotToDeterminismState(guard.snapshot) : workflowDeterminismState
 
     if (Exit.isSuccess(exit)) {
-      const determinismState = snapshotToDeterminismState(guard.snapshot)
       if (executionMode === 'query') {
         return {
           commands: [],
           intents: [],
-          determinismState,
+          determinismState: resultDeterminismState,
           completion: 'completed',
           result: exit.value.result,
           queryResults,
@@ -302,7 +311,7 @@ export class WorkflowExecutor {
         return {
           commands,
           intents: exit.value.commandContext.intents,
-          determinismState,
+          determinismState: resultDeterminismState,
           completion: 'pending',
           queryResults,
           ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
@@ -313,7 +322,7 @@ export class WorkflowExecutor {
       return {
         commands,
         intents: exit.value.commandContext.intents,
-        determinismState,
+        determinismState: resultDeterminismState,
         completion: 'completed',
         result: exit.value.result,
         queryResults,
@@ -321,16 +330,16 @@ export class WorkflowExecutor {
       }
     }
 
-    const error = this.#resolveError(exit.cause)
+    const error = executionError ?? new Error('Workflow execution failed')
 
     const continueAsNewError = unwrapWorkflowError(error, ContinueAsNewWorkflowError)
     if (continueAsNewError) {
       if (executionMode === 'query') {
         throw new WorkflowQueryViolationError('Workflow query cannot request continue-as-new')
       }
-      const rawSnapshot = guard.snapshot
+      const rawDeterminismState = resultDeterminismState
       const continueContext = lastCommandContext
-      const intents = continueContext?.intents ?? rawSnapshot.commandHistory.map((entry) => entry.intent)
+      const intents = continueContext?.intents ?? rawDeterminismState.commandHistory.map((entry) => entry.intent)
       const pendingChildStarts = this.#resolvePendingChildStarts(input.pendingChildWorkflows, intents)
       if (pendingChildStarts.size > 0) {
         const filteredIntents = intents.filter((intent) => intent.kind !== 'continue-as-new')
@@ -339,7 +348,7 @@ export class WorkflowExecutor {
           workflowInfo: info,
         })
         const determinismState = filterDeterminismState(
-          snapshotToDeterminismState(rawSnapshot),
+          rawDeterminismState,
           (intent) => intent.kind !== 'continue-as-new',
         )
         return {
@@ -356,16 +365,11 @@ export class WorkflowExecutor {
       return {
         commands,
         intents,
-        determinismState: snapshotToDeterminismState(rawSnapshot),
+        determinismState: rawDeterminismState,
         completion: 'continued-as-new',
         queryResults,
         ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
       }
-    }
-
-    const nondeterminismError = unwrapWorkflowError(error, WorkflowNondeterminismError)
-    if (nondeterminismError) {
-      throw nondeterminismError
     }
 
     const blockedError = unwrapWorkflowError(error, WorkflowBlockedError) ?? blockedFromUpdates
@@ -383,7 +387,7 @@ export class WorkflowExecutor {
         return {
           commands: [],
           intents: contextForPending.intents,
-          determinismState: snapshotToDeterminismState(guard.snapshot),
+          determinismState: resultDeterminismState,
           completion: 'pending',
           queryResults,
           ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
@@ -392,7 +396,7 @@ export class WorkflowExecutor {
       return {
         commands: pendingCommands,
         intents: contextForPending.intents,
-        determinismState: snapshotToDeterminismState(guard.snapshot),
+        determinismState: resultDeterminismState,
         completion: 'pending',
         queryResults,
         ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
@@ -403,7 +407,7 @@ export class WorkflowExecutor {
       return {
         commands: [],
         intents: [],
-        determinismState: snapshotToDeterminismState(guard.snapshot),
+        determinismState: resultDeterminismState,
         completion: 'failed',
         failure: error,
         queryResults,
@@ -414,7 +418,7 @@ export class WorkflowExecutor {
     return {
       commands: failureCommands,
       intents: [],
-      determinismState: snapshotToDeterminismState(guard.snapshot),
+      determinismState: resultDeterminismState,
       completion: 'failed',
       failure: error,
       queryResults,

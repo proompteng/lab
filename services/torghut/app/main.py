@@ -633,7 +633,7 @@ def _evaluate_trading_health_payload(
     _hypothesis_payload: Mapping[str, object] = {}
     try:
         with SessionLocal() as session:
-            tca_summary = _load_tca_summary(session)
+            tca_summary = _load_tca_summary(session, scheduler=scheduler)
         _hypothesis_payload, hypothesis_summary, _dependency_quorum = (
             _build_hypothesis_runtime_payload(
                 scheduler,
@@ -1811,7 +1811,7 @@ def trading_status() -> dict[str, object]:
     lean_authority_status = _lean_authority_status()
     with SessionLocal() as session:
         llm_evaluation = _load_llm_evaluation(session)
-        tca_summary = _load_tca_summary(session)
+        tca_summary = _load_tca_summary(session, scheduler=scheduler)
     market_context_status = scheduler.market_context_status()
     hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
         _build_hypothesis_runtime_payload(
@@ -2038,7 +2038,7 @@ def trading_metrics(session: Session = Depends(get_session)) -> dict[str, object
     metrics = scheduler.state.metrics
     hypothesis_dependency_quorum = load_jangar_dependency_quorum()
     market_context_status = scheduler.market_context_status()
-    tca_summary = _load_tca_summary(session)
+    tca_summary = _load_tca_summary(session, scheduler=scheduler)
     _hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
         _build_hypothesis_runtime_payload(
             scheduler,
@@ -2544,7 +2544,7 @@ def prometheus_metrics(session: Session = Depends(get_session)) -> Response:
     market_context_status = scheduler.market_context_status()
     shorting_metadata_status = scheduler.shorting_metadata_status()
     rejection_alert_status = scheduler.rejection_alert_status()
-    tca_summary = _load_tca_summary(session)
+    tca_summary = _load_tca_summary(session, scheduler=scheduler)
     _hypothesis_payload, hypothesis_summary, _hypothesis_dependency_quorum = (
         _build_hypothesis_runtime_payload(
             scheduler,
@@ -2715,7 +2715,7 @@ def trading_runtime_profitability(
     gate_rollback_attribution = _load_runtime_profitability_gate_rollback_attribution(
         scheduler.state
     )
-    tca_summary = _load_tca_summary(session)
+    tca_summary = _load_tca_summary(session, scheduler=scheduler)
     market_context_status = scheduler.market_context_status()
     hypothesis_payload, _hypothesis_summary, _dependency_quorum = (
         _build_hypothesis_runtime_payload(
@@ -2805,6 +2805,10 @@ def trading_tca(
     if since:
         stmt = stmt.where(ExecutionTCAMetric.computed_at >= since)
     rows = session.execute(stmt.limit(limit)).scalars().all()
+    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    if scheduler is None:
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
 
     grouped = _aggregate_tca_rows(rows)
     payload_rows = [
@@ -2831,7 +2835,7 @@ def trading_tca(
     ]
     return jsonable_encoder(
         {
-            "summary": _load_tca_summary(session),
+            "summary": _load_tca_summary(session, scheduler=scheduler),
             "aggregates": grouped,
             "rows": payload_rows,
         }
@@ -3336,8 +3340,45 @@ def _tca_row_payload(row: ExecutionTCAMetric | None) -> dict[str, object] | None
     }
 
 
-def _load_tca_summary(session: Session) -> dict[str, object]:
-    return build_tca_gate_inputs(session=session)
+def _load_tca_summary(
+    session: Session,
+    *,
+    scheduler: TradingScheduler | None = None,
+) -> dict[str, object]:
+    return build_tca_gate_inputs(
+        session=session,
+        account_label=settings.trading_account_label,
+        symbols=_resolve_tca_scope_symbols(scheduler),
+    )
+
+
+def _resolve_tca_scope_symbols(
+    scheduler: TradingScheduler | None,
+) -> tuple[str, ...] | None:
+    if scheduler is None:
+        return None
+    resolver = _resolve_universe_resolver_for_readiness(scheduler)
+    if resolver is None:
+        return None
+    try:
+        resolution = resolver.get_resolution()
+    except Exception:  # pragma: no cover - diagnostic scope should not break routes
+        logger.exception("Failed to resolve universe symbols for TCA scope")
+        return None
+    raw_symbols = getattr(resolution, "symbols", None)
+    if not isinstance(raw_symbols, set):
+        return None
+    raw_symbol_set = cast(set[object], raw_symbols)
+    symbols = tuple(
+        sorted(
+            {
+                str(symbol).strip().upper()
+                for symbol in raw_symbol_set
+                if str(symbol).strip()
+            }
+        )
+    )
+    return symbols or None
 
 
 def _ensure_utc_datetime(value: datetime | None) -> datetime | None:

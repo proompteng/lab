@@ -19,6 +19,7 @@ export interface WorkerLoadConfig {
   readonly workflowPollP95TargetMs: number
   readonly activityPollP95TargetMs: number
   readonly workflowDurationBudgetMs: number
+  readonly workflowDescribeConcurrency: number
   readonly metricsFlushTimeoutMs: number
   readonly computeIterations: number
   readonly cpuRounds: number
@@ -68,6 +69,7 @@ const DEFAULT_ACTIVITY_CANCELLATION_DELAY_MS = 250
 const DEFAULT_WORKFLOW_POLL_P95_MS = 6_000
 const DEFAULT_ACTIVITY_POLL_P95_MS = 6_000
 const DEFAULT_WORKFLOW_DEADLINE_MS = 100_000
+const DEFAULT_WORKFLOW_DESCRIBE_CONCURRENCY = 16
 const DEFAULT_METRICS_FLUSH_MS = 5_000
 const DEFAULT_MEMORY_SAMPLE_INTERVAL_MS = 5_000
 const DEFAULT_MEMORY_SLOPE_MAX_MB_PER_HOUR = 128
@@ -131,6 +133,11 @@ export const readWorkerLoadConfig = (): WorkerLoadConfig => {
     'TEMPORAL_LOAD_TEST_TIMEOUT_MS',
     DEFAULT_WORKFLOW_DEADLINE_MS,
     { min: 10_000 },
+  )
+  const workflowDescribeConcurrency = readInt(
+    'TEMPORAL_LOAD_TEST_DESCRIBE_CONCURRENCY',
+    Math.min(32, Math.max(DEFAULT_WORKFLOW_DESCRIBE_CONCURRENCY, workflowConcurrencyTarget)),
+    { min: 1, max: 128 },
   )
   const metricsFlushTimeoutMs = readInt(
     'TEMPORAL_LOAD_TEST_METRICS_FLUSH_MS',
@@ -247,6 +254,7 @@ export const readWorkerLoadConfig = (): WorkerLoadConfig => {
     workflowPollP95TargetMs,
     activityPollP95TargetMs,
     workflowDurationBudgetMs,
+    workflowDescribeConcurrency,
     metricsFlushTimeoutMs,
     computeIterations,
     cpuRounds,

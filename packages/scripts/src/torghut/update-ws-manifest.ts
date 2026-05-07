@@ -11,6 +11,7 @@ import { execGit } from '../shared/git'
 const defaultRegistry = 'registry.ide-newton.ts.net'
 const defaultRepository = 'lab/torghut-ws'
 const defaultManifestPath = 'argocd/applications/torghut-options/ws/deployment.yaml'
+const defaultContainerName = 'torghut-ws-options'
 const digestPattern = /^sha256:[0-9a-f]{64}$/i
 
 type CliOptions = {
@@ -21,9 +22,12 @@ type CliOptions = {
   version?: string
   commit?: string
   manifestPath?: string
+  containerName?: string
 }
 
 const resolvePath = (path: string) => resolve(repoRoot, path)
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const normalizeDigest = (value: string): string => {
   const trimmed = value.trim()
@@ -46,16 +50,18 @@ const updateWsManifest = (
   version: string,
   commit: string,
   manifestPathValue: string,
+  containerName = defaultContainerName,
 ) => {
   const manifestPath = resolvePath(manifestPathValue)
   const source = readFileSync(manifestPath, 'utf8')
   const imageRef = `${imageName}@${digest}`
+  const containerPattern = escapeRegExp(containerName)
 
   let updated = replaceSingle(
     source,
-    /(- name:\s*torghut-ws-options[\s\S]*?\n\s*image:\s*)([^\n]+)/,
+    new RegExp(`(- name:\\s*${containerPattern}[\\s\\S]*?\\n\\s*image:\\s*)([^\\n]+)`),
     `$1${imageRef}`,
-    'torghut-ws-options image reference',
+    `${containerName} image reference`,
   )
   updated = replaceSingle(
     updated,
@@ -96,7 +102,8 @@ Options:
   --digest <sha256:...>
   --version <value>
   --commit <sha40>
-  --manifest-path <path>`)
+  --manifest-path <path>
+  --container-name <name>`)
       process.exit(0)
     }
 
@@ -135,6 +142,9 @@ Options:
       case '--manifest-path':
         options.manifestPath = value
         break
+      case '--container-name':
+        options.containerName = value
+        break
       default:
         throw new Error(`Unknown option: ${flag}`)
     }
@@ -160,8 +170,9 @@ const main = (cliOptions?: CliOptions) => {
   const version = parsed.version ?? process.env.TORGHUT_WS_VERSION ?? execGit(['describe', '--tags', '--always'])
   const commit = parsed.commit ?? process.env.TORGHUT_WS_COMMIT ?? execGit(['rev-parse', 'HEAD'])
   const manifestPath = parsed.manifestPath ?? process.env.TORGHUT_WS_MANIFEST_PATH ?? defaultManifestPath
+  const containerName = parsed.containerName ?? process.env.TORGHUT_WS_CONTAINER_NAME ?? defaultContainerName
 
-  const result = updateWsManifest(imageName, digest, version, commit, manifestPath)
+  const result = updateWsManifest(imageName, digest, version, commit, manifestPath, containerName)
   if (result.changed) {
     console.log(`Updated ${result.manifestPath} with ${result.imageRef}`)
   } else {

@@ -12,7 +12,7 @@ import type { ExecuteWorkflowInput, WorkflowExecutionOutput } from '../src/workf
 import type { WorkflowUpdateInvocation } from '../src/workflow/executor'
 import { WorkflowExecutor } from '../src/workflow/executor'
 import { defineWorkflow, defineWorkflowUpdates } from '../src/workflow/definition'
-import { defineWorkflowQueries } from '../src/workflow/inbound'
+import { defineWorkflowQueries, defineWorkflowSignals } from '../src/workflow/inbound'
 import type { WorkflowQueryRequest } from '../src/workflow/inbound'
 import { log } from '../src/workflow/log'
 import { WorkflowRegistry } from '../src/workflow/registry'
@@ -305,10 +305,70 @@ test('evaluates registered workflow queries with encoded results', async () => {
   expect(entry?.request.id).toBe('q-1')
   const answerValues = await decodePayloadsToValues(dataConverter, entry?.result.answer?.payloads ?? [])
   expect(answerValues[0]).toEqual({ status: 'ready' })
-  expect(output.determinismState.queries.length).toBeGreaterThan(0)
+  expect(output.determinismState.queries).toHaveLength(0)
 })
 
-test('workflow query logs are emitted once on replay', async () => {
+test('workflow query evaluations do not contaminate persisted workflow determinism state', async () => {
+  const { registry, executor, dataConverter } = makeExecutor()
+  const signals = defineWorkflowSignals({
+    unblock: Schema.String,
+    finish: Schema.Struct({}),
+  })
+  const queries = defineWorkflowQueries({
+    state: {
+      input: Schema.Struct({}),
+      output: Schema.Struct({ message: Schema.String }),
+    },
+  })
+  registry.register(
+    defineWorkflow({
+      name: 'signalQueryStateWorkflow',
+      signals,
+      queries,
+      handler: ({ signals: workflowSignals, queries: workflowQueries }) =>
+        Effect.gen(function* () {
+          let current = 'waiting'
+          yield* workflowQueries.register(queries.state, () => Effect.sync(() => ({ message: current })))
+          const unblock = yield* workflowSignals.waitFor(signals.unblock)
+          current = unblock.payload
+          yield* workflowSignals.waitFor(signals.finish)
+          return current
+        }),
+    }),
+  )
+
+  const initial = await execute(executor, { workflowType: 'signalQueryStateWorkflow', arguments: [] })
+  expect(initial.completion).toBe('pending')
+
+  const queriedBeforeSignal = await execute(executor, {
+    workflowType: 'signalQueryStateWorkflow',
+    arguments: [],
+    determinismState: cloneState(initial.determinismState),
+    queryRequests: [{ id: 'state-query', name: 'state', args: [{}], source: 'multi' }],
+  })
+
+  expect(queriedBeforeSignal.completion).toBe('pending')
+  expect(queriedBeforeSignal.determinismState.queries).toHaveLength(0)
+  const [beforeQuery] = queriedBeforeSignal.queryResults
+  const beforeValues = await decodePayloadsToValues(dataConverter, beforeQuery?.result.answer?.payloads ?? [])
+  expect(beforeValues[0]).toEqual({ message: 'waiting' })
+
+  const signalAndQuery = await execute(executor, {
+    workflowType: 'signalQueryStateWorkflow',
+    arguments: [],
+    determinismState: cloneState(queriedBeforeSignal.determinismState),
+    signalDeliveries: [{ name: 'unblock', args: ['ready'], metadata: { eventId: '5', identity: 'test' } }],
+    queryRequests: [{ id: 'state-query', name: 'state', args: [{}], source: 'multi' }],
+  })
+
+  expect(signalAndQuery.completion).toBe('pending')
+  expect(signalAndQuery.determinismState.queries).toHaveLength(0)
+  const [afterQuery] = signalAndQuery.queryResults
+  const afterValues = await decodePayloadsToValues(dataConverter, afterQuery?.result.answer?.payloads ?? [])
+  expect(afterValues[0]).toEqual({ message: 'ready' })
+})
+
+test('workflow query logs do not mutate persisted workflow determinism state', async () => {
   const logs: Array<{ level: string; message: string; fields?: Record<string, unknown> }> = []
   const logger: Logger = {
     log: (level, message, fields) =>
@@ -346,7 +406,7 @@ test('workflow query logs are emitted once on replay', async () => {
     queryRequests: [{ name: 'status', args: [{}], source: 'legacy' }],
   })
   expect(first.completion).toBe('completed')
-  expect(first.determinismState.logCount).toBe(1)
+  expect(first.determinismState.logCount).toBeUndefined()
   expect(logs).toHaveLength(1)
   expect(logs[0]?.fields).toMatchObject({
     namespace: 'default',
@@ -365,7 +425,8 @@ test('workflow query logs are emitted once on replay', async () => {
     queryRequests: [{ name: 'status', args: [{}], source: 'legacy' }],
   })
   expect(second.completion).toBe('completed')
-  expect(logs).toHaveLength(1)
+  expect(second.determinismState.logCount).toBeUndefined()
+  expect(logs).toHaveLength(2)
 })
 
 test('query execution mode returns answers without emitting commands', async () => {

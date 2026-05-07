@@ -4,6 +4,26 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/157-torghut-profit-contract-actuation-and-capital-surface-truth-2026-05-07.md`
+  (current profit contract actuation and capital-surface truth contract)
+- `docs/agents/designs/153-jangar-design-actuation-ledger-and-contract-convergence-gates-2026-05-07.md`
+  (current Jangar contract actuation and convergence gate contract)
+- `docs/torghut/design-system/v6/155-torghut-capital-repair-outcome-ledger-and-edge-reacquisition-gates-2026-05-07.md`
+  (current capital repair outcome ledger and edge reacquisition gate contract)
+- `docs/agents/designs/151-jangar-repair-outcome-settlement-and-schedule-debt-roi-exchange-2026-05-07.md`
+  (current Jangar repair outcome settlement and schedule debt ROI contract)
+- `docs/torghut/design-system/v6/156-torghut-repair-closure-yield-ledger-and-capital-unlock-receipts-2026-05-07.md`
+  (current repair closure yield ledger and capital unlock receipt contract)
+- `docs/agents/designs/152-jangar-material-verdict-authority-and-contradiction-debt-ledger-2026-05-07.md`
+  (current Jangar material verdict authority and contradiction debt contract)
+- `docs/torghut/design-system/v6/154-torghut-marginal-proof-spend-portfolio-and-capital-repair-budget-2026-05-07.md`
+  (current marginal proof-spend portfolio and capital repair budget contract)
+- `docs/agents/designs/150-jangar-controller-brownout-budgets-and-proof-spend-admission-exchange-2026-05-07.md`
+  (current Jangar controller brownout budget and proof-spend admission contract)
+- `docs/torghut/design-system/v6/153-torghut-useful-evidence-capital-escrow-and-provider-repair-gates-2026-05-07.md`
+  (current useful-evidence capital escrow contract)
+- `docs/agents/designs/149-jangar-wrapper-truth-settlement-and-useful-evidence-gates-2026-05-07.md`
+  (current Jangar wrapper-truth settlement contract)
 - `docs/torghut/design-system/v6/151-torghut-hypothesis-scoped-capital-adjudication-and-profit-gates-2026-05-07.md`
   (current hypothesis-scoped capital adjudication and profit gate contract)
 - `docs/agents/designs/147-jangar-hypothesis-scoped-capital-adjudication-ledger-2026-05-07.md`
