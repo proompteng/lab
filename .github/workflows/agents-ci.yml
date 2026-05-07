@@ -141,7 +141,15 @@ jobs:
               exit 1
               ;;
           esac
-          curl -fsSL -o kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl"
+          curl \
+            --connect-timeout 20 \
+            --max-time 120 \
+            --retry 3 \
+            --retry-all-errors \
+            --retry-delay 5 \
+            -fsSL \
+            -o kubectl \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl"
           chmod +x kubectl
           if command -v sudo >/dev/null 2>&1; then
             sudo mv kubectl /usr/local/bin/
