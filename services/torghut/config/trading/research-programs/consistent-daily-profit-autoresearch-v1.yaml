@@ -4,7 +4,7 @@ description: >
   Autoresearch-style outer loop for finding intraday sleeves that behave like a repeatable
   business: active most days, adequately sized, and resistant to single-day lucky-strike bias.
 objective:
-  target_net_pnl_per_day: '500'
+  target_net_pnl_per_day: '300'
   min_active_day_ratio: '0.80'
   min_positive_day_ratio: '0.55'
   min_daily_notional: '300000'

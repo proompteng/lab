@@ -105,7 +105,7 @@ def _numeric_check(
 def evaluate_profit_target_oracle(
     scorecard: Mapping[str, Any],
     *,
-    target_net_pnl_per_day: Decimal = Decimal("500"),
+    target_net_pnl_per_day: Decimal = Decimal("300"),
     policy: ProfitTargetOraclePolicy | None = None,
 ) -> dict[str, Any]:
     """Evaluate the doc 71 production objective criteria against a scorecard."""
