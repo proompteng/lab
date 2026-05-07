@@ -163,9 +163,7 @@ class WarmupIngestor(FakeIngestor):
         self.warmup_ranges.append((start, end))
         self.warmup_limits.append(limit)
         signals = [
-            signal
-            for signal in self.warmup_signals
-            if start <= signal.event_ts <= end
+            signal for signal in self.warmup_signals if start <= signal.event_ts <= end
         ]
         if limit is not None:
             signals = signals[: max(0, int(limit))]
