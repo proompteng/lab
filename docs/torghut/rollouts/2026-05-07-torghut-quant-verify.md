@@ -5,18 +5,19 @@ Repository: `proompteng/lab`
 Branch: `codex/swarm-torghut-quant-verify`
 Base: `main`
 Owner channel: `swarm://owner/trading`
-Last refreshed: 2026-05-07T18:12:00Z
+Last refreshed: 2026-05-07T18:42:00Z
 
 ## Owner update message
 
-Torghut rollout gate is go at main `7b7673a30a342b54085fa35f90f7d3e0338d3e6b` (#5932).
-PR #5931 merged the flat TA quote ingestion fix, and the automatic promotion PR #5932 moved the
+Torghut rollout gate is go at promotion commit `637123ed50b2101c3588009a1817c6e32c017a99` (#5941).
+PR #5937 merged the stale feature-batch cursor fix, and automatic promotion PR #5941 moved the
 runtime image to digest
-`sha256:da08c6f6f976f1f9495435de56f63937578f5da7a79b627c831098cc550044d5`.
+`sha256:1c6894aabfd6400465eaaa22dc99713b4e4c82d64c68c329d15217e3c37868ca`.
 
 Current-main checks are green, including Torghut CI, kubeconform, argo-lint, and
 `torghut-post-deploy-verify`. Argo CD shows both `torghut` and `torghut-options` `Synced` /
-`Healthy` at `7b7673a30a342b54085fa35f90f7d3e0338d3e6b`. Live and sim TA ConfigMaps both carry
+`Healthy` at current main `d1a552877585e42a24e9bcd84fa1dc318a7566e1`, which includes the #5941
+promotion. Live and sim TA ConfigMaps both carry
 `TA_QUOTE_STALE_AFTER_MS=15000`, and the live, sim, catalog, enricher, TA, TA-sim, options TA, and
 websocket workloads are ready with zero restarts on their current pods.
 
@@ -31,6 +32,10 @@ resolved, merge state is refreshed, and fresh required checks pass.
   below the 1000-line mandatory Codex review threshold.
 - #5932, `chore(torghut): promote image abaaf775`, was the automatic image promotion for #5931. It
   merged after #5931 and became the active rollout gate.
+- #5937, `fix(torghut): advance past stale feature batches`, was the final Torghut code unblock. It
+  passed required checks, merged, and generated automatic promotion PR #5941.
+- #5941, `chore(torghut): promote image b2ab2e76`, merged and became the final production rollout
+  gate for this release.
 - #5412, `feat(torghut): add renewal bond profit escrow`, remains open and no-go because the large
   diff still lacks the required Codex review. Visible checks were refreshed after main advanced, but
   ticket/check state is not enough to override the missing review gate.
@@ -73,7 +78,13 @@ resolved, merge state is refreshed, and fresh required checks pass.
   - Selected as the final high-impact unblock.
   - Squash-merged at `abaaf77572f6c9c53c8b8b6f61409e87235b5c19`.
 - #5932 `chore(torghut): promote image abaaf775`
-  - Final production promotion, squash-merged at `7b7673a30a342b54085fa35f90f7d3e0338d3e6b`.
+  - Squash-merged at `7b7673a30a342b54085fa35f90f7d3e0338d3e6b`; superseded by #5941.
+- #5937 `fix(torghut): advance past stale feature batches`
+  - Squash-merged at `b2ab2e76c90e8090b21d434fc37a7137fc20e40a`.
+  - Advanced the cursor for staleness-only feature-quality failures without decisions or orders,
+    while keeping non-staleness feature-quality failures fail-closed.
+- #5941 `chore(torghut): promote image b2ab2e76`
+  - Final production promotion, squash-merged at `637123ed50b2101c3588009a1817c6e32c017a99`.
 - #5412 `feat(torghut): add renewal bond profit escrow`
   - Rechecked status, review state, and large-diff gate.
   - Held no-go at `539180cd0ef3e21c32e4dcd10f31dbd4f2f8da09`.
@@ -88,6 +99,9 @@ resolved, merge state is refreshed, and fresh required checks pass.
   moved to the automatic promotion.
 - #5932 had no review comments. Main CI and rollout were verified after the merge before declaring
   the release go.
+- #5937 had no review comments. It passed all required PR checks before squash merge.
+- #5941 had no review comments. Its main Torghut CI and post-deploy verification passed before final
+  closeout.
 - #5412 had no review threads in the GitHub review-thread query, but it remains no-go because the
   mandatory Codex review did not post. Prior Codex review requests were answered by the connector
   usage-limit response.
@@ -101,8 +115,8 @@ resolved, merge state is refreshed, and fresh required checks pass.
 
 ## Merge outcomes
 
-- Merged source fixes: #5918, #5910, #5929, #5931.
-- Merged image/config promotions: #5920, #5921, #5922, #5923, #5924, #5930, #5932.
+- Merged source fixes: #5918, #5910, #5929, #5931, #5937.
+- Merged image/config promotions: #5920, #5921, #5922, #5923, #5924, #5930, #5932, #5941.
 - Not merged: #5412.
 
 #5931 merged:
@@ -124,6 +138,25 @@ resolved, merge state is refreshed, and fresh required checks pass.
   `sha256:da08c6f6f976f1f9495435de56f63937578f5da7a79b627c831098cc550044d5`.
 - The #5931 post-deploy verifier was cancelled after #5932 superseded it; #5932 became the active
   gate and its current-main verifier passed.
+
+#5937 merged:
+
+- PR: https://github.com/proompteng/lab/pull/5937.
+- Title: `fix(torghut): advance past stale feature batches`.
+- Merge commit: `b2ab2e76c90e8090b21d434fc37a7137fc20e40a`.
+- Change: staleness-only feature-quality failures now advance the cursor without decisions or order
+  submission; schema, duplicate, non-monotonic, and other non-staleness failures remain fail-closed.
+- PR checks passed before merge: changed-file check, semantic checks, argo-lint, kubeconform,
+  Pyright, Bytecode + pytest + coverage, and Quality signals.
+
+#5941 merged:
+
+- PR: https://github.com/proompteng/lab/pull/5941.
+- Title: `chore(torghut): promote image b2ab2e76`.
+- Merge commit: `637123ed50b2101c3588009a1817c6e32c017a99`.
+- Promoted digest:
+  `sha256:1c6894aabfd6400465eaaa22dc99713b4e4c82d64c68c329d15217e3c37868ca`.
+- Main Torghut CI and `torghut-post-deploy-verify` passed after the rollout.
 
 #5412 remains no-go:
 
@@ -149,6 +182,10 @@ services/torghut/tests/test_quote_quality.py`.
   `torghut-post-deploy-verify`.
 - PASS: main `7b7673a` checks: argo-lint run `25513190781`, kubeconform run `25513190682`,
   torghut-ci run `25513190689`, and torghut-post-deploy-verify run `25513190873`.
+- PASS: #5937 PR checks: changed-file check, semantic checks, argo-lint, kubeconform, Pyright,
+  Bytecode + pytest + coverage, and Quality signals.
+- PASS: main `637123ed` checks: argo-lint run `25514753401`, kubeconform run `25514753413`,
+  torghut-ci run `25514753386`, and torghut-post-deploy-verify run `25514753377`.
 - PASS: `bun run lint:argocd` after installing the CI-pinned `kubeconform v0.7.0`.
 - PASS: `kubectl kustomize --enable-helm argocd/applications/torghut` rendered
   `TA_QUOTE_STALE_AFTER_MS: "15000"` for both TA ConfigMaps.
@@ -162,22 +199,23 @@ services/torghut/tests/test_quote_quality.py`.
 
 ## Deployment evidence
 
-- `torghut`: `Synced` / `Healthy` at revision `7b7673a30a342b54085fa35f90f7d3e0338d3e6b`, operation
-  phase `Succeeded`, message `successfully synced (no more tasks)`.
-- `torghut-options`: `Synced` / `Healthy` at revision
-  `7b7673a30a342b54085fa35f90f7d3e0338d3e6b`, operation phase `Succeeded`, message
+- `torghut`: `Synced` / `Healthy` at current main revision
+  `d1a552877585e42a24e9bcd84fa1dc318a7566e1`, operation phase `Succeeded`, message
+  `successfully synced (no more tasks)`.
+- `torghut-options`: `Synced` / `Healthy` at current main revision
+  `d1a552877585e42a24e9bcd84fa1dc318a7566e1`, operation phase `Succeeded`, message
   `successfully synced (all tasks run)`.
 - `torghut-ta-config`: `TA_QUOTE_STALE_AFTER_MS=15000`.
 - `torghut-ta-sim-config`: `TA_QUOTE_STALE_AFTER_MS=15000`.
-- `torghut-00276-deployment-86cbf6d59c-6486g`: Running, ready `true,true`, zero restarts, Torghut
-  digest `sha256:da08c6f6f976f1f9495435de56f63937578f5da7a79b627c831098cc550044d5`.
-- `torghut-sim-00376-deployment-f8bcd59b9-jbw7j`: Running, ready `true,true`, zero restarts, same
+- `torghut-00277-deployment-8dbfb4994-mt4fd`: Running, ready `true,true`, zero restarts, Torghut
+  digest `sha256:1c6894aabfd6400465eaaa22dc99713b4e4c82d64c68c329d15217e3c37868ca`.
+- `torghut-sim-00377-deployment-5b5c5fd787-4m84l`: Running, ready `true,true`, zero restarts, same
   Torghut digest.
-- `torghut-options-catalog-57c548878d-p4ddw`: Running, ready `true`, zero restarts, same Torghut
+- `torghut-options-catalog-689f69b474-x556d`: Running, ready `true`, zero restarts, same Torghut
   digest.
-- `torghut-options-enricher-78b8dd8d69-l677m`: Running, ready `true`, zero restarts, same Torghut
+- `torghut-options-enricher-76b8cc557f-5srnh`: Running, ready `true`, zero restarts, same Torghut
   digest.
-- `torghut-ta-68bbdcd87b-4fcpn`: Running, ready `true`, zero restarts, live TA digest
+- `torghut-ta-5db478c445-dpj7b`: Running, ready `true`, zero restarts, live TA digest
   `sha256:e22e7fb47921db61f749006c5ebde0eb8c12c1b9f9fe24db3f8f739745f9bad2`.
 - `torghut-ta-sim-598655766-rmd4t`: Running, ready `true`, zero restarts, TA sim digest
   `sha256:20fe1818a7c5239d58d4e3888804163025b9b3b2ee1a1674fd7db77007f682af`.
@@ -189,7 +227,7 @@ services/torghut/tests/test_quote_quality.py`.
 
 Event evidence:
 
-- New Knative revisions `torghut-00276` and `torghut-sim-00376` became ready.
+- New Knative revisions `torghut-00277` and `torghut-sim-00377` became ready.
 - The `torghut-db-migrations` hook completed.
 - `torghut-empirical-jobs-backfill`, `torghut-whitepaper-semantic-backfill`, and
   `torghut-whitepapers-bootstrap` completed during the final sync.
@@ -216,10 +254,14 @@ Event evidence:
 
 ## Rollback path
 
-- For #5932: open a GitOps PR reverting `7b7673a30a342b54085fa35f90f7d3e0338d3e6b`, or restore the
+- For #5941: open a GitOps PR reverting `637123ed50b2101c3588009a1817c6e32c017a99`, or restore the
   previous Torghut image digest
-  `sha256:ad28c58749e5d2015f5ba4bd72bab64919963cc2d208a846a9ef047726950fb4` in the affected
+  `sha256:da08c6f6f976f1f9495435de56f63937578f5da7a79b627c831098cc550044d5` in the affected
   manifests, then let Argo CD reconcile.
+- For #5937: open a GitOps PR reverting `b2ab2e76c90e8090b21d434fc37a7137fc20e40a`, rebuild, and
+  promote through the normal release PR path.
+- For #5932: open a GitOps PR reverting `7b7673a30a342b54085fa35f90f7d3e0338d3e6b`, or restore
+  digest `sha256:ad28c58749e5d2015f5ba4bd72bab64919963cc2d208a846a9ef047726950fb4`.
 - For #5931: open a GitOps PR reverting `abaaf77572f6c9c53c8b8b6f61409e87235b5c19`, or set
   `TA_QUOTE_STALE_AFTER_MS` back to `2000` in `argocd/applications/torghut/ta/configmap.yaml` and
   `argocd/applications/torghut/ta-sim/configmap.yaml`, then let Argo CD reconcile.
@@ -230,6 +272,7 @@ Event evidence:
 ## Next action
 
 Keep #5412 blocked until Codex review posts and all resulting threads are resolved. Continue
-watching TA quote-quality admission, flat quote ingestion, route repair evidence, and the TA-sim
-ConfigMap value on the final `7b7673a` rollout; if behavior regresses, revert through GitOps using
+watching TA quote-quality admission, flat quote ingestion, route repair evidence, stale-batch cursor
+advancement, and the TA-sim ConfigMap value on the final `637123ed` / `d1a552877` rollout; if
+behavior regresses, revert through GitOps using
 the paths above.
