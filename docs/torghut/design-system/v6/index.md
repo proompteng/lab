@@ -8,10 +8,18 @@
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM
   reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-07T19:10Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-07T21:25Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-07T19:10Z`):
+- Evidence (current next-work priority, refreshed `2026-05-07T21:25Z`):
+  - `169-torghut-route-reacquisition-board-and-profit-repair-packets-2026-05-07.md`
+  - `docs/agents/designs/165-jangar-proof-settlement-broker-and-profit-repair-packet-gates-2026-05-07.md`
+  - `168-torghut-executable-alpha-receipts-and-capital-replay-board-2026-05-07.md`
+  - `docs/agents/designs/164-jangar-contract-graduation-brake-and-runtime-receipt-gates-2026-05-07.md`
+  - `166-torghut-paper-edge-witness-notary-and-zero-notional-repair-queue-2026-05-07.md`
+  - `docs/agents/designs/162-jangar-contract-witness-notary-and-material-action-gates-2026-05-07.md`
+  - `166-torghut-executable-profit-receipts-and-repair-convoy-settlement-2026-05-07.md`
+  - `docs/agents/designs/162-jangar-capital-receipt-convergence-and-repair-convoy-admission-2026-05-07.md`
   - `165-torghut-quant-freshness-debt-and-paper-edge-ledgers-2026-05-07.md`
   - `docs/agents/designs/161-jangar-stage-debt-clearinghouse-and-freshness-credit-ledger-2026-05-07.md`
   - `164-torghut-zero-notional-route-repair-packets-and-paper-rehearsal-2026-05-07.md`
@@ -994,3 +1002,9 @@ This pack is positioned as the next architecture layer above:
   packet and Jangar brownout-market contracts because the system is serving but still not capital-ready. It makes
   route, quant, market-context, empirical, and alpha repairs compete by measured after-cost unblock value while keeping
   all paper and live notional closed until before/after receipts and Jangar stage-freeze clearing exist.
+- `167-torghut-scoped-profit-repair-options-and-freshness-debt-retirement-2026-05-07.md` follows the executable profit
+  receipt and Jangar scoped evidence debt contracts because broad rollout health is no longer enough proof. It ranks
+  zero-notional repair options by the scoped quant, market-context, empirical, route/TCA, hypothesis, and submission
+  debts they retire before paper or live capital can move. The 2026-05-07 21:10Z refresh narrows the current before
+  state to route/TCA repair, market-context staleness, degraded empirical jobs, account-scope bypass debt, and Jangar
+  scoped-debt agreement, with all paper/live notional still held at zero.

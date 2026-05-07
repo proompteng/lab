@@ -99,7 +99,10 @@ def upsert_execution_tca_metric(
     computed_at = datetime.now(timezone.utc)
     decision = _load_trade_decision(session, execution)
     strategy_id = decision.strategy_id if decision is not None else None
-    account_label = decision.alpaca_account_label if decision is not None else None
+    if decision is not None:
+        account_label = decision.alpaca_account_label
+    else:
+        account_label = execution.alpaca_account_label
 
     arrival_price = _resolve_arrival_price(decision=decision, execution=execution)
     avg_fill_price = _positive_decimal(execution.avg_fill_price)

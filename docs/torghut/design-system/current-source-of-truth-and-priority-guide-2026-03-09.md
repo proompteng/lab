@@ -34,6 +34,8 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v1/historical-dataset-simulation.md`
    - `docs/torghut/design-system/v1/trading-day-simulation-automation.md`
 3. current autonomy/promotion contract source of truth:
+   - `docs/agents/designs/164-jangar-contract-graduation-brake-and-runtime-receipt-gates-2026-05-07.md`
+   - `docs/torghut/design-system/v6/168-torghut-executable-alpha-receipts-and-capital-replay-board-2026-05-07.md`
    - `docs/agents/designs/148-jangar-source-rollout-truth-exchange-and-proof-floor-settlement-2026-05-07.md`
    - `docs/torghut/design-system/v6/152-torghut-proof-floor-settlement-bonds-and-tca-repair-auction-2026-05-07.md`
    - `docs/agents/designs/147-jangar-hypothesis-scoped-capital-adjudication-ledger-2026-05-07.md`
@@ -124,6 +126,14 @@ If the question is "what should I trust right now?", start here:
 ## Current priority, not historical priority
 
 The current highest-priority work is:
+
+The May 7 contract-graduation and executable-alpha contracts are the current implementation handoff:
+
+- make Jangar graduate accepted design contracts through live runtime receipts before they can widen material action in
+  `docs/agents/designs/164-jangar-contract-graduation-brake-and-runtime-receipt-gates-2026-05-07.md`;
+- make Torghut zero-notional alpha repairs produce executable before/after receipts before paper or live capital can
+  widen in
+  `docs/torghut/design-system/v6/168-torghut-executable-alpha-receipts-and-capital-replay-board-2026-05-07.md`.
 
 The May 7 source-rollout and proof-floor settlement contracts are the current implementation handoff:
 

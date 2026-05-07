@@ -450,6 +450,14 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(sim_env.get("TRADING_SIGNAL_TABLE"), "torghut.ta_signals")
         self.assertEqual(sim_env.get("TRADING_PRICE_TABLE"), "torghut.ta_microbars")
         self.assertEqual(
+            sim_env.get("TRADING_EXECUTABLE_QUOTE_LOOKBACK_SECONDS"),
+            "300",
+        )
+        self.assertEqual(
+            _load_torghut_knative_env().get("TRADING_EXECUTABLE_QUOTE_LOOKBACK_SECONDS"),
+            "60",
+        )
+        self.assertEqual(
             sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS"),
             "NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC",
         )

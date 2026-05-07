@@ -35,6 +35,8 @@ The v1 documents are written to stay consistent with:
 If you are trying to decide which docs are current contract truth versus historical milestone records, start with:
 
 - `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md`
+- `docs/torghut/design-system/v6/168-torghut-executable-alpha-receipts-and-capital-replay-board-2026-05-07.md`
+- `docs/agents/designs/164-jangar-contract-graduation-brake-and-runtime-receipt-gates-2026-05-07.md`
 - `docs/torghut/design-system/v6/159-torghut-capital-cohort-frontier-and-routeability-repair-board-2026-05-07.md`
 - `docs/agents/designs/155-jangar-execution-cohort-settlement-and-launch-quarantine-2026-05-07.md`
 - `docs/torghut/design-system/v6/158-torghut-capital-proof-provenance-and-routeable-edge-repair-ledger-2026-05-07.md`

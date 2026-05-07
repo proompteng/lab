@@ -118,20 +118,21 @@ def _reason_counts(hypothesis_payload: Mapping[str, Any]) -> Counter[str]:
     return counts
 
 
-def _slippage_guardrail(hypothesis_payload: Mapping[str, Any]) -> Decimal | None:
+def _slippage_guardrails(hypothesis_payload: Mapping[str, Any]) -> list[Decimal]:
     guardrails: list[Decimal] = []
     for item in _hypothesis_items(hypothesis_payload):
         contract = _mapping(item.get("promotion_contract"))
         value = _decimal(contract.get("max_avg_abs_slippage_bps"))
         if value is not None:
             guardrails.append(value)
-    return min(guardrails) if guardrails else None
+    return guardrails
 
 
 def _tca_symbol_routes(
     tca_summary: Mapping[str, Any],
     *,
     slippage_guardrail: Decimal | None,
+    route_slippage_guardrail: Decimal | None = None,
 ) -> dict[str, object] | None:
     rows: list[Mapping[str, Any]] = []
     for item in _sequence(tca_summary.get("symbol_breakdown")):
@@ -161,16 +162,17 @@ def _tca_symbol_routes(
         if order_count <= 0:
             missing_symbols.append(symbol)
             continue
+        route_guardrail = route_slippage_guardrail or slippage_guardrail
         if (
-            slippage_guardrail is not None
+            route_guardrail is not None
             and avg_abs_slippage is not None
-            and avg_abs_slippage > slippage_guardrail
+            and avg_abs_slippage > route_guardrail
         ):
             blocked_symbols.append(symbol_payload)
             continue
         routeable_symbols.append(symbol_payload)
 
-    return {
+    payload: dict[str, object] = {
         "scope_symbols": list(_sequence(tca_summary.get("scope_symbols"))),
         "scope_symbol_count": _int(tca_summary.get("scope_symbol_count")),
         "slippage_guardrail_bps": _decimal_text(slippage_guardrail),
@@ -181,6 +183,14 @@ def _tca_symbol_routes(
         "blocked_symbols": blocked_symbols,
         "missing_symbols": missing_symbols,
     }
+    if (
+        route_slippage_guardrail is not None
+        and route_slippage_guardrail != slippage_guardrail
+    ):
+        payload["route_slippage_guardrail_bps"] = _decimal_text(
+            route_slippage_guardrail
+        )
+    return payload
 
 
 def _add_repair(
@@ -463,7 +473,9 @@ def build_profitability_proof_floor_receipt(
     )
     tca_order_count = _int(tca_summary.get("order_count"))
     avg_abs_slippage_bps = _decimal(tca_summary.get("avg_abs_slippage_bps"))
-    slippage_guardrail = _slippage_guardrail(hypothesis_payload)
+    slippage_guardrails = _slippage_guardrails(hypothesis_payload)
+    slippage_guardrail = min(slippage_guardrails) if slippage_guardrails else None
+    route_slippage_guardrail = max(slippage_guardrails) if slippage_guardrails else None
     tca_state = "pass"
     tca_reason = "fresh"
     if tca_order_count <= 0:
@@ -495,6 +507,7 @@ def build_profitability_proof_floor_receipt(
     symbol_routes = _tca_symbol_routes(
         tca_summary,
         slippage_guardrail=slippage_guardrail,
+        route_slippage_guardrail=route_slippage_guardrail,
     )
     if symbol_routes is not None:
         tca_source_ref["symbol_routes"] = symbol_routes

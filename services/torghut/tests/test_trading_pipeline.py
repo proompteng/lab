@@ -152,16 +152,25 @@ class WarmupIngestor(FakeIngestor):
         ]
         self.cursor_at = cursor_at
         self.warmup_ranges: list[tuple[datetime, datetime]] = []
+        self.warmup_limits: list[int | None] = []
 
     def _get_cursor(self, session: Session) -> tuple[datetime, int | None, str | None]:
         return self.cursor_at, None, None
 
     def fetch_signals_with_reason(
-        self, *, start: datetime, end: datetime
+        self, *, start: datetime, end: datetime, limit: int | None = None
     ) -> SignalBatch:
         self.warmup_ranges.append((start, end))
+        self.warmup_limits.append(limit)
+        signals = [
+            signal
+            for signal in self.warmup_signals
+            if start <= signal.event_ts <= end
+        ]
+        if limit is not None:
+            signals = signals[: max(0, int(limit))]
         return SignalBatch(
-            signals=self.warmup_signals,
+            signals=signals,
             cursor_at=end,
             cursor_seq=None,
             cursor_symbol=None,
@@ -178,9 +187,9 @@ class CursorErrorWarmupIngestor(WarmupIngestor):
 
 class FetchErrorWarmupIngestor(WarmupIngestor):
     def fetch_signals_with_reason(
-        self, *, start: datetime, end: datetime
+        self, *, start: datetime, end: datetime, limit: int | None = None
     ) -> SignalBatch:
-        del start, end
+        del start, end, limit
         raise RuntimeError("warmup fetch failed")
 
 
@@ -202,10 +211,10 @@ class TransactionAwareWarmupIngestor(WarmupIngestor):
         self.transaction_active_during_fetch: bool | None = None
 
     def fetch_signals_with_reason(
-        self, *, start: datetime, end: datetime
+        self, *, start: datetime, end: datetime, limit: int | None = None
     ) -> SignalBatch:
         self.transaction_active_during_fetch = self.transaction_probe()
-        return super().fetch_signals_with_reason(start=start, end=end)
+        return super().fetch_signals_with_reason(start=start, end=end, limit=limit)
 
 
 class RecordingDecisionEngine(DecisionEngine):
@@ -695,6 +704,9 @@ class TestTradingPipeline(TestCase):
                 "trading_kill_switch_enabled",
                 "trading_universe_source",
                 "trading_static_symbols_raw",
+                "trading_session_context_warmup_signal_limit",
+                "trading_session_context_warmup_max_seconds",
+                "trading_session_context_warmup_max_signals",
                 "trading_feature_quality_enabled",
                 "trading_feature_max_staleness_ms",
                 "trading_allow_shorts",
@@ -1004,7 +1016,7 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
 
-    def test_pipeline_warms_session_context_from_regular_open_to_cursor(self) -> None:
+    def test_pipeline_warms_session_context_with_bounded_replay_window(self) -> None:
         from app import config
 
         config.settings.trading_enabled = True
@@ -1012,6 +1024,7 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_live_enabled = False
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.trading_session_context_warmup_signal_limit = 3
 
         with self.session_local() as session:
             strategy = Strategy(
@@ -1028,14 +1041,6 @@ class TestTradingPipeline(TestCase):
 
         warmup_signals = [
             SignalEnvelope(
-                event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
-                ingest_ts=datetime(2026, 3, 26, 13, 30, 1, tzinfo=timezone.utc),
-                symbol="AAPL",
-                timeframe="1Min",
-                seq=1,
-                payload={"feature_schema_version": "3.0.0", "price": 100},
-            ),
-            SignalEnvelope(
                 event_ts=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
                 ingest_ts=datetime(2026, 3, 26, 14, 0, 1, tzinfo=timezone.utc),
                 symbol="AAPL",
@@ -1044,12 +1049,28 @@ class TestTradingPipeline(TestCase):
                 payload={"feature_schema_version": "3.0.0", "price": 101},
             ),
             SignalEnvelope(
-                event_ts=datetime(2026, 3, 26, 14, 10, tzinfo=timezone.utc),
-                ingest_ts=datetime(2026, 3, 26, 14, 10, 1, tzinfo=timezone.utc),
-                symbol="MSFT",
+                event_ts=datetime(2026, 3, 26, 14, 26, tzinfo=timezone.utc),
+                ingest_ts=datetime(2026, 3, 26, 14, 26, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
                 timeframe="1Min",
                 seq=3,
+                payload={"feature_schema_version": "3.0.0", "price": 102},
+            ),
+            SignalEnvelope(
+                event_ts=datetime(2026, 3, 26, 14, 27, tzinfo=timezone.utc),
+                ingest_ts=datetime(2026, 3, 26, 14, 27, 1, tzinfo=timezone.utc),
+                symbol="MSFT",
+                timeframe="1Min",
+                seq=4,
                 payload={"feature_schema_version": "3.0.0", "price": 250},
+            ),
+            SignalEnvelope(
+                event_ts=datetime(2026, 3, 26, 14, 28, tzinfo=timezone.utc),
+                ingest_ts=datetime(2026, 3, 26, 14, 28, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                timeframe="1Min",
+                seq=5,
+                payload={"feature_schema_version": "3.0.0", "price": 103},
             ),
         ]
         cursor_at = datetime(2026, 3, 26, 14, 30, tzinfo=timezone.utc)
@@ -1086,11 +1107,12 @@ class TestTradingPipeline(TestCase):
             ingestor.warmup_ranges,
             [
                 (
-                    datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 26, 14, 25, tzinfo=timezone.utc),
                     cursor_at,
                 )
             ],
         )
+        self.assertEqual(ingestor.warmup_limits, [3])
         self.assertEqual(decision_engine.observed_symbols, ["AAPL", "AAPL"])
         self.assertEqual(ingestor.committed_batches, 2)
 
@@ -1227,7 +1249,7 @@ class TestTradingPipeline(TestCase):
             ingestor.warmup_ranges,
             [
                 (
-                    datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 26, 13, 55, tzinfo=timezone.utc),
                     datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
                 )
             ],
