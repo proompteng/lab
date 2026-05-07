@@ -12,6 +12,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority, refreshed `2026-05-07T09:30Z`):
+  - `145-torghut-repair-dividend-ledger-and-submission-quorum-2026-05-07.md`
+  - `docs/agents/designs/141-jangar-controller-witness-escrow-and-repair-dividend-settlement-2026-05-07.md`
   - `144-torghut-state-coherent-profit-auction-and-tca-renewal-governor-2026-05-07.md`
   - `docs/agents/designs/140-jangar-watch-reliability-state-exchange-and-capital-action-governor-2026-05-07.md`
   - `143-torghut-empirical-relay-receipts-and-paper-gate-settlement-2026-05-07.md`
@@ -922,3 +924,7 @@ This pack is positioned as the next architecture layer above:
   repair, but TCA is stale, feature/drift counters are zero, forecast authority is registry-empty, and Jangar watch
   reliability is degraded. The contract ranks repairs by capital-state unlock while keeping paper and live notional at
   zero until Jangar state, TCA, feature/drift, forecast, and hypothesis guardrails are current.
+- `145-torghut-repair-dividend-ledger-and-submission-quorum-2026-05-07.md` follows the Jangar controller witness escrow
+  contract because current repair authority is useful but under-priced. Torghut must rank repair work by measurable
+  after-cost capital dividend, consume Jangar repair dividend receipts, and keep paper/live submission closed until TCA,
+  quant ingestion, feature/drift, forecast, hypothesis, and submission-quorum gates are current.
