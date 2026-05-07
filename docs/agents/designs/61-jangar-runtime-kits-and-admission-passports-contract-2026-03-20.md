@@ -383,6 +383,9 @@ The first enforcement slice is the stage and requirement launcher gate:
   digest, runtime-kit set digest, required runtime kits, and producer revision in annotations plus run parameters.
 - command-style runtime components are admitted only when the resolved command path is executable; a file that exists
   on `PATH` but cannot run remains runtime-kit debt and blocks the collaboration passport.
+- generated schedule-runner fire-time admission and proof checks are tied to the controller-level enforcement gate, so
+  `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` returns schedules to advisory launch behavior without separately
+  disabling runner admission checks.
 
 This is Phase 4 from the rollout plan for launchers only. It does not remove the existing `/ready` and status passport
 projection surfaces, and it can be rolled back by setting `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false`.

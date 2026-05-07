@@ -294,6 +294,32 @@ class TestSearchProfitabilityFrontier(TestCase):
         )
         self.assertFalse(strategies["late-day-continuation-long-v1"]["enabled"])
 
+    def test_apply_candidate_to_configmap_accepts_mounted_strategy_catalog(
+        self,
+    ) -> None:
+        updated = apply_candidate_to_configmap(
+            configmap_payload={
+                "strategies": [
+                    {
+                        "name": "breakout-continuation-long-v1",
+                        "enabled": False,
+                        "params": {"min_cross_section_continuation_rank": "0.55"},
+                    }
+                ]
+            },
+            strategy_name="breakout-continuation-long-v1",
+            candidate_params={"min_cross_section_continuation_rank": "0.65"},
+            disable_other_strategies=False,
+        )
+
+        self.assertEqual(updated["kind"], "ConfigMap")
+        catalog = yaml.safe_load(updated["data"]["strategies.yaml"])
+        strategy = catalog["strategies"][0]
+        self.assertTrue(strategy["enabled"])
+        self.assertEqual(
+            strategy["params"]["min_cross_section_continuation_rank"], "0.65"
+        )
+
     def test_apply_candidate_to_configmap_coerces_non_mapping_params(self) -> None:
         configmap_payload = {
             "data": {

@@ -18,6 +18,14 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Fast Jangar/Torghut live analysis workflow: `designs/jangar-torghut-live-analysis-playbook.md`
 - Autonomous Jangar/Torghut production system design: `designs/autonomous-jangar-torghut-production-system.md`
 - Current Jangar/Torghut architecture contracts:
+  - `designs/143-jangar-profit-repair-lease-control-plane-and-controller-witness-exchange-2026-05-07.md`
+  - `../torghut/design-system/v6/147-torghut-profit-repair-leases-and-forecast-registry-settlement-2026-05-07.md`
+  - `designs/143-jangar-route-stable-status-snapshot-escrow-and-repair-actuation-windows-2026-05-07.md`
+  - `../torghut/design-system/v6/147-torghut-stale-proof-repair-exchange-and-route-stable-capital-quorum-2026-05-07.md`
+  - `designs/142-jangar-repair-dividend-handoff-gates-and-actuation-contracts-2026-05-07.md`
+  - `../torghut/design-system/v6/146-torghut-submission-quorum-handoff-and-profit-repair-gates-2026-05-07.md`
+  - `designs/141-jangar-controller-witness-escrow-and-repair-dividend-settlement-2026-05-07.md`
+  - `../torghut/design-system/v6/145-torghut-repair-dividend-ledger-and-submission-quorum-2026-05-07.md`
   - `designs/140-jangar-watch-reliability-state-exchange-and-capital-action-governor-2026-05-07.md`
   - `../torghut/design-system/v6/144-torghut-state-coherent-profit-auction-and-tca-renewal-governor-2026-05-07.md`
   - `designs/139-jangar-empirical-relay-source-binding-and-capital-gate-parity-2026-05-07.md`

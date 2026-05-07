@@ -247,6 +247,52 @@ describe('buildRuntimeAdmissionSnapshot', () => {
     )
   })
 
+  it('keeps proof-surface ids stable across freshness refreshes', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'runtime-admission-'))
+    const binDir = join(tempDir, 'bin')
+    await mkdir(binDir, { recursive: true })
+    const natsPath = join(binDir, 'nats')
+    await writeFile(natsPath, '#!/usr/bin/env bash\nexit 0\n', 'utf8')
+    await chmod(natsPath, 0o755)
+    process.env.PATH = `${binDir}:${process.env.PATH ?? ''}`
+    process.env.NATS_URL = 'nats://nats.nats.svc.cluster.local:4222'
+
+    const first = buildRuntimeAdmissionSnapshot({
+      now: new Date('2026-01-20T00:00:00.000Z'),
+      worktree: REPO_ROOT,
+      natsUrl: 'nats://nats.nats.svc.cluster.local:4222',
+    })
+    const second = buildRuntimeAdmissionSnapshot({
+      now: new Date('2026-01-20T00:02:00.000Z'),
+      worktree: REPO_ROOT,
+      natsUrl: 'nats://nats.nats.svc.cluster.local:4222',
+    })
+
+    const firstPlanPassport = first.admissionPassports.find((passport) => passport.consumer_class === 'swarm_plan')
+    const secondPlanPassport = second.admissionPassports.find((passport) => passport.consumer_class === 'swarm_plan')
+    expect(firstPlanPassport?.admission_passport_id).toBe(secondPlanPassport?.admission_passport_id)
+    expect(firstPlanPassport?.fresh_until).not.toBe(secondPlanPassport?.fresh_until)
+
+    const firstPlanWarrant = first.recoveryWarrants.find((warrant) => warrant.execution_class === 'plan')
+    const secondPlanWarrant = second.recoveryWarrants.find((warrant) => warrant.execution_class === 'plan')
+    expect(firstPlanWarrant?.recovery_warrant_id).toBe(secondPlanWarrant?.recovery_warrant_id)
+    expect(firstPlanWarrant?.recovery_epoch_id).toBe(secondPlanWarrant?.recovery_epoch_id)
+    expect(firstPlanWarrant?.required_proof_cell_ids).toEqual(secondPlanWarrant?.required_proof_cell_ids)
+
+    const firstDeployWatermark = first.projectionWatermarks.find(
+      (watermark) =>
+        watermark.consumer_key === 'deploy_verification' &&
+        watermark.recovery_warrant_id === firstPlanWarrant?.recovery_warrant_id,
+    )
+    const secondDeployWatermark = second.projectionWatermarks.find(
+      (watermark) =>
+        watermark.consumer_key === 'deploy_verification' &&
+        watermark.recovery_warrant_id === secondPlanWarrant?.recovery_warrant_id,
+    )
+    expect(firstDeployWatermark?.projection_watermark_id).toBe(secondDeployWatermark?.projection_watermark_id)
+    expect(firstDeployWatermark?.expires_at).not.toBe(secondDeployWatermark?.expires_at)
+  })
+
   it('keeps degraded execution trust non-blocking so stage schedules can recover', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'runtime-admission-'))
     const binDir = join(tempDir, 'bin')

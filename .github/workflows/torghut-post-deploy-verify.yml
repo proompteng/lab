@@ -5,8 +5,8 @@ on:
     branches:
       - main
     paths:
-      - 'argocd/applications/torghut/**'
-      - 'argocd/applications/torghut-options/**'
+      - "argocd/applications/torghut/**"
+      - "argocd/applications/torghut-options/**"
   workflow_dispatch:
     inputs:
       expected_revision:
@@ -199,8 +199,67 @@ jobs:
             exit 1
           fi
 
-          curl -fsS http://torghut.torghut.svc.cluster.local/trading/status >/tmp/torghut-status.json
-          curl -fsS http://torghut-ws.torghut.svc.cluster.local/readyz >/tmp/torghut-ws-ready.json
+          EVIDENCE_DIR="${RUNNER_TEMP}/torghut-post-deploy"
+          mkdir -p "${EVIDENCE_DIR}"
+
+          TORGHUT_READYZ_HTTP_STATUS="$(
+            curl -sS -o "${EVIDENCE_DIR}/torghut-readyz.json" -w '%{http_code}' \
+              http://torghut.torghut.svc.cluster.local/readyz || true
+          )"
+          if [ -z "${TORGHUT_READYZ_HTTP_STATUS}" ] || [ "${TORGHUT_READYZ_HTTP_STATUS}" = '000' ]; then
+            echo "Torghut /readyz did not return an HTTP response"
+            exit 1
+          fi
+          echo "Torghut /readyz HTTP ${TORGHUT_READYZ_HTTP_STATUS}"
+
+          curl -fsS http://torghut.torghut.svc.cluster.local/trading/status \
+            >"${EVIDENCE_DIR}/torghut-status.json"
+          curl -fsS http://torghut.torghut.svc.cluster.local/trading/revenue-repair \
+            >"${EVIDENCE_DIR}/torghut-revenue-repair-digest.json"
+          curl -fsS http://torghut-ws.torghut.svc.cluster.local/readyz \
+            >"${EVIDENCE_DIR}/torghut-ws-ready.json"
+
+          export TORGHUT_REVENUE_REPAIR_DIGEST="${EVIDENCE_DIR}/torghut-revenue-repair-digest.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          digest = json.loads(Path(os.environ["TORGHUT_REVENUE_REPAIR_DIGEST"]).read_text(encoding="utf-8"))
+          repair_queue = digest.get("repair_queue")
+          if not isinstance(repair_queue, list):
+              raise SystemExit("torghut revenue repair digest missing repair_queue")
+
+          top_repairs = []
+          for item in repair_queue[:5]:
+              if not isinstance(item, dict):
+                  continue
+              top_repairs.append(
+                  f"- `{item.get('code', 'unknown')}`: `{item.get('reason', 'unknown')}` "
+                  f"({item.get('dimension', 'unknown')})"
+              )
+
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          with summary_path.open("a", encoding="utf-8") as handle:
+              handle.write("## Torghut Revenue Repair Digest\n\n")
+              handle.write(f"- Business state: `{digest.get('business_state', 'unknown')}`\n")
+              handle.write(f"- Revenue ready: `{digest.get('revenue_ready', False)}`\n")
+              capital = digest.get("capital") if isinstance(digest.get("capital"), dict) else {}
+              handle.write(f"- Capital state: `{capital.get('capital_state', 'unknown')}`\n")
+              handle.write(f"- Max notional: `{capital.get('max_notional', 'unknown')}`\n")
+              blockers = digest.get("blockers")
+              blocker_reasons = []
+              if isinstance(blockers, list):
+                  for blocker in blockers:
+                      if isinstance(blocker, dict) and blocker.get("reason"):
+                          blocker_reasons.append(str(blocker["reason"]))
+              if blocker_reasons:
+                  handle.write("- Blockers: " + ", ".join(f"`{reason}`" for reason in blocker_reasons) + "\n")
+              if top_repairs:
+                  handle.write("\nTop repair queue:\n")
+                  handle.write("\n".join(top_repairs))
+                  handle.write("\n")
+          PY
 
       - name: Prepare rollback manifests
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -243,8 +302,8 @@ jobs:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/torghut-rollback-${{ github.run_id }}-${{ github.run_attempt }}
           base: main
-          title: 'revert(torghut): rollback failed promotion ${{ github.sha }}'
-          commit-message: 'revert(torghut): rollback failed promotion ${{ github.sha }}'
+          title: "revert(torghut): rollback failed promotion ${{ github.sha }}"
+          commit-message: "revert(torghut): rollback failed promotion ${{ github.sha }}"
           delete-branch: true
           add-paths: |
             argocd/applications/torghut
@@ -256,3 +315,12 @@ jobs:
             - Failed commit: `${{ github.sha }}`
             - Workflow run: `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
             - Rollback source: `HEAD^` manifests from the failed run checkout
+
+      - name: Upload revenue repair evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: torghut-revenue-repair-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/torghut-post-deploy/*.json
+          if-no-files-found: ignore

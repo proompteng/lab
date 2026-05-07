@@ -16,6 +16,10 @@ const activityWorkflowInputSchema = Schema.Struct({
   computeIterations: Schema.Number,
   activityDelayMs: Schema.Number,
   payloadBytes: Schema.Number,
+  activityHeartbeatTimeoutMs: Schema.optional(Schema.Number),
+  activityStartToCloseTimeoutMs: Schema.optional(Schema.Number),
+  activityScheduleToStartTimeoutMs: Schema.optional(Schema.Number),
+  activityScheduleToCloseTimeoutMs: Schema.optional(Schema.Number),
 })
 
 const updateWorkflowInputSchema = Schema.Struct({
@@ -61,12 +65,25 @@ export const workerLoadActivityWorkflow = defineWorkflow(
       const computeIterations = Math.max(1, Math.trunc(input.computeIterations))
       const activityDelayMs = Math.max(MIN_ACTIVITY_DELAY_MS, Math.trunc(input.activityDelayMs))
       const payloadBytes = Math.max(MIN_ACTIVITY_PAYLOAD_BYTES, Math.trunc(input.payloadBytes))
+      const heartbeatTimeoutMs = positiveDurationMs(
+        input.activityHeartbeatTimeoutMs,
+        Math.max(30_000, activityDelayMs * 8),
+      )
+      const startToCloseTimeoutMs = Math.max(
+        heartbeatTimeoutMs,
+        positiveDurationMs(
+          input.activityStartToCloseTimeoutMs,
+          Math.max(60_000, heartbeatTimeoutMs, activityDelayMs * 30),
+        ),
+      )
+      const scheduleToStartTimeoutMs = positiveDurationMs(input.activityScheduleToStartTimeoutMs, 90_000)
+      const scheduleToCloseTimeoutMs = Math.max(
+        scheduleToStartTimeoutMs + startToCloseTimeoutMs,
+        positiveDurationMs(input.activityScheduleToCloseTimeoutMs, 150_000),
+      )
       let checksum = 0
       for (let burst = 0; burst < bursts; burst += 1) {
         checksum = busyLoop(computeIterations + burst * 13, checksum ^ burst)
-        const heartbeatTimeoutMs = Math.max(2_000, activityDelayMs * 2)
-        const startToCloseTimeoutMs = Math.max(5_000, activityDelayMs * 6)
-        const scheduleToCloseTimeoutMs = Math.max(startToCloseTimeoutMs * 2, activityDelayMs * 12)
         yield* activities.schedule(
           'workerLoad.ioBurstActivity',
           [
@@ -78,6 +95,7 @@ export const workerLoadActivityWorkflow = defineWorkflow(
           ],
           {
             heartbeatTimeoutMs,
+            scheduleToStartTimeoutMs,
             startToCloseTimeoutMs,
             scheduleToCloseTimeoutMs,
           },
@@ -189,6 +207,11 @@ const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+
+const positiveDurationMs = (value: number | undefined, fallback: number): number => {
+  const parsed = value === undefined ? fallback : Math.trunc(value)
+  return Math.max(1, Number.isFinite(parsed) ? parsed : fallback)
+}
 
 const burstDigest = (buffer: Buffer): number => {
   let digest = 0

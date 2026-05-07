@@ -294,7 +294,12 @@ def build_profitability_proof_floor_receipt(
     quant_required = _bool(quant_evidence.get("required", True))
     quant_status = _text(quant_evidence.get("status"), "unknown").lower()
     quant_reason = _text(quant_evidence.get("reason"), quant_status or "unknown")
-    if not quant_required and quant_status not in {"ok", "healthy", "pass", "not_required"}:
+    if not quant_required and quant_status not in {
+        "ok",
+        "healthy",
+        "pass",
+        "not_required",
+    }:
         quant_state = "informational"
     elif not _bool(quant_evidence.get("ok")):
         quant_state = "fail"
@@ -334,13 +339,18 @@ def build_profitability_proof_floor_receipt(
     )
 
     market_alert = _bool(market_context_status.get("alert_active"))
+    market_context_stale = reasons.get("market_context_stale", 0)
     market_reason = _text(
         market_context_status.get("alert_reason")
         or market_context_status.get("last_reason"),
         "ok",
     )
-    if market_alert:
-        market_state = "stale" if "stale" in market_reason else "degraded"
+    if market_alert or market_context_stale:
+        market_state = (
+            "stale" if market_context_stale or "stale" in market_reason else "degraded"
+        )
+        if market_context_stale and not market_alert:
+            market_reason = "market_context_stale"
         _add_repair(
             repairs,
             code="repair_market_context",
@@ -348,7 +358,7 @@ def build_profitability_proof_floor_receipt(
             action="refresh_market_context_domains",
             reason=market_reason,
             priority=55,
-            expected_unblock_value=max(1, reasons.get("market_context_stale", 0)),
+            expected_unblock_value=max(1, market_context_stale),
         )
     else:
         market_state = "pass"
@@ -367,6 +377,7 @@ def build_profitability_proof_floor_receipt(
             ),
             "last_quality_score": market_context_status.get("last_quality_score"),
             "last_domain_states": market_context_status.get("last_domain_states") or {},
+            "hypothesis_reason_count": market_context_stale,
         },
         freshness_seconds=_int(market_context_status.get("last_freshness_seconds"), -1),
     )

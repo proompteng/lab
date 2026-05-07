@@ -8,10 +8,22 @@
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM
   reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-07T09:30Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-07T11:25Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-07T09:30Z`):
+- Evidence (current next-work priority, refreshed `2026-05-07T11:25Z`):
+  - `147-torghut-proof-escrow-hypothesis-repair-and-capital-settlement-2026-05-07.md`
+  - `docs/agents/designs/143-jangar-least-privilege-evidence-escrow-and-capital-proof-settlement-2026-05-07.md`
+  - `147-torghut-profit-repair-leases-and-forecast-registry-settlement-2026-05-07.md`
+  - `docs/agents/designs/143-jangar-profit-repair-lease-control-plane-and-controller-witness-exchange-2026-05-07.md`
+  - `147-torghut-stale-proof-repair-exchange-and-route-stable-capital-quorum-2026-05-07.md`
+  - `docs/agents/designs/143-jangar-route-stable-status-snapshot-escrow-and-repair-actuation-windows-2026-05-07.md`
+  - `146-torghut-submission-quorum-handoff-and-profit-repair-gates-2026-05-07.md`
+  - `docs/agents/designs/142-jangar-repair-dividend-handoff-gates-and-actuation-contracts-2026-05-07.md`
+  - `145-torghut-proof-renewal-leases-and-capital-reentry-state-market-2026-05-07.md`
+  - `docs/agents/designs/141-jangar-proof-renewal-leases-and-trading-state-custody-2026-05-07.md`
+  - `145-torghut-repair-dividend-ledger-and-submission-quorum-2026-05-07.md`
+  - `docs/agents/designs/141-jangar-controller-witness-escrow-and-repair-dividend-settlement-2026-05-07.md`
   - `144-torghut-state-coherent-profit-auction-and-tca-renewal-governor-2026-05-07.md`
   - `docs/agents/designs/140-jangar-watch-reliability-state-exchange-and-capital-action-governor-2026-05-07.md`
   - `143-torghut-empirical-relay-receipts-and-paper-gate-settlement-2026-05-07.md`
@@ -922,3 +934,16 @@ This pack is positioned as the next architecture layer above:
   repair, but TCA is stale, feature/drift counters are zero, forecast authority is registry-empty, and Jangar watch
   reliability is degraded. The contract ranks repairs by capital-state unlock while keeping paper and live notional at
   zero until Jangar state, TCA, feature/drift, forecast, and hypothesis guardrails are current.
+- `145-torghut-repair-dividend-ledger-and-submission-quorum-2026-05-07.md` follows the Jangar controller witness escrow
+  contract because current repair authority is useful but under-priced. Torghut must rank repair work by measurable
+  after-cost capital dividend, consume Jangar repair dividend receipts, and keep paper/live submission closed until TCA,
+  quant ingestion, feature/drift, forecast, hypothesis, and submission-quorum gates are current.
+- `146-torghut-submission-quorum-handoff-and-profit-repair-gates-2026-05-07.md` follows the Jangar repair dividend
+  handoff contract because Torghut can keep observe and zero-notional repair open, but paper/live capital needs one
+  explicit quorum that binds Jangar repair dividends, TCA, quant ingestion, feature/drift, forecast, hypothesis, and
+  submission-intent evidence before any capital route can graduate.
+- `147-torghut-proof-escrow-hypothesis-repair-and-capital-settlement-2026-05-07.md` follows the least-privilege Jangar
+  evidence escrow contract because the current cluster is available while capital proof remains repair-only. It ranks
+  repairs by hypothesis, metric target, after-cost dividend, and Jangar escrow membership, keeping paper/live at zero
+  notional until route-readable evidence can settle the current TCA, signal, feature, drift, market-context, and
+  submission blockers.

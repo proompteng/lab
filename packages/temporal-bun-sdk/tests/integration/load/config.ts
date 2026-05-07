@@ -26,6 +26,10 @@ export interface WorkerLoadConfig {
   readonly activityBurstsPerWorkflow: number
   readonly activityDelayMs: number
   readonly activityPayloadBytes: number
+  readonly activityHeartbeatTimeoutMs: number
+  readonly activityStartToCloseTimeoutMs: number
+  readonly activityScheduleToStartTimeoutMs: number
+  readonly activityScheduleToCloseTimeoutMs: number
   readonly memorySampleIntervalMs: number
   readonly memorySlopeMaxMbPerHour: number
   readonly memorySlopeMinElapsedMs: number
@@ -44,6 +48,10 @@ const DEFAULT_ACTIVITY_CONCURRENCY = 14
 const DEFAULT_ACTIVITY_DELAY_MS = 175
 const DEFAULT_ACTIVITY_BURSTS = 4
 const DEFAULT_ACTIVITY_PAYLOAD_BYTES = 2_048
+const DEFAULT_ACTIVITY_HEARTBEAT_TIMEOUT_MS = 30_000
+const DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT_MS = 60_000
+const DEFAULT_ACTIVITY_SCHEDULE_TO_START_TIMEOUT_MS = 90_000
+const DEFAULT_ACTIVITY_SCHEDULE_TO_CLOSE_TIMEOUT_MS = 150_000
 const DEFAULT_COMPUTE_ITERATIONS = 160_000
 const DEFAULT_CPU_ROUNDS = 5
 const DEFAULT_TIMER_DELAY_MS = 60
@@ -57,8 +65,8 @@ const DEFAULT_RESTART_AFTER_SUBMIT = false
 const DEFAULT_RESTART_DELAY_MS = 500
 const DEFAULT_ACTIVITY_CANCELLATION_RATIO = 0
 const DEFAULT_ACTIVITY_CANCELLATION_DELAY_MS = 250
-const DEFAULT_WORKFLOW_POLL_P95_MS = 5_000
-const DEFAULT_ACTIVITY_POLL_P95_MS = 3_500
+const DEFAULT_WORKFLOW_POLL_P95_MS = 6_000
+const DEFAULT_ACTIVITY_POLL_P95_MS = 6_000
 const DEFAULT_WORKFLOW_DEADLINE_MS = 100_000
 const DEFAULT_METRICS_FLUSH_MS = 5_000
 const DEFAULT_MEMORY_SAMPLE_INTERVAL_MS = 5_000
@@ -147,6 +155,29 @@ export const readWorkerLoadConfig = (): WorkerLoadConfig => {
     DEFAULT_ACTIVITY_PAYLOAD_BYTES,
     { min: 256 },
   )
+  const activityHeartbeatTimeoutMs = readInt(
+    'TEMPORAL_LOAD_TEST_ACTIVITY_HEARTBEAT_TIMEOUT_MS',
+    Math.max(DEFAULT_ACTIVITY_HEARTBEAT_TIMEOUT_MS, activityDelayMs * 8),
+    { min: 1_000 },
+  )
+  const activityStartToCloseTimeoutMs = readInt(
+    'TEMPORAL_LOAD_TEST_ACTIVITY_START_TO_CLOSE_TIMEOUT_MS',
+    Math.max(DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT_MS, activityHeartbeatTimeoutMs, activityDelayMs * 30),
+    { min: activityHeartbeatTimeoutMs },
+  )
+  const activityScheduleToStartTimeoutMs = readInt(
+    'TEMPORAL_LOAD_TEST_ACTIVITY_SCHEDULE_TO_START_TIMEOUT_MS',
+    DEFAULT_ACTIVITY_SCHEDULE_TO_START_TIMEOUT_MS,
+    { min: 1_000 },
+  )
+  const activityScheduleToCloseTimeoutMs = readInt(
+    'TEMPORAL_LOAD_TEST_ACTIVITY_SCHEDULE_TO_CLOSE_TIMEOUT_MS',
+    Math.max(
+      DEFAULT_ACTIVITY_SCHEDULE_TO_CLOSE_TIMEOUT_MS,
+      activityScheduleToStartTimeoutMs + activityStartToCloseTimeoutMs,
+    ),
+    { min: activityScheduleToStartTimeoutMs + activityStartToCloseTimeoutMs },
+  )
   const updateWorkflowRatio = readFloat(
     'TEMPORAL_LOAD_TEST_UPDATE_RATIO',
     DEFAULT_UPDATE_WORKFLOW_RATIO,
@@ -223,6 +254,10 @@ export const readWorkerLoadConfig = (): WorkerLoadConfig => {
     activityBurstsPerWorkflow,
     activityDelayMs,
     activityPayloadBytes,
+    activityHeartbeatTimeoutMs,
+    activityStartToCloseTimeoutMs,
+    activityScheduleToStartTimeoutMs,
+    activityScheduleToCloseTimeoutMs,
     memorySampleIntervalMs,
     memorySlopeMaxMbPerHour,
     memorySlopeMinElapsedMs,

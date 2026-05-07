@@ -8,12 +8,12 @@ on:
     branches:
       - main
     paths:
-      - 'services/torghut/**'
-      - 'packages/scripts/src/torghut/**'
-      - 'packages/scripts/src/shared/**'
-      - 'package.json'
-      - 'bun.lock'
-      - '.github/workflows/torghut-build-push.yaml'
+      - "services/torghut/**"
+      - "packages/scripts/src/torghut/**"
+      - "packages/scripts/src/shared/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/torghut-build-push.yaml"
   workflow_dispatch:
 
 concurrency:
@@ -76,12 +76,28 @@ jobs:
             --image 'registry.ide-newton.ts.net/lab/torghut'
 
       - name: Upload release contract artifact
+        id: upload_release_contract
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: torghut-release-contract
           path: torghut-release-contract.json
           if-no-files-found: error
           retention-days: 3
+
+      - name: Warn on release contract upload failure
+        if: steps.upload_release_contract.outcome == 'failure'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::warning::Release contract artifact upload failed after the immutable Torghut image was pushed. torghut-release will fall back to resolving the digest from the pushed image tag."
+          {
+            echo "### Release contract upload failed (non-blocking)"
+            echo ""
+            echo "- Immutable image tag: \`registry.ide-newton.ts.net/lab/torghut:${{ steps.meta.outputs.tag }}\`."
+            echo "- Resolved digest: \`${{ steps.digest.outputs.digest }}\`."
+            echo "- \`torghut-release\` can reconstruct release metadata from the source SHA, tag, and registry digest."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Update latest tag (best effort)
         id: latest_tag

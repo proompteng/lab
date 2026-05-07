@@ -1698,6 +1698,9 @@ const reconcileSchedule = async (
     await applyResourceIfChanged(kube, configMap)
 
     const supportingConfig = resolveSupportingPrimitivesConfig(process.env)
+    const scheduleRunnerAdmissionCheck =
+      shouldEnforceSwarmRuntimeAdmission() && supportingConfig.scheduleRunnerAdmissionCheck
+    const scheduleRunnerRuntimeProofCheck = scheduleRunnerAdmissionCheck && shouldEnforceSwarmRuntimeProof()
     const image = supportingConfig.scheduleRunnerImage
     const nodeSelector = supportingConfig.scheduleRunnerNodeSelector
     const podNamespace = supportingConfig.podNamespace
@@ -1739,11 +1742,11 @@ const reconcileSchedule = async (
                       { name: SCHEDULE_RUNNER_SCHEDULE_NAMESPACE_ENV, value: namespace },
                       {
                         name: SCHEDULE_RUNNER_ADMISSION_CHECK_ENV,
-                        value: supportingConfig.scheduleRunnerAdmissionCheck ? 'true' : 'false',
+                        value: scheduleRunnerAdmissionCheck ? 'true' : 'false',
                       },
                       {
                         name: SCHEDULE_RUNNER_RUNTIME_PROOF_CHECK_ENV,
-                        value: shouldEnforceSwarmRuntimeProof() ? 'true' : 'false',
+                        value: scheduleRunnerRuntimeProofCheck ? 'true' : 'false',
                       },
                       {
                         name: SCHEDULE_RUNNER_ADMISSION_STATUS_URL_ENV,
