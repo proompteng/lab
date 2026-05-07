@@ -16,8 +16,8 @@ data:
   # Dynamic desired-symbol feed sourced from Jangar universe manager.
   JANGAR_SYMBOLS_URL: "http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity&format=compact"
   # Startup fallback if Jangar is temporarily unavailable.
-  SYMBOLS: "NVDA,TSM,AVGO,AMD,MU,TXN,ADI,LRCX,KLAC,QCOM,AMAT,ASML"
-  SYMBOLS_ALLOWLIST: "NVDA,TSM,AVGO,AMD,MU,TXN,ADI,LRCX,KLAC,QCOM,AMAT,ASML"
+  SYMBOLS: "NVDA,TSM,AVGO,MU,AMD,ASML,INTC,LRCX,AMAT,TXN,ARM,KLAC"
+  SYMBOLS_ALLOWLIST: "NVDA,TSM,AVGO,MU,AMD,ASML,INTC,LRCX,AMAT,TXN,ARM,KLAC"
   SYMBOLS_POLL_INTERVAL_MS: "30000"
   SUBSCRIBE_BATCH_SIZE: "200"
   SHARD_COUNT: "1"

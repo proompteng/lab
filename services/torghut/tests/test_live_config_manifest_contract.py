@@ -17,15 +17,15 @@ _RESEARCHED_CHIP_TECH_UNIVERSE = (
     "NVDA",
     "TSM",
     "AVGO",
-    "AMD",
     "MU",
-    "TXN",
-    "ADI",
-    "LRCX",
-    "KLAC",
-    "QCOM",
-    "AMAT",
+    "AMD",
     "ASML",
+    "INTC",
+    "LRCX",
+    "AMAT",
+    "TXN",
+    "ARM",
+    "KLAC",
 )
 _LIVE_EXECUTION_CHIP_TECH_UNIVERSE = _RESEARCHED_CHIP_TECH_UNIVERSE
 _CHIP_UNIVERSE_SYMBOLS = set(_RESEARCHED_CHIP_TECH_UNIVERSE)
@@ -399,7 +399,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(sim_env.get("TRADING_PRICE_TABLE"), "torghut.ta_microbars")
         self.assertEqual(
             sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS"),
-            "NVDA,TSM,AVGO,AMD,MU,TXN,ADI,LRCX,KLAC,QCOM,AMAT,ASML",
+            "NVDA,TSM,AVGO,MU,AMD,ASML,INTC,LRCX,AMAT,TXN,ARM,KLAC",
         )
         self.assertEqual(
             _csv_values(sim_env.get("TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS")),
