@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from argparse import Namespace
 from decimal import Decimal
 from pathlib import Path
@@ -115,6 +116,26 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             prefetch_full_window_rows=False,
             persist_results=False,
         )
+
+    def test_parse_args_defaults_to_300_daily_profit_program(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            with patch.object(
+                sys,
+                "argv",
+                [
+                    "run_whitepaper_autoresearch_profit_target.py",
+                    "--output-dir",
+                    tmpdir,
+                ],
+            ):
+                args = runner._parse_args()
+
+        self.assertEqual(args.target_net_pnl_per_day, "300")
+        self.assertEqual(
+            args.program,
+            Path("config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml"),
+        )
+        self.assertEqual(args.symbols.split(","), _CHIP_UNIVERSE)
 
     def test_seed_recent_whitepapers_runs_end_to_end_and_writes_artifacts(self) -> None:
         with TemporaryDirectory() as tmpdir:

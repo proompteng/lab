@@ -78,6 +78,10 @@ import scripts.run_strategy_factory_v2 as strategy_factory_runner
 
 
 _DEFAULT_CHIP_UNIVERSE_CSV = ",".join(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
+_DEFAULT_DAILY_PROFIT_TARGET = "300"
+_DEFAULT_STRICT_DAILY_PROFIT_PROGRAM = Path(
+    "config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml"
+)
 _PROGRAM_SOURCE_DEFAULT_CONFIDENCE = "0.70"
 
 
@@ -95,7 +99,9 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         help="JSONL file of normalized WhitepaperResearchSource payloads.",
     )
-    parser.add_argument("--target-net-pnl-per-day", default="500")
+    parser.add_argument(
+        "--target-net-pnl-per-day", default=_DEFAULT_DAILY_PROFIT_TARGET
+    )
     parser.add_argument("--max-candidates", type=int, default=64)
     parser.add_argument("--top-k", type=int, default=16)
     parser.add_argument("--exploration-slots", type=int, default=8)
@@ -105,9 +111,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--program",
         type=Path,
-        default=Path(
-            "config/trading/research-programs/strict-daily-profit-autoresearch-v1.yaml"
-        ),
+        default=_DEFAULT_STRICT_DAILY_PROFIT_PROGRAM,
     )
     parser.add_argument(
         "--strategy-configmap",
@@ -442,7 +446,8 @@ def _proposal_sort_value(value: Any) -> float:
 
 def _oracle_policy_from_args(args: argparse.Namespace) -> ProfitTargetOraclePolicy:
     target_net_pnl_per_day = _decimal(
-        getattr(args, "target_net_pnl_per_day", "500"), default="500"
+        getattr(args, "target_net_pnl_per_day", _DEFAULT_DAILY_PROFIT_TARGET),
+        default=_DEFAULT_DAILY_PROFIT_TARGET,
     )
     min_active_day_ratio = _decimal(
         getattr(args, "min_active_day_ratio", "0.90"), default="0.90"
@@ -2011,7 +2016,7 @@ def run_whitepaper_autoresearch_profit_target(
             ),
         }
     )
-    target = _decimal(args.target_net_pnl_per_day, default="500")
+    target = _decimal(args.target_net_pnl_per_day, default=_DEFAULT_DAILY_PROFIT_TARGET)
     oracle_policy = _oracle_policy_from_args(args)
     explicit_source_inputs = bool(
         args.seed_recent_whitepapers
