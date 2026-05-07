@@ -1,9 +1,10 @@
 import { expect, test } from 'bun:test'
 import { create } from '@bufbuild/protobuf'
-import { createClient, type CallOptions } from '@connectrpc/connect'
+import { Code, ConnectError, createClient, type CallOptions } from '@connectrpc/connect'
 
 import { createTemporalClient, temporalCallOptions } from '../../src/client'
 import { loadTemporalConfig } from '../../src/config'
+import { WorkflowExecutionAlreadyStartedFailureSchema } from '../../src/proto/temporal/api/errordetails/v1/message_pb'
 import {
   SchedulePatchSchema,
   ScheduleSchema,
@@ -26,6 +27,7 @@ const makeSchedule = (taskQueue: string) =>
   })
 
 const makeTimestamp = (seconds: bigint) => ({ seconds, nanos: 0 })
+const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 type CallRecord = {
   request: Record<string, unknown>
@@ -58,6 +60,92 @@ const lastCall = (calls: Map<string, CallRecord[]>, method: string): CallRecord 
   }
   return entries[entries.length - 1]
 }
+
+test('startWorkflow uses one generated request id across retries', async () => {
+  const config = await loadTemporalConfig()
+  type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
+  const calls = new Map<string, CallRecord[]>()
+  let attempts = 0
+
+  const workflowService = {
+    startWorkflowExecution: async (request, options) => {
+      attempts += 1
+      recordCall(calls, 'startWorkflowExecution', request, options)
+      if (attempts === 1) {
+        throw new ConnectError('transient start failure', Code.Unavailable)
+      }
+      return { runId: 'run-retry', started: true }
+    },
+  } as unknown as WorkflowServiceClient
+
+  const { client } = await createTemporalClient({ config, workflowService })
+  const callOptions = temporalCallOptions({
+    retryPolicy: {
+      maxAttempts: 2,
+      initialDelayMs: 1,
+      maxDelayMs: 1,
+      jitterFactor: 0,
+    },
+  })
+
+  try {
+    const result = await client.startWorkflow(
+      {
+        workflowId: 'start-retry-request-id',
+        workflowType: 'testWorkflow',
+      },
+      callOptions,
+    )
+
+    const entries = calls.get('startWorkflowExecution') ?? []
+    expect(result.runId).toBe('run-retry')
+    expect(entries).toHaveLength(2)
+    expect(entries[0]?.request.requestId).toMatch(uuidRegex)
+    expect(entries[1]?.request.requestId).toBe(entries[0]?.request.requestId)
+  } finally {
+    await client.shutdown()
+  }
+})
+
+test('startWorkflow recovers already-started errors for the same request id', async () => {
+  const config = await loadTemporalConfig()
+  type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
+  let capturedRequestId = ''
+
+  const workflowService = {
+    startWorkflowExecution: async (request) => {
+      capturedRequestId = request.requestId
+      throw new ConnectError(
+        'Workflow execution is already running',
+        Code.AlreadyExists,
+        undefined,
+        [{
+          desc: WorkflowExecutionAlreadyStartedFailureSchema,
+          value: {
+            startRequestId: request.requestId,
+            runId: 'run-recovered',
+          },
+        }],
+      )
+    },
+  } as unknown as WorkflowServiceClient
+
+  const { client } = await createTemporalClient({ config, workflowService })
+
+  try {
+    const result = await client.startWorkflow({
+      workflowId: 'start-already-started-request-id',
+      workflowType: 'testWorkflow',
+    })
+
+    expect(capturedRequestId).toMatch(uuidRegex)
+    expect(result.workflowId).toBe('start-already-started-request-id')
+    expect(result.runId).toBe('run-recovered')
+    expect(result.firstExecutionRunId).toBe('run-recovered')
+  } finally {
+    await client.shutdown()
+  }
+})
 
 test('schedule client forwards schedule lifecycle RPCs with call options', async () => {
   const config = await loadTemporalConfig()

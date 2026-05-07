@@ -228,11 +228,7 @@ describeIntegration('Signal + query integration', () => {
         console.warn('[signal-query:test] unexpected query result payload', parsed)
         return { message: undefined }
       } catch (error) {
-        if (
-          error instanceof TemporalCliCommandError &&
-          /please retry/i.test(error.stderr || error.stdout || '') &&
-          attempt < maxAttempts
-        ) {
+        if (error instanceof TemporalCliCommandError && isTransientQueryError(error) && attempt < maxAttempts) {
           await Bun.sleep(300 * attempt)
           continue
         }
@@ -299,4 +295,9 @@ function normalizeRetryConfig(value: string | undefined, fallback: number): numb
     return fallback
   }
   return parsed
+}
+
+const isTransientQueryError = (error: TemporalCliCommandError): boolean => {
+  const output = `${error.stderr}\n${error.stdout}`
+  return /please retry|workflow is busy/i.test(output)
 }
