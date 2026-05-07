@@ -1685,6 +1685,8 @@ describe('supporting primitives controller', () => {
         return {
           items: [
             {
+              apiVersion: 'signals.proompteng.ai/v1alpha1',
+              kind: 'Signal',
               metadata: {
                 name: 'torghut-risk-handoff-admission-blocked',
                 namespace: 'agents',
@@ -1748,6 +1750,7 @@ describe('supporting primitives controller', () => {
     expect(requirements.dispatched).toBe(0)
     expect(requirements.blocked).toBe(1)
     expect(requirements.admissionBlocked).toBe(1)
+    expect(requirements.rejected).toBe(1)
     expect((requirements.admission as Record<string, unknown> | undefined)?.passportId).toBe(
       'passport:swarm_implement:test',
     )
@@ -1760,6 +1763,127 @@ describe('supporting primitives controller', () => {
     expect(bridge?.status).toBe('False')
     expect(bridge?.reason).toBe('RuntimeAdmissionBlocked')
     expect(String(bridge?.message)).toContain('runtime_kit_component_missing:nats_cli')
+
+    const signalStatusCall = applyStatus.mock.calls.find((call) => {
+      const payload = call[0] as Record<string, unknown>
+      return payload.kind === 'Signal'
+    })
+    const signalStatus = (signalStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(signalStatus.phase).toBe('Rejected')
+    const signalReady = (Array.isArray(signalStatus.conditions) ? signalStatus.conditions : []).find(
+      (condition) => condition.type === 'Ready',
+    )
+    expect(signalReady?.reason).toBe('RuntimeAdmissionBlocked')
+    expect(String(signalReady?.message)).toContain('passport:swarm_implement:test')
+  })
+
+  it('keeps requirement signals pending when the implement admission passport is on hold', async () => {
+    process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT = '1'
+    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(
+      buildAdmissionSnapshot({
+        swarm_implement: {
+          decision: 'hold',
+          reason_codes: ['runtime_kit_degraded:collaboration'],
+        },
+      }),
+    )
+
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Schedule) {
+        return { status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' } }
+      }
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-implement-template', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+          },
+        }
+      }
+      return null
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              apiVersion: 'signals.proompteng.ai/v1alpha1',
+              kind: 'Signal',
+              metadata: {
+                name: 'torghut-risk-handoff-admission-hold',
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'workflow.general.requirement',
+                payload: { priority: 'critical' },
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const requirementRunPayloads = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
+      .filter((payload) => {
+        const metadata = payload.metadata as Record<string, unknown>
+        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
+      })
+    expect(requirementRunPayloads).toHaveLength(0)
+
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    const requirements = (status.requirements ?? {}) as Record<string, unknown>
+    expect(requirements.pending).toBe(1)
+    expect(requirements.dispatched).toBe(0)
+    expect(requirements.blocked).toBe(1)
+    expect(requirements.admissionBlocked).toBe(1)
+    expect(requirements.rejected).toBe(0)
+    expect((requirements.admission as Record<string, unknown> | undefined)?.decision).toBe('hold')
+
+    const signalStatusCall = applyStatus.mock.calls.find((call) => {
+      const payload = call[0] as Record<string, unknown>
+      return payload.kind === 'Signal'
+    })
+    expect(signalStatusCall).toBeUndefined()
   })
 
   it('fails closed for stage schedules and requirement dispatch when admission snapshots are unavailable', async () => {

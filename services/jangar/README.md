@@ -194,7 +194,10 @@ The supporting-primitives controller enforces stage admission passports before i
 With `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=true` (the production default), discover/plan schedules use the
 `swarm_plan` passport, implement schedules and cross-swarm requirements use `swarm_implement`, and verify schedules use
 `swarm_verify`. A blocked or held passport deletes the matching schedule plus generated runner ConfigMap/CronJob
-resources and prevents requirement dispatch instead of allowing repeated opaque job retries.
+resources and prevents requirement dispatch instead of allowing repeated opaque job retries. A hard-blocked
+`swarm_implement` passport also marks the matching requirement Signal `Rejected` with the passport refusal, so the
+requirement fails once with typed runtime-admission evidence. Held passports and unavailable admission snapshots stay
+pending so they can dispatch after the runtime kit or admission projection recovers.
 
 Schedule reconciliation also re-checks the current stage passport before it writes runner ConfigMaps or CronJobs.
 This keeps pre-existing schedules from launching with stale allowed passport annotations after the collaboration runtime
