@@ -412,6 +412,9 @@ Implementation note: launch runtime-proof enforcement (2026-05-07).
   or required proof cells are no longer valid.
 - admitted schedules and requirement runs now cite `swarmRecoveryWarrantId`, `swarmRecoveryWarrantStatus`, and
   `swarmRequiredProofCells` alongside the existing passport/runtime-kit trace.
+- recovery warrant ids, recovery epoch ids, required proof-cell ids, and deploy-verification projection watermark ids
+  are stable across ordinary freshness refreshes; they change only when the admitted passport, runtime-kit digest,
+  proof content, or decision changes materially.
 - emergency rollback for the proof layer is `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=false`; this returns launchers to
   passport-only enforcement while preserving runtime-kit, passport, warrant, proof-cell, and watermark projection.
 
