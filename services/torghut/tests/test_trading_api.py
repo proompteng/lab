@@ -982,12 +982,25 @@ class TestTradingApi(TestCase):
     ) -> None:
         proof_floor = {
             "schema_version": "torghut.profitability-proof-floor.v1",
+            "generated_at": "2026-05-07T22:11:12.125118+00:00",
+            "account_label": "PA3SX7FYNUTF",
             "route_state": "repair_only",
             "capital_state": "zero_notional",
             "repair_ladder": [{"code": "repair_execution_tca"}],
             "route_reacquisition_book": {
                 "schema_version": "torghut.route-reacquisition-book.v1",
-                "summary": {"blocked_symbol_count": 2},
+                "account_label": "PA3SX7FYNUTF",
+                "trading_mode": "live",
+                "records": [
+                    {
+                        "symbol": "NVDA",
+                        "state": "blocked",
+                        "reason": "execution_tca_route_universe_incomplete",
+                        "filled_execution_count": 12,
+                        "next_repair_action": "repair_route_evidence_before_paper_probe",
+                    }
+                ],
+                "summary": {"blocked_symbol_count": 1},
             },
         }
 
@@ -1005,11 +1018,28 @@ class TestTradingApi(TestCase):
             status_response.json()["route_reacquisition_book"],
             proof_floor["route_reacquisition_book"],
         )
+        status_board = status_response.json()["route_reacquisition_board"]
+        self.assertEqual(
+            status_board["schema_version"],
+            "torghut.route-reacquisition-board.v1",
+        )
+        self.assertEqual(status_board["state"], "repair_only")
+        self.assertEqual(status_board["summary"]["zero_notional_row_count"], 1)
+        self.assertEqual(status_board["rows"][0]["symbol"], "NVDA")
+        self.assertEqual(status_board["rows"][0]["max_notional"], "0")
         self.assertEqual(health_response.json()["proof_floor"], proof_floor)
         self.assertEqual(
             health_response.json()["route_reacquisition_book"],
             proof_floor["route_reacquisition_book"],
         )
+        health_board = health_response.json()["route_reacquisition_board"]
+        self.assertEqual(
+            health_board["schema_version"],
+            "torghut.route-reacquisition-board.v1",
+        )
+        self.assertEqual(health_board["state"], status_board["state"])
+        self.assertEqual(health_board["summary"], status_board["summary"])
+        self.assertEqual(health_board["rows"], status_board["rows"])
         self.assertEqual(
             health_response.json()["dependencies"]["profitability_proof_floor"][
                 "detail"

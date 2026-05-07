@@ -14,6 +14,7 @@ from urllib.request import urlopen
 
 
 SCHEMA_VERSION = 'torghut.trading-readiness-verification.v1'
+ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION = 'torghut.route-reacquisition-board.v1'
 _MISSING_QUANT_REASONS = {
     'quant_health_fetch_failed',
     'quant_health_missing',
@@ -308,6 +309,46 @@ def evaluate_trading_readiness(
         observed=missing_symbol_count,
         expected=0,
         detail=symbol_routes.get('missing_symbols') or [],
+    )
+
+    route_board = _mapping(status.get('route_reacquisition_board'))
+    route_board_summary = _mapping(route_board.get('summary'))
+    route_board_capital_eligible_symbols = _int(
+        route_board_summary.get('capital_eligible_symbol_count')
+    )
+    route_board_zero_notional_rows = _int(
+        route_board_summary.get('zero_notional_row_count')
+    )
+    _add_check(
+        checks,
+        'route_reacquisition_board_present',
+        passed=bool(route_board),
+        observed=bool(route_board),
+        expected=True,
+    )
+    _add_check(
+        checks,
+        'route_board_schema_version',
+        passed=_text(route_board.get('schema_version'))
+        == ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION,
+        observed=_text(route_board.get('schema_version')),
+        expected=ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION,
+    )
+    _add_check(
+        checks,
+        'route_board_capital_eligible_symbols',
+        passed=route_board_capital_eligible_symbols >= min_routeable_symbols,
+        observed=route_board_capital_eligible_symbols,
+        expected=f'>={min_routeable_symbols}',
+        detail=route_board_summary,
+    )
+    _add_check(
+        checks,
+        'route_board_zero_notional_rows',
+        passed=route_board_zero_notional_rows == 0,
+        observed=route_board_zero_notional_rows,
+        expected=0,
+        detail=route_board_summary,
     )
 
     decisions_total = _int(metrics.get('decisions_total'))

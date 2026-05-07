@@ -12,6 +12,7 @@ from app.trading.route_reacquisition import (
     _receipt_id,
     build_route_reacquisition_book,
 )
+from app.trading.route_reacquisition_board import build_route_reacquisition_board
 
 
 def test_empty_proof_floor_builds_zero_value_repair_book() -> None:
@@ -286,3 +287,158 @@ def test_route_book_ranks_zero_notional_repair_candidates_from_live_shape() -> N
     assert (
         candidates[-1]["next_repair_action"] == "create_simulation_probe_before_capital"
     )
+
+
+def test_route_reacquisition_board_keeps_live_repair_zero_notional() -> None:
+    proof_floor = {
+        "generated_at": "2026-05-07T22:11:12.125118+00:00",
+        "account_label": "PA3SX7FYNUTF",
+        "torghut_revision": "torghut-00285",
+        "route_state": "repair_only",
+        "capital_state": "zero_notional",
+        "proof_dimensions": [
+            {
+                "dimension": "execution_tca",
+                "state": "fail",
+                "reason": "execution_tca_route_universe_incomplete",
+                "source_ref": {
+                    "slippage_guardrail_bps": "8",
+                    "unsettled_execution_count": 0,
+                    "symbol_routes": {
+                        "scope_symbols": ["AAPL", "NVDA", "AMZN"],
+                        "scope_symbol_count": 3,
+                        "routeable_symbols": [
+                            {
+                                "symbol": "AAPL",
+                                "order_count": 2033,
+                                "avg_abs_slippage_bps": "9.2512103573044345",
+                                "last_computed_at": "2026-05-07T14:23:42.805829Z",
+                            }
+                        ],
+                        "blocked_symbols": [
+                            {
+                                "symbol": "NVDA",
+                                "order_count": 3289,
+                                "avg_abs_slippage_bps": "13.4758535356493902",
+                                "last_computed_at": "2026-05-07T14:23:42.665729Z",
+                            }
+                        ],
+                        "missing_symbols": ["AMZN"],
+                    },
+                },
+            },
+            {"dimension": "market_context", "state": "stale"},
+            {"dimension": "quant_ingestion", "state": "informational"},
+            {"dimension": "alpha_readiness", "state": "fail"},
+        ],
+    }
+    route_book = build_route_reacquisition_book(
+        proof_floor_receipt=proof_floor,
+        trading_mode="live",
+        market_session_open=False,
+    )
+    proof_floor["route_reacquisition_book"] = route_book
+
+    board = build_route_reacquisition_board(
+        proof_floor_receipt=proof_floor,
+        active_revision="torghut-00285",
+    )
+
+    assert board["schema_version"] == "torghut.route-reacquisition-board.v1"
+    assert board["state"] == "repair_only"
+    assert board["capital_rule"] == "zero_notional_until_receipts_close"
+    assert board["capital_state"] == "zero_notional"
+    rows = cast(list[Mapping[str, Any]], board["rows"])
+    assert [row["symbol"] for row in rows] == ["AAPL", "NVDA", "AMZN"]
+    assert {row["max_notional"] for row in rows} == {"0"}
+    assert rows[0]["state"] == "probing"
+    assert rows[0]["expected_unblock_value"] == 3
+    required_receipts = cast(Mapping[str, Any], rows[0]["required_receipts"])
+    assert required_receipts["market_context_receipt"]["state"] == "stale"
+    assert required_receipts["jangar_proof_packet"]["state"] == "missing"
+    summary = cast(Mapping[str, Any], board["summary"])
+    assert summary["state_counts"] == {"blocked": 1, "missing": 1, "probing": 1}
+    assert summary["zero_notional_row_count"] == 3
+    assert summary["expected_unblock_value"] == 6
+    assert summary["capital_eligible_symbol_count"] == 0
+    assert summary["top_repair_symbols"] == ["AAPL", "NVDA", "AMZN"]
+
+
+def test_route_reacquisition_board_preserves_candidate_notional_and_receipts() -> None:
+    proof_floor = {
+        "generated_at": "2026-05-07T22:11:12.125118+00:00",
+        "account_label": "PA3SX7FYNUTF",
+        "torghut_revision": "torghut-00285",
+        "route_state": "paper_candidate",
+        "capital_state": "paper_allowed",
+        "proof_dimensions": [
+            {"dimension": "execution_tca", "state": "pass", "reason": "fresh"},
+            {"dimension": "market_context", "state": "pass"},
+            {"dimension": "quant_ingestion", "state": "pass"},
+            {"dimension": "alpha_readiness", "state": "pass"},
+        ],
+        "route_reacquisition_book": {
+            "generated_at": "2026-05-07T22:11:12.125118+00:00",
+            "account_label": "PA3SX7FYNUTF",
+            "trading_mode": "paper",
+            "market_session_open": True,
+            "records": [
+                {
+                    "symbol": "NVDA",
+                    "state": "routeable",
+                    "reason": "fresh",
+                    "filled_execution_count": 2.7,
+                    "paper_probe_notional_limit": "125",
+                    "market_context_receipt_id": "mctx-1",
+                    "quant_pipeline_receipt_id": "quant-1",
+                    "hypothesis_ids": ["H-2", "H-1", "H-2"],
+                },
+                {
+                    "symbol": "AMD",
+                    "state": "blocked",
+                    "reason": "slippage_guardrail",
+                    "filled_execution_count": True,
+                    "next_repair_action": "reduce_execution_slippage_before_route_reentry",
+                    "paper_probe_notional_limit": "25",
+                },
+                {
+                    "symbol": "UNKNOWN",
+                    "state": "retired",
+                    "reason": "manual_override",
+                    "filled_execution_count": "not-a-number",
+                    "paper_probe_notional_limit": "",
+                },
+            ],
+        },
+    }
+
+    board = build_route_reacquisition_board(
+        proof_floor_receipt=proof_floor,
+        active_revision="torghut-00285",
+        jangar_broker_ref="jangar-proof-1",
+    )
+
+    assert board["state"] == "candidate"
+    assert board["capital_rule"] == "paper_probe_requires_receipt_chain"
+    rows = cast(list[Mapping[str, Any]], board["rows"])
+    assert [row["symbol"] for row in rows] == ["AMD", "NVDA", "UNKNOWN"]
+    amd, nvda, unknown = rows
+    assert amd["expected_cost_class"] == "high_route_quality_repair"
+    assert amd["expected_profit_effect"] == "repairs_route_quality"
+    assert amd["max_notional"] == "25"
+    assert nvda["expected_unblock_value"] == 4
+    assert nvda["expected_cost_class"] == "low_maintenance"
+    assert nvda["expected_profit_effect"] == "maintains_capital_candidate"
+    assert nvda["max_notional"] == "125"
+    nvda_receipts = cast(Mapping[str, Any], nvda["required_receipts"])
+    assert nvda_receipts["market_context_receipt"]["state"] == "present"
+    assert nvda_receipts["quant_pipeline_receipt"]["state"] == "present"
+    assert nvda_receipts["alpha_readiness_receipt"]["hypothesis_ids"] == ["H-1", "H-2"]
+    assert nvda_receipts["jangar_proof_packet"]["state"] == "present"
+    assert unknown["expected_unblock_value"] == 0
+    assert unknown["expected_cost_class"] == "unknown"
+    assert unknown["expected_profit_effect"] == "none"
+    assert unknown["max_notional"] == "0"
+    summary = cast(Mapping[str, Any], board["summary"])
+    assert summary["capital_eligible_symbol_count"] == 1
+    assert summary["zero_notional_row_count"] == 1
