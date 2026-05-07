@@ -108,6 +108,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             chunk_minutes=10,
             symbols=",".join(_CHIP_UNIVERSE),
             progress_log_seconds=30,
+            max_frontier_candidates_per_spec=runner._DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
+            max_total_frontier_candidates=0,
             train_days=6,
             holdout_days=3,
             full_window_start_date="2026-02-23",
@@ -1116,6 +1118,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     str(source_path),
                     "--clickhouse-password-env",
                     "TORGHUT_CLICKHOUSE_PASSWORD",
+                    "--max-total-frontier-candidates",
+                    "7",
                     "--no-persist-results",
                 ],
             ):
@@ -1131,6 +1135,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             parsed.max_frontier_candidates_per_spec,
             runner._DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
         )
+        self.assertEqual(parsed.max_total_frontier_candidates, 7)
         self.assertFalse(parsed.persist_results)
 
     def test_clickhouse_password_env_resolution_keeps_secret_out_of_argv(
@@ -1361,6 +1366,128 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
 
         self.assertEqual(captured_symbols, [""])
         self.assertEqual(len(result.evidence_bundles), 1)
+
+    def test_real_replay_passes_global_frontier_candidate_budget(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            result_path = output_dir / "result.json"
+            result_path.parent.mkdir(parents=True)
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "top": [
+                            {
+                                "candidate_id": "cand-real",
+                                "objective_scorecard": {
+                                    "net_pnl_per_day": "1",
+                                    "active_day_ratio": "1",
+                                    "positive_day_ratio": "1",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            factory_payload = {
+                "experiments": [
+                    {
+                        "experiment_id": "spec-real-exp",
+                        "dataset_snapshot_id": "snap-real",
+                        "result_path": str(result_path),
+                    }
+                ]
+            }
+            captured_budget: list[int] = []
+
+            def fake_run(
+                factory_args: Namespace, *, source_specs: object
+            ) -> dict[str, object]:
+                captured_budget.append(
+                    int(factory_args.max_total_candidates_to_evaluate)
+                )
+                return factory_payload
+
+            with patch.object(
+                runner.strategy_factory_runner,
+                "run_strategy_factory_v2_from_specs",
+                side_effect=fake_run,
+            ):
+                cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
+                    [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                )
+                compilation = runner.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
+                args = self._args(output_dir)
+                args.max_candidates = 24
+                args.max_total_frontier_candidates = 11
+                result = runner._run_real_replay(
+                    args,
+                    output_dir=output_dir,
+                    specs=compilation.executable_specs[:1],
+                )
+
+        self.assertEqual(captured_budget, [11])
+        self.assertEqual(len(result.evidence_bundles), 1)
+
+    def test_real_replay_defaults_global_frontier_budget_to_candidate_budget(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            result_path = output_dir / "result.json"
+            result_path.parent.mkdir(parents=True)
+            result_path.write_text(
+                json.dumps({"top": []}),
+                encoding="utf-8",
+            )
+            factory_payload = {
+                "experiments": [
+                    {
+                        "experiment_id": "spec-real-exp",
+                        "dataset_snapshot_id": "snap-real",
+                        "result_path": str(result_path),
+                    }
+                ]
+            }
+            captured_budget: list[int] = []
+
+            def fake_run(
+                factory_args: Namespace, *, source_specs: object
+            ) -> dict[str, object]:
+                captured_budget.append(
+                    int(factory_args.max_total_candidates_to_evaluate)
+                )
+                return factory_payload
+
+            with patch.object(
+                runner.strategy_factory_runner,
+                "run_strategy_factory_v2_from_specs",
+                side_effect=fake_run,
+            ):
+                cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
+                    [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                )
+                compilation = runner.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
+                args = self._args(output_dir)
+                args.max_candidates = 24
+                args.max_frontier_candidates_per_spec = 8
+                args.max_total_frontier_candidates = 0
+                result = runner._run_real_replay(
+                    args,
+                    output_dir=output_dir,
+                    specs=compilation.executable_specs[:1],
+                )
+
+        self.assertEqual(captured_budget, [24])
+        self.assertEqual(len(result.evidence_bundles), 0)
 
     def test_main_returns_nonzero_without_sources(self) -> None:
         with (

@@ -90,6 +90,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--top-n", type=int, default=5)
     parser.add_argument("--max-candidates-to-evaluate", type=int, default=0)
     parser.add_argument(
+        "--max-total-candidates-to-evaluate",
+        type=int,
+        default=0,
+        help=(
+            "Global frontier replay budget across all experiment specs. "
+            "When set, each experiment receives only the remaining budget."
+        ),
+    )
+    parser.add_argument(
         "--persist-results",
         dest="persist_results",
         action="store_true",
@@ -379,6 +388,7 @@ def _frontier_args(
     strategy_configmap: Path,
     sweep_config: Path,
     json_output: Path,
+    max_candidates_to_evaluate: int | None = None,
 ) -> argparse.Namespace:
     return argparse.Namespace(
         strategy_configmap=strategy_configmap,
@@ -399,7 +409,11 @@ def _frontier_args(
         family_template_dir=args.family_template_dir,
         prefetch_full_window_rows=bool(args.prefetch_full_window_rows),
         top_n=int(args.top_n),
-        max_candidates_to_evaluate=int(getattr(args, "max_candidates_to_evaluate", 0)),
+        max_candidates_to_evaluate=(
+            int(max_candidates_to_evaluate)
+            if max_candidates_to_evaluate is not None
+            else int(getattr(args, "max_candidates_to_evaluate", 0))
+        ),
         json_output=json_output,
         symbol_prune_iterations=0,
         symbol_prune_candidates=1,
@@ -527,9 +541,27 @@ def run_strategy_factory_v2_from_specs(
         f"strategy-factory-v2-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
     )
     results: list[dict[str, Any]] = []
+    max_total_candidates_to_evaluate = max(
+        0, int(getattr(args, "max_total_candidates_to_evaluate", 0) or 0)
+    )
+    total_candidate_count = 0
+    total_candidate_budget_exhausted = False
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     for experiment_row in source_specs:
+        per_spec_candidate_budget = max(
+            0, int(getattr(args, "max_candidates_to_evaluate", 0) or 0)
+        )
+        effective_candidate_budget = per_spec_candidate_budget
+        if max_total_candidates_to_evaluate > 0:
+            remaining_candidate_budget = (
+                max_total_candidates_to_evaluate - total_candidate_count
+            )
+            effective_candidate_budget = (
+                remaining_candidate_budget
+                if per_spec_candidate_budget <= 0
+                else min(per_spec_candidate_budget, remaining_candidate_budget)
+            )
         compiled = _compile_sweep_config(
             experiment_row=experiment_row,
             family_dir=args.family_template_dir.resolve(),
@@ -551,8 +583,13 @@ def run_strategy_factory_v2_from_specs(
                 strategy_configmap=args.strategy_configmap.resolve(),
                 sweep_config=compiled_sweep_path,
                 json_output=result_path,
+                max_candidates_to_evaluate=effective_candidate_budget,
             )
         )
+        experiment_candidate_count = max(
+            0, int(frontier_payload.get("candidate_count") or 0)
+        )
+        total_candidate_count += experiment_candidate_count
         result_path.write_text(
             json.dumps(frontier_payload, indent=2, sort_keys=True),
             encoding="utf-8",
@@ -596,6 +633,8 @@ def run_strategy_factory_v2_from_specs(
                     )
                     or ""
                 ),
+                "frontier_candidate_budget": effective_candidate_budget,
+                "frontier_candidate_count": experiment_candidate_count,
                 "top_candidate_id": top_candidate_id,
                 "top_net_per_day": (
                     str(
@@ -610,12 +649,24 @@ def run_strategy_factory_v2_from_specs(
                 "promotion_readiness": promotion_readiness,
             }
         )
+        if (
+            max_total_candidates_to_evaluate > 0
+            and total_candidate_count >= max_total_candidates_to_evaluate
+        ):
+            total_candidate_budget_exhausted = True
+            break
 
     summary = {
-        "status": "ok",
+        "status": (
+            "total_candidate_budget_exhausted"
+            if total_candidate_budget_exhausted
+            else "ok"
+        ),
         "runner_run_id": runner_run_id,
         "count": len(results),
+        "max_total_candidates_to_evaluate": max_total_candidates_to_evaluate,
         "persisted": bool(args.persist_results),
+        "total_candidate_count": total_candidate_count,
         "experiments": results,
     }
     return summary
