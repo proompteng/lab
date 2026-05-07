@@ -284,6 +284,65 @@ def test_required_degraded_quant_evidence_keeps_capital_at_zero() -> None:
     ]
 
 
+def test_hypothesis_market_context_stale_blocks_even_without_route_alert() -> None:
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="PA3SX7FYNUTF",
+        torghut_revision="torghut-00245",
+        trading_mode="live",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "ready",
+            "blocked_reasons": [],
+            "capital_stage": "0.10x canary",
+        },
+        hypothesis_payload={
+            "summary": {
+                "hypotheses_total": 1,
+                "promotion_eligible_total": 0,
+                "rollback_required_total": 1,
+                "state_totals": {"shadow": 1},
+            },
+            "items": [
+                {
+                    "hypothesis_id": "H-REV-01",
+                    "reasons": ["market_context_stale"],
+                    "promotion_contract": {"max_avg_abs_slippage_bps": "20"},
+                }
+            ],
+        },
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status={
+            "alert_active": False,
+            "last_reason": "ok",
+            "last_freshness_seconds": None,
+            "last_quality_score": None,
+            "last_domain_states": {},
+        },
+        tca_summary=_fresh_tca_summary(),
+        simple_lane_status=_simple_lane_status(),
+        now=NOW,
+    )
+
+    market_context_dimension = next(
+        item
+        for item in receipt["proof_dimensions"]
+        if item["dimension"] == "market_context"
+    )
+
+    assert receipt["route_state"] == "repair_only"
+    assert receipt["capital_state"] == "zero_notional"
+    assert "market_context_stale" in receipt["blocking_reasons"]
+    assert market_context_dimension["state"] == "stale"
+    assert market_context_dimension["reason"] == "market_context_stale"
+    assert market_context_dimension["source_ref"]["hypothesis_reason_count"] == 1
+    assert [repair["code"] for repair in receipt["repair_ladder"]] == [
+        "repair_alpha_readiness",
+        "repair_market_context",
+    ]
+
+
 def test_live_submit_disabled_fails_closed_even_when_other_dimensions_pass() -> None:
     receipt = build_profitability_proof_floor_receipt(
         account_label="PA3SX7FYNUTF",
