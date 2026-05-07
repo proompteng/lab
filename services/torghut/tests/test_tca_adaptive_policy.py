@@ -571,6 +571,40 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
         self.assertEqual(result["dry_run"], True)
         self.assertEqual(result["account_label"], "paper")
 
+    def test_upsert_tca_preserves_execution_account_without_decision_link(self) -> None:
+        with self.session_local() as session:
+            execution = Execution(
+                trade_decision_id=None,
+                alpaca_account_label="TORGHUT_SIM",
+                alpaca_order_id="order-unlinked-tca",
+                client_order_id="client-unlinked-tca",
+                symbol="NVDA",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                execution_expected_adapter="alpaca",
+                execution_actual_adapter="alpaca",
+            )
+            session.add(execution)
+            session.flush()
+
+            metric = upsert_execution_tca_metric(session, execution)
+            tca_inputs = build_tca_gate_inputs(
+                session,
+                account_label="TORGHUT_SIM",
+                symbols=["NVDA"],
+            )
+
+        self.assertEqual(metric.alpaca_account_label, "TORGHUT_SIM")
+        self.assertIsNone(metric.trade_decision_id)
+        self.assertIsNone(metric.strategy_id)
+        self.assertEqual(tca_inputs["order_count"], 1)
+        self.assertEqual(tca_inputs["filled_execution_count"], 1)
+
     def test_derivation_fallback_when_expected_shortfall_coverage_is_insufficient(
         self,
     ) -> None:
