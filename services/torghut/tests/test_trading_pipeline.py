@@ -150,16 +150,18 @@ class WarmupIngestor(FakeIngestor):
         ]
         self.cursor_at = cursor_at
         self.warmup_ranges: list[tuple[datetime, datetime]] = []
+        self.warmup_limits: list[int | None] = []
 
     def _get_cursor(self, session: Session) -> tuple[datetime, int | None, str | None]:
         return self.cursor_at, None, None
 
     def fetch_signals_with_reason(
-        self, *, start: datetime, end: datetime
+        self, *, start: datetime, end: datetime, limit: int | None = None
     ) -> SignalBatch:
         self.warmup_ranges.append((start, end))
+        self.warmup_limits.append(limit)
         return SignalBatch(
-            signals=self.warmup_signals,
+            signals=self.warmup_signals[:limit],
             cursor_at=end,
             cursor_seq=None,
             cursor_symbol=None,
@@ -176,9 +178,9 @@ class CursorErrorWarmupIngestor(WarmupIngestor):
 
 class FetchErrorWarmupIngestor(WarmupIngestor):
     def fetch_signals_with_reason(
-        self, *, start: datetime, end: datetime
+        self, *, start: datetime, end: datetime, limit: int | None = None
     ) -> SignalBatch:
-        del start, end
+        del start, end, limit
         raise RuntimeError("warmup fetch failed")
 
 
@@ -200,10 +202,10 @@ class TransactionAwareWarmupIngestor(WarmupIngestor):
         self.transaction_active_during_fetch: bool | None = None
 
     def fetch_signals_with_reason(
-        self, *, start: datetime, end: datetime
+        self, *, start: datetime, end: datetime, limit: int | None = None
     ) -> SignalBatch:
         self.transaction_active_during_fetch = self.transaction_probe()
-        return super().fetch_signals_with_reason(start=start, end=end)
+        return super().fetch_signals_with_reason(start=start, end=end, limit=limit)
 
 
 class RecordingDecisionEngine(DecisionEngine):
@@ -693,6 +695,7 @@ class TestTradingPipeline(TestCase):
                 "trading_kill_switch_enabled",
                 "trading_universe_source",
                 "trading_static_symbols_raw",
+                "trading_session_context_warmup_signal_limit",
                 "trading_feature_quality_enabled",
                 "trading_feature_max_staleness_ms",
                 "trading_allow_shorts",
@@ -1010,6 +1013,7 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_live_enabled = False
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.trading_session_context_warmup_signal_limit = 2
 
         with self.session_local() as session:
             strategy = Strategy(
@@ -1089,6 +1093,7 @@ class TestTradingPipeline(TestCase):
                 )
             ],
         )
+        self.assertEqual(ingestor.warmup_limits, [2])
         self.assertEqual(decision_engine.observed_symbols, ["AAPL", "AAPL"])
         self.assertEqual(ingestor.committed_batches, 2)
 
