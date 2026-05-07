@@ -1,6 +1,11 @@
 import { assessAgentRunIngestion } from '~/server/agents-controller'
 import { isRuntimeTestEnv } from '~/server/agents-controller/runtime-config'
-import type { AdmissionPassportStatus } from '~/data/agents-control-plane'
+import type {
+  AdmissionPassportStatus,
+  RecoveryWarrantExecutionClass,
+  RecoveryWarrantStatus,
+  RuntimeProofCellStatus,
+} from '~/data/agents-control-plane'
 import { resolveSupportingControllerConfig } from '~/server/controller-runtime-config'
 import {
   buildRuntimeAdmissionSnapshot,
@@ -35,9 +40,12 @@ import {
   SWARM_ADMISSION_ANNOTATION_DECISION,
   SWARM_ADMISSION_ANNOTATION_PASSPORT_ID,
   SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION,
+  SWARM_ADMISSION_ANNOTATION_PROOF_CELLS,
   SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST,
   SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST,
   SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS,
+  SWARM_ADMISSION_ANNOTATION_WARRANT_ID,
+  SWARM_ADMISSION_ANNOTATION_WARRANT_STATUS,
   SWARM_REQUIREMENT_ANNOTATION_SIGNAL,
   SWARM_REQUIREMENT_LABEL_ATTEMPT,
   SWARM_REQUIREMENT_LABEL_CHANNEL,
@@ -152,6 +160,7 @@ const SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS = 30_000
 const SCHEDULE_RUNNER_NAMESPACE_ENV = 'JANGAR_POD_NAMESPACE'
 const SCHEDULE_RUNNER_SCHEDULE_NAMESPACE_ENV = 'JANGAR_SCHEDULE_NAMESPACE'
 const SCHEDULE_RUNNER_ADMISSION_CHECK_ENV = 'JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK'
+const SCHEDULE_RUNNER_RUNTIME_PROOF_CHECK_ENV = 'JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT'
 const SCHEDULE_RUNNER_ADMISSION_STATUS_URL_ENV = 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL'
 const SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS_ENV = 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS'
 const KUBERNETES_SERVICE_HOST_ENV = 'KUBERNETES_SERVICE_HOST'
@@ -164,18 +173,29 @@ const nowIso = () => new Date().toISOString()
 
 type SwarmLaunchAdmission = {
   enforced: boolean
+  proofEnforced: boolean
   admitted: boolean
   consumerClass: string
   passport: AdmissionPassportStatus | null
+  warrant: RecoveryWarrantStatus | null
+  runtimeProofCells: RuntimeProofCellStatus[]
   reason:
     | 'RuntimeAdmissionDisabled'
     | 'RuntimeAdmissionAllowed'
     | 'AdmissionPassportMissing'
     | 'RuntimeAdmissionUnavailable'
     | 'RuntimeAdmissionBlocked'
+    | 'RuntimeProofSurfaceBlocked'
   message: string
   annotations: Record<string, string>
   parameters: Record<string, string>
+}
+
+const SWARM_WARRANT_EXECUTION_CLASS_BY_STAGE: Record<StageName, RecoveryWarrantExecutionClass> = {
+  discover: 'discover',
+  plan: 'plan',
+  implement: 'implement',
+  verify: 'verify',
 }
 
 const boolEnvProvided = (value: string | undefined) => value !== undefined && value.trim().length > 0
@@ -187,7 +207,23 @@ const shouldEnforceSwarmRuntimeAdmission = () => {
   return true
 }
 
-const buildAdmissionTrace = (passport: AdmissionPassportStatus | null) => {
+const shouldEnforceSwarmRuntimeProof = () => {
+  const configured = resolveSupportingPrimitivesConfig(process.env).swarmRuntimeProofEnforcement
+  if (!configured) return false
+  if (
+    isRuntimeTestEnv() &&
+    !boolEnvProvided(process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT) &&
+    !boolEnvProvided(process.env.JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT)
+  ) {
+    return false
+  }
+  return true
+}
+
+const buildAdmissionTrace = (
+  passport: AdmissionPassportStatus | null,
+  warrant: RecoveryWarrantStatus | null = null,
+) => {
   if (!passport) {
     return {
       annotations: {},
@@ -196,7 +232,8 @@ const buildAdmissionTrace = (passport: AdmissionPassportStatus | null) => {
   }
 
   const requiredRuntimeKits = passport.required_runtime_kits.join(',')
-  const annotations = {
+  const requiredProofCells = warrant?.required_proof_cell_ids.join(',') ?? ''
+  const annotations: Record<string, string> = {
     [SWARM_ADMISSION_ANNOTATION_PASSPORT_ID]: passport.admission_passport_id,
     [SWARM_ADMISSION_ANNOTATION_DECISION]: passport.decision,
     [SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST]: passport.recovery_case_set_digest,
@@ -204,13 +241,21 @@ const buildAdmissionTrace = (passport: AdmissionPassportStatus | null) => {
     [SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS]: requiredRuntimeKits,
     [SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION]: passport.producer_revision,
   }
-  const parameters = {
+  const parameters: Record<string, string> = {
     swarmAdmissionPassportId: passport.admission_passport_id,
     swarmAdmissionDecision: passport.decision,
     swarmRecoveryCaseSetDigest: passport.recovery_case_set_digest,
     swarmRuntimeKitSetDigest: passport.runtime_kit_set_digest,
     swarmRequiredRuntimeKits: requiredRuntimeKits,
     swarmAdmissionProducerRevision: passport.producer_revision,
+  }
+  if (warrant) {
+    annotations[SWARM_ADMISSION_ANNOTATION_WARRANT_ID] = warrant.recovery_warrant_id
+    annotations[SWARM_ADMISSION_ANNOTATION_WARRANT_STATUS] = warrant.status
+    annotations[SWARM_ADMISSION_ANNOTATION_PROOF_CELLS] = requiredProofCells
+    parameters.swarmRecoveryWarrantId = warrant.recovery_warrant_id
+    parameters.swarmRecoveryWarrantStatus = warrant.status
+    parameters.swarmRequiredProofCells = requiredProofCells
   }
 
   return { annotations, parameters }
@@ -229,29 +274,120 @@ const summarizeRuntimeAdmissionError = (error: unknown) => {
   return String(error)
 }
 
-const buildRuntimeAdmissionUnavailable = (stage: StageName, errorMessage: string): SwarmLaunchAdmission => ({
+const buildRuntimeAdmissionUnavailable = (
+  stage: StageName,
+  errorMessage: string,
+  proofEnforced = shouldEnforceSwarmRuntimeProof(),
+): SwarmLaunchAdmission => ({
   enforced: true,
+  proofEnforced,
   admitted: false,
   consumerClass: resolveAdmissionPassportConsumerClass(stage),
   passport: null,
+  warrant: null,
+  runtimeProofCells: [],
   reason: 'RuntimeAdmissionUnavailable',
   message: `runtime admission snapshot unavailable: ${errorMessage}`,
   annotations: {},
   parameters: {},
 })
 
+const findLaunchRecoveryWarrant = ({
+  snapshot,
+  stage,
+  passport,
+}: {
+  snapshot: ReturnType<typeof buildRuntimeAdmissionSnapshot> | null
+  stage: StageName
+  passport: AdmissionPassportStatus
+}) => {
+  const executionClass = SWARM_WARRANT_EXECUTION_CLASS_BY_STAGE[stage]
+  return (snapshot?.recoveryWarrants ?? []).find(
+    (warrant) =>
+      warrant.execution_class === executionClass &&
+      warrant.admission_passport_id === passport.admission_passport_id &&
+      warrant.status !== 'superseded',
+  )
+}
+
+const findRequiredProofCellsForWarrant = (
+  snapshot: ReturnType<typeof buildRuntimeAdmissionSnapshot> | null,
+  warrant: RecoveryWarrantStatus | null,
+) => {
+  if (!warrant) return []
+  const proofCellById = new Map((snapshot?.runtimeProofCells ?? []).map((cell) => [cell.runtime_proof_cell_id, cell]))
+  return warrant.required_proof_cell_ids
+    .map((proofCellId) => proofCellById.get(proofCellId))
+    .filter((proofCell): proofCell is RuntimeProofCellStatus => Boolean(proofCell))
+}
+
+const summarizeWarrantBlock = ({
+  snapshot,
+  stage,
+  passport,
+  warrant,
+  nowMs,
+}: {
+  snapshot: ReturnType<typeof buildRuntimeAdmissionSnapshot> | null
+  stage: StageName
+  passport: AdmissionPassportStatus
+  warrant: RecoveryWarrantStatus | null
+  nowMs: number
+}) => {
+  const executionClass = SWARM_WARRANT_EXECUTION_CLASS_BY_STAGE[stage]
+  if (!warrant) {
+    return `missing sealed recovery warrant for ${executionClass} admission passport ${passport.admission_passport_id}`
+  }
+  const reasons = warrant.reason_codes.length > 0 ? `: ${warrant.reason_codes.join(', ')}` : ''
+  if (warrant.status !== 'sealed') {
+    return `recovery warrant ${warrant.recovery_warrant_id} for ${executionClass} is ${warrant.status}${reasons}`
+  }
+  if (warrant.required_proof_cell_ids.length === 0) {
+    return `recovery warrant ${warrant.recovery_warrant_id} does not cite required proof cells`
+  }
+
+  const proofCellById = new Map((snapshot?.runtimeProofCells ?? []).map((cell) => [cell.runtime_proof_cell_id, cell]))
+  for (const proofCellId of warrant.required_proof_cell_ids) {
+    const proofCell = proofCellById.get(proofCellId)
+    if (!proofCell) {
+      return `recovery warrant ${warrant.recovery_warrant_id} cites missing runtime proof cell ${proofCellId}`
+    }
+    if (proofCell.recovery_warrant_id !== warrant.recovery_warrant_id) {
+      return `runtime proof cell ${proofCellId} does not belong to recovery warrant ${warrant.recovery_warrant_id}`
+    }
+    if (!proofCell.required) {
+      return `runtime proof cell ${proofCellId} is not marked required`
+    }
+    if (proofCell.status !== 'healthy') {
+      const proofReasons = proofCell.reason_codes.length > 0 ? `: ${proofCell.reason_codes.join(', ')}` : ''
+      return `runtime proof cell ${proofCellId} for warrant ${warrant.recovery_warrant_id} is ${proofCell.status}${proofReasons}`
+    }
+    const expiresAtMs = Date.parse(proofCell.expires_at)
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs) {
+      return `runtime proof cell ${proofCellId} for warrant ${warrant.recovery_warrant_id} is stale`
+    }
+  }
+
+  return null
+}
+
 const resolveLaunchAdmission = (input: {
   stage: StageName
   snapshot: ReturnType<typeof buildRuntimeAdmissionSnapshot> | null
   enforced: boolean
+  proofEnforced: boolean
+  nowMs?: number
 }): SwarmLaunchAdmission => {
   const consumerClass = resolveAdmissionPassportConsumerClass(input.stage)
   if (!input.enforced) {
     return {
       enforced: false,
+      proofEnforced: false,
       admitted: true,
       consumerClass,
       passport: null,
+      warrant: null,
+      runtimeProofCells: [],
       reason: 'RuntimeAdmissionDisabled',
       message: 'runtime admission enforcement disabled',
       annotations: {},
@@ -269,53 +405,102 @@ const resolveLaunchAdmission = (input: {
   if (!passport) {
     return {
       enforced: true,
+      proofEnforced: input.proofEnforced,
       admitted: false,
       consumerClass,
       passport: null,
+      warrant: null,
+      runtimeProofCells: [],
       reason: 'AdmissionPassportMissing',
       message: 'stage admission passport missing',
       ...trace,
     }
   }
 
+  const warrant = findLaunchRecoveryWarrant({
+    snapshot: input.snapshot,
+    stage: input.stage,
+    passport,
+  })
+  const runtimeProofCells = findRequiredProofCellsForWarrant(input.snapshot, warrant ?? null)
+  const traceWithWarrant = buildAdmissionTrace(passport, warrant ?? null)
+
   if (passport.decision !== 'allow') {
     return {
       enforced: true,
+      proofEnforced: input.proofEnforced,
       admitted: false,
       consumerClass,
       passport,
+      warrant: warrant ?? null,
+      runtimeProofCells,
       reason: 'RuntimeAdmissionBlocked',
       message: summarizePassportBlock(passport),
-      ...trace,
+      ...traceWithWarrant,
+    }
+  }
+
+  if (input.proofEnforced) {
+    const warrantBlock = summarizeWarrantBlock({
+      snapshot: input.snapshot,
+      stage: input.stage,
+      passport,
+      warrant: warrant ?? null,
+      nowMs: input.nowMs ?? Date.now(),
+    })
+    if (warrantBlock) {
+      return {
+        enforced: true,
+        proofEnforced: true,
+        admitted: false,
+        consumerClass,
+        passport,
+        warrant: warrant ?? null,
+        runtimeProofCells,
+        reason: 'RuntimeProofSurfaceBlocked',
+        message: warrantBlock,
+        ...traceWithWarrant,
+      }
     }
   }
 
   return {
     enforced: true,
+    proofEnforced: input.proofEnforced,
     admitted: true,
     consumerClass,
     passport,
+    warrant: warrant ?? null,
+    runtimeProofCells,
     reason: 'RuntimeAdmissionAllowed',
-    message: `stage admission passport ${passport.admission_passport_id} allows launch`,
-    ...trace,
+    message: warrant
+      ? `stage admission passport ${passport.admission_passport_id} and recovery warrant ${warrant.recovery_warrant_id} allow launch`
+      : `stage admission passport ${passport.admission_passport_id} allows launch`,
+    ...traceWithWarrant,
   }
 }
 
 const admissionStatusForStage = (admission: SwarmLaunchAdmission) => ({
   enforced: admission.enforced,
+  proofEnforced: admission.proofEnforced,
   admitted: admission.admitted,
   consumerClass: admission.consumerClass,
   passportId: admission.passport?.admission_passport_id ?? null,
   decision: admission.passport?.decision ?? null,
+  recoveryWarrantId: admission.warrant?.recovery_warrant_id ?? null,
+  recoveryWarrantStatus: admission.warrant?.status ?? null,
   reason: admission.reason,
   message: admission.message,
   runtimeKitSetDigest: admission.passport?.runtime_kit_set_digest ?? null,
   recoveryCaseSetDigest: admission.passport?.recovery_case_set_digest ?? null,
   requiredRuntimeKits: admission.passport?.required_runtime_kits ?? [],
+  requiredProofCells: admission.warrant?.required_proof_cell_ids ?? [],
 })
 
 const shouldRejectRequirementSignalForAdmission = (admission: SwarmLaunchAdmission) =>
-  admission.reason === 'RuntimeAdmissionBlocked' && admission.passport?.decision === 'block'
+  (admission.reason === 'RuntimeAdmissionBlocked' && admission.passport?.decision === 'block') ||
+  (admission.reason === 'RuntimeProofSurfaceBlocked' &&
+    (admission.warrant?.status === 'broken' || admission.warrant?.status === 'quarantined'))
 
 const resolveSwarmScheduleStage = (schedule: Record<string, unknown>): StageName | null => {
   const labels = asRecord(readNested(schedule, ['metadata', 'labels'])) ?? {}
@@ -329,6 +514,7 @@ const resolveScheduleLaunchAdmission = (schedule: Record<string, unknown>): Swar
   const stage = resolveSwarmScheduleStage(schedule)
   if (!stage) return null
   const enforced = shouldEnforceSwarmRuntimeAdmission()
+  const proofEnforced = enforced && shouldEnforceSwarmRuntimeProof()
   const annotations = asRecord(readNested(schedule, ['metadata', 'annotations'])) ?? {}
   const natsUrl = asString(annotations[SWARM_SCHEDULE_ANNOTATION_NATS_URL]) ?? undefined
   let snapshot: ReturnType<typeof buildRuntimeAdmissionSnapshot> | null = null
@@ -342,10 +528,10 @@ const resolveScheduleLaunchAdmission = (schedule: Record<string, unknown>): Swar
         stage,
         error: message,
       })
-      return buildRuntimeAdmissionUnavailable(stage, message)
+      return buildRuntimeAdmissionUnavailable(stage, message, proofEnforced)
     }
   }
-  return resolveLaunchAdmission({ stage, snapshot, enforced })
+  return resolveLaunchAdmission({ stage, snapshot, enforced, proofEnforced })
 }
 
 const withScheduleAdmissionTrace = (
@@ -1195,10 +1381,14 @@ const buildScheduleRunnerCommand = (): string =>
       runtimeDigest: SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST,
       runtimeKits: SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS,
       producerRevision: SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION,
+      warrantId: SWARM_ADMISSION_ANNOTATION_WARRANT_ID,
+      warrantStatus: SWARM_ADMISSION_ANNOTATION_WARRANT_STATUS,
+      proofCells: SWARM_ADMISSION_ANNOTATION_PROOF_CELLS,
     })};`,
     `  const stageLabelName = ${JSON.stringify(SWARM_STAGE_LABEL)};`,
     `  const scheduleNamespaceEnv = ${JSON.stringify(SCHEDULE_RUNNER_SCHEDULE_NAMESPACE_ENV)};`,
     `  const admissionCheckEnv = ${JSON.stringify(SCHEDULE_RUNNER_ADMISSION_CHECK_ENV)};`,
+    `  const runtimeProofCheckEnv = ${JSON.stringify(SCHEDULE_RUNNER_RUNTIME_PROOF_CHECK_ENV)};`,
     `  const admissionStatusUrlEnv = ${JSON.stringify(SCHEDULE_RUNNER_ADMISSION_STATUS_URL_ENV)};`,
     `  const admissionStatusTimeoutEnv = ${JSON.stringify(SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS_ENV)};`,
     "  const manifest = JSON.parse(readFileSync('/config/run.json', 'utf8').replaceAll('__JANGAR_DELIVERY_ID__', randomUUID()));",
@@ -1233,6 +1423,7 @@ const buildScheduleRunnerCommand = (): string =>
     '    }',
     '  };',
     "  const consumerByStage = { discover: 'swarm_plan', plan: 'swarm_plan', implement: 'swarm_implement', verify: 'swarm_verify' };",
+    "  const warrantClassByStage = { discover: 'discover', plan: 'plan', implement: 'implement', verify: 'verify' };",
     '  const assertCurrentAdmission = async (namespace) => {',
     '    const annotations = asRecord(readNested(manifest, ["metadata", "annotations"])) ?? {};',
     '    const labels = asRecord(readNested(manifest, ["metadata", "labels"])) ?? {};',
@@ -1240,6 +1431,7 @@ const buildScheduleRunnerCommand = (): string =>
     '    if (!stampedPassportId) return;',
     '    const stage = asString(labels[stageLabelName]).toLowerCase();',
     '    const consumer = consumerByStage[stage];',
+    '    const warrantExecutionClass = warrantClassByStage[stage];',
     '    if (!consumer) return;',
     '    const statusUrlValue = readEnv(admissionStatusUrlEnv);',
     '    if (!statusUrlValue) {',
@@ -1273,6 +1465,9 @@ const buildScheduleRunnerCommand = (): string =>
     '    const currentRuntimeDigest = asString(passport.runtime_kit_set_digest);',
     '    const currentRecoveryDigest = asString(passport.recovery_case_set_digest);',
     '    const currentRuntimeKits = normalizeRuntimeKits(passport.required_runtime_kits);',
+    '    let currentWarrantId = "";',
+    '    let currentWarrantStatus = "";',
+    '    let currentRequiredProofCells = "";',
     '    const runtimeKitById = new Map(asArray(status.runtime_kits).map(asRecord).filter(Boolean).map((kit) => [asString(kit.runtime_kit_id), kit]).filter(([id]) => Boolean(id)));',
     '    for (const runtimeKitId of currentRuntimeKits.split(",").filter(Boolean)) {',
     '      const runtimeKit = runtimeKitById.get(runtimeKitId);',
@@ -1283,18 +1478,47 @@ const buildScheduleRunnerCommand = (): string =>
     '      }',
     '      assertFreshUntil(runtimeKit.fresh_until, `current schedule admission runtime kit ${runtimeKitId}`);',
     '    }',
+    '    if (parseBoolean(readEnv(runtimeProofCheckEnv), true)) {',
+    '      if (!warrantExecutionClass) throw new Error(`missing recovery warrant execution class for stage ${stage || "unknown"}`);',
+    '      const warrant = asArray(status.recovery_warrants).map(asRecord).find((entry) => asString(entry?.execution_class) === warrantExecutionClass && asString(entry?.admission_passport_id) === (currentPassportId || stampedPassportId) && asString(entry?.status) !== "superseded");',
+    '      if (!warrant) throw new Error(`missing sealed recovery warrant for ${warrantExecutionClass} admission passport ${currentPassportId || stampedPassportId}`);',
+    '      currentWarrantId = asString(warrant.recovery_warrant_id);',
+    '      currentWarrantStatus = asString(warrant.status);',
+    '      if (currentWarrantStatus !== "sealed") {',
+    '        throw new Error(`current schedule recovery warrant ${currentWarrantId || "missing"} is ${currentWarrantStatus || "missing"}`);',
+    '      }',
+    '      const requiredProofCellIds = asArray(warrant.required_proof_cell_ids).map(asString).filter(Boolean);',
+    '      if (requiredProofCellIds.length === 0) throw new Error(`current schedule recovery warrant ${currentWarrantId} does not cite required proof cells`);',
+    '      const proofCellById = new Map(asArray(status.runtime_proof_cells).map(asRecord).filter(Boolean).map((cell) => [asString(cell.runtime_proof_cell_id), cell]).filter(([id]) => Boolean(id)));',
+    '      for (const proofCellId of requiredProofCellIds) {',
+    '        const proofCell = proofCellById.get(proofCellId);',
+    '        if (!proofCell) throw new Error(`current schedule recovery warrant ${currentWarrantId} cites missing runtime proof cell ${proofCellId}`);',
+    '        if (asString(proofCell.recovery_warrant_id) !== currentWarrantId) throw new Error(`runtime proof cell ${proofCellId} does not belong to recovery warrant ${currentWarrantId}`);',
+    '        if (proofCell.required !== true) throw new Error(`runtime proof cell ${proofCellId} is not marked required`);',
+    '        const proofStatus = asString(proofCell.status);',
+    '        if (proofStatus !== "healthy") throw new Error(`runtime proof cell ${proofCellId} for warrant ${currentWarrantId} is ${proofStatus || "missing"}`);',
+    '        assertFreshUntil(proofCell.expires_at, `runtime proof cell ${proofCellId}`);',
+    '      }',
+    '      currentRequiredProofCells = normalizeRuntimeKits(requiredProofCellIds);',
+    '    }',
     '    writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.passportId, currentPassportId || stampedPassportId);',
     '    writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.decision, decision);',
     '    writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.runtimeDigest, currentRuntimeDigest);',
     '    writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.recoveryDigest, currentRecoveryDigest);',
     '    writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.runtimeKits, currentRuntimeKits);',
     '    writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.producerRevision, asString(passport.producer_revision));',
+    '    if (currentWarrantId) writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.warrantId, currentWarrantId);',
+    '    if (currentWarrantStatus) writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.warrantStatus, currentWarrantStatus);',
+    '    if (currentRequiredProofCells) writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.proofCells, currentRequiredProofCells);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmAdmissionPassportId", currentPassportId || stampedPassportId);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmAdmissionDecision", decision);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRuntimeKitSetDigest", currentRuntimeDigest);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRecoveryCaseSetDigest", currentRecoveryDigest);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRequiredRuntimeKits", currentRuntimeKits);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmAdmissionProducerRevision", asString(passport.producer_revision));',
+    '    if (currentWarrantId) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRecoveryWarrantId", currentWarrantId);',
+    '    if (currentWarrantStatus) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRecoveryWarrantStatus", currentWarrantStatus);',
+    '    if (currentRequiredProofCells) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRequiredProofCells", currentRequiredProofCells);',
     '  };',
     '  const targetByKind = {',
     "  AgentRun: { group: 'agents.proompteng.ai', version: 'v1alpha1', plural: 'agentruns' },",
@@ -1514,6 +1738,10 @@ const reconcileSchedule = async (
                       {
                         name: SCHEDULE_RUNNER_ADMISSION_CHECK_ENV,
                         value: supportingConfig.scheduleRunnerAdmissionCheck ? 'true' : 'false',
+                      },
+                      {
+                        name: SCHEDULE_RUNNER_RUNTIME_PROOF_CHECK_ENV,
+                        value: shouldEnforceSwarmRuntimeProof() ? 'true' : 'false',
                       },
                       {
                         name: SCHEDULE_RUNNER_ADMISSION_STATUS_URL_ENV,
@@ -1785,6 +2013,7 @@ const reconcileSwarm = async (
 
   const nowMs = Date.now()
   const runtimeAdmissionEnforced = shouldEnforceSwarmRuntimeAdmission()
+  const runtimeProofEnforced = runtimeAdmissionEnforced && shouldEnforceSwarmRuntimeProof()
   let runtimeAdmissionSnapshot: ReturnType<typeof buildRuntimeAdmissionSnapshot> | null = null
   let runtimeAdmissionUnavailableMessage: string | null = null
   if (runtimeAdmissionEnforced) {
@@ -1802,7 +2031,10 @@ const reconcileSwarm = async (
   const launchAdmissions = Object.fromEntries(
     STAGE_NAMES.map((stage) => {
       if (runtimeAdmissionUnavailableMessage) {
-        return [stage, buildRuntimeAdmissionUnavailable(stage, runtimeAdmissionUnavailableMessage)]
+        return [
+          stage,
+          buildRuntimeAdmissionUnavailable(stage, runtimeAdmissionUnavailableMessage, runtimeProofEnforced),
+        ]
       }
       return [
         stage,
@@ -1810,6 +2042,8 @@ const reconcileSwarm = async (
           stage,
           snapshot: runtimeAdmissionSnapshot,
           enforced: runtimeAdmissionEnforced,
+          proofEnforced: runtimeProofEnforced,
+          nowMs,
         }),
       ]
     }),
