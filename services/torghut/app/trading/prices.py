@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from http.client import HTTPConnection, HTTPSConnection
-from typing import Any, Optional
+from typing import Any, Optional, cast
 from urllib.parse import urlencode, urlsplit
 
 from ..config import settings
@@ -45,6 +46,48 @@ class PriceFetcher:
             spread=None,
             source="price_fetcher",
         )
+
+
+def resolve_execution_reference_price(
+    *,
+    params: Mapping[str, Any] | None = None,
+    limit_price: Any = None,
+    stop_price: Any = None,
+    market_snapshot: MarketSnapshot | None = None,
+    fallback_price: Any = None,
+) -> Decimal | None:
+    """Resolve the price used for execution sizing, impact, and TCA.
+
+    Signal payloads can carry both a strategy feature price and a fetched market
+    snapshot. The snapshot is the executable reference; the raw signal price is a
+    fallback so stale feature values cannot silently distort notional or TCA.
+    """
+
+    params_payload: Mapping[str, Any] = params or {}
+    price_snapshot = params_payload.get("price_snapshot")
+    snapshot_price = None
+    if isinstance(price_snapshot, Mapping):
+        snapshot_price = cast(Mapping[str, Any], price_snapshot).get("price")
+
+    market_snapshot_price = (
+        market_snapshot.price if market_snapshot is not None else None
+    )
+    for candidate in (
+        params_payload.get("arrival_price"),
+        params_payload.get("reference_price"),
+        params_payload.get("simulated_fill_price"),
+        params_payload.get("fill_price"),
+        snapshot_price,
+        limit_price,
+        stop_price,
+        market_snapshot_price,
+        fallback_price,
+        params_payload.get("price"),
+    ):
+        resolved = _optional_decimal(candidate)
+        if resolved is not None and resolved > 0:
+            return resolved
+    return None
 
 
 class ClickHousePriceFetcher(PriceFetcher):

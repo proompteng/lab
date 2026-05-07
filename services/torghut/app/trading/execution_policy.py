@@ -17,7 +17,7 @@ from .microstructure import (
     parse_microstructure_state,
 )
 from .models import StrategyDecision
-from .prices import MarketSnapshot
+from .prices import MarketSnapshot, resolve_execution_reference_price
 from .quantity_rules import (
     min_qty_for_symbol,
     qty_has_valid_increment,
@@ -1111,14 +1111,12 @@ def _build_impact_assumptions(
 def _resolve_price(
     decision: StrategyDecision, market_snapshot: Optional[MarketSnapshot]
 ) -> Optional[Decimal]:
-    candidate = decision.params.get("price")
-    if candidate is None:
-        candidate = decision.limit_price
-    if candidate is None:
-        candidate = decision.stop_price
-    if candidate is None and market_snapshot is not None:
-        candidate = market_snapshot.price
-    return _optional_decimal(candidate)
+    return resolve_execution_reference_price(
+        params=decision.params,
+        limit_price=decision.limit_price,
+        stop_price=decision.stop_price,
+        market_snapshot=market_snapshot,
+    )
 
 
 def _position_summary(symbol: str, positions: Iterable[dict[str, Any]]) -> Decimal:

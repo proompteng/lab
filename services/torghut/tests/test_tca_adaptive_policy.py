@@ -8,7 +8,11 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import Base, Execution, ExecutionTCAMetric, Strategy, TradeDecision
-from app.trading.tca import build_tca_gate_inputs, derive_adaptive_execution_policy
+from app.trading.tca import (
+    build_tca_gate_inputs,
+    derive_adaptive_execution_policy,
+    upsert_execution_tca_metric,
+)
 
 
 class TestAdaptiveExecutionPolicyDerivation(TestCase):
@@ -247,6 +251,58 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
         self.assertEqual(expected["filled_execution_count"], 2)
         self.assertEqual(expected["unsettled_execution_count"], 1)
         self.assertIsNotNone(expected["latest_execution_created_at"])
+
+    def test_upsert_tca_prefers_price_snapshot_over_stale_signal_price(self) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper",
+                symbol="MU",
+                timeframe="1Min",
+                decision_json={
+                    "strategy_id": str(strategy.id),
+                    "symbol": "MU",
+                    "action": "sell",
+                    "qty": "2.4232",
+                    "params": {
+                        "price": "412.6704331378219",
+                        "price_snapshot": {
+                            "price": "316.93",
+                            "source": "ta_microbars",
+                            "as_of": "2026-03-31T13:38:20+00:00",
+                        },
+                    },
+                },
+                rationale="test",
+                status="submitted",
+                decision_hash="hash-stale-signal-price",
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_order_id="order-stale-signal-price",
+                client_order_id="client-stale-signal-price",
+                symbol="MU",
+                side="sell",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("2.4232"),
+                filled_qty=Decimal("2.4232"),
+                avg_fill_price=Decimal("316.93"),
+                status="filled",
+                execution_expected_adapter="alpaca",
+                execution_actual_adapter="alpaca",
+            )
+            session.add(execution)
+            session.flush()
+
+            metric = upsert_execution_tca_metric(session, execution)
+
+        self.assertEqual(metric.arrival_price, Decimal("316.93"))
+        self.assertEqual(metric.slippage_bps, Decimal("0"))
+        self.assertEqual(metric.shortfall_notional, Decimal("0.0000"))
 
     def test_derivation_fallback_when_expected_shortfall_coverage_is_insufficient(
         self,
