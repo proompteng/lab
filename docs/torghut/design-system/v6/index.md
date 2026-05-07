@@ -990,3 +990,7 @@ This pack is positioned as the next architecture layer above:
   repairs by hypothesis, metric target, after-cost dividend, and Jangar escrow membership, keeping paper/live at zero
   notional until route-readable evidence can settle the current TCA, signal, feature, drift, market-context, and
   submission blockers.
+- `165-torghut-outcome-priced-repair-market-and-capital-shadow-swaps-2026-05-07.md` follows the zero-notional repair
+  packet and Jangar brownout-market contracts because the system is serving but still not capital-ready. It makes
+  route, quant, market-context, empirical, and alpha repairs compete by measured after-cost unblock value while keeping
+  all paper and live notional closed until before/after receipts and Jangar stage-freeze clearing exist.
