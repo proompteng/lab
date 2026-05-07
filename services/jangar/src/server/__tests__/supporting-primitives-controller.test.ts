@@ -285,7 +285,11 @@ describe('supporting primitives controller', () => {
     expect(command).toContain("replaceAll('__JANGAR_DELIVERY_ID__', randomUUID())")
     expect(command).toContain('JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK')
     expect(command).toContain('JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL')
-    expect(command).toContain('stale schedule admission passport')
+    expect(command).not.toContain('stale schedule admission passport')
+    expect(command).toContain(
+      'writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.passportId',
+    )
+    expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmAdmissionPassportId"')
     expect(command).toContain('current schedule admission runtime kit')
     expect(command).toContain('const targetByKind = {')
     expect(command).toContain("method: 'POST'")
