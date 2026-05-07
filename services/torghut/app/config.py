@@ -400,6 +400,11 @@ class Settings(BaseSettings):
     trading_price_lookback_minutes: int = Field(
         default=5, alias="TRADING_PRICE_LOOKBACK_MINUTES"
     )
+    trading_executable_quote_lookback_seconds: int = Field(
+        default=60,
+        alias="TRADING_EXECUTABLE_QUOTE_LOOKBACK_SECONDS",
+        description="Maximum age for a last-good executable quote used to backfill bid/ask before quote-quality checks.",
+    )
     trading_poll_ms: int = Field(default=5000, alias="TRADING_POLL_MS")
     trading_reconcile_ms: int = Field(default=15000, alias="TRADING_RECONCILE_MS")
     trading_order_feed_enabled: bool = Field(

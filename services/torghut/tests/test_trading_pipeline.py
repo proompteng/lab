@@ -38,14 +38,13 @@ from app.trading.llm.schema import (
     LLMDecisionContext,
     LLMPolicyContext,
     MarketContextBundle,
-    MarketSnapshot,
     PortfolioSnapshot,
     RecentDecisionSummary,
     LLMReviewRequest,
     LLMReviewResponse,
 )
 from app.trading.models import SignalEnvelope, StrategyDecision
-from app.trading.prices import PriceFetcher
+from app.trading.prices import MarketSnapshot, PriceFetcher
 from app.trading.ingest import SignalBatch
 from app.trading.reconcile import Reconciler
 from app.trading.risk import RiskEngine
@@ -624,9 +623,18 @@ def _default_probabilities(verdict: str, confidence: float) -> dict[str, float]:
 
 
 class FakePriceFetcher(PriceFetcher):
-    def __init__(self, price: Decimal, *, spread: Decimal | None = None) -> None:
+    def __init__(
+        self,
+        price: Decimal,
+        *,
+        spread: Decimal | None = None,
+        bid: Decimal | None = None,
+        ask: Decimal | None = None,
+    ) -> None:
         self.price = price
         self.spread = spread
+        self.bid = bid
+        self.ask = ask
 
     def fetch_price(self, signal: SignalEnvelope) -> Decimal:
         return self.price
@@ -638,6 +646,8 @@ class FakePriceFetcher(PriceFetcher):
             price=self.price,
             spread=self.spread,
             source="price_fetcher",
+            bid=self.bid,
+            ask=self.ask,
         )
 
 
@@ -729,6 +739,113 @@ class TestTradingPipeline(TestCase):
 
         for name, value in self._settings_snapshot.items():
             setattr(config.settings, name, value)
+
+    def test_ensure_signal_executable_price_backfills_missing_quote_from_snapshot(
+        self,
+    ) -> None:
+        alpaca_client = FakeAlpacaClient()
+        pipeline = TradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(
+                Decimal("101.50"),
+                spread=Decimal("0.02"),
+                bid=Decimal("101.49"),
+                ask=Decimal("101.51"),
+            ),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={
+                "price": Decimal("101.50"),
+                "macd": {"macd": Decimal("1.1"), "signal": Decimal("0.4")},
+            },
+            timeframe="1Min",
+        )
+
+        enriched = pipeline._ensure_signal_executable_price(signal)
+
+        self.assertEqual(enriched.payload.get("price"), Decimal("101.50"))
+        self.assertEqual(enriched.payload.get("imbalance_bid_px"), Decimal("101.49"))
+        self.assertEqual(enriched.payload.get("imbalance_ask_px"), Decimal("101.51"))
+        self.assertEqual(enriched.payload.get("spread"), Decimal("0.02"))
+        self.assertTrue(pipeline._signal_quote_quality.assess(enriched).valid)
+
+    def test_ensure_signal_executable_price_backfills_missing_price_from_snapshot(
+        self,
+    ) -> None:
+        alpaca_client = FakeAlpacaClient()
+        pipeline = TradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(Decimal("101.50")),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={
+                "macd": {"macd": Decimal("1.1"), "signal": Decimal("0.4")},
+            },
+            timeframe="1Min",
+        )
+
+        enriched = pipeline._ensure_signal_executable_price(signal)
+
+        self.assertEqual(enriched.payload.get("price"), Decimal("101.50"))
+
+    def test_ensure_signal_executable_price_returns_original_when_snapshot_adds_nothing(
+        self,
+    ) -> None:
+        alpaca_client = FakeAlpacaClient()
+        pipeline = TradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(Decimal("101.50")),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={
+                "price": Decimal("101.50"),
+                "macd": {"macd": Decimal("1.1"), "signal": Decimal("0.4")},
+            },
+            timeframe="1Min",
+        )
+
+        enriched = pipeline._ensure_signal_executable_price(signal)
+
+        self.assertIs(enriched, signal)
 
     def _seed_promotion_certificate_evidence(
         self,
