@@ -4,6 +4,10 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/158-torghut-capital-proof-provenance-and-routeable-edge-repair-ledger-2026-05-07.md`
+  (current capital proof provenance and routeable edge repair contract)
+- `docs/agents/designs/154-jangar-source-provenance-leases-and-material-action-escrow-2026-05-07.md`
+  (current Jangar source provenance lease and material action escrow contract)
 - `docs/torghut/design-system/v6/157-torghut-profit-contract-actuation-and-capital-surface-truth-2026-05-07.md`
   (current profit contract actuation and capital-surface truth contract)
 - `docs/agents/designs/153-jangar-design-actuation-ledger-and-contract-convergence-gates-2026-05-07.md`
