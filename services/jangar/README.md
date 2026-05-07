@@ -246,6 +246,14 @@ runtime kits, and running on the same image digest as the promoted deployment. T
 rollback for the verifier gate is `--skip-admission-passport-verification` or
 `JANGAR_VERIFY_ADMISSION_PASSPORTS=false`; keep the status projection enabled for forensics.
 
+By default, deploy verification also checks the recovery-warrant proof surface from the same status payload. For each
+configured passport consumer, the verifier requires the deploy-relevant warrant (`serving`, `plan`, `implement`, or
+`verify`) to be `sealed`, cite the same passport/runtime-kit digest, match the promoted image digest, have fresh healthy
+required proof cells, and expose a fresh `deploy_verification` projection watermark that cites the same passport.
+Superseded warrants must report zero active backlog seats before the rollout is marked safe. Emergency rollback for this
+proof-surface gate is `--skip-runtime-proof-verification` or `JANGAR_VERIFY_RUNTIME_PROOF_SURFACE=false`; skipping
+admission passport verification also skips the proof-surface gate because both gates consume the same status projection.
+
 Rollback: set `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` on the control-plane runtime to return launch behavior
 to the previous advisory-only passport mode while keeping status and `/ready` passport projection visible for forensics.
 
