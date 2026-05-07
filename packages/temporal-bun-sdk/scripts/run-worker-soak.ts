@@ -171,6 +171,7 @@ type WorkerLoadReport = {
     readonly activityStartToCloseTimeoutMs?: number
     readonly activityScheduleToStartTimeoutMs?: number
     readonly activityScheduleToCloseTimeoutMs?: number
+    readonly workflowDescribeConcurrency?: number
   }
   readonly stats?: {
     readonly submitted?: number
@@ -208,6 +209,7 @@ type LoadReportSummary = {
   readonly failureInjection: FailureInjectionReport | null
   readonly temporalCliVersion: string
   readonly taskQueue: string
+  readonly workflowDescribeConcurrency: number
 }
 
 type FailureInjectionReport = {
@@ -364,6 +366,7 @@ function summarizeLoadReport(report: WorkerLoadReport | null): LoadReportSummary
     failureInjection: report.failureInjection ?? null,
     temporalCliVersion: report.environment?.temporalCliVersion ?? 'unknown',
     taskQueue: report.environment?.taskQueue ?? 'unknown',
+    workflowDescribeConcurrency: report.config?.workflowDescribeConcurrency ?? 0,
   }
 }
 
