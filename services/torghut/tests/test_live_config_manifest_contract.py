@@ -315,6 +315,8 @@ class TestLiveConfigManifestContract(TestCase):
                 "microbar-prev-day-open45-reversal-long-top1-chip-v1",
                 "intraday-tsmom-profit-v3",
                 "breakout-continuation-long-v1",
+                "mean-reversion-rebound-long-v1",
+                "mean-reversion-exhaustion-short-v1",
             },
         )
 
@@ -352,11 +354,8 @@ class TestLiveConfigManifestContract(TestCase):
                     Decimal("3.0"),
                 )
                 self.assertEqual(params.get("max_spread_bps"), "20")
-            else:
+            elif str(strategy.get("strategy_type")) == "breakout_continuation_long_v1":
                 self.assertEqual(name, "breakout-continuation-long-v1")
-                self.assertEqual(
-                    strategy.get("strategy_type"), "breakout_continuation_long_v1"
-                )
                 self.assertEqual(
                     _strategy_decimal(strategy, "max_notional_per_trade"),
                     Decimal("50000"),
@@ -367,6 +366,35 @@ class TestLiveConfigManifestContract(TestCase):
                 )
                 self.assertEqual(params.get("max_spread_bps"), "20")
                 self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
+            elif str(strategy.get("strategy_type")) in {
+                "mean_reversion_rebound_long_v1",
+                "mean_reversion_exhaustion_short_v1",
+            }:
+                self.assertIn(
+                    name,
+                    {
+                        "mean-reversion-rebound-long-v1",
+                        "mean-reversion-exhaustion-short-v1",
+                    },
+                )
+                self.assertLessEqual(
+                    _strategy_decimal(strategy, "max_notional_per_trade")
+                    or Decimal("0"),
+                    Decimal("31590"),
+                )
+                self.assertEqual(
+                    _strategy_decimal(strategy, "max_position_pct_equity"),
+                    Decimal("1.0"),
+                )
+                self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
+                self.assertLessEqual(
+                    Decimal(str(params.get("max_spread_bps") or "0")),
+                    Decimal("20"),
+                )
+            else:
+                self.fail(
+                    f"enabled paper strategy {name} has unexpected type {strategy.get('strategy_type')}"
+                )
 
     def test_runtime_symbol_sources_use_live_signal_universe(self) -> None:
         live_env = _load_torghut_knative_env()
