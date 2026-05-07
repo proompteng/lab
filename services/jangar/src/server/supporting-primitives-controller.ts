@@ -171,6 +171,18 @@ const AGENTRUN_TEMPLATE_ANNOTATION = 'agents.proompteng.ai/template'
 
 const nowIso = () => new Date().toISOString()
 
+const splitSwarmFreezeReasons = (reason: string | null | undefined) =>
+  (reason ?? '')
+    .split('|')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+
+const isBlockingSwarmFreezeReason = (reason: string | null | undefined) => {
+  const reasons = splitSwarmFreezeReasons(reason)
+  if (reasons.length === 0) return true
+  return reasons.some((entry) => entry !== 'StageStaleness')
+}
+
 type SwarmLaunchAdmission = {
   enforced: boolean
   proofEnforced: boolean
@@ -2161,6 +2173,7 @@ const reconcileSwarm = async (
       previousReason: frozenAtReleaseReason,
     })
   }
+  const freezeBlocksWork = freezeActive && isBlockingSwarmFreezeReason(freezeReason)
 
   const ownerReferences = buildOwnerRefs(swarm)
   const implementStageConfig = stageConfigs.find(
@@ -2263,7 +2276,7 @@ const reconcileSwarm = async (
       requirementStats.blocked += 1
       continue
     }
-    if (freezeActive) continue
+    if (freezeBlocksWork) continue
     if (!requirementAdmission.admitted) {
       requirementStats.blocked += 1
       requirementStats.admissionBlocked += 1
@@ -2436,11 +2449,11 @@ const reconcileSwarm = async (
       admission: admissionStatusForStage(stageAdmission),
     }
 
-    if (!stageConfig.enabled || freezeActive) {
+    if (!stageConfig.enabled || freezeBlocksWork) {
       await deleteStageScheduleAndRunnerResources(kube, stageConfig.scheduleName, swarmNamespace)
       stageStates[stageConfig.stage] = {
         ...baseState,
-        phase: freezeActive ? 'Frozen' : 'Disabled',
+        phase: freezeBlocksWork ? 'Frozen' : 'Disabled',
       }
       continue
     }
