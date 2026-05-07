@@ -12,6 +12,10 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority, refreshed `2026-05-07T12:24Z`):
+  - `152-torghut-proof-floor-settlement-bonds-and-tca-repair-auction-2026-05-07.md`
+  - `docs/agents/designs/148-jangar-source-rollout-truth-exchange-and-proof-floor-settlement-2026-05-07.md`
+  - `151-torghut-hypothesis-scoped-capital-adjudication-and-profit-gates-2026-05-07.md`
+  - `docs/agents/designs/147-jangar-hypothesis-scoped-capital-adjudication-ledger-2026-05-07.md`
   - `150-torghut-repair-dividend-order-book-and-capital-warrants-2026-05-07.md`
   - `docs/agents/designs/146-jangar-repair-warrant-exchange-and-schedule-debt-firebreak-2026-05-07.md`
   - `149-torghut-profit-evidence-convergence-epochs-and-quant-stage-arbitrage-2026-05-07.md`
