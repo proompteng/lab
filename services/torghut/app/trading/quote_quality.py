@@ -64,6 +64,8 @@ def assess_signal_quote_quality(
     if price is None or price <= 0:
         return QuoteQualityStatus(valid=False, reason='non_positive_price')
     if bid is None and ask is None:
+        bid, ask = _infer_quote_from_spread(signal=signal, price=price)
+    if bid is None and ask is None:
         return QuoteQualityStatus(valid=False, reason='missing_executable_quote')
     if bid is None:
         return QuoteQualityStatus(valid=False, reason='missing_bid')
@@ -129,6 +131,20 @@ def _extract_ask(signal: SignalEnvelope) -> Decimal | None:
     )
 
 
+def _infer_quote_from_spread(
+    *,
+    signal: SignalEnvelope,
+    price: Decimal,
+) -> tuple[Decimal | None, Decimal | None]:
+    spread = _extract_explicit_spread(signal)
+    if spread is None:
+        return None, None
+    if spread < 0:
+        return price, price + spread
+    half_spread = spread / Decimal('2')
+    return price - half_spread, price + half_spread
+
+
 def _signal_spread_bps(
     *,
     signal: SignalEnvelope,
@@ -136,16 +152,7 @@ def _signal_spread_bps(
 ) -> Decimal | None:
     if price is None or price <= 0:
         return None
-    spread = _optional_decimal(signal.payload.get('spread'))
-    if spread is None:
-        spread = _optional_decimal(
-            payload_value(
-                signal.payload,
-                'imbalance_spread',
-                block='imbalance',
-                nested_key='spread',
-            )
-        )
+    spread = _extract_explicit_spread(signal)
     if spread is None:
         bid = _extract_bid(signal)
         ask = _extract_ask(signal)
@@ -154,6 +161,20 @@ def _signal_spread_bps(
     if spread is None:
         return None
     return (abs(spread) / price) * Decimal('10000')
+
+
+def _extract_explicit_spread(signal: SignalEnvelope) -> Decimal | None:
+    spread = _optional_decimal(signal.payload.get('spread'))
+    if spread is not None:
+        return spread
+    return _optional_decimal(
+        payload_value(
+            signal.payload,
+            'imbalance_spread',
+            block='imbalance',
+            nested_key='spread',
+        )
+    )
 
 
 def _signal_mid_jump_bps(

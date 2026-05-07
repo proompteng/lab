@@ -69,7 +69,10 @@ class FakeIngestor:
 
     def fetch_signals(self, session: Session) -> SignalBatch:
         return SignalBatch(
-            signals=self.signals, cursor_at=None, cursor_seq=None, cursor_symbol=None
+            signals=[_with_executable_quote(signal) for signal in self.signals],
+            cursor_at=None,
+            cursor_seq=None,
+            cursor_symbol=None,
         )
 
     def commit_cursor(self, session: Session, batch: SignalBatch) -> None:
@@ -98,7 +101,7 @@ class WarmupIngestor(FakeIngestor):
     ) -> SignalBatch:
         self.warmup_ranges.append((start, end))
         return SignalBatch(
-            signals=self.warmup_signals,
+            signals=[_with_executable_quote(signal) for signal in self.warmup_signals],
             cursor_at=end,
             cursor_seq=None,
             cursor_symbol=None,
@@ -153,6 +156,43 @@ class RecordingDecisionEngine(DecisionEngine):
     def observe_signal(self, signal: SignalEnvelope) -> None:
         self.observed_symbols.append(signal.symbol)
         super().observe_signal(signal)
+
+
+def _with_executable_quote(signal: SignalEnvelope) -> SignalEnvelope:
+    payload = dict(signal.payload)
+    if _has_executable_quote(payload) or 'price' not in payload:
+        return signal
+    price = _optional_signal_decimal(payload.get('price'))
+    if price is None or price <= 0:
+        return signal
+    spread = _optional_signal_decimal(payload.get('spread')) or Decimal('0.02')
+    if spread < 0:
+        return signal
+    half_spread = spread / Decimal('2')
+    payload['imbalance_bid_px'] = price - half_spread
+    payload['imbalance_ask_px'] = price + half_spread
+    payload['spread'] = spread
+    return signal.model_copy(update={'payload': payload})
+
+
+def _has_executable_quote(payload: dict[str, Any]) -> bool:
+    if payload.get('imbalance_bid_px') is not None and payload.get('imbalance_ask_px') is not None:
+        return True
+    imbalance = payload.get('imbalance')
+    return (
+        isinstance(imbalance, dict)
+        and imbalance.get('bid_px') is not None
+        and imbalance.get('ask_px') is not None
+    )
+
+
+def _optional_signal_decimal(value: object) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
 
 
 class RaisingObserveDecisionEngine(DecisionEngine):

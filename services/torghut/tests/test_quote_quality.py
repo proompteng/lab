@@ -79,6 +79,28 @@ class TestQuoteQuality(TestCase):
         self.assertTrue(status.valid)
         self.assertEqual(status.spread_bps, Decimal('0.7618757380671212525237133823'))
 
+    def test_assess_signal_quote_quality_infers_quote_from_explicit_spread(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 24, tzinfo=timezone.utc),
+            symbol='META',
+            timeframe='1Sec',
+            seq=16,
+            payload={
+                'price': Decimal('525.00'),
+                'spread': Decimal('0.04'),
+            },
+        )
+
+        status = assess_signal_quote_quality(
+            signal=signal,
+            previous_price=Decimal('525.01'),
+        )
+
+        self.assertTrue(status.valid)
+        self.assertEqual(status.spread_bps, Decimal('0.7619047619047619047619047619'))
+
     def test_assess_signal_quote_quality_rejects_zero_top_level_bid_without_falling_back(
         self,
     ) -> None:
