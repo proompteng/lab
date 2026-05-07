@@ -5,12 +5,15 @@
 - Version: `v6`
 - Date: `2026-03-03`
 - Maturity: `production-quality design pack`
-- Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
+- Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM
+  reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-07T06:20Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-07T06:29Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-07T06:20Z`):
+- Evidence (current next-work priority, refreshed `2026-05-07T06:29Z`):
+  - `138-torghut-profit-stats-census-and-tca-reactivation-market-2026-05-07.md`
+  - `docs/agents/designs/134-jangar-evidence-census-and-projection-settlement-exchange-2026-05-07.md`
   - `138-torghut-capital-efficiency-proof-exchange-and-profit-clock-2026-05-07.md`
   - `docs/agents/designs/134-jangar-profit-clock-settlement-router-and-evidence-margin-arbiter-2026-05-07.md`
   - `137-torghut-renewal-bond-profit-escrow-and-evidence-carry-2026-05-07.md`
