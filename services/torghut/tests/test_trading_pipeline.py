@@ -1657,6 +1657,64 @@ class TestTradingPipeline(TestCase):
         }
         self.assertEqual(dimensions["market_context"]["state"], "pass")
 
+    def test_simple_pipeline_refreshes_market_context_during_prepare_run_once(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_market_context_url = "http://market-context.test/api"
+        config.settings.trading_market_context_timeout_seconds = 1
+        config.settings.trading_market_context_max_staleness_seconds = 300
+        config.settings.trading_market_context_min_quality = 0.4
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        class _MarketContextClient:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def fetch(
+                self, symbol: str, *, as_of: datetime | None = None
+            ) -> MarketContextBundle:
+                del as_of
+                self.calls.append(symbol)
+                return _market_context_bundle(symbol=symbol)
+
+        class _UniverseResolver:
+            @staticmethod
+            def get_resolution() -> SimpleNamespace:
+                return SimpleNamespace(symbols={"AAPL"})
+
+        fake_market_context = _MarketContextClient()
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline.market_context_client = cast(Any, fake_market_context)
+        pipeline.universe_resolver = cast(Any, _UniverseResolver())
+
+        with self.session_local() as session:
+            strategies = pipeline._prepare_run_once(session)
+
+        self.assertEqual(strategies, [])
+        self.assertEqual(fake_market_context.calls, ["AAPL"])
+        self.assertEqual(pipeline.state.last_market_context_symbol, "AAPL")
+        self.assertIsNotNone(pipeline.state.last_market_context_checked_at)
+        self.assertEqual(pipeline.state.last_market_context_freshness_seconds, 20)
+
     def test_simple_pipeline_market_context_refresh_skips_recent_or_fresh_state(
         self,
     ) -> None:
