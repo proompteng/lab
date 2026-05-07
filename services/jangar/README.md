@@ -215,10 +215,12 @@ active.
 
 Schedule-runner pods also verify the stamped passport and sealed warrant against the current
 `/api/agents/control-plane/status?namespace=<schedule namespace>` response immediately before creating the AgentRun or
-OrchestrationRun. A launch-capable swarm runner manifest missing its admission passport stamp, a stale passport id,
-changed runtime-kit digest, non-`allow` decision, stale freshness window, unhealthy cited runtime kit, non-sealed
-recovery warrant, or stale/unhealthy required proof cell fails the runner before work is launched. Emergency rollback
-for this fire-time check only is `JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false`; setting
+OrchestrationRun. A launch-capable swarm runner manifest missing its admission passport stamp, a current non-`allow`
+passport, stale freshness window, unhealthy cited runtime kit, non-sealed recovery warrant, or stale/unhealthy required
+proof cell fails the runner before work is launched. If the stamped passport id or runtime-kit digest drifted but the
+current status payload is still admitted, the runner refreshes the outgoing run annotations and parameters to the
+current passport, warrant, and proof-cell ids before launch. Emergency rollback for this fire-time check only is
+`JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false`; setting
 `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` also disables generated runner admission and proof checks so advisory
 rollback schedules do not fail because they intentionally lack passport stamps.
 
@@ -246,9 +248,11 @@ Admitted schedules and requirement runs carry these trace fields in annotations 
 The runtime-admission compiler also emits Phase 0 recovery-warrant evidence from the same passport snapshot.
 `/ready` and `/api/agents/control-plane/status` include shadow `recovery_warrants`, `runtime_proof_cells`, and
 `projection_watermarks`. A missing required helper or config value becomes a broken warrant with a missing proof cell,
-and the launcher gate now consumes that sealed warrant truth before creating work. Rollback for launcher proof
-enforcement is to set `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=false` while keeping `runtime_kits`,
-`admission_passports`, and proof-surface projection intact.
+and the launcher gate now consumes that sealed warrant truth before creating work. Warrant, epoch, proof-cell, and
+deploy-verification watermark ids stay stable across ordinary freshness refreshes; they change only when the underlying
+passport, runtime-kit digest, proof content, or decision changes. Rollback for launcher proof enforcement is to set
+`JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=false` while keeping `runtime_kits`, `admission_passports`, and proof-surface
+projection intact.
 
 Deploy verification also consumes the runtime-admission projection. After Argo, rollout, and image digest checks pass,
 `packages/scripts/src/jangar/verify-deployment.ts` reads

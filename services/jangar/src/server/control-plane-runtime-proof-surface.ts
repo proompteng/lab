@@ -211,7 +211,6 @@ const buildRecoveryWarrantId = ({
       execution_class: executionClass,
       runtime_kit_set_digest: passport.runtime_kit_set_digest,
       decision: passport.decision,
-      fresh_until: passport.fresh_until,
     }),
   )}`
 
@@ -283,9 +282,9 @@ const buildRecoveryWarrantStatus = ({
     recovery_warrant_id: recoveryWarrantId,
     recovery_epoch_id: `recovery-epoch:${shortDigest(
       digestObject({
+        admission_passport_id: passport.admission_passport_id,
         execution_class: executionClass,
         runtime_kit_digest: passport.runtime_kit_set_digest,
-        opened_at: passport.issued_at,
       }),
     )}`,
     swarm_name: 'jangar-control-plane',
