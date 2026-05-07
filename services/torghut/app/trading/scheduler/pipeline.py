@@ -307,10 +307,18 @@ class TradingPipeline:
         if warmup_end <= session_open:
             return
 
+        warmup_limit = max(
+            1,
+            int(settings.trading_session_context_warmup_signal_limit),
+        )
         try:
             warmup_batch = cast(
                 SignalBatch,
-                fetch_with_reason(start=session_open, end=warmup_end),
+                fetch_with_reason(
+                    start=session_open,
+                    end=warmup_end,
+                    limit=warmup_limit,
+                ),
             )
         except Exception:
             logger.exception(
@@ -345,10 +353,11 @@ class TradingPipeline:
                 )
         self._session_context_warmup_day = session_day
         logger.info(
-            "Session context warmup complete account=%s start=%s end=%s signals=%s",
+            "Session context warmup complete account=%s start=%s end=%s limit=%s signals=%s",
             self.account_label,
             session_open.isoformat(),
             warmup_end.isoformat(),
+            warmup_limit,
             warmed,
         )
 
