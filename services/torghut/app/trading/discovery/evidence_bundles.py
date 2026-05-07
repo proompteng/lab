@@ -27,6 +27,21 @@ def _string(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _decomposition_symbol_contribution_shares(
+    candidate: Mapping[str, Any],
+) -> dict[str, str]:
+    decomposition = _mapping(candidate.get("decomposition"))
+    raw_symbols = _mapping(decomposition.get("symbols"))
+    shares: dict[str, str] = {}
+    for raw_symbol, raw_payload in raw_symbols.items():
+        symbol = _string(raw_symbol).upper()
+        payload = _mapping(raw_payload)
+        share = _string(payload.get("positive_pnl_share"))
+        if symbol and share:
+            shares[symbol] = share
+    return shares
+
+
 @dataclass(frozen=True)
 class CandidateEvidenceBundle:
     schema_version: Literal["torghut.candidate-evidence-bundle.v1"]
@@ -94,6 +109,10 @@ def evidence_bundle_from_frontier_candidate(
         scorecard = {**scorecard, "daily_filled_notional": daily_filled_notional}
     if "trading_day_count" in full_window and "trading_day_count" not in scorecard:
         scorecard = {**scorecard, "trading_day_count": full_window["trading_day_count"]}
+    if "symbol_contribution_shares" not in scorecard and "symbol" not in scorecard:
+        symbol_shares = _decomposition_symbol_contribution_shares(candidate)
+        if symbol_shares:
+            scorecard = {**scorecard, "symbol_contribution_shares": symbol_shares}
     for key in ("family_template_id", "runtime_family", "runtime_strategy_name"):
         value = _string(candidate.get(key))
         if value and key not in scorecard:
