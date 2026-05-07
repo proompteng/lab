@@ -1105,28 +1105,31 @@ class TestTradingPipeline(TestCase):
         )
         pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
 
-        with patch.object(
-            SimpleTradingPipeline,
-            "_live_submission_gate",
-            return_value={
-                "allowed": True,
-                "reason": "promotion_certificate_valid",
-                "blocked_reasons": [],
-                "capital_stage": "live",
-                "capital_state": "live",
-                "profit_window_contract": {
-                    "summary": {"windows_total": 1},
+        with (
+            patch.object(
+                SimpleTradingPipeline,
+                "_live_submission_gate",
+                return_value={
+                    "allowed": True,
+                    "reason": "promotion_certificate_valid",
+                    "blocked_reasons": [],
+                    "capital_stage": "live",
+                    "capital_state": "live",
+                    "profit_window_contract": {
+                        "summary": {"windows_total": 1},
+                    },
                 },
-            },
-        ), patch.object(
-            SimpleTradingPipeline,
-            "_profitability_proof_floor",
-            return_value={
-                "route_state": "paper_ready",
-                "capital_state": "paper",
-                "max_notional": "1000",
-                "blocking_reasons": [],
-            },
+            ),
+            patch.object(
+                SimpleTradingPipeline,
+                "_profitability_proof_floor",
+                return_value={
+                    "route_state": "paper_ready",
+                    "capital_state": "paper",
+                    "max_notional": "1000",
+                    "blocking_reasons": [],
+                },
+            ),
         ):
             pipeline.run_once()
 
