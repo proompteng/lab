@@ -272,6 +272,53 @@ class TestCandidateSpecs(TestCase):
         self.assertEqual(params["entry_end_minute_utc"], "1170")
         self.assertIn("min_cross_section_continuation_breadth", params)
 
+    def test_final_half_hour_reversal_hypothesis_gets_eod_runtime_profile(self) -> None:
+        card = HypothesisCard(
+            schema_version=HYPOTHESIS_CARD_SCHEMA_VERSION,
+            hypothesis_id="hyp-eod-loser-reversal",
+            source_run_id="paper-eod-loser-reversal",
+            source_claim_ids=("claim-eod-loser-reversal",),
+            mechanism=(
+                "Individual-stock losers can reverse sharply in the final 30 minutes "
+                "during a closing-window rebound."
+            ),
+            asset_scope="us_equities_intraday",
+            horizon_scope="late_day_reversal",
+            expected_direction="positive",
+            required_features=(
+                "closing_window",
+                "intraday_return_rank",
+                "quote_quality",
+            ),
+            entry_motifs=("end_of_day_reversal",),
+            exit_motifs=("close_flatten",),
+            risk_controls=("quote_quality", "stop_loss"),
+            expected_regimes=("late_session_reversal",),
+            failure_modes=("cost_stress",),
+            implementation_constraints={"execution_profile_index": 0},
+            confidence=Decimal("0.77"),
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=[card], target_net_pnl_per_day=Decimal("300")
+        )
+        eod = next(
+            spec
+            for spec in specs
+            if spec.family_template_id == "end_of_day_reversal_v1"
+        )
+
+        self.assertEqual(eod.runtime_family, "end_of_day_reversal_consistent")
+        self.assertEqual(eod.runtime_strategy_name, "end-of-day-reversal-long-v1")
+        self.assertEqual(
+            eod.feature_contract["execution_profile"]["profile_id"],
+            "end_of_day_reversal_v1:profile-1",
+        )
+        params = eod.strategy_overrides["params"]
+        self.assertEqual(params["entry_start_minute_utc"], "1150")
+        self.assertEqual(params["entry_end_minute_utc"], "1188")
+        self.assertIn("min_cross_section_reversal_rank", params)
+
     def test_missing_features_and_invalid_payloads_are_blocked(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-2",

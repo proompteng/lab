@@ -4,6 +4,8 @@ economic_mechanism: Late-session reversal in intraday losers after rebid confirm
 supported_markets:
   - us_equities_intraday
 required_features:
+  - closing_window
+  - intraday_return_rank
   - late_day_drawdown
   - reversal_rank
   - quote_quality

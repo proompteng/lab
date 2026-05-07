@@ -25,6 +25,7 @@ EXECUTABLE_FAMILY_IDS = {
     "microstructure_continuation_matched_filter_v1",
     "intraday_tsmom_v2",
     "late_day_continuation_v1",
+    "end_of_day_reversal_v1",
 }
 
 FEATURE_ALIASES = {
