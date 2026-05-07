@@ -13,6 +13,8 @@
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority, refreshed `2026-05-07T17:25Z`):
   - `136-torghut-quant-plan-closeout-and-proof-surface-handoff-2026-05-07.md`
+  - `162-torghut-profit-evidence-refill-and-capital-route-reentry-2026-05-07.md`
+  - `docs/agents/designs/158-jangar-controller-ingestion-epochs-and-profit-evidence-refill-gates-2026-05-07.md`
   - `161-torghut-shadow-capital-parity-and-no-notional-release-train-2026-05-07.md`
   - `docs/agents/designs/157-jangar-shadow-parity-ledger-and-enforcement-release-train-2026-05-07.md`
   - `160-torghut-proof-surface-activation-ledger-and-capital-receipt-firewall-2026-05-07.md`
