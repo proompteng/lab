@@ -94,6 +94,8 @@ Current source-of-truth design:
 
 - `docs/agents/designs/168-jangar-source-heartbeat-witness-settlement-and-material-action-bonds-2026-05-07.md`
 - `docs/torghut/design-system/v6/172-torghut-repair-yield-ledger-and-session-proof-capital-gates-2026-05-07.md`
+- `docs/agents/designs/169-jangar-ready-action-evidence-exchange-and-deployer-custody-2026-05-07.md`
+- `docs/torghut/design-system/v6/173-torghut-no-notional-repair-options-desk-and-promotion-custody-2026-05-07.md`
 - `docs/agents/designs/167-jangar-terminal-evidence-half-life-and-debris-retirement-2026-05-07.md`
 - `docs/torghut/design-system/v6/171-torghut-profit-evidence-half-life-and-capital-carry-governor-2026-05-07.md`
 - `docs/agents/designs/166-jangar-evidence-capability-ledger-and-observer-lease-gates-2026-05-07.md`
@@ -112,12 +114,13 @@ Current source-of-truth design:
 - `docs/torghut/design-system/v6/128-torghut-data-plane-disruption-premium-and-freshness-settlement-2026-05-06.md`
 
 The immediate invariant is that serving readiness, rollout availability, a route-level controller heartbeat, direct SQL
-heartbeat freshness, or an action clock `allow` cannot upgrade a stricter source-heartbeat witness bond, launch cohort,
-source provenance lease, heartbeat stability receipt, run-settlement watermark, terminal evidence half-life ledger, or
-Torghut repair-yield gate. In the current live state, missing source or GitOps revision truth, AgentRun ingestion
-unknowns, retained failed runner pods, retry-only schedule successes, oversized quant proof carry, stale market-context
-domains, and Torghut routeability debt must keep dispatch widening, merge readiness, paper canary, and live capital
-inside explicit hold or observe-only decisions until stable proof arrives.
+heartbeat freshness, an action clock `allow`, or fresh quant metrics cannot upgrade a stricter source-heartbeat witness
+bond, launch cohort, source provenance lease, heartbeat stability receipt, run-settlement watermark, terminal evidence
+half-life ledger, ready-action packet, Torghut repair-yield gate, or Torghut promotion-custody packet. In the current
+live state, missing source or GitOps revision truth, AgentRun ingestion unknowns, retained failed runner pods, failed
+jobs, retry-only schedule successes, stale database statistics, oversized quant proof carry, stale market-context
+domains, routeability debt, and missing promotion evidence must keep normal dispatch, deploy widening, merge readiness,
+paper canary, and live capital inside explicit hold or observe-only decisions until action-specific proof arrives.
 
 ## Ownership map
 
@@ -168,6 +171,8 @@ Historical or design context docs:
 - `docs/jangar/current-state.md`
 - `docs/agents/designs/168-jangar-source-heartbeat-witness-settlement-and-material-action-bonds-2026-05-07.md`
 - `docs/torghut/design-system/v6/172-torghut-repair-yield-ledger-and-session-proof-capital-gates-2026-05-07.md`
+- `docs/agents/designs/169-jangar-ready-action-evidence-exchange-and-deployer-custody-2026-05-07.md`
+- `docs/torghut/design-system/v6/173-torghut-no-notional-repair-options-desk-and-promotion-custody-2026-05-07.md`
 - `docs/agents/designs/167-jangar-terminal-evidence-half-life-and-debris-retirement-2026-05-07.md`
 - `docs/torghut/design-system/v6/171-torghut-profit-evidence-half-life-and-capital-carry-governor-2026-05-07.md`
 - `docs/agents/designs/166-jangar-evidence-capability-ledger-and-observer-lease-gates-2026-05-07.md`
