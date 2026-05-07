@@ -436,6 +436,42 @@ class TestExecutionPolicy(TestCase):
         self.assertEqual(outcome.decision.order_type, "market")
         self.assertIsNone(outcome.decision.limit_price)
 
+    def test_high_conviction_washout_entry_keeps_market_order(self) -> None:
+        policy = ExecutionPolicy(config=_config(prefer_limit=True))
+        decision = _decision(
+            action="buy",
+            qty=Decimal("1"),
+            price=Decimal("316.93"),
+            order_type="market",
+        ).model_copy(
+            update={
+                "params": {
+                    "price": Decimal("316.93"),
+                    "spread": Decimal("0.20"),
+                    "execution_features": {
+                        "spread_bps": Decimal("6.31"),
+                        "recent_microprice_bias_bps_avg": Decimal("0.06"),
+                        "cross_section_reversal_rank": Decimal("0.72"),
+                    },
+                    "strategy_runtime": {
+                        "source_strategy_runtime": [
+                            {"strategy_type": "washout_rebound_long_v1"}
+                        ]
+                    },
+                }
+            }
+        )
+
+        outcome = policy.evaluate(
+            decision,
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+        )
+
+        self.assertEqual(outcome.decision.order_type, "market")
+        self.assertIsNone(outcome.decision.limit_price)
+
     def test_microbar_cross_sectional_short_entry_keeps_market_order(self) -> None:
         policy = ExecutionPolicy(config=_config(prefer_limit=True))
         decision = _decision(
