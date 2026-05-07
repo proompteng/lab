@@ -1161,6 +1161,14 @@ export class WorkerRuntime {
     throw Cause.squash(exit.cause)
   }
 
+  async #runActivityHeartbeat(effect: Effect.Effect<void, unknown, never>): Promise<void> {
+    const exit = await Effect.runPromiseExit(effect)
+    if (Exit.isSuccess(exit)) {
+      return
+    }
+    throw Cause.squash(exit.cause)
+  }
+
   #buildNormalTaskQueue(name: string) {
     return create(TaskQueueSchema, {
       name,
@@ -3157,7 +3165,7 @@ export class WorkerRuntime {
         if (!registration) {
           return
         }
-        await Effect.runPromise(registration.heartbeat(details))
+        await this.#runActivityHeartbeat(registration.heartbeat(details))
       }
     } catch (registrationError) {
       this.#log('warn', 'failed to register heartbeat handler', {
