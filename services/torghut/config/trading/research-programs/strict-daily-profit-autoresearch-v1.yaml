@@ -42,7 +42,7 @@ promotion_policy: research_only
 ledger_policy:
   append_only: true
 objective:
-  target_net_pnl_per_day: '500'
+  target_net_pnl_per_day: '300'
   min_active_day_ratio: '1.0'
   min_positive_day_ratio: '0.625'
   min_daily_notional: '300000'

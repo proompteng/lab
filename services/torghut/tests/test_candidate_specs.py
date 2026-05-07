@@ -69,14 +69,14 @@ class TestCandidateSpecs(TestCase):
         )
 
         first = compile_candidate_specs(
-            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
         )
         second = compile_candidate_specs(
-            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
         )
 
         self.assertEqual(first[0].candidate_spec_id, second[0].candidate_spec_id)
-        self.assertEqual(first[0].objective["target_net_pnl_per_day"], "500")
+        self.assertEqual(first[0].objective["target_net_pnl_per_day"], "300")
         self.assertIn("required_max_drawdown", first[0].hard_vetoes)
         self.assertIn("params", first[0].strategy_overrides)
         self.assertIn("execution_profile", first[0].feature_contract)
@@ -116,7 +116,7 @@ class TestCandidateSpecs(TestCase):
         ]
 
         specs = compile_candidate_specs(
-            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
         )
 
         continuation_specs = [
@@ -158,20 +158,20 @@ class TestCandidateSpecs(TestCase):
         specs = compile_candidate_specs(
             hypothesis_cards=cards,
             target_net_pnl_per_day=Decimal("300"),
-            universe_symbols=("nvda", " AMD ", "NVDA", "arm", "mu"),
+            universe_symbols=("nvda", " AMD ", "NVDA", "arm", "mu", "aapl"),
         )
 
         self.assertTrue(specs)
         for spec in specs:
             self.assertEqual(
                 spec.strategy_overrides["universe_symbols"],
-                ["NVDA", "AMD", "ARM", "MU"],
+                ["NVDA", "AMD", "AAPL"],
             )
             self.assertEqual(
                 spec.to_vnext_experiment_payload()["template_overrides"][
                     "universe_symbols"
                 ],
-                ["NVDA", "AMD", "ARM", "MU"],
+                ["NVDA", "AMD", "AAPL"],
             )
 
     def test_microbar_whitepaper_profiles_include_runtime_risk_controls(self) -> None:
@@ -195,7 +195,7 @@ class TestCandidateSpecs(TestCase):
         )
 
         specs = compile_candidate_specs(
-            hypothesis_cards=[card], target_net_pnl_per_day=Decimal("500")
+            hypothesis_cards=[card], target_net_pnl_per_day=Decimal("300")
         )
         microbar = next(
             spec
@@ -323,7 +323,7 @@ class TestCandidateSpecs(TestCase):
 
         compilation = compile_whitepaper_candidate_specs(
             hypothesis_cards=cards,
-            target_net_pnl_per_day=Decimal("500"),
+            target_net_pnl_per_day=Decimal("300"),
             family_template_dir=Path("config/trading/families"),
         )
 

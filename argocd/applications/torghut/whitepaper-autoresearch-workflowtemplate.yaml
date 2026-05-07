@@ -21,7 +21,7 @@ spec:
       - name: seedRecentWhitepapers
         value: 'true'
       - name: symbols
-        value: NVDA,TSM,AVGO,MU,AMD,ASML,INTC,LRCX,AMAT,TXN,ARM,KLAC
+        value: NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC
       - name: fullWindowStartDate
         value: '2026-04-24'
       - name: fullWindowEndDate

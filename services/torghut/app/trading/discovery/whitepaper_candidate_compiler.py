@@ -286,7 +286,7 @@ def whitepaper_experiment_payload_for_candidate(spec: CandidateSpec) -> dict[str
 def compile_whitepaper_candidate_specs(
     *,
     hypothesis_cards: Sequence[HypothesisCard],
-    target_net_pnl_per_day: Decimal = Decimal("500"),
+    target_net_pnl_per_day: Decimal = Decimal("300"),
     family_template_dir: Path | None = None,
     seed_sweep_dir: Path | None = None,
     universe_symbols: Sequence[str] = (),
@@ -332,7 +332,7 @@ def compile_claim_payloads_to_whitepaper_experiments(
     run_id: str,
     claims: Sequence[Mapping[str, Any]],
     relations: Sequence[Mapping[str, Any]] = (),
-    target_net_pnl_per_day: Decimal = Decimal("500"),
+    target_net_pnl_per_day: Decimal = Decimal("300"),
     family_template_dir: Path | None = None,
     seed_sweep_dir: Path | None = None,
     universe_symbols: Sequence[str] = (),

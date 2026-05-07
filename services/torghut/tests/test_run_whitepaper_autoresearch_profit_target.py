@@ -86,7 +86,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             paper_run_id=[],
             source_jsonl=[],
             seed_recent_whitepapers=True,
-            target_net_pnl_per_day="500",
+            target_net_pnl_per_day="300",
             max_candidates=8,
             top_k=4,
             exploration_slots=2,
@@ -353,7 +353,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             Namespace(symbols="NVDA,AAPL,MSFT,AMAT,TSM,nvda")
         )
 
-        self.assertEqual(symbols, ("NVDA", "AMAT", "TSM"))
+        self.assertEqual(symbols, ("NVDA", "AAPL"))
 
     def test_program_research_sources_feed_whitepaper_claim_compiler(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -437,7 +437,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self,
     ) -> None:
         symbols = runner._candidate_universe_symbols_from_args(
-            Namespace(symbols="AAPL,MSFT,SHOP")
+            Namespace(symbols="MSFT,SHOP")
         )
 
         self.assertEqual(symbols, tuple(_CHIP_UNIVERSE))
@@ -453,7 +453,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(
             runner._candidate_universe_symbols_for_compilation(
-                Namespace(symbols="AAPL,MSFT,SHOP")
+                Namespace(symbols="MSFT,SHOP")
             ),
             (),
         )
@@ -461,7 +461,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             runner._candidate_universe_symbols_for_compilation(
                 Namespace(symbols="NVDA,AMAT,AAPL")
             ),
-            ("NVDA", "AMAT"),
+            ("NVDA", "AAPL"),
         )
 
     def test_rejects_candidate_universe_larger_than_twelve_symbols(self) -> None:

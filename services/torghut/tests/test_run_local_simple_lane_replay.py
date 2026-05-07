@@ -11,17 +11,13 @@ from scripts import run_local_simple_lane_replay
 def test_default_replay_universe_is_live_chip_coverage() -> None:
     assert run_local_simple_lane_replay.DEFAULT_SYMBOLS == [
         "NVDA",
-        "TSM",
+        "AAPL",
+        "AMZN",
+        "GOOGL",
         "AVGO",
-        "MU",
         "AMD",
-        "ASML",
+        "ORCL",
         "INTC",
-        "LRCX",
-        "AMAT",
-        "TXN",
-        "ARM",
-        "KLAC",
     ]
 
 
@@ -40,12 +36,12 @@ def test_seed_strategies_preserves_catalog_runtime_metadata() -> None:
                 "version": "1.0.0",
                 "base_timeframe": "1Sec",
                 "universe_type": "microbar_cross_sectional_long_v1",
-                "universe_symbols": ["NVDA", "TSM"],
+                "universe_symbols": ["NVDA", "AAPL"],
                 "max_notional_per_trade": "5000",
                 "params": {
                     "rank_feature": "cross_section_microbar_volume_rank",
                     "top_n": "2",
-                    "universe_size": "12",
+                    "universe_size": "8",
                 },
             }
         ],
