@@ -43,6 +43,20 @@ _REPAIR_CATALOG: dict[str, tuple[str, str, str, int, int]] = {
         75,
         5,
     ),
+    "execution_tca_route_universe_empty": (
+        "repair_route_universe",
+        "route_universe",
+        "produce_executable_route_universe_before_capital",
+        78,
+        6,
+    ),
+    "execution_tca_route_universe_incomplete": (
+        "repair_route_universe",
+        "route_universe",
+        "settle_missing_symbol_tca_before_promotion",
+        76,
+        4,
+    ),
     "quant_pipeline_degraded": (
         "repair_quant_ingestion",
         "quant_ingestion",
@@ -399,7 +413,7 @@ def _summarize_tca(proof_floor: Mapping[str, Any]) -> dict[str, object]:
         if _text(dimension.get("dimension")) != "execution_tca":
             continue
         source_ref = _mapping(dimension.get("source_ref"))
-        return {
+        summary: dict[str, object] = {
             "state": _text(dimension.get("state"), "unknown"),
             "reason": _text(dimension.get("reason"), "unknown"),
             "order_count": _int(source_ref.get("order_count")),
@@ -414,7 +428,15 @@ def _summarize_tca(proof_floor: Mapping[str, Any]) -> dict[str, object]:
             "freshness_seconds": dimension.get("freshness_seconds"),
             "threshold_seconds": dimension.get("threshold_seconds"),
             "avg_abs_slippage_bps": source_ref.get("avg_abs_slippage_bps"),
+            "slippage_guardrail_bps": source_ref.get("slippage_guardrail_bps"),
         }
+        symbol_routes = _mapping(source_ref.get("symbol_routes"))
+        if symbol_routes:
+            summary["symbol_routes"] = symbol_routes
+        aggregate_reason = _text(source_ref.get("aggregate_reason"))
+        if aggregate_reason:
+            summary["aggregate_reason"] = aggregate_reason
+        return summary
     return {
         "state": "unknown",
         "reason": "missing",
