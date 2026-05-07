@@ -1651,13 +1651,8 @@ class TestTradingPipeline(TestCase):
         )
         self.assertEqual(last_domain_states["news"], "ok")
         self.assertEqual(receipt["floor_state"], "paper_ready")
-        proof_dimensions = cast(
-            list[dict[str, object]], receipt["proof_dimensions"]
-        )
-        dimensions = {
-            cast(str, item["dimension"]): item
-            for item in proof_dimensions
-        }
+        proof_dimensions = cast(list[dict[str, object]], receipt["proof_dimensions"])
+        dimensions = {cast(str, item["dimension"]): item for item in proof_dimensions}
         self.assertEqual(dimensions["market_context"]["state"], "pass")
 
     def test_simple_pipeline_market_context_refresh_skips_recent_or_fresh_state(
@@ -1690,7 +1685,9 @@ class TestTradingPipeline(TestCase):
 
         pipeline._fetch_market_context = _fetch  # type: ignore[method-assign]
         now = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
-        pipeline.state.last_market_context_checked_at = datetime(2026, 3, 26, 13, 29, 45)
+        pipeline.state.last_market_context_checked_at = datetime(
+            2026, 3, 26, 13, 29, 45
+        )
 
         self.assertTrue(pipeline._market_context_refresh_recent(now))
         pipeline._refresh_market_context_for_proof_floor()
