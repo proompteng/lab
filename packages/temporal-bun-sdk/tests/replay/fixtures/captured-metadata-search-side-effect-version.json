@@ -1,0 +1,332 @@
+{
+  "name": "captured-metadata-search-side-effect-version",
+  "info": {
+    "namespace": "default",
+    "taskQueue": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+    "workflowId": "replay-captured-metadata-search-side-effect-version-dd332406-378e-4b93-b714-84a407eeb479",
+    "runId": "019dfeaa-dbe4-758d-977c-27027990bc99",
+    "workflowType": "integrationMetadataWorkflow",
+    "temporalVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)"
+  },
+  "history": [
+    {
+      "eventId": "1",
+      "eventTime": "2026-05-06T19:01:43.524365Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+      "taskId": "48235456",
+      "workflowExecutionStartedEventAttributes": {
+        "workflowType": {
+          "name": "integrationMetadataWorkflow"
+        },
+        "taskQueue": {
+          "name": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJ2YWx1ZSI6Im1ldGFkYXRhLWFscGhhIn0="
+            }
+          ]
+        },
+        "workflowExecutionTimeout": "0s",
+        "workflowRunTimeout": "0s",
+        "workflowTaskTimeout": "10s",
+        "originalExecutionRunId": "019dfeaa-dbe4-758d-977c-27027990bc99",
+        "identity": "temporal-cli:gregkonush@Mac.pihole.lan",
+        "firstExecutionRunId": "019dfeaa-dbe4-758d-977c-27027990bc99",
+        "attempt": 1,
+        "firstWorkflowTaskBackoff": "0s",
+        "header": {},
+        "workflowId": "replay-captured-metadata-search-side-effect-version-dd332406-378e-4b93-b714-84a407eeb479"
+      }
+    },
+    {
+      "eventId": "2",
+      "eventTime": "2026-05-06T19:01:43.524403Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "48235457",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "3",
+      "eventTime": "2026-05-06T19:01:43.526508Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "48235462",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "2",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624",
+        "requestId": "51ce9b0d-6d8f-4fd2-b572-6aa2a2773aeb",
+        "historySizeBytes": "508"
+      }
+    },
+    {
+      "eventId": "4",
+      "eventTime": "2026-05-06T19:01:43.530610Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "48235466",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "2",
+        "startedEventId": "3",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624"
+      }
+    },
+    {
+      "eventId": "5",
+      "eventTime": "2026-05-06T19:01:43.530631Z",
+      "eventType": "EVENT_TYPE_MARKER_RECORDED",
+      "taskId": "48235467",
+      "markerRecordedEventAttributes": {
+        "markerName": "temporal-bun-sdk/side-effect",
+        "details": {
+          "id": {
+            "payloads": [
+              {
+                "metadata": {
+                  "encoding": "anNvbi9wbGFpbg=="
+                },
+                "data": "ImNhcHR1cmUtc2lkZS1lZmZlY3Qi"
+              }
+            ]
+          },
+          "result": {
+            "payloads": [
+              {
+                "metadata": {
+                  "encoding": "anNvbi9wbGFpbg=="
+                },
+                "data": "InNpZGU6bWV0YWRhdGEtYWxwaGEi"
+              }
+            ]
+          }
+        },
+        "workflowTaskCompletedEventId": "4"
+      }
+    },
+    {
+      "eventId": "6",
+      "eventTime": "2026-05-06T19:01:43.530634Z",
+      "eventType": "EVENT_TYPE_MARKER_RECORDED",
+      "taskId": "48235468",
+      "markerRecordedEventAttributes": {
+        "markerName": "temporal-bun-sdk/get-version",
+        "details": {
+          "changeId": {
+            "payloads": [
+              {
+                "metadata": {
+                  "encoding": "anNvbi9wbGFpbg=="
+                },
+                "data": "ImNhcHR1cmUtdmVyc2lvbiI="
+              }
+            ]
+          },
+          "version": {
+            "payloads": [
+              {
+                "metadata": {
+                  "encoding": "anNvbi9wbGFpbg=="
+                },
+                "data": "Mg=="
+              }
+            ]
+          }
+        },
+        "workflowTaskCompletedEventId": "4"
+      }
+    },
+    {
+      "eventId": "7",
+      "eventTime": "2026-05-06T19:01:43.530637Z",
+      "eventType": "EVENT_TYPE_MARKER_RECORDED",
+      "taskId": "48235469",
+      "markerRecordedEventAttributes": {
+        "markerName": "temporal-bun-sdk/patch",
+        "details": {
+          "deprecated": {
+            "payloads": [
+              {
+                "metadata": {
+                  "encoding": "anNvbi9wbGFpbg=="
+                },
+                "data": "ZmFsc2U="
+              }
+            ]
+          },
+          "patchId": {
+            "payloads": [
+              {
+                "metadata": {
+                  "encoding": "anNvbi9wbGFpbg=="
+                },
+                "data": "ImNhcHR1cmUtcGF0Y2gi"
+              }
+            ]
+          }
+        },
+        "workflowTaskCompletedEventId": "4"
+      }
+    },
+    {
+      "eventId": "8",
+      "eventTime": "2026-05-06T19:01:43.530834Z",
+      "eventType": "EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES",
+      "taskId": "48235470",
+      "upsertWorkflowSearchAttributesEventAttributes": {
+        "workflowTaskCompletedEventId": "4",
+        "searchAttributes": {
+          "indexedFields": {
+            "CustomKeywordField": {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg==",
+                "type": "S2V5d29yZA=="
+              },
+              "data": "Im1ldGFkYXRhLWFscGhhIg=="
+            }
+          }
+        }
+      }
+    },
+    {
+      "eventId": "9",
+      "eventTime": "2026-05-06T19:01:43.530856Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED",
+      "taskId": "48235471",
+      "workflowPropertiesModifiedEventAttributes": {
+        "workflowTaskCompletedEventId": "4",
+        "upsertedMemo": {
+          "fields": {
+            "metadataCapture": {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJwYXRjaGVkIjp0cnVlLCJzaWRlRWZmZWN0VmFsdWUiOiJzaWRlOm1ldGFkYXRhLWFscGhhIiwidmVyc2lvbiI6Mn0="
+            }
+          }
+        }
+      }
+    },
+    {
+      "eventId": "10",
+      "eventTime": "2026-05-06T19:01:43.530863Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+      "taskId": "48235472",
+      "workflowExecutionCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJwYXRjaGVkIjp0cnVlLCJzaWRlRWZmZWN0VmFsdWUiOiJzaWRlOm1ldGFkYXRhLWFscGhhIiwidmVyc2lvbiI6Mn0="
+            }
+          ]
+        },
+        "workflowTaskCompletedEventId": "4"
+      }
+    }
+  ],
+  "expectedDeterminismState": {
+    "commandHistory": [
+      {
+        "intent": {
+          "id": "record-marker-0",
+          "kind": "record-marker",
+          "sequence": 0,
+          "markerName": "temporal-bun-sdk/side-effect",
+          "details": {
+            "id": "capture-side-effect",
+            "result": "side:metadata-alpha"
+          }
+        },
+        "metadata": {
+          "eventId": "5",
+          "eventType": 25,
+          "workflowTaskCompletedEventId": "4"
+        }
+      },
+      {
+        "intent": {
+          "id": "record-marker-1",
+          "kind": "record-marker",
+          "sequence": 1,
+          "markerName": "temporal-bun-sdk/get-version",
+          "details": {
+            "changeId": "capture-version",
+            "version": 2
+          }
+        },
+        "metadata": {
+          "eventId": "6",
+          "eventType": 25,
+          "workflowTaskCompletedEventId": "4"
+        }
+      },
+      {
+        "intent": {
+          "id": "record-marker-2",
+          "kind": "record-marker",
+          "sequence": 2,
+          "markerName": "temporal-bun-sdk/patch",
+          "details": {
+            "deprecated": false,
+            "patchId": "capture-patch"
+          }
+        },
+        "metadata": {
+          "eventId": "7",
+          "eventType": 25,
+          "workflowTaskCompletedEventId": "4"
+        }
+      },
+      {
+        "intent": {
+          "id": "upsert-search-attributes-3",
+          "kind": "upsert-search-attributes",
+          "sequence": 3,
+          "searchAttributes": {
+            "CustomKeywordField": "metadata-alpha"
+          }
+        },
+        "metadata": {
+          "eventId": "8",
+          "eventType": 40,
+          "workflowTaskCompletedEventId": "4"
+        }
+      },
+      {
+        "intent": {
+          "id": "modify-workflow-properties-4",
+          "kind": "modify-workflow-properties",
+          "sequence": 4,
+          "memo": {
+            "metadataCapture": {
+              "patched": true,
+              "sideEffectValue": "side:metadata-alpha",
+              "version": 2
+            }
+          }
+        },
+        "metadata": {
+          "eventId": "9",
+          "eventType": 46,
+          "workflowTaskCompletedEventId": "4"
+        }
+      }
+    ],
+    "randomValues": [],
+    "timeValues": [],
+    "signals": [],
+    "queries": []
+  }
+}

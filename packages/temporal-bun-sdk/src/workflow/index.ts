@@ -1,6 +1,7 @@
 export { createDefaultDataConverter, decodePayloadsToValues } from '../common/payloads/converter'
 export type { Command } from '../proto/temporal/api/command/v1/message_pb'
 export { CommandType } from '../proto/temporal/api/enums/v1/command_type_pb'
+export * from './command-event-matrix'
 export * from './commands'
 export * from './context'
 export * from './definition'

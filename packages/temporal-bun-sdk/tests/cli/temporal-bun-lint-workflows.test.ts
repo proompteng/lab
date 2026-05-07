@@ -46,6 +46,40 @@ test('lint-workflows fails on process.env access in workflow modules', async () 
   })
 })
 
+test('lint-workflows fails on Bun environment, timer, file, and socket escape hatches', async () => {
+  await withTempDir(async (dir) => {
+    const workflowsDir = join(dir, 'workflows')
+    await mkdir(workflowsDir, { recursive: true })
+
+    const entry = join(workflowsDir, 'index.ts')
+    await writeFile(
+      entry,
+      [
+        'export const env = () => Bun.env.FOO',
+        'export const sleep = () => Bun.sleep(1)',
+        "export const file = () => Bun.file('/tmp/probe')",
+        "export const write = () => Bun.write('/tmp/probe', 'x')",
+        "export const connect = () => Bun.connect({ hostname: '127.0.0.1', port: 1, socket: {} })",
+        "export const serve = () => Bun.serve({ port: 0, fetch: () => new Response('ok') })",
+      ].join('\n'),
+    )
+
+    const result = await executeLintWorkflows({
+      cwd: dir,
+      workflows: [entry],
+      mode: 'strict',
+      format: 'json',
+    })
+
+    expect(result.exitCode).toBe(1)
+    for (const api of ['Bun.env', 'Bun.sleep', 'Bun.file', 'Bun.write', 'Bun.connect', 'Bun.serve']) {
+      expect(
+        result.violations.some((v) => v.rule === 'deny-member-expression' && v.message.includes(api)),
+      ).toBeTrue()
+    }
+  })
+})
+
 test('lint-workflows fails on capturing Date.now in workflow modules', async () => {
   await withTempDir(async (dir) => {
     const workflowsDir = join(dir, 'workflows')

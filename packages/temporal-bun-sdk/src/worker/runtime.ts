@@ -34,6 +34,7 @@ import { createObservabilityServices, type OpenTelemetryHandle } from '../observ
 import type { LogFields, Logger, LogLevel } from '../observability/logger'
 import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from '../observability/metrics'
 import {
+  CancelWorkflowExecutionCommandAttributesSchema,
   type Command,
   CommandSchema,
   RecordMarkerCommandAttributesSchema,
@@ -1322,6 +1323,14 @@ export class WorkerRuntime {
       historyEventCount: response.history?.events?.length ?? 0,
     })
     const stickyKey = this.#buildStickyKey(execution.workflowId, execution.runId)
+    if (!isLegacyQueryTask && hasOpenWorkflowCancellationRequest(historyEvents)) {
+      await this.#respondWorkflowCancellation(response, execution, baseLogFields)
+      if (stickyKey) {
+        await this.#removeStickyEntry(stickyKey)
+        await this.#removeStickyEntriesForWorkflow(stickyKey.workflowId)
+      }
+      return
+    }
     const stickyEntry = stickyKey ? await this.#getStickyEntry(stickyKey) : undefined
     const decodedArgs = await this.#decodeWorkflowArgs(historyEvents)
     let args = decodedArgs.args
@@ -1784,6 +1793,38 @@ export class WorkerRuntime {
         this.#log('debug', 'sticky cache entry cleared after workflow failure', baseLogFields)
       }
       await this.#failWorkflowTask(response, execution, error)
+    }
+  }
+
+  async #respondWorkflowCancellation(
+    response: PollWorkflowTaskQueueResponse,
+    execution: { readonly workflowId: string; readonly runId: string },
+    logFields: LogFields,
+  ): Promise<void> {
+    const command = create(CommandSchema, {
+      commandType: CommandType.CANCEL_WORKFLOW_EXECUTION,
+      attributes: {
+        case: 'cancelWorkflowExecutionCommandAttributes',
+        value: create(CancelWorkflowExecutionCommandAttributesSchema, {}),
+      },
+    })
+    const completion = create(RespondWorkflowTaskCompletedRequestSchema, {
+      taskToken: response.taskToken,
+      commands: [command],
+      identity: this.#identity,
+      namespace: this.#namespace,
+      deploymentOptions: this.#rpcDeploymentOptions,
+      ...(this.#versioningBehavior !== null ? { versioningBehavior: this.#versioningBehavior } : {}),
+    })
+    try {
+      await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
+      this.#log('info', 'workflow cancellation request acknowledged', logFields)
+    } catch (error) {
+      if (this.#isTaskNotFoundError(error)) {
+        this.#logWorkflowTaskNotFound('respondWorkflowCancellation', execution)
+        return
+      }
+      throw error
     }
   }
 
@@ -3464,6 +3505,28 @@ const markErrorNonRetryable = (error: unknown): void => {
 
 const isActivityCancelRequested = (response: PollActivityTaskQueueResponse): boolean =>
   Boolean((response as { cancelRequested?: boolean }).cancelRequested)
+
+const hasOpenWorkflowCancellationRequest = (events: readonly HistoryEvent[]): boolean => {
+  let cancelRequested = false
+  for (const event of events) {
+    switch (event.eventType) {
+      case EventType.WORKFLOW_EXECUTION_CANCEL_REQUESTED:
+        cancelRequested = true
+        break
+      case EventType.WORKFLOW_EXECUTION_CANCELED:
+      case EventType.WORKFLOW_EXECUTION_COMPLETED:
+      case EventType.WORKFLOW_EXECUTION_CONTINUED_AS_NEW:
+      case EventType.WORKFLOW_EXECUTION_FAILED:
+      case EventType.WORKFLOW_EXECUTION_TERMINATED:
+      case EventType.WORKFLOW_EXECUTION_TIMED_OUT:
+        cancelRequested = false
+        break
+      default:
+        break
+    }
+  }
+  return cancelRequested
+}
 
 const isAbortError = (error: unknown): boolean => error instanceof Error && error.name === 'AbortError'
 

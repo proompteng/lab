@@ -1,0 +1,179 @@
+name: Temporal Bun SDK Long Soak
+
+on:
+  schedule:
+    - cron: '17 8 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'nightly runs a 2h soak; release runs the 6h default-choice soak; custom uses the inputs below'
+        type: choice
+        default: nightly
+        options:
+          - nightly
+          - release
+          - custom
+      duration_ms:
+        description: 'Custom soak duration in milliseconds'
+        type: string
+        required: false
+        default: ''
+      iterations:
+        description: 'Minimum load iterations'
+        type: string
+        required: false
+        default: ''
+      workflows:
+        description: 'Workflows per load iteration'
+        type: string
+        required: false
+        default: '1000'
+      workflow_concurrency:
+        description: 'Workflow concurrency target'
+        type: string
+        required: false
+        default: '50'
+      activity_concurrency:
+        description: 'Activity concurrency target'
+        type: string
+        required: false
+        default: '80'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  long-soak:
+    runs-on: arc-arm64
+    timeout-minutes: 390
+
+    env:
+      TEMPORAL_TEST_SERVER: '1'
+      TEMPORAL_TEST_TIMEOUT: '30000'
+      TEMPORAL_INTEGRATION_TESTS: '1'
+      TEMPORAL_BUN_RELEASE_GATE: '1'
+      TEMPORAL_ADDRESS: temporal-grpc:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_ENFORCE_REMOTE_ADDRESS: '1'
+      TEMPORAL_SOAK_FAILURE_MODES: baseline,worker-restart,sticky-cache-churn,update-rejection-termination,activity-cancellation
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.11.1'
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      - name: Cache Bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.13-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.13-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/temporal-bun-sdk
+
+      - name: Build Temporal Bun SDK
+        run: bun run --filter @proompteng/temporal-bun-sdk build
+
+      - name: Install Temporal CLI
+        run: |
+          curl -sSfL https://temporal.download/cli.sh | bash -s -- -b "${HOME}/.temporalio/bin"
+          echo "${HOME}/.temporalio/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Temporal target
+        run: |
+          temporal --version
+
+          if [[ "${TEMPORAL_TEST_SERVER}" != "1" ]]; then
+            echo "TEMPORAL_TEST_SERVER must be 1 for long-soak evidence."
+            exit 1
+          fi
+
+          case "${TEMPORAL_ADDRESS}" in
+            "127.0.0.1":*|"localhost":*|"[::1]":*)
+              echo "TEMPORAL_ADDRESS must not point to localhost in long-soak CI."
+              exit 1
+              ;;
+          esac
+
+          getent hosts temporal-grpc >/dev/null
+
+      - name: Resolve soak profile
+        id: soak
+        run: |
+          set -euo pipefail
+
+          mode="${{ github.event.inputs.mode || 'nightly' }}"
+          duration="${{ github.event.inputs.duration_ms || '' }}"
+          iterations="${{ github.event.inputs.iterations || '' }}"
+          workflows="${{ github.event.inputs.workflows || '1000' }}"
+          workflow_concurrency="${{ github.event.inputs.workflow_concurrency || '50' }}"
+          activity_concurrency="${{ github.event.inputs.activity_concurrency || '80' }}"
+
+          if [[ "${mode}" == "release" ]]; then
+            duration="21600000"
+            iterations="12"
+          elif [[ "${mode}" == "nightly" || -z "${mode}" ]]; then
+            duration="${duration:-7200000}"
+            iterations="${iterations:-12}"
+          elif [[ "${mode}" == "custom" ]]; then
+            duration="${duration:-7200000}"
+            iterations="${iterations:-12}"
+          else
+            echo "Unsupported soak mode: ${mode}" >&2
+            exit 1
+          fi
+
+          {
+            echo "mode=${mode}"
+            echo "duration=${duration}"
+            echo "iterations=${iterations}"
+            echo "workflows=${workflows}"
+            echo "workflow_concurrency=${workflow_concurrency}"
+            echo "activity_concurrency=${activity_concurrency}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run long soak
+        run: |
+          bun run --filter @proompteng/temporal-bun-sdk test:soak -- \
+            --duration "${{ steps.soak.outputs.duration }}" \
+            --iterations "${{ steps.soak.outputs.iterations }}" \
+            --workflows "${{ steps.soak.outputs.workflows }}" \
+            --workflow-concurrency "${{ steps.soak.outputs.workflow_concurrency }}" \
+            --activity-concurrency "${{ steps.soak.outputs.activity_concurrency }}" \
+            --failure-modes "${TEMPORAL_SOAK_FAILURE_MODES}"
+
+      - name: Verify release default-choice evidence
+        if: steps.soak.outputs.mode == 'release'
+        run: bun run --filter @proompteng/temporal-bun-sdk verify:default-choice
+
+      - name: Generate nightly evidence snapshot
+        if: steps.soak.outputs.mode != 'release'
+        env:
+          TEMPORAL_PRODUCTION_EVIDENCE_ALLOW_INCOMPLETE: '1'
+        run: bun run --filter @proompteng/temporal-bun-sdk evidence:production
+
+      - name: Upload long-soak artifacts
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: temporal-bun-sdk-long-soak-${{ steps.soak.outputs.mode || 'nightly' }}
+          path: |
+            packages/temporal-bun-sdk/.artifacts/worker-soak/report.json
+            packages/temporal-bun-sdk/.artifacts/worker-soak/memory.jsonl
+            packages/temporal-bun-sdk/.artifacts/worker-soak/iteration-*/report.json
+            packages/temporal-bun-sdk/.artifacts/worker-soak/iteration-*/metrics.jsonl
+            packages/temporal-bun-sdk/.artifacts/worker-soak/iteration-*/memory.jsonl
+            packages/temporal-bun-sdk/dist/production-readiness.json
+            packages/temporal-bun-sdk/dist/agent-readiness.json

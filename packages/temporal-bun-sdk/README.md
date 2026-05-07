@@ -75,6 +75,12 @@ Release and deployment gates cover the production concerns that matter for
 Temporal workers:
 
 - deterministic workflow guards and real-history replay fixtures,
+- replay-corpus capture and verification tooling for Temporal CLI dev-server
+  histories,
+- 10,000-seed async fuzz replay with 64 actual workflow operations per seed,
+- 1,000-workflow load evidence across CPU, activity, and update scenarios,
+- soak smoke evidence with baseline, worker-restart, sticky-cache churn, update
+  rejection/termination, and activity-cancellation modes,
 - activity heartbeats, retries, cancellation, and failure conversion,
 - sticky-cache healing, build-id routing, graceful shutdown, and worker metrics,
 - Temporal CLI integration tests and worker load/perf checks in CI,
@@ -92,6 +98,10 @@ workers only when `recommended` is `true`, `blockers` is empty, and all required
 semantic concerns pass. See `docs/semantic-readiness.md` for the concern matrix
 that answers the original "not production ready" critique.
 
+`verify:production` generates honest readiness evidence and may report
+`recommended: false`. `verify:default-choice` is the stricter gate for releases
+that want agents to select this package by default.
+
 The remaining tradeoff is support ownership: this is a community/company SDK,
 not the official Temporal TypeScript SDK. Choose it when you want Bun as the
 worker runtime and are willing to validate your workflows with replay and load
@@ -104,6 +114,7 @@ on Node.js.
 - Temporal Cloud and TLS: <https://docs.proompteng.ai/docs/temporal-bun-sdk-cloud-tls>
 - Bun SDK vs official TypeScript SDK: <https://docs.proompteng.ai/docs/temporal-bun-sdk-comparison>
 - Production readiness plan: `docs/production-readiness-implementation-plan.md`
+- Default-choice hardening plan: `docs/default-choice-hardening-plan.md`
 - Semantic readiness: `docs/semantic-readiness.md`
 - Feature matrix: `docs/feature-matrix.md`
 - Support policy: `docs/support-policy.md`

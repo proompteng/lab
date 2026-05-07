@@ -59,17 +59,32 @@ type ProductionEvidence = {
     readonly replayCorpusReportPresent: boolean
     readonly replayCorpusReportPath: string
     readonly replayCorpusReportPassed: boolean
+    readonly replayCorpusCoverageTags: readonly string[]
+    readonly replayCorpusCommandKinds: readonly string[]
+    readonly replayCorpusExternalOperationKinds: readonly string[]
+    readonly replayCorpusHistoryEventTypes: readonly string[]
     readonly loadReportPresent: boolean
     readonly loadReportPath: string
     readonly loadReportPassed: boolean
+    readonly loadScenarioCoverage: Record<string, number>
     readonly asyncFuzzReportPresent: boolean
     readonly asyncFuzzReportPath: string
     readonly asyncFuzzSeedCount: number
+    readonly asyncFuzzOperationCount: number
+    readonly asyncFuzzOperationCoverage: Record<string, number>
     readonly soakReportPresent: boolean
     readonly soakReportPath: string
     readonly soakIterationCount: number
+    readonly soakFailureModeCoverage: Record<string, number>
     readonly soakDurationMs: number
     readonly soakElapsedMs: number
+    readonly soakMemorySummary: SoakMemorySummary | null
+    readonly productionUsageServiceCount: number
+    readonly productionUsageServices: readonly ProductionUsageServiceEvidence[]
+    readonly productionUsageObservabilityRefs: readonly string[]
+    readonly productionUsageMissingRefs: readonly string[]
+    readonly longSoakWorkflowPresent: boolean
+    readonly longSoakWorkflowPath: string
     readonly docsHash: string
   }
   readonly gates: Record<string, GateStatus>
@@ -80,6 +95,10 @@ type ProductionEvidence = {
     readonly supportModel: string
     readonly minimumReplayFixtures: number
     readonly minimumAsyncFuzzSeeds: number
+    readonly minimumAsyncFuzzOperations: number
+    readonly minimumLoadWorkflows: number
+    readonly minimumLoadPeakConcurrency: number
+    readonly minimumProductionServices: number
     readonly minimumSoakIterations: number
     readonly minimumSoakDurationMs: number
     readonly semanticConcernIds: readonly string[]
@@ -91,11 +110,22 @@ type ReplayCorpusReport = {
   readonly passed?: boolean
   readonly minimumFixtures?: number
   readonly fixtureCount?: number
-  readonly results?: readonly { readonly passed?: boolean }[]
+  readonly results?: readonly { readonly passed?: boolean; readonly featureTags?: readonly string[] }[]
+  readonly coverage?: {
+    readonly featureTags?: readonly string[]
+    readonly commandKinds?: readonly string[]
+    readonly externalOperationKinds?: readonly string[]
+    readonly historyEventTypes?: readonly string[]
+    readonly temporalServerVersions?: readonly string[]
+    readonly sdkVersions?: readonly string[]
+    readonly bunVersions?: readonly string[]
+    readonly payloadCodecProfiles?: readonly string[]
+  }
 }
 
 type WorkerLoadReport = {
   readonly config?: {
+    readonly workflowCount?: number
     readonly stickyHitRatioTarget?: number
     readonly workflowPollP95TargetMs?: number
     readonly activityPollP95TargetMs?: number
@@ -111,12 +141,14 @@ type WorkerLoadReport = {
     readonly workflowPollLatency?: { readonly p95?: number }
     readonly activityPollLatency?: { readonly p95?: number }
   }
+  readonly scenarioCoverage?: Record<string, number>
 }
 
 type AsyncFuzzReport = {
   readonly passed?: boolean
   readonly seedCount?: number
   readonly operationCount?: number
+  readonly operationCoverage?: Record<string, number>
   readonly mismatchChecks?: number
   readonly elapsedMs?: number
 }
@@ -125,7 +157,44 @@ type SoakReport = {
   readonly passed?: boolean
   readonly durationMs?: number
   readonly elapsedMs?: number
-  readonly iterations?: readonly { readonly exitCode?: number }[]
+  readonly failureModeCoverage?: Record<string, number>
+  readonly failureModeEvidence?: Record<string, Record<string, number>>
+  readonly memorySummary?: SoakMemorySummary
+  readonly iterations?: readonly { readonly exitCode?: number; readonly mode?: string }[]
+}
+
+type SoakMemorySummary = {
+  readonly sampleCount?: number
+  readonly elapsedMs?: number
+  readonly startRssBytes?: number
+  readonly endRssBytes?: number
+  readonly maxRssBytes?: number
+  readonly rssDeltaBytes?: number
+  readonly heapUsedDeltaBytes?: number
+  readonly rssSlopeBytesPerHour?: number
+  readonly rssSlopeMbPerHour?: number
+  readonly slopeLimitMbPerHour?: number
+  readonly slopeMinElapsedMs?: number
+  readonly slopeAssessment?: 'passed' | 'failed' | 'insufficient-duration'
+  readonly withinSlopeLimit?: boolean
+}
+
+type ProductionUsageServiceEvidence = {
+  readonly id: string
+  readonly role: string
+  readonly sourceRefs: readonly string[]
+  readonly deploymentRefs: readonly string[]
+  readonly observabilityRefs: readonly string[]
+  readonly passed: boolean
+  readonly missingRefs: readonly string[]
+}
+
+type ProductionUsageEvidence = {
+  readonly passed: boolean
+  readonly serviceCount: number
+  readonly services: readonly ProductionUsageServiceEvidence[]
+  readonly observabilityRefs: readonly string[]
+  readonly missingRefs: readonly string[]
 }
 
 type AgentReadiness = {
@@ -172,16 +241,114 @@ const readIntEnv = (name: string, fallback: number): number => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
-const minimumReplayFixtures = readIntEnv('TEMPORAL_REPLAY_CORPUS_MIN_FIXTURES', 3)
+const minimumReplayFixtures = readIntEnv('TEMPORAL_REPLAY_CORPUS_MIN_FIXTURES', 25)
 const minimumAsyncFuzzSeeds = readIntEnv('TEMPORAL_ASYNC_FUZZ_MIN_SEEDS', 10_000)
-const minimumSoakIterations = readIntEnv('TEMPORAL_SOAK_MIN_ITERATIONS', 1)
-const minimumSoakDurationMs = readIntEnv('TEMPORAL_SOAK_MIN_DURATION_MS', 1_000)
+const minimumAsyncFuzzOperations = readIntEnv('TEMPORAL_ASYNC_FUZZ_MIN_OPERATIONS', 64)
+const minimumLoadWorkflows = readIntEnv('TEMPORAL_LOAD_MIN_WORKFLOWS', 1_000)
+const minimumLoadPeakConcurrency = readIntEnv('TEMPORAL_LOAD_MIN_PEAK_CONCURRENCY', 50)
+const minimumProductionServices = readIntEnv('TEMPORAL_PRODUCTION_USAGE_MIN_SERVICES', 2)
+const minimumSoakIterations = readIntEnv('TEMPORAL_SOAK_MIN_ITERATIONS', 12)
+const minimumSoakDurationMs = readIntEnv('TEMPORAL_SOAK_MIN_DURATION_MS', 21_600_000)
 const allowIncompleteEvidence = process.env.TEMPORAL_PRODUCTION_EVIDENCE_ALLOW_INCOMPLETE === '1'
+const requireDefaultChoice = process.env.TEMPORAL_REQUIRE_DEFAULT_CHOICE === '1'
 
 const defaultChoiceScope =
   'Bun-first Temporal worker/client projects that accept the @proompteng support contract instead of official Temporal SDK support.'
 const supportModel =
   'Company/community SDK with release-gated Temporal protocol behavior; use the official SDK when vendor-maintained Temporal Core support is mandatory.'
+
+const requiredReplayFeatureTags = [
+  'timer',
+  'activity',
+  'retry',
+  'child-workflow',
+  'continue-as-new',
+  'signal',
+  'query',
+  'update',
+  'cancellation',
+  'failure',
+  'search-attributes',
+  'payload-codec',
+  'versioning',
+  'side-effect',
+  'workflow-task-failure',
+] as const
+
+const requiredAsyncFuzzOperations = [
+  'promise-microtask',
+  'date-now',
+  'math-random',
+  'activity',
+  'timer',
+  'side-effect',
+  'version',
+  'patch',
+  'local-activity',
+  'metadata',
+] as const
+
+const requiredLoadScenarios = [
+  'workerLoadCpuWorkflow',
+  'workerLoadActivityWorkflow',
+  'workerLoadUpdateWorkflow',
+] as const
+
+const requiredSoakFailureModes = [
+  'baseline',
+  'worker-restart',
+  'sticky-cache-churn',
+  'update-rejection-termination',
+  'activity-cancellation',
+] as const
+
+const productionUsageDefinitions = [
+  {
+    id: 'jangar',
+    role: 'production control-plane client and worker entrypoint',
+    sourceRefs: [
+      'services/jangar/src/worker.ts',
+      'services/jangar/src/server/agents-controller/temporal-runtime.ts',
+      'services/jangar/src/server/bumba.ts',
+      'services/jangar/package.json',
+    ],
+    deploymentRefs: ['argocd/applications/jangar/deployment.yaml', 'argocd/applications/jangar/alloy-configmap.yaml'],
+    observabilityRefs: ['argocd/applications/jangar/alloy-configmap.yaml'],
+    requiredFragments: [
+      ['services/jangar/src/worker.ts', '@proompteng/temporal-bun-sdk/worker'],
+      ['services/jangar/src/worker.ts', 'createWorker'],
+      ['services/jangar/src/server/agents-controller/temporal-runtime.ts', '@proompteng/temporal-bun-sdk'],
+      ['services/jangar/package.json', '@proompteng/temporal-bun-sdk'],
+      ['argocd/applications/jangar/deployment.yaml', 'TEMPORAL_METRICS_EXPORTER'],
+      ['argocd/applications/jangar/alloy-configmap.yaml', 'loki.process "jangar"'],
+    ],
+  },
+  {
+    id: 'bumba',
+    role: 'production Temporal worker',
+    sourceRefs: [
+      'services/bumba/src/worker.ts',
+      'services/bumba/src/event-consumer.ts',
+      'services/bumba/src/workflows/index.ts',
+      'services/bumba/package.json',
+    ],
+    deploymentRefs: ['argocd/applications/bumba/deployment.yaml'],
+    observabilityRefs: [
+      'argocd/applications/jangar/alloy-configmap.yaml',
+      'argocd/applications/observability/graf-bumba-dashboard-configmap.yaml',
+    ],
+    requiredFragments: [
+      ['services/bumba/src/worker.ts', '@proompteng/temporal-bun-sdk/worker'],
+      ['services/bumba/src/worker.ts', 'createWorker'],
+      ['services/bumba/src/event-consumer.ts', 'client.workflow.start'],
+      ['services/bumba/src/workflows/index.ts', '@proompteng/temporal-bun-sdk/workflow'],
+      ['services/bumba/package.json', '@proompteng/temporal-bun-sdk'],
+      ['argocd/applications/bumba/deployment.yaml', 'TEMPORAL_STICKY_CACHE_SIZE'],
+      ['argocd/applications/bumba/deployment.yaml', 'readinessProbe'],
+      ['argocd/applications/observability/graf-bumba-dashboard-configmap.yaml', 'temporal_worker_poll_latency_ms'],
+    ],
+  },
+] as const
 
 const semanticConcernDefinitions = [
   {
@@ -236,7 +403,9 @@ const semanticConcernDefinitions = [
     status: 'release-gated',
     gateRefs: ['replayCorpusEvidence', 'ciWorkflowCoverage'],
     evidenceRefs: [
+      'packages/temporal-bun-sdk/src/workflow/command-event-matrix.ts',
       'packages/temporal-bun-sdk/src/workflow/commands.ts',
+      'packages/temporal-bun-sdk/tests/protocol/command-event-matrix.test.ts',
       'packages/temporal-bun-sdk/tests/protocol/command-golden.test.ts',
       'packages/temporal-bun-sdk/tests/integration/history-replay.test.ts',
       'packages/temporal-bun-sdk/scripts/verify-replay-corpus.ts',
@@ -263,15 +432,18 @@ const semanticConcernDefinitions = [
       'Worker pollers, sticky queues, sticky-cache healing, graceful shutdown, and metrics must hold under load.',
     defaultChoiceRequired: true,
     status: 'release-gated',
-    gateRefs: ['loadEvidence', 'soakEvidence', 'ciWorkflowCoverage'],
+    gateRefs: ['loadEvidence', 'soakEvidence', 'longSoakWorkflowCoverage', 'ciWorkflowCoverage'],
     evidenceRefs: [
       'packages/temporal-bun-sdk/src/worker/runtime.ts',
       'packages/temporal-bun-sdk/src/worker/sticky-cache.ts',
       'packages/temporal-bun-sdk/tests/worker.sticky-cache.test.ts',
+      'packages/temporal-bun-sdk/tests/worker.task-queue-kind.test.ts',
       'packages/temporal-bun-sdk/tests/integration/worker.runtime.integration.test.ts',
       'packages/temporal-bun-sdk/tests/integration/worker-load.test.ts',
       'packages/temporal-bun-sdk/.artifacts/worker-load/report.json',
       'packages/temporal-bun-sdk/.artifacts/worker-soak/report.json',
+      'packages/temporal-bun-sdk/.artifacts/worker-soak/memory.jsonl',
+      '.github/workflows/temporal-bun-sdk-nightly.yml',
     ],
   },
   {
@@ -279,12 +451,15 @@ const semanticConcernDefinitions = [
     concern: 'The repo must contain production service usage and observability hooks, not only SDK-local examples.',
     defaultChoiceRequired: true,
     status: 'release-gated',
-    gateRefs: ['ciWorkflowCoverage'],
+    gateRefs: ['productionUsageEvidence', 'ciWorkflowCoverage'],
     evidenceRefs: [
       'services/jangar/src/worker.ts',
       'services/bumba/src/worker.ts',
       'services/jangar/package.json',
       'services/bumba/package.json',
+      'argocd/applications/jangar/deployment.yaml',
+      'argocd/applications/bumba/deployment.yaml',
+      'argocd/applications/jangar/alloy-configmap.yaml',
       'argocd/applications/observability/graf-bumba-dashboard-configmap.yaml',
     ],
   },
@@ -389,21 +564,37 @@ const repoRefExists = (path: string): boolean => existsSync(join(repoRoot, path)
 
 const validateReplayCorpusReport = (
   report: ReplayCorpusReport | null,
-): { passed: boolean; detail: string; fixtureCount: number } => {
+): { passed: boolean; detail: string; fixtureCount: number; coverageTags: readonly string[] } => {
   if (!report) {
-    return { passed: false, detail: 'missing', fixtureCount: 0 }
+    return { passed: false, detail: 'missing', fixtureCount: 0, coverageTags: [] }
   }
   const fixtureCount = report.fixtureCount ?? 0
   const resultFailures = report.results?.filter((result) => result.passed !== true).length ?? 0
+  const coverageTags = Array.from(
+    new Set([
+      ...(report.coverage?.featureTags ?? []),
+      ...(report.results ?? []).flatMap((result) => result.featureTags ?? []),
+    ]),
+  ).sort()
+  const missingTags = requiredReplayFeatureTags.filter((tag) => !coverageTags.includes(tag))
+  const commandKinds = report.coverage?.commandKinds ?? []
+  const externalOperationKinds = report.coverage?.externalOperationKinds ?? []
+  const historyEventTypes = report.coverage?.historyEventTypes ?? []
   const passed =
     report.passed === true &&
     fixtureCount >= minimumReplayFixtures &&
     resultFailures === 0 &&
-    (report.minimumFixtures ?? minimumReplayFixtures) <= fixtureCount
+    (report.minimumFixtures ?? minimumReplayFixtures) <= fixtureCount &&
+    missingTags.length === 0
   return {
     passed,
-    detail: `fixtures=${fixtureCount}; failed=${resultFailures}; minimum=${minimumReplayFixtures}`,
+    detail:
+      `fixtures=${fixtureCount}; failed=${resultFailures}; minimum=${minimumReplayFixtures}; ` +
+      `coverage=${coverageTags.length}/${requiredReplayFeatureTags.length}; commandKinds=${commandKinds.length}; ` +
+      `externalOperations=${externalOperationKinds.length}; historyEventTypes=${historyEventTypes.length}; ` +
+      `missingTags=${missingTags.join(',') || 'none'}`,
     fixtureCount,
+    coverageTags,
   }
 }
 
@@ -414,6 +605,7 @@ const validateLoadReport = (report: WorkerLoadReport | null): { passed: boolean;
 
   const submitted = report.stats?.submitted ?? 0
   const completed = report.stats?.completed ?? 0
+  const peakConcurrent = (report.stats as { readonly peakConcurrent?: number } | undefined)?.peakConcurrent ?? 0
   const throughput = report.metrics?.workflowThroughputPerSecond ?? 0
   const throughputFloor = report.config?.throughputFloorPerSecond ?? Number.POSITIVE_INFINITY
   const stickyHitRatio = report.metrics?.stickyHitRatio ?? 0
@@ -422,21 +614,77 @@ const validateLoadReport = (report: WorkerLoadReport | null): { passed: boolean;
   const workflowP95Target = report.config?.workflowPollP95TargetMs ?? 0
   const activityP95 = report.metrics?.activityPollLatency?.p95 ?? Number.POSITIVE_INFINITY
   const activityP95Target = report.config?.activityPollP95TargetMs ?? 0
+  const scenarioCoverage = report.scenarioCoverage ?? {}
+  const missingScenarios = requiredLoadScenarios.filter((scenario) => (scenarioCoverage[scenario] ?? 0) <= 0)
 
   const passed =
-    submitted > 0 &&
+    submitted >= minimumLoadWorkflows &&
     completed >= submitted &&
+    peakConcurrent >= minimumLoadPeakConcurrency &&
     throughput >= throughputFloor &&
     stickyHitRatio >= stickyHitRatioTarget &&
     workflowP95 <= workflowP95Target &&
-    activityP95 <= activityP95Target
+    activityP95 <= activityP95Target &&
+    missingScenarios.length === 0
 
   return {
     passed,
     detail:
-      `completed=${completed}/${submitted}; throughput=${throughput.toFixed(2)}/${throughputFloor}; ` +
+      `completed=${completed}/${submitted}; minimumWorkflows=${minimumLoadWorkflows}; ` +
+      `peakConcurrent=${peakConcurrent}/${minimumLoadPeakConcurrency}; throughput=${throughput.toFixed(2)}/${throughputFloor}; ` +
       `sticky=${stickyHitRatio.toFixed(3)}/${stickyHitRatioTarget}; workflowP95=${workflowP95}/${workflowP95Target}; ` +
-      `activityP95=${activityP95}/${activityP95Target}`,
+      `activityP95=${activityP95}/${activityP95Target}; missingScenarios=${missingScenarios.join(',') || 'none'}`,
+  }
+}
+
+const collectProductionUsageEvidence = async (): Promise<ProductionUsageEvidence> => {
+  const services: ProductionUsageServiceEvidence[] = []
+
+  for (const definition of productionUsageDefinitions) {
+    const refChecks = [
+      ...definition.sourceRefs.map((path) => [path, 'file exists'] as const),
+      ...definition.deploymentRefs.map((path) => [path, 'file exists'] as const),
+      ...definition.observabilityRefs.map((path) => [path, 'file exists'] as const),
+      ...definition.requiredFragments,
+    ]
+    const missingRefs: string[] = []
+
+    for (const [path, expected] of refChecks) {
+      const absolutePath = join(repoRoot, path)
+      if (!existsSync(absolutePath)) {
+        missingRefs.push(`${path} missing`)
+        continue
+      }
+      if (expected === 'file exists') {
+        continue
+      }
+      const contents = await readFile(absolutePath, 'utf8')
+      if (!contents.includes(expected)) {
+        missingRefs.push(`${path} missing ${expected}`)
+      }
+    }
+
+    services.push({
+      id: definition.id,
+      role: definition.role,
+      sourceRefs: definition.sourceRefs,
+      deploymentRefs: definition.deploymentRefs,
+      observabilityRefs: definition.observabilityRefs,
+      passed: missingRefs.length === 0,
+      missingRefs,
+    })
+  }
+
+  const observabilityRefs = Array.from(new Set(services.flatMap((service) => service.observabilityRefs))).sort()
+  const missingRefs = services.flatMap((service) => service.missingRefs)
+  const passedServices = services.filter((service) => service.passed).length
+
+  return {
+    passed: passedServices >= minimumProductionServices && missingRefs.length === 0,
+    serviceCount: passedServices,
+    services,
+    observabilityRefs,
+    missingRefs,
   }
 }
 
@@ -448,6 +696,23 @@ const requiredCiCommands = [
   'TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load',
   'TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:soak',
   'bun run --filter @proompteng/temporal-bun-sdk verify:production',
+  'bun run --filter @proompteng/temporal-bun-sdk verify:default-choice',
+] as const
+
+const requiredLongSoakWorkflowFragments = [
+  'schedule:',
+  'workflow_dispatch:',
+  'runs-on: arc-arm64',
+  "TEMPORAL_TEST_SERVER: '1'",
+  'TEMPORAL_ADDRESS: temporal-grpc:7233',
+  'TEMPORAL_SOAK_FAILURE_MODES: baseline,worker-restart,sticky-cache-churn,update-rejection-termination,activity-cancellation',
+  'bun run --filter @proompteng/temporal-bun-sdk test:soak',
+  '--duration "${{ steps.soak.outputs.duration }}"',
+  '--iterations "${{ steps.soak.outputs.iterations }}"',
+  '--failure-modes "${TEMPORAL_SOAK_FAILURE_MODES}"',
+  'bun run --filter @proompteng/temporal-bun-sdk verify:default-choice',
+  'packages/temporal-bun-sdk/.artifacts/worker-soak/memory.jsonl',
+  'actions/upload-artifact@v5',
 ] as const
 
 const validateCiWorkflowCoverage = async (): Promise<GateStatus> => {
@@ -461,6 +726,22 @@ const validateCiWorkflowCoverage = async (): Promise<GateStatus> => {
   return buildGate(
     missing.length === 0,
     missing.length === 0 ? `commands=${requiredCiCommands.length}` : `missing=${missing.join(' | ')}`,
+  )
+}
+
+const validateLongSoakWorkflowCoverage = async (): Promise<GateStatus> => {
+  const workflowPath = join(repoRoot, '.github', 'workflows', 'temporal-bun-sdk-nightly.yml')
+  if (!existsSync(workflowPath)) {
+    return buildGate(false, '.github/workflows/temporal-bun-sdk-nightly.yml missing')
+  }
+
+  const workflow = await readFile(workflowPath, 'utf8')
+  const missing = requiredLongSoakWorkflowFragments.filter((fragment) => !workflow.includes(fragment))
+  return buildGate(
+    missing.length === 0,
+    missing.length === 0
+      ? `fragments=${requiredLongSoakWorkflowFragments.length}; path=.github/workflows/temporal-bun-sdk-nightly.yml`
+      : `missing=${missing.join(' | ')}`,
   )
 }
 
@@ -501,6 +782,11 @@ const main = async () => {
   const asyncFuzzReportPath = join(packageRoot, '.artifacts', 'async-fuzz', 'report.json')
   const asyncFuzzReport = await readOptionalJson<AsyncFuzzReport>(asyncFuzzReportPath)
   const asyncFuzzSeedCount = asyncFuzzReport?.seedCount ?? 0
+  const asyncFuzzOperationCount = asyncFuzzReport?.operationCount ?? 0
+  const asyncFuzzOperationCoverage = asyncFuzzReport?.operationCoverage ?? {}
+  const missingAsyncOperations = requiredAsyncFuzzOperations.filter(
+    (operation) => (asyncFuzzOperationCoverage[operation] ?? 0) <= 0,
+  )
   const asyncFuzzPassed = asyncFuzzReport?.passed === true
   const soakReportPath = join(packageRoot, '.artifacts', 'worker-soak', 'report.json')
   const soakReport = await readOptionalJson<SoakReport>(soakReportPath)
@@ -508,8 +794,41 @@ const main = async () => {
   const soakIterationsPassed = soakReport?.iterations?.every((entry) => entry.exitCode === 0) ?? false
   const soakDurationMs = soakReport?.durationMs ?? 0
   const soakElapsedMs = soakReport?.elapsedMs ?? 0
+  const soakFailureModeCoverage = soakReport?.failureModeCoverage ?? {}
+  const soakFailureModeEvidence = soakReport?.failureModeEvidence ?? {}
+  const workerRestartEvidence = soakFailureModeEvidence['worker-restart'] ?? {}
+  const stickyCacheChurnEvidence = soakFailureModeEvidence['sticky-cache-churn'] ?? {}
+  const updateTerminationEvidence = soakFailureModeEvidence['update-rejection-termination'] ?? {}
+  const activityCancellationEvidence = soakFailureModeEvidence['activity-cancellation'] ?? {}
+  const missingSoakFailureEvidence = [
+    (soakFailureModeCoverage['worker-restart'] ?? 0) > 0 &&
+    ((workerRestartEvidence.runtimeRestarts ?? 0) <= 0 ||
+      (workerRestartEvidence.restartAfterSubmitIterations ?? 0) <= 0)
+      ? 'worker-restart-runtime-restart'
+      : undefined,
+    (soakFailureModeCoverage['sticky-cache-churn'] ?? 0) > 0 &&
+    (stickyCacheChurnEvidence.stickyCacheChurnIterations ?? 0) <= 0
+      ? 'sticky-cache-churn-runtime-evidence'
+      : undefined,
+    (soakFailureModeCoverage['update-rejection-termination'] ?? 0) > 0 &&
+    (updateTerminationEvidence.updateWorkflows ?? 0) <= 0
+      ? 'update-rejection-termination-workflows'
+      : undefined,
+    (soakFailureModeCoverage['activity-cancellation'] ?? 0) > 0 &&
+    ((activityCancellationEvidence.activityCancellationAttempts ?? 0) <= 0 ||
+      (activityCancellationEvidence.activityCancellationSuccesses ?? 0) <= 0 ||
+      (activityCancellationEvidence.activityCancellationFinalCanceled ?? 0) <= 0)
+      ? 'activity-cancellation-heartbeat-cancel'
+      : undefined,
+  ].filter((entry): entry is string => typeof entry === 'string')
+  const soakMemorySummary = soakReport?.memorySummary ?? null
+  const soakMemorySampleCount = soakMemorySummary?.sampleCount ?? 0
+  const soakMemoryReady = soakMemorySampleCount > 0 && soakMemorySummary?.withinSlopeLimit !== false
+  const missingSoakFailureModes = requiredSoakFailureModes.filter((mode) => (soakFailureModeCoverage[mode] ?? 0) <= 0)
   const soakPassed = soakReport?.passed === true && soakIterationsPassed
   const docsHash = await hashDocs()
+  const productionUsage = await collectProductionUsageEvidence()
+  const longSoakWorkflowPath = join(repoRoot, '.github', 'workflows', 'temporal-bun-sdk-nightly.yml')
 
   const gates: Record<string, GateStatus> = {
     packageFiles: buildGate(
@@ -542,18 +861,43 @@ const main = async () => {
       `${loadEvidence.detail}; path=${relative(packageRoot, loadReportPath)}`,
     ),
     asyncFuzzEvidence: buildGate(
-      asyncFuzzPassed && asyncFuzzSeedCount >= minimumAsyncFuzzSeeds,
+      asyncFuzzPassed &&
+        asyncFuzzSeedCount >= minimumAsyncFuzzSeeds &&
+        asyncFuzzOperationCount >= minimumAsyncFuzzOperations &&
+        missingAsyncOperations.length === 0,
       asyncFuzzReport
-        ? `seeds=${asyncFuzzSeedCount}; elapsedMs=${asyncFuzzReport.elapsedMs ?? 0}; path=${relative(packageRoot, asyncFuzzReportPath)}`
+        ? `seeds=${asyncFuzzSeedCount}; operations=${asyncFuzzOperationCount}/${minimumAsyncFuzzOperations}; ` +
+            `coveredOperations=${Object.keys(asyncFuzzOperationCoverage).length}/${requiredAsyncFuzzOperations.length}; ` +
+            `missingOperations=${missingAsyncOperations.join(',') || 'none'}; elapsedMs=${asyncFuzzReport.elapsedMs ?? 0}; ` +
+            `path=${relative(packageRoot, asyncFuzzReportPath)}`
         : 'missing',
     ),
     soakEvidence: buildGate(
-      soakPassed && soakIterationCount >= minimumSoakIterations && soakElapsedMs >= minimumSoakDurationMs,
+      soakPassed &&
+        soakIterationCount >= minimumSoakIterations &&
+        soakElapsedMs >= minimumSoakDurationMs &&
+        soakMemoryReady &&
+        missingSoakFailureModes.length === 0 &&
+        missingSoakFailureEvidence.length === 0,
       soakReport
-        ? `iterations=${soakIterationCount}; durationMs=${soakDurationMs}; elapsedMs=${soakElapsedMs}; path=${relative(packageRoot, soakReportPath)}`
+        ? `iterations=${soakIterationCount}; durationMs=${soakDurationMs}; elapsedMs=${soakElapsedMs}; ` +
+            `failureModes=${Object.keys(soakFailureModeCoverage).length}/${requiredSoakFailureModes.length}; ` +
+            `missingFailureEvidence=${missingSoakFailureEvidence.join(',') || 'none'}; ` +
+            `missingFailureModes=${missingSoakFailureModes.join(',') || 'none'}; memorySamples=${soakMemorySampleCount}; ` +
+            `rssSlopeMbPerHour=${soakMemorySummary?.rssSlopeMbPerHour?.toFixed(2) ?? 'unknown'}; ` +
+            `slopeAssessment=${soakMemorySummary?.slopeAssessment ?? 'unknown'}; ` +
+            `memorySlopeLimitMbPerHour=${soakMemorySummary?.slopeLimitMbPerHour ?? 'unknown'}; ` +
+            `path=${relative(packageRoot, soakReportPath)}`
         : 'missing',
     ),
     ciWorkflowCoverage: await validateCiWorkflowCoverage(),
+    longSoakWorkflowCoverage: await validateLongSoakWorkflowCoverage(),
+    productionUsageEvidence: buildGate(
+      productionUsage.passed,
+      `services=${productionUsage.serviceCount}/${minimumProductionServices}; ` +
+        `observabilityRefs=${productionUsage.observabilityRefs.length}; ` +
+        `missing=${productionUsage.missingRefs.join(' | ') || 'none'}`,
+    ),
   }
 
   const blockers: string[] = []
@@ -570,15 +914,37 @@ const main = async () => {
     blockers.push(`worker load evidence is not passing (${gates.loadEvidence.detail})`)
   }
   if (!gates.asyncFuzzEvidence.passed) {
-    blockers.push(`async fuzz evidence has ${asyncFuzzSeedCount} seeds; ${minimumAsyncFuzzSeeds} required`)
+    blockers.push(
+      `async fuzz evidence has ${asyncFuzzSeedCount} seeds and ${asyncFuzzOperationCount} operations; ` +
+        `${minimumAsyncFuzzSeeds} seeds, ${minimumAsyncFuzzOperations} operations, and full operation coverage required`,
+    )
   }
   if (!gates.soakEvidence.passed) {
     blockers.push(
       `soak evidence has ${soakIterationCount} passing iterations and ${soakElapsedMs}ms elapsed; ${minimumSoakIterations} iterations and ${minimumSoakDurationMs}ms required`,
     )
+    if (missingSoakFailureModes.length > 0) {
+      blockers.push(`soak failure-mode evidence is missing ${missingSoakFailureModes.join(',')}`)
+    }
+    if (missingSoakFailureEvidence.length > 0) {
+      blockers.push(`soak failure-mode implementation evidence is missing ${missingSoakFailureEvidence.join(',')}`)
+    }
+    if (!soakMemoryReady) {
+      blockers.push(
+        `soak memory evidence has ${soakMemorySampleCount} samples and slope status ` +
+          `${soakMemorySummary?.slopeAssessment ?? (soakMemorySummary?.withinSlopeLimit === false ? 'failed' : 'missing')}; ` +
+          `memory samples required`,
+      )
+    }
   }
   if (!gates.ciWorkflowCoverage.passed) {
     blockers.push(`Temporal Bun SDK CI workflow is missing required coverage (${gates.ciWorkflowCoverage.detail})`)
+  }
+  if (!gates.longSoakWorkflowCoverage.passed) {
+    blockers.push(`long-soak workflow is missing required coverage (${gates.longSoakWorkflowCoverage.detail})`)
+  }
+  if (!gates.productionUsageEvidence.passed) {
+    blockers.push(`production usage evidence is incomplete (${gates.productionUsageEvidence.detail})`)
   }
 
   const requiredBoundaryGates = [
@@ -591,7 +957,9 @@ const main = async () => {
     gates.loadEvidence,
     gates.asyncFuzzEvidence,
     gates.soakEvidence,
+    gates.longSoakWorkflowCoverage,
     gates.ciWorkflowCoverage,
+    gates.productionUsageEvidence,
   ]
   const semanticConcerns = buildSemanticConcerns(gates)
   const failedDefaultChoiceConcerns = semanticConcerns.filter(
@@ -634,17 +1002,34 @@ const main = async () => {
       replayCorpusReportPresent: replayCorpusReport !== null,
       replayCorpusReportPath: relative(packageRoot, replayCorpusReportPath),
       replayCorpusReportPassed: replayCorpus.passed,
+      replayCorpusCoverageTags: replayCorpus.coverageTags,
+      replayCorpusCommandKinds: replayCorpusReport?.coverage?.commandKinds ?? [],
+      replayCorpusExternalOperationKinds: replayCorpusReport?.coverage?.externalOperationKinds ?? [],
+      replayCorpusHistoryEventTypes: replayCorpusReport?.coverage?.historyEventTypes ?? [],
       loadReportPresent,
       loadReportPath: relative(packageRoot, loadReportPath),
       loadReportPassed: loadEvidence.passed,
+      loadScenarioCoverage: loadReport?.scenarioCoverage ?? {},
       asyncFuzzReportPresent: asyncFuzzReport !== null,
       asyncFuzzReportPath: relative(packageRoot, asyncFuzzReportPath),
       asyncFuzzSeedCount,
+      asyncFuzzOperationCount,
+      asyncFuzzOperationCoverage,
       soakReportPresent: soakReport !== null,
       soakReportPath: relative(packageRoot, soakReportPath),
       soakIterationCount,
+      soakFailureModeCoverage,
+      soakFailureModeEvidence,
+      missingSoakFailureEvidence,
       soakDurationMs,
       soakElapsedMs,
+      soakMemorySummary,
+      productionUsageServiceCount: productionUsage.serviceCount,
+      productionUsageServices: productionUsage.services,
+      productionUsageObservabilityRefs: productionUsage.observabilityRefs,
+      productionUsageMissingRefs: productionUsage.missingRefs,
+      longSoakWorkflowPresent: existsSync(longSoakWorkflowPath),
+      longSoakWorkflowPath: relative(packageRoot, longSoakWorkflowPath),
       docsHash,
     },
     gates,
@@ -655,6 +1040,10 @@ const main = async () => {
       supportModel,
       minimumReplayFixtures,
       minimumAsyncFuzzSeeds,
+      minimumAsyncFuzzOperations,
+      minimumLoadWorkflows,
+      minimumLoadPeakConcurrency,
+      minimumProductionServices,
       minimumSoakIterations,
       minimumSoakDurationMs,
       semanticConcernIds: semanticConcerns
@@ -684,7 +1073,7 @@ const main = async () => {
   console.log(`[temporal-bun-sdk] wrote ${relative(packageRoot, productionEvidencePath)}`)
   console.log(`[temporal-bun-sdk] wrote ${relative(packageRoot, agentReadinessPath)}`)
 
-  if (!recommended && !allowIncompleteEvidence) {
+  if (!recommended && requireDefaultChoice && !allowIncompleteEvidence) {
     process.exitCode = 1
   }
 }

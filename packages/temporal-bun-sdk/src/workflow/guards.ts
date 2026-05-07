@@ -30,8 +30,15 @@ const ORIGINAL_SET_TIMEOUT_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.ori
 const ORIGINAL_SET_INTERVAL_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.setInterval')
 const ORIGINAL_PERFORMANCE_NOW_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.performance.now')
 const ORIGINAL_WEBSOCKET_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.WebSocket')
+const ORIGINAL_PROCESS_ENV_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.process.env')
+const ORIGINAL_BUN_ENV_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.env')
 const ORIGINAL_BUN_SPAWN_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.spawn')
 const ORIGINAL_BUN_NANOSECONDS_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.nanoseconds')
+const ORIGINAL_BUN_SLEEP_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.sleep')
+const ORIGINAL_BUN_FILE_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.file')
+const ORIGINAL_BUN_WRITE_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.write')
+const ORIGINAL_BUN_CONNECT_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.connect')
+const ORIGINAL_BUN_SERVE_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.serve')
 
 type ViolationDetails = {
   readonly api: string
@@ -155,6 +162,111 @@ const handleViolation = (details: ViolationDetails): void => {
     return
   }
   throwViolation(details)
+}
+
+const guardEnvironmentViolation = (api: string, action: 'enumeration' | 'inspection' | 'mutation' | 'read') => {
+  const messages = {
+    enumeration: `${api} enumeration is not allowed in workflow code`,
+    inspection: `${api} inspection is not allowed in workflow code`,
+    mutation: `${api} mutation is not allowed in workflow code`,
+    read: `${api} is not allowed in workflow code`,
+  } as const
+  handleViolation({
+    api,
+    message: messages[action],
+    remediation:
+      action === 'mutation'
+        ? 'Move environment mutation into worker bootstrap code or an activity.'
+        : 'Pass environment-derived configuration into the workflow input or activity input before the workflow starts.',
+  })
+}
+
+const guardedEnvironment = <T extends object>(target: T, api: string): T =>
+  new Proxy(target, {
+    get(current, property, receiver) {
+      if (typeof property === 'string') {
+        guardEnvironmentViolation(api, 'read')
+      }
+      return Reflect.get(current, property, receiver)
+    },
+    set(current, property, value, receiver) {
+      if (typeof property === 'string') {
+        guardEnvironmentViolation(api, 'mutation')
+      }
+      return Reflect.set(current, property, value, receiver)
+    },
+    has(current, property) {
+      if (typeof property === 'string') {
+        guardEnvironmentViolation(api, 'inspection')
+      }
+      return Reflect.has(current, property)
+    },
+    ownKeys(current) {
+      guardEnvironmentViolation(api, 'enumeration')
+      return Reflect.ownKeys(current)
+    },
+  })
+
+const guardEnvironmentObjectProperties = (target: Record<string, string | undefined>, api: string) => {
+  const values = new Map<string, string | undefined>()
+  for (const key of Object.keys(target)) {
+    const descriptor = Object.getOwnPropertyDescriptor(target, key)
+    if (!descriptor?.configurable) {
+      continue
+    }
+    values.set(key, descriptor.get ? (descriptor.get.call(target) as string | undefined) : descriptor.value)
+    Object.defineProperty(target, key, {
+      configurable: true,
+      enumerable: descriptor.enumerable,
+      get() {
+        guardEnvironmentViolation(api, 'read')
+        return values.get(key)
+      },
+      set(value: string | undefined) {
+        guardEnvironmentViolation(api, 'mutation')
+        values.set(key, value)
+      },
+    })
+  }
+
+  const originalPrototype = Object.getPrototypeOf(target)
+  if (!originalPrototype || Object.prototype.hasOwnProperty.call(originalPrototype, '__temporalBunSdkEnvGuard')) {
+    return
+  }
+
+  Object.setPrototypeOf(
+    target,
+    new Proxy(Object.create(originalPrototype) as Record<PropertyKey, unknown>, {
+      get(current, property, receiver) {
+        if (typeof property === 'string') {
+          guardEnvironmentViolation(api, 'read')
+        }
+        return Reflect.get(current, property, receiver)
+      },
+      set(current, property, value, receiver) {
+        if (typeof property === 'string') {
+          guardEnvironmentViolation(api, 'mutation')
+        }
+        return Reflect.set(current, property, value, receiver)
+      },
+      has(current, property) {
+        if (typeof property === 'string') {
+          guardEnvironmentViolation(api, 'inspection')
+        }
+        return Reflect.has(current, property)
+      },
+      getOwnPropertyDescriptor(current, property) {
+        if (property === '__temporalBunSdkEnvGuard') {
+          return {
+            configurable: true,
+            enumerable: false,
+            value: true,
+          }
+        }
+        return Reflect.getOwnPropertyDescriptor(current, property)
+      },
+    }),
+  )
 }
 
 export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode }) => {
@@ -494,50 +606,72 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
     }
   }
 
+  const processRef = (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process
   const maybeBun = (globalThis as unknown as { Bun?: unknown }).Bun as
-    | { spawn?: (...args: unknown[]) => unknown; nanoseconds?: () => number }
+    | (Record<string, unknown> & { env?: Record<string, string | undefined> })
     | undefined
-  if (maybeBun?.spawn && typeof maybeBun.spawn === 'function') {
-    globalRef[ORIGINAL_BUN_SPAWN_SYMBOL] = maybeBun.spawn.bind(maybeBun)
-    maybeBun.spawn = (...args: unknown[]) => {
-      const ctx = currentWorkflowLogContext()
-      if (!ctx) {
-        handleViolation({
-          api: 'Bun.spawn',
-          message: 'Bun.spawn() is not allowed in workflow code',
-          remediation: 'Move subprocess execution into an activity and call it via ctx.activities.schedule(...).',
-        })
-        return (globalRef[ORIGINAL_BUN_SPAWN_SYMBOL] as (...args: unknown[]) => unknown)(...args)
-      }
-      handleViolation({
-        api: 'Bun.spawn',
-        message: 'Bun.spawn() is not allowed in workflow code',
-        remediation: 'Move subprocess execution into an activity and call it via ctx.activities.schedule(...).',
-      })
-      return (globalRef[ORIGINAL_BUN_SPAWN_SYMBOL] as (...args: unknown[]) => unknown)(...args)
+
+  const originalProcessEnv = processRef?.env
+  const originalBunEnv = maybeBun?.env
+
+  if (originalProcessEnv && typeof originalProcessEnv === 'object') {
+    globalRef[ORIGINAL_PROCESS_ENV_SYMBOL] = originalProcessEnv
+    processRef.env = guardedEnvironment(originalProcessEnv, 'process.env') as typeof processRef.env
+  }
+
+  if (originalBunEnv && typeof originalBunEnv === 'object') {
+    globalRef[ORIGINAL_BUN_ENV_SYMBOL] = originalBunEnv
+    const bunEnvDescriptor = maybeBun ? Object.getOwnPropertyDescriptor(maybeBun, 'env') : undefined
+    if (bunEnvDescriptor?.writable) {
+      maybeBun.env = guardedEnvironment(originalBunEnv, 'Bun.env') as typeof maybeBun.env
+    } else {
+      guardEnvironmentObjectProperties(originalBunEnv, 'Bun.env')
     }
   }
 
-  if (maybeBun?.nanoseconds && typeof maybeBun.nanoseconds === 'function') {
-    globalRef[ORIGINAL_BUN_NANOSECONDS_SYMBOL] = maybeBun.nanoseconds.bind(maybeBun)
-    maybeBun.nanoseconds = () => {
-      const ctx = currentWorkflowLogContext()
-      if (!ctx) {
-        handleViolation({
-          api: 'Bun.nanoseconds',
-          message: 'Bun.nanoseconds() is not allowed in workflow code',
-          remediation: 'Use workflow time via ctx.determinism.now(); avoid high-resolution timers in workflows.',
-        })
-        return (globalRef[ORIGINAL_BUN_NANOSECONDS_SYMBOL] as () => number)()
-      }
+  const guardBunFunction = (key: string, originalSymbol: symbol, remediation: string) => {
+    if (!maybeBun) {
+      return
+    }
+    const original = maybeBun[key]
+    if (typeof original !== 'function') {
+      return
+    }
+    globalRef[originalSymbol] = original.bind(maybeBun)
+    maybeBun[key] = (...args: unknown[]) => {
+      const api = `Bun.${key}`
       handleViolation({
-        api: 'Bun.nanoseconds',
-        message: 'Bun.nanoseconds() is not allowed in workflow code',
-        remediation: 'Use workflow time via ctx.determinism.now(); avoid high-resolution timers in workflows.',
+        api,
+        message: `${api}() is not allowed in workflow code`,
+        remediation,
       })
-      return (globalRef[ORIGINAL_BUN_NANOSECONDS_SYMBOL] as () => number)()
+      return (globalRef[originalSymbol] as (...args: unknown[]) => unknown)(...args)
     }
   }
+
+  guardBunFunction(
+    'spawn',
+    ORIGINAL_BUN_SPAWN_SYMBOL,
+    'Move subprocess execution into an activity and call it via ctx.activities.schedule(...).',
+  )
+  guardBunFunction(
+    'nanoseconds',
+    ORIGINAL_BUN_NANOSECONDS_SYMBOL,
+    'Use workflow time via ctx.determinism.now(); avoid high-resolution timers in workflows.',
+  )
+  guardBunFunction(
+    'sleep',
+    ORIGINAL_BUN_SLEEP_SYMBOL,
+    'Use workflow timers via ctx.timers.start({ timeoutMs }) instead.',
+  )
+  guardBunFunction('file', ORIGINAL_BUN_FILE_SYMBOL, 'Move filesystem I/O into an activity.')
+  guardBunFunction('write', ORIGINAL_BUN_WRITE_SYMBOL, 'Move filesystem I/O into an activity.')
+  guardBunFunction('connect', ORIGINAL_BUN_CONNECT_SYMBOL, 'Move socket I/O into an activity or external service.')
+  guardBunFunction(
+    'serve',
+    ORIGINAL_BUN_SERVE_SYMBOL,
+    'Move server I/O out of workflow code and into worker bootstrap code.',
+  )
 
   state.installed = true
 }

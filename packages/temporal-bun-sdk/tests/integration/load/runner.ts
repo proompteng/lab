@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, rm, writeFile } from 'node:fs/promises'
 import { Effect } from 'effect'
 
 import { createTemporalClient, type TemporalClient } from '../../../src/client'
-import { loadTemporalConfig, type TemporalConfig } from '../../../src/config'
+import { loadTemporalConfig } from '../../../src/config'
 import { WorkerRuntime } from '../../../src/worker/runtime'
 import { resolveTemporalCliExecutable } from '../harness'
 import { readWorkerLoadConfig, type WorkerLoadConfig } from './config'
@@ -26,8 +26,33 @@ export interface WorkerLoadRunnerOptions {
 export interface WorkerLoadRunResult {
   readonly stats: RuntimeStats
   readonly summary: WorkerLoadMetricsSummary
+  readonly memorySummary: MemorySummary
   readonly plans: WorkflowPlan[]
   readonly loadConfig: WorkerLoadConfig
+}
+
+type ManagedWorkerRuntime = {
+  readonly generation: number
+  readonly runtime: WorkerRuntime
+  readonly runPromise: Promise<void>
+}
+
+type RuntimeRestartEvent = {
+  readonly reason: 'restart-after-submit'
+  readonly startedAt: string
+  readonly completedAt: string
+  readonly delayMs: number
+  readonly previousGeneration: number
+  readonly nextGeneration: number
+}
+
+type ActivityCancellationEvent = {
+  readonly workflowId: string
+  readonly runId: string
+  readonly requestedAt: string
+  readonly completedAt: string
+  readonly status: 'requested' | 'failed'
+  readonly error?: string
 }
 
 const prepareArtifactsDir = async (root: string): Promise<string> => {
@@ -39,6 +64,9 @@ const prepareArtifactsDir = async (root: string): Promise<string> => {
 export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<WorkerLoadRunResult> => {
   const loadConfig = options.loadConfig ?? readWorkerLoadConfig()
   const artifactsDir = await prepareArtifactsDir(loadConfig.artifactsDir)
+  const memoryRecorder = createMemoryRecorder(loadConfig.memoryStreamPath)
+  await memoryRecorder.sample('start')
+  const stopMemorySampling = startMemorySampling(memoryRecorder, loadConfig.memorySampleIntervalMs)
   const taskQueue = buildTaskQueue(options.taskQueuePrefix ?? loadConfig.workflowTaskQueuePrefix)
   const config = await loadTemporalConfig({
     defaults: {
@@ -47,48 +75,100 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
       taskQueue,
       workerWorkflowConcurrency: loadConfig.workflowConcurrencyTarget,
       workerActivityConcurrency: loadConfig.activityConcurrencyTarget,
-      workerStickyCacheSize: Math.max(loadConfig.workflowConcurrencyTarget * 8, 64),
+      workerStickyCacheSize: loadConfig.stickyCacheSize,
+      workerStickyTtlMs: loadConfig.stickyTtlMs,
       stickySchedulingEnabled: true,
     },
   })
 
   const plans = buildWorkflowPlans(loadConfig)
   const stats = createRuntimeStats(plans.length)
-  const runtime = await WorkerRuntime.create({
-    config,
-    workflows: workerLoadWorkflows,
-    activities: workerLoadActivities,
-    taskQueue,
-    namespace: config.namespace,
-    concurrency: {
-      workflow: loadConfig.workflowConcurrencyTarget,
-      activity: loadConfig.activityConcurrencyTarget,
-    },
-    stickyScheduling: true,
-    schedulerHooks: createSchedulerHooks(stats),
-    workflowGuards: 'warn',
-  })
+  const restartEvents: RuntimeRestartEvent[] = []
+  const activityCancellationEvents: ActivityCancellationEvent[] = []
+  let runtimeGeneration = 0
+  let managedRuntime: ManagedWorkerRuntime | null = null
+  let completionResults: WorkflowCompletionResult[] = []
 
-  const runPromise = runtime.run().catch((error) => {
-    console.error('[temporal-bun-sdk:load] worker runtime exited with error', error)
-    throw error
-  })
+  const startRuntime = async (reason: string): Promise<ManagedWorkerRuntime> => {
+    runtimeGeneration += 1
+    const runtime = await WorkerRuntime.create({
+      config,
+      workflows: workerLoadWorkflows,
+      activities: workerLoadActivities,
+      taskQueue,
+      namespace: config.namespace,
+      concurrency: {
+        workflow: loadConfig.workflowConcurrencyTarget,
+        activity: loadConfig.activityConcurrencyTarget,
+      },
+      stickyScheduling: true,
+      schedulerHooks: createSchedulerHooks(stats),
+      workflowGuards: 'warn',
+    })
+    const generation = runtimeGeneration
+    await memoryRecorder.sample('runtime-created', { taskQueue, generation, reason })
+    return {
+      generation,
+      runtime,
+      runPromise: runtime.run().catch((error) => {
+        console.error('[temporal-bun-sdk:load] worker runtime exited with error', { generation, error })
+        throw error
+      }),
+    }
+  }
 
+  const shutdownRuntime = async (current: ManagedWorkerRuntime, reason: string): Promise<void> => {
+    await memoryRecorder.sample('before-runtime-shutdown', { generation: current.generation, reason })
+    await current.runtime.shutdown()
+    await current.runPromise
+    await memoryRecorder.sample('after-runtime-shutdown', { generation: current.generation, reason })
+  }
+
+  managedRuntime = await startRuntime('initial')
+
+  let temporalCliVersion = 'unknown'
   try {
     const cliPath = await Effect.runPromise(resolveTemporalCliExecutable())
+    temporalCliVersion = await readTemporalCliVersion(cliPath)
     const { client: temporalClient, config: resolvedConfig } = await createTemporalClient({ config, taskQueue })
     try {
       const submissions = await submitWorkflows(temporalClient, plans, taskQueue, loadConfig)
+      await memoryRecorder.sample('workflows-submitted', { submitted: submissions.length })
       const handles = submissions.map((submission) => submission.handle)
+      if (loadConfig.restartAfterSubmit && managedRuntime) {
+        const restartStartedAt = new Date().toISOString()
+        const previousGeneration = managedRuntime.generation
+        await shutdownRuntime(managedRuntime, 'restart-after-submit')
+        managedRuntime = null
+        await sleep(loadConfig.restartDelayMs)
+        managedRuntime = await startRuntime('restart-after-submit')
+        restartEvents.push({
+          reason: 'restart-after-submit',
+          startedAt: restartStartedAt,
+          completedAt: new Date().toISOString(),
+          delayMs: loadConfig.restartDelayMs,
+          previousGeneration,
+          nextGeneration: managedRuntime.generation,
+        })
+      }
+      if (loadConfig.activityCancellationRatio > 0) {
+        const cancellationEvents = await cancelActivityWorkflows(temporalClient, submissions, loadConfig)
+        activityCancellationEvents.push(...cancellationEvents)
+        await memoryRecorder.sample('activity-cancellations-driven', {
+          attempted: cancellationEvents.length,
+          succeeded: cancellationEvents.filter((event) => event.status === 'requested').length,
+        })
+      }
       const updateSubmissions = submissions.filter(
         (submission) => submission.plan.workflowType === 'workerLoadUpdateWorkflow',
       )
       if (updateSubmissions.length > 0) {
         await driveWorkflowUpdates(temporalClient, updateSubmissions, loadConfig)
+        await memoryRecorder.sample('updates-driven', { updateWorkflows: updateSubmissions.length })
       }
       const completionBudgetMs =
         loadConfig.workflowDurationBudgetMs + Math.max(loadConfig.metricsFlushTimeoutMs, 5_000)
-      await runWithTimeout(
+      completionResults = await runWithTimeout(
         waitForWorkflowCompletionsCli({
           handles,
           namespace: resolvedConfig.namespace,
@@ -105,12 +185,17 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
         `Worker load suite exceeded ${completionBudgetMs}ms without completing`,
       )
       stats.completed = stats.submitted
+      await memoryRecorder.sample('workflows-completed', { completed: stats.completed })
     } finally {
       await temporalClient.shutdown()
+      await memoryRecorder.sample('client-shutdown')
     }
   } finally {
-    await runtime.shutdown()
-    await runPromise
+    if (managedRuntime) {
+      await shutdownRuntime(managedRuntime, 'final')
+      managedRuntime = null
+    }
+    stopMemorySampling()
     stats.completedAt = stats.completedAt ?? Date.now()
   }
 
@@ -122,6 +207,23 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
     durationMs,
     completedWorkflows: stats.completed,
   })
+  await memoryRecorder.sample('report-ready', { durationMs, completed: stats.completed })
+  await memoryRecorder.flush()
+  const memorySummary = summarizeMemorySamples(
+    memoryRecorder.samples,
+    durationMs,
+    loadConfig.memorySlopeMaxMbPerHour,
+    loadConfig.memorySlopeMinElapsedMs,
+  )
+  const scenarioCoverage = plans.reduce<Record<string, number>>((coverage, plan) => {
+    coverage[plan.workflowType] = (coverage[plan.workflowType] ?? 0) + 1
+    return coverage
+  }, {})
+  const workflowStatusCounts = summarizeWorkflowStatusCounts(completionResults)
+  const activityCancellationTargetIds = new Set(activityCancellationEvents.map((event) => event.workflowId))
+  const activityCancellationFinalCanceledCount = completionResults.filter(
+    (result) => activityCancellationTargetIds.has(result.workflowId) && result.status === 'CANCELED',
+  ).length
 
   await writeFile(
     loadConfig.metricsReportPath,
@@ -132,15 +234,50 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
           workflowCount: loadConfig.workflowCount,
           workflowConcurrencyTarget: loadConfig.workflowConcurrencyTarget,
           activityConcurrencyTarget: loadConfig.activityConcurrencyTarget,
+          stickyCacheSize: loadConfig.stickyCacheSize,
+          stickyTtlMs: loadConfig.stickyTtlMs,
           stickyHitRatioTarget: loadConfig.stickyHitRatioTarget,
+          restartAfterSubmit: loadConfig.restartAfterSubmit,
+          restartDelayMs: loadConfig.restartDelayMs,
+          activityCancellationRatio: loadConfig.activityCancellationRatio,
+          activityCancellationDelayMs: loadConfig.activityCancellationDelayMs,
           workflowPollP95TargetMs: loadConfig.workflowPollP95TargetMs,
           activityPollP95TargetMs: loadConfig.activityPollP95TargetMs,
           throughputFloorPerSecond: loadConfig.throughputFloorPerSecond,
+          memorySampleIntervalMs: loadConfig.memorySampleIntervalMs,
+          memorySlopeMaxMbPerHour: loadConfig.memorySlopeMaxMbPerHour,
+          memorySlopeMinElapsedMs: loadConfig.memorySlopeMinElapsedMs,
         },
         stats,
+        workflowStatusCounts,
+        workflowCompletions: completionResults,
         metrics: summary,
+        memory: memorySummary,
+        scenarioCoverage,
+        failureInjection: {
+          restartAfterSubmit: loadConfig.restartAfterSubmit,
+          runtimeRestartCount: restartEvents.length,
+          restartEvents,
+          activityCancellationRatio: loadConfig.activityCancellationRatio,
+          activityCancellationDelayMs: loadConfig.activityCancellationDelayMs,
+          activityCancellationAttemptCount: activityCancellationEvents.length,
+          activityCancellationSuccessCount: activityCancellationEvents.filter((event) => event.status === 'requested').length,
+          activityCancellationFinalCanceledCount,
+          activityCancellationEvents,
+        },
+        environment: {
+          bunVersion: Bun.version,
+          platform: process.platform,
+          arch: process.arch,
+          temporalCliVersion,
+          temporalAddress: options.address,
+          temporalNamespace: options.namespace,
+          taskQueue,
+          stickySchedulingEnabled: true,
+        },
         artifactsDir,
         metricsPath: loadConfig.metricsStreamPath,
+        memoryPath: loadConfig.memoryStreamPath,
       },
       null,
       2,
@@ -151,8 +288,139 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
   return {
     stats,
     summary,
+    memorySummary,
     plans,
     loadConfig,
+  }
+}
+
+export interface MemorySample {
+  readonly timestamp: string
+  readonly elapsedMs: number
+  readonly phase: string
+  readonly rssBytes: number
+  readonly heapTotalBytes: number
+  readonly heapUsedBytes: number
+  readonly externalBytes: number
+  readonly arrayBuffersBytes: number
+  readonly context?: Record<string, string | number | boolean>
+}
+
+export interface MemorySummary {
+  readonly sampleCount: number
+  readonly startedAt: string
+  readonly completedAt: string
+  readonly elapsedMs: number
+  readonly startRssBytes: number
+  readonly endRssBytes: number
+  readonly maxRssBytes: number
+  readonly rssDeltaBytes: number
+  readonly heapUsedDeltaBytes: number
+  readonly rssSlopeBytesPerHour: number
+  readonly rssSlopeMbPerHour: number
+  readonly slopeLimitMbPerHour: number
+  readonly slopeMinElapsedMs: number
+  readonly slopeAssessment: 'passed' | 'failed' | 'insufficient-duration'
+  readonly withinSlopeLimit: boolean
+}
+
+type MemoryRecorder = {
+  readonly samples: MemorySample[]
+  sample: (phase: string, context?: Record<string, string | number | boolean>) => Promise<MemorySample>
+  flush: () => Promise<void>
+}
+
+const createMemoryRecorder = (path: string): MemoryRecorder => {
+  const startedAt = Date.now()
+  const samples: MemorySample[] = []
+  let pendingWrite = Promise.resolve()
+
+  return {
+    samples,
+    sample: async (phase, context) => {
+      const usage = process.memoryUsage()
+      const sample: MemorySample = {
+        timestamp: new Date().toISOString(),
+        elapsedMs: Date.now() - startedAt,
+        phase,
+        rssBytes: usage.rss,
+        heapTotalBytes: usage.heapTotal,
+        heapUsedBytes: usage.heapUsed,
+        externalBytes: usage.external,
+        arrayBuffersBytes: usage.arrayBuffers,
+        ...(context ? { context } : {}),
+      }
+      samples.push(sample)
+      pendingWrite = pendingWrite.then(() => appendFile(path, `${JSON.stringify(sample)}\n`, 'utf8'))
+      await pendingWrite
+      return sample
+    },
+    flush: () => pendingWrite,
+  }
+}
+
+const startMemorySampling = (recorder: MemoryRecorder, intervalMs: number): (() => void) => {
+  const timer = setInterval(() => {
+    void recorder.sample('interval')
+  }, intervalMs)
+  const maybeNodeTimer = timer as { unref?: () => void }
+  if (typeof maybeNodeTimer.unref === 'function') {
+    maybeNodeTimer.unref()
+  }
+  return () => clearInterval(timer)
+}
+
+const summarizeMemorySamples = (
+  samples: readonly MemorySample[],
+  fallbackElapsedMs: number,
+  slopeLimitMbPerHour: number,
+  slopeMinElapsedMs: number,
+): MemorySummary => {
+  const first = samples[0]
+  const last = samples.at(-1)
+  if (!first || !last) {
+    return {
+      sampleCount: 0,
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      elapsedMs: fallbackElapsedMs,
+      startRssBytes: 0,
+      endRssBytes: 0,
+      maxRssBytes: 0,
+      rssDeltaBytes: 0,
+      heapUsedDeltaBytes: 0,
+      rssSlopeBytesPerHour: 0,
+      rssSlopeMbPerHour: 0,
+      slopeLimitMbPerHour,
+      slopeMinElapsedMs,
+      slopeAssessment: 'insufficient-duration',
+      withinSlopeLimit: true,
+    }
+  }
+
+  const elapsedMs = Math.max(1, last.elapsedMs - first.elapsedMs, fallbackElapsedMs)
+  const rssDeltaBytes = last.rssBytes - first.rssBytes
+  const rssSlopeBytesPerHour = rssDeltaBytes * (3_600_000 / elapsedMs)
+  const rssSlopeMbPerHour = rssSlopeBytesPerHour / (1024 * 1024)
+  const slopeAssessment =
+    elapsedMs < slopeMinElapsedMs ? 'insufficient-duration' : rssSlopeMbPerHour <= slopeLimitMbPerHour ? 'passed' : 'failed'
+
+  return {
+    sampleCount: samples.length,
+    startedAt: first.timestamp,
+    completedAt: last.timestamp,
+    elapsedMs,
+    startRssBytes: first.rssBytes,
+    endRssBytes: last.rssBytes,
+    maxRssBytes: Math.max(...samples.map((sample) => sample.rssBytes)),
+    rssDeltaBytes,
+    heapUsedDeltaBytes: last.heapUsedBytes - first.heapUsedBytes,
+    rssSlopeBytesPerHour,
+    rssSlopeMbPerHour,
+    slopeLimitMbPerHour,
+    slopeMinElapsedMs,
+    slopeAssessment,
+    withinSlopeLimit: slopeAssessment !== 'failed',
   }
 }
 
@@ -219,9 +487,53 @@ const driveWorkflowUpdates = async (
   )
 }
 
+const cancelActivityWorkflows = async (
+  client: TemporalClient,
+  submissions: SubmittedWorkflow[],
+  config: WorkerLoadConfig,
+): Promise<ActivityCancellationEvent[]> => {
+  const candidates = submissions.filter((submission) => submission.plan.workflowType === 'workerLoadActivityWorkflow')
+  if (candidates.length === 0) {
+    return []
+  }
+
+  const targetCount = Math.max(1, Math.ceil(candidates.length * config.activityCancellationRatio))
+  const targets = candidates.slice(0, targetCount)
+  await sleep(config.activityCancellationDelayMs)
+
+  return await Promise.all(
+    targets.map(async ({ handle }) => {
+      const requestedAt = new Date().toISOString()
+      try {
+        await client.workflow.cancel(handle)
+        return {
+          workflowId: handle.workflowId,
+          runId: handle.runId,
+          requestedAt,
+          completedAt: new Date().toISOString(),
+          status: 'requested' as const,
+        }
+      } catch (error) {
+        return {
+          workflowId: handle.workflowId,
+          runId: handle.runId,
+          requestedAt,
+          completedAt: new Date().toISOString(),
+          status: 'failed' as const,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      }
+    }),
+  )
+}
+
 type WorkflowHandle = {
   readonly workflowId: string
   readonly runId: string
+}
+
+type WorkflowCompletionResult = WorkflowHandle & {
+  readonly status: string
 }
 
 class WorkflowCompletionError extends Error {
@@ -259,12 +571,13 @@ const waitForWorkflowCompletionsCli = async ({
   cliPath: string
   address: string
   tlsEnv: Record<string, string | undefined>
-}): Promise<void> => {
+}): Promise<WorkflowCompletionResult[]> => {
   const deadline = Date.now() + timeoutMs
   const queue = [...handles]
   const workers = Math.min(8, queue.length)
+  const completions: WorkflowCompletionResult[] = []
 
-  const describe = async (handle: WorkflowHandle): Promise<void> => {
+  const describe = async (handle: WorkflowHandle): Promise<WorkflowCompletionResult> => {
     while (true) {
       if (Date.now() > deadline) {
         throw new Error(`Timed out waiting for workflow ${handle.workflowId} to complete`)
@@ -313,7 +626,7 @@ const waitForWorkflowCompletionsCli = async ({
           continue
         }
         if (normalizedStatus === 'COMPLETED' || normalizedStatus === 'TERMINATED' || normalizedStatus === 'CANCELED') {
-          return
+          return { ...handle, status: normalizedStatus }
         }
         throw new WorkflowCompletionError(
           `Workflow ${handle.workflowId} finished with status ${normalizedStatus ?? 'UNKNOWN'}`,
@@ -328,10 +641,8 @@ const waitForWorkflowCompletionsCli = async ({
           error,
         })
         await sleep(500)
-  }
-}
-
-
+      }
+    }
   }
 
   await Promise.all(
@@ -341,10 +652,19 @@ const waitForWorkflowCompletionsCli = async ({
         if (!handle) {
           return
         }
-        await describe(handle)
+        completions.push(await describe(handle))
       }
     }),
   )
+  return completions
+}
+
+const summarizeWorkflowStatusCounts = (results: readonly WorkflowCompletionResult[]): Record<string, number> => {
+  const counts: Record<string, number> = {}
+  for (const result of results) {
+    counts[result.status] = (counts[result.status] ?? 0) + 1
+  }
+  return counts
 }
 
 type SubmittedWorkflow = {
@@ -483,6 +803,20 @@ const readStream = async (stream: ReadableStream<Uint8Array> | null): Promise<st
     offset += chunk.length
   }
   return new TextDecoder().decode(merged)
+}
+
+const readTemporalCliVersion = async (cliPath: string): Promise<string> => {
+  const child = Bun.spawn([cliPath, '--version'], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const exitCode = await child.exited
+  const stdout = child.stdout ? await readStream(child.stdout) : ''
+  const stderr = child.stderr ? await readStream(child.stderr) : ''
+  if (exitCode !== 0) {
+    return `unknown (${stderr.trim() || stdout.trim() || `exit ${exitCode}`})`
+  }
+  return stdout.trim() || stderr.trim() || 'unknown'
 }
 
 export type WorkflowPlan =
