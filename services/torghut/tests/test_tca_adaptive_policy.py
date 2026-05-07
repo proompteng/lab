@@ -191,6 +191,63 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
         self.assertEqual(live["order_count"], 1)
         self.assertEqual(live["avg_abs_slippage_bps"], Decimal("100"))
 
+    def test_build_tca_gate_inputs_reports_execution_settlement_coverage(self) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            self._insert_observations(
+                session,
+                strategy,
+                symbol="AAPL",
+                regime="trend",
+                slippages=[Decimal("4")],
+                shortfalls=[Decimal("1")],
+                expected_shortfall_p50_values=[Decimal("1")],
+                adaptive_applied=False,
+            )
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={
+                    "strategy_id": str(strategy.id),
+                    "symbol": "AAPL",
+                    "action": "buy",
+                    "qty": "1",
+                    "params": {"regime_label": "trend"},
+                },
+                rationale="test",
+                status="submitted",
+                decision_hash="hash-unsettled",
+            )
+            session.add(decision)
+            session.flush()
+            session.add(
+                Execution(
+                    trade_decision_id=decision.id,
+                    alpaca_order_id="order-unsettled",
+                    client_order_id="client-unsettled",
+                    symbol="AAPL",
+                    side="buy",
+                    order_type="market",
+                    time_in_force="day",
+                    submitted_qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("100.01"),
+                    status="filled",
+                    execution_expected_adapter="alpaca",
+                    execution_actual_adapter="alpaca",
+                )
+            )
+            session.commit()
+
+            expected = build_tca_gate_inputs(session, strategy_id=strategy.id)
+
+        self.assertEqual(expected["order_count"], 1)
+        self.assertEqual(expected["filled_execution_count"], 2)
+        self.assertEqual(expected["unsettled_execution_count"], 1)
+        self.assertIsNotNone(expected["latest_execution_created_at"])
+
     def test_derivation_fallback_when_expected_shortfall_coverage_is_insufficient(
         self,
     ) -> None:

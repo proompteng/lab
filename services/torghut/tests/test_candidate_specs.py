@@ -17,22 +17,10 @@ from app.trading.discovery.hypothesis_cards import (
 from app.trading.discovery.whitepaper_candidate_compiler import (
     compile_whitepaper_candidate_specs,
 )
+from app.trading.semiconductor_universe import RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE
 
 
-_CHIP_UNIVERSE_SYMBOLS = {
-    "NVDA",
-    "AVGO",
-    "AMD",
-    "TSM",
-    "ASML",
-    "AMAT",
-    "LRCX",
-    "KLAC",
-    "MU",
-    "TXN",
-    "ADI",
-    "QCOM",
-}
+_CHIP_UNIVERSE_SYMBOLS = set(RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE)
 
 
 class TestCandidateSpecs(TestCase):
@@ -170,20 +158,20 @@ class TestCandidateSpecs(TestCase):
         specs = compile_candidate_specs(
             hypothesis_cards=cards,
             target_net_pnl_per_day=Decimal("300"),
-            universe_symbols=("nvda", " AMD ", "NVDA", "qcom", "mu"),
+            universe_symbols=("nvda", " AMD ", "NVDA", "arm", "mu"),
         )
 
         self.assertTrue(specs)
         for spec in specs:
             self.assertEqual(
                 spec.strategy_overrides["universe_symbols"],
-                ["NVDA", "AMD", "QCOM", "MU"],
+                ["NVDA", "AMD", "ARM", "MU"],
             )
             self.assertEqual(
                 spec.to_vnext_experiment_payload()["template_overrides"][
                     "universe_symbols"
                 ],
-                ["NVDA", "AMD", "QCOM", "MU"],
+                ["NVDA", "AMD", "ARM", "MU"],
             )
 
     def test_microbar_whitepaper_profiles_include_runtime_risk_controls(self) -> None:

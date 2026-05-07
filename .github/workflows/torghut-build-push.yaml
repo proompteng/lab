@@ -8,12 +8,12 @@ on:
     branches:
       - main
     paths:
-      - "services/torghut/**"
-      - "packages/scripts/src/torghut/**"
-      - "packages/scripts/src/shared/**"
-      - "package.json"
-      - "bun.lock"
-      - ".github/workflows/torghut-build-push.yaml"
+      - 'services/torghut/**'
+      - 'packages/scripts/src/torghut/**'
+      - 'packages/scripts/src/shared/**'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/workflows/torghut-build-push.yaml'
   workflow_dispatch:
 
 concurrency:

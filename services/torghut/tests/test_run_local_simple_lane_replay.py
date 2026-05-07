@@ -13,15 +13,15 @@ def test_default_replay_universe_is_live_chip_coverage() -> None:
         "NVDA",
         "TSM",
         "AVGO",
-        "AMD",
         "MU",
-        "TXN",
-        "ADI",
-        "LRCX",
-        "KLAC",
-        "QCOM",
-        "AMAT",
+        "AMD",
         "ASML",
+        "INTC",
+        "LRCX",
+        "AMAT",
+        "TXN",
+        "ARM",
+        "KLAC",
     ]
 
 

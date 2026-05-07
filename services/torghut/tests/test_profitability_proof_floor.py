@@ -393,3 +393,84 @@ def test_tca_slippage_guardrail_failure_keeps_capital_at_zero() -> None:
     assert receipt["route_state"] == "repair_only"
     assert receipt["capital_state"] == "zero_notional"
     assert receipt["blocking_reasons"] == ["execution_tca_slippage_guardrail_exceeded"]
+
+
+def test_settled_old_tca_exposes_execution_quality_instead_of_staleness() -> None:
+    settled_at = NOW - timedelta(days=34)
+    latest_execution_at = settled_at - timedelta(seconds=1)
+
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="PA3SX7FYNUTF",
+        torghut_revision="torghut-00256",
+        trading_mode="live",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "ready",
+            "blocked_reasons": [],
+            "capital_stage": "0.10x canary",
+        },
+        hypothesis_payload=_healthy_hypothesis_payload(),
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status=_healthy_market_context(),
+        tca_summary={
+            "order_count": 13775,
+            "filled_execution_count": 13571,
+            "unsettled_execution_count": 0,
+            "latest_execution_created_at": latest_execution_at.isoformat(),
+            "last_computed_at": settled_at.isoformat(),
+            "avg_abs_slippage_bps": "568.6138848199565249",
+        },
+        simple_lane_status=_simple_lane_status(),
+        now=NOW,
+    )
+
+    tca_dimension = next(
+        item
+        for item in receipt["proof_dimensions"]
+        if item["dimension"] == "execution_tca"
+    )
+
+    assert receipt["route_state"] == "repair_only"
+    assert receipt["capital_state"] == "zero_notional"
+    assert receipt["blocking_reasons"] == ["execution_tca_slippage_guardrail_exceeded"]
+    assert "execution_tca_stale" not in receipt["blocking_reasons"]
+    assert tca_dimension["state"] == "fail"
+    assert tca_dimension["source_ref"]["unsettled_execution_count"] == 0
+
+
+def test_unsettled_execution_after_old_tca_stays_stale() -> None:
+    settled_at = NOW - timedelta(days=3)
+    latest_execution_at = NOW - timedelta(hours=1)
+
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="PA3SX7FYNUTF",
+        torghut_revision="torghut-00256",
+        trading_mode="live",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "ready",
+            "blocked_reasons": [],
+            "capital_stage": "0.10x canary",
+        },
+        hypothesis_payload=_healthy_hypothesis_payload(),
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status=_healthy_market_context(),
+        tca_summary={
+            "order_count": 12,
+            "filled_execution_count": 13,
+            "unsettled_execution_count": 1,
+            "latest_execution_created_at": latest_execution_at.isoformat(),
+            "last_computed_at": settled_at.isoformat(),
+            "avg_abs_slippage_bps": "5",
+        },
+        simple_lane_status=_simple_lane_status(),
+        now=NOW,
+    )
+
+    assert receipt["route_state"] == "repair_only"
+    assert receipt["capital_state"] == "zero_notional"
+    assert receipt["blocking_reasons"] == ["execution_tca_stale"]

@@ -1,0 +1,195 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: torghut-whitepaper-autoresearch-profit-target
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: whitepaper-autoresearch
+    app.kubernetes.io/part-of: lab
+spec:
+  serviceAccountName: torghut-runtime
+  entrypoint: run
+  arguments:
+    parameters:
+      - name: runId
+        value: ''
+      - name: outputRoot
+        value: /tmp/torghut-whitepaper-autoresearch
+      - name: sourceJsonlB64
+        value: ''
+      - name: seedRecentWhitepapers
+        value: 'true'
+      - name: symbols
+        value: NVDA,TSM,AVGO,MU,AMD,ASML,INTC,LRCX,AMAT,TXN,ARM,KLAC
+      - name: fullWindowStartDate
+        value: '2026-04-24'
+      - name: fullWindowEndDate
+        value: '2026-05-01'
+      - name: expectedLastTradingDay
+        value: '2026-05-01'
+      - name: targetNetPnlPerDay
+        value: '300'
+      - name: maxCandidates
+        value: '64'
+      - name: topK
+        value: '16'
+      - name: explorationSlots
+        value: '8'
+      - name: portfolioSizeMin
+        value: '2'
+      - name: portfolioSizeMax
+        value: '8'
+      - name: maxFrontierCandidatesPerSpec
+        value: '8'
+      - name: maxTotalFrontierCandidates
+        value: '64'
+      - name: realReplayTimeoutSeconds
+        value: '3600'
+      - name: prefetchFullWindowRows
+        value: 'true'
+      - name: allowStaleTape
+        value: 'true'
+      - name: persistResults
+        value: 'true'
+  templates:
+    - name: run
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      activeDeadlineSeconds: 7200
+      inputs:
+        parameters:
+          - name: runId
+          - name: outputRoot
+          - name: sourceJsonlB64
+          - name: seedRecentWhitepapers
+          - name: symbols
+          - name: fullWindowStartDate
+          - name: fullWindowEndDate
+          - name: expectedLastTradingDay
+          - name: targetNetPnlPerDay
+          - name: maxCandidates
+          - name: topK
+          - name: explorationSlots
+          - name: portfolioSizeMin
+          - name: portfolioSizeMax
+          - name: maxFrontierCandidatesPerSpec
+          - name: maxTotalFrontierCandidates
+          - name: realReplayTimeoutSeconds
+          - name: prefetchFullWindowRows
+          - name: allowStaleTape
+          - name: persistResults
+      container:
+        image: registry.ide-newton.ts.net/lab/torghut@sha256:e85b0aaf95eb89646d7ec7709625934ac274acc21e8541d5d25db5122a77cd86
+        imagePullPolicy: IfNotPresent
+        command:
+          - /bin/bash
+          - -lc
+        env:
+          - name: DB_DSN
+            valueFrom:
+              secretKeyRef:
+                name: torghut-db-app
+                key: uri
+          - name: TA_CLICKHOUSE_URL
+            value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
+          - name: TA_CLICKHOUSE_USERNAME
+            value: torghut
+          - name: TA_CLICKHOUSE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: torghut-clickhouse-auth
+                key: torghut_password
+          - name: TRADING_STRATEGY_CONFIG_PATH
+            value: /etc/torghut/strategies.yaml
+        volumeMounts:
+          - name: strategy-config
+            mountPath: /etc/torghut
+            readOnly: true
+        resources:
+          requests:
+            cpu: 1
+            memory: 8Gi
+          limits:
+            cpu: 4
+            memory: 16Gi
+        args:
+          - |
+            set -euo pipefail
+            cd /app
+
+            RUN_ID="{{inputs.parameters.runId}}"
+            if [ -z "${RUN_ID}" ]; then
+              RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+            fi
+
+            OUTPUT_ROOT="{{inputs.parameters.outputRoot}}"
+            OUTPUT_DIR="${OUTPUT_ROOT%/}/${RUN_ID}"
+            WORKDIR=/tmp/torghut-whitepaper-autoresearch-workflow
+            SOURCE_JSONL="${WORKDIR}/sources.jsonl"
+            mkdir -p "${WORKDIR}" "${OUTPUT_DIR}"
+
+            SCRIPT_ARGS=(
+              --output-dir "${OUTPUT_DIR}"
+              --target-net-pnl-per-day "{{inputs.parameters.targetNetPnlPerDay}}"
+              --max-candidates "{{inputs.parameters.maxCandidates}}"
+              --top-k "{{inputs.parameters.topK}}"
+              --exploration-slots "{{inputs.parameters.explorationSlots}}"
+              --portfolio-size-min "{{inputs.parameters.portfolioSizeMin}}"
+              --portfolio-size-max "{{inputs.parameters.portfolioSizeMax}}"
+              --replay-mode real
+              --program config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml
+              --strategy-configmap /etc/torghut/strategies.yaml
+              --clickhouse-http-url "${TA_CLICKHOUSE_URL}"
+              --clickhouse-username "${TA_CLICKHOUSE_USERNAME}"
+              --clickhouse-password-env TA_CLICKHOUSE_PASSWORD
+              --start-equity 31590.02
+              --chunk-minutes 10
+              --symbols "{{inputs.parameters.symbols}}"
+              --progress-log-seconds 30
+              --max-frontier-candidates-per-spec "{{inputs.parameters.maxFrontierCandidatesPerSpec}}"
+              --max-total-frontier-candidates "{{inputs.parameters.maxTotalFrontierCandidates}}"
+              --real-replay-timeout-seconds "{{inputs.parameters.realReplayTimeoutSeconds}}"
+              --train-days 6
+              --holdout-days 3
+              --full-window-start-date "{{inputs.parameters.fullWindowStartDate}}"
+              --full-window-end-date "{{inputs.parameters.fullWindowEndDate}}"
+              --expected-last-trading-day "{{inputs.parameters.expectedLastTradingDay}}"
+              --min-active-day-ratio 1
+              --min-positive-day-ratio 1
+              --min-daily-net-pnl "{{inputs.parameters.targetNetPnlPerDay}}"
+              --require-no-flat-days
+            )
+
+            if [ "{{inputs.parameters.seedRecentWhitepapers}}" = "true" ]; then
+              SCRIPT_ARGS+=(--seed-recent-whitepapers)
+            fi
+            if [ -n "{{inputs.parameters.sourceJsonlB64}}" ]; then
+              printf '%s' "{{inputs.parameters.sourceJsonlB64}}" | base64 -d > "${SOURCE_JSONL}"
+              SCRIPT_ARGS+=(--source-jsonl "${SOURCE_JSONL}")
+            fi
+            if [ "{{inputs.parameters.prefetchFullWindowRows}}" = "true" ]; then
+              SCRIPT_ARGS+=(--prefetch-full-window-rows)
+            fi
+            if [ "{{inputs.parameters.allowStaleTape}}" = "true" ]; then
+              SCRIPT_ARGS+=(--allow-stale-tape)
+            fi
+            if [ "{{inputs.parameters.persistResults}}" = "true" ]; then
+              SCRIPT_ARGS+=(--persist-results)
+            else
+              SCRIPT_ARGS+=(--no-persist-results)
+            fi
+
+            echo "RUN_LOG whitepaper_autoresearch_start run_id=${RUN_ID} output_dir=${OUTPUT_DIR} symbols={{inputs.parameters.symbols}}"
+            /opt/venv/bin/python -u scripts/run_whitepaper_autoresearch_profit_target.py "${SCRIPT_ARGS[@]}"
+      volumes:
+        - name: strategy-config
+          configMap:
+            name: torghut-strategy-config
+            items:
+              - key: strategies.yaml
+                path: strategies.yaml
+      outputs:
+        artifacts:
+          - name: whitepaper-autoresearch-output
+            path: "{{inputs.parameters.outputRoot}}"

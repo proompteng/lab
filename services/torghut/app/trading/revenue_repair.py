@@ -404,6 +404,13 @@ def _summarize_tca(proof_floor: Mapping[str, Any]) -> dict[str, object]:
             "reason": _text(dimension.get("reason"), "unknown"),
             "order_count": _int(source_ref.get("order_count")),
             "last_computed_at": source_ref.get("last_computed_at"),
+            "filled_execution_count": _int(source_ref.get("filled_execution_count")),
+            "latest_execution_created_at": source_ref.get(
+                "latest_execution_created_at"
+            ),
+            "unsettled_execution_count": _int(
+                source_ref.get("unsettled_execution_count")
+            ),
             "freshness_seconds": dimension.get("freshness_seconds"),
             "threshold_seconds": dimension.get("threshold_seconds"),
             "avg_abs_slippage_bps": source_ref.get("avg_abs_slippage_bps"),
