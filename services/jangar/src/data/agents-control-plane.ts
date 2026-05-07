@@ -614,6 +614,7 @@ export type MaterialActionActivationReceipt = {
   action_class: ActionSloBudgetActionClass
   scope: string
   controller_witness_refs: string[]
+  route_stability_escrow_ref: string | null
   transport_contract_refs: string[]
   proof_freshness_refs: string[]
   positive_authority_refs: string[]
@@ -670,6 +671,65 @@ export type MaterialActionVerdictEpoch = {
   torghut_capital_ref: string | null
   contradiction_refs: string[]
   final_verdicts: MaterialActionVerdict[]
+}
+
+export type RouteStabilityLiveRouteAttempt = {
+  attempt_id: string
+  attempted_at: string
+  url: string | null
+  result: 'success' | 'failure' | 'unknown'
+  status_code: number | null
+  latency_ms: number
+  message: string
+}
+
+export type RouteStabilityWindow = {
+  state: 'stable' | 'escrow_repair_only' | 'unstable' | 'unknown'
+  started_at: string
+  stable_after: string
+  expires_at: string
+  live_route_success_count: number
+  required_success_count: number
+  controller_authority_mode: 'heartbeat' | 'serving_process' | 'rollout' | 'unknown'
+  allowed_action_classes: ActionSloBudgetActionClass[]
+  held_action_classes: ActionSloBudgetActionClass[]
+  blocked_action_classes: ActionSloBudgetActionClass[]
+  reason_codes: string[]
+}
+
+export type RouteStabilityMaterialActionContract = {
+  action_class: ActionSloBudgetActionClass
+  route_requirement: 'live_required' | 'escrow_allowed' | 'none'
+  controller_requirement: 'heartbeat_required' | 'rollout_ok_for_repair' | 'none'
+  decision: MaterialActionActivationReceiptDecision
+  max_dispatches: number | null
+  max_runtime_seconds: number | null
+  max_notional: number | null
+  required_repairs: string[]
+  snapshot_ref: string
+  live_route_ref: string | null
+  rollback_target: string | null
+}
+
+export type RouteStabilityEscrow = {
+  mode: 'shadow' | 'enforced'
+  design_artifact: string
+  escrow_id: string
+  namespace: string
+  generated_at: string
+  fresh_until: string
+  status_snapshot_ref: string
+  status_snapshot_hash: string
+  status_producer_revision: string
+  live_route_attempts: RouteStabilityLiveRouteAttempt[]
+  last_live_route_success_at: string | null
+  last_live_route_error: string | null
+  route_stability_window: RouteStabilityWindow
+  controller_witness_ref: string
+  database_projection_ref: string
+  watch_reliability_ref: string
+  material_action_contracts: RouteStabilityMaterialActionContract[]
+  rollback_target: string | null
 }
 
 export type DeploymentRolloutStatus = {
@@ -783,6 +843,7 @@ export type ControlPlaneStatus = {
   material_action_verdict_epoch: MaterialActionVerdictEpoch
   material_action_verdicts: MaterialActionVerdict[]
   material_action_activation_receipts: MaterialActionActivationReceipt[]
+  route_stability_escrow: RouteStabilityEscrow
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
