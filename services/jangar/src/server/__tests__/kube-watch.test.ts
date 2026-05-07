@@ -61,6 +61,12 @@ const flush = async () => {
   await Promise.resolve()
 }
 
+const rateLimitError = () => {
+  const error = new Error('Too Many Requests') as Error & { statusCode: number }
+  error.statusCode = 429
+  return error
+}
+
 describe('kube-watch', () => {
   let watchHandle: ReturnType<typeof startResourceWatch> | null = null
 
@@ -148,6 +154,86 @@ describe('kube-watch', () => {
     vi.advanceTimersByTime(2000)
     await flush()
     expect(watchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('backs off Kubernetes rate limit watch errors before restarting', async () => {
+    watchHandle = startResourceWatch({
+      resource: 'jobs',
+      namespace: 'agents',
+      onEvent: vi.fn(),
+      restartDelayMs: 2000,
+    })
+
+    await flush()
+    getWatchCall().done(rateLimitError())
+
+    expect(recordWatchErrorMock).toHaveBeenCalledWith({
+      resource: 'jobs',
+      namespace: 'agents',
+      reason: 'watch_rate_limited',
+    })
+    expect(recordWatchRestartMock).toHaveBeenCalledWith({
+      resource: 'jobs',
+      namespace: 'agents',
+      reason: 'watch_rate_limited',
+    })
+
+    vi.advanceTimersByTime(2000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(28_000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses exponential backoff for repeated watch failures', async () => {
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      onEvent: vi.fn(),
+      restartDelayMs: 1000,
+      maxRestartDelayMs: 5000,
+    })
+
+    await flush()
+    getWatchCall().done(new Error('boom'))
+    vi.advanceTimersByTime(1000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(2)
+
+    getWatchCall(1).done(new Error('boom again'))
+    vi.advanceTimersByTime(1000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(2)
+
+    vi.advanceTimersByTime(1000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('resets watch failure backoff after receiving an event', async () => {
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      onEvent: vi.fn(),
+      restartDelayMs: 1000,
+      maxRestartDelayMs: 5000,
+    })
+
+    await flush()
+    getWatchCall().done(new Error('boom'))
+    vi.advanceTimersByTime(1000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(2)
+
+    const restarted = getWatchCall(1)
+    restarted.callback('MODIFIED', { metadata: { resourceVersion: '12399' } })
+    restarted.done(new Error('boom after event'))
+
+    vi.advanceTimersByTime(1000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(3)
   })
 
   it('invokes onRestart with the restart reason when the watch errors', async () => {

@@ -330,8 +330,13 @@ export const buildDependencyQuorum = (input: {
     )
   }
 
-  const addWatchReason = (reason: string) => {
-    appendSegmentReason('watch_stream', reason, 'single_capability', 'medium')
+  const addWatchReason = (reason: string, status: 'blocked' | 'degraded') => {
+    appendSegmentReason(
+      'watch_stream',
+      reason,
+      status === 'blocked' ? 'global' : 'single_capability',
+      status === 'blocked' ? 'low' : 'medium',
+    )
   }
 
   const addRolloutReason = (reason: string) => {
@@ -427,9 +432,10 @@ export const buildDependencyQuorum = (input: {
 
   if (isWatchReliabilityBlocked) {
     blockReasons.push('watch_reliability_blocked')
+    addWatchReason('watch_reliability_blocked', 'blocked')
   } else if (input.watchReliability.status === 'degraded') {
     delayReasons.push('watch_reliability_degraded')
-    addWatchReason('watch_reliability_degraded')
+    addWatchReason('watch_reliability_degraded', 'degraded')
   }
 
   if (hasMaterialRolloutDegradation(input.rolloutHealth)) {
