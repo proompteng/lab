@@ -82,14 +82,19 @@ until they are decomposed further.
 
 ## Current control-plane decision contract
 
-The current architecture priority is execution cohort settlement. Final verdicts remain the consumer surface, but they
-must be backed by a current launch cohort before they are treated as durable admission. Serving readiness, route health,
-rollout health, watch reliability, and database freshness can stay green while retained failed schedule-runner pods,
-old-image running jobs, source provenance gaps, and controller-ingestion witness splits are still unresolved. That
-disagreement is a cohort settlement debt item, not a reason to upgrade normal dispatch or Torghut capital.
+The current architecture priority is terminal evidence half-life and debris retirement. Final verdicts remain the
+consumer surface, but they must now carry two separate proofs before they are treated as durable admission: a current
+launch cohort and a terminal evidence ledger. Serving readiness, route health, rollout health, watch reliability, and
+database freshness can stay green while retained failed schedule-runner pods, retry-only successes, old readiness probe
+bursts, stale component heartbeats, persistent snapshot gaps, and high-volume proof tables still carry material risk.
+That disagreement is terminal carry, not a reason to upgrade normal dispatch or Torghut capital.
 
 Current source-of-truth design:
 
+- `docs/agents/designs/167-jangar-terminal-evidence-half-life-and-debris-retirement-2026-05-07.md`
+- `docs/torghut/design-system/v6/171-torghut-profit-evidence-half-life-and-capital-carry-governor-2026-05-07.md`
+- `docs/agents/designs/166-jangar-evidence-capability-ledger-and-observer-lease-gates-2026-05-07.md`
+- `docs/torghut/design-system/v6/170-torghut-data-witness-capability-bonds-and-capital-observation-gates-2026-05-07.md`
 - `docs/agents/designs/155-jangar-execution-cohort-settlement-and-launch-quarantine-2026-05-07.md`
 - `docs/torghut/design-system/v6/159-torghut-capital-cohort-frontier-and-routeability-repair-board-2026-05-07.md`
 - `docs/agents/designs/129-jangar-heartbeat-lane-escrow-and-material-verdict-stability-2026-05-06.md`
@@ -105,10 +110,10 @@ Current source-of-truth design:
 
 The immediate invariant is that serving readiness, rollout availability, a route-level controller heartbeat, or an
 action clock `allow` cannot upgrade a stricter launch cohort, source provenance lease, heartbeat stability receipt,
-run-settlement watermark, or Torghut consumer-evidence escrow. In the current live state, retained failed runner pods,
-mixed running job image digests, missing source/GitOps revision, split controller witness, and Torghut routeability debt
-must keep dispatch widening, merge readiness, paper canary, and live capital inside explicit hold or observe-only
-decisions until stable proof arrives.
+run-settlement watermark, terminal evidence half-life ledger, or Torghut consumer-evidence escrow. In the current live
+state, retained failed runner pods, retry-only schedule successes, stale component-heartbeat authority, persistent
+snapshot gaps, oversized quant proof carry, and Torghut routeability debt must keep dispatch widening, merge readiness,
+paper canary, and live capital inside explicit hold or observe-only decisions until stable proof arrives.
 
 ## Ownership map
 
@@ -157,6 +162,10 @@ Current operational docs:
 Historical or design context docs:
 
 - `docs/jangar/current-state.md`
+- `docs/agents/designs/167-jangar-terminal-evidence-half-life-and-debris-retirement-2026-05-07.md`
+- `docs/torghut/design-system/v6/171-torghut-profit-evidence-half-life-and-capital-carry-governor-2026-05-07.md`
+- `docs/agents/designs/166-jangar-evidence-capability-ledger-and-observer-lease-gates-2026-05-07.md`
+- `docs/torghut/design-system/v6/170-torghut-data-witness-capability-bonds-and-capital-observation-gates-2026-05-07.md`
 - `docs/agents/designs/155-jangar-execution-cohort-settlement-and-launch-quarantine-2026-05-07.md`
 - `docs/torghut/design-system/v6/159-torghut-capital-cohort-frontier-and-routeability-repair-board-2026-05-07.md`
 - `docs/agents/designs/129-jangar-heartbeat-lane-escrow-and-material-verdict-stability-2026-05-06.md`
