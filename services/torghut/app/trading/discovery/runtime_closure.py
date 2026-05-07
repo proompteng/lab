@@ -40,7 +40,41 @@ from scripts.search_consistent_profitability_frontier import (
     apply_candidate_to_configmap_with_overrides,
 )
 
-_REPO_ROOT = Path(__file__).resolve().parents[5]
+
+def _discover_runtime_root(source_path: Path) -> Path:
+    resolved = source_path.resolve()
+    search_start = resolved if resolved.is_dir() else resolved.parent
+    ancestors = (search_start, *search_start.parents)
+    for candidate in ancestors:
+        if (candidate / ".git").exists() and (
+            candidate / "services" / "torghut"
+        ).exists():
+            return candidate
+    for candidate in ancestors:
+        if (
+            candidate
+            / "argocd"
+            / "applications"
+            / "torghut"
+            / "strategy-configmap.yaml"
+        ).exists():
+            return candidate
+    for candidate in ancestors:
+        if (candidate / "app" / "main.py").exists() and (
+            candidate / "scripts"
+        ).exists():
+            return candidate
+    if tuple(resolved.parts[-4:]) == (
+        "app",
+        "trading",
+        "discovery",
+        "runtime_closure.py",
+    ):
+        return resolved.parents[3]
+    return search_start
+
+
+_REPO_ROOT = _discover_runtime_root(Path(__file__))
 
 
 def _string(value: Any) -> str:
@@ -184,7 +218,9 @@ def _runtime_closure_policy(
     *, best_candidate: Mapping[str, Any] | None = None
 ) -> dict[str, Any]:
     portfolio_optimizer_evidence_required = bool(
-        _portfolio_optimizer_evidence(best_candidate) if best_candidate is not None else {}
+        _portfolio_optimizer_evidence(best_candidate)
+        if best_candidate is not None
+        else {}
     )
     policy = {
         "promotion_require_profitability_stage_manifest": True,
@@ -357,7 +393,9 @@ def _text_tuple(value: Any) -> tuple[str, ...]:
     return tuple(str(item) for item in cast(list[Any], value) if str(item).strip())
 
 
-def _portfolio_candidate_runtime_payload(portfolio: PortfolioCandidateSpec) -> dict[str, Any]:
+def _portfolio_candidate_runtime_payload(
+    portfolio: PortfolioCandidateSpec,
+) -> dict[str, Any]:
     payload = portfolio.to_payload()
     objective_scorecard = _mapping(payload.get("objective_scorecard"))
     return {
@@ -435,15 +473,11 @@ def _portfolio_optimizer_evidence(
     sleeves = _list_of_mappings(portfolio.get("sleeves"))
     return {
         "schema_version": "torghut.portfolio-optimizer-evidence.v1",
-        "portfolio_candidate_id": _string(
-            best_candidate.get("portfolio_candidate_id")
-        )
+        "portfolio_candidate_id": _string(best_candidate.get("portfolio_candidate_id"))
         or _string(best_candidate.get("candidate_id")),
         "candidate_id": _string(best_candidate.get("candidate_id")),
         "source_candidate_ids": list(source_candidate_ids),
-        "target_net_pnl_per_day": _string(
-            best_candidate.get("target_net_pnl_per_day")
-        )
+        "target_net_pnl_per_day": _string(best_candidate.get("target_net_pnl_per_day"))
         or _string(portfolio.get("target_net_pnl_per_day")),
         "sleeve_count": len(sleeves),
         "evidence_refs": list(evidence_refs),
@@ -785,17 +819,36 @@ def _window_bounds(
     return (_date_from_iso(start_text), _date_from_iso(end_text))
 
 
+def _load_strategy_configmap_payload(path: Path) -> dict[str, Any]:
+    source = path.read_text(encoding="utf-8")
+    payload = yaml.safe_load(source)
+    if not isinstance(payload, Mapping):
+        raise ValueError("strategy_configmap_not_mapping")
+    payload_mapping = cast(Mapping[str, Any], payload)
+    data = payload_mapping.get("data")
+    if isinstance(data, Mapping):
+        data_mapping = cast(Mapping[str, Any], data)
+        if isinstance(data_mapping.get("strategies.yaml"), str):
+            return dict(payload_mapping)
+    if isinstance(payload_mapping.get("strategies"), list):
+        return {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": path.stem},
+            "data": {"strategies.yaml": source},
+        }
+    raise ValueError("strategy_configmap_missing_strategies_yaml")
+
+
 def _materialize_candidate_configmap(
     *,
     best_candidate: Mapping[str, Any],
     execution_context: RuntimeClosureExecutionContext,
     output_path: Path,
 ) -> Path:
-    configmap_payload = yaml.safe_load(
-        execution_context.strategy_configmap_path.read_text(encoding="utf-8")
+    configmap_payload = _load_strategy_configmap_payload(
+        execution_context.strategy_configmap_path
     )
-    if not isinstance(configmap_payload, Mapping):
-        raise ValueError("strategy_configmap_not_mapping")
     portfolio_runtime_strategies = [
         *_materialized_microbar_portfolio_runtime_strategies(
             best_candidate=best_candidate,
@@ -1603,9 +1656,9 @@ def _profitability_stage_manifest(
         portfolio_optimizer_evidence_path is not None
         and portfolio_optimizer_evidence_path.exists()
     ):
-        artifact_hashes[
-            str(portfolio_optimizer_evidence_path.relative_to(root))
-        ] = _sha256_path(portfolio_optimizer_evidence_path)
+        artifact_hashes[str(portfolio_optimizer_evidence_path.relative_to(root))] = (
+            _sha256_path(portfolio_optimizer_evidence_path)
+        )
     payload = {
         "schema_version": "profitability-stage-manifest-v1",
         "candidate_id": candidate_id,

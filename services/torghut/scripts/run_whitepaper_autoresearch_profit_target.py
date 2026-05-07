@@ -86,6 +86,13 @@ _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC = 8
 _PROGRAM_SOURCE_DEFAULT_CONFIDENCE = "0.70"
 
 
+def _default_strategy_config_path() -> Path:
+    configured = str(os.getenv("TRADING_STRATEGY_CONFIG_PATH") or "").strip()
+    if configured:
+        return Path(configured)
+    return Path("argocd/applications/torghut/strategy-configmap.yaml")
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run whitepaper autoresearch and assemble a portfolio candidate for a profit target.",
@@ -117,7 +124,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strategy-configmap",
         type=Path,
-        default=Path("argocd/applications/torghut/strategy-configmap.yaml"),
+        default=_default_strategy_config_path(),
     )
     parser.add_argument(
         "--family-template-dir",

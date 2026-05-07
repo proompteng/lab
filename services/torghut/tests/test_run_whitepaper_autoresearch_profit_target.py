@@ -136,9 +136,30 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(args.target_net_pnl_per_day, "300")
         self.assertEqual(
             args.program,
-            Path("config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml"),
+            Path(
+                "config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml"
+            ),
         )
         self.assertEqual(args.symbols.split(","), _CHIP_UNIVERSE)
+
+    def test_parse_args_defaults_strategy_configmap_to_runtime_env_path(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            with patch.dict(
+                "os.environ",
+                {"TRADING_STRATEGY_CONFIG_PATH": "/etc/torghut/strategies.yaml"},
+            ):
+                with patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "run_whitepaper_autoresearch_profit_target.py",
+                        "--output-dir",
+                        tmpdir,
+                    ],
+                ):
+                    args = runner._parse_args()
+
+        self.assertEqual(args.strategy_configmap, Path("/etc/torghut/strategies.yaml"))
 
     def test_seed_recent_whitepapers_runs_end_to_end_and_writes_artifacts(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -1204,9 +1225,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     dict(item)
                     for item in cast(list[dict[str, object]], payload["claims"])
                 ]
-                claims[0][
-                    "claim_text"
-                ] = f"Order-flow momentum continuation signal {index} with late-day reversal validation."
+                claims[0]["claim_text"] = (
+                    f"Order-flow momentum continuation signal {index} with late-day reversal validation."
+                )
                 payload["claims"] = claims
                 rows.append(payload)
             source_path.write_text(
