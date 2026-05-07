@@ -175,6 +175,23 @@ def iter_parameter_candidates(
     return candidates
 
 
+def _coerce_strategy_configmap_payload(configmap_payload: Mapping[str, Any]) -> dict[str, Any]:
+    root = json.loads(json.dumps(configmap_payload))
+    if not isinstance(root, dict):
+        raise ValueError('strategy_configmap_not_mapping')
+    data = root.get('data')
+    if isinstance(data, dict):
+        return root
+    if isinstance(root.get('strategies'), list):
+        return {
+            'apiVersion': 'v1',
+            'kind': 'ConfigMap',
+            'metadata': {'name': 'mounted-strategy-catalog'},
+            'data': {'strategies.yaml': yaml.safe_dump(root, sort_keys=False)},
+        }
+    raise ValueError('strategy_configmap_missing_data')
+
+
 def apply_candidate_to_configmap(
     *,
     configmap_payload: Mapping[str, Any],
@@ -182,9 +199,7 @@ def apply_candidate_to_configmap(
     candidate_params: Mapping[str, Any],
     disable_other_strategies: bool,
 ) -> dict[str, Any]:
-    root = json.loads(json.dumps(configmap_payload))
-    if not isinstance(root, dict):
-        raise ValueError('strategy_configmap_not_mapping')
+    root = _coerce_strategy_configmap_payload(configmap_payload)
     data = root.get('data')
     if not isinstance(data, dict):
         raise ValueError('strategy_configmap_missing_data')
