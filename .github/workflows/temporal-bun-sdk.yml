@@ -54,6 +54,7 @@ jobs:
       TEMPORAL_ENFORCE_REMOTE_ADDRESS: '1'
       TEMPORAL_LOAD_TEST_WORKFLOW_POLL_P95_MS: '12000'
       TEMPORAL_LOAD_TEST_ACTIVITY_POLL_P95_MS: '12000'
+      TEMPORAL_LOAD_TEST_DESCRIBE_CONCURRENCY: '32'
       TEMPORAL_SOAK_FAILURE_MODES: baseline,worker-restart,sticky-cache-churn,update-rejection-termination,activity-cancellation
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

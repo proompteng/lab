@@ -1,9 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir, rm, writeFile } from 'node:fs/promises'
+import { create } from '@bufbuild/protobuf'
 import { Effect } from 'effect'
 
-import { createTemporalClient, type TemporalClient } from '../../../src/client'
+import { createTemporalClient, temporalCallOptions, type TemporalClient } from '../../../src/client'
 import { loadTemporalConfig } from '../../../src/config'
+import { WorkflowExecutionSchema } from '../../../src/proto/temporal/api/common/v1/message_pb'
+import { WorkflowExecutionStatus } from '../../../src/proto/temporal/api/enums/v1/workflow_pb'
+import { DescribeWorkflowExecutionRequestSchema } from '../../../src/proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkerRuntime } from '../../../src/worker/runtime'
 import { resolveTemporalCliExecutable } from '../harness'
 import { readWorkerLoadConfig, type WorkerLoadConfig } from './config'
@@ -169,17 +173,12 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
       const completionBudgetMs =
         loadConfig.workflowDurationBudgetMs + Math.max(loadConfig.metricsFlushTimeoutMs, 5_000)
       completionResults = await runWithTimeout(
-        waitForWorkflowCompletionsCli({
+        waitForWorkflowCompletionsRpc({
+          client: temporalClient,
           handles,
           namespace: resolvedConfig.namespace,
           timeoutMs: completionBudgetMs,
-          cliPath,
-          address: options.address,
-          tlsEnv: {
-            TEMPORAL_TLS_CA_PATH: config.tls?.caPath,
-            TEMPORAL_TLS_CERT_PATH: config.tls?.certPath,
-            TEMPORAL_TLS_KEY_PATH: config.tls?.keyPath,
-          },
+          describeConcurrency: loadConfig.workflowDescribeConcurrency,
         }),
         completionBudgetMs,
         `Worker load suite exceeded ${completionBudgetMs}ms without completing`,
@@ -247,6 +246,7 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
           activityScheduleToCloseTimeoutMs: loadConfig.activityScheduleToCloseTimeoutMs,
           workflowPollP95TargetMs: loadConfig.workflowPollP95TargetMs,
           activityPollP95TargetMs: loadConfig.activityPollP95TargetMs,
+          workflowDescribeConcurrency: loadConfig.workflowDescribeConcurrency,
           throughputFloorPerSecond: loadConfig.throughputFloorPerSecond,
           memorySampleIntervalMs: loadConfig.memorySampleIntervalMs,
           memorySlopeMaxMbPerHour: loadConfig.memorySlopeMaxMbPerHour,
@@ -568,69 +568,43 @@ const runWithTimeout = async <T>(promise: Promise<T>, timeoutMs: number, message
       })
   })
 
-const waitForWorkflowCompletionsCli = async ({
+const waitForWorkflowCompletionsRpc = async ({
+  client,
   handles,
   namespace,
   timeoutMs,
-  cliPath,
-  address,
-  tlsEnv,
+  describeConcurrency,
 }: {
+  client: TemporalClient
   handles: WorkflowHandle[]
   namespace: string
   timeoutMs: number
-  cliPath: string
-  address: string
-  tlsEnv: Record<string, string | undefined>
+  describeConcurrency: number
 }): Promise<WorkflowCompletionResult[]> => {
   const deadline = Date.now() + timeoutMs
   const queue = [...handles]
-  const workers = Math.min(8, queue.length)
+  const workers = Math.min(Math.max(1, describeConcurrency), queue.length)
   const completions: WorkflowCompletionResult[] = []
+  const rpcTimeoutMs = Math.min(10_000, Math.max(1_000, Math.floor(timeoutMs / 4)))
 
   const describe = async (handle: WorkflowHandle): Promise<WorkflowCompletionResult> => {
     while (true) {
       if (Date.now() > deadline) {
         throw new Error(`Timed out waiting for workflow ${handle.workflowId} to complete`)
       }
-      const command = [
-        cliPath,
-        'workflow',
-        'describe',
-        '--workflow-id',
-        handle.workflowId,
-        '--run-id',
-        handle.runId,
-        '--namespace',
-        namespace,
-        '--output',
-        'json',
-      ]
-      const child = Bun.spawn(command, {
-        stdout: 'pipe',
-        stderr: 'pipe',
-        env: {
-          ...process.env,
-          TEMPORAL_ADDRESS: address,
-          TEMPORAL_NAMESPACE: namespace,
-          ...tlsEnv,
-        },
-      })
-      const exitCode = await child.exited
-      const stdout = child.stdout ? await readStream(child.stdout) : ''
-      const stderr = child.stderr ? await readStream(child.stderr) : ''
-      if (exitCode !== 0) {
-        console.warn('[temporal-bun-sdk:load] temporal workflow describe failed', {
-          command,
-          exitCode,
-          stderr,
-        })
-        await sleep(500)
-        continue
-      }
       try {
-        const parsed = JSON.parse(stdout)
-        const statusField = parsed?.workflowExecutionInfo?.status ?? parsed?.status
+        const response = await client.rpc.workflow.call(
+          'describeWorkflowExecution',
+          create(DescribeWorkflowExecutionRequestSchema, {
+            namespace,
+            execution: create(WorkflowExecutionSchema, {
+              workflowId: handle.workflowId,
+              runId: handle.runId ?? '',
+            }),
+          }),
+          temporalCallOptions({ timeoutMs: rpcTimeoutMs }),
+        )
+        const statusField = response.workflowExecutionInfo?.status
         const normalizedStatus = normalizeWorkflowStatus(statusField)
         if (normalizedStatus === 'RUNNING') {
           await sleep(500)
@@ -641,10 +615,7 @@ const waitForWorkflowCompletionsCli = async ({
         }
         throw new Error(`Workflow ${handle.workflowId} has unknown status ${String(statusField)}`)
       } catch (error) {
-        if (error instanceof WorkflowCompletionError) {
-          throw error
-        }
-        console.warn('[temporal-bun-sdk:load] workflow describe processing failed', {
+        console.warn('[temporal-bun-sdk:load] workflow describe RPC failed', {
           workflowId: handle.workflowId,
           runId: handle.runId,
           error,
@@ -784,6 +755,9 @@ const sleep = (ms: number): Promise<void> =>
   })
 
 const normalizeWorkflowStatus = (status: unknown): string | undefined => {
+  if (typeof status === 'number') {
+    return workflowExecutionStatusNames[status]
+  }
   if (typeof status !== 'string') {
     return undefined
   }
@@ -791,6 +765,21 @@ const normalizeWorkflowStatus = (status: unknown): string | undefined => {
     return status.replace('WORKFLOW_EXECUTION_STATUS_', '')
   }
   return status.toUpperCase()
+}
+
+const workflowExecutionStatusNames: Record<number, string> = {
+  [WorkflowExecutionStatus.RUNNING]: 'RUNNING',
+  [WorkflowExecutionStatus.COMPLETED]: 'COMPLETED',
+  [WorkflowExecutionStatus.FAILED]: 'FAILED',
+  [WorkflowExecutionStatus.CANCELED]: 'CANCELED',
+  [WorkflowExecutionStatus.TERMINATED]: 'TERMINATED',
+  [WorkflowExecutionStatus.CONTINUED_AS_NEW]: 'CONTINUED_AS_NEW',
+  [WorkflowExecutionStatus.TIMED_OUT]: 'TIMED_OUT',
+  [WorkflowExecutionStatus.PAUSED]: 'PAUSED',
+}
+
+export const __workerLoadTestHooks = {
+  normalizeWorkflowStatus,
 }
 
 const readStream = async (stream: ReadableStream<Uint8Array> | null): Promise<string> => {

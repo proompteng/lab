@@ -33,7 +33,9 @@ test('worker load config uses release-safe activity timeouts by default', async 
       TEMPORAL_LOAD_TEST_ACTIVITY_DELAY_MS: '175',
       TEMPORAL_LOAD_TEST_ACTIVITY_BURSTS: '4',
       TEMPORAL_LOAD_TEST_WORKFLOWS: '1000',
+      TEMPORAL_LOAD_TEST_WORKFLOW_CONCURRENCY: '50',
       TEMPORAL_LOAD_TEST_ACTIVITY_CONCURRENCY: '80',
+      TEMPORAL_LOAD_TEST_DESCRIBE_CONCURRENCY: undefined,
       TEMPORAL_LOAD_TEST_WORKFLOW_POLL_P95_MS: undefined,
       TEMPORAL_LOAD_TEST_ACTIVITY_POLL_P95_MS: undefined,
     },
@@ -46,6 +48,35 @@ test('worker load config uses release-safe activity timeouts by default', async 
       expect(config.activityScheduleToCloseTimeoutMs).toBe(150_000)
       expect(config.workflowPollP95TargetMs).toBe(6_000)
       expect(config.activityPollP95TargetMs).toBe(6_000)
+      expect(config.workflowDescribeConcurrency).toBe(32)
+    },
+  )
+})
+
+test('worker load config exposes bounded workflow describe concurrency', async () => {
+  await withEnvironment(
+    {
+      TEMPORAL_LOAD_TEST_WORKFLOWS: '1000',
+      TEMPORAL_LOAD_TEST_WORKFLOW_CONCURRENCY: '50',
+      TEMPORAL_LOAD_TEST_DESCRIBE_CONCURRENCY: '64',
+    },
+    async () => {
+      const config = readWorkerLoadConfig()
+
+      expect(config.workflowDescribeConcurrency).toBe(64)
+    },
+  )
+})
+
+test('worker load config clamps workflow describe concurrency', async () => {
+  await withEnvironment(
+    {
+      TEMPORAL_LOAD_TEST_DESCRIBE_CONCURRENCY: '256',
+    },
+    async () => {
+      const config = readWorkerLoadConfig()
+
+      expect(config.workflowDescribeConcurrency).toBe(128)
     },
   )
 })

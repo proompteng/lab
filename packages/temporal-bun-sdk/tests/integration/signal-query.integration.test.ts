@@ -25,11 +25,12 @@ const scenarioTimeoutMs = 60_000
 const hookTimeoutMs = 60_000
 const temporalCliCommandMaxAttempts = normalizeRetryConfig(process.env.TEMPORAL_CLI_COMMAND_MAX_ATTEMPTS, 3)
 const temporalCliCommandRetryMs = normalizeRetryConfig(process.env.TEMPORAL_CLI_COMMAND_RETRY_MS, 500)
+const defaultTaskQueue = `temporal-bun-integration-signal-query-${crypto.randomUUID()}`
 
 const CLI_CONFIG: TemporalDevServerConfig = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
   namespace: process.env.TEMPORAL_NAMESPACE ?? 'default',
-  taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? 'temporal-bun-integration',
+  taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? defaultTaskQueue,
 }
 
 describeIntegration('Signal + query integration', () => {
