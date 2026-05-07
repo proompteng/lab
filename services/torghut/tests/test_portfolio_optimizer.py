@@ -115,6 +115,80 @@ class TestPortfolioOptimizer(TestCase):
         with self.assertRaisesRegex(ValueError, "portfolio_candidate_schema_invalid"):
             portfolio_candidate_from_payload({"schema_version": "bad"})
 
+    def test_portfolio_optimizer_uses_decomposition_symbol_shares_when_scorecard_missing(
+        self,
+    ) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-chip-decomposition",
+            candidate={
+                "candidate_id": "cand-chip-decomposition",
+                "runtime_family": "momentum_pullback_consistent",
+                "runtime_strategy_name": "momentum-pullback-long-v1",
+                "family_template_id": "momentum_pullback_v1",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "350",
+                    "active_day_ratio": "1.0",
+                    "positive_day_ratio": "1.0",
+                    "worst_day_loss": "0",
+                    "max_drawdown": "0",
+                    "best_day_share": "0.34",
+                    "avg_filled_notional_per_day": "350000",
+                    "regime_slice_pass_rate": "0.55",
+                    "posterior_edge_lower": "0.01",
+                    "shadow_parity_status": "within_budget",
+                    "daily_net": {
+                        "2026-02-23": "340",
+                        "2026-02-24": "350",
+                        "2026-02-25": "360",
+                    },
+                    "daily_filled_notional": {
+                        "2026-02-23": "350000",
+                        "2026-02-24": "350000",
+                        "2026-02-25": "350000",
+                    },
+                    **_executable_scorecard_fields("decomposition"),
+                },
+                "decomposition": {
+                    "symbols": {
+                        "NVDA": {"positive_pnl_share": "0.34"},
+                        "AVGO": {"positive_pnl_share": "0.33"},
+                        "TSM": {"positive_pnl_share": "0.33"},
+                    }
+                },
+            },
+            dataset_snapshot_id="snapshot-chip-decomposition",
+            result_path="/tmp/chip-decomposition.json",
+        )
+
+        self.assertEqual(
+            bundle.objective_scorecard["symbol_contribution_shares"],
+            {"NVDA": "0.34", "AVGO": "0.33", "TSM": "0.33"},
+        )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[bundle],
+            target_net_pnl_per_day=Decimal("300"),
+            portfolio_size_min=1,
+            portfolio_size_max=1,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        symbol_shares = portfolio.objective_scorecard["symbol_contribution_shares"]
+        self.assertEqual(
+            symbol_shares,
+            {
+                "AVGO": "0.33",
+                "NVDA": "0.34",
+                "TSM": "0.33",
+            },
+        )
+        self.assertNotIn("UNKNOWN", symbol_shares)
+        self.assertEqual(
+            portfolio.objective_scorecard["max_single_symbol_contribution_share"],
+            "0.34",
+        )
+
     def test_optimizer_keeps_research_candidate_blocked_on_scheduler_approval(
         self,
     ) -> None:

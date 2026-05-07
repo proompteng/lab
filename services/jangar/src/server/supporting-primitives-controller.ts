@@ -217,9 +217,9 @@ const buildAdmissionTrace = (passport: AdmissionPassportStatus | null) => {
 }
 
 const summarizePassportBlock = (passport: AdmissionPassportStatus | null) => {
-  if (!passport) return 'missing stage admission passport'
+  if (!passport) return 'missing launch admission passport'
   const reasons = passport.reason_codes.length > 0 ? `: ${passport.reason_codes.join(', ')}` : ''
-  return `stage admission passport ${passport.admission_passport_id} is ${passport.decision}${reasons}`
+  return `launch admission passport ${passport.admission_passport_id} is ${passport.decision}${reasons}`
 }
 
 const summarizeRuntimeAdmissionError = (error: unknown) => {
@@ -313,6 +313,9 @@ const admissionStatusForStage = (admission: SwarmLaunchAdmission) => ({
   recoveryCaseSetDigest: admission.passport?.recovery_case_set_digest ?? null,
   requiredRuntimeKits: admission.passport?.required_runtime_kits ?? [],
 })
+
+const shouldRejectRequirementSignalForAdmission = (admission: SwarmLaunchAdmission) =>
+  admission.reason === 'RuntimeAdmissionBlocked' && admission.passport?.decision === 'block'
 
 const resolveSwarmScheduleStage = (schedule: Record<string, unknown>): StageName | null => {
   const labels = asRecord(readNested(schedule, ['metadata', 'labels'])) ?? {}
@@ -2025,6 +2028,10 @@ const reconcileSwarm = async (
     if (!requirementAdmission.admitted) {
       requirementStats.blocked += 1
       requirementStats.admissionBlocked += 1
+      if (shouldRejectRequirementSignalForAdmission(requirementAdmission)) {
+        requirementStats.rejected += 1
+        await rejectRequirementSignal(kube, signal, requirementAdmission.reason, requirementAdmission.message)
+      }
       continue
     }
     if (requirementDispatchPauseAssessment) {

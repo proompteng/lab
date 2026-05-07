@@ -374,6 +374,21 @@ Implementation note: Phase 0 status projection (2026-05-06).
 - rollback for this slice is consumer-side only: ignore the new fields or revert the projection while preserving the
   existing `runtime_kits`, `admission_passports`, and launcher passport enforcement.
 
+Implementation note: deploy-verification proof gate (2026-05-07).
+
+- `packages/scripts/src/jangar/verify-deployment.ts` now validates the recovery-warrant proof surface after rollout
+  image and admission passport parity pass.
+- the verifier maps configured passport consumers to the deploy-relevant warrant classes: `serving`, `plan`,
+  `implement`, and `verify`.
+- each required warrant must be `sealed`, cite the same admission passport and runtime-kit digest, and report an
+  admitted image digest matching the promoted rollout digest.
+- each required proof cell must be present, required, `healthy`, and fresh.
+- each warrant must expose a fresh `deploy_verification` projection watermark that cites the same admission passport.
+- any superseded warrant with a non-zero active backlog seat count blocks rollout verification before widening.
+- emergency rollback for this gate is `--skip-runtime-proof-verification` or
+  `JANGAR_VERIFY_RUNTIME_PROOF_SURFACE=false`; the existing admission-passport rollback also skips this gate because
+  both checks consume the same status projection.
+
 Phase 1. Shadow enforcement.
 
 - compute whether launches and rollout widening would be blocked under the new contract;

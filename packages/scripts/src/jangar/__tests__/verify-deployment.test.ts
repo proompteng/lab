@@ -4,6 +4,94 @@ import { parseArgoApplicationStatus } from '../../shared/argo'
 import { __private } from '../verify-deployment'
 
 describe('verify-deployment', () => {
+  const expectedDigest = 'sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222'
+  const futureFreshUntil = '2999-01-01T00:00:00.000Z'
+
+  const buildRuntimeProofStatus = (overrides: Record<string, unknown> = {}) => ({
+    serving_passport_id: 'passport:serving:1',
+    admission_passports: [
+      {
+        admission_passport_id: 'passport:serving:1',
+        consumer_class: 'serving',
+        decision: 'allow',
+        runtime_kit_set_digest: 'runtime-serving',
+        required_runtime_kits: ['runtime-kit:serving:1'],
+        fresh_until: futureFreshUntil,
+      },
+      {
+        admission_passport_id: 'passport:swarm_plan:1',
+        consumer_class: 'swarm_plan',
+        decision: 'allow',
+        runtime_kit_set_digest: 'runtime-plan',
+        required_runtime_kits: ['runtime-kit:collaboration:1'],
+        fresh_until: futureFreshUntil,
+      },
+    ],
+    recovery_warrants: [
+      {
+        recovery_warrant_id: 'recovery-warrant:serving:1',
+        execution_class: 'serving',
+        admission_passport_id: 'passport:serving:1',
+        runtime_kit_digest: 'runtime-serving',
+        admitted_image_digest: expectedDigest,
+        required_proof_cell_ids: ['runtime-proof-cell:serving:image'],
+        projection_watermark_ids: ['projection-watermark:serving:deploy'],
+        status: 'sealed',
+        active_backlog_seat_count: 0,
+        reason_codes: [],
+      },
+      {
+        recovery_warrant_id: 'recovery-warrant:plan:1',
+        execution_class: 'plan',
+        admission_passport_id: 'passport:swarm_plan:1',
+        runtime_kit_digest: 'runtime-plan',
+        admitted_image_digest: expectedDigest,
+        required_proof_cell_ids: ['runtime-proof-cell:plan:image'],
+        projection_watermark_ids: ['projection-watermark:plan:deploy'],
+        status: 'sealed',
+        active_backlog_seat_count: 0,
+        reason_codes: [],
+      },
+    ],
+    runtime_proof_cells: [
+      {
+        runtime_proof_cell_id: 'runtime-proof-cell:serving:image',
+        recovery_warrant_id: 'recovery-warrant:serving:1',
+        status: 'healthy',
+        required: true,
+        expires_at: futureFreshUntil,
+      },
+      {
+        runtime_proof_cell_id: 'runtime-proof-cell:plan:image',
+        recovery_warrant_id: 'recovery-warrant:plan:1',
+        status: 'healthy',
+        required: true,
+        expires_at: futureFreshUntil,
+      },
+    ],
+    projection_watermarks: [
+      {
+        projection_watermark_id: 'projection-watermark:serving:deploy',
+        consumer_key: 'deploy_verification',
+        recovery_warrant_id: 'recovery-warrant:serving:1',
+        source_ref: 'admission-passport:passport:serving:1',
+        status: 'fresh',
+        expires_at: futureFreshUntil,
+        projection_digest: 'projection-serving',
+      },
+      {
+        projection_watermark_id: 'projection-watermark:plan:deploy',
+        consumer_key: 'deploy_verification',
+        recovery_warrant_id: 'recovery-warrant:plan:1',
+        source_ref: 'admission-passport:passport:swarm_plan:1',
+        status: 'fresh',
+        expires_at: futureFreshUntil,
+        projection_digest: 'projection-plan',
+      },
+    ],
+    ...overrides,
+  })
+
   it('extracts expected digest for configured image', () => {
     const source = `images:
   - name: registry.ide-newton.ts.net/lab/jangar
@@ -48,6 +136,7 @@ describe('verify-deployment', () => {
       '--admission-passport-consumers',
       'serving,swarm_plan',
       '--skip-admission-passport-verification',
+      '--skip-runtime-proof-verification',
     ])
 
     expect(parsed.namespace).toBe('jangar')
@@ -65,6 +154,7 @@ describe('verify-deployment', () => {
     expect(parsed.controlPlaneStatusNamespace).toBe('agents')
     expect(parsed.admissionPassportConsumers).toEqual(['serving', 'swarm_plan'])
     expect(parsed.skipAdmissionPassportVerification).toBe(true)
+    expect(parsed.skipRuntimeProofVerification).toBe(true)
   })
 
   it('builds the control-plane status service proxy path', () => {
@@ -211,6 +301,67 @@ describe('verify-deployment', () => {
         now: new Date('2026-05-06T00:00:00.000Z'),
       }),
     ).toThrow('is not allow')
+  })
+
+  it('verifies sealed deployment warrants, proof cells, and deploy watermarks', () => {
+    const evidence = __private.verifyRuntimeProofSurfaceParity({
+      status: buildRuntimeProofStatus(),
+      expectedDigest,
+      consumers: ['serving', 'swarm_plan'],
+      now: new Date('2026-05-07T00:00:00.000Z'),
+    })
+
+    expect(evidence.warrantIds).toEqual(['recovery-warrant:serving:1', 'recovery-warrant:plan:1'])
+    expect(evidence.proofCellIds).toEqual(['runtime-proof-cell:serving:image', 'runtime-proof-cell:plan:image'])
+    expect(evidence.projectionWatermarkIds).toEqual([
+      'projection-watermark:serving:deploy',
+      'projection-watermark:plan:deploy',
+    ])
+  })
+
+  it('fails runtime proof verification when the deploy watermark is missing', () => {
+    expect(() =>
+      __private.verifyRuntimeProofSurfaceParity({
+        status: buildRuntimeProofStatus({
+          projection_watermarks: [
+            {
+              projection_watermark_id: 'projection-watermark:serving:status',
+              consumer_key: 'control_plane_status',
+              recovery_warrant_id: 'recovery-warrant:serving:1',
+              source_ref: 'admission-passport:passport:serving:1',
+              status: 'fresh',
+              expires_at: futureFreshUntil,
+              projection_digest: 'projection-serving',
+            },
+          ],
+        }),
+        expectedDigest,
+        consumers: ['serving'],
+        now: new Date('2026-05-07T00:00:00.000Z'),
+      }),
+    ).toThrow('Missing deploy verification projection watermark')
+  })
+
+  it('fails runtime proof verification when a superseded warrant still has runnable seats', () => {
+    const status = buildRuntimeProofStatus()
+    const recoveryWarrants = [
+      ...(status.recovery_warrants as Record<string, unknown>[]),
+      {
+        recovery_warrant_id: 'recovery-warrant:plan:old',
+        execution_class: 'plan',
+        status: 'superseded',
+        active_backlog_seat_count: 1,
+      },
+    ]
+
+    expect(() =>
+      __private.verifyRuntimeProofSurfaceParity({
+        status: buildRuntimeProofStatus({ recovery_warrants: recoveryWarrants }),
+        expectedDigest,
+        consumers: ['swarm_plan'],
+        now: new Date('2026-05-07T00:00:00.000Z'),
+      }),
+    ).toThrow('superseded recovery warrant recovery-warrant:plan:old still has 1 active backlog seats')
   })
 
   it('waits while Argo revision is not the expected revision', () => {

@@ -5,6 +5,8 @@ supported_markets:
   - us_equities_intraday
 required_features:
   - trend_strength
+  - intraday_momentum_rank
+  - prior_day_return
   - realized_volatility
   - turnover
 allowed_normalizations:

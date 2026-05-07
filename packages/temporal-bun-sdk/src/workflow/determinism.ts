@@ -1,5 +1,5 @@
 import type { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
-import { WorkflowIdReusePolicy } from '../proto/temporal/api/enums/v1/workflow_pb'
+import { ParentClosePolicy, WorkflowIdReusePolicy } from '../proto/temporal/api/enums/v1/workflow_pb'
 import type { WorkflowCommandIntent } from './commands'
 import { WorkflowNondeterminismError, WorkflowQueryViolationError } from './errors'
 
@@ -363,9 +363,13 @@ export const intentsEqual = (a: WorkflowCommandIntent | undefined, b: WorkflowCo
 
 const DEFAULT_CHILD_WORKFLOW_TASK_TIMEOUT_MS = 10_000
 const DEFAULT_ACTIVITY_HEARTBEAT_TIMEOUT_MS = 0
+const DEFAULT_ACTIVITY_RETRY_INITIAL_INTERVAL_MS = 1_000
+const DEFAULT_ACTIVITY_RETRY_BACKOFF_COEFFICIENT = 2
+const DEFAULT_ACTIVITY_RETRY_MAXIMUM_INTERVAL_MS = 100_000
 const DEFAULT_WORKFLOW_RUN_TIMEOUT_MS = 0
 const DEFAULT_WORKFLOW_EXECUTION_TIMEOUT_MS = 0
 const DEFAULT_WORKFLOW_ID_REUSE_POLICY = WorkflowIdReusePolicy.ALLOW_DUPLICATE
+const DEFAULT_PARENT_CLOSE_POLICY = ParentClosePolicy.TERMINATE
 
 const normalizeIntentForComparison = (intent: WorkflowCommandIntent): WorkflowCommandIntent => {
   switch (intent.kind) {
@@ -395,10 +399,37 @@ const normalizeScheduleActivityIntent = (intent: WorkflowCommandIntent): Workflo
   if (timeouts.heartbeatTimeoutMs === undefined || timeouts.heartbeatTimeoutMs === null) {
     timeouts.heartbeatTimeoutMs = DEFAULT_ACTIVITY_HEARTBEAT_TIMEOUT_MS
   }
+  const heartbeatUpperBoundMs = minPositive(scheduleToCloseTimeoutMs, startToCloseTimeoutMs)
+  if (
+    timeouts.heartbeatTimeoutMs !== undefined &&
+    timeouts.heartbeatTimeoutMs > 0 &&
+    heartbeatUpperBoundMs !== undefined &&
+    timeouts.heartbeatTimeoutMs > heartbeatUpperBoundMs
+  ) {
+    timeouts.heartbeatTimeoutMs = heartbeatUpperBoundMs
+  }
   return {
     ...intent,
     timeouts,
+    retry: normalizeActivityRetryForComparison(intent.retry),
   }
+}
+
+const normalizeActivityRetryForComparison = (
+  retry: WorkflowRetryPolicyInput | undefined,
+): WorkflowRetryPolicyInput => ({
+  initialIntervalMs: retry?.initialIntervalMs ?? DEFAULT_ACTIVITY_RETRY_INITIAL_INTERVAL_MS,
+  backoffCoefficient: retry?.backoffCoefficient ?? DEFAULT_ACTIVITY_RETRY_BACKOFF_COEFFICIENT,
+  maximumIntervalMs: retry?.maximumIntervalMs ?? DEFAULT_ACTIVITY_RETRY_MAXIMUM_INTERVAL_MS,
+  ...(retry?.maximumAttempts !== undefined && retry.maximumAttempts !== 0
+    ? { maximumAttempts: retry.maximumAttempts }
+    : {}),
+  ...(retry?.nonRetryableErrorTypes?.length ? { nonRetryableErrorTypes: retry.nonRetryableErrorTypes } : {}),
+})
+
+const minPositive = (...values: readonly (number | null | undefined)[]): number | undefined => {
+  const positives = values.filter((value): value is number => typeof value === 'number' && value > 0)
+  return positives.length > 0 ? Math.min(...positives) : undefined
 }
 
 const normalizeStartChildWorkflowIntent = (intent: WorkflowCommandIntent): WorkflowCommandIntent => {
@@ -418,6 +449,7 @@ const normalizeStartChildWorkflowIntent = (intent: WorkflowCommandIntent): Workf
   return {
     ...intent,
     timeouts,
+    parentClosePolicy: intent.parentClosePolicy ?? DEFAULT_PARENT_CLOSE_POLICY,
     workflowIdReusePolicy: intent.workflowIdReusePolicy ?? DEFAULT_WORKFLOW_ID_REUSE_POLICY,
   }
 }

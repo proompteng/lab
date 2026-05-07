@@ -194,7 +194,10 @@ The supporting-primitives controller enforces stage admission passports before i
 With `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=true` (the production default), discover/plan schedules use the
 `swarm_plan` passport, implement schedules and cross-swarm requirements use `swarm_implement`, and verify schedules use
 `swarm_verify`. A blocked or held passport deletes the matching schedule plus generated runner ConfigMap/CronJob
-resources and prevents requirement dispatch instead of allowing repeated opaque job retries.
+resources and prevents requirement dispatch instead of allowing repeated opaque job retries. A hard-blocked
+`swarm_implement` passport also marks the matching requirement Signal `Rejected` with the passport refusal, so the
+requirement fails once with typed runtime-admission evidence. Held passports and unavailable admission snapshots stay
+pending so they can dispatch after the runtime kit or admission projection recovers.
 
 Schedule reconciliation also re-checks the current stage passport before it writes runner ConfigMaps or CronJobs.
 This keeps pre-existing schedules from launching with stale allowed passport annotations after the collaboration runtime
@@ -242,6 +245,14 @@ runtime kits, and running on the same image digest as the promoted deployment. T
 `JANGAR_RUNTIME_IMAGE` to the promoted tag and digest so runtime-kit `image_ref` can be compared directly. Emergency
 rollback for the verifier gate is `--skip-admission-passport-verification` or
 `JANGAR_VERIFY_ADMISSION_PASSPORTS=false`; keep the status projection enabled for forensics.
+
+By default, deploy verification also checks the recovery-warrant proof surface from the same status payload. For each
+configured passport consumer, the verifier requires the deploy-relevant warrant (`serving`, `plan`, `implement`, or
+`verify`) to be `sealed`, cite the same passport/runtime-kit digest, match the promoted image digest, have fresh healthy
+required proof cells, and expose a fresh `deploy_verification` projection watermark that cites the same passport.
+Superseded warrants must report zero active backlog seats before the rollout is marked safe. Emergency rollback for this
+proof-surface gate is `--skip-runtime-proof-verification` or `JANGAR_VERIFY_RUNTIME_PROOF_SURFACE=false`; skipping
+admission passport verification also skips the proof-surface gate because both gates consume the same status projection.
 
 Rollback: set `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` on the control-plane runtime to return launch behavior
 to the previous advisory-only passport mode while keeping status and `/ready` passport projection visible for forensics.

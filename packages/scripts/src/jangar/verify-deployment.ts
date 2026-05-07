@@ -29,6 +29,7 @@ type CliOptions = {
   digestIntervalSeconds?: number
   requireSynced?: boolean
   skipAdmissionPassportVerification?: boolean
+  skipRuntimeProofVerification?: boolean
 }
 
 type CommandResult = {
@@ -60,6 +61,7 @@ type ResolvedOptions = {
   digestIntervalSeconds: number
   requireSynced: boolean
   skipAdmissionPassportVerification: boolean
+  skipRuntimeProofVerification: boolean
 }
 
 const defaultImageName = 'registry.ide-newton.ts.net/lab/jangar'
@@ -103,10 +105,48 @@ type AdmissionPassportStatus = {
   reason_codes?: unknown
 }
 
+type RecoveryWarrantExecutionClass = 'serving' | 'plan' | 'implement' | 'verify'
+
+type RecoveryWarrantStatus = {
+  recovery_warrant_id?: unknown
+  execution_class?: unknown
+  admission_passport_id?: unknown
+  admitted_image_digest?: unknown
+  runtime_kit_digest?: unknown
+  required_proof_cell_ids?: unknown
+  projection_watermark_ids?: unknown
+  status?: unknown
+  active_backlog_seat_count?: unknown
+  reason_codes?: unknown
+}
+
+type RuntimeProofCellStatus = {
+  runtime_proof_cell_id?: unknown
+  recovery_warrant_id?: unknown
+  status?: unknown
+  required?: unknown
+  expires_at?: unknown
+  reason_codes?: unknown
+}
+
+type ProjectionWatermarkStatus = {
+  projection_watermark_id?: unknown
+  consumer_key?: unknown
+  recovery_warrant_id?: unknown
+  source_ref?: unknown
+  projection_digest?: unknown
+  status?: unknown
+  expires_at?: unknown
+  reason_codes?: unknown
+}
+
 type ControlPlaneStatusPayload = {
   runtime_kits?: unknown
   admission_passports?: unknown
   serving_passport_id?: unknown
+  recovery_warrants?: unknown
+  runtime_proof_cells?: unknown
+  projection_watermarks?: unknown
 }
 
 type AdmissionPassportParityEvidence = {
@@ -115,6 +155,20 @@ type AdmissionPassportParityEvidence = {
   runtimeKitSetDigests: string[]
   runtimeKitIds: string[]
   runtimeImageRefs: string[]
+}
+
+type RuntimeProofSurfaceParityEvidence = {
+  consumers: AdmissionPassportConsumer[]
+  warrantIds: string[]
+  proofCellIds: string[]
+  projectionWatermarkIds: string[]
+}
+
+const deploymentWarrantExecutionClassByConsumer: Record<AdmissionPassportConsumer, RecoveryWarrantExecutionClass> = {
+  serving: 'serving',
+  swarm_plan: 'plan',
+  swarm_implement: 'implement',
+  swarm_verify: 'verify',
 }
 
 const resolvePath = (path: string) => resolve(repoRoot, path)
@@ -126,7 +180,18 @@ const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [
 
 const asString = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value.trim() : null)
 
+const asBoolean = (value: unknown): boolean | null => (typeof value === 'boolean' ? value : null)
+
+const asNumber = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
+
 const uniqueStrings = (values: string[]) => [...new Set(values)]
+
+const stringList = (value: unknown) =>
+  asArray(value)
+    .map((entry) => asString(entry))
+    .filter((entry): entry is string => Boolean(entry))
+
+const reasonList = (value: unknown) => stringList(value).join(',') || 'none'
 
 const parseBoolean = (value: string | undefined, fallback: boolean) => {
   const normalized = value?.trim().toLowerCase()
@@ -331,6 +396,8 @@ Options:
                                       Required passport consumers (default: serving,swarm_plan,swarm_implement)
   --skip-admission-passport-verification
                                       Skip runtime admission passport parity verification
+  --skip-runtime-proof-verification
+                                      Skip recovery warrant, runtime proof cell, and projection watermark verification
   --rollout-timeout <duration>       kubectl rollout timeout (default: 10m)
   --health-attempts <number>         Argo health polling attempts (default: 60)
   --health-interval-seconds <number> Argo health polling interval seconds (default: 10)
@@ -348,6 +415,10 @@ Options:
     }
     if (arg === '--skip-admission-passport-verification') {
       options.skipAdmissionPassportVerification = true
+      continue
+    }
+    if (arg === '--skip-runtime-proof-verification') {
+      options.skipRuntimeProofVerification = true
       continue
     }
 
@@ -689,6 +760,226 @@ const verifyAdmissionPassportParity = (input: {
   }
 }
 
+const verifyRuntimeProofSurfaceParity = (input: {
+  status: ControlPlaneStatusPayload
+  expectedDigest: string
+  consumers: AdmissionPassportConsumer[]
+  now?: Date
+}): RuntimeProofSurfaceParityEvidence => {
+  const nowMs = (input.now ?? new Date()).getTime()
+  const admissionPassports = asArray(input.status.admission_passports)
+    .map((entry) => asRecord(entry) as AdmissionPassportStatus | null)
+    .filter((entry): entry is AdmissionPassportStatus => Boolean(entry))
+  const recoveryWarrants = asArray(input.status.recovery_warrants)
+    .map((entry) => asRecord(entry) as RecoveryWarrantStatus | null)
+    .filter((entry): entry is RecoveryWarrantStatus => Boolean(entry))
+  const runtimeProofCells = asArray(input.status.runtime_proof_cells)
+    .map((entry) => asRecord(entry) as RuntimeProofCellStatus | null)
+    .filter((entry): entry is RuntimeProofCellStatus => Boolean(entry))
+  const projectionWatermarks = asArray(input.status.projection_watermarks)
+    .map((entry) => asRecord(entry) as ProjectionWatermarkStatus | null)
+    .filter((entry): entry is ProjectionWatermarkStatus => Boolean(entry))
+
+  if (admissionPassports.length === 0) {
+    throw new Error('Control-plane status did not include admission_passports')
+  }
+  if (recoveryWarrants.length === 0) {
+    throw new Error('Control-plane status did not include recovery_warrants')
+  }
+  if (runtimeProofCells.length === 0) {
+    throw new Error('Control-plane status did not include runtime_proof_cells')
+  }
+  if (projectionWatermarks.length === 0) {
+    throw new Error('Control-plane status did not include projection_watermarks')
+  }
+
+  const passportByConsumer = new Map<AdmissionPassportConsumer, AdmissionPassportStatus>()
+  for (const passport of admissionPassports) {
+    const consumer = admissionPassportConsumer(passport)
+    if (consumer && supportedAdmissionPassportConsumers.includes(consumer)) {
+      passportByConsumer.set(consumer, passport)
+    }
+  }
+
+  const proofCellById = new Map<string, RuntimeProofCellStatus>()
+  for (const proofCell of runtimeProofCells) {
+    const id = asString(proofCell.runtime_proof_cell_id)
+    if (id) proofCellById.set(id, proofCell)
+  }
+
+  for (const warrant of recoveryWarrants) {
+    if (asString(warrant.status) !== 'superseded') {
+      continue
+    }
+
+    const warrantId = asString(warrant.recovery_warrant_id) ?? 'unknown'
+    const activeBacklogSeatCount = asNumber(warrant.active_backlog_seat_count)
+    if (activeBacklogSeatCount === null) {
+      throw new Error(`superseded recovery warrant ${warrantId} is missing active_backlog_seat_count`)
+    }
+    if (activeBacklogSeatCount > 0) {
+      throw new Error(
+        `superseded recovery warrant ${warrantId} still has ${activeBacklogSeatCount} active backlog seats`,
+      )
+    }
+  }
+
+  const warrantIds: string[] = []
+  const proofCellIds: string[] = []
+  const projectionWatermarkIds: string[] = []
+
+  for (const consumer of input.consumers) {
+    const passport = passportByConsumer.get(consumer)
+    if (!passport) {
+      throw new Error(`Missing admission passport for consumer ${consumer}`)
+    }
+
+    const passportId = asString(passport.admission_passport_id)
+    if (!passportId) {
+      throw new Error(`Admission passport for consumer ${consumer} does not include admission_passport_id`)
+    }
+
+    const runtimeKitSetDigest = asString(passport.runtime_kit_set_digest)
+    if (!runtimeKitSetDigest) {
+      throw new Error(`Admission passport ${passportId} for ${consumer} does not include runtime_kit_set_digest`)
+    }
+
+    const executionClass = deploymentWarrantExecutionClassByConsumer[consumer]
+    const matchingWarrants = recoveryWarrants.filter(
+      (warrant) =>
+        asString(warrant.execution_class) === executionClass &&
+        asString(warrant.admission_passport_id) === passportId &&
+        asString(warrant.status) !== 'superseded',
+    )
+
+    if (matchingWarrants.length === 0) {
+      throw new Error(`Missing ${executionClass} recovery warrant for admission passport ${passportId}`)
+    }
+    if (matchingWarrants.length > 1) {
+      throw new Error(`Multiple ${executionClass} recovery warrants found for admission passport ${passportId}`)
+    }
+
+    const warrant = matchingWarrants[0]
+    const warrantId = asString(warrant.recovery_warrant_id)
+    if (!warrantId) {
+      throw new Error(`${executionClass} recovery warrant for admission passport ${passportId} is missing id`)
+    }
+
+    const warrantStatus = asString(warrant.status)
+    if (warrantStatus !== 'sealed') {
+      throw new Error(
+        `Recovery warrant ${warrantId} for ${consumer} is not sealed: status=${
+          warrantStatus ?? 'missing'
+        } reasons=${reasonList(warrant.reason_codes)}`,
+      )
+    }
+
+    const warrantRuntimeKitDigest = asString(warrant.runtime_kit_digest)
+    if (warrantRuntimeKitDigest !== runtimeKitSetDigest) {
+      throw new Error(
+        `Recovery warrant ${warrantId} runtime_kit_digest=${warrantRuntimeKitDigest ?? 'missing'} does not match ` +
+          `passport ${passportId} runtime_kit_set_digest=${runtimeKitSetDigest}`,
+      )
+    }
+
+    const admittedImageDigest = asString(warrant.admitted_image_digest)
+    if (!admittedImageDigest || !imageRefMatchesExpectedDigest(admittedImageDigest, input.expectedDigest)) {
+      throw new Error(
+        `Recovery warrant ${warrantId} admitted_image_digest=${admittedImageDigest ?? 'missing'} does not match ` +
+          `expected rollout digest ${input.expectedDigest}`,
+      )
+    }
+
+    const requiredProofCellIds = stringList(warrant.required_proof_cell_ids)
+    if (requiredProofCellIds.length === 0) {
+      throw new Error(`Recovery warrant ${warrantId} does not cite required_proof_cell_ids`)
+    }
+
+    for (const proofCellId of requiredProofCellIds) {
+      const proofCell = proofCellById.get(proofCellId)
+      if (!proofCell) {
+        throw new Error(`Recovery warrant ${warrantId} cites missing runtime proof cell ${proofCellId}`)
+      }
+      if (asString(proofCell.recovery_warrant_id) !== warrantId) {
+        throw new Error(`Runtime proof cell ${proofCellId} does not belong to recovery warrant ${warrantId}`)
+      }
+      if (asBoolean(proofCell.required) !== true) {
+        throw new Error(`Runtime proof cell ${proofCellId} is not marked required`)
+      }
+
+      const proofCellStatus = asString(proofCell.status)
+      if (proofCellStatus !== 'healthy') {
+        throw new Error(
+          `Runtime proof cell ${proofCellId} for warrant ${warrantId} is not healthy: status=${
+            proofCellStatus ?? 'missing'
+          } reasons=${reasonList(proofCell.reason_codes)}`,
+        )
+      }
+      if (parseFreshUntilMs(proofCell.expires_at, `Runtime proof cell ${proofCellId}`) <= nowMs) {
+        throw new Error(`Runtime proof cell ${proofCellId} for warrant ${warrantId} is stale`)
+      }
+
+      proofCellIds.push(proofCellId)
+    }
+
+    const warrantWatermarkIds = stringList(warrant.projection_watermark_ids)
+    const deployWatermark = projectionWatermarks.find(
+      (watermark) =>
+        asString(watermark.consumer_key) === 'deploy_verification' &&
+        asString(watermark.recovery_warrant_id) === warrantId,
+    )
+    if (!deployWatermark) {
+      throw new Error(`Missing deploy verification projection watermark for recovery warrant ${warrantId}`)
+    }
+
+    const deployWatermarkId = asString(deployWatermark.projection_watermark_id)
+    if (!deployWatermarkId) {
+      throw new Error(`Deploy verification projection watermark for recovery warrant ${warrantId} is missing id`)
+    }
+    if (!warrantWatermarkIds.includes(deployWatermarkId)) {
+      throw new Error(
+        `Recovery warrant ${warrantId} does not cite deploy verification projection watermark ${deployWatermarkId}`,
+      )
+    }
+    if (asString(deployWatermark.source_ref) !== `admission-passport:${passportId}`) {
+      throw new Error(
+        `Deploy verification projection watermark ${deployWatermarkId} source_ref=${
+          asString(deployWatermark.source_ref) ?? 'missing'
+        } does not cite admission passport ${passportId}`,
+      )
+    }
+    if (!asString(deployWatermark.projection_digest)) {
+      throw new Error(
+        `Deploy verification projection watermark ${deployWatermarkId} does not include projection_digest`,
+      )
+    }
+
+    const deployWatermarkStatus = asString(deployWatermark.status)
+    if (deployWatermarkStatus !== 'fresh') {
+      throw new Error(
+        `Deploy verification projection watermark ${deployWatermarkId} for warrant ${warrantId} is not fresh: ` +
+          `status=${deployWatermarkStatus ?? 'missing'} reasons=${reasonList(deployWatermark.reason_codes)}`,
+      )
+    }
+    if (
+      parseFreshUntilMs(deployWatermark.expires_at, `Deploy verification projection watermark ${deployWatermarkId}`) <=
+      nowMs
+    ) {
+      throw new Error(`Deploy verification projection watermark ${deployWatermarkId} for warrant ${warrantId} is stale`)
+    }
+
+    warrantIds.push(warrantId)
+    projectionWatermarkIds.push(deployWatermarkId)
+  }
+
+  return {
+    consumers: input.consumers,
+    warrantIds,
+    proofCellIds: uniqueStrings(proofCellIds),
+    projectionWatermarkIds,
+  }
+}
+
 export const main = async (cliOptions?: CliOptions) => {
   ensureCli('kubectl')
 
@@ -697,6 +988,8 @@ export const main = async (cliOptions?: CliOptions) => {
   const expectedRevisionMode = validateExpectedRevisionMode(parsed.expectedRevisionMode)
   const namespace = parsed.namespace ?? defaultNamespace
   const verifyAdmissionPassports = parseBoolean(process.env.JANGAR_VERIFY_ADMISSION_PASSPORTS, true)
+  const verifyRuntimeProofSurface = parseBoolean(process.env.JANGAR_VERIFY_RUNTIME_PROOF_SURFACE, true)
+  const skipAdmissionPassportVerification = parsed.skipAdmissionPassportVerification ?? !verifyAdmissionPassports
   const resolvedOptions: ResolvedOptions = {
     namespace,
     deployments: parsed.deployments?.length ? parsed.deployments : [...defaultDeployments],
@@ -726,7 +1019,9 @@ export const main = async (cliOptions?: CliOptions) => {
     digestAttempts: parsed.digestAttempts ?? defaultDigestAttempts,
     digestIntervalSeconds: parsed.digestIntervalSeconds ?? defaultDigestIntervalSeconds,
     requireSynced: parsed.requireSynced ?? false,
-    skipAdmissionPassportVerification: parsed.skipAdmissionPassportVerification ?? !verifyAdmissionPassports,
+    skipAdmissionPassportVerification,
+    skipRuntimeProofVerification:
+      parsed.skipRuntimeProofVerification ?? (skipAdmissionPassportVerification || !verifyRuntimeProofSurface),
   }
 
   if (!Number.isInteger(resolvedOptions.healthAttempts) || resolvedOptions.healthAttempts <= 0) {
@@ -775,20 +1070,42 @@ export const main = async (cliOptions?: CliOptions) => {
     resolvedOptions.digestIntervalSeconds,
   )
 
+  const shouldReadControlPlaneStatus =
+    !resolvedOptions.skipAdmissionPassportVerification || !resolvedOptions.skipRuntimeProofVerification
+  const controlPlaneStatus = shouldReadControlPlaneStatus ? await readControlPlaneStatus(resolvedOptions) : undefined
+  const requireControlPlaneStatus = () => {
+    if (!controlPlaneStatus) {
+      throw new Error('Control-plane status is required for runtime admission verification')
+    }
+    return controlPlaneStatus
+  }
+
   if (resolvedOptions.skipAdmissionPassportVerification) {
     console.log('Admission passport verification skipped by operator flag.')
+  } else {
+    const passportEvidence = verifyAdmissionPassportParity({
+      status: requireControlPlaneStatus(),
+      expectedDigest,
+      consumers: resolvedOptions.admissionPassportConsumers,
+    })
+    console.log(`Admission passports verified: ${passportEvidence.passportIds.join(', ')}`)
+    console.log(`Runtime kit set digests: ${passportEvidence.runtimeKitSetDigests.join(', ')}`)
+    console.log(`Runtime kit image refs: ${passportEvidence.runtimeImageRefs.join(', ')}`)
+  }
+
+  if (resolvedOptions.skipRuntimeProofVerification) {
+    console.log('Runtime proof surface verification skipped by operator flag.')
     return
   }
 
-  const controlPlaneStatus = await readControlPlaneStatus(resolvedOptions)
-  const passportEvidence = verifyAdmissionPassportParity({
-    status: controlPlaneStatus,
+  const runtimeProofEvidence = verifyRuntimeProofSurfaceParity({
+    status: requireControlPlaneStatus(),
     expectedDigest,
     consumers: resolvedOptions.admissionPassportConsumers,
   })
-  console.log(`Admission passports verified: ${passportEvidence.passportIds.join(', ')}`)
-  console.log(`Runtime kit set digests: ${passportEvidence.runtimeKitSetDigests.join(', ')}`)
-  console.log(`Runtime kit image refs: ${passportEvidence.runtimeImageRefs.join(', ')}`)
+  console.log(`Recovery warrants verified: ${runtimeProofEvidence.warrantIds.join(', ')}`)
+  console.log(`Runtime proof cells verified: ${runtimeProofEvidence.proofCellIds.join(', ')}`)
+  console.log(`Deploy verification watermarks verified: ${runtimeProofEvidence.projectionWatermarkIds.join(', ')}`)
 }
 
 if (import.meta.main) {
@@ -805,4 +1122,5 @@ export const __private = {
   parseArgs,
   parseAdmissionPassportConsumers,
   verifyAdmissionPassportParity,
+  verifyRuntimeProofSurfaceParity,
 }

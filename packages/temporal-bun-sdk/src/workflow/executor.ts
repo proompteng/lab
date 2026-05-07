@@ -682,14 +682,6 @@ export class WorkflowExecutor {
     if (!registry) {
       throw new Error('Workflow query registry unavailable')
     }
-    if (process.env.CODEX_DEBUG_QUERY_REGISTRY === '1') {
-      console.log(
-        'query registry handlers',
-        registry.list().map((handler) => handler.handle.name),
-        'requests',
-        requests.map((request) => request.name),
-      )
-    }
     const results: WorkflowQueryEvaluationResult[] = []
     for (const request of requests) {
       try {

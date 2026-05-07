@@ -160,6 +160,8 @@ class TestRunStrategyFactoryV2(TestCase):
             allow_stale_tape=False,
             prefetch_full_window_rows=False,
             top_n=3,
+            max_candidates_to_evaluate=0,
+            max_total_candidates_to_evaluate=0,
             persist_results=True,
         )
 
@@ -479,6 +481,90 @@ class TestRunStrategyFactoryV2(TestCase):
                     persisted_spec.payload_json["promotion_readiness"]["status"],
                     "blocked_pending_runtime_parity",
                 )
+
+    def test_run_strategy_factory_v2_respects_global_candidate_budget(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            family_template_dir = self._write_family_template(root)
+            seed_sweep_dir = self._write_seed_sweep(root)
+            output_dir = root / "artifacts"
+            output_dir.mkdir()
+
+            base_payload = {
+                "family_template_id": "breakout_reclaim_v2",
+                "paper_claim_links": ["claim-1"],
+            }
+            with Session(self.engine) as session:
+                for index in range(3):
+                    session.add(
+                        VNextExperimentSpec(
+                            run_id="paper-run-1",
+                            candidate_id=None,
+                            experiment_id=f"exp-breakout-{index}",
+                            payload_json=base_payload,
+                        )
+                    )
+                session.commit()
+
+            observed_budgets: list[int] = []
+
+            def fake_frontier(args: Namespace) -> dict[str, object]:
+                observed_budgets.append(int(args.max_candidates_to_evaluate))
+                return {
+                    "candidate_count": int(args.max_candidates_to_evaluate),
+                    "dataset_snapshot_receipt": {
+                        "snapshot_id": f"snap-{len(observed_budgets)}"
+                    },
+                    "top": [
+                        {
+                            "candidate_id": f"cand-{len(observed_budgets)}",
+                            "full_window": {"net_per_day": "1"},
+                        }
+                    ],
+                }
+
+            with (
+                patch(
+                    "scripts.run_strategy_factory_v2.SessionLocal",
+                    side_effect=lambda: Session(self.engine),
+                ),
+                patch(
+                    "scripts.run_strategy_factory_v2.run_consistent_profitability_frontier",
+                    side_effect=fake_frontier,
+                ),
+            ):
+                result = runner.run_strategy_factory_v2(
+                    Namespace(
+                        **{
+                            **vars(
+                                self._args(
+                                    output_dir=output_dir,
+                                    strategy_configmap=strategy_configmap,
+                                    family_template_dir=family_template_dir,
+                                    seed_sweep_dir=seed_sweep_dir,
+                                )
+                            ),
+                            "max_candidates_to_evaluate": 2,
+                            "max_total_candidates_to_evaluate": 3,
+                            "persist_results": False,
+                        }
+                    )
+                )
+
+        self.assertEqual(observed_budgets, [2, 1])
+        self.assertEqual(result["status"], "total_candidate_budget_exhausted")
+        self.assertEqual(result["count"], 2)
+        self.assertEqual(result["total_candidate_count"], 3)
+        self.assertEqual(result["max_total_candidates_to_evaluate"], 3)
+        self.assertEqual(
+            [item["frontier_candidate_budget"] for item in result["experiments"]],
+            [2, 1],
+        )
+        self.assertEqual(
+            [item["frontier_candidate_count"] for item in result["experiments"]],
+            [2, 1],
+        )
 
     def test_run_strategy_factory_v2_returns_no_experiments_when_source_empty(
         self,
