@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
+from typing import Any, cast
 
 from app.trading.proof_floor import build_profitability_proof_floor_receipt
 
@@ -393,6 +395,71 @@ def test_tca_slippage_guardrail_failure_keeps_capital_at_zero() -> None:
     assert receipt["route_state"] == "repair_only"
     assert receipt["capital_state"] == "zero_notional"
     assert receipt["blocking_reasons"] == ["execution_tca_slippage_guardrail_exceeded"]
+
+
+def test_execution_tca_source_ref_exposes_symbol_route_blockers() -> None:
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="PA3SX7FYNUTF",
+        torghut_revision="torghut-00267",
+        trading_mode="live",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "ready",
+            "blocked_reasons": [],
+            "capital_stage": "0.10x canary",
+        },
+        hypothesis_payload=_healthy_hypothesis_payload(),
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status=_healthy_market_context(),
+        tca_summary={
+            **_fresh_tca_summary(avg_abs_slippage_bps="25"),
+            "scope_symbols": ["AAPL", "NVDA", "ORCL"],
+            "scope_symbol_count": 3,
+            "symbol_breakdown": [
+                {
+                    "symbol": "AAPL",
+                    "order_count": 3,
+                    "avg_abs_slippage_bps": "6",
+                    "max_abs_slippage_bps": "9",
+                    "last_computed_at": NOW.isoformat(),
+                },
+                {
+                    "symbol": "NVDA",
+                    "order_count": 4,
+                    "avg_abs_slippage_bps": "25",
+                    "max_abs_slippage_bps": "31",
+                    "last_computed_at": NOW.isoformat(),
+                },
+                {
+                    "symbol": "ORCL",
+                    "order_count": 0,
+                    "avg_abs_slippage_bps": None,
+                    "max_abs_slippage_bps": None,
+                    "last_computed_at": None,
+                },
+            ],
+        },
+        simple_lane_status=_simple_lane_status(),
+        now=NOW,
+    )
+
+    tca_dimension = next(
+        item
+        for item in receipt["proof_dimensions"]
+        if item["dimension"] == "execution_tca"
+    )
+    source_ref = cast(Mapping[str, Any], tca_dimension["source_ref"])
+    symbol_routes = cast(Mapping[str, Any], source_ref["symbol_routes"])
+
+    assert symbol_routes["scope_symbols"] == ["AAPL", "NVDA", "ORCL"]
+    assert symbol_routes["routeable_symbol_count"] == 1
+    assert symbol_routes["blocked_symbol_count"] == 1
+    assert symbol_routes["missing_symbol_count"] == 1
+    assert symbol_routes["routeable_symbols"][0]["symbol"] == "AAPL"
+    assert symbol_routes["blocked_symbols"][0]["symbol"] == "NVDA"
+    assert symbol_routes["missing_symbols"] == ["ORCL"]
 
 
 def test_settled_old_tca_exposes_execution_quality_instead_of_staleness() -> None:

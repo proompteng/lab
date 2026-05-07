@@ -126,6 +126,61 @@ def _slippage_guardrail(hypothesis_payload: Mapping[str, Any]) -> Decimal | None
     return min(guardrails) if guardrails else None
 
 
+def _tca_symbol_routes(
+    tca_summary: Mapping[str, Any],
+    *,
+    slippage_guardrail: Decimal | None,
+) -> dict[str, object] | None:
+    rows: list[Mapping[str, Any]] = []
+    for item in _sequence(tca_summary.get("symbol_breakdown")):
+        if isinstance(item, Mapping):
+            rows.append(cast(Mapping[str, Any], item))
+    if not rows:
+        return None
+
+    routeable_symbols: list[dict[str, object]] = []
+    blocked_symbols: list[dict[str, object]] = []
+    missing_symbols: list[str] = []
+    for row in rows:
+        symbol = _text(row.get("symbol"))
+        if not symbol:
+            continue
+        order_count = _int(row.get("order_count"))
+        avg_abs_slippage = _decimal(row.get("avg_abs_slippage_bps"))
+        symbol_payload: dict[str, object] = {
+            "symbol": symbol,
+            "order_count": order_count,
+            "avg_abs_slippage_bps": _decimal_text(avg_abs_slippage),
+            "max_abs_slippage_bps": _decimal_text(
+                _decimal(row.get("max_abs_slippage_bps"))
+            ),
+            "last_computed_at": row.get("last_computed_at"),
+        }
+        if order_count <= 0:
+            missing_symbols.append(symbol)
+            continue
+        if (
+            slippage_guardrail is not None
+            and avg_abs_slippage is not None
+            and avg_abs_slippage > slippage_guardrail
+        ):
+            blocked_symbols.append(symbol_payload)
+            continue
+        routeable_symbols.append(symbol_payload)
+
+    return {
+        "scope_symbols": list(_sequence(tca_summary.get("scope_symbols"))),
+        "scope_symbol_count": _int(tca_summary.get("scope_symbol_count")),
+        "slippage_guardrail_bps": _decimal_text(slippage_guardrail),
+        "routeable_symbol_count": len(routeable_symbols),
+        "blocked_symbol_count": len(blocked_symbols),
+        "missing_symbol_count": len(missing_symbols),
+        "routeable_symbols": routeable_symbols,
+        "blocked_symbols": blocked_symbols,
+        "missing_symbols": missing_symbols,
+    }
+
+
 def _add_repair(
     repairs: list[dict[str, object]],
     *,
@@ -425,6 +480,21 @@ def build_profitability_proof_floor_receipt(
     ):
         tca_state = "fail"
         tca_reason = "execution_tca_slippage_guardrail_exceeded"
+    tca_source_ref: dict[str, object] = {
+        "order_count": tca_order_count,
+        "last_computed_at": tca_summary.get("last_computed_at"),
+        "filled_execution_count": _int(tca_summary.get("filled_execution_count")),
+        "latest_execution_created_at": tca_summary.get("latest_execution_created_at"),
+        "unsettled_execution_count": tca_unsettled_execution_count,
+        "avg_abs_slippage_bps": _decimal_text(avg_abs_slippage_bps),
+        "slippage_guardrail_bps": _decimal_text(slippage_guardrail),
+    }
+    symbol_routes = _tca_symbol_routes(
+        tca_summary,
+        slippage_guardrail=slippage_guardrail,
+    )
+    if symbol_routes is not None:
+        tca_source_ref["symbol_routes"] = symbol_routes
     if tca_state != "pass":
         _add_repair(
             repairs,
@@ -444,17 +514,7 @@ def build_profitability_proof_floor_receipt(
         else "paper_hold"
         if not live_mode
         else "live_hold",
-        source_ref={
-            "order_count": tca_order_count,
-            "last_computed_at": tca_summary.get("last_computed_at"),
-            "filled_execution_count": _int(tca_summary.get("filled_execution_count")),
-            "latest_execution_created_at": tca_summary.get(
-                "latest_execution_created_at"
-            ),
-            "unsettled_execution_count": tca_unsettled_execution_count,
-            "avg_abs_slippage_bps": _decimal_text(avg_abs_slippage_bps),
-            "slippage_guardrail_bps": _decimal_text(slippage_guardrail),
-        },
+        source_ref=tca_source_ref,
         freshness_seconds=tca_age_seconds,
         threshold_seconds=max(0, tca_max_age_seconds),
     )
