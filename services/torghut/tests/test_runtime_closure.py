@@ -86,6 +86,100 @@ def _program() -> StrategyAutoresearchProgram:
 
 
 class TestRuntimeClosure(TestCase):
+    def test_discover_runtime_root_accepts_monorepo_and_service_image_layouts(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            monorepo_root = root / "repo"
+            monorepo_source = (
+                monorepo_root
+                / "services"
+                / "torghut"
+                / "app"
+                / "trading"
+                / "discovery"
+                / "runtime_closure.py"
+            )
+            monorepo_source.parent.mkdir(parents=True)
+            monorepo_source.write_text("# test\n", encoding="utf-8")
+            (monorepo_root / ".git").write_text("gitdir: test\n", encoding="utf-8")
+
+            self.assertEqual(
+                runtime_closure._discover_runtime_root(monorepo_source),
+                monorepo_root.resolve(),
+            )
+
+            service_root = root / "service-image"
+            service_source = (
+                service_root / "app" / "trading" / "discovery" / "runtime_closure.py"
+            )
+            service_source.parent.mkdir(parents=True)
+            service_source.write_text("# test\n", encoding="utf-8")
+            (service_root / "app" / "main.py").write_text("# test\n", encoding="utf-8")
+            (service_root / "scripts").mkdir()
+
+            self.assertEqual(
+                runtime_closure._discover_runtime_root(service_source),
+                service_root.resolve(),
+            )
+
+            argocd_root = root / "argocd-root"
+            argocd_source = (
+                argocd_root
+                / "pkg"
+                / "app"
+                / "trading"
+                / "discovery"
+                / "runtime_closure.py"
+            )
+            argocd_source.parent.mkdir(parents=True)
+            argocd_source.write_text("# test\n", encoding="utf-8")
+            (
+                argocd_root
+                / "argocd"
+                / "applications"
+                / "torghut"
+                / "strategy-configmap.yaml"
+            ).parent.mkdir(parents=True)
+            (
+                argocd_root
+                / "argocd"
+                / "applications"
+                / "torghut"
+                / "strategy-configmap.yaml"
+            ).write_text("apiVersion: v1\n", encoding="utf-8")
+
+            self.assertEqual(
+                runtime_closure._discover_runtime_root(argocd_source),
+                argocd_root.resolve(),
+            )
+
+            shallow_source = (
+                root
+                / "shallow"
+                / "app"
+                / "trading"
+                / "discovery"
+                / "runtime_closure.py"
+            )
+            shallow_source.parent.mkdir(parents=True)
+            shallow_source.write_text("# test\n", encoding="utf-8")
+
+            self.assertEqual(
+                runtime_closure._discover_runtime_root(shallow_source),
+                (root / "shallow").resolve(),
+            )
+
+            unmatched_source = root / "other" / "module.py"
+            unmatched_source.parent.mkdir(parents=True)
+            unmatched_source.write_text("# test\n", encoding="utf-8")
+
+            self.assertEqual(
+                runtime_closure._discover_runtime_root(unmatched_source),
+                unmatched_source.parent.resolve(),
+            )
+
     def test_runtime_closure_helper_branches_cover_edge_cases(self) -> None:
         manifest = build_mlx_snapshot_manifest(
             runner_run_id="run-1",
@@ -317,6 +411,60 @@ data:
                     execution_context=valid_context,
                     output_path=root / "missing-params.yaml",
                 )
+
+            missing_catalog_path = root / "missing-catalog.yaml"
+            missing_catalog_path.write_text("not_strategies: []\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError, "strategy_configmap_missing_strategies_yaml"
+            ):
+                runtime_closure._load_strategy_configmap_payload(missing_catalog_path)
+
+    def test_materialize_candidate_configmap_accepts_mounted_strategy_catalog(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_catalog_path = root / "strategies.yaml"
+            strategy_catalog_path.write_text(
+                """
+strategies:
+  - name: breakout-continuation-long-v1
+    enabled: false
+    strategy_type: breakout_continuation_long_v1
+    params:
+      max_entries_per_session: '1'
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            context = RuntimeClosureExecutionContext(
+                strategy_configmap_path=strategy_catalog_path,
+                clickhouse_http_url="http://example.invalid:8123",
+                clickhouse_username="torghut",
+                clickhouse_password="secret",
+                start_equity=Decimal("31590.02"),
+                chunk_minutes=10,
+            )
+
+            rendered_path = runtime_closure._materialize_candidate_configmap(
+                best_candidate={
+                    "candidate_id": "cand-1",
+                    "runtime_strategy_name": "breakout-continuation-long-v1",
+                    "candidate_params": {"max_entries_per_session": "3"},
+                },
+                execution_context=context,
+                output_path=root / "candidate-configmap.yaml",
+            )
+
+            rendered = runtime_closure.yaml.safe_load(
+                rendered_path.read_text(encoding="utf-8")
+            )
+            catalog = runtime_closure.yaml.safe_load(
+                rendered["data"]["strategies.yaml"]
+            )
+            strategy = catalog["strategies"][0]
+            self.assertTrue(strategy["enabled"])
+            self.assertEqual(strategy["params"]["max_entries_per_session"], "3")
 
     def test_materialize_candidate_configmap_supports_microbar_portfolio_candidates(
         self,
