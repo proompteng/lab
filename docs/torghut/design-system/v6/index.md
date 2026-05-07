@@ -8,10 +8,14 @@
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM
   reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-07T08:27Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-07T09:27Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-07T08:27Z`):
+- Evidence (current next-work priority, refreshed `2026-05-07T09:27Z`):
+  - `143-torghut-empirical-relay-receipts-and-paper-gate-settlement-2026-05-07.md`
+  - `docs/agents/designs/139-jangar-empirical-relay-source-binding-and-capital-gate-parity-2026-05-07.md`
+  - `142-torghut-alpha-truth-windows-and-capital-reentry-warrants-2026-05-07.md`
+  - `docs/agents/designs/138-jangar-proof-truth-windows-and-contradiction-arbiter-2026-05-07.md`
   - `141-torghut-watch-debt-profit-repair-market-and-capital-reentry-gates-2026-05-07.md`
   - `docs/agents/designs/137-jangar-watch-debt-clearing-and-profit-repair-leases-2026-05-07.md`
   - `140-torghut-post-cost-alpha-reentry-and-proof-query-market-2026-05-07.md`
@@ -911,3 +915,8 @@ This pack is positioned as the next architecture layer above:
   capital still lacks durable Torghut consumer evidence. It makes Torghut emit account/window/hypothesis receipts,
   persists hypothesis custody and zero-notional proof windows, and requires Jangar to agree on quant freshness before
   paper or live capital can reenter.
+- `141-torghut-state-coherent-profit-auction-and-tca-renewal-governor-2026-05-07.md` follows the endpoint-parity and
+  profit-repair auction contracts because the current live state is no longer a total outage. Torghut can observe and
+  repair, but TCA is stale, feature/drift counters are zero, forecast authority is registry-empty, and Jangar watch
+  reliability is degraded. The contract ranks repairs by capital-state unlock while keeping paper and live notional at
+  zero until Jangar state, TCA, feature/drift, forecast, and hypothesis guardrails are current.

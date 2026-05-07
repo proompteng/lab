@@ -155,7 +155,10 @@ describe('activity lifecycle helpers', () => {
           Effect.catchAll((error) =>
             Effect.sync(() => {
               caught = true
-              const root = typeof error === 'object' && error && 'cause' in error ? (error as { cause?: unknown }).cause : error
+              const root =
+                typeof error === 'object' && error && 'cause' in error
+                  ? ((error as { cause?: unknown }).cause ?? error)
+                  : error
               expect(root).toBeInstanceOf(ConnectError)
             }),
           ),
@@ -165,6 +168,54 @@ describe('activity lifecycle helpers', () => {
     await Effect.runPromise(registration.shutdown)
 
     expect(failureCounter.getCount()).toBe(1)
+  })
+
+  test('heartbeat not-found aborts the activity instead of surfacing an RPC failure', async () => {
+    const lifecycle = await Effect.runPromise(
+      makeActivityLifecycle({
+        heartbeatIntervalMs: 10,
+        heartbeatRpcTimeoutMs: 50,
+        heartbeatRetry: {
+          initialIntervalMs: 1,
+          maxIntervalMs: 1,
+          backoffCoefficient: 1,
+          maxAttempts: 1,
+        },
+      }),
+    )
+
+    const controller = new AbortController()
+    const context = createTestContext(controller)
+    const stub = new NotFoundWorkflowService()
+
+    const registration = await Effect.runPromise(
+      lifecycle.registerHeartbeat({
+        context,
+        workflowService: stub,
+        taskToken: new Uint8Array([10, 11, 12]),
+        identity: 'test-worker',
+        namespace: 'default',
+        dataConverter: converter,
+        abortController: controller,
+      }),
+    )
+
+    let caught: unknown
+    await Effect.runPromise(
+      registration.heartbeat(['late']).pipe(
+        Effect.catchAll((error) =>
+          Effect.sync(() => {
+            caught = error
+          }),
+        ),
+      ),
+    )
+    await Effect.runPromise(registration.shutdown)
+
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as Error).name).toBe('AbortError')
+    expect(context.isCancellationRequested).toBe(true)
+    expect(context.info.cancellationReason).toBe('not-found')
   })
 })
 
@@ -205,6 +256,12 @@ class StubWorkflowService {
 class AlwaysFailingWorkflowService extends StubWorkflowService {
   async recordActivityTaskHeartbeat(): Promise<never> {
     throw new ConnectError('test failure', Code.Unavailable)
+  }
+}
+
+class NotFoundWorkflowService extends StubWorkflowService {
+  async recordActivityTaskHeartbeat(): Promise<never> {
+    throw new ConnectError('activity already completed', Code.NotFound)
   }
 }
 

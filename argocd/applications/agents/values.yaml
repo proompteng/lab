@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: 885368c6
-  digest: sha256:209c72e339afc54ee854a24f62d4941480931f23ae0ed5cb31fd1d9fec19ed06
+  tag: be164bc1
+  digest: sha256:146f2790c661890f6480da020b4b94ea65528250c9f72b1baec52c516934d241
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,16 +11,18 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: 885368c6
-    digest: sha256:acaf78bb1c5f4804de4a131aaf209b70e23b22215703a93257c4c653838b57a6
+    tag: be164bc1
+    digest: sha256:a069354d947c28828607a54e80395f67047232d3871f9fe3dfd04fdc2c5c04e8
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
+      JANGAR_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/autonomy
+      JANGAR_TORGHUT_STATUS_TIMEOUT_MS: "3000"
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: 885368c6
-    digest: sha256:209c72e339afc54ee854a24f62d4941480931f23ae0ed5cb31fd1d9fec19ed06
+    tag: be164bc1
+    digest: sha256:146f2790c661890f6480da020b4b94ea65528250c9f72b1baec52c516934d241
 argocdHooks:
   enabled: true
   image:
