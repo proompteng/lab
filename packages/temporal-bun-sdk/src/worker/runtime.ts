@@ -13,6 +13,7 @@ import {
   makeActivityLifecycle,
 } from '../activities/lifecycle'
 import { buildTransportOptions, normalizeTemporalAddress } from '../client'
+import { withTemporalRetry } from '../client/retries'
 import { durationFromMillis, durationToMillis } from '../common/duration'
 import {
   buildCodecsFromConfig,
@@ -1144,6 +1145,22 @@ export class WorkerRuntime {
     return isAbortError(error) || (error instanceof ConnectError && error.code === Code.Canceled)
   }
 
+  async #runWorkerResponseRpc<T>(operation: () => Promise<T>): Promise<T> {
+    const exit = await Effect.runPromiseExit(
+      withTemporalRetry(
+        Effect.tryPromise({
+          try: operation,
+          catch: (error) => error,
+        }),
+        this.#config.rpcRetryPolicy,
+      ),
+    )
+    if (Exit.isSuccess(exit)) {
+      return exit.value
+    }
+    throw Cause.squash(exit.cause)
+  }
+
   #buildNormalTaskQueue(name: string) {
     return create(TaskQueueSchema, {
       name,
@@ -1689,7 +1706,9 @@ export class WorkerRuntime {
           ...(updateProtocolMessages.length > 0 ? { messages: updateProtocolMessages } : {}),
         })
         try {
-          await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
+          await this.#runWorkerResponseRpc(() =>
+            this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS }),
+          )
           workflowTaskCommitted = true
         } catch (rpcError) {
           this.#log('error', 'debug: respondWorkflowTaskCompleted failed', {
@@ -1817,7 +1836,9 @@ export class WorkerRuntime {
       ...(this.#versioningBehavior !== null ? { versioningBehavior: this.#versioningBehavior } : {}),
     })
     try {
-      await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
+      await this.#runWorkerResponseRpc(() =>
+        this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS }),
+      )
       this.#log('info', 'workflow cancellation request acknowledged', logFields)
     } catch (error) {
       if (this.#isTaskNotFoundError(error)) {
@@ -2462,7 +2483,9 @@ export class WorkerRuntime {
       failure: queryResult.failure,
       cause: WorkflowTaskFailedCause.UNSPECIFIED,
     })
-    await this.#workflowService.respondQueryTaskCompleted(request, { timeoutMs: RESPOND_TIMEOUT_MS })
+    await this.#runWorkerResponseRpc(() =>
+      this.#workflowService.respondQueryTaskCompleted(request, { timeoutMs: RESPOND_TIMEOUT_MS }),
+    )
   }
 
   async #respondLegacyQueryFailure(response: PollWorkflowTaskQueueResponse, cause: unknown): Promise<void> {
@@ -2477,7 +2500,9 @@ export class WorkerRuntime {
       cause: WorkflowTaskFailedCause.UNSPECIFIED,
     })
     try {
-      await this.#workflowService.respondQueryTaskCompleted(request, { timeoutMs: RESPOND_TIMEOUT_MS })
+      await this.#runWorkerResponseRpc(() =>
+        this.#workflowService.respondQueryTaskCompleted(request, { timeoutMs: RESPOND_TIMEOUT_MS }),
+      )
     } catch (rpcError) {
       this.#log('error', 'respondQueryTaskCompleted failed for legacy query', {
         namespace: this.#namespace,
@@ -2727,7 +2752,28 @@ export class WorkerRuntime {
   }
 
   #isTaskNotFoundError(error: unknown): boolean {
-    return error instanceof ConnectError && error.code === Code.NotFound
+    const underlying = this.#unwrapWorkerRpcError(error)
+    return underlying instanceof ConnectError && underlying.code === Code.NotFound
+  }
+
+  #unwrapWorkerRpcError(error: unknown): unknown {
+    if (error instanceof ConnectError) {
+      return error
+    }
+    if (!error || typeof error !== 'object') {
+      return error
+    }
+    const candidate = error as { _tag?: string; cause?: unknown; error?: unknown }
+    if (candidate._tag === 'UnknownException') {
+      return this.#unwrapWorkerRpcError(candidate.cause ?? candidate.error ?? error)
+    }
+    if (candidate.cause) {
+      return this.#unwrapWorkerRpcError(candidate.cause)
+    }
+    if (candidate.error) {
+      return this.#unwrapWorkerRpcError(candidate.error)
+    }
+    return error
   }
 
   #buildDeterminismMarkerCommand(details: Record<string, Payloads>): Command {
@@ -3029,7 +3075,9 @@ export class WorkerRuntime {
     })
 
     try {
-      await this.#workflowService.respondWorkflowTaskFailed(failed, { timeoutMs: RESPOND_TIMEOUT_MS })
+      await this.#runWorkerResponseRpc(() =>
+        this.#workflowService.respondWorkflowTaskFailed(failed, { timeoutMs: RESPOND_TIMEOUT_MS }),
+      )
       this.#incrementCounter(this.#metrics.workflowFailures)
     } catch (rpcError) {
       if (this.#isTaskNotFoundError(rpcError)) {
@@ -3133,18 +3181,9 @@ export class WorkerRuntime {
 
     try {
       while (true) {
+        let result: unknown
         try {
-          const result = await runWithActivityContext(context, async () => await handler(...args))
-          const payloads = await encodeValuesToPayloads(this.#dataConverter, result === undefined ? [] : [result])
-          const completion = create(RespondActivityTaskCompletedRequestSchema, {
-            taskToken: response.taskToken,
-            identity: this.#identity,
-            namespace: this.#namespace,
-            result: payloads && payloads.length > 0 ? create(PayloadsSchema, { payloads }) : undefined,
-            deploymentOptions: this.#rpcDeploymentOptions,
-          })
-          await this.#workflowService.respondActivityTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
-          break
+          result = await runWithActivityContext(context, async () => await handler(...args))
         } catch (error) {
           if (isAbortError(error)) {
             await this.#cancelActivityTask(response, context)
@@ -3169,6 +3208,19 @@ export class WorkerRuntime {
           context.throwIfCancelled()
           context.info.attempt = nextRetry.attempt
           retryState = nextRetry
+          continue
+        }
+
+        try {
+          const payloads = await encodeValuesToPayloads(this.#dataConverter, result === undefined ? [] : [result])
+          const completed = await this.#completeActivityTask(response, payloads)
+          if (!completed) {
+            return
+          }
+          break
+        } catch (error) {
+          await this.#failActivityTask(response, error, context)
+          return
         }
       }
     } finally {
@@ -3206,7 +3258,17 @@ export class WorkerRuntime {
       deploymentOptions: this.#rpcDeploymentOptions,
     })
 
-    await this.#workflowService.respondActivityTaskFailed(request, { timeoutMs: RESPOND_TIMEOUT_MS })
+    try {
+      await this.#runWorkerResponseRpc(() =>
+        this.#workflowService.respondActivityTaskFailed(request, { timeoutMs: RESPOND_TIMEOUT_MS }),
+      )
+    } catch (rpcError) {
+      if (this.#isTaskNotFoundError(rpcError)) {
+        this.#logActivityTaskNotFound('respondActivityTaskFailed', response)
+        return
+      }
+      throw rpcError
+    }
     this.#incrementCounter(this.#metrics.activityFailures)
   }
 
@@ -3223,7 +3285,43 @@ export class WorkerRuntime {
       deploymentOptions: this.#rpcDeploymentOptions,
     })
 
-    await this.#workflowService.respondActivityTaskCanceled(request, { timeoutMs: RESPOND_TIMEOUT_MS })
+    try {
+      await this.#runWorkerResponseRpc(() =>
+        this.#workflowService.respondActivityTaskCanceled(request, { timeoutMs: RESPOND_TIMEOUT_MS }),
+      )
+    } catch (rpcError) {
+      if (this.#isTaskNotFoundError(rpcError)) {
+        this.#logActivityTaskNotFound('respondActivityTaskCanceled', response)
+        return
+      }
+      throw rpcError
+    }
+  }
+
+  async #completeActivityTask(
+    response: PollActivityTaskQueueResponse,
+    payloads: Awaited<ReturnType<typeof encodeValuesToPayloads>>,
+  ): Promise<boolean> {
+    const completion = create(RespondActivityTaskCompletedRequestSchema, {
+      taskToken: response.taskToken,
+      identity: this.#identity,
+      namespace: this.#namespace,
+      result: payloads && payloads.length > 0 ? create(PayloadsSchema, { payloads }) : undefined,
+      deploymentOptions: this.#rpcDeploymentOptions,
+    })
+
+    try {
+      await this.#runWorkerResponseRpc(() =>
+        this.#workflowService.respondActivityTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS }),
+      )
+      return true
+    } catch (rpcError) {
+      if (this.#isTaskNotFoundError(rpcError)) {
+        this.#logActivityTaskNotFound('respondActivityTaskCompleted', response)
+        return false
+      }
+      throw rpcError
+    }
   }
 
   async #encodeHeartbeatPayloads(details: unknown[] | undefined, reason?: string): Promise<Payloads | undefined> {
@@ -3441,6 +3539,16 @@ export class WorkerRuntime {
       context,
       workflowId: execution.workflowId,
       runId: execution.runId,
+    })
+  }
+
+  #logActivityTaskNotFound(context: string, response: PollActivityTaskQueueResponse): void {
+    this.#log('warn', 'activity task already resolved', {
+      context,
+      workflowId: response.workflowExecution?.workflowId,
+      runId: response.workflowExecution?.runId,
+      activityId: response.activityId,
+      activityType: response.activityType?.name,
     })
   }
 }
