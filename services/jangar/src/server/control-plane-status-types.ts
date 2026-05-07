@@ -13,7 +13,10 @@ import type {
   MaterialActionVerdictEpoch,
   MaterialActionActivationReceipt,
   NegativeEvidenceRouterStatus,
+  ProjectionWatermarkStatus,
   ReconciledActionClock,
+  RecoveryWarrantStatus,
+  RuntimeProofCellStatus,
   RuntimeKitStatus,
   WorkflowsReliabilityStatus,
 } from '~/data/agents-control-plane'
@@ -154,6 +157,9 @@ export type ControlPlaneStatus = {
   runtime_kits: RuntimeKitStatus[]
   admission_passports: AdmissionPassportStatus[]
   serving_passport_id: string | null
+  recovery_warrants: RecoveryWarrantStatus[]
+  runtime_proof_cells: RuntimeProofCellStatus[]
+  projection_watermarks: ProjectionWatermarkStatus[]
   workflows: WorkflowsReliabilityStatus
   dependency_quorum: DependencyQuorumStatus
   failure_domain_leases: FailureDomainLeaseSet

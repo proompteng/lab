@@ -361,6 +361,19 @@ Phase 0. Write-only.
 - create warrants, proof cells, and watermarks alongside the current epoch/seat and rollout reducers;
 - expose them in status without changing launch admission.
 
+Implementation note: Phase 0 status projection (2026-05-06).
+
+- `services/jangar/src/server/control-plane-runtime-admission.ts` now derives shadow recovery warrants, runtime proof
+  cells, and projection watermarks from the same runtime kits and admission passports that already gate swarm launches.
+- `/ready` returns the active serving recovery warrant id and a boolean summary of serving proof-cell health, alongside
+  the full warrant/proof/watermark projection.
+- `/api/agents/control-plane/status` returns `recovery_warrants`, `runtime_proof_cells`, and `projection_watermarks`
+  without changing launch admission or deploy verification behavior.
+- missing required helper/config/runtime evidence yields a missing proof cell, a broken launch-class warrant, and a
+  degraded projection watermark. Existing passport enforcement remains the production launch stop.
+- rollback for this slice is consumer-side only: ignore the new fields or revert the projection while preserving the
+  existing `runtime_kits`, `admission_passports`, and launcher passport enforcement.
+
 Phase 1. Shadow enforcement.
 
 - compute whether launches and rollout widening would be blocked under the new contract;

@@ -202,6 +202,12 @@ kit moves to `hold` or `block`.
 If the admission snapshot cannot be compiled, launch admission fails closed as `RuntimeAdmissionUnavailable`, deletes the
 matching runner resources, and records the unavailable passport state in swarm status instead of leaving stale CronJobs
 armed.
+Schedule-runner pods also verify the stamped passport against the current
+`/api/agents/control-plane/status?namespace=<schedule namespace>` response immediately before creating the AgentRun or
+OrchestrationRun. A stale passport id, changed runtime-kit digest, non-`allow` decision, stale freshness window, or
+unhealthy cited runtime kit fails the runner before work is launched. Emergency rollback for this fire-time check only
+is `JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false`; keep the controller-level
+`JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT` gate enabled unless you intentionally want advisory-only launch behavior.
 
 Binary runtime-kit components must be executable, not just present on disk. The source Codex NATS helpers and the
 installed `/usr/local/bin/codex-nats-*` wrappers both satisfy that command-path contract; a non-executable helper keeps
@@ -220,6 +226,13 @@ Admitted schedules and requirement runs carry these trace fields in annotations 
 - `swarmRuntimeKitSetDigest`
 - `swarmRequiredRuntimeKits`
 - `swarmAdmissionProducerRevision`
+
+The runtime-admission compiler also emits Phase 0 recovery-warrant evidence from the same passport snapshot.
+`/ready` and `/api/agents/control-plane/status` include shadow `recovery_warrants`, `runtime_proof_cells`, and
+`projection_watermarks`. A missing required helper or config value becomes a broken warrant with a missing proof cell,
+while the existing passport launcher gate remains the enforcement path. This is write-only rollout evidence for the
+runtime proof-cell contract; rollback is to stop consuming the new fields while keeping `runtime_kits` and
+`admission_passports` intact.
 
 Deploy verification also consumes the runtime-admission projection. After Argo, rollout, and image digest checks pass,
 `packages/scripts/src/jangar/verify-deployment.ts` reads

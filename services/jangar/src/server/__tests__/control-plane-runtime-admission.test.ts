@@ -91,6 +91,37 @@ describe('buildRuntimeAdmissionSnapshot', () => {
         }),
       ]),
     )
+    expect(snapshot.recoveryWarrants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          execution_class: 'plan',
+          status: 'sealed',
+          admission_passport_id: expect.stringContaining('passport:swarm_plan:'),
+        }),
+      ]),
+    )
+    expect(snapshot.runtimeProofCells).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          proof_kind: 'helper_asset',
+          proof_subject: expect.stringContaining('codex-nats-publish'),
+          status: 'healthy',
+        }),
+        expect.objectContaining({
+          proof_kind: 'config_digest',
+          proof_subject: 'service_url:NATS_URL',
+          status: 'healthy',
+        }),
+      ]),
+    )
+    expect(snapshot.projectionWatermarks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          consumer_key: 'deploy_verification',
+          status: 'fresh',
+        }),
+      ]),
+    )
   })
 
   it('blocks collaboration admission when the NATS CLI path is present but not executable', async () => {
@@ -170,7 +201,7 @@ describe('buildRuntimeAdmissionSnapshot', () => {
     expect(collaborationKit?.components).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          component_ref: publishPath,
+          component_ref: expect.stringContaining('codex-nats-publish.ts'),
           present: false,
           reason_code: 'runtime_kit_component_missing:codex_nats_publish',
         }),
@@ -186,9 +217,37 @@ describe('buildRuntimeAdmissionSnapshot', () => {
         }),
       ]),
     )
+    expect(snapshot.runtimeProofCells).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          proof_kind: 'helper_asset',
+          proof_subject: expect.stringContaining('codex-nats-publish.ts'),
+          status: 'missing',
+          reason_codes: expect.arrayContaining(['runtime_kit_component_missing:codex_nats_publish']),
+        }),
+      ]),
+    )
+    expect(snapshot.recoveryWarrants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          execution_class: 'implement',
+          status: 'broken',
+          reason_codes: expect.arrayContaining(['runtime_kit_component_missing:codex_nats_publish']),
+        }),
+      ]),
+    )
+    expect(snapshot.projectionWatermarks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          recovery_warrant_id: expect.stringContaining('recovery-warrant:implement:'),
+          status: 'degraded',
+          reason_codes: expect.arrayContaining(['runtime_kit_component_missing:codex_nats_publish']),
+        }),
+      ]),
+    )
   })
 
-  it('holds collaboration admission while degraded authority keeps serving non-blocking', async () => {
+  it('keeps degraded execution trust non-blocking so stage schedules can recover', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'runtime-admission-'))
     const binDir = join(tempDir, 'bin')
     await mkdir(binDir, { recursive: true })
@@ -214,22 +273,48 @@ describe('buildRuntimeAdmissionSnapshot', () => {
       expect.arrayContaining([
         expect.objectContaining({
           consumer_class: 'serving',
-          decision: 'degrade',
+          decision: 'allow',
           reason_codes: expect.arrayContaining(['execution_trust_degraded']),
+          required_subjects: expect.arrayContaining([
+            expect.objectContaining({
+              subject_kind: 'authority',
+              decision: 'allow',
+            }),
+          ]),
         }),
         expect.objectContaining({
           consumer_class: 'swarm_plan',
-          decision: 'hold',
+          decision: 'allow',
           reason_codes: expect.arrayContaining(['execution_trust_degraded']),
+          required_subjects: expect.arrayContaining([
+            expect.objectContaining({
+              subject_kind: 'authority',
+              decision: 'allow',
+            }),
+          ]),
         }),
         expect.objectContaining({
           consumer_class: 'swarm_implement',
-          decision: 'hold',
+          decision: 'allow',
           reason_codes: expect.arrayContaining(['execution_trust_degraded']),
         }),
         expect.objectContaining({
           consumer_class: 'swarm_verify',
-          decision: 'hold',
+          decision: 'allow',
+          reason_codes: expect.arrayContaining(['execution_trust_degraded']),
+        }),
+      ]),
+    )
+    expect(snapshot.recoveryWarrants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          execution_class: 'plan',
+          status: 'sealed',
+          reason_codes: expect.arrayContaining(['execution_trust_degraded']),
+        }),
+        expect.objectContaining({
+          execution_class: 'implement',
+          status: 'sealed',
           reason_codes: expect.arrayContaining(['execution_trust_degraded']),
         }),
       ]),

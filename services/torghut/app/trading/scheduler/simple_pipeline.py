@@ -13,14 +13,22 @@ from sqlalchemy.orm import Session
 
 from ...config import settings
 from ...models import Strategy, TradeDecision
+from ..empirical_jobs import build_empirical_jobs_status
 from ..firewall import OrderFirewallBlocked
 from ..ingest import SignalBatch
 from ..models import StrategyDecision
 from ..prices import MarketSnapshot
+from ..proof_floor import build_profitability_proof_floor_receipt
 from ..simple_risk import (
     position_qty_for_symbol,
     prepare_simple_decision,
 )
+from ..submission_council import (
+    build_hypothesis_runtime_summary,
+    build_submission_gate_market_context_status,
+    load_quant_evidence_status,
+)
+from ..tca import build_tca_gate_inputs
 from .pipeline import TradingPipeline
 from .pipeline_helpers import (
     _extract_json_error_payload,
@@ -39,6 +47,7 @@ _SIMPLE_ALLOWED_REJECT_REASONS = {
     "broker_precheck_failed",
     "broker_submit_failed",
 }
+_PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS = 86_400
 
 
 @dataclass(frozen=True)
@@ -264,6 +273,84 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         return False
 
+    def _profitability_proof_floor(self, *, session: Session) -> Mapping[str, object]:
+        try:
+            market_context_status = build_submission_gate_market_context_status(
+                self.state
+            )
+            hypothesis_payload = build_hypothesis_runtime_summary(
+                session,
+                state=self.state,
+                market_context_status=market_context_status,
+            )
+            empirical_jobs_status = build_empirical_jobs_status(
+                session=session,
+                stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
+            )
+            quant_evidence = load_quant_evidence_status(account_label=self.account_label)
+            live_submission_gate = self._live_submission_gate(
+                session=session,
+                hypothesis_summary=hypothesis_payload,
+                empirical_jobs_status=empirical_jobs_status,
+                quant_health_status=quant_evidence,
+            )
+            return build_profitability_proof_floor_receipt(
+                account_label=self.account_label,
+                torghut_revision=None,
+                trading_mode=settings.trading_mode,
+                market_session_open=cast(
+                    bool | None,
+                    getattr(self.state, "market_session_open", None),
+                ),
+                live_submission_gate=live_submission_gate,
+                hypothesis_payload=hypothesis_payload,
+                empirical_jobs_status=empirical_jobs_status,
+                quant_evidence=quant_evidence,
+                market_context_status=market_context_status,
+                tca_summary=build_tca_gate_inputs(session=session),
+                simple_lane_status={
+                    "enabled": settings.trading_pipeline_mode == "simple",
+                    "submit_enabled": settings.trading_simple_submit_enabled,
+                    "max_notional_per_order": settings.trading_simple_max_notional_per_order,
+                    "max_notional_per_symbol": settings.trading_simple_max_notional_per_symbol,
+                    "allowed_reject_reasons": sorted(_SIMPLE_ALLOWED_REJECT_REASONS),
+                },
+                tca_max_age_seconds=_PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS,
+            )
+        except Exception as exc:  # pragma: no cover - defensive capital safety
+            logger.exception("Simple-lane proof floor unavailable")
+            return {
+                "schema_version": "torghut.profitability-proof-floor.v1",
+                "floor_state": "repair_only",
+                "route_state": "repair_only",
+                "capital_state": "zero_notional",
+                "max_notional": "0",
+                "blocking_reasons": [
+                    f"profitability_proof_floor_unavailable:{type(exc).__name__}"
+                ],
+            }
+
+    @staticmethod
+    def _proof_floor_submission_block_reason(
+        proof_floor: Mapping[str, object],
+    ) -> str | None:
+        route_state = str(proof_floor.get("route_state") or "").strip()
+        capital_state = str(proof_floor.get("capital_state") or "").strip()
+        max_notional = _optional_decimal(proof_floor.get("max_notional"))
+        if (
+            route_state == "repair_only"
+            or capital_state == "zero_notional"
+            or (max_notional is not None and max_notional <= 0)
+        ):
+            blocking_reasons = proof_floor.get("blocking_reasons")
+            if isinstance(blocking_reasons, list):
+                for item in cast(list[object], blocking_reasons):
+                    reason = str(item).strip()
+                    if reason:
+                        return reason
+            return "profitability_proof_floor_zero_notional"
+        return None
+
     def _is_trading_submission_allowed(
         self,
         *,
@@ -317,6 +404,21 @@ class SimpleTradingPipeline(TradingPipeline):
                     extra_metadata={"live_submission_gate": live_submission_gate},
                 )
                 return False
+        proof_floor = self._profitability_proof_floor(session=session)
+        proof_floor_block_reason = self._proof_floor_submission_block_reason(
+            proof_floor
+        )
+        if proof_floor_block_reason is not None:
+            self._block_decision_submission(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                reason=proof_floor_block_reason,
+                submission_stage="blocked_profitability_proof_floor",
+                capital_stage=str(proof_floor.get("capital_state") or "zero_notional"),
+                extra_metadata={"profitability_proof_floor": dict(proof_floor)},
+            )
+            return False
         if settings.trading_emergency_stop_enabled and self.state.emergency_stop_active:
             self._block_decision_submission(
                 session=session,
