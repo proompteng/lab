@@ -44,17 +44,13 @@ from app.trading.universe import UniverseResolver
 
 DEFAULT_SYMBOLS = [
     'NVDA',
-    'TSM',
+    'AAPL',
+    'AMZN',
+    'GOOGL',
     'AVGO',
-    'MU',
     'AMD',
-    'ASML',
+    'ORCL',
     'INTC',
-    'LRCX',
-    'AMAT',
-    'TXN',
-    'ARM',
-    'KLAC',
 ]
 ALLOWED_REJECT_REASONS = {
     'kill_switch_enabled',

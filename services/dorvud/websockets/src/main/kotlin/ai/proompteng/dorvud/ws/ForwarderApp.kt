@@ -526,10 +526,6 @@ class ForwarderApp(
         logger.info { "dorvud-ws initial symbols=$initial count=${initial.size}" }
       }
 
-      subscribedLock.withLock {
-        subscribedSymbols.clear()
-        subscribedSymbols.addAll(initial)
-      }
       awaitAuthOrThrow()
       applySubscribe(initial)
       maybeBackfillBars(producer, seq, initial)
@@ -544,17 +540,15 @@ class ForwarderApp(
                 subscribedLock.withLock {
                   val add = desired.filter { !subscribedSymbols.contains(it) }
                   val remove = subscribedSymbols.filter { !desired.contains(it) }
-                  subscribedSymbols.addAll(add)
-                  remove.forEach { subscribedSymbols.remove(it) }
                   add to remove
                 }
 
               if (toAdd.isNotEmpty()) {
-                logger.info { "subscribing ${toAdd.size} symbols" }
+                logger.info { "subscribing ${toAdd.size} symbols symbols=$toAdd" }
                 applySubscribe(toAdd)
               }
               if (toRemove.isNotEmpty()) {
-                logger.info { "unsubscribing ${toRemove.size} symbols" }
+                logger.info { "unsubscribing ${toRemove.size} symbols symbols=$toRemove" }
                 applyUnsubscribe(toRemove)
               }
               if (config.alpacaMarketType == AlpacaMarketType.OPTIONS && (toAdd.isNotEmpty() || toRemove.isNotEmpty())) {
@@ -582,8 +576,21 @@ class ForwarderApp(
                 return@forEach
               }
               is AlpacaSubscription -> {
-                subscribedOk = true
+                val actualSubscribed = msg.subscribedSymbolsForChannels(alpacaMarketDataChannels(config))
+                val missing = missingDesiredSymbols(symbolsTracker.current(), actualSubscribed)
+                subscribedLock.withLock {
+                  subscribedSymbols.clear()
+                  subscribedSymbols.addAll(actualSubscribed)
+                }
+                subscribedOk = actualSubscribed.isNotEmpty() && missing.isEmpty()
                 updateWsReady()
+                if (missing.isNotEmpty()) {
+                  logger.warn {
+                    "alpaca subscription missing desired symbols count=${missing.size} symbols=$missing " +
+                      "subscribed_count=${actualSubscribed.size}"
+                  }
+                  applySubscribe(missing)
+                }
                 publishOptionsWsStatus(
                   producer = producer,
                   seq = seq,
@@ -1344,6 +1351,25 @@ class ForwarderApp(
       else -> "closed"
     }
   }
+}
+
+internal fun AlpacaSubscription.subscribedSymbolsForChannels(channels: Collection<String>): Set<String> {
+  val normalizedChannels = channels.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+  val subscribed = mutableSetOf<String>()
+  if ("trades" in normalizedChannels) subscribed.addAll(trades)
+  if ("quotes" in normalizedChannels) subscribed.addAll(quotes)
+  if ("bars" in normalizedChannels) subscribed.addAll(bars1m)
+  if ("updatedBars" in normalizedChannels) subscribed.addAll(updatedBars)
+  if ("dailyBars" in normalizedChannels) subscribed.addAll(dailyBars)
+  return subscribed.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet()
+}
+
+internal fun missingDesiredSymbols(
+  desired: Collection<String>,
+  subscribed: Set<String>,
+): List<String> {
+  val normalizedSubscribed = subscribed.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet()
+  return desired.map { it.trim().uppercase() }.filter { it.isNotEmpty() && it !in normalizedSubscribed }.distinct()
 }
 
 fun main() =

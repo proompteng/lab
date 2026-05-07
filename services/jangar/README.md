@@ -275,6 +275,28 @@ Rollback: set `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=false` to return launch be
 set `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` on the control-plane runtime to return launch behavior to the
 previous advisory-only passport mode while keeping status and `/ready` passport/proof projection visible for forensics.
 
+## Source rollout truth exchange
+
+Control-plane status includes a `source_rollout_truth_exchange` projection from
+`docs/agents/designs/148-jangar-source-rollout-truth-exchange-and-proof-floor-settlement-2026-05-07.md`. The reducer is
+pure and uses evidence the status route has already collected: runtime-kit desired images, live pod image evidence,
+controller witness quorum, route probe, database projection, watch cache, rollout health, and Torghut action-budget
+proof-floor state. It does not call Argo, Torghut, GitHub, or Kubernetes again while building receipts.
+
+Set `JANGAR_SOURCE_HEAD_SHA` (or `JANGAR_COMMIT`, `SOURCE_HEAD_SHA`, `GIT_COMMIT`, `COMMIT_SHA`) and
+`JANGAR_GITOPS_REVISION` (or `ARGOCD_APP_REVISION`, `ARGOCD_REVISION`, `GITOPS_REVISION`) when the runtime has explicit
+source and GitOps revision evidence. If those values are missing, `dispatch_normal`, `deploy_widen`, and `merge_ready`
+receipts stay conservative instead of inferring rollout convergence from healthy pods alone. `serve_readonly` can remain
+allowed on healthy route/database evidence, and `dispatch_repair` can remain allowed only when the controller heartbeat
+is fresh enough to observe bounded repair work.
+
+Material-action verdicts consume the matching truth-settlement receipt as an additional conservative signal. Source or
+image lag downgrades normal dispatch to `repair_only` and holds deploy widening/merge readiness. A controller heartbeat
+split holds material dispatch as `heartbeat_projection_split`. A Torghut proof floor that is `repair_only` or missing
+keeps paper/live capital actions held or blocked while observation can remain open. Rollback is to ignore the status
+section and remove it from material-action verdict input; no database schema or Kubernetes resource rollback is
+required.
+
 ## Lease reconciliation action clocks
 
 Control-plane status projects shadow `reconciled_action_clocks` from the contract in

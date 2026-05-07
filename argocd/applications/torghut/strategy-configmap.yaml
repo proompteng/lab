@@ -18,7 +18,7 @@ data:
         enabled: true
         base_timeframe: "1Sec"
         universe_type: microbar_cross_sectional_long_v1
-        universe_symbols: ["NVDA", "TSM", "AVGO", "MU", "AMD", "ASML", "INTC", "LRCX", "AMAT", "TXN", "ARM", "KLAC"]
+        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
         max_notional_per_trade: 50000
         max_position_pct_equity: 2.0
         params:
@@ -40,7 +40,7 @@ data:
         enabled: true
         base_timeframe: "1Sec"
         universe_type: microbar_cross_sectional_long_v1
-        universe_symbols: ["NVDA", "TSM", "AVGO", "MU", "AMD", "ASML", "INTC", "LRCX", "AMAT", "TXN", "ARM", "KLAC"]
+        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
         max_notional_per_trade: 50000
         max_position_pct_equity: 2.0
         params:
@@ -62,7 +62,7 @@ data:
         enabled: false
         base_timeframe: "1Sec"
         universe_type: intraday_tsmom_v1
-        universe_symbols: ["NVDA", "TSM", "AVGO", "MU", "AMD", "ASML", "INTC", "LRCX", "AMAT", "TXN", "ARM", "KLAC"]
+        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
         max_notional_per_trade: 50000
         max_position_pct_equity: 3.0
         params:
@@ -91,7 +91,7 @@ data:
         enabled: false
         base_timeframe: "1Sec"
         universe_type: momentum_pullback_long_v1
-        universe_symbols: ["NVDA", "TSM", "AVGO", "MU", "AMD", "ASML", "INTC", "LRCX", "AMAT", "TXN", "ARM", "KLAC"]
+        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
         max_notional_per_trade: 31590
         max_position_pct_equity: 1.0
         params:
@@ -142,7 +142,7 @@ data:
         enabled: false
         base_timeframe: "1Sec"
         universe_type: breakout_continuation_long_v1
-        universe_symbols: ["NVDA", "TSM", "AVGO", "MU", "AMD", "ASML", "INTC", "LRCX", "AMAT", "TXN", "ARM", "KLAC"]
+        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
         max_notional_per_trade: 50000
         max_position_pct_equity: 3.0
         params:
@@ -223,7 +223,7 @@ data:
         enabled: false
         base_timeframe: "1Sec"
         universe_type: mean_reversion_rebound_long_v1
-        universe_symbols: ["NVDA", "TSM", "AVGO", "MU", "AMD", "ASML", "INTC", "LRCX", "AMAT", "TXN", "ARM", "KLAC"]
+        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
         max_notional_per_trade: 31590
         max_position_pct_equity: 1.0
         params:
@@ -277,7 +277,7 @@ data:
         enabled: false
         base_timeframe: "1Sec"
         universe_type: mean_reversion_exhaustion_short_v1
-        universe_symbols: ["NVDA", "TSM", "AVGO", "MU", "AMD", "ASML", "INTC", "LRCX", "AMAT", "TXN", "ARM", "KLAC"]
+        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
         max_notional_per_trade: 30000
         max_position_pct_equity: 1.0
         params:
@@ -310,7 +310,7 @@ data:
           rank_feature: "cross_section_reversal_rank"
           selection_mode: "reversal"
           top_n: "1"
-          universe_size: "12"
+          universe_size: "8"
           entry_notional_min_multiplier: "0.20"
           entry_notional_rank_floor: "0.65"
           entry_notional_rank_ceiling: "0.95"
@@ -345,7 +345,7 @@ data:
         enabled: false
         base_timeframe: "1Sec"
         universe_type: washout_rebound_long_v1
-        universe_symbols: ["NVDA", "TSM", "AVGO", "MU", "AMD", "ASML", "INTC", "LRCX", "AMAT", "TXN", "ARM", "KLAC"]
+        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
         max_notional_per_trade: 63180
         max_position_pct_equity: 2.0
         params:
@@ -421,7 +421,7 @@ data:
         enabled: false
         base_timeframe: "1Sec"
         universe_type: microbar_cross_sectional_pairs_v1
-        universe_symbols: ["NVDA", "TSM", "AVGO", "MU", "AMD", "ASML", "INTC", "LRCX", "AMAT", "TXN", "ARM", "KLAC"]
+        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
         max_notional_per_trade: 50000
         max_position_pct_equity: 6.0
         params:
@@ -443,7 +443,7 @@ data:
         enabled: false
         base_timeframe: "1Sec"
         universe_type: microbar_cross_sectional_long_v1
-        universe_symbols: ["NVDA", "TSM", "AVGO", "MU", "AMD", "ASML", "INTC", "LRCX", "AMAT", "TXN", "ARM", "KLAC"]
+        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
         max_notional_per_trade: 157950.10
         max_position_pct_equity: 8.0
         params:
@@ -464,7 +464,7 @@ data:
         enabled: false
         base_timeframe: "1Sec"
         universe_type: microbar_cross_sectional_short_v1
-        universe_symbols: ["NVDA", "TSM", "AVGO", "MU", "AMD", "ASML", "INTC", "LRCX", "AMAT", "TXN", "ARM", "KLAC"]
+        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
         max_notional_per_trade: 157950.10
         max_position_pct_equity: 8.0
         params:
@@ -487,7 +487,7 @@ data:
         enabled: false
         base_timeframe: "1Sec"
         universe_type: microbar_cross_sectional_long_v1
-        universe_symbols: ["NVDA", "TSM", "AVGO", "MU", "AMD", "ASML", "INTC", "LRCX", "AMAT", "TXN", "ARM", "KLAC"]
+        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
         max_notional_per_trade: 157950.10
         max_position_pct_equity: 8.0
         params:
@@ -508,7 +508,7 @@ data:
         enabled: false
         base_timeframe: "1Sec"
         universe_type: late_day_continuation_long_v1
-        universe_symbols: ["NVDA", "TSM", "AVGO", "MU", "AMD", "ASML", "INTC", "LRCX", "AMAT", "TXN", "ARM", "KLAC"]
+        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
         max_notional_per_trade: 94770
         max_position_pct_equity: 3.0
         params:
@@ -584,7 +584,7 @@ data:
         enabled: false
         base_timeframe: "1Sec"
         universe_type: end_of_day_reversal_long_v1
-        universe_symbols: ["NVDA", "TSM", "AVGO", "MU", "AMD", "ASML", "INTC", "LRCX", "AMAT", "TXN", "ARM", "KLAC"]
+        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
         max_notional_per_trade: 31590
         max_position_pct_equity: 1.0
         params:

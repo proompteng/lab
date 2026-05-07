@@ -15,7 +15,12 @@ import type {
   NegativeEvidenceRouterStatus,
   ReconciledActionClock,
   ReconciledActionClockDecision,
+  SourceRolloutTruthExchange,
 } from '~/data/agents-control-plane'
+import {
+  SOURCE_ROLLOUT_TRUTH_EXCHANGE_DESIGN_ARTIFACT,
+  sourceRolloutTruthVerdictDecision,
+} from '~/server/control-plane-source-rollout-truth-exchange'
 import type {
   ControlPlaneRolloutHealth,
   ControlPlaneWatchReliability,
@@ -38,7 +43,7 @@ const DECISION_RANK: Record<MaterialActionVerdictDecision, number> = {
 }
 
 type DecisionSignal = {
-  source: 'dependency_quorum' | 'action_slo_budget' | 'action_clock'
+  source: 'dependency_quorum' | 'action_slo_budget' | 'action_clock' | 'source_rollout_truth_exchange'
   decision: MaterialActionVerdictDecision
   evidenceRefs: string[]
   blockingReasons: string[]
@@ -64,6 +69,7 @@ export type MaterialActionVerdictInput = {
   database: DatabaseStatus
   watchReliability: ControlPlaneWatchReliability
   empiricalServices: EmpiricalServicesStatus
+  sourceRolloutTruthExchange?: SourceRolloutTruthExchange
 }
 
 const uniqueStrings = (values: string[]) => [...new Set(values.filter((value) => value.trim().length > 0))]
@@ -269,6 +275,42 @@ const clockSignal = (
   }
 }
 
+const sourceRolloutTruthSignal = (
+  exchange: SourceRolloutTruthExchange | undefined,
+  actionClass: ActionSloBudgetActionClass,
+): DecisionSignal | null => {
+  if (!exchange) return null
+  const receipt = exchange.receipts.find((entry) => entry.action_class === actionClass)
+  if (!receipt) return null
+
+  const decision = sourceRolloutTruthVerdictDecision(receipt.action_decision)
+  const reasons =
+    receipt.blocking_reasons.length > 0
+      ? receipt.blocking_reasons
+      : receipt.settlement_state === 'converged'
+        ? []
+        : [receipt.settlement_state]
+
+  return {
+    source: 'source_rollout_truth_exchange',
+    decision,
+    evidenceRefs: uniqueStrings([
+      SOURCE_ROLLOUT_TRUTH_EXCHANGE_DESIGN_ARTIFACT,
+      exchange.exchange_id,
+      receipt.receipt_id,
+    ]),
+    blockingReasons: decision === 'repair_only' ? [] : reasons,
+    downgradeReasons: decision === 'repair_only' ? reasons : [],
+    requiredRepairs: reasons.map(repairActionForReason),
+    rollbackTarget: receipt.rollback_target,
+    allowedUntil: receipt.fresh_until,
+    maxDispatches: decision === 'allow' ? null : decision === 'repair_only' ? 1 : 0,
+    maxRuntimeSeconds: decision === 'allow' ? null : decision === 'repair_only' ? 20 * 60 : 0,
+    maxNotional: 0,
+    confidence: decision === 'allow' ? 'high' : receipt.settlement_state === 'unknown' ? 'unknown' : 'medium',
+  }
+}
+
 const contradictionRefsForSignals = (input: {
   actionClass: ActionSloBudgetActionClass
   budget: ActionSloBudget | undefined
@@ -307,6 +349,7 @@ const buildVerdict = (input: {
   dependencyQuorum: DependencyQuorumStatus
   negativeEvidenceRouter: NegativeEvidenceRouterStatus
   controllerWitness: ControlPlaneControllerWitnessQuorum
+  sourceRolloutTruthExchange?: SourceRolloutTruthExchange
 }): MaterialActionVerdict => {
   const budget = budgetSignal(input.budget, input.actionClass)
   const clock = clockSignal(input.clock, input.actionClass)
@@ -315,7 +358,13 @@ const buildVerdict = (input: {
     actionClass: input.actionClass,
     dependencyQuorum: input.dependencyQuorum,
   })
-  const signals = dependency ? [budget, clock, dependency] : [budget, clock]
+  const sourceRolloutTruth = sourceRolloutTruthSignal(input.sourceRolloutTruthExchange, input.actionClass)
+  const signals = [
+    budget,
+    clock,
+    ...(dependency ? [dependency] : []),
+    ...(sourceRolloutTruth ? [sourceRolloutTruth] : []),
+  ]
   const strictest = strictestSignal(signals)
   const contradictionRefs = contradictionRefsForSignals({
     actionClass: input.actionClass,
@@ -394,6 +443,7 @@ const buildEpochId = (input: {
   budgets: ActionSloBudget[]
   clocks: ReconciledActionClock[]
   controllerWitness: ControlPlaneControllerWitnessQuorum
+  sourceRolloutTruthExchange?: SourceRolloutTruthExchange
 }) =>
   `material-action-verdict:${hashJson({
     namespace: input.namespace,
@@ -406,6 +456,9 @@ const buildEpochId = (input: {
     budget_ids: input.budgets.map((budget) => budget.budget_id).sort(),
     clock_ids: input.clocks.map((clock) => clock.clock_id).sort(),
     controller_witness_quorum_id: input.controllerWitness.quorum_id,
+    source_rollout_truth_exchange_id: input.sourceRolloutTruthExchange?.exchange_id ?? null,
+    source_rollout_truth_receipt_ids:
+      input.sourceRolloutTruthExchange?.receipts.map((receipt) => receipt.receipt_id).sort() ?? [],
   })}`
 
 export const buildMaterialActionVerdictEpoch = (input: MaterialActionVerdictInput): MaterialActionVerdictEpoch => {
@@ -421,6 +474,7 @@ export const buildMaterialActionVerdictEpoch = (input: MaterialActionVerdictInpu
     budgets: input.actionSloBudgets,
     clocks: input.reconciledActionClocks,
     controllerWitness: input.controllerWitness,
+    sourceRolloutTruthExchange: input.sourceRolloutTruthExchange,
   })
   const finalVerdicts = actionClasses.map((actionClass) =>
     buildVerdict({
@@ -432,6 +486,7 @@ export const buildMaterialActionVerdictEpoch = (input: MaterialActionVerdictInpu
       dependencyQuorum: input.dependencyQuorum,
       negativeEvidenceRouter: input.negativeEvidenceRouter,
       controllerWitness: input.controllerWitness,
+      sourceRolloutTruthExchange: input.sourceRolloutTruthExchange,
     }),
   )
   const contradictionRefs = uniqueStrings(finalVerdicts.flatMap((verdict) => verdict.contradiction_refs)).sort()

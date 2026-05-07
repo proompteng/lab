@@ -422,7 +422,7 @@ def _sleeve_score(bundle: CandidateEvidenceBundle) -> Decimal:
         + (_positive_ratio(bundle) * Decimal("150"))
         - (_worst_day_loss(bundle) * Decimal("0.50"))
         - (_max_drawdown(bundle) * Decimal("0.10"))
-        - (_best_day_share(bundle) * Decimal("500"))
+        - (_best_day_share(bundle) * Decimal("300"))
     )
 
 
@@ -437,7 +437,7 @@ def _portfolio_candidate_id(
 def optimize_portfolio_candidate(
     *,
     evidence_bundles: Sequence[CandidateEvidenceBundle],
-    target_net_pnl_per_day: Decimal = Decimal("500"),
+    target_net_pnl_per_day: Decimal = Decimal("300"),
     oracle_policy: ProfitTargetOraclePolicy | None = None,
     portfolio_size_min: int = 2,
     portfolio_size_max: int = 8,

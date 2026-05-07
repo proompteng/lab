@@ -4,14 +4,14 @@ family_template_id: washout_rebound_v2
 strategy_name: washout-rebound-long-v1
 disable_other_strategies: false
 constraints:
-  holdout_target_net_per_day: '500'
+  holdout_target_net_per_day: '300'
   min_active_holdout_days: 3
   max_worst_holdout_day_loss: '250'
   min_profit_factor: '1.05'
   require_training_decisions: true
   require_holdout_decisions: true
 consistency_constraints:
-  target_net_per_day: '500'
+  target_net_per_day: '300'
   min_active_days: 8
   min_active_ratio: '1.0'
   min_positive_days: 5
@@ -25,7 +25,7 @@ consistency_constraints:
   require_every_day_active: true
 strategy_overrides:
   universe_symbols:
-    - ['NVDA', 'TSM', 'AVGO', 'MU', 'AMD', 'ASML', 'INTC', 'LRCX', 'AMAT', 'TXN', 'ARM', 'KLAC']
+    - ['NVDA', 'AAPL', 'AMZN', 'GOOGL', 'AVGO', 'AMD', 'ORCL', 'INTC']
   max_notional_per_trade:
     - '63180'
     - '94770'

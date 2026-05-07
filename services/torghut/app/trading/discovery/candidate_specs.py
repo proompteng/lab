@@ -74,18 +74,13 @@ _AI_ACCELERATOR_UNIVERSE_PROFILE: tuple[str, ...] = (
     "NVDA",
     "AVGO",
     "AMD",
-    "TSM",
-    "ASML",
-    "MU",
-    "ARM",
 )
-_EQUIPMENT_MEMORY_UNIVERSE_PROFILE: tuple[str, ...] = (
-    "AMAT",
-    "LRCX",
-    "KLAC",
-    "MU",
-    "ASML",
-    "TXN",
+_LIQUID_TECH_PLATFORM_UNIVERSE_PROFILE: tuple[str, ...] = (
+    "AAPL",
+    "AMZN",
+    "GOOGL",
+    "ORCL",
+    "INTC",
 )
 _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE: tuple[str, ...] = (
     _RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE
@@ -93,23 +88,23 @@ _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE: tuple[str, ...] = (
 
 _LARGE_CAP_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
     _AI_ACCELERATOR_UNIVERSE_PROFILE,
-    _EQUIPMENT_MEMORY_UNIVERSE_PROFILE,
+    _LIQUID_TECH_PLATFORM_UNIVERSE_PROFILE,
     _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _BREAKOUT_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
     _AI_ACCELERATOR_UNIVERSE_PROFILE,
-    ("NVDA", "AVGO", "AMD", "AMAT", "LRCX", "KLAC", "MU", "ARM"),
+    ("NVDA", "AVGO", "AMD", "ORCL", "INTC"),
     _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _REVERSAL_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
-    ("AMD", "TXN", "INTC", "AMAT", "LRCX", "MU"),
-    ("AMD", "TXN", "INTC", "AMAT", "LRCX", "KLAC", "MU", "AVGO"),
+    ("AMD", "INTC", "ORCL", "AAPL"),
+    ("AMD", "INTC", "ORCL", "AAPL", "AMZN", "GOOGL", "AVGO"),
     _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _TSMOM_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
     ("NVDA",),
-    ("NVDA", "AVGO", "AMD", "TSM"),
-    ("NVDA", "AVGO", "AMD", "TSM", "ASML", "AMAT", "MU", "ARM"),
+    ("NVDA", "AVGO", "AMD", "INTC"),
+    _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 
 _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
@@ -1057,7 +1052,7 @@ def candidate_spec_id_for_payload(payload: Mapping[str, Any]) -> str:
 def compile_candidate_specs(
     *,
     hypothesis_cards: Sequence[HypothesisCard],
-    target_net_pnl_per_day: Decimal = Decimal("500"),
+    target_net_pnl_per_day: Decimal = Decimal("300"),
     universe_symbols: Sequence[str] = (),
 ) -> list[CandidateSpec]:
     specs: list[CandidateSpec] = []

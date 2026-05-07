@@ -10,7 +10,7 @@ import type {
   ControlPlaneHeartbeatRow,
   ControlPlaneHeartbeatStoreGetInput,
 } from '~/server/control-plane-heartbeat-store'
-import type { KubeGateway, KubeGatewayDeployment, KubeGatewaySwarm } from '~/server/kube-gateway'
+import type { KubeGateway, KubeGatewayDeployment, KubeGatewayPod, KubeGatewaySwarm } from '~/server/kube-gateway'
 import type {
   AdmissionPassportStatus,
   ControlPlaneWatchReliability,
@@ -53,12 +53,36 @@ const setKubeGateway = (gateway: KubeGateway) => {
   return gateway
 }
 
-const setRolloutDeploymentList = (items: KubeGatewayDeployment[] = []) =>
+const setRolloutDeploymentList = (items: KubeGatewayDeployment[] = [], pods: KubeGatewayPod[] = []) =>
   setKubeGateway(
     createTestKubeGateway({
       listDeployments: vi.fn(async () => items),
+      listPods: vi.fn(async () => pods),
     }),
   )
+
+const healthyRuntimePod = (image = 'runtime:local'): KubeGatewayPod => ({
+  metadata: {
+    name: 'jangar-0',
+    namespace: 'agents',
+    generation: 1,
+    labels: {},
+    creationTimestamp: '2026-01-20T00:00:00Z',
+  },
+  status: {
+    phase: 'Running',
+    conditions: [],
+    containerStatuses: [
+      {
+        name: 'app',
+        image,
+        image_id: image,
+        ready: true,
+        state: { running: true },
+      },
+    ],
+  },
+})
 
 const healthyRolloutDeployment: KubeGatewayDeployment = {
   metadata: {
@@ -335,6 +359,8 @@ describe('control-plane status', () => {
     delete process.env.JANGAR_CONTROL_PLANE_ROUTE_PROBE_ENABLED
     delete process.env.JANGAR_CONTROL_PLANE_ROUTE_NAMESPACE
     delete process.env.JANGAR_FAILURE_DOMAIN_EVIDENCE_NAMESPACES
+    delete process.env.JANGAR_SOURCE_HEAD_SHA
+    delete process.env.JANGAR_GITOPS_REVISION
   })
 
   const buildExecutionTrustSwarmResource = (
@@ -632,7 +658,12 @@ describe('control-plane status', () => {
     })
 
   it('returns healthy summary when components are healthy', async () => {
-    setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
+    process.env.JANGAR_SOURCE_HEAD_SHA = '99470fcfa0000000000000000000000000000000'
+    process.env.JANGAR_GITOPS_REVISION = '99470fcfa0000000000000000000000000000000'
+    setRolloutDeploymentList(
+      [healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment],
+      [healthyRuntimePod()],
+    )
     const status = await buildStatus(
       {
         namespace: 'agents',
@@ -788,6 +819,29 @@ describe('control-plane status', () => {
       negative_evidence_router_epoch_ref: status.negative_evidence_router.router_epoch_id,
       controller_witness_ref: status.control_plane_controller_witness.quorum_id,
     })
+    expect(status.source_rollout_truth_exchange).toMatchObject({
+      mode: 'shadow',
+      design_artifact:
+        'docs/agents/designs/148-jangar-source-rollout-truth-exchange-and-proof-floor-settlement-2026-05-07.md',
+      source_head_sha: '99470fcfa0000000000000000000000000000000',
+      gitops_revision: '99470fcfa0000000000000000000000000000000',
+      database_projection_ref: expect.stringContaining('database:healthy:healthy'),
+      watch_cache_ref: expect.stringContaining('watch:healthy'),
+    })
+    expect(status.source_rollout_truth_exchange.torghut_proof_floor.state).toBe('repair_only')
+    expect(status.source_rollout_truth_exchange.receipts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'deploy_widen',
+          settlement_state: 'converged',
+          action_decision: 'allow',
+        }),
+        expect.objectContaining({
+          action_class: 'paper_canary',
+          settlement_state: 'proof_floor_repair_only',
+        }),
+      ]),
+    )
     expect(status.material_action_verdicts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -796,8 +850,8 @@ describe('control-plane status', () => {
         }),
         expect.objectContaining({
           action_class: 'live_micro_canary',
-          decision: 'hold',
-          blocking_reason_codes: ['torghut_consumer_evidence_missing'],
+          decision: 'block',
+          blocking_reason_codes: expect.arrayContaining(['torghut_consumer_evidence_missing']),
         }),
       ]),
     )
@@ -866,6 +920,65 @@ describe('control-plane status', () => {
     expect(status.empirical_services.forecast.authoritative).toBe(true)
     expect(status.empirical_services.lean.authoritative).toBe(true)
     expect(status.empirical_services.jobs.authoritative).toBe(true)
+  })
+
+  it('projects source rollout truth and keeps normal dispatch repair-only when GitOps lags source', async () => {
+    process.env.JANGAR_SOURCE_HEAD_SHA = '99470fcfa0000000000000000000000000000000'
+    process.env.JANGAR_GITOPS_REVISION = '4c44179970000000000000000000000000000000'
+    setRolloutDeploymentList(
+      [healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment],
+      [healthyRuntimePod()],
+    )
+
+    const status = await buildStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+      },
+    )
+
+    const exchange = status.source_rollout_truth_exchange
+    const serveReceipt = exchange.receipts.find((receipt) => receipt.action_class === 'serve_readonly')
+    const dispatchReceipt = exchange.receipts.find((receipt) => receipt.action_class === 'dispatch_normal')
+    const deployReceipt = exchange.receipts.find((receipt) => receipt.action_class === 'deploy_widen')
+    const dispatchVerdict = status.material_action_verdicts.find(
+      (verdict) => verdict.action_class === 'dispatch_normal',
+    )
+
+    expect(serveReceipt).toMatchObject({
+      settlement_state: 'rollout_lagging_source',
+      action_decision: 'allow',
+      blocking_reasons: [],
+    })
+    expect(dispatchReceipt).toMatchObject({
+      settlement_state: 'rollout_lagging_source',
+      action_decision: 'repair_only',
+      blocking_reasons: expect.arrayContaining(['source_head_gitops_revision_mismatch']),
+    })
+    expect(deployReceipt).toMatchObject({
+      action_decision: 'hold',
+      rollback_target: 'hold rollout widening until GitOps revision, desired image, and live image converge',
+    })
+    expect(dispatchVerdict).toMatchObject({
+      decision: 'repair_only',
+      downgrade_reason_codes: expect.arrayContaining(['source_head_gitops_revision_mismatch']),
+    })
   })
 
   it('surfaces blocked collaboration runtime kits without changing the serving passport id', async () => {
@@ -1911,8 +2024,17 @@ describe('control-plane status', () => {
       expect.arrayContaining([
         expect.objectContaining({
           action_class: 'dispatch_normal',
-          decision: 'repair_only',
+          decision: 'hold',
           controller_witness_refs: status.control_plane_controller_witness.witness_refs,
+        }),
+      ]),
+    )
+    expect(status.source_rollout_truth_exchange.receipts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_normal',
+          settlement_state: 'heartbeat_projection_split',
+          action_decision: 'hold',
         }),
       ]),
     )

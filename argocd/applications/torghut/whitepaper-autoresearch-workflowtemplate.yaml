@@ -21,7 +21,7 @@ spec:
       - name: seedRecentWhitepapers
         value: 'true'
       - name: symbols
-        value: NVDA,TSM,AVGO,MU,AMD,ASML,INTC,LRCX,AMAT,TXN,ARM,KLAC
+        value: NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC
       - name: fullWindowStartDate
         value: '2026-04-24'
       - name: fullWindowEndDate
@@ -80,7 +80,7 @@ spec:
           - name: allowStaleTape
           - name: persistResults
       container:
-        image: registry.ide-newton.ts.net/lab/torghut@sha256:69e1ddad4229200a90343a65facbb152ee6dfbf65e141e92539b4ddffdaf5e60
+        image: registry.ide-newton.ts.net/lab/torghut@sha256:8db8a40ee7f76c08aaa0689b55e145dfaf872248707a20fb38c005e0eabb42ab
         imagePullPolicy: IfNotPresent
         command:
           - /bin/bash

@@ -19,6 +19,7 @@ import type {
   RouteStabilityEscrow,
   RuntimeProofCellStatus,
   RuntimeKitStatus,
+  SourceRolloutTruthExchange,
   WorkflowsReliabilityStatus,
 } from '~/data/agents-control-plane'
 
@@ -172,6 +173,7 @@ export type ControlPlaneStatus = {
   material_action_verdict_epoch: MaterialActionVerdictEpoch
   material_action_verdicts: MaterialActionVerdict[]
   material_action_activation_receipts: MaterialActionActivationReceipt[]
+  source_rollout_truth_exchange: SourceRolloutTruthExchange
   route_stability_escrow: RouteStabilityEscrow
   execution_trust: ExecutionTrustStatus
   swarms: ExecutionTrustSwarm[]
