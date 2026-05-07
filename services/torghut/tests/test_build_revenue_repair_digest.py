@@ -136,6 +136,17 @@ def _repair_only_status() -> dict[str, object]:
                     "blocked_symbol_count": 5,
                     "missing_symbol_count": 3,
                     "candidate_symbols": [],
+                    "repair_candidate_count": 1,
+                    "repair_candidate_symbols": ["AAPL"],
+                    "repair_candidates": [
+                        {
+                            "rank": 1,
+                            "symbol": "AAPL",
+                            "state": "blocked",
+                            "next_repair_action": "repair_route_evidence_before_paper_probe",
+                            "paper_probe_notional_limit": "0",
+                        }
+                    ],
                     "expected_unblock_value": 13,
                 },
             },
@@ -254,6 +265,23 @@ class TestBuildRevenueRepairDigest(TestCase):
         self.assertEqual(route_reacquisition["state"], "repair_only")
         self.assertEqual(route_reacquisition["blocked_symbol_count"], 5)
         self.assertEqual(route_reacquisition["missing_symbol_count"], 3)
+        self.assertEqual(route_reacquisition["repair_candidate_count"], 1)
+        self.assertEqual(
+            route_reacquisition["repair_candidate_symbols"],
+            ["AAPL"],
+        )
+        self.assertEqual(
+            route_reacquisition["repair_candidates"],
+            [
+                {
+                    "rank": 1,
+                    "symbol": "AAPL",
+                    "state": "blocked",
+                    "next_repair_action": "repair_route_evidence_before_paper_probe",
+                    "paper_probe_notional_limit": "0",
+                }
+            ],
+        )
         self.assertEqual(route_reacquisition["expected_unblock_value"], 13)
 
     def test_digest_defaults_generated_at_and_handles_missing_tca_dimension(

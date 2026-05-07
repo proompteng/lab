@@ -466,6 +466,13 @@ def _summarize_route_reacquisition(
         "blocked_symbol_count": _int(summary.get("blocked_symbol_count")),
         "missing_symbol_count": _int(summary.get("missing_symbol_count")),
         "candidate_symbols": _string_items(summary.get("candidate_symbols")),
+        "repair_candidate_count": _int(summary.get("repair_candidate_count")),
+        "repair_candidate_symbols": _string_items(
+            summary.get("repair_candidate_symbols")
+        ),
+        "repair_candidates": [
+            _mapping(item) for item in _sequence(summary.get("repair_candidates"))
+        ],
         "expected_unblock_value": _int(summary.get("expected_unblock_value")),
     }
 

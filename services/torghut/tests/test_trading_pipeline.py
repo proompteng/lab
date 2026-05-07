@@ -38,14 +38,13 @@ from app.trading.llm.schema import (
     LLMDecisionContext,
     LLMPolicyContext,
     MarketContextBundle,
-    MarketSnapshot,
     PortfolioSnapshot,
     RecentDecisionSummary,
     LLMReviewRequest,
     LLMReviewResponse,
 )
 from app.trading.models import SignalEnvelope, StrategyDecision
-from app.trading.prices import PriceFetcher
+from app.trading.prices import MarketSnapshot, PriceFetcher
 from app.trading.ingest import SignalBatch
 from app.trading.reconcile import Reconciler
 from app.trading.risk import RiskEngine
@@ -100,21 +99,43 @@ def _with_default_executable_quote(signal: SignalEnvelope) -> SignalEnvelope:
 
 
 class FakeIngestor:
-    def __init__(self, signals: list[SignalEnvelope]) -> None:
+    def __init__(
+        self,
+        signals: list[SignalEnvelope],
+        *,
+        cursor_at: datetime | None = None,
+        cursor_seq: int | None = None,
+        cursor_symbol: str | None = None,
+    ) -> None:
         self.signals = [_with_default_executable_quote(signal) for signal in signals]
+        self.cursor_at = cursor_at
+        self.cursor_seq = cursor_seq
+        self.cursor_symbol = cursor_symbol
         self.committed_batches = 0
 
     def fetch_signals(self, session: Session) -> SignalBatch:
         return SignalBatch(
             signals=self.signals,
-            cursor_at=None,
-            cursor_seq=None,
-            cursor_symbol=None,
+            cursor_at=self.cursor_at,
+            cursor_seq=self.cursor_seq,
+            cursor_symbol=self.cursor_symbol,
         )
 
     def commit_cursor(self, session: Session, batch: SignalBatch) -> None:
         self.committed_batches += 1
         return None
+
+
+class CursorAdvancingFakeIngestor(FakeIngestor):
+    def fetch_signals(self, session: Session) -> SignalBatch:
+        if self.committed_batches > 0:
+            return SignalBatch(
+                signals=[],
+                cursor_at=self.cursor_at,
+                cursor_seq=self.cursor_seq,
+                cursor_symbol=self.cursor_symbol,
+            )
+        return super().fetch_signals(session)
 
 
 class WarmupIngestor(FakeIngestor):
@@ -604,9 +625,18 @@ def _default_probabilities(verdict: str, confidence: float) -> dict[str, float]:
 
 
 class FakePriceFetcher(PriceFetcher):
-    def __init__(self, price: Decimal, *, spread: Decimal | None = None) -> None:
+    def __init__(
+        self,
+        price: Decimal,
+        *,
+        spread: Decimal | None = None,
+        bid: Decimal | None = None,
+        ask: Decimal | None = None,
+    ) -> None:
         self.price = price
         self.spread = spread
+        self.bid = bid
+        self.ask = ask
 
     def fetch_price(self, signal: SignalEnvelope) -> Decimal:
         return self.price
@@ -618,6 +648,8 @@ class FakePriceFetcher(PriceFetcher):
             price=self.price,
             spread=self.spread,
             source="price_fetcher",
+            bid=self.bid,
+            ask=self.ask,
         )
 
 
@@ -709,6 +741,113 @@ class TestTradingPipeline(TestCase):
 
         for name, value in self._settings_snapshot.items():
             setattr(config.settings, name, value)
+
+    def test_ensure_signal_executable_price_backfills_missing_quote_from_snapshot(
+        self,
+    ) -> None:
+        alpaca_client = FakeAlpacaClient()
+        pipeline = TradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(
+                Decimal("101.50"),
+                spread=Decimal("0.02"),
+                bid=Decimal("101.49"),
+                ask=Decimal("101.51"),
+            ),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={
+                "price": Decimal("101.50"),
+                "macd": {"macd": Decimal("1.1"), "signal": Decimal("0.4")},
+            },
+            timeframe="1Min",
+        )
+
+        enriched = pipeline._ensure_signal_executable_price(signal)
+
+        self.assertEqual(enriched.payload.get("price"), Decimal("101.50"))
+        self.assertEqual(enriched.payload.get("imbalance_bid_px"), Decimal("101.49"))
+        self.assertEqual(enriched.payload.get("imbalance_ask_px"), Decimal("101.51"))
+        self.assertEqual(enriched.payload.get("spread"), Decimal("0.02"))
+        self.assertTrue(pipeline._signal_quote_quality.assess(enriched).valid)
+
+    def test_ensure_signal_executable_price_backfills_missing_price_from_snapshot(
+        self,
+    ) -> None:
+        alpaca_client = FakeAlpacaClient()
+        pipeline = TradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(Decimal("101.50")),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={
+                "macd": {"macd": Decimal("1.1"), "signal": Decimal("0.4")},
+            },
+            timeframe="1Min",
+        )
+
+        enriched = pipeline._ensure_signal_executable_price(signal)
+
+        self.assertEqual(enriched.payload.get("price"), Decimal("101.50"))
+
+    def test_ensure_signal_executable_price_returns_original_when_snapshot_adds_nothing(
+        self,
+    ) -> None:
+        alpaca_client = FakeAlpacaClient()
+        pipeline = TradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(Decimal("101.50")),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={
+                "price": Decimal("101.50"),
+                "macd": {"macd": Decimal("1.1"), "signal": Decimal("0.4")},
+            },
+            timeframe="1Min",
+        )
+
+        enriched = pipeline._ensure_signal_executable_price(signal)
+
+        self.assertIs(enriched, signal)
 
     def _seed_promotion_certificate_evidence(
         self,
@@ -2084,7 +2223,7 @@ class TestTradingPipeline(TestCase):
             execution_adapter,
         )
 
-    def test_pipeline_rejects_batch_when_feature_quality_gate_fails(self) -> None:
+    def test_pipeline_skips_stale_feature_batch_and_commits_cursor(self) -> None:
         from app import config
 
         original = {
@@ -2134,7 +2273,124 @@ class TestTradingPipeline(TestCase):
             )
 
             execution_adapter = FakeAlpacaClient()
-            ingestor = FakeIngestor([stale_signal])
+            ingestor = CursorAdvancingFakeIngestor(
+                [stale_signal],
+                cursor_at=stale_signal.event_ts,
+                cursor_seq=stale_signal.seq,
+                cursor_symbol=stale_signal.symbol,
+            )
+            state = TradingState()
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=ingestor,
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=execution_adapter,
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=state,
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+
+            pipeline.run_once()
+            pipeline.run_once()
+
+            self.assertEqual(ingestor.committed_batches, 2)
+            self.assertEqual(state.metrics.feature_quality_rejections_total, 1)
+            self.assertEqual(
+                state.metrics.feature_quality_reject_reason_total.get(
+                    "feature_staleness_exceeds_budget"
+                ),
+                1,
+            )
+            self.assertIsNone(
+                state.metrics.feature_quality_cursor_commit_blocked_total.get(
+                    "feature_staleness_exceeds_budget"
+                )
+            )
+            self.assertGreater(state.metrics.feature_staleness_ms_p95, 1_000)
+            self.assertEqual(execution_adapter.submitted, [])
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.trading_feature_quality_enabled = original[
+                "trading_feature_quality_enabled"
+            ]
+            config.settings.trading_feature_max_staleness_ms = original[
+                "trading_feature_max_staleness_ms"
+            ]
+
+    def test_pipeline_blocks_cursor_on_non_staleness_feature_quality_failure(
+        self,
+    ) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "trading_feature_quality_enabled": config.settings.trading_feature_quality_enabled,
+            "trading_feature_max_staleness_ms": config.settings.trading_feature_max_staleness_ms,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.trading_feature_quality_enabled = True
+        config.settings.trading_feature_max_staleness_ms = 1_000
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="schema quality-gate regression",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            malformed_schema_signal = SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                ingest_ts=datetime(2026, 1, 1, 0, 0, 0, 500000, tzinfo=timezone.utc),
+                symbol="AAPL",
+                timeframe="1Min",
+                seq=1,
+                payload={
+                    "feature_schema_version": "2.0.0",
+                    "macd": {"macd": 1.2, "signal": 0.5},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+            )
+
+            execution_adapter = FakeAlpacaClient()
+            ingestor = FakeIngestor(
+                [malformed_schema_signal],
+                cursor_at=malformed_schema_signal.event_ts,
+                cursor_seq=malformed_schema_signal.seq,
+                cursor_symbol=malformed_schema_signal.symbol,
+            )
             state = TradingState()
             pipeline = TradingPipeline(
                 alpaca_client=FakeAlpacaClient(),
@@ -2157,17 +2413,16 @@ class TestTradingPipeline(TestCase):
             self.assertEqual(state.metrics.feature_quality_rejections_total, 1)
             self.assertEqual(
                 state.metrics.feature_quality_reject_reason_total.get(
-                    "feature_staleness_exceeds_budget"
+                    "schema_mismatch"
                 ),
                 1,
             )
             self.assertEqual(
                 state.metrics.feature_quality_cursor_commit_blocked_total.get(
-                    "feature_staleness_exceeds_budget"
+                    "schema_mismatch"
                 ),
                 1,
             )
-            self.assertGreater(state.metrics.feature_staleness_ms_p95, 1_000)
             self.assertEqual(execution_adapter.submitted, [])
         finally:
             config.settings.trading_enabled = original["trading_enabled"]

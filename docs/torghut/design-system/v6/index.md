@@ -8,11 +8,21 @@
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM
   reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-07T17:25Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-07T19:10Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-07T17:25Z`):
+- Evidence (current next-work priority, refreshed `2026-05-07T19:10Z`):
+  - `165-torghut-quant-freshness-debt-and-paper-edge-ledgers-2026-05-07.md`
+  - `docs/agents/designs/161-jangar-stage-debt-clearinghouse-and-freshness-credit-ledger-2026-05-07.md`
+  - `164-torghut-zero-notional-route-repair-packets-and-paper-rehearsal-2026-05-07.md`
+  - `docs/agents/designs/160-jangar-split-authority-repair-escrow-and-dispatch-reentry-packets-2026-05-07.md`
+  - `163-torghut-quant-stage-cohort-and-evidence-repair-settlement-2026-05-07.md`
+  - `docs/agents/designs/159-jangar-authority-surface-settlement-and-quant-stage-cohort-gates-2026-05-07.md`
   - `136-torghut-quant-plan-closeout-and-proof-surface-handoff-2026-05-07.md`
+  - `163-torghut-repair-outcome-attribution-and-capital-reentry-slo-2026-05-07.md`
+  - `docs/agents/designs/159-jangar-closed-loop-repair-outcome-ledger-and-material-action-reentry-2026-05-07.md`
+  - `162-torghut-profit-evidence-refill-and-capital-route-reentry-2026-05-07.md`
+  - `docs/agents/designs/158-jangar-controller-ingestion-epochs-and-profit-evidence-refill-gates-2026-05-07.md`
   - `161-torghut-shadow-capital-parity-and-no-notional-release-train-2026-05-07.md`
   - `docs/agents/designs/157-jangar-shadow-parity-ledger-and-enforcement-release-train-2026-05-07.md`
   - `160-torghut-proof-surface-activation-ledger-and-capital-receipt-firewall-2026-05-07.md`
@@ -980,3 +990,7 @@ This pack is positioned as the next architecture layer above:
   repairs by hypothesis, metric target, after-cost dividend, and Jangar escrow membership, keeping paper/live at zero
   notional until route-readable evidence can settle the current TCA, signal, feature, drift, market-context, and
   submission blockers.
+- `165-torghut-outcome-priced-repair-market-and-capital-shadow-swaps-2026-05-07.md` follows the zero-notional repair
+  packet and Jangar brownout-market contracts because the system is serving but still not capital-ready. It makes
+  route, quant, market-context, empirical, and alpha repairs compete by measured after-cost unblock value while keeping
+  all paper and live notional closed until before/after receipts and Jangar stage-freeze clearing exist.

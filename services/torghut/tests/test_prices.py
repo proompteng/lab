@@ -6,7 +6,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from app.trading.models import SignalEnvelope
-from app.trading.prices import ClickHousePriceFetcher
+from app.trading.prices import ClickHousePriceFetcher, _midpoint
 
 
 class FakeClickHousePriceFetcher(ClickHousePriceFetcher):
@@ -29,6 +29,37 @@ class CapturingPriceFetcher(ClickHousePriceFetcher):
     def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
         self.last_query = query
         return []
+
+
+class RoutingClickHousePriceFetcher(ClickHousePriceFetcher):
+    def __init__(
+        self,
+        *,
+        price_rows: list[dict[str, object]],
+        quote_rows: list[dict[str, object]],
+        fail_quote_query: bool = False,
+    ) -> None:
+        super().__init__(
+            url="http://example",
+            table="torghut.ta_microbars",
+            quote_table="torghut.ta_signals",
+            quote_lookback_seconds=60,
+        )
+        self.price_rows = price_rows
+        self.quote_rows = quote_rows
+        self.fail_quote_query = fail_quote_query
+        self.queries: list[str] = []
+
+    def _resolve_columns(self) -> set[str] | None:
+        return None
+
+    def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+        self.queries.append(query)
+        if "FROM torghut.ta_signals" in query:
+            if self.fail_quote_query:
+                raise RuntimeError("quote query failed")
+            return self.quote_rows
+        return self.price_rows
 
 
 class SeqAwarePriceFetcher(CapturingPriceFetcher):
@@ -97,6 +128,159 @@ class TestClickHousePriceFetcher(TestCase):
         self.assertIsNotNone(snapshot)
         assert snapshot is not None
         self.assertEqual(snapshot.price, Decimal("102.5"))
+
+    def test_fetch_market_snapshot_backfills_recent_executable_quote(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[
+                {"event_ts": "2026-01-01T12:00:29Z", "c": "125.75", "vwap": "125.70"}
+            ],
+            quote_rows=[
+                {
+                    "event_ts": "2026-01-01T12:00:28Z",
+                    "imbalance_bid_px": "125.70",
+                    "imbalance_ask_px": "125.80",
+                    "imbalance_spread": "0.10",
+                }
+            ],
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("125.75"))
+        self.assertEqual(snapshot.bid, Decimal("125.70"))
+        self.assertEqual(snapshot.ask, Decimal("125.80"))
+        self.assertEqual(snapshot.spread, Decimal("0.10"))
+        self.assertEqual(snapshot.source, "ta_microbars+ta_signals_quote")
+        self.assertEqual(len(fetcher.queries), 2)
+        self.assertIn("FROM torghut.ta_signals", fetcher.queries[1])
+        self.assertIn("imbalance_bid_px IS NOT NULL", fetcher.queries[1])
+        self.assertIn("imbalance_ask_px >= imbalance_bid_px", fetcher.queries[1])
+
+    def test_fetch_market_snapshot_uses_recent_quote_midpoint_without_price_row(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="NVDA",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[
+                {
+                    "event_ts": "2026-01-01T12:00:28Z",
+                    "imbalance_bid_px": "200.10",
+                    "imbalance_ask_px": "200.30",
+                }
+            ],
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("200.20"))
+        self.assertEqual(snapshot.spread, Decimal("0.20"))
+        self.assertEqual(snapshot.source, "ta_signals_quote")
+
+    def test_fetch_market_snapshot_returns_none_without_price_or_quote(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="NVDA",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(price_rows=[], quote_rows=[])
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNone(snapshot)
+
+    def test_fetch_market_snapshot_keeps_price_when_quote_lookup_empty(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="NVDA",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[
+                {"event_ts": "2026-01-01T12:00:29Z", "c": "200.25", "spread": "0.03"}
+            ],
+            quote_rows=[],
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("200.25"))
+        self.assertEqual(snapshot.spread, Decimal("0.03"))
+        self.assertEqual(snapshot.source, "ta_microbars")
+
+    def test_fetch_market_snapshot_keeps_price_when_quote_lookup_fails(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="NVDA",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[
+                {"event_ts": "2026-01-01T12:00:29Z", "c": "200.25"}
+            ],
+            quote_rows=[],
+            fail_quote_query=True,
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("200.25"))
+        self.assertEqual(snapshot.source, "ta_microbars")
+
+    def test_fetch_market_snapshot_prefers_explicit_quote_spread(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="NVDA",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[
+                {
+                    "event_ts": "2026-01-01T12:00:28Z",
+                    "imbalance_bid_px": "200.10",
+                    "imbalance_ask_px": "200.30",
+                    "spread": "0.01",
+                    "imbalance_spread": "0.20",
+                }
+            ],
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.spread, Decimal("0.01"))
+
+    def test_quote_midpoint_requires_complete_quote(self) -> None:
+        self.assertIsNone(_midpoint(bid=None, ask=Decimal("100.20")))
 
     def test_fetch_price_query_uses_schema_columns(self) -> None:
         signal = SignalEnvelope(

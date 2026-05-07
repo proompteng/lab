@@ -254,6 +254,25 @@ describe('scheduled AgentRun templates', () => {
       )
     }
   })
+
+  it('bounds scheduled verify runs so deployer lanes cannot hang indefinitely', () => {
+    const manifests = readYamlObjects('argocd/applications/agents/swarm-agentrun-templates.yaml')
+    const agentRunTemplates = new Map(
+      manifests
+        .filter((manifest) => manifest.kind === 'AgentRun')
+        .map((agentRun) => [objectAt(objectAt(agentRun, 'metadata'), 'name'), agentRun])
+        .filter((entry): entry is [string, Record<string, unknown>] => typeof entry[0] === 'string'),
+    )
+
+    for (const name of ['jangar-swarm-verify-template', 'torghut-swarm-verify-template']) {
+      const template = agentRunTemplates.get(name)
+      const workflow = objectAt(objectAt(template, 'spec'), 'workflow')
+      const steps = objectAt(workflow, 'steps') as Record<string, unknown>[] | undefined
+      const verifyStep = steps?.find((step) => objectAt(step, 'name') === 'verify')
+
+      expect(objectAt(verifyStep, 'timeoutSeconds')).toBe(5400)
+    }
+  })
 })
 
 describe('kubectl error classification', () => {
