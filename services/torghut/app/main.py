@@ -69,6 +69,7 @@ from .trading.lean_lanes import LeanLaneManager
 from .trading.lean_runtime import lean_authority_status
 from .trading.llm.evaluation import build_llm_evaluation_metrics
 from .trading.proof_floor import build_profitability_proof_floor_receipt
+from .trading.revenue_repair import build_revenue_repair_digest
 from .trading.submission_council import (
     build_live_submission_gate_payload,
     build_shadow_first_toggle_parity,
@@ -1122,6 +1123,26 @@ def readyz() -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         content=jsonable_encoder(payload),
+    )
+
+
+@app.get("/trading/revenue-repair")
+def trading_revenue_repair() -> dict[str, object]:
+    """Return business-state and repair-priority evidence for revenue readiness."""
+
+    readyz_payload, _status_code = _evaluate_trading_health_payload(
+        include_database_contract=True,
+        allow_stale_dependency_cache=True,
+    )
+    status_payload = trading_status()
+    return cast(
+        dict[str, object],
+        jsonable_encoder(
+            build_revenue_repair_digest(
+                readyz_payload=readyz_payload,
+                status_payload=status_payload,
+            )
+        ),
     )
 
 

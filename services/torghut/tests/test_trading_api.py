@@ -2730,6 +2730,100 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
+    def test_trading_revenue_repair_endpoint_returns_business_digest(self) -> None:
+        readyz_payload: dict[str, object] = {
+            "status": "degraded",
+            "dependencies": {
+                "profitability_proof_floor": {
+                    "ok": False,
+                    "detail": "repair_only",
+                    "capital_state": "zero_notional",
+                },
+                "live_submission_gate": {
+                    "ok": False,
+                    "detail": "simple_submit_disabled",
+                    "capital_stage": "shadow",
+                },
+            },
+        }
+        status_payload: dict[str, object] = {
+            "mode": "live",
+            "pipeline_mode": "simple",
+            "build": {"active_revision": "torghut-00254"},
+            "live_submission_gate": {
+                "allowed": False,
+                "reason": "simple_submit_disabled",
+                "blocked_reasons": ["simple_submit_disabled"],
+                "capital_stage": "shadow",
+                "configured_live_promotion": False,
+            },
+            "proof_floor": {
+                "route_state": "repair_only",
+                "capital_state": "zero_notional",
+                "max_notional": "0",
+                "blocking_reasons": [
+                    "alpha_readiness_not_promotion_eligible",
+                    "execution_tca_stale",
+                    "simple_submit_disabled",
+                ],
+                "repair_ladder": [
+                    {
+                        "code": "repair_execution_tca",
+                        "reason": "execution_tca_stale",
+                        "dimension": "execution_tca",
+                        "priority": 65,
+                        "expected_unblock_value": 3,
+                    }
+                ],
+                "proof_dimensions": [
+                    {
+                        "dimension": "execution_tca",
+                        "state": "stale",
+                        "reason": "execution_tca_stale",
+                        "freshness_seconds": 2_988_327,
+                        "threshold_seconds": 86_400,
+                        "source_ref": {
+                            "order_count": 13_775,
+                            "last_computed_at": "2026-04-02T20:59:45.136640+00:00",
+                            "avg_abs_slippage_bps": "568.6138848199565249",
+                        },
+                    }
+                ],
+            },
+            "alpha_readiness": {
+                "summary": {
+                    "promotion_eligible_total": 0,
+                    "rollback_required_total": 3,
+                    "state_totals": {"blocked": 1, "shadow": 2},
+                }
+            },
+            "quant_evidence": {"ok": True, "status": "healthy", "reason": "ready"},
+        }
+        with (
+            patch(
+                "app.main._evaluate_trading_health_payload",
+                return_value=(readyz_payload, 503),
+            ),
+            patch("app.main.trading_status", return_value=status_payload),
+        ):
+            response = self.client.get("/trading/revenue-repair")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["schema_version"], "torghut.revenue-repair-digest.v1")
+        self.assertFalse(payload["revenue_ready"])
+        self.assertEqual(payload["business_state"], "repair_only")
+        self.assertEqual(payload["capital"]["capital_state"], "zero_notional")
+        self.assertIn(
+            "execution_tca_stale",
+            {item["reason"] for item in payload["blockers"]},
+        )
+        self.assertEqual(payload["repair_queue"][0]["code"], "repair_alpha_readiness")
+        self.assertEqual(
+            payload["evidence"]["execution_tca"]["last_computed_at"],
+            "2026-04-02T20:59:45.136640+00:00",
+        )
+
     def test_trading_status_blocks_live_submission_when_lineage_tables_are_empty(
         self,
     ) -> None:
