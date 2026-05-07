@@ -225,6 +225,19 @@ def build_tca_gate_inputs(
         )
 
     row = session.execute(stmt).one()
+    execution_stmt = _tca_execution_coverage_stmt(
+        strategy_id=strategy_id,
+        account_label=normalized_account_label,
+    )
+    unsettled_execution_stmt = _tca_execution_coverage_stmt(
+        strategy_id=strategy_id,
+        account_label=normalized_account_label,
+        only_unsettled=True,
+    )
+    execution_count, latest_execution_created_at = session.execute(execution_stmt).one()
+    unsettled_execution_count = int(
+        session.execute(unsettled_execution_stmt).scalar_one() or 0
+    )
     order_count = int(row[0] or 0)
     avg_slippage = _decimal_or_none(row[1])
     avg_abs_slippage = _decimal_or_none(row[2])
@@ -241,9 +254,7 @@ def build_tca_gate_inputs(
     avg_calibration_error_bps = _decimal_or_none(row[13])
     last_computed_at = row[14]
     expected_shortfall_coverage = (
-        Decimal(expected_count) / Decimal(order_count)
-        if order_count > 0
-        else None
+        Decimal(expected_count) / Decimal(order_count) if order_count > 0 else None
     )
     return {
         "order_count": order_count,
@@ -258,7 +269,9 @@ def build_tca_gate_inputs(
         if avg_abs_shortfall is not None
         else Decimal("0"),
         "avg_churn_ratio": avg_churn if avg_churn is not None else Decimal("0"),
-        "avg_divergence_bps": avg_divergence if avg_divergence is not None else Decimal("0"),
+        "avg_divergence_bps": avg_divergence
+        if avg_divergence is not None
+        else Decimal("0"),
         "avg_divergence_bps_abs": avg_abs_divergence
         if avg_abs_divergence is not None
         else Decimal("0"),
@@ -278,7 +291,41 @@ def build_tca_gate_inputs(
         else Decimal("0"),
         "avg_calibration_error_bps": avg_calibration_error_bps,
         "last_computed_at": last_computed_at,
+        "filled_execution_count": int(execution_count or 0),
+        "latest_execution_created_at": latest_execution_created_at,
+        "unsettled_execution_count": unsettled_execution_count,
     }
+
+
+def _tca_execution_coverage_stmt(
+    *,
+    strategy_id: str | None,
+    account_label: str,
+    only_unsettled: bool = False,
+) -> Any:
+    if only_unsettled:
+        stmt = (
+            select(func.count(Execution.id))
+            .select_from(Execution)
+            .outerjoin(
+                ExecutionTCAMetric,
+                ExecutionTCAMetric.execution_id == Execution.id,
+            )
+            .where(ExecutionTCAMetric.id.is_(None))
+        )
+    else:
+        stmt = select(func.count(Execution.id), func.max(Execution.created_at))
+
+    stmt = stmt.where(
+        Execution.avg_fill_price.is_not(None),
+        Execution.filled_qty > 0,
+    )
+    if strategy_id:
+        stmt = stmt.join(TradeDecision, TradeDecision.id == Execution.trade_decision_id)
+        stmt = stmt.where(TradeDecision.strategy_id == strategy_id)
+    if account_label:
+        stmt = stmt.where(Execution.alpaca_account_label == account_label)
+    return stmt
 
 
 def derive_adaptive_execution_policy(
