@@ -1001,4 +1001,6 @@ This pack is positioned as the next architecture layer above:
 - `167-torghut-scoped-profit-repair-options-and-freshness-debt-retirement-2026-05-07.md` follows the executable profit
   receipt and Jangar scoped evidence debt contracts because broad rollout health is no longer enough proof. It ranks
   zero-notional repair options by the scoped quant, market-context, empirical, route/TCA, hypothesis, and submission
-  debts they retire before paper or live capital can move.
+  debts they retire before paper or live capital can move. The 2026-05-07 21:10Z refresh narrows the current before
+  state to route/TCA repair, market-context staleness, degraded empirical jobs, account-scope bypass debt, and Jangar
+  scoped-debt agreement, with all paper/live notional still held at zero.

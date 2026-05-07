@@ -340,3 +340,50 @@ wire the summary into the control-plane status route without changing Kubernetes
 Deployer: treat broad rollout health as serving evidence only. Normal dispatch and capital must follow scoped debt
 decisions. Retained failures can be tolerated only when the quarantine state says they are superseded, audit-only, or
 retired by a specific receipt.
+
+## 2026-05-07 21:10Z Evidence Refresh
+
+This refresh keeps the selected architecture unchanged. The newer evidence narrows the active risk: Jangar has recovered
+the broad serving and schedule failure shape, but material action is still correctly held because the scoped debt is not
+closed.
+
+Read-only evidence collected from the `agents` service account showed:
+
+- `GET /ready` returned `status=ok`, leader election current, execution trust healthy, and fresh runtime proof cells.
+- Jangar pods were running, including `jangar-865f8f4768-bq94m` at `2/2`, `jangar-db-1` at `1/1`, and the supporting
+  Bumba, OpenWebUI, Redis, Symphony, and Alloy pods.
+- Agents pods showed `agents=1/1`, both `agents-controllers` replicas at `1/1`, and `agents-alloy=1/1`.
+- Recent Jangar and Torghut scheduled cron jobs completed after the older failed cron wave. The retained failures are
+  still visible in `agents`, which confirms the need for quarantine classification rather than manual interpretation.
+- Recent events still showed transient readiness timeouts for `agents` and `agents-controllers`, plus a Torghut verify
+  pod with missing input/spec ConfigMaps. Those failures must classify as active, superseded, or audit-only before
+  normal dispatch can reenter.
+- `GET /api/agents/control-plane/status?namespace=agents` reported database healthy with `28/28` migrations applied and
+  latest migration `20260505_torghut_quant_pipeline_health_window_index`.
+- The same status route reported watch reliability healthy over the current 15 minute window, but
+  `agentrun_ingestion.status=unknown` with message `agents controller not started`.
+- Controller authority was split by surface: agents and supporting controller status could be rollout-derived while the
+  orchestration controller had heartbeat authority in the compact status sample.
+- Route-stability and material-action evidence allowed serving and Torghut observation, but held `dispatch_repair`,
+  `dispatch_normal`, `deploy_widen`, `merge_ready`, and `paper_canary`; live capital classes remained blocked.
+- The held repair lists still named `source_rollout_truth_missing:source_or_gitops_revision`, AgentRun ingestion
+  witness debt, Kubernetes/serving-process witness debt, watch-reliability repair, and missing
+  `workflow_artifact.configmap_missing` closure for normal dispatch.
+
+Torghut evidence reinforced the same scoped-debt boundary:
+
+- The active live revision `torghut-00283` and simulation revision `torghut-sim-00383` were both running.
+- `/db-check` was healthy with current and expected Alembic head `0029_whitepaper_embedding_dimension_4096`, no missing
+  heads, no duplicate revisions, no orphan parents, and lineage-ready graph.
+- Parent-fork warnings at `0010_execution_provenance_and_governance_trace` and
+  `0015_whitepaper_workflow_tables` remained visible; account-scope checks were ready only under the documented
+  multi-account-disabled bypass.
+- Jangar market-context health for `NVDA` was degraded: technicals and regime were about `922s` old, news about
+  `12363s`, and fundamentals about `4865116s`.
+- Torghut `/readyz` returned HTTP `503` with proof floor `repair_only`, capital state `zero_notional`, live submission
+  disabled, stale market context, degraded empirical jobs, zero promotion-eligible hypotheses, and route/TCA debt.
+
+The implementation implication is sharper than the original text: do not spend engineering time on a new broad health
+flag. The next reducer should make the current held state explainable by scoped debt IDs and retained-failure states.
+The engineer acceptance gate for this refresh is that a fresh status sample can answer, without reading pod lists, why
+`serve_readonly` and `torghut_observe` are open while dispatch, deploy widening, paper, and live capital are not.

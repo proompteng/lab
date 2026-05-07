@@ -316,3 +316,49 @@ notional, and wire the output into existing Torghut status routes without moving
 
 Deployer: use the option book to pick bounded zero-notional repairs only. Do not treat broad service health, unscoped
 quant health, or a single successful refresh as paper or live authority; Jangar scoped debt retirement is the gate.
+
+## 2026-05-07 21:10Z Evidence Refresh
+
+This refresh does not change the selected Torghut direction. It updates the before-state that engineers and deployers
+must use when implementing the option book.
+
+Read-only runtime evidence showed:
+
+- The live `torghut-00283` and simulation `torghut-sim-00383` revisions were running at `2/2` after a fresh migration
+  job and revision handoff.
+- `/healthz` returned `status=ok`, but `/readyz` returned HTTP `503` with service `status=degraded`.
+- `/db-check` was current on Alembic head `0029_whitepaper_embedding_dimension_4096`, with one branch, no missing or
+  unexpected heads, no duplicate revisions, no orphan parents, and lineage-ready graph.
+- Schema warnings remained active for parent forks at `0010_execution_provenance_and_governance_trace` and
+  `0015_whitepaper_workflow_tables`; account-scope checks were considered ready only because multi-account trading is
+  disabled.
+- `/readyz` reported Postgres, ClickHouse, Alpaca, database schema, universe, readiness cache, and scheduler checks
+  healthy.
+- The same `/readyz` proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and max
+  notional `0`.
+- Live submission was not allowed because `simple_submit_disabled`; configured live promotion and autonomy promotion
+  were not eligible.
+- Alpha readiness had `3` hypotheses, `0` promotion eligible, and `3` rollback required; dependency quorum decision was
+  `block` because empirical jobs were degraded.
+- Proof-floor blockers included `alpha_readiness_not_promotion_eligible`, `degraded`,
+  `execution_tca_route_universe_incomplete`, `market_context_stale`, and `simple_submit_disabled`.
+- Market-context health for `NVDA` was degraded through Jangar: technicals and regime were stale at about `922s`, news
+  at about `12363s`, and fundamentals at about `4865116s`.
+- Route reacquisition showed no capital-routeable universe: `AAPL` was only `probing`, `AMD`, `AVGO`, `INTC`, and
+  `NVDA` were blocked by route evidence, and `AMZN`, `GOOGL`, and `ORCL` were missing.
+- The route book ranked repair candidates with `NVDA` first, then `AMD`, `INTC`, `AVGO`, `AMZN`, `GOOGL`, and `ORCL`;
+  every candidate retained `paper_probe_notional_limit=0`.
+- Quant evidence remained informational rather than capital-authoritative: `quant_pipeline_stages_missing` with latest
+  metrics present, no stage receipts, and no permission to clear paper or live gates.
+
+The implementation priority is therefore:
+
+1. Emit a scoped option book whose first ranked repair is still zero-notional route/TCA repair, not paper rehearsal.
+2. Require market-context and empirical-job retirement receipts before `AAPL` can move from probing evidence to a paper
+   candidate.
+3. Treat account-scope bypass as a paper/live debt even though it is informational for readiness while multi-account
+   trading is disabled.
+4. Require Jangar scoped evidence debt agreement before any option changes capital state.
+
+Deployer must keep live submit disabled and max notional zero through this refresh. The only allowed operational use of
+the option book is to schedule bounded proof repair work that emits before/after receipts.
