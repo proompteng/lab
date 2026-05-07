@@ -8,6 +8,7 @@ from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
+from typing import cast
 from unittest import TestCase
 
 from scripts.build_revenue_repair_digest import (
@@ -125,6 +126,19 @@ def _repair_only_status() -> dict[str, object]:
                     },
                 },
             ],
+            "route_reacquisition_book": {
+                "schema_version": "torghut.route-reacquisition-book.v1",
+                "state": "repair_only",
+                "capital_rule": "live_zero_notional_unchanged",
+                "summary": {
+                    "routeable_symbol_count": 0,
+                    "probing_symbol_count": 0,
+                    "blocked_symbol_count": 5,
+                    "missing_symbol_count": 3,
+                    "candidate_symbols": [],
+                    "expected_unblock_value": 13,
+                },
+            },
         },
         "quant_evidence": {
             "ok": False,
@@ -233,6 +247,14 @@ class TestBuildRevenueRepairDigest(TestCase):
                 ][0]["action"]
             ),
         )
+        evidence = cast(dict[str, object], digest["evidence"])
+        self.assertIsInstance(evidence, dict)
+        route_reacquisition = evidence["route_reacquisition"]
+        self.assertIsInstance(route_reacquisition, dict)
+        self.assertEqual(route_reacquisition["state"], "repair_only")
+        self.assertEqual(route_reacquisition["blocked_symbol_count"], 5)
+        self.assertEqual(route_reacquisition["missing_symbol_count"], 3)
+        self.assertEqual(route_reacquisition["expected_unblock_value"], 13)
 
     def test_digest_defaults_generated_at_and_handles_missing_tca_dimension(
         self,

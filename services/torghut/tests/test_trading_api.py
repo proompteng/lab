@@ -914,6 +914,10 @@ class TestTradingApi(TestCase):
             "route_state": "repair_only",
             "capital_state": "zero_notional",
             "repair_ladder": [{"code": "repair_execution_tca"}],
+            "route_reacquisition_book": {
+                "schema_version": "torghut.route-reacquisition-book.v1",
+                "summary": {"blocked_symbol_count": 2},
+            },
         }
 
         with patch(
@@ -926,7 +930,15 @@ class TestTradingApi(TestCase):
         self.assertEqual(status_response.status_code, 200)
         self.assertIn(health_response.status_code, {200, 503})
         self.assertEqual(status_response.json()["proof_floor"], proof_floor)
+        self.assertEqual(
+            status_response.json()["route_reacquisition_book"],
+            proof_floor["route_reacquisition_book"],
+        )
         self.assertEqual(health_response.json()["proof_floor"], proof_floor)
+        self.assertEqual(
+            health_response.json()["route_reacquisition_book"],
+            proof_floor["route_reacquisition_book"],
+        )
         self.assertEqual(
             health_response.json()["dependencies"]["profitability_proof_floor"][
                 "detail"
