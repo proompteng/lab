@@ -363,7 +363,8 @@ The first enforcement slice is the stage and requirement launcher gate:
   before creating schedules or cross-swarm requirement runs.
 - discover and plan schedules consume `swarm_plan`; implement schedules and requirement dispatch consume
   `swarm_implement`; verify schedules consume `swarm_verify`.
-- blocked or held stage passports delete the matching schedule and set the stage state to `AdmissionBlocked`.
+- blocked or held stage passports delete the matching schedule plus generated runner ConfigMap/CronJob resources and set
+  the stage state to `AdmissionBlocked`.
 - existing swarm schedules also re-check the current stage passport before regenerating runner ConfigMaps or CronJobs,
   so stale allowed passport annotations cannot keep launching work after the collaboration kit moves to `hold` or
   `block`.
