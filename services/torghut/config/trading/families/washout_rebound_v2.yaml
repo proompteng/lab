@@ -5,7 +5,9 @@ supported_markets:
   - us_equities_intraday
 required_features:
   - session_open_selloff_bps
+  - session_selloff_bps
   - price_vs_session_low_bps
+  - cross_section_reversal_rank
   - rsi14
   - quote_quality
 allowed_normalizations:

@@ -175,6 +175,79 @@ class TestWhitepaperCandidateCompiler(TestCase):
         )
         self.assertEqual(eod_specs[0].objective["target_net_pnl_per_day"], "300")
 
+    def test_momentum_and_reversal_families_cover_inferred_feature_contracts(
+        self,
+    ) -> None:
+        momentum = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-run-momentum-contract",
+            claims=[
+                {
+                    "claim_id": "claim-momentum-contract",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Fresh intraday momentum and trend persistence in chip stocks "
+                        "support pullback continuation entries."
+                    ),
+                    "confidence": "0.76",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("300"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+        momentum_family_ids = {
+            spec.family_template_id for spec in momentum.executable_specs
+        }
+
+        self.assertTrue(
+            {
+                "momentum_pullback_v1",
+                "intraday_tsmom_v2",
+            }.issubset(momentum_family_ids)
+        )
+        self.assertFalse(
+            [
+                blocker
+                for blocker in momentum.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+        )
+
+        reversal = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-run-reversal-contract",
+            claims=[
+                {
+                    "claim_id": "claim-reversal-contract",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Intraday washout reversal and mean reversion in liquid chip "
+                        "stocks support controlled rebound entries."
+                    ),
+                    "confidence": "0.76",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("300"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+        reversal_family_ids = {
+            spec.family_template_id for spec in reversal.executable_specs
+        }
+
+        self.assertTrue(
+            {
+                "washout_rebound_v2",
+                "mean_reversion_rebound_v1",
+            }.issubset(reversal_family_ids)
+        )
+        self.assertFalse(
+            [
+                blocker
+                for blocker in reversal.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+        )
+
     def test_missing_seed_sweep_blocks_execution(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-run-3",
