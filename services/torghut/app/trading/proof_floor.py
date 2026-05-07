@@ -413,20 +413,32 @@ def build_profitability_proof_floor_receipt(
         "ok",
     )
     if market_alert or market_context_stale:
-        market_state = (
-            "stale" if market_context_stale or "stale" in market_reason else "degraded"
-        )
+        market_stale = bool(market_context_stale) or "stale" in market_reason
         if market_context_stale and not market_alert:
             market_reason = "market_context_stale"
-        _add_repair(
-            repairs,
-            code="repair_market_context",
-            dimension="market_context",
-            action="refresh_market_context_domains",
-            reason=market_reason,
-            priority=55,
-            expected_unblock_value=max(1, market_context_stale),
-        )
+        if market_session_open is False and market_stale:
+            market_state = "informational"
+            market_reason = "expected_market_closed_staleness"
+            _add_repair(
+                repairs,
+                code="closed_session_market_context_hold",
+                dimension="market_context",
+                action="verify_market_context_freshness_at_next_market_open",
+                reason=market_reason,
+                priority=15,
+                expected_unblock_value=max(1, market_context_stale),
+            )
+        else:
+            market_state = "stale" if market_stale else "degraded"
+            _add_repair(
+                repairs,
+                code="repair_market_context",
+                dimension="market_context",
+                action="refresh_market_context_domains",
+                reason=market_reason,
+                priority=55,
+                expected_unblock_value=max(1, market_context_stale),
+            )
     else:
         market_state = "pass"
     add_dimension(
@@ -434,7 +446,7 @@ def build_profitability_proof_floor_receipt(
         state=market_state,
         reason=market_reason,
         capital_effect="none"
-        if market_state == "pass"
+        if market_state in {"pass", "informational"}
         else "paper_hold"
         if not live_mode
         else "live_hold",
