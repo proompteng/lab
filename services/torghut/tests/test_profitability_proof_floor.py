@@ -94,6 +94,8 @@ def test_live_degraded_evidence_routes_to_repair_only() -> None:
                 "promotion_eligible_total": 0,
                 "rollback_required_total": 3,
                 "state_totals": {"blocked": 1, "shadow": 2},
+                "reason_totals": {"slippage_budget_exceeded": 2},
+                "informational_reason_totals": {"closed_session_signal_hold": 2},
             },
             "items": [
                 {
@@ -142,6 +144,17 @@ def test_live_degraded_evidence_routes_to_repair_only() -> None:
         "repair_quant_ingestion",
     ]
     assert repair_codes[-1] == "closed_session_signal_hold"
+    alpha_dimension = next(
+        item
+        for item in receipt["proof_dimensions"]
+        if item["dimension"] == "alpha_readiness"
+    )
+    assert alpha_dimension["source_ref"]["reason_totals"] == {
+        "slippage_budget_exceeded": 2
+    }
+    assert alpha_dimension["source_ref"]["informational_reason_totals"] == {
+        "closed_session_signal_hold": 2
+    }
 
 
 def test_live_all_clear_routes_to_micro_candidate_with_configured_notional() -> None:
