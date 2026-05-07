@@ -149,3 +149,43 @@ class TestQuoteQuality(TestCase):
 
         self.assertFalse(status.valid)
         self.assertEqual(status.reason, 'missing_executable_quote')
+
+    def test_assess_signal_quote_quality_rejects_missing_bid(self) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 24, tzinfo=timezone.utc),
+            symbol='META',
+            timeframe='1Sec',
+            seq=16,
+            payload={
+                'price': Decimal('525.00'),
+                'imbalance_ask_px': Decimal('525.04'),
+            },
+        )
+
+        status = assess_signal_quote_quality(
+            signal=signal,
+            previous_price=Decimal('525.01'),
+        )
+
+        self.assertFalse(status.valid)
+        self.assertEqual(status.reason, 'missing_bid')
+
+    def test_assess_signal_quote_quality_rejects_missing_ask(self) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 24, tzinfo=timezone.utc),
+            symbol='META',
+            timeframe='1Sec',
+            seq=17,
+            payload={
+                'price': Decimal('525.00'),
+                'imbalance_bid_px': Decimal('525.00'),
+            },
+        )
+
+        status = assess_signal_quote_quality(
+            signal=signal,
+            previous_price=Decimal('525.01'),
+        )
+
+        self.assertFalse(status.valid)
+        self.assertEqual(status.reason, 'missing_ask')
