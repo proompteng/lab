@@ -4,6 +4,10 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/147-torghut-stale-proof-repair-exchange-and-route-stable-capital-quorum-2026-05-07.md`
+  (current stale-proof repair exchange and route-stable capital quorum contract)
+- `docs/agents/designs/143-jangar-route-stable-status-snapshot-escrow-and-repair-actuation-windows-2026-05-07.md`
+  (current Jangar route-stable status escrow and repair actuation contract)
 - `docs/torghut/design-system/v6/145-torghut-proof-renewal-leases-and-capital-reentry-state-market-2026-05-07.md`
   (current proof renewal lease and capital reentry state market contract)
 - `docs/agents/designs/141-jangar-proof-renewal-leases-and-trading-state-custody-2026-05-07.md` (current Jangar
