@@ -4,6 +4,90 @@ Swarm: `jangar-control-plane`
 Branch: `codex/swarm-jangar-control-plane-verify`
 Release engineer: Marco Silva
 
+## Current pass - 17:55 UTC
+
+### PRs touched
+
+- #5889 `feat(jangar): add repair warrant exchange`
+  - Selected as the only open direct Jangar control-plane implementation PR.
+  - Head: `01e375780f961fd2d9b84beccac04a64d06fd5d7`.
+  - GitHub state: non-draft, `MERGEABLE`, `CLEAN`.
+  - Hosted checks: pass or skipped only. The final blocker check, `agents-ci / integration`, passed at
+    2026-05-07T17:53:06Z; `agents-ci / validate`, `jangar-ci / lint-and-typecheck / run`, semantic checks, and
+    `CI / check_changed_files` also passed.
+  - Review state: no unresolved review threads from the GitHub reviewThreads query.
+  - No merge: the PR is still above the large-diff Codex review threshold at 1,446 additions and 46 deletions
+    across 15 files.
+  - Progress comment updated:
+    https://github.com/proompteng/lab/pull/5889#issuecomment-4398288855.
+- #5931 `fix(torghut): preserve executable flat quotes`
+  - Initially enumerated as an open non-Jangar PR; it merged independently at 2026-05-07T17:54:04Z as
+    `abaaf77572f6c9c53c8b8b6f61409e87235b5c19`.
+  - Not selected for this Jangar control-plane release gate.
+- #5767 `chore(release/c3ba60b): automated release PR`
+  - Enumerated as an app GitOps release PR; not selected for this Jangar control-plane release gate.
+- #5412 `feat(torghut): add renewal bond profit escrow`
+  - Enumerated as an open Torghut PR; not selected for this Jangar control-plane release gate.
+- #5316 `chore(release/735ddbc): automated release PR`
+  - Enumerated as a docs GitOps release PR; not selected for this Jangar control-plane release gate.
+
+### Comments and conflicts
+
+- #5889 has a Codex review request at
+  https://github.com/proompteng/lab/pull/5889#issuecomment-4398286043.
+- The Codex connector responded with a review usage-limit message at
+  https://github.com/proompteng/lab/pull/5889#issuecomment-4398287400 instead of posting a review.
+- No review threads are unresolved, and no merge conflicts are present.
+
+### Merge gate
+
+No-go for #5889.
+
+- Code and CI gates are green, but the large-diff review gate is still closed because no Codex review has posted.
+- The smallest unblocker is restored Codex review capacity, an explicit maintainer waiver, or a safe diff reduction
+  below 1,000 changed lines followed by revalidation.
+- No PR was merged in this pass.
+
+### Rollout evidence
+
+No new #5889 rollout exists because the PR is unmerged. Current in-cluster baseline health for already-merged `main`
+was checked instead.
+
+- Argo CD:
+  - `jangar`: `Synced`, `Healthy`, operation `Succeeded`, revision
+    `abaaf77572f6c9c53c8b8b6f61409e87235b5c19`.
+  - `agents`: `Synced`, `Healthy`, revision `3675674d7089bb8d1e942e160505e9b72090dc70`.
+  - `agents-ci`: `Synced`, `Healthy`, revision `3675674d7089bb8d1e942e160505e9b72090dc70`.
+  - `torghut`: `Synced`, `Healthy`, revision `3675674d7089bb8d1e942e160505e9b72090dc70`.
+  - `torghut-options`: `Synced`, `Healthy`.
+- Workload readiness:
+  - `deployment/jangar`: rollout status succeeded; pod `jangar-594b6746fd-5lhwp` is `Running` with both `app` and
+    `docker` containers ready and zero restarts.
+  - `deployment/symphony-jangar`: rollout status succeeded.
+- Events:
+  - Recent `jangar` namespace events showed only `NoPods` messages for an unrelated `elasticsearch-master-pdb`.
+
+### Residual risk
+
+- #5889 remains the direct Jangar feature risk because its control-plane diff is larger than 1,000 changed lines and
+  the required Codex review is blocked by usage limits.
+- The current in-cluster Jangar state is healthy, but it does not include #5889.
+
+### Rollback path
+
+- If #5889 later merges and regresses runtime behavior, rollback is a normal GitOps PR reverting its squash merge and
+  any resulting Jangar image promotion.
+- Do not mutate production workloads directly from a local shell; rollback remains PR-driven GitOps.
+- If current Jangar health regresses independently of #5889, open a GitOps revert of the current promotion commit on
+  `main` and let Argo CD reconcile back to the last documented healthy image.
+
+### Next action
+
+- Keep #5889 held until Codex review capacity returns, an explicit maintainer waiver is recorded, or the PR is safely
+  reduced below 1,000 changed lines.
+- After the unblocker lands, re-check mergeability, hosted checks, review state, and current cluster health before any
+  squash merge.
+
 ## Current pass - 16:47 UTC
 
 ### PRs touched
