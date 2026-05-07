@@ -489,7 +489,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(selection["budget"]["selected_count"], 3)
         self.assertEqual(payload["replay_candidate_spec_count"], 3)
         self.assertEqual(payload["evidence_bundle_count"], 3)
-        self.assertEqual(payload["candidate_spec_count"], args.max_candidates)
+        self.assertGreater(payload["candidate_spec_count"], args.max_candidates)
+        self.assertEqual(
+            selection["budget"]["compiled_candidate_count"],
+            payload["candidate_spec_count"],
+        )
         self.assertTrue(payload["best_false_negative_table"])
         self.assertEqual(
             payload["best_false_negative_table"][0]["evidence_status"], "not_replayed"

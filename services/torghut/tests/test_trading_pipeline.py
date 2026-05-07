@@ -1453,7 +1453,17 @@ class TestTradingPipeline(TestCase):
         )
         pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
 
-        pipeline.run_once()
+        with patch.object(
+            SimpleTradingPipeline,
+            "_profitability_proof_floor",
+            return_value={
+                "route_state": "paper_ready",
+                "capital_state": "paper",
+                "max_notional": "1000",
+                "blocking_reasons": [],
+            },
+        ):
+            pipeline.run_once()
         updates = pipeline.reconcile()
 
         self.assertEqual(updates, 1)
@@ -1515,8 +1525,18 @@ class TestTradingPipeline(TestCase):
         )
         pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
 
-        pipeline.run_once()
-        pipeline.run_once()
+        with patch.object(
+            SimpleTradingPipeline,
+            "_profitability_proof_floor",
+            return_value={
+                "route_state": "paper_ready",
+                "capital_state": "paper",
+                "max_notional": "1000",
+                "blocking_reasons": [],
+            },
+        ):
+            pipeline.run_once()
+            pipeline.run_once()
 
         self.assertEqual(len(alpaca_client.submitted), 1)
         with self.session_local() as session:
