@@ -149,6 +149,15 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=_DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
     )
+    parser.add_argument(
+        "--max-total-frontier-candidates",
+        type=int,
+        default=0,
+        help=(
+            "Global real-replay frontier candidate budget across all selected "
+            "candidate specs. Defaults to --max-candidates when omitted."
+        ),
+    )
     parser.add_argument("--real-replay-timeout-seconds", type=int, default=0)
     parser.add_argument("--train-days", type=int, default=6)
     parser.add_argument("--holdout-days", type=int, default=3)
@@ -1675,6 +1684,13 @@ def _run_real_replay(
             args,
             "max_frontier_candidates_per_spec",
             _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
+        ),
+        max_total_candidates_to_evaluate=max(
+            1,
+            int(
+                getattr(args, "max_total_frontier_candidates", 0)
+                or getattr(args, "max_candidates", 1)
+            ),
         ),
         persist_results=args.persist_results,
     )
