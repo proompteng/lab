@@ -1,8 +1,8 @@
-# Torghut Design-System Current Source-of-Truth and Priority Guide (updated 2026-05-06)
+# Torghut Design-System Current Source-of-Truth and Priority Guide (updated 2026-05-07)
 
 ## Status
 
-- Date: `2026-05-06`
+- Date: `2026-05-07`
 - Purpose: distinguish live source-of-truth docs from historical milestone records and identify the current highest-priority work
 - Scope: `docs/torghut/design-system/**`, `docs/torghut/**`, `argocd/applications/torghut/**`, `services/torghut/**`, `services/jangar/**`
 
@@ -34,6 +34,8 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v1/historical-dataset-simulation.md`
    - `docs/torghut/design-system/v1/trading-day-simulation-automation.md`
 3. current autonomy/promotion contract source of truth:
+   - `docs/agents/designs/147-jangar-hypothesis-scoped-capital-adjudication-ledger-2026-05-07.md`
+   - `docs/torghut/design-system/v6/151-torghut-hypothesis-scoped-capital-adjudication-and-profit-gates-2026-05-07.md`
    - `docs/agents/designs/115-jangar-watch-quiescence-and-evidence-renewal-arbiter-2026-05-06.md`
    - `docs/torghut/design-system/v6/119-torghut-evidence-renewal-batches-and-capital-quiescence-gates-2026-05-06.md`
    - `docs/agents/designs/114-jangar-evidence-transport-ledger-and-watch-restart-circuit-breakers-2026-05-06.md`
