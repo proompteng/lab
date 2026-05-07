@@ -3169,6 +3169,10 @@ def _build_hypothesis_runtime_payload(
         tca_summary=tca_summary,
         market_context_status=market_context_status,
         jangar_dependency_quorum=dependency_quorum,
+        market_session_open=cast(
+            bool | None,
+            getattr(scheduler.state, "market_session_open", None),
+        ),
     )
     summary = summarize_hypothesis_runtime_statuses(
         items,
