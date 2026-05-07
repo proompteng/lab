@@ -132,6 +132,19 @@ export const getReadyHandler = async () => {
     admissionPassports: runtimeAdmission.admissionPassports,
     consumerClass: 'serving',
   })
+  const recoveryWarrants = runtimeAdmission.recoveryWarrants ?? []
+  const runtimeProofCells = runtimeAdmission.runtimeProofCells ?? []
+  const projectionWatermarks = runtimeAdmission.projectionWatermarks ?? []
+  const servingRecoveryWarrant =
+    recoveryWarrants.find((warrant) => warrant.execution_class === 'serving' && warrant.status !== 'superseded') ?? null
+  const servingRuntimeProofCells = servingRecoveryWarrant
+    ? runtimeProofCells.filter((cell) =>
+        servingRecoveryWarrant.required_proof_cell_ids.includes(cell.runtime_proof_cell_id),
+      )
+    : []
+  const servingRuntimeProofCellsHealthy =
+    servingRecoveryWarrant !== null &&
+    servingRuntimeProofCells.every((cell) => !cell.required || cell.status === 'healthy')
 
   const controllersOk =
     isControllerHealthReady(agentsController) &&
@@ -161,6 +174,11 @@ export const getReadyHandler = async () => {
     runtime_kits: runtimeAdmission.runtimeKits,
     admission_passports: runtimeAdmission.admissionPassports,
     serving_passport_id: runtimeAdmission.servingPassportId,
+    recovery_warrants: recoveryWarrants,
+    runtime_proof_cells: runtimeProofCells,
+    projection_watermarks: projectionWatermarks,
+    serving_recovery_warrant_id: servingRecoveryWarrant?.recovery_warrant_id ?? null,
+    serving_runtime_proof_cells_healthy: servingRuntimeProofCellsHealthy,
   })
 
   const headers: Record<string, string> = {

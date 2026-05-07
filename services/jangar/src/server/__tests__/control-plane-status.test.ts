@@ -18,6 +18,9 @@ import type {
   ExecutionTrustStage,
   ExecutionTrustStatus,
   ExecutionTrustSwarm,
+  ProjectionWatermarkStatus,
+  RecoveryWarrantStatus,
+  RuntimeProofCellStatus,
   RuntimeKitStatus,
   WorkflowsReliabilityStatus,
 } from '~/data/agents-control-plane'
@@ -501,11 +504,65 @@ describe('control-plane status', () => {
     ...overrides,
   })
 
+  const buildRecoveryWarrant = (overrides: Partial<RecoveryWarrantStatus> = {}): RecoveryWarrantStatus => ({
+    recovery_warrant_id: 'recovery-warrant:serving:1',
+    recovery_epoch_id: 'recovery-epoch:serving:1',
+    swarm_name: 'jangar-control-plane',
+    execution_class: 'serving',
+    admitted_revision: 'shadow-v1',
+    admitted_image_digest: null,
+    runtime_kit_digest: 'runtime-1',
+    admission_passport_id: 'passport:serving:1',
+    required_proof_cell_ids: ['runtime-proof-cell:serving:1'],
+    active_backlog_seat_count: 0,
+    projection_watermark_ids: ['projection-watermark:ready:1'],
+    status: 'sealed',
+    opened_at: '2026-01-20T00:00:00Z',
+    sealed_at: '2026-01-20T00:00:00Z',
+    superseded_at: null,
+    reason_codes: [],
+    ...overrides,
+  })
+
+  const buildRuntimeProofCell = (overrides: Partial<RuntimeProofCellStatus> = {}): RuntimeProofCellStatus => ({
+    runtime_proof_cell_id: 'runtime-proof-cell:serving:1',
+    recovery_warrant_id: 'recovery-warrant:serving:1',
+    runtime_kit_id: 'runtime-kit:serving:1',
+    proof_kind: 'runtime_kit',
+    proof_subject: 'runtime-kit:serving:1',
+    expected_ref: 'digest-serving',
+    observed_ref: 'healthy',
+    artifact_ref: 'jangar:/ready',
+    content_hash: 'digest-serving',
+    status: 'healthy',
+    required: true,
+    reason_codes: [],
+    observed_at: '2026-01-20T00:00:00Z',
+    expires_at: '2026-01-20T00:05:00Z',
+    ...overrides,
+  })
+
+  const buildProjectionWatermark = (overrides: Partial<ProjectionWatermarkStatus> = {}): ProjectionWatermarkStatus => ({
+    projection_watermark_id: 'projection-watermark:ready:1',
+    consumer_key: 'jangar_ready',
+    recovery_warrant_id: 'recovery-warrant:serving:1',
+    projection_digest: 'projection-digest-1',
+    source_ref: 'admission-passport:passport:serving:1',
+    observed_at: '2026-01-20T00:00:00Z',
+    expires_at: '2026-01-20T00:05:00Z',
+    status: 'fresh',
+    reason_codes: [],
+    ...overrides,
+  })
+
   const buildRuntimeAdmissionSnapshot = (
     overrides: Partial<{
       runtimeKits: RuntimeKitStatus[]
       admissionPassports: AdmissionPassportStatus[]
       servingPassportId: string | null
+      recoveryWarrants: RecoveryWarrantStatus[]
+      runtimeProofCells: RuntimeProofCellStatus[]
+      projectionWatermarks: ProjectionWatermarkStatus[]
     }> = {},
   ) => ({
     runtimeKits: overrides.runtimeKits ?? [
@@ -527,6 +584,38 @@ describe('control-plane status', () => {
       }),
     ],
     servingPassportId: overrides.servingPassportId ?? 'passport:serving:1',
+    recoveryWarrants: overrides.recoveryWarrants ?? [
+      buildRecoveryWarrant(),
+      buildRecoveryWarrant({
+        recovery_warrant_id: 'recovery-warrant:implement:1',
+        execution_class: 'implement',
+        runtime_kit_digest: 'runtime-2',
+        admission_passport_id: 'passport:swarm_implement:1',
+        required_proof_cell_ids: ['runtime-proof-cell:implement:1'],
+        projection_watermark_ids: ['projection-watermark:status:1'],
+      }),
+    ],
+    runtimeProofCells: overrides.runtimeProofCells ?? [
+      buildRuntimeProofCell(),
+      buildRuntimeProofCell({
+        runtime_proof_cell_id: 'runtime-proof-cell:implement:1',
+        recovery_warrant_id: 'recovery-warrant:implement:1',
+        runtime_kit_id: 'runtime-kit:collaboration:1',
+        proof_subject: 'runtime-kit:collaboration:1',
+        expected_ref: 'digest-collaboration',
+        artifact_ref: 'jangar:codex:nats-collaboration',
+        content_hash: 'digest-collaboration',
+      }),
+    ],
+    projectionWatermarks: overrides.projectionWatermarks ?? [
+      buildProjectionWatermark(),
+      buildProjectionWatermark({
+        projection_watermark_id: 'projection-watermark:status:1',
+        consumer_key: 'control_plane_status',
+        recovery_warrant_id: 'recovery-warrant:implement:1',
+        source_ref: 'admission-passport:passport:swarm_implement:1',
+      }),
+    ],
   })
 
   const healthyRuntimeAdmissionSnapshot = buildRuntimeAdmissionSnapshot()
@@ -601,6 +690,9 @@ describe('control-plane status', () => {
     expect(status.runtime_kits).toEqual(healthyRuntimeAdmissionSnapshot.runtimeKits)
     expect(status.admission_passports).toEqual(healthyRuntimeAdmissionSnapshot.admissionPassports)
     expect(status.serving_passport_id).toBe('passport:serving:1')
+    expect(status.recovery_warrants).toEqual(healthyRuntimeAdmissionSnapshot.recoveryWarrants)
+    expect(status.runtime_proof_cells).toEqual(healthyRuntimeAdmissionSnapshot.runtimeProofCells)
+    expect(status.projection_watermarks).toEqual(healthyRuntimeAdmissionSnapshot.projectionWatermarks)
     expect(status.workflows).toEqual({
       active_job_runs: 0,
       recent_failed_jobs: 0,
@@ -822,6 +914,46 @@ describe('control-plane status', () => {
                 required_runtime_kits: ['runtime-kit:collaboration:2'],
               }),
             ],
+            recoveryWarrants: [
+              buildRecoveryWarrant(),
+              buildRecoveryWarrant({
+                recovery_warrant_id: 'recovery-warrant:implement:2',
+                execution_class: 'implement',
+                runtime_kit_digest: 'runtime-2',
+                admission_passport_id: 'passport:swarm_implement:2',
+                required_proof_cell_ids: ['runtime-proof-cell:implement:2'],
+                projection_watermark_ids: ['projection-watermark:status:2'],
+                status: 'broken',
+                sealed_at: null,
+                reason_codes: ['runtime_kit_component_missing:codex_nats_publish'],
+              }),
+            ],
+            runtimeProofCells: [
+              buildRuntimeProofCell(),
+              buildRuntimeProofCell({
+                runtime_proof_cell_id: 'runtime-proof-cell:implement:2',
+                recovery_warrant_id: 'recovery-warrant:implement:2',
+                runtime_kit_id: 'runtime-kit:collaboration:2',
+                proof_subject: 'binary:codex-nats-publish',
+                expected_ref: 'codex-nats-publish',
+                observed_ref: null,
+                artifact_ref: 'checked_paths=[codex-nats-publish]',
+                content_hash: null,
+                status: 'missing',
+                reason_codes: ['runtime_kit_component_missing:codex_nats_publish'],
+              }),
+            ],
+            projectionWatermarks: [
+              buildProjectionWatermark(),
+              buildProjectionWatermark({
+                projection_watermark_id: 'projection-watermark:status:2',
+                consumer_key: 'control_plane_status',
+                recovery_warrant_id: 'recovery-warrant:implement:2',
+                source_ref: 'admission-passport:passport:swarm_implement:2',
+                status: 'degraded',
+                reason_codes: ['runtime_kit_component_missing:codex_nats_publish'],
+              }),
+            ],
           }),
       },
     )
@@ -840,6 +972,24 @@ describe('control-plane status', () => {
         expect.objectContaining({
           consumer_class: 'swarm_implement',
           decision: 'block',
+        }),
+      ]),
+    )
+    expect(status.recovery_warrants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          execution_class: 'implement',
+          status: 'broken',
+          reason_codes: expect.arrayContaining(['runtime_kit_component_missing:codex_nats_publish']),
+        }),
+      ]),
+    )
+    expect(status.runtime_proof_cells).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          recovery_warrant_id: 'recovery-warrant:implement:2',
+          proof_kind: 'runtime_kit',
+          status: 'missing',
         }),
       ]),
     )

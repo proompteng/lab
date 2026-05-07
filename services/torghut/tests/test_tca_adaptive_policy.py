@@ -145,6 +145,52 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
             self.assertEqual(expected["expected_shortfall_sample_count"], 2)
             self.assertEqual(expected["expected_shortfall_coverage"], Decimal("1"))
 
+    def test_build_tca_gate_inputs_filters_by_account_label(self) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            self._insert_observations(
+                session,
+                strategy,
+                symbol="AAPL",
+                regime="trend",
+                slippages=[Decimal("4")],
+                shortfalls=[Decimal("1")],
+                expected_shortfall_p50_values=[Decimal("1")],
+                realized_shortfall_bps_values=[Decimal("-8")],
+                divergence_bps_values=[Decimal("0")],
+                adaptive_applied=False,
+                account_label="paper",
+            )
+            self._insert_observations(
+                session,
+                strategy,
+                symbol="AAPL",
+                regime="trend-live",
+                slippages=[Decimal("100")],
+                shortfalls=[Decimal("10")],
+                expected_shortfall_p50_values=[Decimal("1")],
+                realized_shortfall_bps_values=[Decimal("12")],
+                divergence_bps_values=[Decimal("0")],
+                adaptive_applied=False,
+                account_label="live",
+            )
+
+            paper = build_tca_gate_inputs(
+                session,
+                strategy_id=strategy.id,
+                account_label="paper",
+            )
+            live = build_tca_gate_inputs(
+                session,
+                strategy_id=strategy.id,
+                account_label="live",
+            )
+
+        self.assertEqual(paper["order_count"], 1)
+        self.assertEqual(paper["avg_abs_slippage_bps"], Decimal("4"))
+        self.assertEqual(live["order_count"], 1)
+        self.assertEqual(live["avg_abs_slippage_bps"], Decimal("100"))
+
     def test_derivation_fallback_when_expected_shortfall_coverage_is_insufficient(
         self,
     ) -> None:
@@ -349,12 +395,13 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
         expected_shortfall_p95_values: list[Decimal] | None = None,
         realized_shortfall_bps_values: list[Decimal | None] | None = None,
         divergence_bps_values: list[Decimal] | None = None,
+        account_label: str = "paper",
     ) -> None:
         base_ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
         for idx, slippage in enumerate(slippages):
             decision = TradeDecision(
                 strategy_id=strategy.id,
-                alpaca_account_label="paper",
+                alpaca_account_label=account_label,
                 symbol=symbol,
                 timeframe="1Min",
                 decision_json={
@@ -430,7 +477,7 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
                 execution_id=execution.id,
                 trade_decision_id=decision.id,
                 strategy_id=strategy.id,
-                alpaca_account_label="paper",
+                alpaca_account_label=account_label,
                 symbol=symbol,
                 side="buy",
                 arrival_price=Decimal("100"),

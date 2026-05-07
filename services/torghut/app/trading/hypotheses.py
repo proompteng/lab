@@ -72,6 +72,11 @@ def _optional_int(value: object) -> int | None:
 
 
 def _parse_iso8601(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
     if not isinstance(value, str):
         return None
     normalized = value.strip()
@@ -484,6 +489,13 @@ def compile_hypothesis_runtime_statuses(
         tca_summary.get('avg_realized_shortfall_bps')
     )
     post_cost_expectancy_bps_proxy = -avg_realized_shortfall_bps
+    tca_last_computed_at = _parse_iso8601(tca_summary.get('last_computed_at'))
+    tca_age_minutes: int | None = None
+    if tca_last_computed_at is not None:
+        tca_age_minutes = max(
+            0,
+            int((now - tca_last_computed_at).total_seconds() / 60),
+        )
 
     statuses: list[dict[str, object]] = []
     for manifest in registry.items:
@@ -572,6 +584,15 @@ def compile_hypothesis_runtime_statuses(
             and feature_batch_rows_total <= 0
         ):
             reasons.append('required_feature_set_unavailable')
+        if (
+            tca_order_count > 0
+            and requirements.max_evidence_age_minutes is not None
+            and (
+                tca_age_minutes is None
+                or tca_age_minutes > requirements.max_evidence_age_minutes
+            )
+        ):
+            reasons.append('tca_evidence_stale')
 
         readiness_blockers = set(reasons)
 
@@ -579,7 +600,12 @@ def compile_hypothesis_runtime_statuses(
         capital_multiplier = Decimal('0')
         promotion_eligible = False
         rollback_required = bool(
-            {'jangar_dependency_delay', 'jangar_dependency_block', 'signal_continuity_alert_active'}
+            {
+                'jangar_dependency_delay',
+                'jangar_dependency_block',
+                'signal_continuity_alert_active',
+                'tca_evidence_stale',
+            }
             & readiness_blockers
         )
 
@@ -651,6 +677,12 @@ def compile_hypothesis_runtime_statuses(
                     'evidence_age_minutes': evidence_age_minutes,
                     'market_context_freshness_seconds': market_context_freshness_seconds,
                     'tca_order_count': tca_order_count,
+                    'tca_last_computed_at': (
+                        tca_last_computed_at.isoformat()
+                        if tca_last_computed_at is not None
+                        else None
+                    ),
+                    'tca_age_minutes': tca_age_minutes,
                     'avg_abs_slippage_bps': _decimal_to_string(avg_abs_slippage_bps),
                     'post_cost_expectancy_bps_proxy': _decimal_to_string(
                         post_cost_expectancy_bps_proxy

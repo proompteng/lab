@@ -246,7 +246,9 @@ export const createAgentMessagesStore = (options: AgentMessagesStoreOptions = {}
       query = query.where('created_at', '>', since)
     }
 
-    const rows = await query.orderBy('created_at', 'asc').limit(limit).execute()
+    const rows = since
+      ? await query.orderBy('created_at', 'asc').limit(limit).execute()
+      : (await query.orderBy('created_at', 'desc').limit(limit).execute()).reverse()
     return rows.map((row) =>
       mapRow({
         ...(row as typeof row & { attrs?: Record<string, unknown> }),

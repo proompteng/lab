@@ -130,6 +130,51 @@ class TestWhitepaperCandidateCompiler(TestCase):
             "300",
         )
 
+    def test_end_of_day_reversal_family_is_executable_from_loser_reversal_claim(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-run-eod-reversal",
+            claims=[
+                {
+                    "claim_id": "claim-eod-reversal",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Individual-stock losers can reverse in the final 30 minutes "
+                        "with closing-window rebid confirmation."
+                    ),
+                    "required_features": [
+                        "closing_window",
+                        "intraday_return_rank",
+                        "quote_quality",
+                    ],
+                    "confidence": "0.77",
+                },
+                {
+                    "claim_id": "claim-eod-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": "The reversal sleeve must pass held-out transaction-cost stress.",
+                    "required_features": ["transaction_cost_stress"],
+                    "confidence": "0.72",
+                },
+            ],
+            target_net_pnl_per_day=Decimal("300"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        eod_specs = [
+            spec
+            for spec in compilation.executable_specs
+            if spec.family_template_id == "end_of_day_reversal_v1"
+        ]
+        self.assertEqual(len(eod_specs), 1)
+        self.assertEqual(
+            eod_specs[0].runtime_strategy_name,
+            "end-of-day-reversal-long-v1",
+        )
+        self.assertEqual(eod_specs[0].objective["target_net_pnl_per_day"], "300")
+
     def test_missing_seed_sweep_blocks_execution(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-run-3",

@@ -413,7 +413,10 @@ def build_hypothesis_runtime_summary(
     items = compile_hypothesis_runtime_statuses(
         registry=registry,
         state=state,
-        tca_summary=build_tca_gate_inputs(session=session),
+        tca_summary=build_tca_gate_inputs(
+            session=session,
+            account_label=settings.trading_account_label,
+        ),
         market_context_status=market_context_status,
         jangar_dependency_quorum=dependency_quorum,
     )

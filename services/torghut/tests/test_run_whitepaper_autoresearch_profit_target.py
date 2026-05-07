@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import sys
 from argparse import Namespace
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import cast
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -115,6 +117,26 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             prefetch_full_window_rows=False,
             persist_results=False,
         )
+
+    def test_parse_args_defaults_to_300_daily_profit_program(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            with patch.object(
+                sys,
+                "argv",
+                [
+                    "run_whitepaper_autoresearch_profit_target.py",
+                    "--output-dir",
+                    tmpdir,
+                ],
+            ):
+                args = runner._parse_args()
+
+        self.assertEqual(args.target_net_pnl_per_day, "300")
+        self.assertEqual(
+            args.program,
+            Path("config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml"),
+        )
+        self.assertEqual(args.symbols.split(","), _CHIP_UNIVERSE)
 
     def test_seed_recent_whitepapers_runs_end_to_end_and_writes_artifacts(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -467,7 +489,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(selection["budget"]["selected_count"], 3)
         self.assertEqual(payload["replay_candidate_spec_count"], 3)
         self.assertEqual(payload["evidence_bundle_count"], 3)
-        self.assertEqual(payload["candidate_spec_count"], args.max_candidates)
+        self.assertGreater(payload["candidate_spec_count"], args.max_candidates)
+        self.assertEqual(
+            selection["budget"]["compiled_candidate_count"],
+            payload["candidate_spec_count"],
+        )
         self.assertTrue(payload["best_false_negative_table"])
         self.assertEqual(
             payload["best_false_negative_table"][0]["evidence_status"], "not_replayed"
@@ -1101,6 +1127,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(parsed.source_jsonl, [source_path])
         self.assertEqual(parsed.clickhouse_password_env, "TORGHUT_CLICKHOUSE_PASSWORD")
         self.assertEqual(parsed.symbols, ",".join(_CHIP_UNIVERSE))
+        self.assertEqual(
+            parsed.max_frontier_candidates_per_spec,
+            runner._DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
+        )
         self.assertFalse(parsed.persist_results)
 
     def test_clickhouse_password_env_resolution_keeps_secret_out_of_argv(
@@ -1152,6 +1182,60 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(payload["source_count"], 1)
         self.assertEqual(manifest["paper_sources"][0]["run_id"], "paper-jsonl-2026")
         self.assertEqual(sources[0]["run_id"], "paper-jsonl-2026")
+
+    def test_candidate_budget_does_not_truncate_compiled_hypothesis_universe(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_path = root / "sources.jsonl"
+            rows: list[dict[str, object]] = []
+            for index in range(6):
+                payload = dict(_source_jsonl_payload())
+                payload["run_id"] = f"paper-jsonl-coverage-{index}"
+                payload["title"] = f"Coverage Paper {index}"
+                payload["source_url"] = f"https://example.test/coverage-{index}.pdf"
+                claims = [
+                    dict(item)
+                    for item in cast(list[dict[str, object]], payload["claims"])
+                ]
+                claims[0][
+                    "claim_text"
+                ] = f"Order-flow momentum continuation signal {index} with late-day reversal validation."
+                payload["claims"] = claims
+                rows.append(payload)
+            source_path.write_text(
+                "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+                encoding="utf-8",
+            )
+            output_dir = root / "epoch"
+            args = self._args(output_dir)
+            args.seed_recent_whitepapers = False
+            args.source_jsonl = [source_path]
+            args.max_candidates = 2
+            args.top_k = 1
+            args.exploration_slots = 1
+            args.persist_results = False
+
+            payload = runner.run_whitepaper_autoresearch_profit_target(args)
+            selection = json.loads(
+                (output_dir / "candidate-selection-manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertGreater(payload["candidate_spec_count"], args.max_candidates)
+        self.assertEqual(
+            selection["budget"]["compiled_candidate_count"],
+            payload["candidate_spec_count"],
+        )
+        self.assertEqual(
+            selection["budget"]["selected_count"],
+            payload["replay_candidate_spec_count"],
+        )
+        self.assertLessEqual(
+            payload["replay_candidate_spec_count"], args.max_candidates
+        )
 
     def test_real_replay_builds_evidence_and_skips_incomplete_results(self) -> None:
         with TemporaryDirectory() as tmpdir:
