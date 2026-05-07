@@ -291,15 +291,18 @@ def build_profitability_proof_floor_receipt(
         },
     )
 
+    quant_required = _bool(quant_evidence.get("required", True))
     quant_status = _text(quant_evidence.get("status"), "unknown").lower()
     quant_reason = _text(quant_evidence.get("reason"), quant_status or "unknown")
-    if not _bool(quant_evidence.get("ok")):
+    if not quant_required and quant_status not in {"ok", "healthy", "pass", "not_required"}:
+        quant_state = "informational"
+    elif not _bool(quant_evidence.get("ok")):
         quant_state = "fail"
     elif quant_status in {"ok", "healthy", "pass", "not_required"}:
         quant_state = "pass"
     else:
         quant_state = "degraded"
-    if quant_state != "pass":
+    if quant_required and quant_state != "pass":
         _add_repair(
             repairs,
             code="repair_quant_ingestion",
@@ -313,13 +316,16 @@ def build_profitability_proof_floor_receipt(
         state=quant_state,
         reason=quant_reason,
         capital_effect="none"
-        if quant_state == "pass"
+        if quant_state in {"informational", "pass"}
         else "paper_hold"
         if not live_mode
         else "live_hold",
         source_ref={
+            "required": quant_required,
             "account": quant_evidence.get("account"),
             "window": quant_evidence.get("window"),
+            "blocking_reasons": quant_evidence.get("blocking_reasons") or [],
+            "informational_reasons": quant_evidence.get("informational_reasons") or [],
             "latest_metrics_updated_at": quant_evidence.get(
                 "latest_metrics_updated_at"
             ),

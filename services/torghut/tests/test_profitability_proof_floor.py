@@ -198,6 +198,92 @@ def test_paper_all_clear_routes_to_paper_candidate() -> None:
     assert receipt["max_notional"] == "250"
 
 
+def test_optional_degraded_quant_evidence_is_informational() -> None:
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="TORGHUT_SIM",
+        torghut_revision="torghut-sim-00345",
+        trading_mode="paper",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "capital_stage": "paper",
+        },
+        hypothesis_payload=_healthy_hypothesis_payload(),
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence={
+            "required": False,
+            "ok": True,
+            "status": "degraded",
+            "reason": "quant_latest_metrics_empty",
+            "blocking_reasons": [],
+            "informational_reasons": [
+                "quant_latest_metrics_empty",
+                "quant_pipeline_stages_missing",
+            ],
+            "account": "paper",
+            "window": "15m",
+        },
+        market_context_status=_healthy_market_context(),
+        tca_summary=_fresh_tca_summary(),
+        simple_lane_status=_simple_lane_status(),
+        now=NOW,
+    )
+
+    quant_dimension = next(
+        item
+        for item in receipt["proof_dimensions"]
+        if item["dimension"] == "quant_ingestion"
+    )
+    repair_codes = [repair["code"] for repair in receipt["repair_ladder"]]
+
+    assert receipt["route_state"] == "paper_candidate"
+    assert receipt["capital_state"] == "paper_allowed"
+    assert receipt["blocking_reasons"] == []
+    assert quant_dimension["state"] == "informational"
+    assert quant_dimension["capital_effect"] == "none"
+    assert "repair_quant_ingestion" not in repair_codes
+
+
+def test_required_degraded_quant_evidence_keeps_capital_at_zero() -> None:
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="TORGHUT_SIM",
+        torghut_revision="torghut-sim-00345",
+        trading_mode="paper",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "capital_stage": "paper",
+        },
+        hypothesis_payload=_healthy_hypothesis_payload(),
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence={
+            "required": True,
+            "ok": False,
+            "status": "degraded",
+            "reason": "quant_latest_metrics_empty",
+            "blocking_reasons": ["quant_latest_metrics_empty"],
+            "informational_reasons": [],
+            "account": "paper",
+            "window": "15m",
+        },
+        market_context_status=_healthy_market_context(),
+        tca_summary=_fresh_tca_summary(),
+        simple_lane_status=_simple_lane_status(),
+        now=NOW,
+    )
+
+    assert receipt["route_state"] == "repair_only"
+    assert receipt["capital_state"] == "zero_notional"
+    assert receipt["blocking_reasons"] == ["quant_latest_metrics_empty"]
+    assert [repair["code"] for repair in receipt["repair_ladder"]] == [
+        "repair_quant_ingestion"
+    ]
+
+
 def test_live_submit_disabled_fails_closed_even_when_other_dimensions_pass() -> None:
     receipt = build_profitability_proof_floor_receipt(
         account_label="PA3SX7FYNUTF",
