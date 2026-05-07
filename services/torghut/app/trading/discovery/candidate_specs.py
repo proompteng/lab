@@ -77,15 +77,15 @@ _AI_ACCELERATOR_UNIVERSE_PROFILE: tuple[str, ...] = (
     "TSM",
     "ASML",
     "MU",
-    "QCOM",
+    "ARM",
 )
 _EQUIPMENT_MEMORY_UNIVERSE_PROFILE: tuple[str, ...] = (
     "AMAT",
     "LRCX",
     "KLAC",
     "MU",
+    "ASML",
     "TXN",
-    "ADI",
 )
 _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE: tuple[str, ...] = (
     _RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE
@@ -98,18 +98,18 @@ _LARGE_CAP_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
 )
 _BREAKOUT_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
     _AI_ACCELERATOR_UNIVERSE_PROFILE,
-    ("NVDA", "AVGO", "AMD", "AMAT", "LRCX", "KLAC", "MU", "QCOM"),
+    ("NVDA", "AVGO", "AMD", "AMAT", "LRCX", "KLAC", "MU", "ARM"),
     _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _REVERSAL_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
-    ("AMD", "TXN", "ADI", "AMAT", "LRCX", "MU"),
-    ("AMD", "TXN", "ADI", "AMAT", "LRCX", "KLAC", "MU", "AVGO"),
+    ("AMD", "TXN", "INTC", "AMAT", "LRCX", "MU"),
+    ("AMD", "TXN", "INTC", "AMAT", "LRCX", "KLAC", "MU", "AVGO"),
     _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE,
 )
 _TSMOM_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
     ("NVDA",),
     ("NVDA", "AVGO", "AMD", "TSM"),
-    ("NVDA", "AVGO", "AMD", "TSM", "ASML", "AMAT", "MU", "QCOM"),
+    ("NVDA", "AVGO", "AMD", "TSM", "ASML", "AMAT", "MU", "ARM"),
 )
 
 _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {

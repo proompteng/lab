@@ -42,6 +42,10 @@ const torghutArm64ImageChecks: ManifestCheck[] = [
     path: 'argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml',
     selectorPath: ['spec', 'templates', 0],
   },
+  {
+    path: 'argocd/applications/torghut/whitepaper-autoresearch-workflowtemplate.yaml',
+    selectorPath: ['spec', 'templates', 0],
+  },
   { path: 'argocd/applications/torghut-options/catalog/deployment.yaml', selectorPath: ['spec', 'template', 'spec'] },
   { path: 'argocd/applications/torghut-options/enricher/deployment.yaml', selectorPath: ['spec', 'template', 'spec'] },
 ]
@@ -71,5 +75,25 @@ describe('Torghut manifest scheduling', () => {
         'kubernetes.io/arch': 'arm64',
       })
     }
+  })
+
+  it('keeps whitepaper autoresearch off the serving pod resource envelope', () => {
+    const manifest = parseManifest('argocd/applications/torghut/whitepaper-autoresearch-workflowtemplate.yaml')
+    const template = getAtPath(manifest, ['spec', 'templates', 0])
+    const container = getAtPath(template, ['container'])
+    const resources = getAtPath(container, ['resources'])
+    const requests = getAtPath(resources, ['requests'])
+    const limits = getAtPath(resources, ['limits'])
+
+    expect(requests.memory).toBe('8Gi')
+    expect(limits.memory).toBe('16Gi')
+    expect(container.volumeMounts).toContainEqual(
+      expect.objectContaining({
+        mountPath: '/etc/torghut',
+        name: 'strategy-config',
+      }),
+    )
+    expect(JSON.stringify(template)).toContain('run_whitepaper_autoresearch_profit_target.py')
+    expect(JSON.stringify(template)).toContain('--require-no-flat-days')
   })
 })

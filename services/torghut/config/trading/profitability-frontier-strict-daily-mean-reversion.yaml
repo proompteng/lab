@@ -25,7 +25,7 @@ consistency_constraints:
   require_every_day_active: true
 strategy_overrides:
   universe_symbols:
-    - ['NVDA', 'TSM', 'AVGO', 'AMD', 'MU', 'TXN', 'ADI', 'LRCX', 'KLAC', 'QCOM', 'AMAT', 'ASML']
+    - ['NVDA', 'TSM', 'AVGO', 'MU', 'AMD', 'ASML', 'INTC', 'LRCX', 'AMAT', 'TXN', 'ARM', 'KLAC']
   max_position_pct_equity:
     - '2.0'
     - '4.0'

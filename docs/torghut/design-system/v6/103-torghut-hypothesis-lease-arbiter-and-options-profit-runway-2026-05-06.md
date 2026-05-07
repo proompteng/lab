@@ -253,7 +253,7 @@ below the paper/live gate.
 
 Measurements:
 
-- universe: `NVDA, TSM, AVGO, AMD, MU, TXN, ADI, LRCX, KLAC, QCOM, AMAT, ASML`;
+- universe: `NVDA, TSM, AVGO, MU, AMD, ASML, INTC, LRCX, AMAT, TXN, ARM, KLAC`;
 - sample: at least five trading sessions or an approved replay equivalent;
 - rejection ratio below 1 percent for paper admission;
 - expected net edge after fees and slippage greater than zero;
