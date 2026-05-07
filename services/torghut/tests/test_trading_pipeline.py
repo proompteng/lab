@@ -98,6 +98,48 @@ def _with_default_executable_quote(signal: SignalEnvelope) -> SignalEnvelope:
     return signal.model_copy(update={"payload": payload})
 
 
+def _market_context_bundle(
+    *,
+    symbol: str = "AAPL",
+    as_of: datetime | None = None,
+    freshness_seconds: int = 20,
+    quality_score: float = 0.92,
+) -> MarketContextBundle:
+    as_of = as_of or datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
+
+    def domain(name: str) -> dict[str, object]:
+        return {
+            "domain": name,
+            "state": "ok",
+            "asOf": as_of.isoformat(),
+            "freshnessSeconds": freshness_seconds,
+            "maxFreshnessSeconds": 300,
+            "sourceCount": 1,
+            "qualityScore": quality_score,
+            "payload": {},
+            "citations": [],
+            "riskFlags": [],
+        }
+
+    return MarketContextBundle.model_validate(
+        {
+            "contextVersion": "torghut.market-context.v1",
+            "symbol": symbol,
+            "asOfUtc": as_of.isoformat(),
+            "freshnessSeconds": freshness_seconds,
+            "qualityScore": quality_score,
+            "sourceCount": 4,
+            "riskFlags": [],
+            "domains": {
+                "technicals": domain("technicals"),
+                "fundamentals": domain("fundamentals"),
+                "news": domain("news"),
+                "regime": domain("regime"),
+            },
+        }
+    )
+
+
 class FakeIngestor:
     def __init__(
         self,
@@ -716,7 +758,12 @@ class TestTradingPipeline(TestCase):
                 "trading_simple_order_feed_telemetry_enabled",
                 "trading_universe_static_fallback_enabled",
                 "trading_universe_static_fallback_symbols_raw",
+                "trading_market_context_url",
+                "trading_market_context_timeout_seconds",
+                "trading_market_context_required",
                 "trading_market_context_fail_mode",
+                "trading_market_context_min_quality",
+                "trading_market_context_max_staleness_seconds",
                 "llm_enabled",
                 "llm_min_confidence",
                 "llm_adjustment_allowed",
@@ -1469,6 +1516,263 @@ class TestTradingPipeline(TestCase):
                 control_plane.get("live_submission_gate", {}).get("reason"),
                 "non_live_mode",
             )
+
+    def test_simple_pipeline_refreshes_market_context_before_profitability_floor(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_market_context_url = "http://market-context.test/api"
+        config.settings.trading_market_context_timeout_seconds = 1
+        config.settings.trading_market_context_max_staleness_seconds = 300
+        config.settings.trading_market_context_min_quality = 0.4
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        class _MarketContextClient:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def fetch(
+                self, symbol: str, *, as_of: datetime | None = None
+            ) -> MarketContextBundle:
+                del as_of
+                self.calls.append(symbol)
+                return _market_context_bundle(symbol=symbol)
+
+        class _UniverseResolver:
+            @staticmethod
+            def get_resolution() -> SimpleNamespace:
+                return SimpleNamespace(symbols={"AAPL"})
+
+        captured_market_context: dict[str, object] = {}
+        fake_market_context = _MarketContextClient()
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline.market_context_client = cast(Any, fake_market_context)
+        pipeline.universe_resolver = cast(Any, _UniverseResolver())
+        pipeline.state.market_session_open = True
+        now = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
+
+        def _healthy_hypotheses(
+            session: Session,
+            *,
+            state: object,
+            market_context_status: dict[str, object],
+        ) -> dict[str, object]:
+            del session, state
+            captured_market_context.update(market_context_status)
+            return {
+                "summary": {
+                    "promotion_eligible_total": 1,
+                    "rollback_required_total": 0,
+                    "state_totals": {"canary_live": 1},
+                },
+                "items": [
+                    {
+                        "hypothesis_id": "H-CONT-01",
+                        "promotion_contract": {
+                            "max_avg_abs_slippage_bps": "12",
+                        },
+                    }
+                ],
+            }
+
+        with (
+            self.session_local() as session,
+            patch(
+                "app.trading.scheduler.simple_pipeline.build_hypothesis_runtime_summary",
+                side_effect=_healthy_hypotheses,
+            ),
+            patch(
+                "app.trading.scheduler.simple_pipeline.build_empirical_jobs_status",
+                return_value={"ready": True, "status": "healthy"},
+            ),
+            patch(
+                "app.trading.scheduler.simple_pipeline.load_quant_evidence_status",
+                return_value=self._healthy_quant_status(account_label="paper"),
+            ),
+            patch.object(
+                SimpleTradingPipeline,
+                "_live_submission_gate",
+                return_value={
+                    "allowed": True,
+                    "reason": "non_live_mode",
+                    "blocked_reasons": [],
+                    "capital_stage": "paper",
+                },
+            ),
+            patch(
+                "app.trading.scheduler.simple_pipeline.build_tca_gate_inputs",
+                return_value={
+                    "order_count": 40,
+                    "filled_execution_count": 40,
+                    "unsettled_execution_count": 0,
+                    "latest_execution_created_at": now.isoformat(),
+                    "last_computed_at": now.isoformat(),
+                    "avg_abs_slippage_bps": "5.0",
+                    "scope_symbols": ["AAPL"],
+                    "scope_symbol_count": 1,
+                    "symbol_breakdown": [
+                        {
+                            "symbol": "AAPL",
+                            "order_count": 40,
+                            "avg_abs_slippage_bps": "5.0",
+                            "max_abs_slippage_bps": "7.0",
+                            "last_computed_at": now.isoformat(),
+                        }
+                    ],
+                },
+            ),
+        ):
+            receipt = pipeline._profitability_proof_floor(session=session)
+
+        self.assertEqual(fake_market_context.calls, ["AAPL"])
+        self.assertEqual(pipeline.state.last_market_context_symbol, "AAPL")
+        self.assertEqual(captured_market_context["last_freshness_seconds"], 20)
+        last_domain_states = cast(
+            dict[str, str], captured_market_context["last_domain_states"]
+        )
+        self.assertEqual(last_domain_states["news"], "ok")
+        self.assertEqual(receipt["floor_state"], "paper_ready")
+        proof_dimensions = cast(
+            list[dict[str, object]], receipt["proof_dimensions"]
+        )
+        dimensions = {
+            cast(str, item["dimension"]): item
+            for item in proof_dimensions
+        }
+        self.assertEqual(dimensions["market_context"]["state"], "pass")
+
+    def test_simple_pipeline_market_context_refresh_skips_recent_or_fresh_state(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_market_context_url = "http://market-context.test/api"
+        config.settings.trading_market_context_max_staleness_seconds = 300
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+
+        fetch_calls: list[str] = []
+
+        def _fetch(symbol: str) -> tuple[MarketContextBundle | None, str | None]:
+            fetch_calls.append(symbol)
+            return _market_context_bundle(symbol=symbol), None
+
+        pipeline._fetch_market_context = _fetch  # type: ignore[method-assign]
+        now = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
+        pipeline.state.last_market_context_checked_at = datetime(2026, 3, 26, 13, 29, 45)
+
+        self.assertTrue(pipeline._market_context_refresh_recent(now))
+        pipeline._refresh_market_context_for_proof_floor()
+        self.assertEqual(fetch_calls, [])
+
+        pipeline.state.last_market_context_checked_at = now - timedelta(seconds=60)
+        pipeline.state.last_market_context_as_of = datetime(2026, 3, 26, 13, 29, 30)
+        pipeline.state.last_market_context_freshness_seconds = 30
+        pipeline.state.market_context_alert_active = False
+        pipeline._refresh_market_context_for_proof_floor()
+
+        self.assertEqual(fetch_calls, [])
+        self.assertGreaterEqual(
+            cast(int, pipeline.state.last_market_context_freshness_seconds),
+            0,
+        )
+
+    def test_simple_pipeline_market_context_probe_symbol_fallbacks(self) -> None:
+        class _EmptyUniverseResolver:
+            @staticmethod
+            def get_resolution() -> SimpleNamespace:
+                return SimpleNamespace(symbols={"", "   "})
+
+        class _FailingUniverseResolver:
+            @staticmethod
+            def get_resolution() -> SimpleNamespace:
+                raise RuntimeError("universe unavailable")
+
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+
+        pipeline.state.last_market_context_symbol = " nvda "
+        self.assertEqual(pipeline._market_context_probe_symbol(), "NVDA")
+
+        pipeline.state.last_market_context_symbol = None
+        pipeline.universe_resolver = cast(Any, _EmptyUniverseResolver())
+        self.assertIsNone(pipeline._market_context_probe_symbol())
+
+        pipeline.universe_resolver = cast(Any, _FailingUniverseResolver())
+        self.assertIsNone(pipeline._market_context_probe_symbol())
+
+    def test_simple_pipeline_market_context_refresh_handles_empty_probe_symbol(
+        self,
+    ) -> None:
+        from app import config
+
+        class _EmptyUniverseResolver:
+            @staticmethod
+            def get_resolution() -> SimpleNamespace:
+                return SimpleNamespace(symbols=set())
+
+        config.settings.trading_market_context_url = "http://market-context.test/api"
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline.universe_resolver = cast(Any, _EmptyUniverseResolver())
+        pipeline._refresh_market_context_for_proof_floor()
+
+        self.assertIsNone(pipeline.state.last_market_context_symbol)
 
     def test_simple_pipeline_drift_check_skip_does_not_mutate_promotion_state(
         self,

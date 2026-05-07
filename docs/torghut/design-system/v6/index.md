@@ -8,10 +8,16 @@
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM
   reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-07T21:25Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-07T22:25Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-07T21:25Z`):
+- Evidence (current next-work priority, refreshed `2026-05-07T22:25Z`):
+  - `171-torghut-profit-evidence-half-life-and-capital-carry-governor-2026-05-07.md`
+  - `docs/agents/designs/167-jangar-terminal-evidence-half-life-and-debris-retirement-2026-05-07.md`
+  - `170-torghut-capital-surface-repair-cadence-and-route-edge-market-2026-05-07.md`
+  - `docs/agents/designs/166-jangar-repair-cadence-ledger-and-capital-surface-admission-2026-05-07.md`
+  - `170-torghut-data-witness-capability-bonds-and-capital-observation-gates-2026-05-07.md`
+  - `docs/agents/designs/166-jangar-evidence-capability-ledger-and-observer-lease-gates-2026-05-07.md`
   - `169-torghut-route-reacquisition-board-and-profit-repair-packets-2026-05-07.md`
   - `docs/agents/designs/165-jangar-proof-settlement-broker-and-profit-repair-packet-gates-2026-05-07.md`
   - `168-torghut-executable-alpha-receipts-and-capital-replay-board-2026-05-07.md`
