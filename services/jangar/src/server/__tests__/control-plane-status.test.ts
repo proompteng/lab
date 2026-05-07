@@ -1344,6 +1344,17 @@ describe('control-plane status', () => {
       reasons: ['watch_reliability_blocked'],
       message: 'Control-plane dependency quorum is blocked.',
     })
+    expect(status.dependency_quorum.segments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          segment: 'watch_stream',
+          status: 'blocked',
+          scope: 'global',
+          confidence: 'low',
+          reasons: ['watch_reliability_blocked'],
+        }),
+      ]),
+    )
     expect(status.namespaces[0]?.degraded_components ?? []).toContain('watch_reliability')
     expect(status.watch_reliability.status).toBe('degraded')
   })
@@ -1435,6 +1446,17 @@ describe('control-plane status', () => {
       reasons: ['watch_reliability_degraded'],
       message: 'Control-plane dependency quorum is degraded; delay capital promotion.',
     })
+    expect(status.dependency_quorum.segments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          segment: 'watch_stream',
+          status: 'degraded',
+          scope: 'single_capability',
+          confidence: 'medium',
+          reasons: ['watch_reliability_degraded'],
+        }),
+      ]),
+    )
     expect(status.namespaces[0]?.degraded_components ?? []).toContain('watch_reliability')
     expect(status.watch_reliability.status).toBe('degraded')
   })
