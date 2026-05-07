@@ -11,6 +11,7 @@ from app.models import Base, Execution, ExecutionTCAMetric, Strategy, TradeDecis
 from app.trading.tca import (
     build_tca_gate_inputs,
     derive_adaptive_execution_policy,
+    refresh_execution_tca_metrics,
     upsert_execution_tca_metric,
 )
 
@@ -303,6 +304,215 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
         self.assertEqual(metric.arrival_price, Decimal("316.93"))
         self.assertEqual(metric.slippage_bps, Decimal("0"))
         self.assertEqual(metric.shortfall_notional, Decimal("0.0000"))
+
+    def test_upsert_tca_refreshes_existing_metric_computed_at(self) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper",
+                symbol="MU",
+                timeframe="1Min",
+                decision_json={
+                    "strategy_id": str(strategy.id),
+                    "symbol": "MU",
+                    "action": "sell",
+                    "qty": "2",
+                    "params": {
+                        "price": "412.67",
+                        "price_snapshot": {"price": "316.93"},
+                    },
+                },
+                rationale="test",
+                status="submitted",
+                decision_hash="hash-existing-tca",
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_order_id="order-existing-tca",
+                client_order_id="client-existing-tca",
+                symbol="MU",
+                side="sell",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("2"),
+                filled_qty=Decimal("2"),
+                avg_fill_price=Decimal("316.93"),
+                status="filled",
+                execution_expected_adapter="alpaca",
+                execution_actual_adapter="alpaca",
+            )
+            session.add(execution)
+            session.flush()
+            old_computed_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            session.add(
+                ExecutionTCAMetric(
+                    execution_id=execution.id,
+                    trade_decision_id=decision.id,
+                    strategy_id=strategy.id,
+                    alpaca_account_label="paper",
+                    symbol="MU",
+                    side="sell",
+                    arrival_price=Decimal("412.67"),
+                    avg_fill_price=Decimal("316.93"),
+                    filled_qty=Decimal("2"),
+                    signed_qty=Decimal("-2"),
+                    slippage_bps=Decimal("2319"),
+                    shortfall_notional=Decimal("191.48"),
+                    churn_qty=Decimal("0"),
+                    churn_ratio=Decimal("0"),
+                    computed_at=old_computed_at,
+                )
+            )
+            session.commit()
+
+            metric = upsert_execution_tca_metric(session, execution)
+
+        self.assertEqual(metric.arrival_price, Decimal("316.93"))
+        self.assertEqual(metric.slippage_bps, Decimal("0"))
+        self.assertGreater(
+            metric.computed_at.replace(tzinfo=timezone.utc), old_computed_at
+        )
+
+    def test_refresh_execution_tca_metrics_rematerializes_stale_rows(self) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper",
+                symbol="MU",
+                timeframe="1Min",
+                decision_json={
+                    "strategy_id": str(strategy.id),
+                    "symbol": "MU",
+                    "action": "sell",
+                    "qty": "2",
+                    "params": {
+                        "price": "412.67",
+                        "price_snapshot": {"price": "316.93"},
+                    },
+                },
+                rationale="test",
+                status="submitted",
+                decision_hash="hash-refresh-tca",
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_order_id="order-refresh-tca",
+                client_order_id="client-refresh-tca",
+                symbol="MU",
+                side="sell",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("2"),
+                filled_qty=Decimal("2"),
+                avg_fill_price=Decimal("316.93"),
+                status="filled",
+                execution_expected_adapter="alpaca",
+                execution_actual_adapter="alpaca",
+            )
+            session.add(execution)
+            session.flush()
+            old_computed_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            session.add(
+                ExecutionTCAMetric(
+                    execution_id=execution.id,
+                    trade_decision_id=decision.id,
+                    strategy_id=strategy.id,
+                    alpaca_account_label="paper",
+                    symbol="MU",
+                    side="sell",
+                    arrival_price=Decimal("412.67"),
+                    avg_fill_price=Decimal("316.93"),
+                    filled_qty=Decimal("2"),
+                    signed_qty=Decimal("-2"),
+                    slippage_bps=Decimal("2319"),
+                    shortfall_notional=Decimal("191.48"),
+                    churn_qty=Decimal("0"),
+                    churn_ratio=Decimal("0"),
+                    computed_at=old_computed_at,
+                )
+            )
+            session.commit()
+
+            result = refresh_execution_tca_metrics(
+                session,
+                stale_before=datetime(2026, 1, 2, tzinfo=timezone.utc),
+                limit=10,
+            )
+            session.commit()
+            metric = session.execute(
+                select(ExecutionTCAMetric).where(
+                    ExecutionTCAMetric.execution_id == execution.id
+                )
+            ).scalar_one()
+
+        self.assertEqual(result["selected"], 1)
+        self.assertEqual(result["refreshed"], 1)
+        self.assertEqual(metric.arrival_price, Decimal("316.93"))
+        self.assertEqual(metric.slippage_bps, Decimal("0"))
+        self.assertGreater(
+            metric.computed_at.replace(tzinfo=timezone.utc), old_computed_at
+        )
+
+    def test_refresh_execution_tca_metrics_dry_run_reports_account_selection(
+        self,
+    ) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={
+                    "strategy_id": str(strategy.id),
+                    "symbol": "AAPL",
+                    "action": "buy",
+                    "qty": "1",
+                    "params": {"price": "100"},
+                },
+                rationale="test",
+                status="submitted",
+                decision_hash="hash-dry-run-tca",
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_order_id="order-dry-run-tca",
+                client_order_id="client-dry-run-tca",
+                symbol="AAPL",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                alpaca_account_label="paper",
+                execution_expected_adapter="alpaca",
+                execution_actual_adapter="alpaca",
+            )
+            session.add(execution)
+            session.commit()
+
+            result = refresh_execution_tca_metrics(
+                session,
+                account_label="paper",
+                stale_before=datetime.now(timezone.utc),
+                limit=10,
+                dry_run=True,
+            )
+
+        self.assertEqual(result["selected"], 1)
+        self.assertEqual(result["refreshed"], 0)
+        self.assertEqual(result["dry_run"], True)
+        self.assertEqual(result["account_label"], "paper")
 
     def test_derivation_fallback_when_expected_shortfall_coverage_is_insufficient(
         self,
