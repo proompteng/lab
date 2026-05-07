@@ -1,5 +1,30 @@
 # Jangar Control Plane Release Verification
 
+## Current Addendum - 2026-05-07T17:55:00Z
+
+Owner update message:
+
+Jangar rollout is healthy, but the #5889 merge gate is no-go. GitHub reports #5889 `CLEAN` and `MERGEABLE`, all hosted
+checks are now terminal green or skipped, and `agents-ci / integration` passed at 2026-05-07T17:53:06Z on head
+`01e375780f961fd2d9b84beccac04a64d06fd5d7`.
+
+I did not squash-merge #5889 because the PR remains 1,492 total changed lines, and the required Codex review has not
+posted. The review request was made at https://github.com/proompteng/lab/pull/5889#issuecomment-4398286043, but the
+connector returned the Codex review usage-limit blocker at
+https://github.com/proompteng/lab/pull/5889#issuecomment-4398287400. The anchored progress comment now records the
+green CI evidence and the exact policy blocker:
+https://github.com/proompteng/lab/pull/5889#issuecomment-4398288855.
+
+Current cluster evidence for already-merged `main`: Argo CD `jangar` is `Synced` and `Healthy` at revision
+`abaaf77572f6c9c53c8b8b6f61409e87235b5c19`; `agents`, `agents-ci`, `torghut`, and `torghut-options` are `Synced` and
+`Healthy` at revision `3675674d7089bb8d1e942e160505e9b72090dc70`. `deployment/jangar` and
+`deployment/symphony-jangar` rollout status succeeded; `pod/jangar-594b6746fd-5lhwp` is Running with both containers
+ready and zero restarts.
+
+Next action: keep #5889 held until Codex review capacity returns, an explicit maintainer waiver is recorded, or the PR
+is safely reduced below 1,000 changed lines and revalidated. Rollback for any eventual #5889 promotion remains a normal
+PR-driven GitOps revert; do not mutate production workloads directly from a local shell.
+
 Timestamp: 2026-05-07T15:36:00Z
 Repository: `proompteng/lab`
 Base: `main`
