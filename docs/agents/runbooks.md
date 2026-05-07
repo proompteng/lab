@@ -216,8 +216,9 @@ Expected outcomes:
 - the collaboration runtime kit points at the missing component through `reason_codes` and
   `components[].evidence_ref` (for example `runtime_kit_component_missing:codex_nats_publish` with the
   checked helper paths).
-- schedule-runner pods fail closed before creating AgentRuns when their stamped passport id or runtime-kit digest no
-  longer matches the current status response. If this fire-time check itself is blocking emergency recovery, set
+- schedule-runner pods fail closed before creating AgentRuns when a launch-capable swarm runner manifest lacks its
+  passport stamp or when the stamped passport id or runtime-kit digest no longer matches the current status response.
+  If this fire-time check itself is blocking emergency recovery, set
   `JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false` and keep `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=true` so the
   controller still deletes newly blocked schedules.
 - rollback is runtime-local: restore the missing helper/config/secret in the admitted image or revert the

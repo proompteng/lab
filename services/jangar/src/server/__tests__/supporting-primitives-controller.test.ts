@@ -369,6 +369,7 @@ describe('supporting primitives controller', () => {
     expect(command).toContain('JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK')
     expect(command).toContain('JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT')
     expect(command).toContain('JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL')
+    expect(command).toContain('missing schedule admission passport annotation for')
     expect(command).not.toContain('stale schedule admission passport')
     expect(command).not.toContain('stale schedule runtime-kit digest')
     expect(command).not.toContain('stale schedule recovery-case digest')
