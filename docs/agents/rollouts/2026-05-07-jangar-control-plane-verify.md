@@ -4,6 +4,99 @@ Swarm: `jangar-control-plane`
 Branch: `codex/swarm-jangar-control-plane-verify`
 Release engineer: Marco Silva
 
+## Current pass - 16:47 UTC
+
+### PRs touched
+
+- #5889 `feat(jangar): add repair warrant exchange`
+  - Selected as the only currently open direct Jangar PR from the open PR inventory.
+  - Head: `ac81ee0ba84c0d1352c4a40507a4a892a59cc250`.
+  - GitHub state: non-draft, `MERGEABLE`, `CLEAN`.
+  - Hosted checks: pass or skipped only, including `agents-ci / integration`, `agents-ci / validate`,
+    `jangar-ci / lint-and-typecheck / run`, `CI / check_changed_files`, semantic commit/title checks, and
+    path-gated skip jobs.
+  - No merge: the PR is still above the large-diff Codex review threshold at 1,446 additions and 46 deletions
+    across 15 files.
+  - Progress comment updated:
+    https://github.com/proompteng/lab/pull/5889#issuecomment-4398288855.
+- #5387 `fix(torghut): restore rollout readiness`
+  - Rechecked because it was named in the inherited NATS context.
+  - Already merged on 2026-05-05T10:17:03Z as `65e4d54152313a6eddef8ca6ce4f6ca193e23af5`.
+- #5364 `ci: stabilize agents and jangar checks`
+  - Rechecked because it was named in the inherited NATS context.
+  - Already merged on 2026-05-05T09:21:18Z as `3726ade1c5c11fd33ecd7a6d273d84128979653d`.
+- #5376 `fix(torghut): restore live jangar dependency quorum`
+  - Rechecked because it was named in the inherited NATS context.
+  - Already merged on 2026-05-05T09:16:09Z as `3f443891f7f9a4e2058c630e027b69626714cbf6`.
+
+### Comments and conflicts
+
+- #5889 has no posted reviews, no review requests, and no blocking review decision visible through `gh pr view`.
+- #5889 has a Codex review request at
+  https://github.com/proompteng/lab/pull/5889#issuecomment-4398286043.
+- The Codex connector responded with a usage-limit message at
+  https://github.com/proompteng/lab/pull/5889#issuecomment-4398287400 instead of posting a review.
+- No merge conflicts are present on #5889; GitHub reports `MERGEABLE` and `CLEAN`.
+
+### Merge gate
+
+No-go for #5889.
+
+- The PR is clean and green, but the large-diff gate is still closed because a required Codex review has not posted.
+- The smallest unblocker is restored Codex review capacity, explicit maintainer waiver, or reducing the PR below the
+  1,000-line threshold and revalidating.
+- No PR was merged in this pass.
+
+### Rollout evidence
+
+No new #5889 rollout exists because the PR is unmerged. Current in-cluster health for already-merged `main`
+`fb3ea3d493ecc84608e741849530f69c0fd5c53c` was verified instead.
+
+- Argo CD:
+  - `jangar`: `Synced`, `Healthy`, operation `Succeeded`, reconciled at 2026-05-07T16:44:33Z.
+  - `agents`: `Synced`, `Healthy`, operation `Succeeded`, reconciled at 2026-05-07T16:45:10Z.
+  - `torghut`: `Synced`, `Healthy`, operation `Succeeded`, reconciled at 2026-05-07T16:44:25Z.
+- Workload readiness:
+  - `deployment/jangar`: generation 341 observed, 1/1 ready, rollout status succeeded.
+  - `deployment/agents`: generation 195 observed, 1/1 ready, rollout status succeeded.
+  - `deployment/agents-controllers`: generation 221 observed, 2/2 ready, rollout status succeeded.
+- Active images:
+  - `jangar`: `registry.ide-newton.ts.net/lab/jangar:2214e91f@sha256:b059ad6762dc409b2b80e18fbeaca66c307243532c987867285a55dfe82a3c93`.
+  - `agents`: `registry.ide-newton.ts.net/lab/jangar-control-plane:2214e91f@sha256:90f494d56d4aab52223981b3b7d6a27d078312c7ba81146b3daf750f3f0ec0f1`.
+  - `agents-controllers`: `registry.ide-newton.ts.net/lab/jangar:2214e91f@sha256:b059ad6762dc409b2b80e18fbeaca66c307243532c987867285a55dfe82a3c93`.
+- Health endpoints:
+  - `http://jangar.jangar.svc.cluster.local/health`: `status=ok`.
+  - `http://agents.agents.svc.cluster.local/health`: `status=ok`.
+  - `http://agents.agents.svc.cluster.local/ready`: `status=ok`, execution trust healthy, memory provider healthy,
+    runtime kits healthy, admission passports allow, serving runtime proof cells healthy.
+- Events:
+  - Jangar and agents showed expected rollout events for the current `2214e91f` image refresh.
+  - Recent warning events were transient readiness probes during replacement pod startup; current rollout status and
+    Ready pod state cleared them.
+  - Older completed/error AgentRun pods remain visible in the `agents` namespace and are historical workflow state,
+    not current deployment unavailability.
+
+### Residual risk
+
+- #5889 remains the direct Jangar feature risk because the control-plane diff is above the large-diff threshold
+  without the required Codex review.
+- The current `2214e91f` runtime state is healthy, but it is unrelated to #5889 because #5889 has not merged.
+
+### Rollback path
+
+- If #5889 later merges and regresses runtime behavior, rollback is a normal GitOps PR reverting its squash merge and
+  any resulting Jangar image promotion.
+- Do not mutate production workloads directly from a local shell; rollback remains PR-driven GitOps.
+- If current `2214e91f` Jangar/agents health regresses independently of #5889, open a GitOps revert of the current
+  promotion commit on `main` and let Argo CD reconcile back to the last documented healthy image.
+
+### Next action
+
+- Keep #5889 held until Codex review capacity returns, an explicit maintainer waiver is recorded, or the PR is
+  reduced below 1,000 changed lines.
+- After the unblocker lands, re-check mergeability, hosted checks, review state, and current cluster health before
+  any squash merge.
+
 ## Current pass - 16:31 UTC
 
 ### PRs touched
