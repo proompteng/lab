@@ -4,6 +4,121 @@ Swarm: `jangar-control-plane`
 Branch: `codex/swarm-jangar-control-plane-verify`
 Release engineer: Marco Silva
 
+## Current pass - 11:58 UTC
+
+### PRs touched
+
+- #5852 `chore(jangar): promote image 817b46ca`
+  - Selected as the latest merged Jangar GitOps promotion requiring rollout verification in this pass.
+  - Source image tag: `817b46ca`.
+  - Merge commit: `d28c5057ab8d7e7e89f86ac74d352890deac8b0d`.
+  - Merged at 2026-05-07T11:35:56Z after semantic, argo-lint, kubeconform, `jangar-ci`, and deploy-enable checks
+    were pass or skipped.
+  - Progress comment: https://github.com/proompteng/lab/pull/5852#issuecomment-4396880450.
+- #5412 `feat(torghut): add renewal bond profit escrow`
+  - Rechecked as the only open PR returned by a Jangar search.
+  - Not selected for merge: the PR is Torghut-scoped, remains over the 1000-line large-diff threshold, and still lacks
+    the required Codex review because the review connector is returning the account usage-limit blocker.
+  - Progress comment: https://github.com/proompteng/lab/pull/5412#issuecomment-4378206627.
+
+Current open PR enumeration at the merge gate:
+
+- #5859 `ci(torghut): use bun for revenue repair summary`: Torghut CI workflow, merged into `main` as `ef36fad05`
+  while this audit was running.
+- #5857 `test(temporal-bun-sdk): widen heartbeat lifecycle budgets`: Temporal SDK scoped; not selected for Jangar.
+- #5855 `feat(torghut): add chip autoresearch workflow`: Torghut scoped; pending checks during enumeration.
+- #5767 `chore(release/c3ba60b): automated release PR`: app GitOps release scoped; not selected for Jangar.
+- #5412 `feat(torghut): add renewal bond profit escrow`: Jangar-adjacent Torghut runtime work; blocked by large-diff
+  review policy.
+- #5316 `chore(release/735ddbc): automated release PR`: docs GitOps release scoped; not selected for Jangar.
+
+### Comments and conflicts
+
+- #5364, #5376, and #5387 from the stale May 5 handoff are already merged with green recorded check sets.
+- No open direct `services/jangar`, `argocd/applications/jangar`, or `argocd/applications/agents` implementation PR was
+  present during this pass.
+- #5412 review-thread query returned no active threads, but the mandatory large-diff Codex review has not posted.
+- #5852 was already merged before this pass; no conflict repair was required.
+
+### Merge gate
+
+Go for the already-merged #5852 rollout verification. No new Jangar implementation PR was available for merge in this
+pass.
+
+- #5852 PR checks before merge were terminal green or skipped:
+  - `Semantic Commits / Lint commit messages`.
+  - `Semantic Pull Request / Validate PR title`.
+  - `argo-lint / lint`.
+  - `kubeconform / validate`.
+  - `jangar-ci / lint-and-typecheck`.
+  - `jangar-deploy-automerge / enable`.
+- Mainline workflows after #5852:
+  - `jangar-build-push` for head `817b46ca` succeeded.
+  - `agents-ci` for head `817b46ca` succeeded.
+  - `jangar-post-deploy-verify` for merge commit `d28c5057` succeeded.
+- #5412 merge decision remains no-go until Codex review posts and any review threads are resolved, or a maintainer
+  explicitly waives the large-diff gate.
+
+### Rollout evidence
+
+- Argo CD:
+  - `jangar`: Synced / Healthy, reconciled at 2026-05-07T11:49:49Z.
+  - `agents`: Synced / Healthy, reconciled at 2026-05-07T11:52:28Z.
+- Workload readiness:
+  - `kubectl rollout status deployment/jangar -n jangar --timeout=30s`: successfully rolled out.
+  - `kubectl rollout status deployment/agents -n agents --timeout=30s`: successfully rolled out.
+  - `kubectl rollout status deployment/agents-controllers -n agents --timeout=30s`: successfully rolled out.
+- Serving images:
+  - `jangar`: `registry.ide-newton.ts.net/lab/jangar:817b46ca@sha256:729353bc285a1a6c45670a287c7472278537b85765bf4a35b666e75626c1305f`.
+  - `agents`: `registry.ide-newton.ts.net/lab/jangar-control-plane:817b46ca@sha256:29cff7a0d76213ce1c035394568ac09f5e42394261c015c0df45309f9d10023b`.
+  - `agents-controllers`: `registry.ide-newton.ts.net/lab/jangar:817b46ca@sha256:729353bc285a1a6c45670a287c7472278537b85765bf4a35b666e75626c1305f`.
+- Current pods:
+  - `jangar-98f54c787-xwwzs`: Running, `app:true`, `docker:true`, zero restarts.
+  - `agents-686467787-s7d8k`: Running, Ready, zero restarts.
+  - `agents-controllers-77bbbc7799-2m7zc` and `agents-controllers-77bbbc7799-s8swj`: Running, Ready, zero
+    restarts.
+- Jangar health:
+  - `http://jangar.jangar.svc.cluster.local/health` returned `{"status":"ok","service":"jangar",...}`.
+  - `http://jangar.jangar.svc.cluster.local/ready` returned `{"status":"ok","service":"jangar",...}` with
+    `leaderElection.isLeader=true`, `lastError=null`, and `execution_trust.status=healthy`.
+  - `http://agents.agents.svc.cluster.local/ready` returned `{"status":"ok","service":"jangar",...}` with
+    `execution_trust.status=healthy`.
+- Runtime verifier:
+  - This command passed:
+    ```bash
+    bun run packages/scripts/src/jangar/verify-deployment.ts --require-synced --expected-revision d28c5057ab8d7e7e89f86ac74d352890deac8b0d --expected-revision-mode ancestor --health-attempts 3 --health-interval-seconds 2 --digest-attempts 3 --digest-interval-seconds 2
+    ```
+  - The verifier confirmed digest parity, admission passports for `serving`, `swarm_plan`, and `swarm_implement`,
+    runtime kit image refs, recovery warrants, runtime proof cells, and deploy-verification watermarks.
+
+### Residual risk
+
+- Startup readiness probe warnings occurred during the #5852 replacement, then cleared. Current Jangar and Agents pods
+  are Ready with zero restarts.
+- Jangar logs include non-fatal metrics export socket failures and transient Kubernetes 429 watch warnings. The live
+  `/ready` endpoint remains `status=ok`, so these are operational noise to monitor rather than rollback triggers.
+- #5412 remains a policy blocker outside the direct Jangar rollout lane because the mandatory Codex review cannot post
+  while the connector is usage-limited.
+
+### Rollback path
+
+- If the `817b46ca` rollout regresses readiness, digest parity, or Jangar control-plane health, open a GitOps revert PR
+  for #5852 merge commit `d28c5057ab8d7e7e89f86ac74d352890deac8b0d` in:
+  - `argocd/applications/jangar/kustomization.yaml`.
+  - `argocd/applications/jangar/deployment.yaml`.
+  - `argocd/applications/agents/values.yaml`.
+- If the source behavior from #5843 is implicated after image rollback, revert
+  `3c7e24de3b9085531cd47cd28955045ddb68860d` through a normal PR and let `jangar-build-push` plus `jangar-release`
+  produce a new promotion.
+- Do not mutate production workloads directly from a local shell; promotion and rollback remain PR-driven GitOps.
+
+### Next action
+
+- Runtime rollout gate: go. #5852 is merged, post-deploy verification passed, Argo is Synced/Healthy, workloads are
+  ready, and live images match GitOps.
+- Merge gate: no direct open Jangar implementation PR remains selected. #5412 remains no-go pending Codex review or an
+  explicit maintainer waiver.
+
 ## Current pass - 09:24 UTC
 
 ### PRs touched
