@@ -998,3 +998,7 @@ This pack is positioned as the next architecture layer above:
   packet and Jangar brownout-market contracts because the system is serving but still not capital-ready. It makes
   route, quant, market-context, empirical, and alpha repairs compete by measured after-cost unblock value while keeping
   all paper and live notional closed until before/after receipts and Jangar stage-freeze clearing exist.
+- `167-torghut-scoped-profit-repair-options-and-freshness-debt-retirement-2026-05-07.md` follows the executable profit
+  receipt and Jangar scoped evidence debt contracts because broad rollout health is no longer enough proof. It ranks
+  zero-notional repair options by the scoped quant, market-context, empirical, route/TCA, hypothesis, and submission
+  debts they retire before paper or live capital can move.
