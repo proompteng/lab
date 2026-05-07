@@ -369,7 +369,6 @@ test('workflow query logs are emitted once on replay', async () => {
 })
 
 test('query execution mode returns answers without emitting commands', async () => {
-
   const { registry, executor, dataConverter } = makeExecutor()
   const queries = defineWorkflowQueries({
     status: {
@@ -405,6 +404,66 @@ test('query execution mode returns answers without emitting commands', async () 
   const [entry] = output.queryResults
   const values = await decodePayloadsToValues(dataConverter, entry?.result.answer?.payloads ?? [])
   expect(values[0]).toBe('ready')
+})
+
+test('query replay stops at unresolved activity before evaluating registered query', async () => {
+  const { registry, executor, dataConverter } = makeExecutor()
+  const queries = defineWorkflowQueries({
+    state: {
+      input: Schema.Struct({}),
+      output: Schema.Struct({
+        message: Schema.String,
+        payload: Schema.Struct({ nested: Schema.String, count: Schema.Number }),
+        echoed: Schema.Boolean,
+      }),
+    },
+  })
+
+  registry.register(
+    defineWorkflow({
+      name: 'queryPendingActivityWorkflow',
+      schema: Schema.Struct({}),
+      queries,
+      handler: ({ activities, queries: registryQueries }) =>
+        Effect.gen(function* () {
+          let state = {
+            message: 'started',
+            payload: { nested: 'value', count: 3 },
+            echoed: false,
+          }
+          yield* registryQueries.register(queries.state, () => Effect.sync(() => state))
+
+          const echoed = (yield* activities.schedule('echo', [state])) as typeof state
+          state = {
+            ...state,
+            payload: echoed.payload,
+            echoed: true,
+          }
+          return state
+        }),
+    }),
+  )
+
+  const initial = await execute(executor, { workflowType: 'queryPendingActivityWorkflow', arguments: {} })
+  expect(initial.completion).toBe('pending')
+
+  const output = await execute(executor, {
+    workflowType: 'queryPendingActivityWorkflow',
+    arguments: {},
+    determinismState: cloneState(initial.determinismState),
+    queryRequests: [{ name: 'state', args: [{}], source: 'legacy' }],
+    mode: 'query',
+  })
+
+  expect(output.completion).toBe('pending')
+  expect(output.commands).toHaveLength(0)
+  const [entry] = output.queryResults
+  const values = await decodePayloadsToValues(dataConverter, entry?.result.answer?.payloads ?? [])
+  expect(values[0]).toEqual({
+    message: 'started',
+    payload: { nested: 'value', count: 3 },
+    echoed: false,
+  })
 })
 
 test('query execution mode rejects new workflow commands', async () => {

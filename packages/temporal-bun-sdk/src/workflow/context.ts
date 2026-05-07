@@ -379,11 +379,6 @@ export const createWorkflowContext = <I>(
         commandContext.addIntent(intent)
         const resolution = activityResults.get(intent.activityId)
         if (!resolution) {
-          // In query mode we must not block; return a deterministic command ref so query
-          // handlers can surface the latest known state without introducing new commands.
-          if (params.determinismGuard.isQueryMode()) {
-            return createCommandRef(intent, { activityId: intent.activityId })
-          }
           throw new WorkflowBlockedError(`Activity ${intent.activityId} pending`)
         }
         if (resolution.status === 'failed') {
@@ -411,9 +406,6 @@ export const createWorkflowContext = <I>(
         commandContext.addIntent(intent)
         const resolution = nexusResults.get(intent.operationId)
         if (!resolution) {
-          if (params.determinismGuard.isQueryMode()) {
-            return createCommandRef(intent, { operationId: intent.operationId })
-          }
           throw new WorkflowBlockedError(`Nexus operation ${intent.operationId} pending`)
         }
         if (resolution.status === 'failed') {
@@ -442,9 +434,6 @@ export const createWorkflowContext = <I>(
         // If the timer hasn't fired yet, block the workflow so it will resume
         // when the corresponding TimerFired event is observed on replay.
         if (!params.timerResults?.has(intent.timerId)) {
-          if (params.determinismGuard.isQueryMode()) {
-            return { timerId: intent.timerId }
-          }
           throw new WorkflowBlockedError(`Timer ${intent.timerId} pending`)
         }
         return { timerId: intent.timerId }
