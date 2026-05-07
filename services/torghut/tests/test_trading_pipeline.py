@@ -80,7 +80,9 @@ def _with_default_executable_quote(signal: SignalEnvelope) -> SignalEnvelope:
 
     spread = payload.get("spread")
     try:
-        executable_spread = Decimal(str(spread)) if spread is not None else Decimal("0.02")
+        executable_spread = (
+            Decimal(str(spread)) if spread is not None else Decimal("0.02")
+        )
     except Exception:
         executable_spread = Decimal("0.02")
     if executable_spread <= 0:
@@ -6974,7 +6976,9 @@ class TestTradingPipeline(TestCase):
                 state=TradingState(),
                 account_label="paper",
                 session_factory=self.session_local,
-                price_fetcher=FakePriceFetcher(Decimal("101.5"), spread=Decimal("0.02")),
+                price_fetcher=FakePriceFetcher(
+                    Decimal("101.5"), spread=Decimal("0.02")
+                ),
             )
 
             pipeline.run_once()
