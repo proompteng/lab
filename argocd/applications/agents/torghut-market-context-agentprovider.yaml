@@ -450,6 +450,14 @@ spec:
         def _can_retry_with_next_provider(failure_category: str) -> bool:
           return failure_category in {'provider_attempt_timeout', 'provider_fallback_eligible'}
 
+        def _write_process_output(stream, output) -> None:
+          if not output:
+            return
+          if isinstance(output, bytes):
+            stream.write(output.decode('utf-8', errors='replace'))
+            return
+          stream.write(output)
+
         def _run_attempt(event_path: Path, provider: str, model: str, timeout_seconds: int) -> tuple[int, str, str]:
           env = os.environ.copy()
           env['CODEX_MODEL'] = model
@@ -467,17 +475,17 @@ spec:
               timeout=timeout_seconds,
             )
             if result.stdout:
-              sys.stdout.write(result.stdout)
+              _write_process_output(sys.stdout, result.stdout)
             if result.stderr:
-              sys.stderr.write(result.stderr)
+              _write_process_output(sys.stderr, result.stderr)
             message = (result.stderr or result.stdout or '').strip()
             last_line = message.splitlines()[-1] if message else ''
             return result.returncode, _classify_attempt_failure(result.returncode, last_line), last_line
           except subprocess.TimeoutExpired as error:
             if error.stdout:
-              sys.stdout.write(error.stdout)
+              _write_process_output(sys.stdout, error.stdout)
             if error.stderr:
-              sys.stderr.write(error.stderr)
+              _write_process_output(sys.stderr, error.stderr)
             return 124, 'provider_attempt_timeout', 'provider_attempt_timeout'
 
         def main() -> int:
