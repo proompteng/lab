@@ -4,6 +4,132 @@ Swarm: `jangar-control-plane`
 Branch: `codex/swarm-jangar-control-plane-verify`
 Release engineer: Marco Silva
 
+## Current pass - 16:31 UTC
+
+### PRs touched
+
+- #5904 `fix(jangar): decode market context timeout output`
+  - Selected as a small direct Jangar production fix after it opened during this release pass.
+  - Final head commit before merge: `88a22e67d454aa3279ead3014f1dfc4a23e8ec50`.
+  - Squash merge commit: `2214e91f910574a027c1fbbb8c14764b9606dd3f`.
+  - Merged at 2026-05-07T16:24:07Z after GitHub reported clean/mergeable, no blocking reviews, no active review
+    threads, diff below the 1000-line Codex review threshold, and every non-skipped hosted PR check green.
+  - Scope:
+    - `.github/workflows/agents-ci.yml`.
+    - `argocd/applications/agents/torghut-market-context-agentprovider.yaml`.
+    - `services/jangar/src/__tests__/agents-ci-workflow.test.ts`.
+    - `services/jangar/src/server/__tests__/torghut-market-context-agentprovider-manifest.test.ts`.
+  - Progress comment: https://github.com/proompteng/lab/pull/5904#issuecomment-4398705337.
+- #5889 `feat(jangar): add repair warrant exchange`
+  - Direct Jangar implementation PR rechecked after `agents-ci / integration` finished.
+  - No merge: current hosted checks are pass or skipped and GitHub reports `mergeStateStatus=CLEAN`, but the PR is
+    still above the large-diff gate at 1,446 additions and 46 deletions. The `@codex review` request received the
+    Codex usage-limit response instead of a posted review.
+  - Progress comment: https://github.com/proompteng/lab/pull/5889#issuecomment-4398288855.
+- #5910 `fix(torghut): reject stale TA quotes`
+  - Newly opened Torghut-scoped Jangar-adjacent candidate during final #5904 rollout closeout.
+  - Not selected in this slice because #5904 was already merged and `torghut-ci / Bytecode + pytest + coverage` was
+    still in progress at 2026-05-07T16:31Z.
+- #5412 `feat(torghut): add renewal bond profit escrow`
+  - Rechecked from earlier passes.
+  - No merge: still above the large-diff Codex review threshold and still blocked by the Codex review usage-limit
+    response recorded in the existing progress comment.
+- #5767 `chore(release/c3ba60b): automated release PR` and #5316 `chore(release/735ddbc): automated release PR`
+  - Enumerated as open release PRs; not selected for this Jangar release slice.
+
+Current open PR enumeration at the close of this pass:
+
+- #5910 `fix(torghut): reject stale TA quotes`: mergeable but unstable while
+  `torghut-ci / Bytecode + pytest + coverage` runs.
+- #5889 `feat(jangar): add repair warrant exchange`: clean and green, but no-go until Codex review posts or a
+  maintainer explicitly waives the large-diff review requirement.
+- #5767 `chore(release/c3ba60b): automated release PR`: app GitOps release scoped; not selected for Jangar.
+- #5412 `feat(torghut): add renewal bond profit escrow`: clean and green, but no-go until Codex review posts or a
+  maintainer explicitly waives the large-diff review requirement.
+- #5316 `chore(release/735ddbc): automated release PR`: docs GitOps release scoped; not selected for Jangar.
+
+### Comments and conflicts
+
+- #5904 and #5889 were both GitHub-reported conflict-mergeable at their final gate checks.
+- #5904 had no active review threads and no blocking review state before squash merge.
+- The #5904 transient `agents-ci / integration` failure was an infrastructure timeout while downloading `kubectl`
+  from `dl.k8s.io`; the branch was updated to bound and retry the download, then the integration job passed in
+  11m10s on the final head.
+- #5889 has no active review threads, but the required large-diff review is not posted because the Codex connector
+  returned a usage-limit response.
+
+### Merge gate
+
+Go for #5904. No-go for #5889 and #5412. #5910 is deferred to a follow-up Torghut/Jangar-adjacent pass.
+
+- #5904 PR checks before merge were terminal green or skipped:
+  - `agents-ci / validate`.
+  - `agents-ci / integration`.
+  - `argo-lint / lint`.
+  - `kubeconform / validate`.
+  - `jangar-ci / lint-and-typecheck / run`.
+  - `CI / check_changed_files`.
+  - `Semantic Commits / Lint commit messages`.
+  - `Semantic Pull Request / Validate PR title`.
+  - Path-gated app/docs/deploy enable checks skipped.
+- #5889 current checks are pass or skipped, including `agents-ci / integration` and
+  `jangar-ci / lint-and-typecheck / run`, but the review gate remains closed.
+
+### Rollout evidence
+
+- #5904 merged into `main` at revision `2214e91f910574a027c1fbbb8c14764b9606dd3f`.
+- Argo CD `agents` after the merge:
+  - Sync: `Synced`.
+  - Health: `Healthy`.
+  - Operation: `Succeeded`.
+  - Revision: `2214e91f910574a027c1fbbb8c14764b9606dd3f`.
+  - Reconciled at 2026-05-07T16:26:45Z.
+  - Message: `successfully synced (all tasks run)`.
+- `AgentProvider/torghut-market-context` in namespace `agents`:
+  - `metadata.generation=14`.
+  - `status.observedGeneration=14`.
+  - Ready condition `True`, reason `ValidSpec`.
+  - Live runner script includes `_write_process_output(...)` and invokes it for stdout/stderr on both normal
+    completion and `subprocess.TimeoutExpired`.
+- Workload readiness:
+  - `deployment/agents`: 1/1 ready; rollout status succeeded.
+  - `deployment/agents-controllers`: 2/2 ready; rollout status succeeded.
+  - Current pods were Ready/Running after rollout:
+    `agents-b7bff85dd-hzgfn`, `agents-controllers-6445c68c54-fhjhr`, and
+    `agents-controllers-6445c68c54-kmh2v`.
+- Runtime events:
+  - Readiness/liveness warnings occurred during the `agents` and `agents-controllers` restart window around
+    2026-05-07T16:26-16:27Z, then cleared by successful rollout status and current Ready pods.
+  - Pre-existing namespace warnings remain for historical scheduler/job failures, including the old
+    `torghut-market-context-news-batch-xfc6r-job` `BackoffLimitExceeded` event from before #5904 landed.
+
+### Residual risk
+
+- #5904 changes the market-context AgentProvider runner helper and the CI bootstrap path for `kubectl`. The live
+  AgentProvider accepted the spec, but the next scheduled market-context batch should still be watched for timeout
+  stderr/stdout decoding behavior.
+- `agents` and `agents-controllers` each had one pod restart during reconciliation. Current deployment availability
+  and rollout status are healthy, so this is recorded as a rollout observation rather than a blocker.
+- #5889 remains the direct Jangar feature risk because its control-plane blast radius is larger than 1000 changed
+  lines and the required Codex review is not posted.
+
+### Rollback path
+
+- If #5904 regresses market-context runner behavior, open a normal GitOps PR reverting
+  `2214e91f910574a027c1fbbb8c14764b9606dd3f`; let Argo reconcile the previous
+  `torghut-market-context` AgentProvider script.
+- If the CI bootstrap change in #5904 regresses integration reliability, revert the workflow hunk from the same merge
+  commit through a normal PR and rerun `agents-ci / integration`.
+- Do not mutate production workloads directly from a local shell; rollback remains PR-driven GitOps.
+
+### Next action
+
+- Runtime rollout gate: go for #5904. The merge commit is live in Argo `agents`, the affected AgentProvider is Ready
+  at the observed generation, and the agents workloads are ready.
+- #5889 gate: no-go until Codex review posts successfully or a maintainer explicitly waives the large-diff review
+  requirement.
+- #5910 gate: evaluate as the next Torghut/Jangar-adjacent candidate after terminal CI.
+
 ## Current pass - 15:36 UTC
 
 ### PRs touched
