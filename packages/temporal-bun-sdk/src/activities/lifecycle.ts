@@ -83,9 +83,16 @@ export const makeActivityLifecycle = (
       Effect.try(() => {
         const driver = new ActivityHeartbeatDriver(config, options, config.observability)
         return {
-          heartbeat: (details) => Effect.tryPromise(async () => await driver.enqueue(details)),
-          shutdown: Effect.tryPromise(async () => {
-            await driver.shutdown()
+          heartbeat: (details) =>
+            Effect.tryPromise({
+              try: async () => await driver.enqueue(details),
+              catch: (error) => error,
+            }),
+          shutdown: Effect.tryPromise({
+            try: async () => {
+              await driver.shutdown()
+            },
+            catch: (error) => error,
           }).pipe(Effect.catchAll(() => Effect.void)),
         }
       })
@@ -290,8 +297,9 @@ class ActivityHeartbeatDriver {
         }
         if (isHeartbeatNotFound(error)) {
           this.#options.context.info.cancellationReason = 'not-found'
-          this.#options.abortController.abort(createAbortError('Activity heartbeat rejected: task not found'))
-          throw error
+          const abortError = createAbortError('Activity heartbeat rejected: task not found')
+          this.#options.abortController.abort(abortError)
+          throw abortError
         }
         if (!isRetriableHeartbeatError(error)) {
           throw error
