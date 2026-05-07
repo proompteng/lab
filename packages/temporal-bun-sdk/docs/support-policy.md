@@ -1,6 +1,6 @@
 # Temporal Bun SDK Support Policy
 
-_Last updated: May 5, 2026_
+_Last updated: May 6, 2026_
 
 ## Supported Runtime Matrix
 
@@ -10,7 +10,7 @@ _Last updated: May 5, 2026_
 | Node            | Build tooling only                                                              | The worker runtime is Bun TypeScript. Node is used by repository tooling and GitHub Actions setup, not by the published worker runtime. |
 | Temporal Server | Current CI cluster plus pinned dev server histories                             | Additional server minor/version coverage requires replay-corpus and integration evidence before being documented as preferred.          |
 | Temporal Cloud  | Client/worker TLS and mTLS paths are supported when credentials are configured. | Cloud Ops tests remain optional unless credentials are present.                                                                         |
-| OS/arch         | Linux arm64 in CI, local macOS development                                      | Additional platforms require package-boundary, build, test, replay, and load evidence.                                                  |
+| OS/arch         | Linux x64 release CI, local macOS development                                   | Additional platforms require package-boundary, build, test, replay, and load evidence.                                                  |
 
 ## Supported Package Boundary
 
@@ -46,6 +46,10 @@ Every release should publish or upload:
 async determinism fuzz, load, soak, CI coverage, package-boundary, and semantic
 concern evidence meet the default-choice thresholds in
 `docs/semantic-readiness.md`.
+
+Default-choice evidence is intentionally stricter than publish evidence. A
+release may publish with `recommended: false` so users can opt in, but agents
+must not select it by default until `verify:default-choice` passes.
 
 ## Known Limits
 

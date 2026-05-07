@@ -10,6 +10,12 @@ export interface WorkerLoadConfig {
   readonly updateDelayMs: number
   readonly throughputFloorPerSecond: number
   readonly stickyHitRatioTarget: number
+  readonly stickyCacheSize: number
+  readonly stickyTtlMs: number
+  readonly restartAfterSubmit: boolean
+  readonly restartDelayMs: number
+  readonly activityCancellationRatio: number
+  readonly activityCancellationDelayMs: number
   readonly workflowPollP95TargetMs: number
   readonly activityPollP95TargetMs: number
   readonly workflowDurationBudgetMs: number
@@ -20,8 +26,12 @@ export interface WorkerLoadConfig {
   readonly activityBurstsPerWorkflow: number
   readonly activityDelayMs: number
   readonly activityPayloadBytes: number
+  readonly memorySampleIntervalMs: number
+  readonly memorySlopeMaxMbPerHour: number
+  readonly memorySlopeMinElapsedMs: number
   readonly artifactsDir: string
   readonly metricsStreamPath: string
+  readonly memoryStreamPath: string
   readonly metricsReportPath: string
   readonly cliLogPath: string
   readonly workflowTaskQueuePrefix: string
@@ -42,10 +52,18 @@ const DEFAULT_UPDATES_PER_WORKFLOW = 3
 const DEFAULT_UPDATE_DELAY_MS = 500
 const DEFAULT_THROUGHPUT_FLOOR = 2
 const DEFAULT_STICKY_RATIO = 0.5
+const DEFAULT_STICKY_TTL_MS = 5 * 60_000
+const DEFAULT_RESTART_AFTER_SUBMIT = false
+const DEFAULT_RESTART_DELAY_MS = 500
+const DEFAULT_ACTIVITY_CANCELLATION_RATIO = 0
+const DEFAULT_ACTIVITY_CANCELLATION_DELAY_MS = 250
 const DEFAULT_WORKFLOW_POLL_P95_MS = 5_000
 const DEFAULT_ACTIVITY_POLL_P95_MS = 3_500
 const DEFAULT_WORKFLOW_DEADLINE_MS = 100_000
 const DEFAULT_METRICS_FLUSH_MS = 5_000
+const DEFAULT_MEMORY_SAMPLE_INTERVAL_MS = 5_000
+const DEFAULT_MEMORY_SLOPE_MAX_MB_PER_HOUR = 128
+const DEFAULT_MEMORY_SLOPE_MIN_ELAPSED_MS = 600_000
 const DEFAULT_TASK_QUEUE_PREFIX = 'worker-load'
 
 export const readWorkerLoadConfig = (): WorkerLoadConfig => {
@@ -69,6 +87,28 @@ export const readWorkerLoadConfig = (): WorkerLoadConfig => {
     min: 0,
     max: 1,
   })
+  const stickyCacheSize = readInt(
+    'TEMPORAL_LOAD_TEST_STICKY_CACHE_SIZE',
+    Math.max(workflowConcurrencyTarget * 8, 64),
+    { min: 1 },
+  )
+  const stickyTtlMs = readInt(
+    'TEMPORAL_LOAD_TEST_STICKY_TTL_MS',
+    readInt('TEMPORAL_STICKY_TTL_MS', DEFAULT_STICKY_TTL_MS, { min: 0 }),
+    { min: 0 },
+  )
+  const restartAfterSubmit = readBoolean('TEMPORAL_LOAD_TEST_RESTART_AFTER_SUBMIT', DEFAULT_RESTART_AFTER_SUBMIT)
+  const restartDelayMs = readInt('TEMPORAL_LOAD_TEST_RESTART_DELAY_MS', DEFAULT_RESTART_DELAY_MS, { min: 0 })
+  const activityCancellationRatio = readFloat(
+    'TEMPORAL_LOAD_TEST_ACTIVITY_CANCELLATION_RATIO',
+    DEFAULT_ACTIVITY_CANCELLATION_RATIO,
+    { min: 0, max: 1 },
+  )
+  const activityCancellationDelayMs = readInt(
+    'TEMPORAL_LOAD_TEST_ACTIVITY_CANCELLATION_DELAY_MS',
+    DEFAULT_ACTIVITY_CANCELLATION_DELAY_MS,
+    { min: 0 },
+  )
   const workflowPollP95TargetMs = readInt(
     'TEMPORAL_LOAD_TEST_WORKFLOW_POLL_P95_MS',
     DEFAULT_WORKFLOW_POLL_P95_MS,
@@ -118,6 +158,21 @@ export const readWorkerLoadConfig = (): WorkerLoadConfig => {
     { min: 1 },
   )
   const updateDelayMs = readInt('TEMPORAL_LOAD_TEST_UPDATE_DELAY_MS', DEFAULT_UPDATE_DELAY_MS, { min: 25 })
+  const memorySampleIntervalMs = readInt(
+    'TEMPORAL_LOAD_TEST_MEMORY_SAMPLE_INTERVAL_MS',
+    DEFAULT_MEMORY_SAMPLE_INTERVAL_MS,
+    { min: 100 },
+  )
+  const memorySlopeMaxMbPerHour = readFloat(
+    'TEMPORAL_LOAD_TEST_MEMORY_SLOPE_MAX_MB_PER_HOUR',
+    DEFAULT_MEMORY_SLOPE_MAX_MB_PER_HOUR,
+    { min: 0 },
+  )
+  const memorySlopeMinElapsedMs = readInt(
+    'TEMPORAL_LOAD_TEST_MEMORY_SLOPE_MIN_MS',
+    DEFAULT_MEMORY_SLOPE_MIN_ELAPSED_MS,
+    { min: 1_000 },
+  )
 
   const artifactsDir = resolvePath(
     process.env.TEMPORAL_WORKER_LOAD_ARTIFACTS_DIR ?? process.env.TEMPORAL_ARTIFACTS_DIR,
@@ -130,6 +185,10 @@ export const readWorkerLoadConfig = (): WorkerLoadConfig => {
   const metricsReportPath = resolvePath(
     process.env.TEMPORAL_LOAD_TEST_REPORT_PATH,
     join(artifactsDir, 'report.json'),
+  )
+  const memoryStreamPath = resolvePath(
+    process.env.TEMPORAL_LOAD_TEST_MEMORY_PATH,
+    join(artifactsDir, 'memory.jsonl'),
   )
   const cliLogPath = resolvePath(
     process.env.TEMPORAL_LOAD_TEST_CLI_LOG_PATH,
@@ -148,6 +207,12 @@ export const readWorkerLoadConfig = (): WorkerLoadConfig => {
     updateDelayMs,
     throughputFloorPerSecond,
     stickyHitRatioTarget,
+    stickyCacheSize,
+    stickyTtlMs,
+    restartAfterSubmit,
+    restartDelayMs,
+    activityCancellationRatio,
+    activityCancellationDelayMs,
     workflowPollP95TargetMs,
     activityPollP95TargetMs,
     workflowDurationBudgetMs,
@@ -158,8 +223,12 @@ export const readWorkerLoadConfig = (): WorkerLoadConfig => {
     activityBurstsPerWorkflow,
     activityDelayMs,
     activityPayloadBytes,
+    memorySampleIntervalMs,
+    memorySlopeMaxMbPerHour,
+    memorySlopeMinElapsedMs,
     artifactsDir,
     metricsStreamPath,
+    memoryStreamPath,
     metricsReportPath,
     cliLogPath,
     workflowTaskQueuePrefix,
@@ -192,6 +261,20 @@ const readFloat = (name: string, fallback: number, options: { min?: number; max?
     return clamp(fallback, options)
   }
   return clamp(parsed, options)
+}
+
+const readBoolean = (name: string, fallback: boolean): boolean => {
+  const raw = process.env[name]?.trim().toLowerCase()
+  if (!raw) {
+    return fallback
+  }
+  if (raw === '1' || raw === 'true' || raw === 't' || raw === 'yes' || raw === 'y' || raw === 'on') {
+    return true
+  }
+  if (raw === '0' || raw === 'false' || raw === 'f' || raw === 'no' || raw === 'n' || raw === 'off') {
+    return false
+  }
+  return fallback
 }
 
 const clamp = (value: number, options: { min?: number; max?: number }): number => {

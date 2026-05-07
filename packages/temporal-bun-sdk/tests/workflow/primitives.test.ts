@@ -184,6 +184,66 @@ test('intentsEqual normalizes activity timeout defaults', () => {
   expect(intentsEqual(expected, actual)).toBe(true)
 })
 
+test('intentsEqual normalizes server activity retry defaults', () => {
+  const expected = {
+    id: 'schedule-activity-0',
+    kind: 'schedule-activity',
+    sequence: 0,
+    activityType: 'integrationEchoActivity',
+    activityId: 'activity-0',
+    taskQueue: baseInfo.taskQueue,
+    input: ['alpha'],
+    timeouts: {
+      scheduleToCloseTimeoutMs: 10_000,
+      startToCloseTimeoutMs: 10_000,
+    },
+  } as const
+
+  const actual = {
+    ...expected,
+    timeouts: {
+      ...expected.timeouts,
+      scheduleToStartTimeoutMs: 10_000,
+      heartbeatTimeoutMs: 0,
+    },
+    retry: {
+      initialIntervalMs: 1_000,
+      backoffCoefficient: 2,
+      maximumIntervalMs: 100_000,
+    },
+  }
+
+  expect(intentsEqual(expected, actual)).toBe(true)
+})
+
+test('intentsEqual normalizes heartbeat timeout server cap', () => {
+  const expected = {
+    id: 'schedule-activity-0',
+    kind: 'schedule-activity',
+    sequence: 0,
+    activityType: 'integrationHeartbeatActivity',
+    activityId: 'activity-0',
+    taskQueue: baseInfo.taskQueue,
+    input: [300],
+    timeouts: {
+      scheduleToCloseTimeoutMs: 900,
+      startToCloseTimeoutMs: 900,
+      heartbeatTimeoutMs: 1_000,
+    },
+  } as const
+
+  const actual = {
+    ...expected,
+    timeouts: {
+      ...expected.timeouts,
+      scheduleToStartTimeoutMs: 900,
+      heartbeatTimeoutMs: 900,
+    },
+  }
+
+  expect(intentsEqual(expected, actual)).toBe(true)
+})
+
 test('intentsEqual normalizes child workflow defaults', () => {
   const expected = {
     id: 'start-child-workflow-0',
@@ -205,6 +265,32 @@ test('intentsEqual normalizes child workflow defaults', () => {
       workflowRunTimeoutMs: 0,
       workflowTaskTimeoutMs: 10_000,
     },
+    workflowIdReusePolicy: 1,
+  }
+
+  expect(intentsEqual(expected, actual)).toBe(true)
+})
+
+test('intentsEqual normalizes server child workflow close-policy defaults', () => {
+  const expected = {
+    id: 'start-child-workflow-0',
+    kind: 'start-child-workflow',
+    sequence: 0,
+    workflowType: 'integrationChildWorkflow',
+    workflowId: 'wf-primitive-child-0',
+    namespace: baseInfo.namespace,
+    taskQueue: baseInfo.taskQueue,
+    input: ['alpha-child'],
+    timeouts: {},
+  } as const
+
+  const actual = {
+    ...expected,
+    timeouts: {
+      workflowRunTimeoutMs: 0,
+      workflowTaskTimeoutMs: 10_000,
+    },
+    parentClosePolicy: 1,
     workflowIdReusePolicy: 1,
   }
 

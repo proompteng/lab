@@ -139,7 +139,13 @@ jobs:
 
       - name: Run worker soak smoke
         run: |
-          TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:soak -- --duration 1000 --workflows 16 --workflow-concurrency 4 --activity-concurrency 6
+          TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:soak -- \
+            --duration 1000 \
+            --iterations 4 \
+            --workflows 16 \
+            --workflow-concurrency 4 \
+            --activity-concurrency 6 \
+            --failure-modes baseline,worker-restart,sticky-cache-churn,update-rejection-termination,activity-cancellation
 
       - name: Verify production package boundary
         run: bun run --filter @proompteng/temporal-bun-sdk verify:production
@@ -151,9 +157,11 @@ jobs:
           name: worker-load-artifacts
           path: |
             packages/temporal-bun-sdk/.artifacts/worker-load/metrics.jsonl
+            packages/temporal-bun-sdk/.artifacts/worker-load/memory.jsonl
             packages/temporal-bun-sdk/.artifacts/worker-load/report.json
             packages/temporal-bun-sdk/.artifacts/worker-load/temporal-cli.log
             packages/temporal-bun-sdk/.artifacts/worker-soak/report.json
+            packages/temporal-bun-sdk/.artifacts/worker-soak/memory.jsonl
             packages/temporal-bun-sdk/.artifacts/worker-soak/iteration-*/report.json
             packages/temporal-bun-sdk/.artifacts/async-fuzz/report.json
 
@@ -169,6 +177,7 @@ jobs:
             packages/temporal-bun-sdk/.artifacts/replay-corpus/report.json
             packages/temporal-bun-sdk/.artifacts/worker-load/report.json
             packages/temporal-bun-sdk/.artifacts/worker-soak/report.json
+            packages/temporal-bun-sdk/.artifacts/worker-soak/memory.jsonl
 
   prepare-release:
     name: Prepare Temporal Bun SDK Release
@@ -320,6 +329,9 @@ jobs:
 
       - name: Verify production package boundary
         run: bun run --filter @proompteng/temporal-bun-sdk verify:production
+
+      - name: Verify default-choice readiness
+        run: bun run --filter @proompteng/temporal-bun-sdk verify:default-choice
 
       - name: Publish package to npm
         working-directory: packages/temporal-bun-sdk

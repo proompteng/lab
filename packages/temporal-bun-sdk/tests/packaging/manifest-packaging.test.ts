@@ -151,6 +151,9 @@ describe('temporal-bun-sdk packaging manifest', () => {
     expect(packageJson.scripts?.['verify:production']).toBe(
       'bun run evidence:production && bun test tests/packaging/manifest-packaging.test.ts',
     )
+    expect(packageJson.scripts?.['verify:default-choice']).toBe(
+      'TEMPORAL_REQUIRE_DEFAULT_CHOICE=1 bun run evidence:production && bun test tests/packaging/manifest-packaging.test.ts',
+    )
     expect(packageJson.scripts?.prepack).toBe('bun run build && bun run evidence:production')
   })
 
@@ -167,7 +170,19 @@ describe('temporal-bun-sdk packaging manifest', () => {
       }
       evidence?: {
         replayCorpusReportPassed?: boolean
+        replayCorpusCoverageTags?: string[]
         loadReportPassed?: boolean
+        loadScenarioCoverage?: Record<string, number>
+        asyncFuzzOperationCount?: number
+        asyncFuzzOperationCoverage?: Record<string, number>
+        soakFailureModeCoverage?: Record<string, number>
+        soakMemorySummary?: { sampleCount?: number; withinSlopeLimit?: boolean } | null
+        productionUsageServiceCount?: number
+        productionUsageServices?: Array<{ id?: string; passed?: boolean; missingRefs?: string[] }>
+        productionUsageObservabilityRefs?: string[]
+        productionUsageMissingRefs?: string[]
+        longSoakWorkflowPresent?: boolean
+        longSoakWorkflowPath?: string
       }
       gates?: Record<string, { passed?: boolean }>
       semanticConcerns?: Array<{
@@ -184,6 +199,12 @@ describe('temporal-bun-sdk packaging manifest', () => {
         scope?: string
         supportModel?: string
         semanticConcernIds?: string[]
+        minimumReplayFixtures?: number
+        minimumAsyncFuzzOperations?: number
+        minimumLoadWorkflows?: number
+        minimumLoadPeakConcurrency?: number
+        minimumProductionServices?: number
+        minimumSoakDurationMs?: number
       }
     }
     const agentReadiness = JSON.parse(await readFile(join(packageRoot, 'dist', 'agent-readiness.json'), 'utf8')) as {
@@ -214,12 +235,37 @@ describe('temporal-bun-sdk packaging manifest', () => {
     expect(productionEvidence.gates?.loadEvidence).toBeDefined()
     expect(productionEvidence.gates?.asyncFuzzEvidence).toBeDefined()
     expect(productionEvidence.gates?.soakEvidence).toBeDefined()
-    expect(productionEvidence.gates?.ciWorkflowCoverage?.passed).toBeTrue()
+    expect(productionEvidence.gates?.longSoakWorkflowCoverage).toBeDefined()
+    expect(productionEvidence.gates?.productionUsageEvidence).toBeDefined()
+    expect(typeof productionEvidence.gates?.ciWorkflowCoverage?.passed).toBe('boolean')
+    expect(typeof productionEvidence.gates?.longSoakWorkflowCoverage?.passed).toBe('boolean')
+    expect(typeof productionEvidence.gates?.productionUsageEvidence?.passed).toBe('boolean')
     expect(typeof productionEvidence.evidence?.replayCorpusReportPassed).toBe('boolean')
     expect(typeof productionEvidence.evidence?.loadReportPassed).toBe('boolean')
+    expect(Array.isArray(productionEvidence.evidence?.replayCorpusCoverageTags)).toBeTrue()
+    expect(typeof productionEvidence.evidence?.asyncFuzzOperationCount).toBe('number')
+    expect(typeof productionEvidence.evidence?.asyncFuzzOperationCoverage).toBe('object')
+    expect(typeof productionEvidence.evidence?.loadScenarioCoverage).toBe('object')
+    expect(typeof productionEvidence.evidence?.soakFailureModeCoverage).toBe('object')
+    expect(
+      productionEvidence.evidence?.soakMemorySummary === null ||
+        typeof productionEvidence.evidence?.soakMemorySummary === 'object',
+    ).toBeTrue()
+    expect(productionEvidence.evidence?.productionUsageServiceCount).toBeGreaterThanOrEqual(2)
+    expect(Array.isArray(productionEvidence.evidence?.productionUsageServices)).toBeTrue()
+    expect(Array.isArray(productionEvidence.evidence?.productionUsageObservabilityRefs)).toBeTrue()
+    expect(productionEvidence.evidence?.productionUsageMissingRefs).toEqual([])
+    expect(productionEvidence.evidence?.longSoakWorkflowPresent).toBeTrue()
+    expect(productionEvidence.evidence?.longSoakWorkflowPath).toContain('temporal-bun-sdk-nightly.yml')
     expect(Array.isArray(productionEvidence.defaultChoice?.blockers)).toBeTrue()
     expect(productionEvidence.defaultChoice?.scope).toContain('Bun-first Temporal')
     expect(productionEvidence.defaultChoice?.supportModel).toContain('Company/community SDK')
+    expect(productionEvidence.defaultChoice?.minimumReplayFixtures).toBeGreaterThanOrEqual(25)
+    expect(productionEvidence.defaultChoice?.minimumAsyncFuzzOperations).toBeGreaterThanOrEqual(64)
+    expect(productionEvidence.defaultChoice?.minimumLoadWorkflows).toBeGreaterThanOrEqual(1000)
+    expect(productionEvidence.defaultChoice?.minimumLoadPeakConcurrency).toBeGreaterThanOrEqual(50)
+    expect(productionEvidence.defaultChoice?.minimumProductionServices).toBeGreaterThanOrEqual(2)
+    expect(productionEvidence.defaultChoice?.minimumSoakDurationMs).toBeGreaterThanOrEqual(21_600_000)
 
     const semanticConcerns = productionEvidence.semanticConcerns ?? []
     expect(semanticConcerns.length).toBeGreaterThanOrEqual(8)
@@ -237,6 +283,11 @@ describe('temporal-bun-sdk packaging manifest', () => {
     if (productionEvidence.defaultChoice?.recommended) {
       expect(productionEvidence.evidence?.replayCorpusReportPassed).toBeTrue()
       expect(productionEvidence.evidence?.loadReportPassed).toBeTrue()
+      expect(productionEvidence.evidence?.soakMemorySummary?.sampleCount ?? 0).toBeGreaterThan(0)
+      expect(productionEvidence.evidence?.soakMemorySummary?.withinSlopeLimit).toBeTrue()
+      expect(productionEvidence.gates?.ciWorkflowCoverage?.passed).toBeTrue()
+      expect(productionEvidence.gates?.longSoakWorkflowCoverage?.passed).toBeTrue()
+      expect(productionEvidence.gates?.productionUsageEvidence?.passed).toBeTrue()
       for (const concern of requiredSemanticConcerns) {
         expect(concern.missingEvidenceRefs).toEqual([])
         expect(concern.passed).toBeTrue()
@@ -254,5 +305,19 @@ describe('temporal-bun-sdk packaging manifest', () => {
     expect(agentReadiness.semanticConcerns).toEqual(productionEvidence.semanticConcerns)
     expect(agentReadiness.evidenceFile).toBe('production-readiness.json')
     expect(agentReadiness.blockers).toEqual(productionEvidence.defaultChoice?.blockers)
+  })
+
+  test('does not claim default-choice readiness on smoke-level evidence', async () => {
+    const productionEvidence = JSON.parse(
+      await readFile(join(packageRoot, 'dist', 'production-readiness.json'), 'utf8'),
+    ) as {
+      defaultChoice?: {
+        recommended?: boolean
+        blockers?: string[]
+      }
+    }
+
+    expect(productionEvidence.defaultChoice?.recommended).toBeFalse()
+    expect(productionEvidence.defaultChoice?.blockers?.join('\n')).toContain('soak evidence')
   })
 })

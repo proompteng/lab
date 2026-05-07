@@ -216,3 +216,119 @@ test('worker sticky poll RPCs send STICKY task queue kind with normalName', asyn
   expect(stickyPoll?.taskQueue?.kind).toBe(TaskQueueKind.STICKY)
   expect(stickyPoll?.taskQueue?.normalName).toBe(config.taskQueue)
 })
+
+test('worker shutdown aborts normal, sticky, and activity long polls', async () => {
+  const config: TemporalConfig = createTestTemporalConfig({
+    taskQueue: 'queue-shutdown-poller-abort',
+    stickySchedulingEnabled: true,
+  })
+  const observability = createObservabilityStub()
+  const pollRecords: Array<{
+    kind: 'workflow' | 'activity'
+    queueName: string
+    taskQueueKind: TaskQueueKind
+    aborted: boolean
+  }> = []
+
+  const waitForRecordedAbort = async (record: (typeof pollRecords)[number], signal?: AbortSignal) => {
+    return await new Promise<never>((_, reject) => {
+      const abort = () => {
+        record.aborted = true
+        const abortError = new Error('aborted')
+        abortError.name = 'AbortError'
+        reject(abortError)
+      }
+      if (signal?.aborted) {
+        abort()
+        return
+      }
+      signal?.addEventListener('abort', abort, { once: true })
+    })
+  }
+
+  const workflowService: WorkflowServiceClient = {
+    pollWorkflowTaskQueue: async (request, { signal }: { signal?: AbortSignal }) => {
+      const record = {
+        kind: 'workflow' as const,
+        queueName: request.taskQueue?.name ?? '',
+        taskQueueKind: request.taskQueue?.kind ?? TaskQueueKind.UNSPECIFIED,
+        aborted: false,
+      }
+      pollRecords.push(record)
+      return await waitForRecordedAbort(record, signal)
+    },
+    pollActivityTaskQueue: async (request, { signal }: { signal?: AbortSignal }) => {
+      const record = {
+        kind: 'activity' as const,
+        queueName: request.taskQueue?.name ?? '',
+        taskQueueKind: request.taskQueue?.kind ?? TaskQueueKind.UNSPECIFIED,
+        aborted: false,
+      }
+      pollRecords.push(record)
+      return await waitForRecordedAbort(record, signal)
+    },
+    getWorkflowExecutionHistory: async () => ({ history: { events: [] }, nextPageToken: new Uint8Array() }),
+    respondQueryTaskCompleted: async () => ({}),
+    respondWorkflowTaskCompleted: async () => ({}),
+    respondWorkflowTaskFailed: async () => ({}),
+    respondActivityTaskCompleted: async () => ({}),
+    respondActivityTaskFailed: async () => ({}),
+    respondActivityTaskCanceled: async () => ({}),
+    requestCancelWorkflowExecution: async () => ({}),
+    pollWorkflowExecutionUpdate: async () => ({ messages: [] }),
+  } as unknown as WorkflowServiceClient
+
+  const runtime = await WorkerRuntime.create({
+    config,
+    taskQueue: config.taskQueue,
+    namespace: config.namespace,
+    workflows: [defineWorkflow('shutdownPollerAbortWorkflow', () => Effect.succeed('ok'))],
+    activities: {
+      noop: async () => undefined,
+    },
+    workflowService,
+    logger: observability.services.logger,
+    metrics: observability.services.metricsRegistry,
+    metricsExporter: observability.services.metricsExporter,
+    stickyScheduling: true,
+    pollers: { workflow: 2 },
+    concurrency: { workflow: 1, activity: 1 },
+  })
+
+  const runPromise = runtime.run()
+  await waitFor(() => {
+    const normalWorkflowPolls = pollRecords.filter(
+      (record) =>
+        record.kind === 'workflow' &&
+        record.queueName === config.taskQueue &&
+        record.taskQueueKind === TaskQueueKind.NORMAL,
+    )
+    const stickyWorkflowPolls = pollRecords.filter(
+      (record) =>
+        record.kind === 'workflow' &&
+        record.queueName !== config.taskQueue &&
+        record.taskQueueKind === TaskQueueKind.STICKY,
+    )
+    const activityPolls = pollRecords.filter(
+      (record) =>
+        record.kind === 'activity' &&
+        record.queueName === config.taskQueue &&
+        record.taskQueueKind === TaskQueueKind.NORMAL,
+    )
+    return normalWorkflowPolls.length >= 2 && stickyWorkflowPolls.length >= 2 && activityPolls.length >= 1
+  })
+
+  await runtime.shutdown()
+  await runPromise
+
+  expect(pollRecords).toHaveLength(5)
+  expect(pollRecords.every((record) => record.aborted)).toBe(true)
+  expect(observability.getFlushes()).toBeGreaterThan(0)
+  expect(
+    observability.logs.some(
+      (entry) =>
+        entry.message === 'temporal worker shutdown complete' &&
+        (entry.fields as { drained?: unknown } | undefined)?.drained === true,
+    ),
+  ).toBe(true)
+})

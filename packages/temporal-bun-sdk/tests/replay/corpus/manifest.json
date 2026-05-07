@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-05-05T00:00:00.000Z",
+  "generatedAt": "2026-05-06T19:01:43.978Z",
   "fixtures": [
     {
       "name": "timer-workflow",
@@ -9,7 +9,13 @@
       "sdkVersion": "0.8.0",
       "bunVersion": "1.3.10",
       "workflowType": "timerWorkflow",
-      "featureTags": ["timer", "determinism"],
+      "featureTags": [
+        "timer",
+        "determinism"
+      ],
+      "commandKinds": [
+        "start-timer"
+      ],
       "historyEventCount": 1,
       "expectedCommandCount": 1,
       "payloadCodecProfile": "json",
@@ -23,7 +29,14 @@
       "sdkVersion": "0.8.0",
       "bunVersion": "1.3.10",
       "workflowType": "activityWorkflow",
-      "featureTags": ["activity", "retry", "determinism"],
+      "featureTags": [
+        "activity",
+        "retry",
+        "determinism"
+      ],
+      "commandKinds": [
+        "schedule-activity"
+      ],
       "historyEventCount": 1,
       "expectedCommandCount": 1,
       "payloadCodecProfile": "json",
@@ -37,12 +50,1078 @@
       "sdkVersion": "0.8.0",
       "bunVersion": "1.3.10",
       "workflowType": "parentWorkflow",
-      "featureTags": ["child-workflow", "continue-as-new", "determinism"],
+      "featureTags": [
+        "child-workflow",
+        "continue-as-new",
+        "determinism"
+      ],
+      "commandKinds": [
+        "continue-as-new",
+        "start-child-workflow"
+      ],
       "historyEventCount": 2,
       "expectedCommandCount": 2,
       "payloadCodecProfile": "json",
       "capturedAt": "2026-05-05T00:00:00.000Z",
       "source": "checked-in replay fixture"
+    },
+    {
+      "name": "captured-timer-010ms",
+      "path": "../fixtures/captured-timer-010ms.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationTimerWorkflow",
+      "featureTags": [
+        "timer",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "start-timer"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_TIMER_FIRED",
+        "EVENT_TYPE_TIMER_STARTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 11,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-timer-025ms",
+      "path": "../fixtures/captured-timer-025ms.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationTimerWorkflow",
+      "featureTags": [
+        "timer",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "start-timer"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_TIMER_FIRED",
+        "EVENT_TYPE_TIMER_STARTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 11,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-timer-050ms",
+      "path": "../fixtures/captured-timer-050ms.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationTimerWorkflow",
+      "featureTags": [
+        "timer",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "start-timer"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_TIMER_FIRED",
+        "EVENT_TYPE_TIMER_STARTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 11,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-timer-100ms",
+      "path": "../fixtures/captured-timer-100ms.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationTimerWorkflow",
+      "featureTags": [
+        "timer",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "start-timer"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_TIMER_FIRED",
+        "EVENT_TYPE_TIMER_STARTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 11,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-timer-200ms",
+      "path": "../fixtures/captured-timer-200ms.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationTimerWorkflow",
+      "featureTags": [
+        "timer",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "start-timer"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_TIMER_FIRED",
+        "EVENT_TYPE_TIMER_STARTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 11,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-timer-default",
+      "path": "../fixtures/captured-timer-default.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationTimerWorkflow",
+      "featureTags": [
+        "timer",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "start-timer"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_TIMER_FIRED",
+        "EVENT_TYPE_TIMER_STARTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 11,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-activity-alpha",
+      "path": "../fixtures/captured-activity-alpha.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationActivityWorkflow",
+      "featureTags": [
+        "activity",
+        "payload-codec",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "schedule-activity"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+        "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+        "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 12,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-activity-json",
+      "path": "../fixtures/captured-activity-json.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationActivityWorkflow",
+      "featureTags": [
+        "activity",
+        "payload-codec",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "schedule-activity"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+        "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+        "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 12,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-activity-unicode",
+      "path": "../fixtures/captured-activity-unicode.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationActivityWorkflow",
+      "featureTags": [
+        "activity",
+        "payload-codec",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "schedule-activity"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+        "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+        "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 12,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-activity-long",
+      "path": "../fixtures/captured-activity-long.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationActivityWorkflow",
+      "featureTags": [
+        "activity",
+        "payload-codec",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "schedule-activity"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+        "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+        "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 12,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-activity-empty",
+      "path": "../fixtures/captured-activity-empty.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationActivityWorkflow",
+      "featureTags": [
+        "activity",
+        "payload-codec",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "schedule-activity"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+        "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+        "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 12,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-activity-punctuation",
+      "path": "../fixtures/captured-activity-punctuation.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationActivityWorkflow",
+      "featureTags": [
+        "activity",
+        "payload-codec",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "schedule-activity"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+        "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+        "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 12,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-child-alpha",
+      "path": "../fixtures/captured-child-alpha.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationParentWorkflow",
+      "featureTags": [
+        "child-workflow",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "start-child-workflow"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 11,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-child-beta",
+      "path": "../fixtures/captured-child-beta.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationParentWorkflow",
+      "featureTags": [
+        "child-workflow",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "start-child-workflow"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 11,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-child-json",
+      "path": "../fixtures/captured-child-json.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationParentWorkflow",
+      "featureTags": [
+        "child-workflow",
+        "payload-codec",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "start-child-workflow"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 11,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-child-long",
+      "path": "../fixtures/captured-child-long.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationParentWorkflow",
+      "featureTags": [
+        "child-workflow",
+        "payload-codec",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "start-child-workflow"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 11,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-continue-two",
+      "path": "../fixtures/captured-continue-two.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationContinueAsNewWorkflow",
+      "featureTags": [
+        "continue-as-new",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "continue-as-new"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 5,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-continue-three",
+      "path": "../fixtures/captured-continue-three.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationContinueAsNewWorkflow",
+      "featureTags": [
+        "continue-as-new",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "continue-as-new"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 5,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-continue-counter",
+      "path": "../fixtures/captured-continue-counter.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationContinueAsNewWorkflow",
+      "featureTags": [
+        "continue-as-new",
+        "payload-codec",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "continue-as-new"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 5,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-continue-four",
+      "path": "../fixtures/captured-continue-four.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationContinueAsNewWorkflow",
+      "featureTags": [
+        "continue-as-new",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "continue-as-new"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 5,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-heartbeat-short",
+      "path": "../fixtures/captured-heartbeat-short.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationHeartbeatWorkflow",
+      "featureTags": [
+        "activity",
+        "heartbeat",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "schedule-activity"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+        "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+        "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 12,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-heartbeat-medium",
+      "path": "../fixtures/captured-heartbeat-medium.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationHeartbeatWorkflow",
+      "featureTags": [
+        "activity",
+        "heartbeat",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "schedule-activity"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+        "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+        "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 12,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-retry-once",
+      "path": "../fixtures/captured-retry-once.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationRetryProbeWorkflow",
+      "featureTags": [
+        "activity",
+        "retry",
+        "failure",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "schedule-activity"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+        "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+        "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 12,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-retry-twice",
+      "path": "../fixtures/captured-retry-twice.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationRetryProbeWorkflow",
+      "featureTags": [
+        "activity",
+        "retry",
+        "failure",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "schedule-activity"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+        "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+        "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 12,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-retry-no-failure",
+      "path": "../fixtures/captured-retry-no-failure.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationRetryProbeWorkflow",
+      "featureTags": [
+        "activity",
+        "retry",
+        "determinism",
+        "real-history"
+      ],
+      "commandKinds": [
+        "schedule-activity"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+        "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+        "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 12,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-metadata-search-side-effect-version",
+      "path": "../fixtures/captured-metadata-search-side-effect-version.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationMetadataWorkflow",
+      "featureTags": [
+        "determinism",
+        "payload-codec",
+        "real-history",
+        "search-attributes",
+        "side-effect",
+        "versioning"
+      ],
+      "commandKinds": [
+        "modify-workflow-properties",
+        "record-marker",
+        "upsert-search-attributes"
+      ],
+      "externalOperationKinds": [
+        "operator"
+      ],
+      "historyEventTypes": [
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 10,
+      "expectedCommandCount": 5,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-timer-cancellation",
+      "path": "../fixtures/captured-timer-cancellation.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationTimerCancellationWorkflow",
+      "featureTags": [
+        "cancellation",
+        "determinism",
+        "real-history",
+        "timer"
+      ],
+      "commandKinds": [
+        "cancel-timer",
+        "start-timer"
+      ],
+      "externalOperationKinds": [],
+      "historyEventTypes": [
+        "EVENT_TYPE_TIMER_CANCELED",
+        "EVENT_TYPE_TIMER_STARTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 7,
+      "expectedCommandCount": 2,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-signal-query",
+      "path": "../fixtures/captured-signal-query.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationSignalQueryWorkflow",
+      "featureTags": [
+        "determinism",
+        "query",
+        "real-history",
+        "signal"
+      ],
+      "commandKinds": [],
+      "externalOperationKinds": [
+        "query",
+        "signal"
+      ],
+      "historyEventTypes": [
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 14,
+      "expectedCommandCount": 0,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-update-success",
+      "path": "../fixtures/captured-update-success.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationUpdateWorkflow",
+      "featureTags": [
+        "determinism",
+        "real-history",
+        "update"
+      ],
+      "commandKinds": [
+        "start-timer"
+      ],
+      "externalOperationKinds": [
+        "terminate",
+        "update"
+      ],
+      "historyEventTypes": [
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_TIMER_STARTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 12,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-update-rejection",
+      "path": "../fixtures/captured-update-rejection.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationUpdateWorkflow",
+      "featureTags": [
+        "determinism",
+        "real-history",
+        "update"
+      ],
+      "commandKinds": [
+        "start-timer"
+      ],
+      "externalOperationKinds": [
+        "terminate",
+        "update"
+      ],
+      "historyEventTypes": [
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_TIMER_STARTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 10,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-external-cancellation",
+      "path": "../fixtures/captured-external-cancellation.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationQueryOnlyWorkflow",
+      "featureTags": [
+        "cancellation",
+        "determinism",
+        "query",
+        "real-history"
+      ],
+      "commandKinds": [
+        "start-timer"
+      ],
+      "externalOperationKinds": [
+        "cancel",
+        "query",
+        "terminate"
+      ],
+      "historyEventTypes": [
+        "EVENT_TYPE_MARKER_RECORDED",
+        "EVENT_TYPE_TIMER_STARTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED",
+        "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 11,
+      "expectedCommandCount": 1,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
+    },
+    {
+      "name": "captured-workflow-task-failure",
+      "path": "../fixtures/captured-workflow-task-failure.json",
+      "temporalServerVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)",
+      "sdkVersion": "0.9.1",
+      "bunVersion": "1.3.13",
+      "workflowType": "integrationWorkflowTaskFailureWorkflow",
+      "featureTags": [
+        "failure",
+        "real-history",
+        "search-attributes",
+        "workflow-task-failure"
+      ],
+      "commandKinds": [],
+      "externalOperationKinds": [
+        "terminate"
+      ],
+      "historyEventTypes": [
+        "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED",
+        "EVENT_TYPE_WORKFLOW_TASK_FAILED",
+        "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+        "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+      ],
+      "historyEventCount": 5,
+      "expectedCommandCount": 0,
+      "allowEmptyCommandKinds": true,
+      "payloadCodecProfile": "json",
+      "capturedAt": "2026-05-06T19:01:25.233Z",
+      "source": "Temporal CLI dev-server capture via scripts/capture-replay-corpus.ts"
     }
   ]
 }

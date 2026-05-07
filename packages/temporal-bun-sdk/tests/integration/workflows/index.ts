@@ -40,6 +40,14 @@ const retryProbeInputSchema = Schema.Struct({
   maxAttempts: Schema.Number,
 })
 
+const metadataInputSchema = Schema.Struct({
+  value: Schema.String,
+})
+
+const timerCancellationInputSchema = Schema.Struct({
+  timeoutMs: Schema.optional(Schema.Number),
+})
+
 const updateWorkflowInputSchema = Schema.Struct({
   initialMessage: Schema.optional(Schema.String),
   cycles: Schema.optional(Schema.Number),
@@ -165,6 +173,48 @@ export const retryProbeWorkflow = defineWorkflow(
         startToCloseTimeoutMs: 10_000,
       },
     ),
+)
+
+export const metadataWorkflow = defineWorkflow(
+  'integrationMetadataWorkflow',
+  metadataInputSchema,
+  ({ determinism, input, upsertMemo, upsertSearchAttributes }) =>
+    Effect.sync(() => {
+      const sideEffectValue = determinism.sideEffect({
+        identifier: 'capture-side-effect',
+        compute: () => `side:${input.value}`,
+      })
+      const version = determinism.getVersion({
+        changeId: 'capture-version',
+        minSupported: 1,
+        maxSupported: 2,
+      })
+      const patched = determinism.patched('capture-patch')
+      upsertSearchAttributes({ CustomKeywordField: input.value })
+      upsertMemo({ metadataCapture: { patched, sideEffectValue, version } })
+      return { patched, sideEffectValue, version }
+    }),
+)
+
+export const timerCancellationWorkflow = defineWorkflow(
+  'integrationTimerCancellationWorkflow',
+  timerCancellationInputSchema,
+  ({ input, timers }) =>
+    Effect.gen(function* () {
+      yield* Effect.exit(timers.start({ timerId: 'capture-cancel-timer', timeoutMs: input.timeoutMs ?? 30_000 }))
+      yield* timers.cancel('capture-cancel-timer')
+      return 'timer-cancel-requested'
+    }),
+)
+
+export const workflowTaskFailureWorkflow = defineWorkflow(
+  'integrationWorkflowTaskFailureWorkflow',
+  metadataInputSchema,
+  ({ input, upsertSearchAttributes }) =>
+    Effect.sync(() => {
+      upsertSearchAttributes({ TemporalBunSdkMissingKeyword: input.value })
+      return 'unreachable-after-invalid-search-attribute'
+    }),
 )
 
 const signalHandles = defineWorkflowSignals({
@@ -301,6 +351,9 @@ export const integrationWorkflows = [
   heartbeatWorkflow,
   heartbeatTimeoutWorkflow,
   retryProbeWorkflow,
+  metadataWorkflow,
+  timerCancellationWorkflow,
+  workflowTaskFailureWorkflow,
   signalQueryWorkflow,
   queryOnlyWorkflow,
   updateWorkflow,
