@@ -31,6 +31,19 @@ def _int(value: object, default: int = 0) -> int:
     return default
 
 
+def _float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
 def _mapping(value: object) -> Mapping[str, Any]:
     if isinstance(value, Mapping):
         return cast(Mapping[str, Any], value)
@@ -116,6 +129,7 @@ def _record_from_symbol(
         "reason": reason,
         "avg_abs_slippage_bps": symbol_payload.get("avg_abs_slippage_bps"),
         "max_abs_slippage_bps": symbol_payload.get("max_abs_slippage_bps"),
+        "slippage_guardrail_bps": tca_source_ref.get("slippage_guardrail_bps"),
         "filled_execution_count": filled_execution_count,
         "unsettled_execution_count": _int(
             tca_source_ref.get("unsettled_execution_count")
@@ -165,6 +179,33 @@ def _missing_record(
         quant_source_ref=quant_source_ref,
         alpha_source_ref=alpha_source_ref,
     )
+
+
+def _repair_candidate_rank(record: Mapping[str, object]) -> tuple[int, float, int, str]:
+    state = _text(record.get("state"))
+    state_rank = {"blocked": 0, "missing": 1, "retired": 2}.get(state, 3)
+    slippage = _float(record.get("avg_abs_slippage_bps"))
+    filled = _int(record.get("filled_execution_count"))
+    return (
+        state_rank,
+        slippage if slippage is not None else float("inf"),
+        -filled,
+        _text(record.get("symbol")),
+    )
+
+
+def _repair_candidate(record: Mapping[str, object], *, rank: int) -> dict[str, object]:
+    return {
+        "rank": rank,
+        "symbol": _text(record.get("symbol")),
+        "state": _text(record.get("state")),
+        "reason": _text(record.get("reason")),
+        "avg_abs_slippage_bps": record.get("avg_abs_slippage_bps"),
+        "slippage_guardrail_bps": record.get("slippage_guardrail_bps"),
+        "filled_execution_count": _int(record.get("filled_execution_count")),
+        "paper_probe_notional_limit": "0",
+        "next_repair_action": _text(record.get("next_repair_action")),
+    }
 
 
 def build_route_reacquisition_book(
@@ -266,6 +307,18 @@ def build_route_reacquisition_book(
         for item in records
         if _text(item.get("state")) in {"routeable", "probing"}
     ]
+    repair_source_records = sorted(
+        (
+            record
+            for record in records
+            if _text(record.get("state")) in {"blocked", "missing"}
+        ),
+        key=_repair_candidate_rank,
+    )
+    repair_candidates = [
+        _repair_candidate(record, rank=index + 1)
+        for index, record in enumerate(repair_source_records)
+    ]
     expected_unblock_value = (
         counts["blocked"] * 2
         + counts["missing"]
@@ -295,6 +348,11 @@ def build_route_reacquisition_book(
             "missing_symbol_count": counts["missing"],
             "retired_symbol_count": counts["retired"],
             "candidate_symbols": candidate_symbols,
+            "repair_candidate_count": len(repair_candidates),
+            "repair_candidate_symbols": [
+                _text(item.get("symbol")) for item in repair_candidates
+            ],
+            "repair_candidates": repair_candidates,
             "expected_unblock_value": expected_unblock_value,
         },
         "source_refs": {
