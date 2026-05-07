@@ -20,6 +20,8 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Current Jangar/Torghut architecture contracts:
   - `designs/151-jangar-repair-outcome-settlement-and-schedule-debt-roi-exchange-2026-05-07.md`
   - `../torghut/design-system/v6/155-torghut-capital-repair-outcome-ledger-and-edge-reacquisition-gates-2026-05-07.md`
+  - `designs/152-jangar-material-verdict-authority-and-contradiction-debt-ledger-2026-05-07.md`
+  - `../torghut/design-system/v6/156-torghut-repair-closure-yield-ledger-and-capital-unlock-receipts-2026-05-07.md`
   - `designs/150-jangar-controller-brownout-budgets-and-proof-spend-admission-exchange-2026-05-07.md`
   - `../torghut/design-system/v6/154-torghut-marginal-proof-spend-portfolio-and-capital-repair-budget-2026-05-07.md`
   - `designs/149-jangar-wrapper-truth-settlement-and-useful-evidence-gates-2026-05-07.md`
