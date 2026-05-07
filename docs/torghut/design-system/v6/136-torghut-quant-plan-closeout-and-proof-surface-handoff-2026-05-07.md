@@ -12,6 +12,8 @@ Primary merged contracts:
 - `docs/torghut/design-system/v6/72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
 - `docs/agents/designs/70-jangar-promotion-authority-ledger-and-rollout-rehearsal-cells-2026-05-05.md`
 - `docs/torghut/design-system/v6/75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md`
+- `docs/agents/designs/144-jangar-capital-evidence-return-lane-and-paper-gate-witness-quorum-2026-05-07.md`
+- `docs/torghut/design-system/v6/148-torghut-profit-evidence-reactivation-scheduler-and-paper-gate-receipts-2026-05-07.md`
 
 Merged PR evidence:
 
@@ -19,6 +21,10 @@ Merged PR evidence:
   `c8530a79d388ee38ed726af93a544bea9a5779a1`.
 - PR 5408: `https://github.com/proompteng/lab/pull/5408`, merged as
   `ad00e8e7f2c98bab69a89a30c9d989f65318dcbc`.
+- PR 5777: `https://github.com/proompteng/lab/pull/5777`, merged as
+  `ec1b8e5a9f5d0536489a3878c3c53f353ad2b585`.
+- PR 5854: `https://github.com/proompteng/lab/pull/5854`, merged as
+  `b05380736319cd68b17549615d9602adbc1abc46`.
 
 ## Decision
 
@@ -238,3 +244,59 @@ and quant ingestion is fresh for the account/window under consideration.
 
 The next decision point is not whether Torghut should trade. The next decision point is whether the system can publish a
 fresh, bounded, account-scoped proof item that would make one paper canary capital request explainable and reversible.
+
+## Current Refresh 2026-05-07T17:25Z
+
+I rechecked the lane after the later capital-evidence return contract merged. The architecture direction still holds,
+but the live blocker moved.
+
+Jangar is no longer failing the May 5 controller-rollout shape. The in-cluster identity is still
+`system:serviceaccount:agents:agents-sa`; `deployment/agents` is `1/1`, `deployment/agents-controllers` is `2/2`,
+`deployment/jangar` is `1/1`, Jangar `/ready` returns HTTP 200, and the control-plane status reports rollout health,
+database projection, execution trust, and watch reliability as healthy. Jangar database migration consistency is
+current with `28/28` Kysely migrations applied and latest migration
+`20260505_torghut_quant_pipeline_health_window_index`.
+
+The blocker is now capital evidence, not base serving availability. Jangar dependency quorum is `block` because
+`empirical_jobs_degraded`, and the material-action verdict epoch keeps `dispatch_repair`, `dispatch_normal`,
+`deploy_widen`, `merge_ready`, `paper_canary`, `live_micro_canary`, and `live_scale` held or blocked. The two permitted
+action classes are read-only serving and Torghut observe. The deployer summary names
+`source_rollout_truth_missing:source_or_gitops_revision` as the freshest blocking reason and rolls back to bounded
+repair until a controller-ingestion witness is current.
+
+Torghut serving is also split by capability. The active revision is `torghut-00274`; `/healthz` returns HTTP 200, and
+`/trading/status` returns HTTP 200. `/db-check` now returns HTTP 200 with schema head
+`0029_whitepaper_embedding_dimension_4096`, current/expected heads aligned, lineage ready, and only the known parent
+fork warnings. `/readyz` still returns HTTP 503, which is the right answer while the proof floor is `repair_only`.
+
+Capital remains intentionally closed. Torghut reports `live_submission_gate.allowed=false`,
+`reason=simple_submit_disabled`, `capital_stage=shadow`, proof-floor `capital_state=zero_notional`, and
+`max_notional=0`. Current proof-floor blockers are `alpha_readiness_not_promotion_eligible`, `degraded`,
+`execution_tca_route_universe_empty`, `market_context_stale`, and `simple_submit_disabled`. The route reacquisition
+book has `0` routeable symbols out of `8`: `AAPL`, `AMD`, `AVGO`, `INTC`, and `NVDA` are blocked by execution TCA,
+while `AMZN`, `GOOGL`, and `ORCL` are missing execution TCA evidence.
+
+The data picture is better than the older stale-TCA snapshot but still not paper-ready. TCA now has `7334` orders,
+`7245` filled executions, latest execution timestamp `2026-04-02T19:00:29.586040Z`, and last computed timestamp
+`2026-05-07T14:23:43.480686Z`. Average absolute slippage is about `13.82` bps against the `8` bps guardrail, so the
+route universe still correctly resolves to zero candidates. Quant latest metrics are present for account
+`PA3SX7FYNUTF`, window `15m`, with `144` latest metrics and low latest-store lag, but the stage array is empty and the
+status remains `degraded` for `quant_pipeline_stages_missing`. Empirical jobs are now stale/degraded:
+`benchmark_parity`, `foundation_router_parity`, `janus_event_car`, and `janus_hgrm_reward`.
+
+Direct data-store access remains intentionally unavailable to this worker. CNPG psql against `torghut-db` is forbidden
+because the service account cannot create `pods/exec` in namespace `torghut`, and unauthenticated ClickHouse HTTP
+returns `REQUIRED_PASSWORD`. That reinforces the least-privilege design choice: deployer and engineer gates must use
+typed runtime receipts and proof projections, not database shells.
+
+The implementation order after this refresh is therefore unchanged but sharper:
+
+1. Keep Jangar serving and observe open; keep dispatch widening, paper, and live held until material-action receipts
+   clear.
+2. Repair source-rollout truth and controller-ingestion witness parity so Jangar can distinguish route health from
+   rollout truth without holding unrelated observe paths.
+3. Refresh empirical job receipts, market-context receipts, quant stage receipts, and execution TCA route evidence as
+   zero-notional work.
+4. Open paper only after the proof floor reports a routeable symbol set, empirical jobs are current, quant stages are
+   present, market context is fresh, and Jangar paper gate receipts allow `paper_canary`.
+5. Keep live capital blocked until paper settlement produces reversible fillability, post-cost, and rollback receipts.

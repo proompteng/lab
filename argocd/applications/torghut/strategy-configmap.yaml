@@ -139,7 +139,7 @@ data:
         strategy_type: breakout_continuation_long_v1
         version: 1.0.0
         description: Paper-only breakout continuation sleeve on the live executable chip core; production approval blocked pending $300/day executable proof, version=1.0.0
-        enabled: false
+        enabled: true
         base_timeframe: "1Sec"
         universe_type: breakout_continuation_long_v1
         universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
@@ -219,8 +219,8 @@ data:
         strategy_id: mean_reversion_rebound_long_v1@research
         strategy_type: mean_reversion_rebound_long_v1
         version: 1.0.0
-        description: Research-backed intraday rebound sleeve after controlled downside dislocation, version=1.0.0
-        enabled: false
+        description: Paper-only intraday rebound sleeve after controlled downside dislocation; production approval blocked pending $300/day executable proof, version=1.0.0
+        enabled: true
         base_timeframe: "1Sec"
         universe_type: mean_reversion_rebound_long_v1
         universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
@@ -273,8 +273,8 @@ data:
         strategy_id: mean_reversion_exhaustion_short_v1@research
         strategy_type: mean_reversion_exhaustion_short_v1
         version: 1.0.0
-        description: Research-backed intraday short fade after controlled upside exhaustion, version=1.0.0
-        enabled: false
+        description: Paper-only intraday short fade after controlled upside exhaustion; production approval blocked pending $300/day executable proof, version=1.0.0
+        enabled: true
         base_timeframe: "1Sec"
         universe_type: mean_reversion_exhaustion_short_v1
         universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]

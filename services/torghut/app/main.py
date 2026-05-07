@@ -790,6 +790,7 @@ def _evaluate_trading_health_payload(
             "live_submission_gate": live_submission_gate,
             "proof_floor": proof_floor,
             "renewal_bond_profit_escrow": renewal_bond_profit_escrow,
+            "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
             "quant_evidence": quant_evidence,
             "profit_lease_projection": live_submission_gate.get(
                 "profit_lease_projection"
@@ -1896,6 +1897,7 @@ def trading_status() -> dict[str, object]:
         "profit_lease_projection": live_submission_gate.get("profit_lease_projection"),
         "proof_floor": proof_floor,
         "renewal_bond_profit_escrow": renewal_bond_profit_escrow,
+        "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
         "quant_evidence": quant_evidence,
         "last_decision_at": last_decision_at,
         "simple_lane_status": simple_lane_status,

@@ -8,6 +8,7 @@ from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
+from typing import cast
 from unittest import TestCase
 
 from scripts.build_revenue_repair_digest import (
@@ -125,6 +126,19 @@ def _repair_only_status() -> dict[str, object]:
                     },
                 },
             ],
+            "route_reacquisition_book": {
+                "schema_version": "torghut.route-reacquisition-book.v1",
+                "state": "repair_only",
+                "capital_rule": "live_zero_notional_unchanged",
+                "summary": {
+                    "routeable_symbol_count": 0,
+                    "probing_symbol_count": 0,
+                    "blocked_symbol_count": 5,
+                    "missing_symbol_count": 3,
+                    "candidate_symbols": [],
+                    "expected_unblock_value": 13,
+                },
+            },
         },
         "quant_evidence": {
             "ok": False,
@@ -233,6 +247,14 @@ class TestBuildRevenueRepairDigest(TestCase):
                 ][0]["action"]
             ),
         )
+        evidence = cast(dict[str, object], digest["evidence"])
+        self.assertIsInstance(evidence, dict)
+        route_reacquisition = evidence["route_reacquisition"]
+        self.assertIsInstance(route_reacquisition, dict)
+        self.assertEqual(route_reacquisition["state"], "repair_only")
+        self.assertEqual(route_reacquisition["blocked_symbol_count"], 5)
+        self.assertEqual(route_reacquisition["missing_symbol_count"], 3)
+        self.assertEqual(route_reacquisition["expected_unblock_value"], 13)
 
     def test_digest_defaults_generated_at_and_handles_missing_tca_dimension(
         self,
@@ -257,6 +279,83 @@ class TestBuildRevenueRepairDigest(TestCase):
         execution_tca = evidence["execution_tca"]
         self.assertIsInstance(execution_tca, dict)
         self.assertEqual(execution_tca["reason"], "missing")
+
+    def test_digest_exposes_route_universe_repair_details(self) -> None:
+        status = _repair_only_status()
+        proof_floor = status["proof_floor"]
+        self.assertIsInstance(proof_floor, dict)
+        proof_floor["blocking_reasons"] = [
+            "alpha_readiness_not_promotion_eligible",
+            "execution_tca_route_universe_empty",
+            "simple_submit_disabled",
+        ]
+        proof_floor["repair_ladder"] = [
+            {
+                "code": "repair_route_universe",
+                "reason": "execution_tca_route_universe_empty",
+                "priority": 78,
+                "expected_unblock_value": 4,
+            }
+        ]
+        execution_tca_dimension = [
+            item
+            for item in proof_floor["proof_dimensions"]
+            if isinstance(item, dict) and item.get("dimension") == "execution_tca"
+        ][0]
+        source_ref = execution_tca_dimension["source_ref"]
+        self.assertIsInstance(source_ref, dict)
+        execution_tca_dimension["state"] = "fail"
+        execution_tca_dimension["reason"] = "execution_tca_route_universe_empty"
+        source_ref["slippage_guardrail_bps"] = "8"
+        source_ref["aggregate_reason"] = "execution_tca_slippage_guardrail_exceeded"
+        source_ref["symbol_routes"] = {
+            "scope_symbols": ["AAPL", "NVDA", "ORCL"],
+            "scope_symbol_count": 3,
+            "slippage_guardrail_bps": "8",
+            "routeable_symbol_count": 0,
+            "blocked_symbol_count": 2,
+            "missing_symbol_count": 1,
+            "routeable_symbols": [],
+            "blocked_symbols": [
+                {"symbol": "AAPL", "order_count": 2033},
+                {"symbol": "NVDA", "order_count": 3289},
+            ],
+            "missing_symbols": ["ORCL"],
+        }
+
+        digest = build_revenue_repair_digest(
+            readyz_payload=_repair_only_readyz(),
+            status_payload=status,
+            generated_at=NOW,
+        )
+
+        blockers = {
+            str(item["reason"]) for item in digest["blockers"] if isinstance(item, dict)
+        }
+        self.assertIn("execution_tca_route_universe_empty", blockers)
+        evidence = digest["evidence"]
+        self.assertIsInstance(evidence, dict)
+        execution_tca = evidence["execution_tca"]
+        self.assertIsInstance(execution_tca, dict)
+        self.assertEqual(
+            execution_tca["reason"],
+            "execution_tca_route_universe_empty",
+        )
+        self.assertEqual(
+            execution_tca["aggregate_reason"],
+            "execution_tca_slippage_guardrail_exceeded",
+        )
+        symbol_routes = execution_tca["symbol_routes"]
+        self.assertIsInstance(symbol_routes, dict)
+        self.assertEqual(symbol_routes["routeable_symbol_count"], 0)
+        self.assertEqual(symbol_routes["missing_symbols"], ["ORCL"])
+        repair_queue = digest["repair_queue"]
+        self.assertIsInstance(repair_queue, list)
+        self.assertEqual(repair_queue[0]["code"], "repair_route_universe")
+        self.assertEqual(
+            repair_queue[0]["action"],
+            "produce_executable_route_universe_before_capital",
+        )
 
     def test_status_degraded_quant_reason_becomes_blocker_when_ok_flag_is_true(
         self,

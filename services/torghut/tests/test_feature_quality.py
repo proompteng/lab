@@ -23,6 +23,9 @@ def _signal(
         'macd': {'macd': '1', 'signal': '0.4'},
         'rsi14': '48',
         'price': '100',
+        'spread': '0.02',
+        'imbalance_bid_px': '99.99',
+        'imbalance_ask_px': '100.01',
     }
     if schema is not None:
         payload['feature_schema_version'] = schema

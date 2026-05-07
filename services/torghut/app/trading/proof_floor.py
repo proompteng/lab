@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 
+from .route_reacquisition import build_route_reacquisition_book
+
 
 _BLOCKING_STATES = {"degraded", "fail", "missing", "stale"}
 _LIVE_MICRO_STAGES = {"0.10x canary", "0.25x canary"}
@@ -480,6 +482,7 @@ def build_profitability_proof_floor_receipt(
     ):
         tca_state = "fail"
         tca_reason = "execution_tca_slippage_guardrail_exceeded"
+    aggregate_tca_reason = tca_reason
     tca_source_ref: dict[str, object] = {
         "order_count": tca_order_count,
         "last_computed_at": tca_summary.get("last_computed_at"),
@@ -495,6 +498,32 @@ def build_profitability_proof_floor_receipt(
     )
     if symbol_routes is not None:
         tca_source_ref["symbol_routes"] = symbol_routes
+        routeable_symbol_count = _int(symbol_routes.get("routeable_symbol_count"))
+        missing_symbol_count = _int(symbol_routes.get("missing_symbol_count"))
+        scope_symbol_count = _int(symbol_routes.get("scope_symbol_count"))
+        route_universe_reason = None
+        if scope_symbol_count > 0 and routeable_symbol_count <= 0:
+            route_universe_reason = "execution_tca_route_universe_empty"
+        elif missing_symbol_count > 0:
+            route_universe_reason = "execution_tca_route_universe_incomplete"
+        if route_universe_reason is not None:
+            tca_state = "fail"
+            tca_reason = route_universe_reason
+            if aggregate_tca_reason != "fresh":
+                tca_source_ref["aggregate_reason"] = aggregate_tca_reason
+            _add_repair(
+                repairs,
+                code="repair_route_universe",
+                dimension="route_universe",
+                action="exclude_missing_or_high_slippage_symbols_before_promotion",
+                reason=route_universe_reason,
+                priority=78,
+                expected_unblock_value=max(
+                    1,
+                    _int(symbol_routes.get("blocked_symbol_count"))
+                    + missing_symbol_count,
+                ),
+            )
     if tca_state != "pass":
         _add_repair(
             repairs,
@@ -627,7 +656,7 @@ def build_profitability_proof_floor_receipt(
         }
     )
 
-    return {
+    receipt: dict[str, object] = {
         "schema_version": "torghut.profitability-proof-floor.v1",
         "generated_at": generated_at.isoformat(),
         "account_label": account_label,
@@ -648,6 +677,12 @@ def build_profitability_proof_floor_receipt(
             "live_submit_enabled": False,
         },
     }
+    receipt["route_reacquisition_book"] = build_route_reacquisition_book(
+        proof_floor_receipt=receipt,
+        trading_mode=trading_mode,
+        market_session_open=market_session_open,
+    )
+    return receipt
 
 
 __all__ = ["build_profitability_proof_floor_receipt"]

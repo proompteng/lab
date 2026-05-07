@@ -8,10 +8,21 @@
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM
   reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-07T15:31Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-07T17:25Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-07T15:31Z`):
+- Evidence (current next-work priority, refreshed `2026-05-07T17:25Z`):
+  - `136-torghut-quant-plan-closeout-and-proof-surface-handoff-2026-05-07.md`
+  - `161-torghut-shadow-capital-parity-and-no-notional-release-train-2026-05-07.md`
+  - `docs/agents/designs/157-jangar-shadow-parity-ledger-and-enforcement-release-train-2026-05-07.md`
+  - `160-torghut-proof-surface-activation-ledger-and-capital-receipt-firewall-2026-05-07.md`
+  - `docs/agents/designs/156-jangar-runtime-activation-receipts-and-source-drift-quarantine-2026-05-07.md`
+  - `159-torghut-capital-cohort-frontier-and-routeability-repair-board-2026-05-07.md`
+  - `docs/agents/designs/155-jangar-execution-cohort-settlement-and-launch-quarantine-2026-05-07.md`
+  - `158-torghut-route-reacquisition-and-market-context-repair-cells-2026-05-07.md`
+  - `docs/agents/designs/154-jangar-repair-cell-admission-and-market-context-trust-gates-2026-05-07.md`
+  - `158-torghut-capital-proof-provenance-and-routeable-edge-repair-ledger-2026-05-07.md`
+  - `docs/agents/designs/154-jangar-source-provenance-leases-and-material-action-escrow-2026-05-07.md`
   - `157-torghut-profit-contract-actuation-and-capital-surface-truth-2026-05-07.md`
   - `docs/agents/designs/153-jangar-design-actuation-ledger-and-contract-convergence-gates-2026-05-07.md`
   - `155-torghut-capital-repair-outcome-ledger-and-edge-reacquisition-gates-2026-05-07.md`

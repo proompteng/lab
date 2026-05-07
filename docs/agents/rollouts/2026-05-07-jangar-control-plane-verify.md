@@ -4,6 +4,364 @@ Swarm: `jangar-control-plane`
 Branch: `codex/swarm-jangar-control-plane-verify`
 Release engineer: Marco Silva
 
+## Current pass - 16:47 UTC
+
+### PRs touched
+
+- #5889 `feat(jangar): add repair warrant exchange`
+  - Selected as the only currently open direct Jangar PR from the open PR inventory.
+  - Head: `ac81ee0ba84c0d1352c4a40507a4a892a59cc250`.
+  - GitHub state: non-draft, `MERGEABLE`, `CLEAN`.
+  - Hosted checks: pass or skipped only, including `agents-ci / integration`, `agents-ci / validate`,
+    `jangar-ci / lint-and-typecheck / run`, `CI / check_changed_files`, semantic commit/title checks, and
+    path-gated skip jobs.
+  - No merge: the PR is still above the large-diff Codex review threshold at 1,446 additions and 46 deletions
+    across 15 files.
+  - Progress comment updated:
+    https://github.com/proompteng/lab/pull/5889#issuecomment-4398288855.
+- #5387 `fix(torghut): restore rollout readiness`
+  - Rechecked because it was named in the inherited NATS context.
+  - Already merged on 2026-05-05T10:17:03Z as `65e4d54152313a6eddef8ca6ce4f6ca193e23af5`.
+- #5364 `ci: stabilize agents and jangar checks`
+  - Rechecked because it was named in the inherited NATS context.
+  - Already merged on 2026-05-05T09:21:18Z as `3726ade1c5c11fd33ecd7a6d273d84128979653d`.
+- #5376 `fix(torghut): restore live jangar dependency quorum`
+  - Rechecked because it was named in the inherited NATS context.
+  - Already merged on 2026-05-05T09:16:09Z as `3f443891f7f9a4e2058c630e027b69626714cbf6`.
+
+### Comments and conflicts
+
+- #5889 has no posted reviews, no review requests, and no blocking review decision visible through `gh pr view`.
+- #5889 has a Codex review request at
+  https://github.com/proompteng/lab/pull/5889#issuecomment-4398286043.
+- The Codex connector responded with a usage-limit message at
+  https://github.com/proompteng/lab/pull/5889#issuecomment-4398287400 instead of posting a review.
+- No merge conflicts are present on #5889; GitHub reports `MERGEABLE` and `CLEAN`.
+
+### Merge gate
+
+No-go for #5889.
+
+- The PR is clean and green, but the large-diff gate is still closed because a required Codex review has not posted.
+- The smallest unblocker is restored Codex review capacity, explicit maintainer waiver, or reducing the PR below the
+  1,000-line threshold and revalidating.
+- No PR was merged in this pass.
+
+### Rollout evidence
+
+No new #5889 rollout exists because the PR is unmerged. Current in-cluster health for already-merged `main`
+`fb3ea3d493ecc84608e741849530f69c0fd5c53c` was verified instead.
+
+- Argo CD:
+  - `jangar`: `Synced`, `Healthy`, operation `Succeeded`, reconciled at 2026-05-07T16:44:33Z.
+  - `agents`: `Synced`, `Healthy`, operation `Succeeded`, reconciled at 2026-05-07T16:45:10Z.
+  - `torghut`: `Synced`, `Healthy`, operation `Succeeded`, reconciled at 2026-05-07T16:44:25Z.
+- Workload readiness:
+  - `deployment/jangar`: generation 341 observed, 1/1 ready, rollout status succeeded.
+  - `deployment/agents`: generation 195 observed, 1/1 ready, rollout status succeeded.
+  - `deployment/agents-controllers`: generation 221 observed, 2/2 ready, rollout status succeeded.
+- Active images:
+  - `jangar`: `registry.ide-newton.ts.net/lab/jangar:2214e91f@sha256:b059ad6762dc409b2b80e18fbeaca66c307243532c987867285a55dfe82a3c93`.
+  - `agents`: `registry.ide-newton.ts.net/lab/jangar-control-plane:2214e91f@sha256:90f494d56d4aab52223981b3b7d6a27d078312c7ba81146b3daf750f3f0ec0f1`.
+  - `agents-controllers`: `registry.ide-newton.ts.net/lab/jangar:2214e91f@sha256:b059ad6762dc409b2b80e18fbeaca66c307243532c987867285a55dfe82a3c93`.
+- Health endpoints:
+  - `http://jangar.jangar.svc.cluster.local/health`: `status=ok`.
+  - `http://agents.agents.svc.cluster.local/health`: `status=ok`.
+  - `http://agents.agents.svc.cluster.local/ready`: `status=ok`, execution trust healthy, memory provider healthy,
+    runtime kits healthy, admission passports allow, serving runtime proof cells healthy.
+- Events:
+  - Jangar and agents showed expected rollout events for the current `2214e91f` image refresh.
+  - Recent warning events were transient readiness probes during replacement pod startup; current rollout status and
+    Ready pod state cleared them.
+  - Older completed/error AgentRun pods remain visible in the `agents` namespace and are historical workflow state,
+    not current deployment unavailability.
+
+### Residual risk
+
+- #5889 remains the direct Jangar feature risk because the control-plane diff is above the large-diff threshold
+  without the required Codex review.
+- The current `2214e91f` runtime state is healthy, but it is unrelated to #5889 because #5889 has not merged.
+
+### Rollback path
+
+- If #5889 later merges and regresses runtime behavior, rollback is a normal GitOps PR reverting its squash merge and
+  any resulting Jangar image promotion.
+- Do not mutate production workloads directly from a local shell; rollback remains PR-driven GitOps.
+- If current `2214e91f` Jangar/agents health regresses independently of #5889, open a GitOps revert of the current
+  promotion commit on `main` and let Argo CD reconcile back to the last documented healthy image.
+
+### Next action
+
+- Keep #5889 held until Codex review capacity returns, an explicit maintainer waiver is recorded, or the PR is
+  reduced below 1,000 changed lines.
+- After the unblocker lands, re-check mergeability, hosted checks, review state, and current cluster health before
+  any squash merge.
+
+## Current pass - 16:31 UTC
+
+### PRs touched
+
+- #5904 `fix(jangar): decode market context timeout output`
+  - Selected as a small direct Jangar production fix after it opened during this release pass.
+  - Final head commit before merge: `88a22e67d454aa3279ead3014f1dfc4a23e8ec50`.
+  - Squash merge commit: `2214e91f910574a027c1fbbb8c14764b9606dd3f`.
+  - Merged at 2026-05-07T16:24:07Z after GitHub reported clean/mergeable, no blocking reviews, no active review
+    threads, diff below the 1000-line Codex review threshold, and every non-skipped hosted PR check green.
+  - Scope:
+    - `.github/workflows/agents-ci.yml`.
+    - `argocd/applications/agents/torghut-market-context-agentprovider.yaml`.
+    - `services/jangar/src/__tests__/agents-ci-workflow.test.ts`.
+    - `services/jangar/src/server/__tests__/torghut-market-context-agentprovider-manifest.test.ts`.
+  - Progress comment: https://github.com/proompteng/lab/pull/5904#issuecomment-4398705337.
+- #5889 `feat(jangar): add repair warrant exchange`
+  - Direct Jangar implementation PR rechecked after `agents-ci / integration` finished.
+  - No merge: current hosted checks are pass or skipped and GitHub reports `mergeStateStatus=CLEAN`, but the PR is
+    still above the large-diff gate at 1,446 additions and 46 deletions. The `@codex review` request received the
+    Codex usage-limit response instead of a posted review.
+  - Progress comment: https://github.com/proompteng/lab/pull/5889#issuecomment-4398288855.
+- #5910 `fix(torghut): reject stale TA quotes`
+  - Newly opened Torghut-scoped Jangar-adjacent candidate during final #5904 rollout closeout.
+  - Not selected in this slice because #5904 was already merged and `torghut-ci / Bytecode + pytest + coverage` was
+    still in progress at 2026-05-07T16:31Z.
+- #5412 `feat(torghut): add renewal bond profit escrow`
+  - Rechecked from earlier passes.
+  - No merge: still above the large-diff Codex review threshold and still blocked by the Codex review usage-limit
+    response recorded in the existing progress comment.
+- #5767 `chore(release/c3ba60b): automated release PR` and #5316 `chore(release/735ddbc): automated release PR`
+  - Enumerated as open release PRs; not selected for this Jangar release slice.
+
+Current open PR enumeration at the close of this pass:
+
+- #5910 `fix(torghut): reject stale TA quotes`: mergeable but unstable while
+  `torghut-ci / Bytecode + pytest + coverage` runs.
+- #5889 `feat(jangar): add repair warrant exchange`: clean and green, but no-go until Codex review posts or a
+  maintainer explicitly waives the large-diff review requirement.
+- #5767 `chore(release/c3ba60b): automated release PR`: app GitOps release scoped; not selected for Jangar.
+- #5412 `feat(torghut): add renewal bond profit escrow`: clean and green, but no-go until Codex review posts or a
+  maintainer explicitly waives the large-diff review requirement.
+- #5316 `chore(release/735ddbc): automated release PR`: docs GitOps release scoped; not selected for Jangar.
+
+### Comments and conflicts
+
+- #5904 and #5889 were both GitHub-reported conflict-mergeable at their final gate checks.
+- #5904 had no active review threads and no blocking review state before squash merge.
+- The #5904 transient `agents-ci / integration` failure was an infrastructure timeout while downloading `kubectl`
+  from `dl.k8s.io`; the branch was updated to bound and retry the download, then the integration job passed in
+  11m10s on the final head.
+- #5889 has no active review threads, but the required large-diff review is not posted because the Codex connector
+  returned a usage-limit response.
+
+### Merge gate
+
+Go for #5904. No-go for #5889 and #5412. #5910 is deferred to a follow-up Torghut/Jangar-adjacent pass.
+
+- #5904 PR checks before merge were terminal green or skipped:
+  - `agents-ci / validate`.
+  - `agents-ci / integration`.
+  - `argo-lint / lint`.
+  - `kubeconform / validate`.
+  - `jangar-ci / lint-and-typecheck / run`.
+  - `CI / check_changed_files`.
+  - `Semantic Commits / Lint commit messages`.
+  - `Semantic Pull Request / Validate PR title`.
+  - Path-gated app/docs/deploy enable checks skipped.
+- #5889 current checks are pass or skipped, including `agents-ci / integration` and
+  `jangar-ci / lint-and-typecheck / run`, but the review gate remains closed.
+
+### Rollout evidence
+
+- #5904 merged into `main` at revision `2214e91f910574a027c1fbbb8c14764b9606dd3f`.
+- Argo CD `agents` after the merge:
+  - Sync: `Synced`.
+  - Health: `Healthy`.
+  - Operation: `Succeeded`.
+  - Revision: `2214e91f910574a027c1fbbb8c14764b9606dd3f`.
+  - Reconciled at 2026-05-07T16:26:45Z.
+  - Message: `successfully synced (all tasks run)`.
+- `AgentProvider/torghut-market-context` in namespace `agents`:
+  - `metadata.generation=14`.
+  - `status.observedGeneration=14`.
+  - Ready condition `True`, reason `ValidSpec`.
+  - Live runner script includes `_write_process_output(...)` and invokes it for stdout/stderr on both normal
+    completion and `subprocess.TimeoutExpired`.
+- Workload readiness:
+  - `deployment/agents`: 1/1 ready; rollout status succeeded.
+  - `deployment/agents-controllers`: 2/2 ready; rollout status succeeded.
+  - Current pods were Ready/Running after rollout:
+    `agents-b7bff85dd-hzgfn`, `agents-controllers-6445c68c54-fhjhr`, and
+    `agents-controllers-6445c68c54-kmh2v`.
+- Runtime events:
+  - Readiness/liveness warnings occurred during the `agents` and `agents-controllers` restart window around
+    2026-05-07T16:26-16:27Z, then cleared by successful rollout status and current Ready pods.
+  - Pre-existing namespace warnings remain for historical scheduler/job failures, including the old
+    `torghut-market-context-news-batch-xfc6r-job` `BackoffLimitExceeded` event from before #5904 landed.
+
+### Residual risk
+
+- #5904 changes the market-context AgentProvider runner helper and the CI bootstrap path for `kubectl`. The live
+  AgentProvider accepted the spec, but the next scheduled market-context batch should still be watched for timeout
+  stderr/stdout decoding behavior.
+- `agents` and `agents-controllers` each had one pod restart during reconciliation. Current deployment availability
+  and rollout status are healthy, so this is recorded as a rollout observation rather than a blocker.
+- #5889 remains the direct Jangar feature risk because its control-plane blast radius is larger than 1000 changed
+  lines and the required Codex review is not posted.
+
+### Rollback path
+
+- If #5904 regresses market-context runner behavior, open a normal GitOps PR reverting
+  `2214e91f910574a027c1fbbb8c14764b9606dd3f`; let Argo reconcile the previous
+  `torghut-market-context` AgentProvider script.
+- If the CI bootstrap change in #5904 regresses integration reliability, revert the workflow hunk from the same merge
+  commit through a normal PR and rerun `agents-ci / integration`.
+- Do not mutate production workloads directly from a local shell; rollback remains PR-driven GitOps.
+
+### Next action
+
+- Runtime rollout gate: go for #5904. The merge commit is live in Argo `agents`, the affected AgentProvider is Ready
+  at the observed generation, and the agents workloads are ready.
+- #5889 gate: no-go until Codex review posts successfully or a maintainer explicitly waives the large-diff review
+  requirement.
+- #5910 gate: evaluate as the next Torghut/Jangar-adjacent candidate after terminal CI.
+
+## Current pass - 15:36 UTC
+
+### PRs touched
+
+- #5884 `fix(torghut): expose route-scoped tca evidence`
+  - Selected as the highest-impact unblocked Jangar-adjacent Torghut PR in this pass.
+  - Head commit: `9139b805c3971d4cdc1d5c2945d7c7639441cb61`.
+  - Squash merge commit: `8e3f342e3f31927f016dece75eed0660b9bec280`.
+  - Merged at 2026-05-07T14:57:37Z after GitHub reported clean/mergeable, no blocking reviews, diff below the
+    1000-line Codex review threshold, and all non-skipped hosted PR checks green.
+  - Progress comment: https://github.com/proompteng/lab/pull/5884#issuecomment-4398077532.
+- #5890 `chore(torghut): promote image 8e3f342e`
+  - Generated GitOps promotion for #5884.
+  - Merged at 2026-05-07T15:12:10Z as `c5b9101f22f57b6251c30ce1c458ddd056e31455`.
+  - Promoted image:
+    `registry.ide-newton.ts.net/lab/torghut:8e3f342e@sha256:9c5c85848ba0b46253f374f7f670fd5d201c043e33a2bc7d85149efc1db3f4b0`.
+  - Progress comment: https://github.com/proompteng/lab/pull/5890#issuecomment-4398555447.
+- #5891 `chore(jangar): promote image 061ec2b2`
+  - Jangar GitOps promotion that landed during this release window.
+  - Merged at 2026-05-07T15:14:04Z as `5dae5708ba494e9ad942cc745781f8cfb8562b54`.
+  - `jangar-post-deploy-verify` run `25504664273` passed at 2026-05-07T15:21:00Z.
+- #5895 `revert(torghut): rollback failed promotion c5b9101f22f57b6251c30ce1c458ddd056e31455`
+  - Generated by the first #5890 post-deploy verifier attempt after Argo needed longer than the workflow timeout.
+  - Closed at 2026-05-07T15:35:36Z after `torghut-post-deploy-verify` rerun attempt 2 passed and current Argo
+    reported torghut and jangar Synced/Healthy/Succeeded.
+- #5889 `feat(jangar): add repair warrant exchange`
+  - Direct Jangar PR opened during the verification window.
+  - No merge: 1,402 additions and 46 deletions exceed the large-diff Codex review threshold, the earlier
+    `@codex review` request received the Codex usage-limit response, and `agents-ci / integration` was still
+    pending at 2026-05-07T15:36Z.
+  - Progress comment: https://github.com/proompteng/lab/pull/5889#issuecomment-4398288855.
+- #5412 `feat(torghut): add renewal bond profit escrow`
+  - Rechecked because it remains a high-impact Jangar-adjacent Torghut blocker.
+  - No merge: clean and green is not sufficient while the PR remains above the large-diff Codex review threshold
+    at 5,915 additions and 453 deletions and repeated review requests still hit the Codex usage-limit response.
+  - Progress comment: https://github.com/proompteng/lab/pull/5412#issuecomment-4378206627.
+
+Current open PR enumeration at the close of this pass:
+
+- #5896 `fix(torghut): gate empty route universe repair`: Torghut scoped, opened after this release slice was
+  already recovering; not selected, and `Bytecode + pytest + coverage` was still running at 2026-05-07T15:36Z.
+- #5889 `feat(jangar): add repair warrant exchange`: direct Jangar PR, no-go until Codex review or waiver and
+  terminal required checks.
+- #5767 `chore(release/c3ba60b): automated release PR`: app GitOps release scoped; not selected for Jangar.
+- #5412 `feat(torghut): add renewal bond profit escrow`: clean and green, but no-go until Codex review posts or
+  a maintainer explicitly waives the large-diff gate.
+- #5316 `chore(release/735ddbc): automated release PR`: docs GitOps release scoped; not selected for Jangar.
+
+### Comments and conflicts
+
+- #5884 and #5890 had no active blocking review threads during the merge gate.
+- #5884 was below the large-diff Codex review threshold.
+- #5889 and #5412 both have anchored progress comments recording the large-diff no-go decision and Codex
+  usage-limit blocker.
+- The transient #5890 post-deploy failure opened #5895 as a rollback PR; it was closed after verifier attempt 2
+  passed and current cluster state was healthy.
+
+### Merge gate
+
+Go for #5884 and #5890. No-go for #5889 and #5412.
+
+- #5884 PR checks before merge were terminal green or skipped:
+  - `torghut-ci / Bytecode + pytest + coverage`.
+  - `torghut-ci / Pyright`.
+  - `torghut-ci / Quality signals (complexity + security)`.
+  - `CI / check_changed_files`.
+  - `Semantic Commits / Lint commit messages`.
+  - `Semantic Pull Request / Validate PR title`.
+  - Path-gated deploy enable checks skipped.
+- Mainline workflows after #5884:
+  - `torghut-ci` run `25503734411` passed.
+  - `torghut-build-push` run `25503734322` passed and emitted the `8e3f342e` release contract.
+  - Docker Build and Push run `25503734384` passed.
+  - `torghut-release` run `25504127860` passed and created promotion PR #5890.
+- #5890 promotion checks:
+  - PR validation passed, including `Bytecode + pytest + coverage` in 5m40s.
+  - Main `torghut-ci` run `25504560614` passed, including `Bytecode + pytest + coverage` in 6m40s.
+  - `torghut-post-deploy-verify` run `25504560579` failed on attempt 1 while Argo was still converging, then
+    passed on attempt 2 at 2026-05-07T15:34:22Z.
+- #5891 Jangar promotion checks:
+  - `argo-lint`, `kubeconform`, `jangar-ci / lint-and-typecheck / run`, semantic checks, and
+    `jangar-post-deploy-verify` passed.
+
+### Rollout evidence
+
+- Argo CD after current main revision `2fa59585c9533b6ed2eacdb232502920bdb52139`:
+  - `torghut`: Synced / Healthy / operation Succeeded, message `successfully synced (no more tasks)`.
+  - `jangar`: Synced / Healthy / operation Succeeded, message `successfully synced (all tasks run)`.
+- Torghut image evidence:
+  - Build output from `torghut-build-push` run `25503734322` produced
+    `registry.ide-newton.ts.net/lab/torghut:8e3f342e` at digest
+    `sha256:9c5c85848ba0b46253f374f7f670fd5d201c043e33a2bc7d85149efc1db3f4b0`.
+  - Argo summary and live deployments include
+    `registry.ide-newton.ts.net/lab/torghut@sha256:9c5c85848ba0b46253f374f7f670fd5d201c043e33a2bc7d85149efc1db3f4b0`.
+- Workload readiness:
+  - `deployment/torghut-00268-deployment` in namespace `torghut`: 1/1 ready, 1 updated, 1 available.
+  - `deployment/torghut-sim-00368-deployment` in namespace `torghut`: 1/1 ready, 1 updated, 1 available.
+  - `deployment/torghut-options-catalog` and `deployment/torghut-options-enricher`: 1/1 ready on the same
+    Torghut digest.
+  - `deployment/jangar` in namespace `jangar`: 1/1 ready on
+    `registry.ide-newton.ts.net/lab/jangar:061ec2b2@sha256:6cf402a7aee422df91581d4dd3b3096c8c07e145a6e29070c6fac59429b3cb54`.
+- Runtime logs:
+  - New Torghut live and sim pods returned repeated `/healthz` HTTP 200s after startup.
+  - Trading status, metrics, and autonomy endpoints returned HTTP 200s from the live pod during the rollout check.
+
+### Residual risk
+
+- The first #5890 post-deploy verifier timed out while Argo was waiting on hooks and Knative readiness. This was
+  validated as transient by direct cluster checks and by the successful attempt 2 rerun.
+- Startup/readiness warnings appeared during the new Torghut Knative revision creation and cleared once the pods
+  became Ready.
+- The torghut namespace still emits pre-existing ClickHouse multiple-PDB warnings and a historical failed
+  whitepaper-autoresearch job. Neither blocked current Argo health or the post-deploy verifier.
+- #5889 and #5412 remain release no-go items because large-diff Codex review is not posted.
+
+### Rollback path
+
+- If the `9c5c85848ba0b46253f374f7f670fd5d201c043e33a2bc7d85149efc1db3f4b0` Torghut digest regresses readiness,
+  trading status, or control-plane integration, open a GitOps PR reverting #5890 across:
+  - `argocd/applications/torghut/knative-service.yaml`.
+  - `argocd/applications/torghut/knative-service-sim.yaml`.
+  - `argocd/applications/torghut-options/catalog/deployment.yaml`.
+  - `argocd/applications/torghut-options/enricher/deployment.yaml`.
+  - the Torghut hook and workflow templates updated by #5890.
+- #5895 contains the generated rollback patch from the failed first attempt and was closed as stale after the
+  successful rerun. Reopen or regenerate that GitOps revert pattern only if fresh evidence shows regression.
+- If source behavior from #5884 is implicated after image rollback, revert
+  `8e3f342e3f31927f016dece75eed0660b9bec280` through a normal PR and let `torghut-build-push` plus
+  `torghut-release` produce the replacement promotion.
+- Do not mutate production workloads directly from a local shell; rollback remains PR-driven GitOps.
+
+### Next action
+
+- Runtime rollout gate: go for #5884/#5890 and #5891. Current Argo is Synced/Healthy/Succeeded, promoted workloads are
+  ready, and the post-deploy verifier passed after rerun.
+- Audit gate: open and merge the documentation-only audit PR after its checks pass.
+- #5889 and #5412 gate: no-go until Codex review posts successfully or a maintainer explicitly waives the large-diff
+  review requirement, with terminal required checks.
+
 ## Current pass - 14:41 UTC
 
 ### PRs touched

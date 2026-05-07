@@ -43,6 +43,20 @@ _REPAIR_CATALOG: dict[str, tuple[str, str, str, int, int]] = {
         75,
         5,
     ),
+    "execution_tca_route_universe_empty": (
+        "repair_route_universe",
+        "route_universe",
+        "produce_executable_route_universe_before_capital",
+        78,
+        6,
+    ),
+    "execution_tca_route_universe_incomplete": (
+        "repair_route_universe",
+        "route_universe",
+        "settle_missing_symbol_tca_before_promotion",
+        76,
+        4,
+    ),
     "quant_pipeline_degraded": (
         "repair_quant_ingestion",
         "quant_ingestion",
@@ -399,7 +413,7 @@ def _summarize_tca(proof_floor: Mapping[str, Any]) -> dict[str, object]:
         if _text(dimension.get("dimension")) != "execution_tca":
             continue
         source_ref = _mapping(dimension.get("source_ref"))
-        return {
+        summary: dict[str, object] = {
             "state": _text(dimension.get("state"), "unknown"),
             "reason": _text(dimension.get("reason"), "unknown"),
             "order_count": _int(source_ref.get("order_count")),
@@ -414,7 +428,15 @@ def _summarize_tca(proof_floor: Mapping[str, Any]) -> dict[str, object]:
             "freshness_seconds": dimension.get("freshness_seconds"),
             "threshold_seconds": dimension.get("threshold_seconds"),
             "avg_abs_slippage_bps": source_ref.get("avg_abs_slippage_bps"),
+            "slippage_guardrail_bps": source_ref.get("slippage_guardrail_bps"),
         }
+        symbol_routes = _mapping(source_ref.get("symbol_routes"))
+        if symbol_routes:
+            summary["symbol_routes"] = symbol_routes
+        aggregate_reason = _text(source_ref.get("aggregate_reason"))
+        if aggregate_reason:
+            summary["aggregate_reason"] = aggregate_reason
+        return summary
     return {
         "state": "unknown",
         "reason": "missing",
@@ -423,6 +445,28 @@ def _summarize_tca(proof_floor: Mapping[str, Any]) -> dict[str, object]:
         "freshness_seconds": None,
         "threshold_seconds": None,
         "avg_abs_slippage_bps": None,
+    }
+
+
+def _summarize_route_reacquisition(
+    status_payload: Mapping[str, Any],
+    proof_floor: Mapping[str, Any],
+) -> dict[str, object]:
+    route_book = _choose_mapping(
+        status_payload.get("route_reacquisition_book"),
+        proof_floor.get("route_reacquisition_book"),
+    )
+    summary = _mapping(route_book.get("summary"))
+    return {
+        "schema_version": _text(route_book.get("schema_version"), "missing"),
+        "state": _text(route_book.get("state"), "unknown"),
+        "capital_rule": _text(route_book.get("capital_rule"), "unknown"),
+        "routeable_symbol_count": _int(summary.get("routeable_symbol_count")),
+        "probing_symbol_count": _int(summary.get("probing_symbol_count")),
+        "blocked_symbol_count": _int(summary.get("blocked_symbol_count")),
+        "missing_symbol_count": _int(summary.get("missing_symbol_count")),
+        "candidate_symbols": _string_items(summary.get("candidate_symbols")),
+        "expected_unblock_value": _int(summary.get("expected_unblock_value")),
     }
 
 
@@ -542,6 +586,9 @@ def build_revenue_repair_digest(
                 ),
             },
             "execution_tca": _summarize_tca(proof_floor),
+            "route_reacquisition": _summarize_route_reacquisition(
+                status_payload, proof_floor
+            ),
             "simple_lane_reject_reason_totals": _collect_reason_counts(status_payload),
         },
         "blockers": [{"reason": reason} for reason in blocking_reasons],

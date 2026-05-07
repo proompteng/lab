@@ -25,6 +25,7 @@ data class FlinkTaConfig(
   val checkpointTimeoutMs: Long,
   val minPauseBetweenCheckpointsMs: Long,
   val maxOutOfOrderMs: Long,
+  val quoteStaleAfterMs: Long,
   val parallelism: Int,
   val vwapWindow: Duration,
   val realizedVolWindow: Int,
@@ -89,6 +90,10 @@ data class FlinkTaConfig(
       val clickhouseUrl = env("TA_CLICKHOUSE_URL")?.takeIf { it.isNotBlank() }
 
       val parallelism = envInt("TA_PARALLELISM", 1)
+      val quoteStaleAfterMs =
+        env("TA_QUOTE_STALE_AFTER_MS")?.toLongOrNull()
+          ?: env("TA_QUOTE_STALE_AFTER_SEC")?.toLongOrNull()?.times(1_000)
+          ?: 2_000
 
       return FlinkTaConfig(
         bootstrapServers = env("TA_KAFKA_BOOTSTRAP", "kafka-kafka-bootstrap.kafka:9092"),
@@ -111,6 +116,7 @@ data class FlinkTaConfig(
         checkpointTimeoutMs = envLong("TA_CHECKPOINT_TIMEOUT_MS", 120_000),
         minPauseBetweenCheckpointsMs = envLong("TA_CHECKPOINT_PAUSE_MS", 5_000),
         maxOutOfOrderMs = envLong("TA_MAX_OUT_OF_ORDER_MS", 2_000),
+        quoteStaleAfterMs = quoteStaleAfterMs,
         parallelism = parallelism,
         vwapWindow = Duration.ofSeconds(envLong("TA_VWAP_WINDOW_SECONDS", 300)),
         realizedVolWindow = envInt("TA_REALIZED_VOL_WINDOW", 60),
