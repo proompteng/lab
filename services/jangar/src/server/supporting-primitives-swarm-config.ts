@@ -61,6 +61,9 @@ export const SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST = 'swarm.proompteng.ai/r
 export const SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST = 'swarm.proompteng.ai/runtime-kit-set-digest'
 export const SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS = 'swarm.proompteng.ai/required-runtime-kits'
 export const SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION = 'swarm.proompteng.ai/admission-producer-revision'
+export const SWARM_ADMISSION_ANNOTATION_WARRANT_ID = 'swarm.proompteng.ai/recovery-warrant-id'
+export const SWARM_ADMISSION_ANNOTATION_WARRANT_STATUS = 'swarm.proompteng.ai/recovery-warrant-status'
+export const SWARM_ADMISSION_ANNOTATION_PROOF_CELLS = 'swarm.proompteng.ai/required-proof-cells'
 export const SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT = resolveSupportingPrimitivesConfig(
   process.env,
 ).swarmRequirementMaxPayloadBytes
@@ -402,6 +405,9 @@ export const resolveScheduleRuntimeInjection = (schedule: Record<string, unknown
   const runtimeKitSetDigest = asString(annotations[SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST])
   const requiredRuntimeKits = asString(annotations[SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS])
   const admissionProducerRevision = asString(annotations[SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION])
+  const recoveryWarrantId = asString(annotations[SWARM_ADMISSION_ANNOTATION_WARRANT_ID])
+  const recoveryWarrantStatus = asString(annotations[SWARM_ADMISSION_ANNOTATION_WARRANT_STATUS])
+  const requiredProofCells = asString(annotations[SWARM_ADMISSION_ANNOTATION_PROOF_CELLS])
 
   const parameters: Record<string, string> = {}
   if (ownerChannel) parameters.ownerChannel = ownerChannel
@@ -418,6 +424,9 @@ export const resolveScheduleRuntimeInjection = (schedule: Record<string, unknown
   if (runtimeKitSetDigest) parameters.swarmRuntimeKitSetDigest = runtimeKitSetDigest
   if (requiredRuntimeKits) parameters.swarmRequiredRuntimeKits = requiredRuntimeKits
   if (admissionProducerRevision) parameters.swarmAdmissionProducerRevision = admissionProducerRevision
+  if (recoveryWarrantId) parameters.swarmRecoveryWarrantId = recoveryWarrantId
+  if (recoveryWarrantStatus) parameters.swarmRecoveryWarrantStatus = recoveryWarrantStatus
+  if (requiredProofCells) parameters.swarmRequiredProofCells = requiredProofCells
 
   const runAnnotations = Object.fromEntries(
     [
@@ -427,6 +436,9 @@ export const resolveScheduleRuntimeInjection = (schedule: Record<string, unknown
       [SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST, runtimeKitSetDigest],
       [SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS, requiredRuntimeKits],
       [SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION, admissionProducerRevision],
+      [SWARM_ADMISSION_ANNOTATION_WARRANT_ID, recoveryWarrantId],
+      [SWARM_ADMISSION_ANNOTATION_WARRANT_STATUS, recoveryWarrantStatus],
+      [SWARM_ADMISSION_ANNOTATION_PROOF_CELLS, requiredProofCells],
     ].filter((entry): entry is [string, string] => Boolean(entry[1])),
   )
 

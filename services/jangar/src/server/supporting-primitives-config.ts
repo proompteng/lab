@@ -38,6 +38,7 @@ export type SupportingPrimitivesConfig = {
   swarmRequirementMaxPayloadBytes: number
   swarmRequirementMaxAttempts: number
   swarmRuntimeAdmissionEnforcement: boolean
+  swarmRuntimeProofEnforcement: boolean
   scheduleRunnerAdmissionCheck: boolean
   scheduleRunnerAdmissionStatusUrl: string
   scheduleRunnerAdmissionStatusTimeoutMs: number
@@ -57,6 +58,7 @@ export const resolveSupportingPrimitivesConfig = (env: EnvSource = process.env):
   swarmRequirementMaxPayloadBytes: parsePositiveInt(env.JANGAR_SWARM_REQUIREMENT_MAX_PAYLOAD_BYTES, 16_384),
   swarmRequirementMaxAttempts: parsePositiveInt(env.JANGAR_SWARM_REQUIREMENT_MAX_ATTEMPTS, 3),
   swarmRuntimeAdmissionEnforcement: parseBoolean(env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT, true),
+  swarmRuntimeProofEnforcement: parseBoolean(env.JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT, true),
   scheduleRunnerAdmissionCheck: parseBoolean(env.JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK, true),
   scheduleRunnerAdmissionStatusUrl:
     normalizeNonEmpty(env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL) ??

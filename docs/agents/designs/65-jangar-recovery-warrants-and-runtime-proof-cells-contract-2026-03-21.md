@@ -399,6 +399,22 @@ Phase 2. Enforce runtime-proof admission.
 - block launches for broken or incomplete warrants;
 - keep serving on the active serving warrant while non-serving classes cut over separately if needed.
 
+Implementation note: launch runtime-proof enforcement (2026-05-07).
+
+- `services/jangar/src/server/supporting-primitives-controller.ts` now resolves the stage recovery warrant from the
+  same runtime-admission snapshot as the admission passport before creating schedules, schedule runner templates, or
+  cross-swarm requirement runs.
+- discover, plan, implement, and verify launches require their matching recovery warrant to be `sealed` and to cite
+  present, required, fresh, healthy runtime proof cells. A missing, broken, active, quarantined, or stale proof surface
+  blocks launch as `RuntimeProofSurfaceBlocked`.
+- schedule-runner pods repeat the live status check immediately before creating the target AgentRun or
+  OrchestrationRun, refresh the stamped recovery-warrant/proof-cell parameters, and fail closed if the current warrant
+  or required proof cells are no longer valid.
+- admitted schedules and requirement runs now cite `swarmRecoveryWarrantId`, `swarmRecoveryWarrantStatus`, and
+  `swarmRequiredProofCells` alongside the existing passport/runtime-kit trace.
+- emergency rollback for the proof layer is `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=false`; this returns launchers to
+  passport-only enforcement while preserving runtime-kit, passport, warrant, proof-cell, and watermark projection.
+
 Phase 3. Enforce rollout parity.
 
 - require deploy verification and consumer projections to cite fresh watermarks from sealed warrants before widening.
