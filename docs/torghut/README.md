@@ -4,6 +4,10 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/168-torghut-executable-alpha-receipts-and-capital-replay-board-2026-05-07.md`
+  (current executable alpha receipt and capital replay board contract)
+- `docs/agents/designs/164-jangar-contract-graduation-brake-and-runtime-receipt-gates-2026-05-07.md`
+  (current Jangar contract graduation brake and runtime receipt gate contract)
 - `docs/torghut/design-system/v6/159-torghut-capital-cohort-frontier-and-routeability-repair-board-2026-05-07.md`
   (current capital cohort frontier and routeability repair board contract)
 - `docs/agents/designs/155-jangar-execution-cohort-settlement-and-launch-quarantine-2026-05-07.md`
