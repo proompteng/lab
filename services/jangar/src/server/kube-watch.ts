@@ -19,6 +19,9 @@ type WatchOptions = {
   fieldSelector?: string
   resourceVersion?: string
   restartDelayMs?: number
+  maxRestartDelayMs?: number
+  rateLimitRestartDelayMs?: number
+  rateLimitMaxRestartDelayMs?: number
   onEvent: (event: WatchEvent) => void | Promise<void>
   onError?: (error: Error) => void
   onRestart?: (reason: string) => void | Promise<void>
@@ -30,6 +33,26 @@ type WatchHandle = {
 }
 
 const DEFAULT_RESTART_DELAY_MS = 2_000
+const DEFAULT_MAX_RESTART_DELAY_MS = 60_000
+const DEFAULT_RATE_LIMIT_RESTART_DELAY_MS = 30_000
+const DEFAULT_RATE_LIMIT_MAX_RESTART_DELAY_MS = 300_000
+const MAX_BACKOFF_EXPONENT = 6
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value != null && typeof value === 'object' && !Array.isArray(value)
+
+const errorStatusCode = (error: Error) => {
+  if (!isRecord(error)) return null
+  const statusCode = error.statusCode ?? error.code
+  return typeof statusCode === 'number' && Number.isFinite(statusCode) ? statusCode : null
+}
+
+const isRateLimitError = (error: Error) => errorStatusCode(error) === 429 || error.message.includes('Too Many Requests')
+
+const boundedDelay = (value: number, fallback: number) => {
+  if (!Number.isFinite(value) || value <= 0) return fallback
+  return Math.floor(value)
+}
 
 const buildWatchPath = async (resource: string, namespace: string) => {
   return buildKubernetesResourceCollectionPath(resource, namespace)
@@ -47,6 +70,9 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
     fieldSelector,
     resourceVersion,
     restartDelayMs = DEFAULT_RESTART_DELAY_MS,
+    maxRestartDelayMs = DEFAULT_MAX_RESTART_DELAY_MS,
+    rateLimitRestartDelayMs = DEFAULT_RATE_LIMIT_RESTART_DELAY_MS,
+    rateLimitMaxRestartDelayMs = DEFAULT_RATE_LIMIT_MAX_RESTART_DELAY_MS,
     onEvent,
     onError,
     onRestart,
@@ -54,6 +80,19 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
   } = options
 
   const { kubeConfig } = getNativeKubeClients()
+  const baseRestartDelayMs = boundedDelay(restartDelayMs, DEFAULT_RESTART_DELAY_MS)
+  const boundedMaxRestartDelayMs = Math.max(
+    baseRestartDelayMs,
+    boundedDelay(maxRestartDelayMs, DEFAULT_MAX_RESTART_DELAY_MS),
+  )
+  const boundedRateLimitRestartDelayMs = Math.max(
+    baseRestartDelayMs,
+    boundedDelay(rateLimitRestartDelayMs, DEFAULT_RATE_LIMIT_RESTART_DELAY_MS),
+  )
+  const boundedRateLimitMaxRestartDelayMs = Math.max(
+    boundedRateLimitRestartDelayMs,
+    boundedDelay(rateLimitMaxRestartDelayMs, DEFAULT_RATE_LIMIT_MAX_RESTART_DELAY_MS),
+  )
 
   let stopped = false
   let restartTimer: NodeJS.Timeout | null = null
@@ -61,6 +100,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
   let currentResourceVersion = resourceVersion?.trim() ? resourceVersion.trim() : null
   let watchStartResourceVersion: string | null = null
   let sawEventSinceStart = false
+  let consecutiveFailureRestarts = 0
   const normalizedResource = resource.trim() ? resource.trim() : 'unknown'
   const normalizedNamespace = namespace.trim() ? namespace.trim() : 'unknown'
 
@@ -70,7 +110,23 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
     currentResourceVersion = null
   }
 
+  const restartDelayForReason = (reason: string) => {
+    if (reason === 'closed') return baseRestartDelayMs
+    const exponent = Math.min(Math.max(consecutiveFailureRestarts - 1, 0), MAX_BACKOFF_EXPONENT)
+    const multiplier = 2 ** exponent
+    if (reason === 'watch_rate_limited' || reason === 'watch_start_rate_limited') {
+      return Math.min(boundedRateLimitMaxRestartDelayMs, boundedRateLimitRestartDelayMs * multiplier)
+    }
+    return Math.min(boundedMaxRestartDelayMs, baseRestartDelayMs * multiplier)
+  }
+
   const scheduleRestart = (reason: string) => {
+    if (reason === 'closed') {
+      consecutiveFailureRestarts = 0
+    } else {
+      consecutiveFailureRestarts += 1
+    }
+    const restartDelay = restartDelayForReason(reason)
     recordKubeWatchRestart({
       resource: normalizedResource,
       namespace: normalizedNamespace,
@@ -81,7 +137,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
     restartTimer = setTimeout(() => {
       restartTimer = null
       start()
-    }, restartDelayMs)
+    }, restartDelay)
     recordWatchReliabilityRestart({
       resource: normalizedResource,
       namespace: normalizedNamespace,
@@ -117,6 +173,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
             if (nextResourceVersion) {
               currentResourceVersion = nextResourceVersion
             }
+            consecutiveFailureRestarts = 0
             sawEventSinceStart = true
             if (type === 'BOOKMARK') return
 
@@ -135,10 +192,11 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
             if (stopped) return
             clearStaleResourceVersionBeforeRestart()
             if (error) {
+              const reason = isRateLimitError(error) ? 'watch_rate_limited' : 'watch_error'
               recordKubeWatchError({
                 resource: normalizedResource,
                 namespace: normalizedNamespace,
-                reason: 'watch_error',
+                reason,
               })
               recordWatchReliabilityError({
                 resource: normalizedResource,
@@ -146,7 +204,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
               })
               onError?.(new Error(`${logPrefix} ${resource} (${namespace}) watch failed: ${error.message}`))
             }
-            scheduleRestart(error ? 'watch_error' : 'closed')
+            scheduleRestart(error ? (isRateLimitError(error) ? 'watch_rate_limited' : 'watch_error') : 'closed')
           },
         ),
       )
@@ -154,17 +212,19 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
         abortController = controller
       })
       .catch((error) => {
+        const normalizedError = error instanceof Error ? error : new Error(String(error))
+        const reason = isRateLimitError(normalizedError) ? 'watch_start_rate_limited' : 'watch_start_error'
         recordKubeWatchError({
           resource: normalizedResource,
           namespace: normalizedNamespace,
-          reason: 'watch_start_error',
+          reason,
         })
         recordWatchReliabilityError({
           resource: normalizedResource,
           namespace: normalizedNamespace,
         })
-        onError?.(error instanceof Error ? error : new Error(String(error)))
-        scheduleRestart('watch_start_error')
+        onError?.(normalizedError)
+        scheduleRestart(reason)
       })
   }
 
