@@ -343,6 +343,24 @@ Rollback: ignore `material_action_verdict_epoch` and continue reading the existi
 failure-domain-lease, action-SLO-budget, and controller-witness fields. If verdicts are too conservative or too
 permissive, revert the status/receipt wiring while preserving the diagnostic inputs for incident review.
 
+## Route-stable status snapshot escrow
+
+Control-plane status emits the shadow route-stability escrow from
+`docs/agents/designs/143-jangar-route-stable-status-snapshot-escrow-and-repair-actuation-windows-2026-05-07.md`.
+`route_stability_escrow` binds the current status snapshot hash, live route probe attempt, controller witness,
+database projection, watch reliability, and material-action verdicts into one short-lived repair authority object.
+
+The first implementation is projection-only. A refused live status-route attempt leaves `serve_readonly`,
+`dispatch_repair`, and `torghut_observe` available only when the snapshot is fresh, downgrades `dispatch_normal` to
+`repair_only`, and holds or blocks deploy, merge, paper, and live capital actions. A stale snapshot removes fallback
+authority for all non-serving actions. Rollout-derived controller authority can keep repair open, but it cannot
+graduate normal dispatch without a live route and fresh controller-process witness authority.
+
+`material_action_activation_receipts` cite the escrow id in both `route_stability_escrow_ref` and transport refs so
+deployer and Torghut consumers can compare shadow route-stability authority with the existing material-action receipts.
+Rollback: ignore `route_stability_escrow` consumers and continue relying on material-action receipts while keeping the
+shadow snapshot evidence for incident analysis.
+
 ## Workspace storage proof
 
 The supporting-primitives controller reconciles `Workspace` CRs by creating and reading the backing

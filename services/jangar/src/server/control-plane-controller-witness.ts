@@ -12,6 +12,7 @@ import type {
   MaterialActionActivationReceiptCapitalStage,
   MaterialActionActivationReceiptDecision,
   NegativeEvidenceRouterStatus,
+  RouteStabilityEscrow,
 } from '~/data/agents-control-plane'
 import type {
   AgentRunIngestionStatus,
@@ -398,6 +399,7 @@ export const buildMaterialActionActivationReceipts = (input: {
   router: NegativeEvidenceRouterStatus
   budgets: ActionSloBudget[]
   materialActionVerdictEpoch?: MaterialActionVerdictEpoch
+  routeStabilityEscrow?: RouteStabilityEscrow
 }): MaterialActionActivationReceipt[] =>
   input.budgets.map((budget) => {
     const verdict = input.materialActionVerdictEpoch?.final_verdicts.find(
@@ -421,10 +423,12 @@ export const buildMaterialActionActivationReceipts = (input: {
       action_class: budget.action_class,
       scope: input.scope,
       controller_witness_refs: input.controllerWitness.witness_refs,
+      route_stability_escrow_ref: input.routeStabilityEscrow?.escrow_id ?? null,
       transport_contract_refs: [
         input.router.router_epoch_id,
         input.controllerWitness.quorum_id,
         ...(input.materialActionVerdictEpoch ? [input.materialActionVerdictEpoch.epoch_id] : []),
+        ...(input.routeStabilityEscrow ? [input.routeStabilityEscrow.escrow_id] : []),
         ...input.router.failure_domain_lease_refs,
       ],
       proof_freshness_refs: proofFreshnessRefs(input.router),

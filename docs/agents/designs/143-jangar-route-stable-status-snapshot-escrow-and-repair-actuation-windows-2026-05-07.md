@@ -331,6 +331,23 @@ Engineer lane:
 6. Add tests covering route connection refusal, stale snapshot expiry, rollout-derived controller authority,
    heartbeat recovery, and capital quarantine.
 
+Implementation note: shadow status projection (2026-05-07).
+
+- `services/jangar/src/server/control-plane-route-stability-escrow.ts` now implements the reducer as a pure status
+  projection outside `supporting-primitives-controller.ts`.
+- `/api/agents/control-plane/status` includes `route_stability_escrow` with the live route attempt, status snapshot
+  hash, controller witness ref, database/watch refs, route-stability window, and one material-action contract per action
+  class.
+- Fresh snapshot fallback is shadow-scoped to `serve_readonly`, `dispatch_repair`, and `torghut_observe`; normal
+  dispatch becomes `repair_only`, deploy and merge hold, paper and live capital hold or block, and stale snapshots
+  remove non-serving fallback authority.
+- Rollout-derived controller authority keeps bounded repair visible but does not graduate `dispatch_normal`,
+  `merge_ready`, or `deploy_widen`; those require live route success plus controller-process witness authority.
+- Material action activation receipts cite the escrow id through `route_stability_escrow_ref` and transport refs, giving
+  deployer and Torghut consumers one compact shadow artifact to compare before any runner or capital enforcement.
+- Rollback for this slice is to ignore `route_stability_escrow` and continue consuming existing material-action
+  receipts; no Kubernetes resource mutation, data migration, or schedule admission change is required.
+
 Deployer lane:
 
 1. Roll out the reducer in shadow mode.

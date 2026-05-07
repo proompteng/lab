@@ -807,6 +807,29 @@ describe('control-plane status', () => {
           action_class: 'dispatch_normal',
           decision: 'allow',
           controller_witness_refs: status.control_plane_controller_witness.witness_refs,
+          route_stability_escrow_ref: status.route_stability_escrow.escrow_id,
+          transport_contract_refs: expect.arrayContaining([status.route_stability_escrow.escrow_id]),
+        }),
+      ]),
+    )
+    expect(status.route_stability_escrow).toMatchObject({
+      mode: 'shadow',
+      design_artifact:
+        'docs/agents/designs/143-jangar-route-stable-status-snapshot-escrow-and-repair-actuation-windows-2026-05-07.md',
+      controller_witness_ref: status.control_plane_controller_witness.quorum_id,
+      route_stability_window: {
+        state: 'stable',
+        live_route_success_count: 1,
+        controller_authority_mode: 'heartbeat',
+      },
+    })
+    expect(status.route_stability_escrow.material_action_contracts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_normal',
+          decision: 'allow',
+          route_requirement: 'live_required',
+          controller_requirement: 'heartbeat_required',
         }),
       ]),
     )
