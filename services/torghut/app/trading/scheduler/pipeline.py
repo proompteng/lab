@@ -36,7 +36,11 @@ from ..empirical_jobs import build_empirical_jobs_status
 from ..execution import OrderExecutor
 from ..execution_adapters import ExecutionAdapter
 from ..execution_policy import ExecutionPolicy
-from ..feature_quality import FeatureQualityThresholds, evaluate_feature_batch_quality
+from ..feature_quality import (
+    REASON_STALENESS,
+    FeatureQualityThresholds,
+    evaluate_feature_batch_quality,
+)
 from ..features import extract_executable_price
 from ..firewall import OrderFirewall, OrderFirewallBlocked
 from ..ingest import ClickHouseSignalIngestor, SignalBatch
@@ -398,9 +402,13 @@ class TradingPipeline:
                     quality_report=quality_report,
                 )
                 if quality_report.blocking_reasons:
-                    self.state.metrics.record_feature_quality_cursor_commit_blocked(
-                        quality_report.blocking_reasons
-                    )
+                    staleness_only_block = set(quality_report.blocking_reasons) == {
+                        REASON_STALENESS
+                    }
+                    if not staleness_only_block:
+                        self.state.metrics.record_feature_quality_cursor_commit_blocked(
+                            quality_report.blocking_reasons
+                        )
                     logger.error(
                         "Feature quality gate failed component=%s account_label=%s rows=%s reasons=%s "
                         "cursor_at=%s cursor_symbol=%s cursor_seq=%s staleness_ms_p95=%s duplicate_ratio=%s "
@@ -416,6 +424,17 @@ class TradingPipeline:
                         quality_report.duplicate_ratio,
                         failure_payload["sample_rows"],
                     )
+                    if staleness_only_block:
+                        logger.warning(
+                            "Skipping stale feature batch and advancing cursor without decisions "
+                            "component=%s account_label=%s cursor_at=%s cursor_symbol=%s cursor_seq=%s",
+                            failure_payload["component"],
+                            failure_payload["account_label"],
+                            failure_payload["cursor_at"],
+                            failure_payload["cursor_symbol"],
+                            failure_payload["cursor_seq"],
+                        )
+                        self.ingestor.commit_cursor(session, batch)
                     return False
 
                 logger.warning(
