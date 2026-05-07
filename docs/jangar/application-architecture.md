@@ -1,6 +1,6 @@
 # Jangar Application Architecture
 
-This is the authoritative architecture index for the Jangar application as of 2026-05-06.
+This is the authoritative architecture index for the Jangar application as of 2026-05-07.
 
 Use this document together with:
 
@@ -82,14 +82,16 @@ until they are decomposed further.
 
 ## Current control-plane decision contract
 
-The current architecture priority is stable material-action authority. Final verdicts remain the consumer surface, but
-they must be backed by heartbeat-lane escrow before they are treated as durable admission. Serving readiness, route
-health, rollout health, watch reliability, and database freshness can stay green while controller-process heartbeats,
-serving self-report, and AgentRun ingestion witnesses disagree. That disagreement is a stability debt item, not a
-reason to upgrade normal dispatch or Torghut capital.
+The current architecture priority is execution cohort settlement. Final verdicts remain the consumer surface, but they
+must be backed by a current launch cohort before they are treated as durable admission. Serving readiness, route health,
+rollout health, watch reliability, and database freshness can stay green while retained failed schedule-runner pods,
+old-image running jobs, source provenance gaps, and controller-ingestion witness splits are still unresolved. That
+disagreement is a cohort settlement debt item, not a reason to upgrade normal dispatch or Torghut capital.
 
 Current source-of-truth design:
 
+- `docs/agents/designs/155-jangar-execution-cohort-settlement-and-launch-quarantine-2026-05-07.md`
+- `docs/torghut/design-system/v6/159-torghut-capital-cohort-frontier-and-routeability-repair-board-2026-05-07.md`
 - `docs/agents/designs/129-jangar-heartbeat-lane-escrow-and-material-verdict-stability-2026-05-06.md`
 - `docs/torghut/design-system/v6/133-torghut-stable-jangar-receipts-and-closed-session-capital-hold-2026-05-06.md`
 - `docs/agents/designs/128-jangar-terminal-run-settlement-and-forecast-reentry-admission-2026-05-06.md`
@@ -102,11 +104,11 @@ Current source-of-truth design:
 - `docs/torghut/design-system/v6/128-torghut-data-plane-disruption-premium-and-freshness-settlement-2026-05-06.md`
 
 The immediate invariant is that serving readiness, rollout availability, a route-level controller heartbeat, or an
-action clock `allow` cannot upgrade a stricter heartbeat stability receipt, run-settlement watermark, or Torghut
-consumer-evidence escrow. In the current live state, the route can observe healthy controller heartbeats while direct
-heartbeat storage can still show serving-process disabled controller rows; AgentRun ingestion remains unknown from the
-serving process; Torghut forecast authority is `registry_empty`; closed-session signal staleness is expected; and
-paper/live capital must stay inside explicit hold or observe-only decisions until stable proof arrives.
+action clock `allow` cannot upgrade a stricter launch cohort, source provenance lease, heartbeat stability receipt,
+run-settlement watermark, or Torghut consumer-evidence escrow. In the current live state, retained failed runner pods,
+mixed running job image digests, missing source/GitOps revision, split controller witness, and Torghut routeability debt
+must keep dispatch widening, merge readiness, paper canary, and live capital inside explicit hold or observe-only
+decisions until stable proof arrives.
 
 ## Ownership map
 
@@ -155,6 +157,8 @@ Current operational docs:
 Historical or design context docs:
 
 - `docs/jangar/current-state.md`
+- `docs/agents/designs/155-jangar-execution-cohort-settlement-and-launch-quarantine-2026-05-07.md`
+- `docs/torghut/design-system/v6/159-torghut-capital-cohort-frontier-and-routeability-repair-board-2026-05-07.md`
 - `docs/agents/designs/129-jangar-heartbeat-lane-escrow-and-material-verdict-stability-2026-05-06.md`
 - `docs/agents/designs/128-jangar-terminal-run-settlement-and-forecast-reentry-admission-2026-05-06.md`
 - `docs/agents/designs/128-jangar-runtime-convergence-ledger-and-capital-gate-receipts-2026-05-06.md`
