@@ -65,6 +65,31 @@ def _ready_status() -> dict[str, object]:
                 },
             ],
         },
+        'route_reacquisition_board': {
+            'schema_version': 'torghut.route-reacquisition-board.v1',
+            'state': 'candidate',
+            'capital_state': 'paper_allowed',
+            'summary': {
+                'row_count': 2,
+                'state_counts': {'routeable': 2},
+                'zero_notional_row_count': 0,
+                'expected_unblock_value': 8,
+                'top_repair_symbols': [],
+                'capital_eligible_symbol_count': 2,
+            },
+            'rows': [
+                {
+                    'symbol': 'NVDA',
+                    'state': 'routeable',
+                    'max_notional': '250',
+                },
+                {
+                    'symbol': 'AVGO',
+                    'state': 'routeable',
+                    'max_notional': '250',
+                },
+            ],
+        },
     }
 
 
@@ -183,6 +208,24 @@ class TestVerifyTradingReadiness(TestCase):
                     }
                 )
 
+        status['route_reacquisition_board'] = {
+            'schema_version': 'torghut.route-reacquisition-board.v1',
+            'state': 'repair_only',
+            'capital_state': 'zero_notional',
+            'summary': {
+                'row_count': 2,
+                'state_counts': {'blocked': 1, 'missing': 1},
+                'zero_notional_row_count': 2,
+                'expected_unblock_value': 3,
+                'top_repair_symbols': ['NVDA', 'AVGO'],
+                'capital_eligible_symbol_count': 0,
+            },
+            'rows': [
+                {'symbol': 'NVDA', 'state': 'blocked', 'max_notional': '0'},
+                {'symbol': 'AVGO', 'state': 'missing', 'max_notional': '0'},
+            ],
+        }
+
         result = evaluate_trading_readiness(
             status,
             profile='paper',
@@ -200,6 +243,8 @@ class TestVerifyTradingReadiness(TestCase):
         self.assertIn('routeable_symbol_count', result['failed_checks'])
         self.assertIn('blocked_symbol_count', result['failed_checks'])
         self.assertIn('missing_symbol_count', result['failed_checks'])
+        self.assertIn('route_board_capital_eligible_symbols', result['failed_checks'])
+        self.assertIn('route_board_zero_notional_rows', result['failed_checks'])
 
     def test_quant_empty_fails_unless_informational_quant_is_allowed(self) -> None:
         status = _ready_status()
