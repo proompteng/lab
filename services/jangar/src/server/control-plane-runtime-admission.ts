@@ -289,6 +289,13 @@ const toRuntimeSubjectDecision = (decision: RuntimeKitDecision): AdmissionPasspo
   return 'allow'
 }
 
+const toAuthoritySubjectDecision = (executionTrust: ExecutionTrustStatus): AdmissionPassportDecision => {
+  if (executionTrust.status === 'blocked' || executionTrust.status === 'unknown') {
+    return 'block'
+  }
+  return 'allow'
+}
+
 const buildPassport = (input: {
   now: Date
   consumerClass: AdmissionPassportConsumerClass
@@ -312,8 +319,6 @@ const buildPassport = (input: {
     decision = 'block'
   } else if (input.runtimeKits.some((kit) => kit.decision === 'blocked' || kit.decision === 'unknown')) {
     decision = 'block'
-  } else if (input.authority.trust.status === 'degraded') {
-    decision = input.consumerClass === 'serving' ? 'degrade' : 'hold'
   } else if (input.runtimeKits.some((kit) => kit.decision === 'degraded')) {
     decision = input.consumerClass === 'serving' ? 'degrade' : 'hold'
   }
@@ -323,14 +328,7 @@ const buildPassport = (input: {
       subject_kind: 'authority',
       subject_ref: input.authority.authoritySessionId,
       required: true,
-      decision:
-        input.authority.trust.status === 'healthy'
-          ? 'allow'
-          : input.authority.trust.status === 'degraded'
-            ? input.consumerClass === 'serving'
-              ? 'degrade'
-              : 'hold'
-            : 'block',
+      decision: toAuthoritySubjectDecision(input.authority.trust),
       evidence_ref: input.authority.recoveryCaseSetDigest,
     },
     ...input.runtimeKits.map((kit) => ({
