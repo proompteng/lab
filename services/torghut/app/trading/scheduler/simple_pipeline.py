@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional, cast
 
@@ -13,10 +13,12 @@ from sqlalchemy.orm import Session
 
 from ...config import settings
 from ...models import Strategy, TradeDecision
+from ..autonomy import DriftThresholds, detect_drift
 from ..empirical_jobs import build_empirical_jobs_status
+from ..feature_quality import FeatureQualityThresholds, evaluate_feature_batch_quality
 from ..firewall import OrderFirewallBlocked
 from ..ingest import SignalBatch
-from ..models import StrategyDecision
+from ..models import SignalEnvelope, StrategyDecision
 from ..prices import MarketSnapshot
 from ..proof_floor import build_profitability_proof_floor_receipt
 from ..simple_risk import (
@@ -50,12 +52,6 @@ _SIMPLE_ALLOWED_REJECT_REASONS = {
 _PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS = 86_400
 
 
-@dataclass(frozen=True)
-class SimplePolicyOutcome:
-    retry_delays: list[int]
-    advisor_metadata: dict[str, object]
-
-
 class SimpleTradingPipeline(TradingPipeline):
     """Minimal signal -> hard-risk -> direct execution lane."""
 
@@ -75,15 +71,15 @@ class SimpleTradingPipeline(TradingPipeline):
         session: Session,
         batch: SignalBatch,
         *,
-        quality_signals: list[Any],
+        quality_signals: list[SignalEnvelope],
     ) -> bool:
-        if not batch.signals:
-            self.record_no_signal_batch(batch)
-            self.ingestor.commit_cursor(session, batch)
+        if not super()._prepare_batch_for_decisions(
+            session,
+            batch,
+            quality_signals=quality_signals,
+        ):
             return False
-        market_session_open = self._is_market_session_open()
-        self.state.market_session_open = market_session_open
-        self.state.metrics.market_session_open = 1 if market_session_open else 0
+        self._run_simple_drift_check(quality_signals)
         self.state.metrics.no_signal_reason_streak = {}
         self.state.metrics.no_signal_streak = 0
         self.state.metrics.signal_lag_seconds = None
@@ -92,6 +88,39 @@ class SimpleTradingPipeline(TradingPipeline):
         self.state.last_signal_continuity_reason = None
         self.state.last_signal_continuity_actionable = False
         return True
+
+    def _run_simple_drift_check(self, quality_signals: list[SignalEnvelope]) -> None:
+        if not settings.trading_drift_governance_enabled or not quality_signals:
+            return
+        now = datetime.now(timezone.utc)
+        feature_report = evaluate_feature_batch_quality(
+            quality_signals,
+            thresholds=_simple_drift_feature_thresholds(),
+        )
+        fallback_total = sum(self.state.metrics.execution_fallback_total.values())
+        submitted_total = max(1, self.state.metrics.orders_submitted_total)
+        detection = detect_drift(
+            run_id=f"simple-runtime:{self.account_label}:{now.isoformat()}",
+            feature_quality_report=feature_report,
+            gate_report_payload={},
+            fallback_ratio=Decimal(str(fallback_total / submitted_total)),
+            thresholds=_simple_drift_thresholds(),
+            detected_at=now,
+        )
+        self.state.metrics.drift_detection_checks_total += 1
+        self.state.drift_last_detection_at = detection.detected_at
+        if detection.drift_detected:
+            self.state.metrics.drift_incidents_total += 1
+            self.state.drift_active_incident_id = detection.incident_id
+            self.state.drift_active_reason_codes = list(detection.reason_codes)
+            self.state.drift_status = "drift_detected"
+            self.state.drift_live_promotion_eligible = False
+            self.state.drift_live_promotion_reasons = list(detection.reason_codes)
+            for reason_code in detection.reason_codes:
+                self.state.metrics.drift_incident_reason_total[reason_code] = (
+                    self.state.metrics.drift_incident_reason_total.get(reason_code, 0)
+                    + 1
+                )
 
     def _process_batch_signals(
         self,
@@ -222,29 +251,6 @@ class SimpleTradingPipeline(TradingPipeline):
             return None
         return preparation.decision, snapshot
 
-    def _evaluate_execution_policy_outcome(
-        self,
-        *,
-        session: Session,
-        decision: StrategyDecision,
-        decision_row: TradeDecision,
-        strategy: Strategy,
-        positions: list[dict[str, Any]],
-        snapshot: Optional[MarketSnapshot],
-    ) -> tuple[StrategyDecision, Any] | None:
-        _ = (session, decision_row, strategy, positions, snapshot)
-        return (
-            decision,
-            SimplePolicyOutcome(
-                retry_delays=[],
-                advisor_metadata={
-                    "enabled": False,
-                    "applied": False,
-                    "fallback_reason": "simple_lane",
-                },
-            ),
-        )
-
     def _passes_risk_verdict(
         self,
         *,
@@ -287,7 +293,9 @@ class SimpleTradingPipeline(TradingPipeline):
                 session=session,
                 stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
             )
-            quant_evidence = load_quant_evidence_status(account_label=self.account_label)
+            quant_evidence = load_quant_evidence_status(
+                account_label=self.account_label
+            )
             live_submission_gate = self._live_submission_gate(
                 session=session,
                 hypothesis_summary=hypothesis_payload,
@@ -640,6 +648,45 @@ def _min_optional_decimal(*values: Decimal | None) -> Decimal | None:
     if not candidates:
         return None
     return min(candidates)
+
+
+def _simple_drift_feature_thresholds() -> FeatureQualityThresholds:
+    return FeatureQualityThresholds(
+        max_required_null_rate=settings.trading_drift_max_required_null_rate,
+        max_staleness_ms=settings.trading_drift_max_staleness_ms_p95,
+        max_duplicate_ratio=settings.trading_drift_max_duplicate_ratio,
+    )
+
+
+def _simple_drift_thresholds() -> DriftThresholds:
+    return DriftThresholds(
+        max_required_null_rate=Decimal(
+            str(settings.trading_drift_max_required_null_rate)
+        ),
+        max_staleness_ms_p95=max(0, int(settings.trading_drift_max_staleness_ms_p95)),
+        max_duplicate_ratio=Decimal(str(settings.trading_drift_max_duplicate_ratio)),
+        max_schema_mismatch_total=max(
+            0, int(settings.trading_drift_max_schema_mismatch_total)
+        ),
+        max_model_calibration_error=Decimal(
+            str(settings.trading_drift_max_model_calibration_error)
+        ),
+        max_model_llm_error_ratio=Decimal(
+            str(settings.trading_drift_max_model_llm_error_ratio)
+        ),
+        min_performance_net_pnl=Decimal(
+            str(settings.trading_drift_min_performance_net_pnl)
+        ),
+        max_performance_drawdown=Decimal(
+            str(settings.trading_drift_max_performance_drawdown)
+        ),
+        max_performance_cost_bps=Decimal(
+            str(settings.trading_drift_max_performance_cost_bps)
+        ),
+        max_execution_fallback_ratio=Decimal(
+            str(settings.trading_drift_max_execution_fallback_ratio)
+        ),
+    )
 
 
 def _pct_cap_to_notional(
