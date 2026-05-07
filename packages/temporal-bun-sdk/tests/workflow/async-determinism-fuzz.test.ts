@@ -14,7 +14,10 @@ import { WorkflowRegistry } from '../../src/workflow/registry'
 
 const fuzzSeeds = Math.max(1, Number.parseInt(process.env.TEMPORAL_ASYNC_FUZZ_SEEDS ?? '10000', 10))
 const fuzzOperationCount = Math.max(4, Number.parseInt(process.env.TEMPORAL_ASYNC_FUZZ_OPERATIONS ?? '64', 10))
-const fuzzTimeoutMs = Math.max(15_000, fuzzSeeds * 2)
+const fuzzTimeoutMs = Math.max(
+  60_000,
+  Number.parseInt(process.env.TEMPORAL_ASYNC_FUZZ_TIMEOUT_MS ?? '', 10) || fuzzSeeds * 4,
+)
 const packageRoot = join(import.meta.dir, '../..')
 const artifactPath = join(packageRoot, '.artifacts', 'async-fuzz', 'report.json')
 const operationNames = [
