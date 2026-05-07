@@ -286,10 +286,17 @@ describe('supporting primitives controller', () => {
     expect(command).toContain('JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK')
     expect(command).toContain('JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL')
     expect(command).not.toContain('stale schedule admission passport')
+    expect(command).not.toContain('stale schedule runtime-kit digest')
+    expect(command).not.toContain('stale schedule recovery-case digest')
+    expect(command).not.toContain('stale schedule required runtime kits')
     expect(command).toContain(
       'writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.passportId',
     )
+    expect(command).toContain(
+      'writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.runtimeDigest',
+    )
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmAdmissionPassportId"')
+    expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRuntimeKitSetDigest"')
     expect(command).toContain('current schedule admission runtime kit')
     expect(command).toContain('const targetByKind = {')
     expect(command).toContain("method: 'POST'")
