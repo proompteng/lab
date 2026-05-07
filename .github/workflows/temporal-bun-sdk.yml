@@ -42,6 +42,7 @@ concurrency:
 jobs:
   test:
     runs-on: arc-arm64
+    timeout-minutes: 390
 
     env:
       TEMPORAL_TEST_SERVER: '1'
@@ -51,6 +52,7 @@ jobs:
       TEMPORAL_ADDRESS: temporal-grpc:7233
       TEMPORAL_NAMESPACE: default
       TEMPORAL_ENFORCE_REMOTE_ADDRESS: '1'
+      TEMPORAL_SOAK_FAILURE_MODES: baseline,worker-restart,sticky-cache-churn,update-rejection-termination,activity-cancellation
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
@@ -138,6 +140,7 @@ jobs:
           TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load
 
       - name: Run worker soak smoke
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.release_mode != 'publish'
         run: |
           TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:soak -- \
             --duration 1000 \
@@ -145,7 +148,18 @@ jobs:
             --workflows 16 \
             --workflow-concurrency 4 \
             --activity-concurrency 6 \
-            --failure-modes baseline,worker-restart,sticky-cache-churn,update-rejection-termination,activity-cancellation
+            --failure-modes "${TEMPORAL_SOAK_FAILURE_MODES}"
+
+      - name: Run worker release soak gate
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'publish'
+        run: |
+          TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:soak -- \
+            --duration 21600000 \
+            --iterations 12 \
+            --workflows 1000 \
+            --workflow-concurrency 50 \
+            --activity-concurrency 80 \
+            --failure-modes "${TEMPORAL_SOAK_FAILURE_MODES}"
 
       - name: Verify production package boundary
         run: bun run --filter @proompteng/temporal-bun-sdk verify:production
