@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..models import Execution, ExecutionTCAMetric, TradeDecision
@@ -96,6 +96,7 @@ def upsert_execution_tca_metric(
 ) -> ExecutionTCAMetric:
     """Derive deterministic TCA metrics for an execution and upsert a single row."""
 
+    computed_at = datetime.now(timezone.utc)
     decision = _load_trade_decision(session, execution)
     strategy_id = decision.strategy_id if decision is not None else None
     account_label = decision.alpaca_account_label if decision is not None else None
@@ -161,6 +162,7 @@ def upsert_execution_tca_metric(
             simulator_version=simulator_version,
             churn_qty=churn_qty,
             churn_ratio=churn_ratio,
+            computed_at=computed_at,
         )
         session.add(row)
         return row
@@ -183,8 +185,75 @@ def upsert_execution_tca_metric(
     existing.simulator_version = simulator_version
     existing.churn_qty = churn_qty
     existing.churn_ratio = churn_ratio
+    existing.computed_at = computed_at
     session.add(existing)
     return existing
+
+
+def refresh_execution_tca_metrics(
+    session: Session,
+    *,
+    account_label: str | None = None,
+    stale_before: datetime | None = None,
+    limit: int = 500,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Refresh materialized TCA rows for filled executions.
+
+    This is intentionally bounded. Revenue-readiness gates consume the
+    materialized ``execution_tca_metrics`` table, so code-level TCA fixes do not
+    affect promotion evidence until stale rows are rematerialized.
+    """
+
+    bounded_limit = max(1, min(limit, 5000))
+    stmt = (
+        select(Execution)
+        .outerjoin(ExecutionTCAMetric, ExecutionTCAMetric.execution_id == Execution.id)
+        .where(
+            Execution.avg_fill_price.is_not(None),
+            Execution.filled_qty > 0,
+        )
+        .order_by(
+            ExecutionTCAMetric.computed_at.asc().nullsfirst(),
+            Execution.created_at.asc(),
+        )
+        .limit(bounded_limit)
+    )
+    normalized_account_label = account_label.strip() if account_label else ""
+    if normalized_account_label:
+        stmt = stmt.where(Execution.alpaca_account_label == normalized_account_label)
+    if stale_before is not None:
+        stmt = stmt.where(
+            or_(
+                ExecutionTCAMetric.id.is_(None),
+                ExecutionTCAMetric.computed_at < stale_before,
+            )
+        )
+
+    executions = session.execute(stmt).scalars().all()
+    if dry_run:
+        return {
+            "selected": len(executions),
+            "refreshed": 0,
+            "dry_run": True,
+            "limit": bounded_limit,
+            "account_label": normalized_account_label or None,
+            "stale_before": stale_before.isoformat() if stale_before else None,
+        }
+
+    refreshed = 0
+    for execution in executions:
+        upsert_execution_tca_metric(session, execution)
+        refreshed += 1
+
+    return {
+        "selected": len(executions),
+        "refreshed": refreshed,
+        "dry_run": False,
+        "limit": bounded_limit,
+        "account_label": normalized_account_label or None,
+        "stale_before": stale_before.isoformat() if stale_before else None,
+    }
 
 
 def build_tca_gate_inputs(
@@ -813,5 +882,6 @@ __all__ = [
     "AdaptiveExecutionPolicyDecision",
     "build_tca_gate_inputs",
     "derive_adaptive_execution_policy",
+    "refresh_execution_tca_metrics",
     "upsert_execution_tca_metric",
 ]
