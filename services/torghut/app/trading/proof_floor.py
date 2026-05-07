@@ -383,6 +383,22 @@ def build_profitability_proof_floor_receipt(
     )
 
     tca_last_computed_at = _parse_timestamp(tca_summary.get("last_computed_at"))
+    latest_execution_created_at = _parse_timestamp(
+        tca_summary.get("latest_execution_created_at")
+    )
+    tca_unsettled_execution_count = _int(tca_summary.get("unsettled_execution_count"))
+    tca_settlement_coverage_known = (
+        "latest_execution_created_at" in tca_summary
+        or "filled_execution_count" in tca_summary
+        or "unsettled_execution_count" in tca_summary
+    )
+    has_unsettled_execution = tca_unsettled_execution_count > 0
+    if (
+        latest_execution_created_at is not None
+        and tca_last_computed_at is not None
+        and latest_execution_created_at > tca_last_computed_at
+    ):
+        has_unsettled_execution = True
     tca_age_seconds = (
         max(0, int((generated_at - tca_last_computed_at).total_seconds()))
         if tca_last_computed_at is not None
@@ -396,7 +412,10 @@ def build_profitability_proof_floor_receipt(
     if tca_order_count <= 0:
         tca_state = "missing"
         tca_reason = "execution_tca_missing"
-    elif tca_age_seconds is None or tca_age_seconds > max(0, tca_max_age_seconds):
+    elif tca_age_seconds is None or (
+        (not tca_settlement_coverage_known or has_unsettled_execution)
+        and tca_age_seconds > max(0, tca_max_age_seconds)
+    ):
         tca_state = "stale"
         tca_reason = "execution_tca_stale"
     elif (
@@ -428,6 +447,11 @@ def build_profitability_proof_floor_receipt(
         source_ref={
             "order_count": tca_order_count,
             "last_computed_at": tca_summary.get("last_computed_at"),
+            "filled_execution_count": _int(tca_summary.get("filled_execution_count")),
+            "latest_execution_created_at": tca_summary.get(
+                "latest_execution_created_at"
+            ),
+            "unsettled_execution_count": tca_unsettled_execution_count,
             "avg_abs_slippage_bps": _decimal_text(avg_abs_slippage_bps),
             "slippage_guardrail_bps": _decimal_text(slippage_guardrail),
         },
