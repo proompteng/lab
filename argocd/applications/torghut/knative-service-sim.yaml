@@ -150,6 +150,8 @@ spec:
               value: torghut.ta_signals
             - name: TRADING_PRICE_TABLE
               value: torghut.ta_microbars
+            - name: TRADING_EXECUTABLE_QUOTE_LOOKBACK_SECONDS
+              value: "60"
             - name: TRADING_SIGNAL_ALLOWED_SOURCES
               value: ta
             - name: TRADING_SIGNAL_LOOKBACK_MINUTES

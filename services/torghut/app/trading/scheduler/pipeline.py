@@ -41,7 +41,7 @@ from ..feature_quality import (
     FeatureQualityThresholds,
     evaluate_feature_batch_quality,
 )
-from ..features import extract_executable_price
+from ..features import extract_executable_price, optional_decimal, payload_value
 from ..firewall import OrderFirewall, OrderFirewallBlocked
 from ..ingest import ClickHouseSignalIngestor, SignalBatch
 from ..lean_lanes import LeanLaneManager
@@ -773,15 +773,39 @@ class TradingPipeline:
             return []
 
     def _ensure_signal_executable_price(self, signal: SignalEnvelope) -> SignalEnvelope:
-        if extract_executable_price(signal.payload) is not None:
+        price = extract_executable_price(signal.payload)
+        bid = optional_decimal(
+            payload_value(
+                signal.payload,
+                "imbalance_bid_px",
+                block="imbalance",
+                nested_key="bid_px",
+            )
+        )
+        ask = optional_decimal(
+            payload_value(
+                signal.payload,
+                "imbalance_ask_px",
+                block="imbalance",
+                nested_key="ask_px",
+            )
+        )
+        if price is not None and bid is not None and ask is not None:
             return signal
         snapshot = self.price_fetcher.fetch_market_snapshot(signal)
-        if snapshot is None or snapshot.price is None:
+        if snapshot is None:
             return signal
         payload = dict(signal.payload)
-        payload.setdefault("price", snapshot.price)
-        if snapshot.spread is not None:
-            payload.setdefault("spread", snapshot.spread)
+        if price is None and snapshot.price is not None:
+            payload["price"] = snapshot.price
+        if payload.get("spread") is None and snapshot.spread is not None:
+            payload["spread"] = snapshot.spread
+        if bid is None and snapshot.bid is not None:
+            payload["imbalance_bid_px"] = snapshot.bid
+        if ask is None and snapshot.ask is not None:
+            payload["imbalance_ask_px"] = snapshot.ask
+        if payload == signal.payload:
+            return signal
         return signal.model_copy(update={"payload": payload})
 
     def _feature_quality_failure_payload(
