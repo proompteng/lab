@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from typing import cast
 from unittest import TestCase
 
 from sqlalchemy import create_engine, select
@@ -195,6 +196,62 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
         self.assertEqual(paper["avg_abs_slippage_bps"], Decimal("4"))
         self.assertEqual(live["order_count"], 1)
         self.assertEqual(live["avg_abs_slippage_bps"], Decimal("100"))
+
+    def test_build_tca_gate_inputs_filters_by_scope_symbols_and_reports_breakdown(
+        self,
+    ) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            self._insert_observations(
+                session,
+                strategy,
+                symbol="AAPL",
+                regime="trend",
+                slippages=[Decimal("4")],
+                shortfalls=[Decimal("1")],
+                expected_shortfall_p50_values=[Decimal("1")],
+                adaptive_applied=False,
+            )
+            self._insert_observations(
+                session,
+                strategy,
+                symbol="NVDA",
+                regime="trend-nvda",
+                slippages=[Decimal("12")],
+                shortfalls=[Decimal("1")],
+                expected_shortfall_p50_values=[Decimal("1")],
+                adaptive_applied=False,
+            )
+            self._insert_observations(
+                session,
+                strategy,
+                symbol="META",
+                regime="trend-meta",
+                slippages=[Decimal("100")],
+                shortfalls=[Decimal("1")],
+                expected_shortfall_p50_values=[Decimal("1")],
+                adaptive_applied=False,
+            )
+
+            summary = build_tca_gate_inputs(
+                session,
+                strategy_id=strategy.id,
+                account_label="paper",
+                symbols={"NVDA", "AAPL", "ORCL"},
+            )
+
+        self.assertEqual(summary["scope_symbols"], ["AAPL", "NVDA", "ORCL"])
+        self.assertEqual(summary["scope_symbol_count"], 3)
+        self.assertEqual(summary["order_count"], 2)
+        self.assertEqual(summary["avg_abs_slippage_bps"], Decimal("8"))
+        breakdown = {
+            str(item["symbol"]): item
+            for item in cast(list[dict[str, object]], summary["symbol_breakdown"])
+        }
+        self.assertEqual(breakdown["AAPL"]["order_count"], 1)
+        self.assertEqual(breakdown["NVDA"]["avg_abs_slippage_bps"], Decimal("12"))
+        self.assertEqual(breakdown["ORCL"]["order_count"], 0)
+        self.assertNotIn("META", breakdown)
 
     def test_build_tca_gate_inputs_reports_execution_settlement_coverage(self) -> None:
         with self.session_local() as session:
