@@ -11,7 +11,9 @@
   `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-07T16:24Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-07T16:24Z`):
+- Evidence (current next-work priority, refreshed `2026-05-07T17:14Z`):
+  - `160-torghut-proof-surface-activation-ledger-and-capital-receipt-firewall-2026-05-07.md`
+  - `docs/agents/designs/156-jangar-runtime-activation-receipts-and-source-drift-quarantine-2026-05-07.md`
   - `159-torghut-capital-cohort-frontier-and-routeability-repair-board-2026-05-07.md`
   - `docs/agents/designs/155-jangar-execution-cohort-settlement-and-launch-quarantine-2026-05-07.md`
   - `158-torghut-route-reacquisition-and-market-context-repair-cells-2026-05-07.md`
