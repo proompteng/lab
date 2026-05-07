@@ -113,6 +113,24 @@ spec:
               value: "false"
             - name: TRADING_JANGAR_QUANT_HEALTH_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/trading/control-plane/quant/health
+            - name: TRADING_MARKET_CONTEXT_URL
+              value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/
+            - name: TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS
+              value: "300"
+            - name: TRADING_MARKET_CONTEXT_REQUIRED
+              value: "false"
+            - name: TRADING_MARKET_CONTEXT_FAIL_MODE
+              value: shadow_only
+            - name: TRADING_MARKET_CONTEXT_MIN_QUALITY
+              value: "0.55"
+            - name: TRADING_MARKET_CONTEXT_MAX_STALENESS_SECONDS
+              value: "300"
+            - name: TRADING_MARKET_CONTEXT_ALLOW_DEGRADED_LAST_GOOD
+              value: "true"
+            - name: TRADING_MARKET_CONTEXT_FUNDAMENTALS_DEGRADED_MAX_STALENESS_SECONDS
+              value: "86400"
+            - name: TRADING_MARKET_CONTEXT_NEWS_DEGRADED_MAX_STALENESS_SECONDS
+              value: "1800"
             - name: TRADING_ACCOUNT_LABEL
               value: PA3SX7FYNUTF
             - name: TRADING_ACCOUNTS_JSON

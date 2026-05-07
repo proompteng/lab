@@ -62,6 +62,7 @@ class SimpleTradingPipeline(TradingPipeline):
         self.order_firewall.cancel_open_orders_if_kill_switch()
         if self.strategy_catalog is not None:
             self.strategy_catalog.refresh(session)
+        self._refresh_market_context_for_proof_floor()
         strategies = self._load_strategies(session)
         if not strategies:
             logger.info("No enabled strategies found; skipping simple trading cycle")

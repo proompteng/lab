@@ -256,7 +256,12 @@ class TestLiveConfigManifestContract(TestCase):
             settings.trading_jangar_quant_health_url,
             "http://jangar.jangar.svc.cluster.local/api/torghut/trading/control-plane/quant/health",
         )
-        self.assertIsNone(settings.trading_market_context_url)
+        self.assertEqual(
+            settings.trading_market_context_url,
+            "http://jangar.jangar.svc.cluster.local/api/torghut/market-context",
+        )
+        self.assertFalse(settings.trading_market_context_required)
+        self.assertEqual(settings.trading_market_context_fail_mode, "shadow_only")
         self.assertEqual(
             set(settings.trading_universe_static_fallback_symbols),
             _LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS,
@@ -264,7 +269,10 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertNotIn("TRADING_FEATURE_FLAGS_URL", env)
         self.assertNotIn("TRADING_FORECAST_SERVICE_URL", env)
         self.assertNotIn("TRADING_LEAN_RUNNER_URL", env)
-        self.assertNotIn("TRADING_MARKET_CONTEXT_URL", env)
+        self.assertEqual(
+            env.get("TRADING_MARKET_CONTEXT_URL"),
+            "http://jangar.jangar.svc.cluster.local/api/torghut/market-context/",
+        )
         self.assertEqual(
             env.get("TRADING_JANGAR_CONTROL_PLANE_STATUS_URL"),
             "http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents",
