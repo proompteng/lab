@@ -461,6 +461,14 @@ def test_execution_tca_source_ref_exposes_symbol_route_blockers() -> None:
     assert symbol_routes["blocked_symbols"][0]["symbol"] == "NVDA"
     assert symbol_routes["missing_symbols"] == ["ORCL"]
     assert source_ref["aggregate_reason"] == "execution_tca_slippage_guardrail_exceeded"
+    route_book = cast(Mapping[str, Any], receipt["route_reacquisition_book"])
+    route_summary = cast(Mapping[str, Any], route_book["summary"])
+    route_records = cast(list[Mapping[str, Any]], route_book["records"])
+    assert route_summary["routeable_symbol_count"] == 1
+    assert route_summary["blocked_symbol_count"] == 1
+    assert route_summary["missing_symbol_count"] == 1
+    assert route_records[0]["symbol"] == "AAPL"
+    assert route_records[0]["state"] == "routeable"
     assert receipt["blocking_reasons"] == [
         "execution_tca_route_universe_incomplete",
     ]
@@ -530,8 +538,83 @@ def test_execution_tca_zero_routeable_symbols_blocks_capital() -> None:
     assert symbol_routes["routeable_symbol_count"] == 0
     assert symbol_routes["blocked_symbol_count"] == 2
     assert symbol_routes["missing_symbol_count"] == 1
+    route_book = cast(Mapping[str, Any], receipt["route_reacquisition_book"])
+    route_summary = cast(Mapping[str, Any], route_book["summary"])
+    assert route_summary["routeable_symbol_count"] == 0
+    assert route_summary["blocked_symbol_count"] == 2
+    assert route_summary["missing_symbol_count"] == 1
+    assert route_summary["expected_unblock_value"] == 5
     assert receipt["repair_ladder"][0]["code"] == "repair_route_universe"
     assert receipt["repair_ladder"][0]["reason"] == "execution_tca_route_universe_empty"
+
+
+def test_sim_routeable_symbol_becomes_repair_probe_without_capital_unlock() -> None:
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="TORGHUT_SIM",
+        torghut_revision="torghut-sim-00372",
+        trading_mode="paper",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "capital_stage": "paper",
+        },
+        hypothesis_payload=_healthy_hypothesis_payload(),
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status={
+            "alert_active": True,
+            "alert_reason": "market_context_stale",
+            "last_freshness_seconds": 86400,
+            "last_quality_score": 0.62,
+            "last_domain_states": {"news": "stale"},
+        },
+        tca_summary={
+            **_fresh_tca_summary(avg_abs_slippage_bps="5.5"),
+            "scope_symbols": ["AAPL", "AMZN", "NVDA"],
+            "scope_symbol_count": 3,
+            "symbol_breakdown": [
+                {
+                    "symbol": "AAPL",
+                    "order_count": 0,
+                    "avg_abs_slippage_bps": None,
+                    "max_abs_slippage_bps": None,
+                    "last_computed_at": None,
+                },
+                {
+                    "symbol": "AMZN",
+                    "order_count": 0,
+                    "avg_abs_slippage_bps": None,
+                    "max_abs_slippage_bps": None,
+                    "last_computed_at": None,
+                },
+                {
+                    "symbol": "NVDA",
+                    "order_count": 5,
+                    "avg_abs_slippage_bps": "5.57",
+                    "max_abs_slippage_bps": "7.10",
+                    "last_computed_at": NOW.isoformat(),
+                },
+            ],
+        },
+        simple_lane_status=_simple_lane_status(),
+        now=NOW,
+    )
+
+    route_book = cast(Mapping[str, Any], receipt["route_reacquisition_book"])
+    route_summary = cast(Mapping[str, Any], route_book["summary"])
+    route_records = cast(list[Mapping[str, Any]], route_book["records"])
+    nvda = next(item for item in route_records if item["symbol"] == "NVDA")
+
+    assert receipt["route_state"] == "repair_only"
+    assert receipt["capital_state"] == "zero_notional"
+    assert "market_context_stale" in receipt["blocking_reasons"]
+    assert route_summary["probing_symbol_count"] == 1
+    assert route_summary["missing_symbol_count"] == 2
+    assert route_summary["candidate_symbols"] == ["NVDA"]
+    assert nvda["state"] == "probing"
+    assert nvda["paper_probe_notional_limit"] == "0"
 
 
 def test_settled_old_tca_exposes_execution_quality_instead_of_staleness() -> None:

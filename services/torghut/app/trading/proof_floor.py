@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 
+from .route_reacquisition import build_route_reacquisition_book
+
 
 _BLOCKING_STATES = {"degraded", "fail", "missing", "stale"}
 _LIVE_MICRO_STAGES = {"0.10x canary", "0.25x canary"}
@@ -654,7 +656,7 @@ def build_profitability_proof_floor_receipt(
         }
     )
 
-    return {
+    receipt: dict[str, object] = {
         "schema_version": "torghut.profitability-proof-floor.v1",
         "generated_at": generated_at.isoformat(),
         "account_label": account_label,
@@ -675,6 +677,12 @@ def build_profitability_proof_floor_receipt(
             "live_submit_enabled": False,
         },
     }
+    receipt["route_reacquisition_book"] = build_route_reacquisition_book(
+        proof_floor_receipt=receipt,
+        trading_mode=trading_mode,
+        market_session_open=market_session_open,
+    )
+    return receipt
 
 
 __all__ = ["build_profitability_proof_floor_receipt"]

@@ -448,6 +448,28 @@ def _summarize_tca(proof_floor: Mapping[str, Any]) -> dict[str, object]:
     }
 
 
+def _summarize_route_reacquisition(
+    status_payload: Mapping[str, Any],
+    proof_floor: Mapping[str, Any],
+) -> dict[str, object]:
+    route_book = _choose_mapping(
+        status_payload.get("route_reacquisition_book"),
+        proof_floor.get("route_reacquisition_book"),
+    )
+    summary = _mapping(route_book.get("summary"))
+    return {
+        "schema_version": _text(route_book.get("schema_version"), "missing"),
+        "state": _text(route_book.get("state"), "unknown"),
+        "capital_rule": _text(route_book.get("capital_rule"), "unknown"),
+        "routeable_symbol_count": _int(summary.get("routeable_symbol_count")),
+        "probing_symbol_count": _int(summary.get("probing_symbol_count")),
+        "blocked_symbol_count": _int(summary.get("blocked_symbol_count")),
+        "missing_symbol_count": _int(summary.get("missing_symbol_count")),
+        "candidate_symbols": _string_items(summary.get("candidate_symbols")),
+        "expected_unblock_value": _int(summary.get("expected_unblock_value")),
+    }
+
+
 def _business_state(
     *,
     revenue_ready: bool,
@@ -564,6 +586,9 @@ def build_revenue_repair_digest(
                 ),
             },
             "execution_tca": _summarize_tca(proof_floor),
+            "route_reacquisition": _summarize_route_reacquisition(
+                status_payload, proof_floor
+            ),
             "simple_lane_reject_reason_totals": _collect_reason_counts(status_payload),
         },
         "blockers": [{"reason": reason} for reason in blocking_reasons],
