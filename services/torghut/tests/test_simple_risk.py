@@ -45,6 +45,38 @@ class TestSimpleRisk(TestCase):
         self.assertEqual(result.decision.qty, Decimal("2.5000"))
         self.assertEqual(result.notional, Decimal("250.0000"))
 
+    def test_price_snapshot_drives_notional_when_signal_price_is_stale(self) -> None:
+        decision = self._decision(
+            action="sell", qty="2.4232", price="412.6704331378219"
+        )
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": "412.6704331378219",
+                    "price_snapshot": {
+                        "price": "316.93",
+                        "source": "ta_microbars",
+                        "as_of": "2026-03-31T13:38:20+00:00",
+                    },
+                }
+            }
+        )
+
+        result = prepare_simple_decision(
+            decision=decision,
+            account={"buying_power": "10000", "equity": "10000", "cash": "10000"},
+            positions=[{"symbol": "AAPL", "qty": "3.1488", "side": "long"}],
+            fractional_equities_enabled=True,
+            allow_shorts=True,
+            max_notional_per_order=None,
+            max_notional_per_symbol=None,
+        )
+
+        self.assertTrue(result.approved)
+        self.assertEqual(result.notional, Decimal("767.984776"))
+        self.assertEqual(result.diagnostics["price"], "316.93")
+        self.assertEqual(result.decision.params["simple_lane"]["price"], "316.93")
+
     def test_rejects_when_symbol_exposure_cap_leaves_less_than_min_qty(self) -> None:
         result = prepare_simple_decision(
             decision=self._decision(qty="1"),
