@@ -1,4 +1,4 @@
-# 137. Jangar Watch Reliability State Exchange And Capital Action Governor (2026-05-07)
+# 140. Jangar Watch Reliability State Exchange And Capital Action Governor (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
 Date: 2026-05-07
@@ -8,7 +8,7 @@ receipts, safe rollout, validation, and rollback.
 
 Companion Torghut contract:
 
-- `docs/torghut/design-system/v6/141-torghut-state-coherent-profit-auction-and-tca-renewal-governor-2026-05-07.md`
+- `docs/torghut/design-system/v6/144-torghut-state-coherent-profit-auction-and-tca-renewal-governor-2026-05-07.md`
 
 Extends:
 
@@ -24,14 +24,15 @@ step.
 
 The current cluster is not down. That is the important point. Jangar is serving, leader election is healthy, the
 database is connected, migration consistency is green, and runtime kits are healthy. The failure mode is subtler and
-more dangerous for downstream automation: watch reliability and stale stage evidence are degraded while some action
-classes can still look locally healthy.
+more dangerous for downstream automation: watch reliability is blocked while serving, repair, and observe can still
+look locally healthy.
 
-At `2026-05-07T08:26Z`, Jangar status reported database latency of `3` ms, `28` registered migrations, `28` applied
-migrations, and no unexpected migrations. The same response reported execution trust degraded because
-`jangar-control-plane:verify` was stale. Watch reliability was also degraded in the latest 15 minute window with
-`14` watch errors and `17` restarts across three streams. Material action receipts already held `deploy_widen` and
-`merge_ready`, held `paper_canary`, and blocked `live_micro_canary`.
+At `2026-05-07T09:30Z`, Jangar status reported database latency of `3` ms, `28` registered migrations, `28` applied
+migrations, and no unexpected migrations. The same response reported execution trust healthy. Watch reliability was
+degraded in the latest 15 minute window with `1,133` events, `4` watch errors, and `9` restarts across five streams,
+which pushed dependency quorum to `block` with `watch_reliability_blocked`. Material action verdicts allowed
+`serve_readonly`, `dispatch_repair`, and `torghut_observe`, held `dispatch_normal`, `deploy_widen`, `merge_ready`, and
+`paper_canary`, and blocked `live_micro_canary` and `live_scale`.
 
 That behavior is directionally right, but the contract is still too implicit. A downstream client has to infer why
 observe is allowed, repair is allowed, deploy widening is held, and live capital is blocked. The selected design makes
@@ -75,30 +76,39 @@ copying it forward as fresh evidence.
   `symphony`, and `symphony-jangar` all Running.
 - `kubectl get deploy -n jangar` showed `bumba`, `jangar`, `jangar-alloy`, `symphony`, and `symphony-jangar`
   available.
-- Jangar events showed the current pod `jangar-74cd8d8fcd-rtjth` rolled about 27 minutes before the assessment, with a
+- Jangar events showed the current pod `jangar-75d54f6fbc-5cs4r` rolled about 7 minutes before the assessment, with a
   transient readiness probe failure during startup.
-- Jangar logs showed repeated watch failures for AgentRuns and Orchestrations with `Too Many Requests`.
-- Jangar logs also showed a leader election lease replace failure caused by `etcdserver: request timed out` before
-  the pod returned to leader state.
-- The service account could not list StatefulSets in `jangar`, so this run could not independently verify stateful
-  workload rollout from the Kubernetes API.
+- Jangar logs showed repeated watch failures for approval policies, jobs, and orchestrations with `Too Many Requests`.
+- Jangar logs also showed unresolved Git refs for several swarm branches, including this plan branch before it was
+  pushed again.
+- `kubectl config current-context` was unset in this workspace, but explicit namespace Kubernetes reads still worked
+  through the in-cluster service account.
 
 ### Jangar Endpoint And Database Evidence
 
-- `GET /ready` returned `status=ok`, with leader election healthy and runtime kit proofs current.
+- `GET /ready` returned `status=ok`, with leader election healthy and runtime kit proofs current. Its embedded
+  execution-trust block still reported the plan stage stale, while the control-plane status route below reported
+  execution trust healthy; that route divergence is another reason clients need one explicit action receipt.
 - `GET /api/agents/control-plane/status?namespace=agents` returned:
-  - `execution_trust.status=degraded`;
-  - `execution_trust.reason="execution trust degraded: verify stage is stale"`;
+  - `generated_at=2026-05-07T09:30:23.907Z`;
+  - `execution_trust.status=healthy`;
+  - `execution_trust.reason="execution trust is healthy."`;
   - database `configured=true`, `connected=true`, `status=healthy`, `latency_ms=3`;
   - migration consistency `registered_count=28`, `applied_count=28`, `unapplied_count=0`, `unexpected_count=0`;
   - latest registered and applied migration `20260505_torghut_quant_pipeline_health_window_index`;
   - `watch_reliability.status=degraded`;
   - `watch_reliability.window_minutes=15`;
-  - `watch_reliability.total_errors=14`;
-  - `watch_reliability.total_restarts=17`.
-- The degraded streams were Orchestrations with `11` errors and `13` restarts, and AgentRuns with `3` errors and
-  `4` restarts.
-- The status response held `deploy_widen`, held `merge_ready`, held `paper_canary`, and blocked `live_micro_canary`.
+  - `watch_reliability.total_events=1133`;
+  - `watch_reliability.total_errors=4`;
+  - `watch_reliability.total_restarts=9`;
+  - `dependency_quorum.decision=block`;
+  - `dependency_quorum.reasons=["watch_reliability_blocked"]`.
+- The degraded streams were approval policies with `2` errors and `4` restarts, jobs with `1` error and `2` restarts,
+  orchestrations with `1` error and `2` restarts, signal deliveries with `1` restart, and AgentRuns with `1,131`
+  events.
+- The status response allowed `serve_readonly`, bounded `dispatch_repair`, and `torghut_observe`; held
+  `dispatch_normal`, `deploy_widen`, `merge_ready`, and `paper_canary`; and blocked `live_micro_canary` and
+  `live_scale`.
 - Direct SQL and direct ClickHouse checks were not available from this run because `pods/exec` is forbidden in the
   `torghut` namespace, and CNPG cluster listing is forbidden.
 
@@ -107,13 +117,13 @@ copying it forward as fresh evidence.
 - Torghut `/trading/health` reported Postgres, ClickHouse, Alpaca, universe, empirical jobs, DSPy runtime, and quant
   evidence dependencies as reachable or informational, but overall status was degraded.
 - Torghut alpha readiness reported three hypotheses, zero promotion eligible, three rollback required, and dependency
-  quorum blocked by `watch_reliability_blocked`.
+  quorum delayed or blocked by Jangar watch reliability.
 - Torghut proof floor was `repair_only`, capital state `zero_notional`, with blocking reasons
   `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
 - TCA evidence was stale from `2026-04-02T20:59:45.136640Z`; average absolute slippage was about `568.61` bps against
   an `8` bps guardrail.
-- Quant latest metrics were fresh, but scoped stage evidence was absent: `stage_count=0`, `stages=[]`,
-  `quant_pipeline_stages_missing`.
+- Quant latest metrics were fresh, but scoped stage evidence was still degraded: `stage_count=3`, compute and
+  materialization were current, and ingestion lag was `56,689` seconds.
 - Jangar therefore has to distinguish "Torghut observe/repair can proceed" from "Torghut paper/live capital can
   proceed".
 
