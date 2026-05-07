@@ -673,6 +673,105 @@ export type MaterialActionVerdictEpoch = {
   final_verdicts: MaterialActionVerdict[]
 }
 
+export type SourceRolloutTruthSettlementState =
+  | 'converged'
+  | 'rollout_lagging_source'
+  | 'heartbeat_projection_split'
+  | 'proof_floor_repair_only'
+  | 'consumer_evidence_missing'
+  | 'unknown'
+
+export type SourceRolloutTruthActionDecision = 'allow' | 'observe_only' | 'repair_only' | 'hold' | 'block'
+
+export type SourceRolloutTruthImageRef = {
+  image_id: string
+  role: 'desired_runtime' | 'live_pod'
+  name: string
+  namespace: string | null
+  image_ref: string | null
+  image_digest: string | null
+  evidence_ref: string
+}
+
+export type SourceRolloutTruthControllerHeartbeatRef = {
+  heartbeat_ref: string
+  status: 'fresh' | 'stale' | 'missing' | 'split'
+  decision: ControllerWitnessDecision
+  observed_at: string | null
+  fresh_until: string
+  message: string
+  evidence_refs: string[]
+}
+
+export type SourceRolloutTruthRouteStatus = {
+  route_status_ref: string
+  status: 'healthy' | 'degraded' | 'unknown'
+  reachable: boolean
+  url: string | null
+  status_code: number | null
+  observed_at: string
+  message: string
+}
+
+export type SourceRolloutTruthProofFloor = {
+  proof_floor_ref: string
+  state: 'closed' | 'repair_only' | 'missing' | 'unknown'
+  capital_state: 'none' | 'zero_notional' | 'paper' | 'live' | 'unknown'
+  fresh_until: string
+  blockers: string[]
+  evidence_refs: string[]
+}
+
+export type SourceRolloutTruthSettlementReceipt = {
+  receipt_id: string
+  action_class: ActionSloBudgetActionClass
+  settlement_state: SourceRolloutTruthSettlementState
+  source_head_sha: string | null
+  gitops_revision: string | null
+  desired_image_ref: string | null
+  desired_image_digest: string | null
+  live_image_ref: string | null
+  live_image_digest: string | null
+  controller_heartbeat_ref: string | null
+  database_projection_ref: string
+  watch_cache_ref: string
+  route_status_ref: string
+  torghut_proof_floor_ref: string | null
+  fresh_until: string
+  action_decision: SourceRolloutTruthActionDecision
+  blocking_reasons: string[]
+  rollback_target: string | null
+}
+
+export type SourceRolloutTruthDeployerSummary = {
+  settlement_state: SourceRolloutTruthSettlementState
+  freshest_blocking_reason: string | null
+  rollback_target: string | null
+  held_action_classes: ActionSloBudgetActionClass[]
+  receipt_refs: string[]
+}
+
+export type SourceRolloutTruthExchange = {
+  mode: 'shadow' | 'enforced'
+  design_artifact: string
+  exchange_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  source_head_sha: string | null
+  gitops_revision: string | null
+  desired_images: SourceRolloutTruthImageRef[]
+  live_images: SourceRolloutTruthImageRef[]
+  controller_heartbeats: SourceRolloutTruthControllerHeartbeatRef[]
+  route_statuses: SourceRolloutTruthRouteStatus[]
+  database_projection_ref: string
+  watch_cache_ref: string
+  torghut_proof_floor: SourceRolloutTruthProofFloor
+  receipts: SourceRolloutTruthSettlementReceipt[]
+  deployer_summary: SourceRolloutTruthDeployerSummary
+  rollback_target: string | null
+}
+
 export type RouteStabilityLiveRouteAttempt = {
   attempt_id: string
   attempted_at: string
@@ -843,6 +942,7 @@ export type ControlPlaneStatus = {
   material_action_verdict_epoch: MaterialActionVerdictEpoch
   material_action_verdicts: MaterialActionVerdict[]
   material_action_activation_receipts: MaterialActionActivationReceipt[]
+  source_rollout_truth_exchange: SourceRolloutTruthExchange
   route_stability_escrow: RouteStabilityEscrow
   database: DatabaseStatus
   grpc: GrpcStatus

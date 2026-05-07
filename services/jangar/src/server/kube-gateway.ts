@@ -76,6 +76,7 @@ export type KubeGatewayContainerState = {
 export type KubeGatewayContainerStatus = {
   name: string
   image: string | null
+  image_id?: string | null
   ready: boolean
   state: KubeGatewayContainerState
 }
@@ -255,6 +256,7 @@ const parseContainerStatuses = (value: unknown) =>
       return {
         name,
         image: asString(record.image),
+        image_id: asString(record.imageID),
         ready: record.ready === true,
         state: parseContainerState(record.state),
       }
