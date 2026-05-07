@@ -56,6 +56,14 @@ kubectl get agentrun -n agents torghut-market-context-fundamentals-preopen-probe
 kubectl get agentrun -n agents torghut-market-context-news-preopen-probe-template -o yaml | rg 'reason: pre_open_probe'
 ```
 
+6. Confirm fundamentals has intraday recovery cadence, not a single fragile open attempt:
+
+```bash
+kubectl get schedule -n agents torghut-market-context-fundamentals-batch -o jsonpath='{.spec.cron}{"\n"}'
+```
+
+Expected: `35 9-15/2 * * 1-5`.
+
 ## Data Plane Verification
 
 1. Trigger providers via Jangar (example symbol):

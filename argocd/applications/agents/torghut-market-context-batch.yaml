@@ -312,7 +312,7 @@ metadata:
   name: torghut-market-context-fundamentals-batch
   namespace: agents
 spec:
-  cron: "35 9 * * 1-5"
+  cron: "35 9-15/2 * * 1-5"
   timezone: America/New_York
   targetRef:
     apiVersion: agents.proompteng.ai/v1alpha1

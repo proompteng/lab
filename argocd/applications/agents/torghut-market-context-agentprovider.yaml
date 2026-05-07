@@ -13,6 +13,7 @@ spec:
     CODEX_MARKET_CONTEXT_ATTEMPT_TIMEOUT_SECONDS: "600"
     CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS: "1200"
     CODEX_MARKET_CONTEXT_PROGRESS_TIMEOUT_SECONDS: "10"
+    CODEX_MARKET_CONTEXT_PREFLIGHT_TIMEOUT_SECONDS: "10"
     CODEX_DISABLE_RESUME: "1"
     CODEX_MAX_SESSION_ATTEMPTS: "1"
     CODEX_IDLE_TIMEOUT_MS: "600000"
@@ -246,6 +247,11 @@ spec:
             return normalized[: -len('/ingest')]
           return None
 
+        def _get_json(url: str, timeout_seconds: int):
+          request = urllib.request.Request(url, headers={'accept': 'application/json'})
+          with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            return _parse_json_bytes(response.read())
+
         def _parse_json_bytes(raw: bytes):
           if not raw:
             return None
@@ -263,6 +269,53 @@ spec:
           if isinstance(payload, str) and payload.strip():
             return payload.strip()
           return fallback
+
+        def _parse_market_open_value(value) -> bool | None:
+          if isinstance(value, bool):
+            return value
+          if isinstance(value, int):
+            if value == 1:
+              return True
+            if value == 0:
+              return False
+            return None
+          if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {'true', '1', 'yes', 'on', 'open'}:
+              return True
+            if normalized in {'false', '0', 'no', 'off', 'closed'}:
+              return False
+          return None
+
+        def _resolve_market_session_open(payload) -> bool | None:
+          if not isinstance(payload, dict):
+            return None
+          direct = _parse_market_open_value(payload.get('market_session_open'))
+          if direct is not None:
+            return direct
+          continuity = payload.get('signal_continuity')
+          if isinstance(continuity, dict):
+            return _parse_market_open_value(continuity.get('market_session_open'))
+          return None
+
+        def _should_skip_closed_market_session(payload: dict, timeout_seconds: int) -> tuple[bool, str]:
+          trading_status_url = _resolve_field(payload, 'tradingStatusUrl')
+          domain = _resolve_field(payload, 'domain')
+          if domain not in {'fundamentals', 'news'} or not trading_status_url:
+            return False, 'market_context_preflight_not_applicable'
+          try:
+            status_payload = _get_json(trading_status_url, timeout_seconds)
+          except Exception as error:
+            print(f'market_context_preflight_unavailable:{str(error).strip() or type(error).__name__}', file=sys.stderr)
+            return False, 'market_context_preflight_unavailable'
+
+          market_open = _resolve_market_session_open(status_payload)
+          if market_open is False:
+            return True, 'market_session_closed_noop'
+          if market_open is True:
+            return False, 'market_session_open'
+          print('market_context_preflight_unknown_session', file=sys.stderr)
+          return False, 'market_context_preflight_unknown_session'
 
         def _load_bearer_token() -> str | None:
           token_path = (os.environ.get('CODEX_MARKET_CONTEXT_TOKEN_PATH') or DEFAULT_TOKEN_PATH).strip()
@@ -503,6 +556,15 @@ spec:
           per_attempt_timeout = _parse_positive_int(os.environ.get('CODEX_MARKET_CONTEXT_ATTEMPT_TIMEOUT_SECONDS'), 600)
           overall_timeout = _parse_positive_int(os.environ.get('CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS'), 1200)
           progress_timeout = _parse_positive_int(os.environ.get('CODEX_MARKET_CONTEXT_PROGRESS_TIMEOUT_SECONDS'), 10)
+          preflight_timeout = _parse_positive_int(
+            os.environ.get('CODEX_MARKET_CONTEXT_PREFLIGHT_TIMEOUT_SECONDS'),
+            progress_timeout,
+          )
+          should_skip, skip_reason = _should_skip_closed_market_session(original_payload, preflight_timeout)
+          if should_skip:
+            print(skip_reason)
+            return 0
+
           deadline = time.monotonic() + overall_timeout
           attempts: list[dict] = []
           last_exit_code = 1
