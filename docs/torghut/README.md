@@ -4,6 +4,10 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/145-torghut-proof-renewal-leases-and-capital-reentry-state-market-2026-05-07.md`
+  (current proof renewal lease and capital reentry state market contract)
+- `docs/agents/designs/141-jangar-proof-renewal-leases-and-trading-state-custody-2026-05-07.md` (current Jangar
+  trading proof renewal lease and action custody contract)
 - `docs/torghut/design-system/v6/110-torghut-evidence-freshness-repair-market-and-capital-reentry-2026-05-06.md`
   (current evidence freshness repair market and capital reentry contract)
 - `docs/agents/designs/106-jangar-proof-repair-clearinghouse-and-brownout-priority-queue-2026-05-06.md` (current
