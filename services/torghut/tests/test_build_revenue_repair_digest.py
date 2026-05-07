@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tempfile
 from contextlib import redirect_stdout
 from datetime import datetime, timezone
@@ -176,6 +178,21 @@ def _ready_trading_status() -> dict[str, object]:
 
 
 class TestBuildRevenueRepairDigest(TestCase):
+    def test_direct_script_execution_supports_help(self) -> None:
+        service_root = Path(__file__).resolve().parents[1]
+        script_path = service_root / "scripts" / "build_revenue_repair_digest.py"
+
+        result = subprocess.run(
+            [sys.executable, str(script_path), "--help"],
+            cwd=service_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--readyz", result.stdout)
+
     def test_repair_only_payload_prioritizes_evidence_before_live_submit(self) -> None:
         digest = build_revenue_repair_digest(
             readyz_payload=_repair_only_readyz(),
