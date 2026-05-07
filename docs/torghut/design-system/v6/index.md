@@ -12,6 +12,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority, refreshed `2026-05-07T19:10Z`):
+  - `166-torghut-executable-profit-receipts-and-repair-convoy-settlement-2026-05-07.md`
+  - `docs/agents/designs/162-jangar-capital-receipt-convergence-and-repair-convoy-admission-2026-05-07.md`
   - `165-torghut-quant-freshness-debt-and-paper-edge-ledgers-2026-05-07.md`
   - `docs/agents/designs/161-jangar-stage-debt-clearinghouse-and-freshness-credit-ledger-2026-05-07.md`
   - `164-torghut-zero-notional-route-repair-packets-and-paper-rehearsal-2026-05-07.md`
