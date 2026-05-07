@@ -907,3 +907,8 @@ This pack is positioned as the next architecture layer above:
   capital still lacks durable Torghut consumer evidence. It makes Torghut emit account/window/hypothesis receipts,
   persists hypothesis custody and zero-notional proof windows, and requires Jangar to agree on quant freshness before
   paper or live capital can reenter.
+- `141-torghut-state-coherent-profit-auction-and-tca-renewal-governor-2026-05-07.md` follows the endpoint-parity and
+  profit-repair auction contracts because the current live state is no longer a total outage. Torghut can observe and
+  repair, but TCA is stale, feature/drift counters are zero, forecast authority is registry-empty, and Jangar watch
+  reliability is degraded. The contract ranks repairs by capital-state unlock while keeping paper and live notional at
+  zero until Jangar state, TCA, feature/drift, forecast, and hypothesis guardrails are current.
