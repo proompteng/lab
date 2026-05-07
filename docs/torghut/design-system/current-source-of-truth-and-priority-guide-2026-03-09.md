@@ -1,8 +1,8 @@
-# Torghut Design-System Current Source-of-Truth and Priority Guide (updated 2026-05-06)
+# Torghut Design-System Current Source-of-Truth and Priority Guide (updated 2026-05-07)
 
 ## Status
 
-- Date: `2026-05-06`
+- Date: `2026-05-07`
 - Purpose: distinguish live source-of-truth docs from historical milestone records and identify the current highest-priority work
 - Scope: `docs/torghut/design-system/**`, `docs/torghut/**`, `argocd/applications/torghut/**`, `services/torghut/**`, `services/jangar/**`
 
@@ -34,6 +34,10 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v1/historical-dataset-simulation.md`
    - `docs/torghut/design-system/v1/trading-day-simulation-automation.md`
 3. current autonomy/promotion contract source of truth:
+   - `docs/torghut/design-system/v6/137-torghut-renewal-bond-profit-escrow-and-evidence-carry-2026-05-07.md`
+   - `docs/agents/designs/133-jangar-in-flight-stage-renewal-bonds-and-controller-ingestion-settlement-2026-05-07.md`
+   - `docs/torghut/design-system/v6/136-torghut-stage-coherent-profit-escrow-and-proof-age-arbitrage-2026-05-07.md`
+   - `docs/agents/designs/132-jangar-stage-freshness-escrow-and-capital-authority-reclocking-2026-05-07.md`
    - `docs/agents/designs/115-jangar-watch-quiescence-and-evidence-renewal-arbiter-2026-05-06.md`
    - `docs/torghut/design-system/v6/119-torghut-evidence-renewal-batches-and-capital-quiescence-gates-2026-05-06.md`
    - `docs/agents/designs/114-jangar-evidence-transport-ledger-and-watch-restart-circuit-breakers-2026-05-06.md`
@@ -116,6 +120,19 @@ If the question is "what should I trust right now?", start here:
 ## Current priority, not historical priority
 
 The current highest-priority work is:
+
+The May 7 renewal-bond and stage-coherence contracts are the current implementation handoff:
+
+- make Torghut preserve fresh empirical proof as evidence carry while Jangar stage renewal, stale TCA, market-context
+  contradictions, quant ingestion lag, or alpha-readiness blockers keep paper/live notional at zero in
+  `docs/torghut/design-system/v6/137-torghut-renewal-bond-profit-escrow-and-evidence-carry-2026-05-07.md`;
+- make Jangar expose active stage renewal bonds and controller ingestion settlement so Torghut can distinguish
+  `current`, `renewing`, `repair_only`, `stale`, and `blocked` platform proof states in
+  `docs/agents/designs/133-jangar-in-flight-stage-renewal-bonds-and-controller-ingestion-settlement-2026-05-07.md`;
+- keep stale but promising proof available only for zero-notional repair ranking, not capital authority, in
+  `docs/torghut/design-system/v6/136-torghut-stage-coherent-profit-escrow-and-proof-age-arbitrage-2026-05-07.md`;
+- reclock Jangar stage freshness into explicit capital-authority inputs in
+  `docs/agents/designs/132-jangar-stage-freshness-escrow-and-capital-authority-reclocking-2026-05-07.md`.
 
 The May 6 provenance and lease-graduation contracts are the current implementation handoff:
 

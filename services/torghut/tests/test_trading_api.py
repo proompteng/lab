@@ -1005,6 +1005,32 @@ class TestTradingApi(TestCase):
             "repair_only",
         )
 
+    def test_trading_status_and_health_include_renewal_bond_profit_escrow(
+        self,
+    ) -> None:
+        escrow = {
+            "schema_version": "torghut.renewal-bond-profit-escrow.v1",
+            "receipt_id": "rbpe-test",
+            "escrow_verdict": "repair_only",
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "selected_zero_notional_repairs": [
+                {"code": "refresh_execution_tca_settlement"}
+            ],
+        }
+
+        with patch(
+            "app.main.build_renewal_bond_profit_escrow",
+            return_value=escrow,
+        ):
+            status_response = self.client.get("/trading/status")
+            health_response = self.client.get("/trading/health")
+
+        self.assertEqual(status_response.status_code, 200)
+        self.assertIn(health_response.status_code, {200, 503})
+        self.assertEqual(status_response.json()["renewal_bond_profit_escrow"], escrow)
+        self.assertEqual(health_response.json()["renewal_bond_profit_escrow"], escrow)
+
     def test_trading_health_requires_profitability_proof_floor_in_live(self) -> None:
         original_enabled = settings.trading_enabled
         original_mode = settings.trading_mode
@@ -2391,9 +2417,14 @@ class TestTradingApi(TestCase):
         self.assertIn("lean_authority", payload)
         self.assertIn("empirical_jobs", payload)
         self.assertIn("profit_lease_projection", payload)
+        self.assertIn("renewal_bond_profit_escrow", payload)
         self.assertEqual(
             payload["profit_lease_projection"]["schema_version"],
             "torghut.profit-lease-provenance.v1",
+        )
+        self.assertEqual(
+            payload["renewal_bond_profit_escrow"]["schema_version"],
+            "torghut.renewal-bond-profit-escrow.v1",
         )
         self.assertEqual(
             payload["profit_lease_projection"]["jangar_consumer"]["action_class"],

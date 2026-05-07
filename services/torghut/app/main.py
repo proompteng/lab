@@ -86,6 +86,7 @@ from .trading.lean_lanes import LeanLaneManager
 from .trading.lean_runtime import lean_authority_status
 from .trading.llm.evaluation import build_llm_evaluation_metrics
 from .trading.proof_floor import build_profitability_proof_floor_receipt
+from .trading.renewal_bond_profit_escrow import build_renewal_bond_profit_escrow
 from .trading.submission_council import (
     build_live_submission_gate_payload,
     build_shadow_first_toggle_parity,
@@ -694,6 +695,18 @@ def _evaluate_trading_health_payload(
         market_context_status=market_context_status,
         tca_summary=tca_summary,
     )
+    renewal_bond_profit_escrow = _build_renewal_bond_profit_escrow_payload(
+        state=scheduler.state,
+        torghut_revision=BUILD_COMMIT,
+        dependency_quorum=dependency_quorum.as_payload(),
+        live_submission_gate=live_submission_gate,
+        proof_floor=proof_floor,
+        hypothesis_payload=_hypothesis_payload,
+        empirical_jobs_status=empirical_jobs,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        tca_summary=tca_summary,
+    )
     live_mode = settings.trading_mode == "live"
     empirical_jobs_required = (
         live_mode and settings.trading_empirical_jobs_health_required
@@ -775,6 +788,7 @@ def _evaluate_trading_health_payload(
             "alpha_readiness": alpha_readiness,
             "live_submission_gate": live_submission_gate,
             "proof_floor": proof_floor,
+            "renewal_bond_profit_escrow": renewal_bond_profit_escrow,
             "quant_evidence": quant_evidence,
             "profit_lease_projection": live_submission_gate.get(
                 "profit_lease_projection"
@@ -1824,6 +1838,18 @@ def trading_status() -> dict[str, object]:
         tca_summary=tca_summary,
         simple_lane_status=simple_lane_status,
     )
+    renewal_bond_profit_escrow = _build_renewal_bond_profit_escrow_payload(
+        state=state,
+        torghut_revision=str(shadow_first_runtime["active_revision"]),
+        dependency_quorum=hypothesis_dependency_quorum.as_payload(),
+        live_submission_gate=live_submission_gate,
+        proof_floor=proof_floor,
+        hypothesis_payload=hypothesis_payload,
+        empirical_jobs_status=empirical_jobs,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        tca_summary=tca_summary,
+    )
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -1848,6 +1874,7 @@ def trading_status() -> dict[str, object]:
         "live_submission_gate": live_submission_gate,
         "profit_lease_projection": live_submission_gate.get("profit_lease_projection"),
         "proof_floor": proof_floor,
+        "renewal_bond_profit_escrow": renewal_bond_profit_escrow,
         "quant_evidence": quant_evidence,
         "last_decision_at": last_decision_at,
         "simple_lane_status": simple_lane_status,
@@ -3481,6 +3508,39 @@ def _build_profitability_proof_floor_payload(
         market_context_status=market_context_status,
         tca_summary=tca_summary,
         simple_lane_status=simple_lane_status or _build_simple_lane_status_payload(),
+        tca_max_age_seconds=PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS,
+    )
+
+
+def _build_renewal_bond_profit_escrow_payload(
+    *,
+    state: object,
+    torghut_revision: str | None,
+    dependency_quorum: Mapping[str, Any],
+    live_submission_gate: Mapping[str, Any],
+    proof_floor: Mapping[str, Any],
+    hypothesis_payload: Mapping[str, Any],
+    empirical_jobs_status: Mapping[str, Any],
+    quant_evidence: Mapping[str, Any],
+    market_context_status: Mapping[str, Any],
+    tca_summary: Mapping[str, Any],
+) -> dict[str, object]:
+    return build_renewal_bond_profit_escrow(
+        account_label=settings.trading_account_label,
+        torghut_revision=torghut_revision,
+        trading_mode=settings.trading_mode,
+        market_session_open=cast(
+            bool | None,
+            getattr(state, "market_session_open", None),
+        ),
+        jangar_dependency_quorum=dependency_quorum,
+        live_submission_gate=live_submission_gate,
+        proof_floor=proof_floor,
+        hypothesis_payload=hypothesis_payload,
+        empirical_jobs_status=empirical_jobs_status,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        tca_summary=tca_summary,
         tca_max_age_seconds=PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS,
     )
 

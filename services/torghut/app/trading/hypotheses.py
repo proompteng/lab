@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -210,18 +210,97 @@ class HypothesisRegistryLoadResult:
     errors: list[str]
 
 
+def _empty_payload_dict() -> dict[str, object]:
+    return {}
+
+
+def _empty_payload_dict_list() -> list[dict[str, object]]:
+    return []
+
+
 @dataclass(frozen=True)
 class JangarDependencyQuorumStatus:
     decision: DependencyQuorumDecision
     reasons: list[str]
     message: str
+    stage_trust: dict[str, object] = field(default_factory=_empty_payload_dict)
+    stage_renewal_bonds: list[dict[str, object]] = field(
+        default_factory=_empty_payload_dict_list
+    )
+    controller_ingestion_settlement: dict[str, object] = field(
+        default_factory=_empty_payload_dict
+    )
+    generated_at: str | None = None
 
     def as_payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             'decision': self.decision,
             'reasons': list(self.reasons),
             'message': self.message,
         }
+        if self.stage_trust:
+            payload['stage_trust'] = dict(self.stage_trust)
+        if self.stage_renewal_bonds:
+            payload['stage_renewal_bonds'] = [
+                dict(item) for item in self.stage_renewal_bonds
+            ]
+        if self.controller_ingestion_settlement:
+            payload['controller_ingestion_settlement'] = dict(
+                self.controller_ingestion_settlement
+            )
+        if self.generated_at:
+            payload['generated_at'] = self.generated_at
+        return payload
+
+
+def _as_payload_dict(value: object) -> dict[str, object]:
+    return dict(cast(Mapping[str, object], value)) if isinstance(value, Mapping) else {}
+
+
+def _as_payload_dict_list(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return []
+    return [
+        dict(cast(Mapping[str, object], item))
+        for item in cast(Sequence[object], value)
+        if isinstance(item, Mapping)
+    ]
+
+
+def _extract_stage_trust(
+    payload: Mapping[str, Any],
+    quorum: Mapping[str, Any],
+) -> dict[str, object]:
+    return _as_payload_dict(
+        payload.get('stage_trust')
+        or payload.get('stageTrust')
+        or quorum.get('stage_trust')
+        or quorum.get('stageTrust')
+    )
+
+
+def _extract_stage_renewal_bonds(
+    payload: Mapping[str, Any],
+    quorum: Mapping[str, Any],
+) -> list[dict[str, object]]:
+    return _as_payload_dict_list(
+        payload.get('stage_renewal_bonds')
+        or payload.get('stageRenewalBonds')
+        or quorum.get('stage_renewal_bonds')
+        or quorum.get('stageRenewalBonds')
+    )
+
+
+def _extract_controller_ingestion_settlement(
+    payload: Mapping[str, Any],
+    quorum: Mapping[str, Any],
+) -> dict[str, object]:
+    return _as_payload_dict(
+        payload.get('controller_ingestion_settlement')
+        or payload.get('controllerIngestionSettlement')
+        or quorum.get('controller_ingestion_settlement')
+        or quorum.get('controllerIngestionSettlement')
+    )
 
 
 def resolve_hypothesis_registry_path(path_value: str | None = None) -> Path | None:
@@ -420,6 +499,20 @@ def load_jangar_dependency_quorum() -> JangarDependencyQuorumStatus:
                 decision=cast(DependencyQuorumDecision, decision),
                 reasons=reasons,
                 message=str(quorum.get('message') or '').strip(),
+                stage_trust=_extract_stage_trust(payload, quorum),
+                stage_renewal_bonds=_extract_stage_renewal_bonds(payload, quorum),
+                controller_ingestion_settlement=_extract_controller_ingestion_settlement(
+                    payload,
+                    quorum,
+                ),
+                generated_at=str(
+                    payload.get('generated_at')
+                    or payload.get('generatedAt')
+                    or quorum.get('generated_at')
+                    or quorum.get('generatedAt')
+                    or ''
+                ).strip()
+                or None,
             )
         else:
             status = _fallback_quorum_from_legacy_status(payload)

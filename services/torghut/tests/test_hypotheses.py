@@ -408,7 +408,28 @@ class TestHypothesisReadiness(TestCase):
                         'decision': 'delay',
                         'reasons': ['workflow_backoff_warning'],
                         'message': 'degraded',
-                    }
+                    },
+                    'stage_trust': {
+                        'stages': [
+                            {
+                                'stage': 'implement',
+                                'state': 'renewing',
+                                'reason_codes': ['agentrun_active'],
+                            }
+                        ]
+                    },
+                    'stage_renewal_bonds': [
+                        {
+                            'bond_id': 'bond-implement-1',
+                            'stage': 'implement',
+                            'state': 'renewing',
+                        }
+                    ],
+                    'controller_ingestion_settlement': {
+                        'decision': 'current',
+                        'settlement_id': 'ingest-1',
+                    },
+                    'generated_at': '2026-05-07T12:00:00Z',
                 }
             ),
         ):
@@ -417,6 +438,19 @@ class TestHypothesisReadiness(TestCase):
         self.assertEqual(status.decision, 'delay')
         self.assertEqual(status.reasons, ['workflow_backoff_warning'])
         self.assertEqual(status.message, 'degraded')
+        self.assertEqual(
+            status.stage_trust['stages'],
+            [
+                {
+                    'stage': 'implement',
+                    'state': 'renewing',
+                    'reason_codes': ['agentrun_active'],
+                }
+            ],
+        )
+        self.assertEqual(status.stage_renewal_bonds[0]['bond_id'], 'bond-implement-1')
+        self.assertEqual(status.controller_ingestion_settlement['decision'], 'current')
+        self.assertEqual(status.as_payload()['generated_at'], '2026-05-07T12:00:00Z')
 
     def test_load_jangar_dependency_quorum_falls_back_to_legacy_status_when_needed(self) -> None:
         settings.trading_jangar_control_plane_status_url = 'https://jangar.example/status'

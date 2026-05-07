@@ -184,6 +184,10 @@ Testing rules for the trading core:
   `torghut.profit-lease-provenance.v1` payload for Jangar `torghut_capital` consumers. It source-qualifies proof by
   empirical job freshness, quant metrics, relevant data readiness, promotion-table presence, rejection drag, and the
   Jangar action lease before emitting `observe_only`, `repair_only`, `paper_candidate`, or `live_candidate`.
+- `GET /trading/status` and `GET /readyz` also surface `renewal_bond_profit_escrow`, a shadow-only
+  `torghut.renewal-bond-profit-escrow.v1` receipt for the May 7 doc 137 contract. It consumes Jangar stage trust,
+  stage renewal bonds, proof floor, empirical jobs, quant evidence, market context, TCA, and hypothesis readiness,
+  then keeps `max_notional=0` while ranking zero-notional repairs and carrying fresh empirical proof value.
 - The simple direct-submit lane is no longer an authority bypass in live mode. Before submitting to Alpaca it evaluates
   the same live-submission gate as the scheduler path and persists the gate payload in decision metadata when a
   submission is blocked. Paper-mode simple execution remains unchanged.
