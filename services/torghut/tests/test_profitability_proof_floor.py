@@ -475,6 +475,96 @@ def test_execution_tca_source_ref_exposes_symbol_route_blockers() -> None:
     assert receipt["repair_ladder"][0]["code"] == "repair_route_universe"
 
 
+def test_execution_tca_route_universe_uses_widest_hypothesis_guardrail() -> None:
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="PA3SX7FYNUTF",
+        torghut_revision="torghut-00268",
+        trading_mode="live",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "ready",
+            "blocked_reasons": [],
+            "capital_stage": "0.10x canary",
+        },
+        hypothesis_payload={
+            "summary": {
+                "hypotheses_total": 2,
+                "promotion_eligible_total": 2,
+                "rollback_required_total": 0,
+                "state_totals": {"promotion_eligible": 2},
+            },
+            "items": [
+                {
+                    "hypothesis_id": "microstructure-breakout",
+                    "reasons": [],
+                    "promotion_contract": {"max_avg_abs_slippage_bps": "8"},
+                },
+                {
+                    "hypothesis_id": "event-reversion",
+                    "reasons": [],
+                    "promotion_contract": {"max_avg_abs_slippage_bps": "12"},
+                },
+            ],
+        },
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status=_healthy_market_context(),
+        tca_summary={
+            **_fresh_tca_summary(avg_abs_slippage_bps="13"),
+            "scope_symbols": ["AAPL", "NVDA", "ORCL"],
+            "scope_symbol_count": 3,
+            "symbol_breakdown": [
+                {
+                    "symbol": "AAPL",
+                    "order_count": 2033,
+                    "avg_abs_slippage_bps": "9.25",
+                    "max_abs_slippage_bps": "112.77",
+                    "last_computed_at": NOW.isoformat(),
+                },
+                {
+                    "symbol": "NVDA",
+                    "order_count": 3289,
+                    "avg_abs_slippage_bps": "13.47",
+                    "max_abs_slippage_bps": "178.40",
+                    "last_computed_at": NOW.isoformat(),
+                },
+                {
+                    "symbol": "ORCL",
+                    "order_count": 0,
+                    "avg_abs_slippage_bps": None,
+                    "max_abs_slippage_bps": None,
+                    "last_computed_at": None,
+                },
+            ],
+        },
+        simple_lane_status=_simple_lane_status(),
+        now=NOW,
+    )
+
+    tca_dimension = next(
+        item
+        for item in receipt["proof_dimensions"]
+        if item["dimension"] == "execution_tca"
+    )
+    source_ref = cast(Mapping[str, Any], tca_dimension["source_ref"])
+    symbol_routes = cast(Mapping[str, Any], source_ref["symbol_routes"])
+
+    assert tca_dimension["reason"] == "execution_tca_route_universe_incomplete"
+    assert source_ref["aggregate_reason"] == "execution_tca_slippage_guardrail_exceeded"
+    assert symbol_routes["slippage_guardrail_bps"] == "8"
+    assert symbol_routes["route_slippage_guardrail_bps"] == "12"
+    assert symbol_routes["routeable_symbol_count"] == 1
+    assert symbol_routes["routeable_symbols"][0]["symbol"] == "AAPL"
+    assert symbol_routes["blocked_symbol_count"] == 1
+    assert symbol_routes["blocked_symbols"][0]["symbol"] == "NVDA"
+    assert symbol_routes["missing_symbol_count"] == 1
+    assert symbol_routes["missing_symbols"] == ["ORCL"]
+    assert receipt["blocking_reasons"] == [
+        "execution_tca_route_universe_incomplete",
+    ]
+
+
 def test_execution_tca_zero_routeable_symbols_blocks_capital() -> None:
     receipt = build_profitability_proof_floor_receipt(
         account_label="PA3SX7FYNUTF",
