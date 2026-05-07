@@ -241,6 +241,10 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
           restartDelayMs: loadConfig.restartDelayMs,
           activityCancellationRatio: loadConfig.activityCancellationRatio,
           activityCancellationDelayMs: loadConfig.activityCancellationDelayMs,
+          activityHeartbeatTimeoutMs: loadConfig.activityHeartbeatTimeoutMs,
+          activityStartToCloseTimeoutMs: loadConfig.activityStartToCloseTimeoutMs,
+          activityScheduleToStartTimeoutMs: loadConfig.activityScheduleToStartTimeoutMs,
+          activityScheduleToCloseTimeoutMs: loadConfig.activityScheduleToCloseTimeoutMs,
           workflowPollP95TargetMs: loadConfig.workflowPollP95TargetMs,
           activityPollP95TargetMs: loadConfig.activityPollP95TargetMs,
           throughputFloorPerSecond: loadConfig.throughputFloorPerSecond,
@@ -284,6 +288,13 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
     ),
     'utf8',
   )
+
+  const failedWorkflow = completionResults.find((result) => !isAcceptedTerminalWorkflowStatus(result.status))
+  if (failedWorkflow) {
+    throw new WorkflowCompletionError(
+      `Workflow ${failedWorkflow.workflowId} finished with status ${failedWorkflow.status}`,
+    )
+  }
 
   return {
     stats,
@@ -625,12 +636,10 @@ const waitForWorkflowCompletionsCli = async ({
           await sleep(500)
           continue
         }
-        if (normalizedStatus === 'COMPLETED' || normalizedStatus === 'TERMINATED' || normalizedStatus === 'CANCELED') {
+        if (normalizedStatus && normalizedStatus !== 'RUNNING') {
           return { ...handle, status: normalizedStatus }
         }
-        throw new WorkflowCompletionError(
-          `Workflow ${handle.workflowId} finished with status ${normalizedStatus ?? 'UNKNOWN'}`,
-        )
+        throw new Error(`Workflow ${handle.workflowId} has unknown status ${String(statusField)}`)
       } catch (error) {
         if (error instanceof WorkflowCompletionError) {
           throw error
@@ -658,6 +667,9 @@ const waitForWorkflowCompletionsCli = async ({
   )
   return completions
 }
+
+const isAcceptedTerminalWorkflowStatus = (status: string): boolean =>
+  status === 'COMPLETED' || status === 'TERMINATED' || status === 'CANCELED'
 
 const summarizeWorkflowStatusCounts = (results: readonly WorkflowCompletionResult[]): Record<string, number> => {
   const counts: Record<string, number> = {}
@@ -714,6 +726,10 @@ const buildWorkflowPlans = (config: WorkerLoadConfig): WorkflowPlan[] => {
         computeIterations: Math.max(10_000, Math.floor(config.computeIterations / 4)),
         activityDelayMs: config.activityDelayMs,
         payloadBytes: config.activityPayloadBytes,
+        activityHeartbeatTimeoutMs: config.activityHeartbeatTimeoutMs,
+        activityStartToCloseTimeoutMs: config.activityStartToCloseTimeoutMs,
+        activityScheduleToStartTimeoutMs: config.activityScheduleToStartTimeoutMs,
+        activityScheduleToCloseTimeoutMs: config.activityScheduleToCloseTimeoutMs,
       },
     })
   }

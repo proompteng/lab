@@ -167,6 +167,10 @@ type WorkerLoadReport = {
     readonly restartDelayMs?: number
     readonly activityCancellationRatio?: number
     readonly activityCancellationDelayMs?: number
+    readonly activityHeartbeatTimeoutMs?: number
+    readonly activityStartToCloseTimeoutMs?: number
+    readonly activityScheduleToStartTimeoutMs?: number
+    readonly activityScheduleToCloseTimeoutMs?: number
   }
   readonly stats?: {
     readonly submitted?: number

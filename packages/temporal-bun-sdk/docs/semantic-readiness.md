@@ -121,7 +121,7 @@ bun run --cwd packages/temporal-bun-sdk lint:oxlint
 cd packages/temporal-bun-sdk && TEMPORAL_TEST_SERVER=1 bun test --timeout=30000 --max-concurrency=1
 bun run --filter @proompteng/temporal-bun-sdk verify:replay-corpus
 TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load
-TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:soak -- --duration 21600000 --workflows 1000 --workflow-concurrency 50 --activity-concurrency 80
+TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:soak -- --duration 21600000 --workflows 1000 --workflow-concurrency 50 --activity-concurrency 80 --failure-modes "${TEMPORAL_SOAK_FAILURE_MODES}"
 bun run --filter @proompteng/temporal-bun-sdk verify:production
 bun run --filter @proompteng/temporal-bun-sdk verify:default-choice
 ```

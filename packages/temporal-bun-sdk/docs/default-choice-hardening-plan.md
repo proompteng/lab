@@ -144,3 +144,12 @@ acceptance criteria are satisfied.
   `verify:production` keeps soak evidence failed when memory samples are
   missing or exceed the configured slope limit. Default choice remains blocked
   until a real six-hour, 12-iteration release soak passes with those artifacts.
+- May 7, 2026: widened the worker-load heartbeat activity timeout budget and
+  moved it into explicit load configuration. The prior release soak used a
+  `10s` schedule-to-close timeout for activity-heavy workflows; under the
+  `1000`-workflow release profile, one baseline activity waited about `9.5s`
+  before its third retry started and then failed on schedule-to-close. The gate
+  now uses a `30s`/`60s`/`90s`/`150s` heartbeat/start/schedule budget and
+  records heartbeat, start-to-close, schedule-to-start, and
+  schedule-to-close budgets in the load report so release soak evidence is
+  measuring worker/runtime behavior instead of an undersized synthetic timeout.
