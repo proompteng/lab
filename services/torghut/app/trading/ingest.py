@@ -1408,22 +1408,27 @@ def _ensure_price_value(payload: dict[str, Any], row: dict[str, Any]) -> None:
 
 def _merge_imbalance_payload(payload: dict[str, Any], row: dict[str, Any]) -> None:
     spread_value = row.get("spread")
-    if spread_value is not None and "imbalance" not in payload:
-        payload["imbalance"] = {"spread": spread_value}
+    if spread_value is None:
+        spread_value = row.get("imbalance_spread")
+
+    bid_px = row.get("imbalance_bid_px")
+    ask_px = row.get("imbalance_ask_px")
+    if (
+        "imbalance" not in payload
+        and (spread_value is not None or bid_px is not None or ask_px is not None)
+    ):
+        payload["imbalance"] = {}
 
     imbalance = payload.get("imbalance")
     if not isinstance(imbalance, dict):
         return
 
-    bid_px = row.get("imbalance_bid_px")
-    ask_px = row.get("imbalance_ask_px")
-    spread = row.get("spread")
     if bid_px is not None and "bid_px" not in imbalance:
         imbalance["bid_px"] = bid_px
     if ask_px is not None and "ask_px" not in imbalance:
         imbalance["ask_px"] = ask_px
-    if spread is not None and "spread" not in imbalance:
-        imbalance["spread"] = spread
+    if spread_value is not None and "spread" not in imbalance:
+        imbalance["spread"] = spread_value
 
 
 def _merge_microstructure_signal_payload(payload: dict[str, Any], row: dict[str, Any]) -> None:

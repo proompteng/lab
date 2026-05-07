@@ -211,6 +211,29 @@ class TestSignalIngest(TestCase):
         self.assertEqual(signal.payload.get("imbalance", {}).get("ask_px"), 125.80)
         self.assertEqual(signal.payload.get("imbalance", {}).get("spread"), 0.08)
 
+    def test_parse_flat_row_preserves_bid_ask_when_only_imbalance_spread_exists(
+        self,
+    ) -> None:
+        ingestor = ClickHouseSignalIngestor(schema="flat", fast_forward_stale_cursor=False)
+        row = {
+            "ts": "2026-01-01T00:00:02Z",
+            "symbol": "NVDA",
+            "macd": 0.4,
+            "signal": 0.2,
+            "rsi14": 44,
+            "vwap_session": 125.50,
+            "imbalance_bid_px": 125.70,
+            "imbalance_ask_px": 125.80,
+            "imbalance_spread": 0.10,
+        }
+        signal = ingestor.parse_row(row)
+        self.assertIsNotNone(signal)
+        assert signal is not None
+        self.assertEqual(signal.payload.get("price"), 125.75)
+        self.assertEqual(signal.payload.get("imbalance", {}).get("bid_px"), 125.70)
+        self.assertEqual(signal.payload.get("imbalance", {}).get("ask_px"), 125.80)
+        self.assertEqual(signal.payload.get("imbalance", {}).get("spread"), 0.10)
+
     def test_parse_flat_row_uses_vwap_as_price_fallback_without_midpoint(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="flat", fast_forward_stale_cursor=False)
         row = {
