@@ -5,8 +5,8 @@ on:
     branches:
       - main
     paths:
-      - "argocd/applications/torghut/**"
-      - "argocd/applications/torghut-options/**"
+      - 'argocd/applications/torghut/**'
+      - 'argocd/applications/torghut-options/**'
   workflow_dispatch:
     inputs:
       expected_revision:
@@ -314,8 +314,8 @@ jobs:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/torghut-rollback-${{ github.run_id }}-${{ github.run_attempt }}
           base: main
-          title: "revert(torghut): rollback failed promotion ${{ github.sha }}"
-          commit-message: "revert(torghut): rollback failed promotion ${{ github.sha }}"
+          title: 'revert(torghut): rollback failed promotion ${{ github.sha }}'
+          commit-message: 'revert(torghut): rollback failed promotion ${{ github.sha }}'
           delete-branch: true
           add-paths: |
             argocd/applications/torghut

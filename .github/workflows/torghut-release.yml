@@ -273,8 +273,8 @@ jobs:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/torghut-release-${{ steps.meta.outputs.tag }}
           base: main
-          title: "chore(torghut): promote image ${{ steps.meta.outputs.tag }}"
-          commit-message: "chore(torghut): promote image ${{ steps.meta.outputs.tag }}"
+          title: 'chore(torghut): promote image ${{ steps.meta.outputs.tag }}'
+          commit-message: 'chore(torghut): promote image ${{ steps.meta.outputs.tag }}'
           delete-branch: true
           labels: do-not-automerge
           draft: true
@@ -315,8 +315,8 @@ jobs:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/torghut-release-${{ steps.meta.outputs.tag }}
           base: main
-          title: "chore(torghut): promote image ${{ steps.meta.outputs.tag }}"
-          commit-message: "chore(torghut): promote image ${{ steps.meta.outputs.tag }}"
+          title: 'chore(torghut): promote image ${{ steps.meta.outputs.tag }}'
+          commit-message: 'chore(torghut): promote image ${{ steps.meta.outputs.tag }}'
           delete-branch: true
           add-paths: |
             argocd/applications/torghut/knative-service.yaml
