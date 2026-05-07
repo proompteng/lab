@@ -1105,17 +1105,119 @@ class TestTradingPipeline(TestCase):
         )
         pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
 
-        with patch.object(
-            SimpleTradingPipeline,
-            "_live_submission_gate",
-            return_value={
-                "allowed": True,
-                "reason": "promotion_certificate_valid",
-                "blocked_reasons": [],
-                "capital_stage": "live",
-                "capital_state": "live",
+        with (
+            patch.object(
+                SimpleTradingPipeline,
+                "_live_submission_gate",
+                return_value={
+                    "allowed": True,
+                    "reason": "promotion_certificate_valid",
+                    "blocked_reasons": [],
+                    "capital_stage": "live",
+                    "capital_state": "live",
+                },
+            ),
+            patch.object(
+                SimpleTradingPipeline,
+                "_profitability_proof_floor",
+                return_value={
+                    "route_state": "paper_ready",
+                    "capital_state": "paper",
+                    "max_notional": "1000",
+                    "blocking_reasons": [],
+                },
+            ),
+        ):
+            pipeline.run_once()
+
+        self.assertEqual(len(alpaca_client.submitted), 1)
+        self.assertEqual(alpaca_client.submitted[0]["type"], "limit")
+        self.assertEqual(pipeline.state.metrics.feature_batch_rows_total, 1)
+        self.assertEqual(pipeline.state.metrics.feature_quality_rejections_total, 0)
+        self.assertEqual(pipeline.state.metrics.drift_detection_checks_total, 1)
+        self.assertIsNotNone(pipeline.state.drift_last_detection_at)
+        self.assertFalse(pipeline.state.drift_live_promotion_eligible)
+        self.assertEqual(pipeline.state.drift_status, "unknown")
+        with self.session_local() as session:
+            decision = session.execute(select(TradeDecision)).scalar_one()
+            execution = session.execute(select(Execution)).scalar_one()
+            decision_json = cast(dict[str, Any], decision.decision_json)
+            params = cast(dict[str, Any], decision_json.get("params"))
+            control_plane = cast(
+                dict[str, Any], decision_json.get("control_plane_snapshot")
+            )
+            execution_audit = cast(dict[str, Any], execution.execution_audit_json)
+            self.assertEqual(decision.status, "submitted")
+            self.assertEqual(execution.order_type, "limit")
+            self.assertEqual(params.get("execution_lane"), "simple")
+            self.assertEqual(params.get("submit_path"), "direct_alpaca")
+            execution_policy = cast(dict[str, Any], params.get("execution_policy"))
+            self.assertEqual(execution_policy.get("selected_order_type"), "limit")
+            self.assertEqual(control_plane.get("execution_lane"), "simple")
+            self.assertEqual(control_plane.get("pipeline_mode"), "simple")
+            self.assertEqual(execution_audit.get("execution_lane"), "simple")
+            self.assertEqual(execution_audit.get("submit_path"), "direct_alpaca")
+
+    def test_simple_pipeline_paper_order_updates_proof_counters_without_live_promotion(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_drift_governance_enabled = True
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "AAPL"
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="simple-paper-proof-counters",
+                description="simple paper lane proof counter regression",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 13, 30, 5, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Min",
+            seq=1,
+            payload={
+                "feature_schema_version": "3.0.0",
+                "macd": {"macd": 1.2, "signal": 0.5},
+                "rsi14": 25,
+                "price": 100,
             },
-        ), patch.object(
+        )
+
+        alpaca_client = FakeAlpacaClient()
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([signal]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        with patch.object(
             SimpleTradingPipeline,
             "_profitability_proof_floor",
             return_value={
@@ -1128,6 +1230,13 @@ class TestTradingPipeline(TestCase):
             pipeline.run_once()
 
         self.assertEqual(len(alpaca_client.submitted), 1)
+        self.assertEqual(alpaca_client.submitted[0]["type"], "limit")
+        self.assertEqual(pipeline.state.metrics.feature_batch_rows_total, 1)
+        self.assertEqual(pipeline.state.metrics.feature_quality_rejections_total, 0)
+        self.assertEqual(pipeline.state.metrics.drift_detection_checks_total, 1)
+        self.assertIsNotNone(pipeline.state.drift_last_detection_at)
+        self.assertFalse(pipeline.state.drift_live_promotion_eligible)
+        self.assertEqual(pipeline.state.drift_status, "unknown")
         with self.session_local() as session:
             decision = session.execute(select(TradeDecision)).scalar_one()
             execution = session.execute(select(Execution)).scalar_one()
@@ -1136,14 +1245,114 @@ class TestTradingPipeline(TestCase):
             control_plane = cast(
                 dict[str, Any], decision_json.get("control_plane_snapshot")
             )
-            execution_audit = cast(dict[str, Any], execution.execution_audit_json)
             self.assertEqual(decision.status, "submitted")
+            self.assertEqual(execution.order_type, "limit")
             self.assertEqual(params.get("execution_lane"), "simple")
             self.assertEqual(params.get("submit_path"), "direct_alpaca")
-            self.assertEqual(control_plane.get("execution_lane"), "simple")
-            self.assertEqual(control_plane.get("pipeline_mode"), "simple")
-            self.assertEqual(execution_audit.get("execution_lane"), "simple")
-            self.assertEqual(execution_audit.get("submit_path"), "direct_alpaca")
+            execution_policy = cast(dict[str, Any], params.get("execution_policy"))
+            self.assertEqual(execution_policy.get("selected_order_type"), "limit")
+            self.assertEqual(
+                control_plane.get("live_submission_gate", {}).get("reason"),
+                "non_live_mode",
+            )
+
+    def test_simple_pipeline_drift_check_skip_does_not_mutate_promotion_state(
+        self,
+    ) -> None:
+        from app import config
+
+        original_enabled = config.settings.trading_drift_governance_enabled
+        config.settings.trading_drift_governance_enabled = False
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline.state.drift_live_promotion_eligible = True
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 13, 30, 5, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Min",
+            seq=1,
+            payload={
+                "feature_schema_version": "3.0.0",
+                "macd": {"macd": 1.2, "signal": 0.5},
+                "rsi14": 25,
+                "price": 100,
+            },
+        )
+
+        try:
+            pipeline._run_simple_drift_check([signal])
+        finally:
+            config.settings.trading_drift_governance_enabled = original_enabled
+
+        self.assertEqual(pipeline.state.metrics.drift_detection_checks_total, 0)
+        self.assertIsNone(pipeline.state.drift_last_detection_at)
+        self.assertTrue(pipeline.state.drift_live_promotion_eligible)
+
+    def test_simple_pipeline_detected_drift_blocks_promotion_state(self) -> None:
+        from app import config
+
+        config.settings.trading_drift_governance_enabled = True
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline.state.drift_live_promotion_eligible = True
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 13, 30, 5, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Min",
+            seq=1,
+            payload={
+                "feature_schema_version": "3.0.0",
+                "price": 100,
+            },
+        )
+
+        pipeline._run_simple_drift_check([signal])
+
+        self.assertEqual(pipeline.state.metrics.drift_detection_checks_total, 1)
+        self.assertEqual(pipeline.state.metrics.drift_incidents_total, 1)
+        self.assertIsNotNone(pipeline.state.drift_active_incident_id)
+        self.assertIn(
+            "data_required_null_rate_exceeded",
+            pipeline.state.drift_active_reason_codes,
+        )
+        self.assertEqual(pipeline.state.drift_status, "drift_detected")
+        self.assertFalse(pipeline.state.drift_live_promotion_eligible)
+        self.assertIn(
+            "data_required_null_rate_exceeded",
+            pipeline.state.drift_live_promotion_reasons,
+        )
+        self.assertEqual(
+            pipeline.state.metrics.drift_incident_reason_total[
+                "data_required_null_rate_exceeded"
+            ],
+            1,
+        )
 
     def test_simple_pipeline_blocks_live_order_when_shared_gate_blocks(
         self,
