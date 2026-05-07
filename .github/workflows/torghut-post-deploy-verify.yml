@@ -220,46 +220,58 @@ jobs:
             >"${EVIDENCE_DIR}/torghut-ws-ready.json"
 
           export TORGHUT_REVENUE_REPAIR_DIGEST="${EVIDENCE_DIR}/torghut-revenue-repair-digest.json"
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
+          node <<'JS'
+          const fs = require('node:fs')
 
-          digest = json.loads(Path(os.environ["TORGHUT_REVENUE_REPAIR_DIGEST"]).read_text(encoding="utf-8"))
-          repair_queue = digest.get("repair_queue")
-          if not isinstance(repair_queue, list):
-              raise SystemExit("torghut revenue repair digest missing repair_queue")
+          const digestPath = process.env.TORGHUT_REVENUE_REPAIR_DIGEST
+          const summaryPath = process.env.GITHUB_STEP_SUMMARY
+          if (!digestPath) {
+            throw new Error('TORGHUT_REVENUE_REPAIR_DIGEST is unset')
+          }
+          if (!summaryPath) {
+            throw new Error('GITHUB_STEP_SUMMARY is unset')
+          }
 
-          top_repairs = []
-          for item in repair_queue[:5]:
-              if not isinstance(item, dict):
-                  continue
-              top_repairs.append(
-                  f"- `{item.get('code', 'unknown')}`: `{item.get('reason', 'unknown')}` "
-                  f"({item.get('dimension', 'unknown')})"
-              )
+          const digest = JSON.parse(fs.readFileSync(digestPath, 'utf8'))
+          const repairQueue = digest.repair_queue
+          if (!Array.isArray(repairQueue)) {
+            throw new Error('torghut revenue repair digest missing repair_queue')
+          }
 
-          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
-          with summary_path.open("a", encoding="utf-8") as handle:
-              handle.write("## Torghut Revenue Repair Digest\n\n")
-              handle.write(f"- Business state: `{digest.get('business_state', 'unknown')}`\n")
-              handle.write(f"- Revenue ready: `{digest.get('revenue_ready', False)}`\n")
-              capital = digest.get("capital") if isinstance(digest.get("capital"), dict) else {}
-              handle.write(f"- Capital state: `{capital.get('capital_state', 'unknown')}`\n")
-              handle.write(f"- Max notional: `{capital.get('max_notional', 'unknown')}`\n")
-              blockers = digest.get("blockers")
-              blocker_reasons = []
-              if isinstance(blockers, list):
-                  for blocker in blockers:
-                      if isinstance(blocker, dict) and blocker.get("reason"):
-                          blocker_reasons.append(str(blocker["reason"]))
-              if blocker_reasons:
-                  handle.write("- Blockers: " + ", ".join(f"`{reason}`" for reason in blocker_reasons) + "\n")
-              if top_repairs:
-                  handle.write("\nTop repair queue:\n")
-                  handle.write("\n".join(top_repairs))
-                  handle.write("\n")
-          PY
+          const topRepairs = repairQueue
+            .slice(0, 5)
+            .filter((item) => item && typeof item === 'object' && !Array.isArray(item))
+            .map((item) => {
+              const code = item.code ?? 'unknown'
+              const reason = item.reason ?? 'unknown'
+              const dimension = item.dimension ?? 'unknown'
+              return `- \`${code}\`: \`${reason}\` (${dimension})`
+            })
+
+          const capital = digest.capital && typeof digest.capital === 'object' && !Array.isArray(digest.capital)
+            ? digest.capital
+            : {}
+          const blockers = Array.isArray(digest.blockers) ? digest.blockers : []
+          const blockerReasons = blockers
+            .filter((blocker) => blocker && typeof blocker === 'object' && !Array.isArray(blocker) && blocker.reason)
+            .map((blocker) => String(blocker.reason))
+
+          const lines = [
+            '## Torghut Revenue Repair Digest',
+            '',
+            `- Business state: \`${digest.business_state ?? 'unknown'}\``,
+            `- Revenue ready: \`${digest.revenue_ready ?? false}\``,
+            `- Capital state: \`${capital.capital_state ?? 'unknown'}\``,
+            `- Max notional: \`${capital.max_notional ?? 'unknown'}\``,
+          ]
+          if (blockerReasons.length > 0) {
+            lines.push(`- Blockers: ${blockerReasons.map((reason) => `\`${reason}\``).join(', ')}`)
+          }
+          if (topRepairs.length > 0) {
+            lines.push('', 'Top repair queue:', ...topRepairs)
+          }
+          fs.appendFileSync(summaryPath, `${lines.join('\n')}\n`, 'utf8')
+          JS
 
       - name: Prepare rollback manifests
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
