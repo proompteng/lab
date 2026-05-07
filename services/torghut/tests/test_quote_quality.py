@@ -79,7 +79,7 @@ class TestQuoteQuality(TestCase):
         self.assertTrue(status.valid)
         self.assertEqual(status.spread_bps, Decimal('0.7618757380671212525237133823'))
 
-    def test_assess_signal_quote_quality_infers_quote_from_explicit_spread(
+    def test_assess_signal_quote_quality_rejects_spread_without_executable_quote(
         self,
     ) -> None:
         signal = SignalEnvelope(
@@ -98,8 +98,8 @@ class TestQuoteQuality(TestCase):
             previous_price=Decimal('525.01'),
         )
 
-        self.assertTrue(status.valid)
-        self.assertEqual(status.spread_bps, Decimal('0.7619047619047619047619047619'))
+        self.assertFalse(status.valid)
+        self.assertEqual(status.reason, 'missing_executable_quote')
 
     def test_assess_signal_quote_quality_rejects_zero_top_level_bid_without_falling_back(
         self,

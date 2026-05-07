@@ -64,8 +64,6 @@ def assess_signal_quote_quality(
     if price is None or price <= 0:
         return QuoteQualityStatus(valid=False, reason='non_positive_price')
     if bid is None and ask is None:
-        bid, ask = _infer_quote_from_spread(signal=signal, price=price)
-    if bid is None and ask is None:
         return QuoteQualityStatus(valid=False, reason='missing_executable_quote')
     if bid is None:
         return QuoteQualityStatus(valid=False, reason='missing_bid')
@@ -129,20 +127,6 @@ def _extract_ask(signal: SignalEnvelope) -> Decimal | None:
             nested_key='ask_px',
         )
     )
-
-
-def _infer_quote_from_spread(
-    *,
-    signal: SignalEnvelope,
-    price: Decimal,
-) -> tuple[Decimal | None, Decimal | None]:
-    spread = _extract_explicit_spread(signal)
-    if spread is None:
-        return None, None
-    if spread < 0:
-        return price, price + spread
-    half_spread = spread / Decimal('2')
-    return price - half_spread, price + half_spread
 
 
 def _signal_spread_bps(

@@ -62,14 +62,49 @@ from app.trading.tca import AdaptiveExecutionPolicyDecision
 from app.trading.universe import UniverseResolver
 
 
+def _with_default_executable_quote(signal: SignalEnvelope) -> SignalEnvelope:
+    payload = dict(signal.payload)
+    if (
+        payload.get("price") is None
+        or payload.get("imbalance_bid_px") is not None
+        or payload.get("imbalance_ask_px") is not None
+    ):
+        return signal
+
+    try:
+        price = Decimal(str(payload["price"]))
+    except Exception:
+        return signal
+    if price <= 0:
+        return signal
+
+    spread = payload.get("spread")
+    try:
+        executable_spread = Decimal(str(spread)) if spread is not None else Decimal("0.02")
+    except Exception:
+        executable_spread = Decimal("0.02")
+    if executable_spread <= 0:
+        executable_spread = Decimal("0.02")
+    half_spread = executable_spread / Decimal("2")
+    bid = price - half_spread
+    if bid <= 0:
+        bid = Decimal("0.0001")
+        executable_spread = Decimal("0.02")
+    ask = bid + executable_spread
+    payload["spread"] = ask - bid
+    payload["imbalance_bid_px"] = bid
+    payload["imbalance_ask_px"] = ask
+    return signal.model_copy(update={"payload": payload})
+
+
 class FakeIngestor:
     def __init__(self, signals: list[SignalEnvelope]) -> None:
-        self.signals = signals
+        self.signals = [_with_default_executable_quote(signal) for signal in signals]
         self.committed_batches = 0
 
     def fetch_signals(self, session: Session) -> SignalBatch:
         return SignalBatch(
-            signals=[_with_executable_quote(signal) for signal in self.signals],
+            signals=self.signals,
             cursor_at=None,
             cursor_seq=None,
             cursor_symbol=None,
@@ -89,7 +124,9 @@ class WarmupIngestor(FakeIngestor):
         cursor_at: datetime,
     ) -> None:
         super().__init__(signals)
-        self.warmup_signals = warmup_signals
+        self.warmup_signals = [
+            _with_default_executable_quote(signal) for signal in warmup_signals
+        ]
         self.cursor_at = cursor_at
         self.warmup_ranges: list[tuple[datetime, datetime]] = []
 
@@ -101,7 +138,7 @@ class WarmupIngestor(FakeIngestor):
     ) -> SignalBatch:
         self.warmup_ranges.append((start, end))
         return SignalBatch(
-            signals=[_with_executable_quote(signal) for signal in self.warmup_signals],
+            signals=self.warmup_signals,
             cursor_at=end,
             cursor_seq=None,
             cursor_symbol=None,
@@ -156,43 +193,6 @@ class RecordingDecisionEngine(DecisionEngine):
     def observe_signal(self, signal: SignalEnvelope) -> None:
         self.observed_symbols.append(signal.symbol)
         super().observe_signal(signal)
-
-
-def _with_executable_quote(signal: SignalEnvelope) -> SignalEnvelope:
-    payload = dict(signal.payload)
-    if _has_executable_quote(payload) or 'price' not in payload:
-        return signal
-    price = _optional_signal_decimal(payload.get('price'))
-    if price is None or price <= 0:
-        return signal
-    spread = _optional_signal_decimal(payload.get('spread')) or Decimal('0.02')
-    if spread < 0:
-        return signal
-    half_spread = spread / Decimal('2')
-    payload['imbalance_bid_px'] = price - half_spread
-    payload['imbalance_ask_px'] = price + half_spread
-    payload['spread'] = spread
-    return signal.model_copy(update={'payload': payload})
-
-
-def _has_executable_quote(payload: dict[str, Any]) -> bool:
-    if payload.get('imbalance_bid_px') is not None and payload.get('imbalance_ask_px') is not None:
-        return True
-    imbalance = payload.get('imbalance')
-    return (
-        isinstance(imbalance, dict)
-        and imbalance.get('bid_px') is not None
-        and imbalance.get('ask_px') is not None
-    )
-
-
-def _optional_signal_decimal(value: object) -> Decimal | None:
-    if value is None:
-        return None
-    try:
-        return Decimal(str(value))
-    except Exception:
-        return None
 
 
 class RaisingObserveDecisionEngine(DecisionEngine):
@@ -6943,7 +6943,14 @@ class TestTradingPipeline(TestCase):
             signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25},
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": Decimal("101.5"),
+                    "spread": Decimal("0.02"),
+                    "imbalance_bid_px": Decimal("101.49"),
+                    "imbalance_ask_px": Decimal("101.51"),
+                },
                 timeframe="1Min",
             )
 
