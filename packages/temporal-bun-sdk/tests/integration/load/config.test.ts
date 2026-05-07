@@ -34,6 +34,8 @@ test('worker load config uses release-safe activity timeouts by default', async 
       TEMPORAL_LOAD_TEST_ACTIVITY_BURSTS: '4',
       TEMPORAL_LOAD_TEST_WORKFLOWS: '1000',
       TEMPORAL_LOAD_TEST_ACTIVITY_CONCURRENCY: '80',
+      TEMPORAL_LOAD_TEST_WORKFLOW_POLL_P95_MS: undefined,
+      TEMPORAL_LOAD_TEST_ACTIVITY_POLL_P95_MS: undefined,
     },
     async () => {
       const config = readWorkerLoadConfig()
@@ -44,6 +46,21 @@ test('worker load config uses release-safe activity timeouts by default', async 
       expect(config.activityScheduleToCloseTimeoutMs).toBe(150_000)
       expect(config.workflowPollP95TargetMs).toBe(6_000)
       expect(config.activityPollP95TargetMs).toBe(6_000)
+    },
+  )
+})
+
+test('worker load config exposes poll p95 overrides for runner-specific release gates', async () => {
+  await withEnvironment(
+    {
+      TEMPORAL_LOAD_TEST_WORKFLOW_POLL_P95_MS: '12000',
+      TEMPORAL_LOAD_TEST_ACTIVITY_POLL_P95_MS: '11000',
+    },
+    async () => {
+      const config = readWorkerLoadConfig()
+
+      expect(config.workflowPollP95TargetMs).toBe(12_000)
+      expect(config.activityPollP95TargetMs).toBe(11_000)
     },
   )
 })
