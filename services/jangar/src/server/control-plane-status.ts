@@ -8,6 +8,7 @@ import {
   buildMaterialActionActivationReceipts,
 } from '~/server/control-plane-controller-witness'
 import { buildMaterialActionVerdictEpoch } from '~/server/control-plane-material-action-verdict'
+import { buildRouteStabilityEscrow } from '~/server/control-plane-route-stability-escrow'
 import {
   createControlPlaneHeartbeatStore,
   isHeartbeatFresh,
@@ -503,6 +504,15 @@ export const buildControlPlaneStatus = async (
   const degradedBackoffThreshold = statusConfig.workflowsDegradedBackoffThreshold
   const watchReliabilityBlockErrorsThreshold = resolveWatchReliabilityBlockErrorsThreshold()
   const watchReliabilityBlockRestartsThreshold = resolveWatchReliabilityBlockRestartsThreshold()
+  const watchReliabilityStatus = {
+    status: watchReliability.status,
+    window_minutes: watchReliability.window_minutes,
+    observed_streams: watchReliability.observed_streams,
+    total_events: watchReliability.total_events,
+    total_errors: watchReliability.total_errors,
+    total_restarts: watchReliability.total_restarts,
+    streams: watchReliability.streams,
+  }
   const executionTrust = await (deps.resolveExecutionTrust ?? buildExecutionTrust)({
     namespace: options.namespace,
     now,
@@ -584,15 +594,7 @@ export const buildControlPlaneStatus = async (
     database,
     rolloutHealth,
     workflows,
-    watchReliability: {
-      status: watchReliability.status,
-      window_minutes: watchReliability.window_minutes,
-      observed_streams: watchReliability.observed_streams,
-      total_events: watchReliability.total_events,
-      total_errors: watchReliability.total_errors,
-      total_restarts: watchReliability.total_restarts,
-      streams: watchReliability.streams,
-    },
+    watchReliability: watchReliabilityStatus,
     empiricalServices,
   })
 
@@ -611,15 +613,7 @@ export const buildControlPlaneStatus = async (
     servingController: servingProcessController,
     effectiveController: effectiveAgentsController,
     rolloutHealth,
-    watchReliability: {
-      status: watchReliability.status,
-      window_minutes: watchReliability.window_minutes,
-      observed_streams: watchReliability.observed_streams,
-      total_events: watchReliability.total_events,
-      total_errors: watchReliability.total_errors,
-      total_restarts: watchReliability.total_restarts,
-      streams: watchReliability.streams,
-    },
+    watchReliability: watchReliabilityStatus,
     agentRunIngestion,
   })
   const dependencyQuorum = buildDependencyQuorum({
@@ -642,15 +636,7 @@ export const buildControlPlaneStatus = async (
     namespace: options.namespace,
     service,
     workflows,
-    watchReliability: {
-      status: watchReliability.status,
-      window_minutes: watchReliability.window_minutes,
-      observed_streams: watchReliability.observed_streams,
-      total_events: watchReliability.total_events,
-      total_errors: watchReliability.total_errors,
-      total_restarts: watchReliability.total_restarts,
-      streams: watchReliability.streams,
-    },
+    watchReliability: watchReliabilityStatus,
     agentRunIngestion,
     database,
     rolloutHealth,
@@ -671,16 +657,19 @@ export const buildControlPlaneStatus = async (
     rolloutHealth,
     controllerWitness,
     database,
-    watchReliability: {
-      status: watchReliability.status,
-      window_minutes: watchReliability.window_minutes,
-      observed_streams: watchReliability.observed_streams,
-      total_events: watchReliability.total_events,
-      total_errors: watchReliability.total_errors,
-      total_restarts: watchReliability.total_restarts,
-      streams: watchReliability.streams,
-    },
+    watchReliability: watchReliabilityStatus,
     empiricalServices,
+  })
+  const routeStabilityEscrow = buildRouteStabilityEscrow({
+    now,
+    namespace: options.namespace,
+    service,
+    routeProbe,
+    database,
+    rolloutHealth,
+    watchReliability: watchReliabilityStatus,
+    controllerWitness,
+    materialActionVerdictEpoch,
   })
   const materialActionActivationReceipts = buildMaterialActionActivationReceipts({
     now,
@@ -689,6 +678,7 @@ export const buildControlPlaneStatus = async (
     router: negativeEvidenceRouter.router,
     budgets: negativeEvidenceRouter.budgets,
     materialActionVerdictEpoch,
+    routeStabilityEscrow,
   })
 
   const leaderElection = getLeaderElectionStatus()
@@ -739,15 +729,7 @@ export const buildControlPlaneStatus = async (
     execution_trust: executionTrust.executionTrust,
     database,
     grpc: grpcStatus,
-    watch_reliability: {
-      status: watchReliability.status,
-      window_minutes: watchReliability.window_minutes,
-      observed_streams: watchReliability.observed_streams,
-      total_events: watchReliability.total_events,
-      total_errors: watchReliability.total_errors,
-      total_restarts: watchReliability.total_restarts,
-      streams: watchReliability.streams,
-    },
+    watch_reliability: watchReliabilityStatus,
     agentrun_ingestion: agentRunIngestion,
     runtime_kits: runtimeAdmission.runtimeKits,
     admission_passports: runtimeAdmission.admissionPassports,
@@ -769,6 +751,7 @@ export const buildControlPlaneStatus = async (
     material_action_verdict_epoch: materialActionVerdictEpoch,
     material_action_verdicts: materialActionVerdictEpoch.final_verdicts,
     material_action_activation_receipts: materialActionActivationReceipts,
+    route_stability_escrow: routeStabilityEscrow,
     empirical_services: empiricalServices,
     namespaces: [
       {

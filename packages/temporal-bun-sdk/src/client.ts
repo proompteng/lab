@@ -70,6 +70,7 @@ import {
 import type { QueryRejectCondition } from './proto/temporal/api/enums/v1/query_pb'
 import { UpdateWorkflowExecutionLifecycleStage } from './proto/temporal/api/enums/v1/update_pb'
 import { HistoryEventFilterType, VersioningBehavior } from './proto/temporal/api/enums/v1/workflow_pb'
+import { WorkflowExecutionAlreadyStartedFailureSchema } from './proto/temporal/api/errordetails/v1/message_pb'
 import type { HistoryEvent } from './proto/temporal/api/history/v1/message_pb'
 import {
   type AddSearchAttributesRequest,
@@ -183,6 +184,7 @@ import {
   type SetWorkerDeploymentRampingVersionResponse,
   type SignalWithStartWorkflowExecutionResponse,
   type StartWorkflowExecutionResponse,
+  StartWorkflowExecutionResponseSchema,
   type UnpauseWorkflowExecutionRequest,
   UnpauseWorkflowExecutionRequestSchema,
   type UnpauseWorkflowExecutionResponse,
@@ -742,6 +744,26 @@ const normalizeUnknownError = (error: unknown): unknown => {
   return unwrap(error)
 }
 
+const withStartRequestId = <T extends StartWorkflowOptions>(options: T): T => ({
+  ...options,
+  requestId: options.requestId ?? randomUUID(),
+})
+
+const extractMatchingAlreadyStartedRunId = (error: unknown, requestId: string | undefined): string | undefined => {
+  if (!requestId) {
+    return undefined
+  }
+  const normalized = normalizeUnknownError(error)
+  if (!(normalized instanceof ConnectError) || normalized.code !== Code.AlreadyExists) {
+    return undefined
+  }
+  const [detail] = normalized
+    .findDetails(WorkflowExecutionAlreadyStartedFailureSchema)
+    .filter((candidate) => candidate.startRequestId === requestId)
+  const runId = detail?.runId?.trim()
+  return runId ? runId : undefined
+}
+
 const isCallOptionsCandidate = (value: unknown): value is BrandedTemporalClientCallOptions => {
   if (!value || typeof value !== 'object') {
     return false
@@ -1245,7 +1267,7 @@ class TemporalClientImpl implements TemporalClient {
     options: StartWorkflowOptions,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<StartWorkflowResult> {
-    const parsedOptions = sanitizeStartWorkflowOptions(options)
+    const parsedOptions = withStartRequestId(sanitizeStartWorkflowOptions(options))
     return this.#instrumentOperation(
       'workflow.start',
       async () => {
@@ -1262,11 +1284,29 @@ class TemporalClientImpl implements TemporalClient {
           this.dataConverter,
         )
 
-        const response = await this.executeRpc(
-          'startWorkflow',
-          (rpcOptions) => this.workflowService.startWorkflowExecution(request, rpcOptions),
-          callOptions,
-        )
+        let response: StartWorkflowExecutionResponse
+        try {
+          response = await this.executeRpc(
+            'startWorkflow',
+            (rpcOptions) => this.workflowService.startWorkflowExecution(request, rpcOptions),
+            callOptions,
+          )
+        } catch (error) {
+          const recoveredRunId = extractMatchingAlreadyStartedRunId(error, request.requestId)
+          if (!recoveredRunId) {
+            throw error
+          }
+          this.#log('info', 'temporal rpc startWorkflow recovered already-started request', {
+            operation: 'startWorkflow',
+            workflowId: request.workflowId,
+            runId: recoveredRunId,
+            requestId: request.requestId,
+          })
+          response = create(StartWorkflowExecutionResponseSchema, {
+            runId: recoveredRunId,
+            started: true,
+          })
+        }
         return this.toStartWorkflowResult(response, {
           workflowId: request.workflowId,
           namespace: request.namespace,
@@ -1477,7 +1517,7 @@ class TemporalClientImpl implements TemporalClient {
     options: SignalWithStartOptions,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<StartWorkflowResult> {
-    const startOptions = sanitizeStartWorkflowOptions(options)
+    const startOptions = withStartRequestId(sanitizeStartWorkflowOptions(options))
     return this.#instrumentOperation(
       'workflow.signalWithStart',
       async () => {

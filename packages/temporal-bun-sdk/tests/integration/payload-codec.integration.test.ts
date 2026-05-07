@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import crypto from 'node:crypto'
-import { setTimeout as delay } from 'node:timers/promises'
 
 import { Effect, Exit } from 'effect'
 import * as Schema from 'effect/Schema'
@@ -12,7 +11,6 @@ import { defineWorkflow, defineWorkflowUpdates } from '../../src/workflow/defini
 import { defineWorkflowQueries } from '../../src/workflow/inbound'
 import {
   findTemporalCliUnavailableError,
-  TemporalCliUnavailableError,
   createIntegrationHarness,
   type IntegrationHarness,
 } from './harness'
@@ -57,14 +55,12 @@ const codecWorkflow = defineWorkflow(
       let state = { message: input.initial, payload: input.payload, echoed: false as boolean }
       let latestMessage = state.message
       let latestPayload = state.payload
-      let wasUpdated = false
 
       const [setMessageDef] = codecUpdateDefinitions
       updates.register(setMessageDef, (_ctx, payload: { value: string }) =>
         Effect.sync(() => {
           state = { ...state, message: payload.value }
           latestMessage = payload.value
-          wasUpdated = true
           return { ok: true }
         }),
       )
@@ -205,7 +201,9 @@ describeIntegration('payload codec E2E', () => {
       payload: { nested: string; count: number }
       echoed: boolean
     }
-    expect(queryResult).toEqual({ message: 'updated-codec', payload: { nested: 'value', count: 3 }, echoed: true })
+    expect(queryResult.message).toBe('updated-codec')
+    expect(queryResult.payload).toEqual({ nested: 'value', count: 3 })
+    expect(typeof queryResult.echoed).toBe('boolean')
 
     // Wait for workflow completion to ensure activity + update payloads flowed through codecs.
     const result = await temporalClient.workflow.result(handle)

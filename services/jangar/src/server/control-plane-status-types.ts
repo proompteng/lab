@@ -16,6 +16,7 @@ import type {
   ProjectionWatermarkStatus,
   ReconciledActionClock,
   RecoveryWarrantStatus,
+  RouteStabilityEscrow,
   RuntimeProofCellStatus,
   RuntimeKitStatus,
   WorkflowsReliabilityStatus,
@@ -171,6 +172,7 @@ export type ControlPlaneStatus = {
   material_action_verdict_epoch: MaterialActionVerdictEpoch
   material_action_verdicts: MaterialActionVerdict[]
   material_action_activation_receipts: MaterialActionActivationReceipt[]
+  route_stability_escrow: RouteStabilityEscrow
   execution_trust: ExecutionTrustStatus
   swarms: ExecutionTrustSwarm[]
   stages: ExecutionTrustStage[]

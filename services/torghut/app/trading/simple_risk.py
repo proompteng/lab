@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Any
 
 from .models import StrategyDecision
+from .prices import resolve_execution_reference_price
 from .quantity_rules import (
     QuantityResolution,
     min_qty_for_symbol,
@@ -329,18 +330,11 @@ def prepare_simple_decision(
 
 
 def _extract_decision_price(decision: StrategyDecision) -> Decimal | None:
-    for candidate in (
-        decision.params.get("price"),
-        decision.limit_price,
-        decision.stop_price,
-    ):
-        if candidate is None:
-            continue
-        try:
-            return Decimal(str(candidate))
-        except (ArithmeticError, ValueError):
-            continue
-    return None
+    return resolve_execution_reference_price(
+        params=decision.params,
+        limit_price=decision.limit_price,
+        stop_price=decision.stop_price,
+    )
 
 
 def _resolve_decimal(value: Any) -> Decimal | None:

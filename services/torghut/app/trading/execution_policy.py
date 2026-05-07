@@ -17,7 +17,7 @@ from .microstructure import (
     parse_microstructure_state,
 )
 from .models import StrategyDecision
-from .prices import MarketSnapshot
+from .prices import MarketSnapshot, resolve_execution_reference_price
 from .quantity_rules import (
     min_qty_for_symbol,
     qty_has_valid_increment,
@@ -906,7 +906,10 @@ def _should_keep_market_order_for_high_conviction_entry(
     )
 
     if "breakout_continuation_long_v1" in strategy_types:
-        if continuation_rank is None or continuation_rank < HIGH_CONVICTION_BREAKOUT_CONTINUATION_RANK_MIN:
+        if (
+            continuation_rank is None
+            or continuation_rank < HIGH_CONVICTION_BREAKOUT_CONTINUATION_RANK_MIN
+        ):
             return False
         if (
             microprice_bias_bps is not None
@@ -916,7 +919,10 @@ def _should_keep_market_order_for_high_conviction_entry(
         return True
 
     if "washout_rebound_long_v1" in strategy_types:
-        if reversal_rank is None or reversal_rank < HIGH_CONVICTION_WASHOUT_REVERSAL_RANK_MIN:
+        if (
+            reversal_rank is None
+            or reversal_rank < HIGH_CONVICTION_WASHOUT_REVERSAL_RANK_MIN
+        ):
             return False
         if (
             microprice_bias_bps is not None
@@ -1111,14 +1117,12 @@ def _build_impact_assumptions(
 def _resolve_price(
     decision: StrategyDecision, market_snapshot: Optional[MarketSnapshot]
 ) -> Optional[Decimal]:
-    candidate = decision.params.get("price")
-    if candidate is None:
-        candidate = decision.limit_price
-    if candidate is None:
-        candidate = decision.stop_price
-    if candidate is None and market_snapshot is not None:
-        candidate = market_snapshot.price
-    return _optional_decimal(candidate)
+    return resolve_execution_reference_price(
+        params=decision.params,
+        limit_price=decision.limit_price,
+        stop_price=decision.stop_price,
+        market_snapshot=market_snapshot,
+    )
 
 
 def _position_summary(symbol: str, positions: Iterable[dict[str, Any]]) -> Decimal:

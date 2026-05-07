@@ -72,6 +72,8 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms)
   })
 
+const ACTIVITY_CLOSE_BUDGET_MS = 15_000
+
 export const timerWorkflow = defineWorkflow('integrationTimerWorkflow', timerInputSchema, ({ timers, input }) =>
   timers
     .start({ timeoutMs: input.timeoutMs ?? 1_000 })
@@ -124,8 +126,9 @@ export const heartbeatWorkflow = defineWorkflow(
         'integrationHeartbeatActivity',
         [input.durationMs],
         {
-          heartbeatTimeoutMs: input.heartbeatTimeoutMs ?? 400,
-          startToCloseTimeoutMs: input.durationMs + 600,
+          heartbeatTimeoutMs: input.heartbeatTimeoutMs ?? 1_000,
+          startToCloseTimeoutMs: input.durationMs + ACTIVITY_CLOSE_BUDGET_MS,
+          scheduleToCloseTimeoutMs: input.durationMs + ACTIVITY_CLOSE_BUDGET_MS,
         },
       )
       .pipe(Effect.map(() => 'heartbeat-complete')),
@@ -134,20 +137,28 @@ export const heartbeatWorkflow = defineWorkflow(
 export const heartbeatTimeoutWorkflow = defineWorkflow(
   'integrationHeartbeatTimeoutWorkflow',
   heartbeatTimeoutInputSchema,
-  ({ activities, input }) =>
-    activities.schedule(
+  ({ activities, input }) => {
+    const initialBeats = input.initialBeats ?? 2
+    const stallMs = input.stallMs ?? 1_000
+    const startToCloseTimeoutMs = initialBeats * 250 + stallMs + ACTIVITY_CLOSE_BUDGET_MS
+    return activities.schedule(
       'integrationHeartbeatTimeoutActivity',
       [
         {
-          initialBeats: input.initialBeats ?? 2,
-          stallMs: input.stallMs ?? 1_000,
+          initialBeats,
+          stallMs,
         },
       ],
       {
-        heartbeatTimeoutMs: input.heartbeatTimeoutMs ?? 300,
-        startToCloseTimeoutMs: (input.stallMs ?? 1_000) + 600,
+        heartbeatTimeoutMs: input.heartbeatTimeoutMs ?? 500,
+        startToCloseTimeoutMs,
+        scheduleToCloseTimeoutMs: startToCloseTimeoutMs,
+        retry: {
+          maximumAttempts: 1,
+        },
       },
-    ),
+    )
+  },
 )
 
 export const retryProbeWorkflow = defineWorkflow(

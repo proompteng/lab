@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..models import Execution, ExecutionTCAMetric, TradeDecision
+from .prices import resolve_execution_reference_price
 
 ADAPTIVE_LOOKBACK_WINDOW = 24
 ADAPTIVE_MIN_SAMPLE_SIZE = 6
@@ -621,17 +622,18 @@ def _resolve_arrival_price(
     for candidate in (
         params_payload.get("arrival_price"),
         params_payload.get("reference_price"),
-        params_payload.get("price"),
         decision_payload.get("arrival_price"),
         decision_payload.get("reference_price"),
         raw_order_payload.get("arrival_price"),
         raw_order_payload.get("reference_price"),
-        raw_order_payload.get("limit_price"),
     ):
         resolved = _positive_decimal(candidate)
         if resolved is not None:
             return resolved
-    return None
+    return resolve_execution_reference_price(
+        params=params_payload,
+        limit_price=raw_order_payload.get("limit_price"),
+    )
 
 
 def _load_trade_decision(

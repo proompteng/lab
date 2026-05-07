@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from http.client import HTTPConnection, HTTPSConnection
-from typing import Any, Optional
+from typing import Any, Optional, cast
 from urllib.parse import urlencode, urlsplit
 
 from ..config import settings
@@ -47,6 +48,48 @@ class PriceFetcher:
         )
 
 
+def resolve_execution_reference_price(
+    *,
+    params: Mapping[str, Any] | None = None,
+    limit_price: Any = None,
+    stop_price: Any = None,
+    market_snapshot: MarketSnapshot | None = None,
+    fallback_price: Any = None,
+) -> Decimal | None:
+    """Resolve the price used for execution sizing, impact, and TCA.
+
+    Signal payloads can carry both a strategy feature price and a fetched market
+    snapshot. The snapshot is the executable reference; the raw signal price is a
+    fallback so stale feature values cannot silently distort notional or TCA.
+    """
+
+    params_payload: Mapping[str, Any] = params or {}
+    price_snapshot = params_payload.get("price_snapshot")
+    snapshot_price = None
+    if isinstance(price_snapshot, Mapping):
+        snapshot_price = cast(Mapping[str, Any], price_snapshot).get("price")
+
+    market_snapshot_price = (
+        market_snapshot.price if market_snapshot is not None else None
+    )
+    for candidate in (
+        params_payload.get("arrival_price"),
+        params_payload.get("reference_price"),
+        params_payload.get("simulated_fill_price"),
+        params_payload.get("fill_price"),
+        snapshot_price,
+        limit_price,
+        stop_price,
+        market_snapshot_price,
+        fallback_price,
+        params_payload.get("price"),
+    ):
+        resolved = _optional_decimal(candidate)
+        if resolved is not None and resolved > 0:
+            return resolved
+    return None
+
+
 class ClickHousePriceFetcher(PriceFetcher):
     """Fetch latest microbar close from ClickHouse."""
 
@@ -62,7 +105,9 @@ class ClickHousePriceFetcher(PriceFetcher):
         self.username = username or settings.trading_clickhouse_username
         self.password = password or settings.trading_clickhouse_password
         self.table = _qualified_table_name(table or settings.trading_price_table)
-        self.lookback_minutes = lookback_minutes or settings.trading_price_lookback_minutes
+        self.lookback_minutes = (
+            lookback_minutes or settings.trading_price_lookback_minutes
+        )
         self._columns: Optional[set[str]] = None
 
     def fetch_price(self, signal: SignalEnvelope) -> Optional[Decimal]:
@@ -77,21 +122,21 @@ class ClickHousePriceFetcher(PriceFetcher):
         order_clause = "event_ts DESC"
         if self._supports_seq():
             order_clause = "event_ts DESC, seq DESC"
-        query = ' '.join(
+        query = " ".join(
             [
-                'SELECT event_ts, c, vwap',
-                'FROM',
+                "SELECT event_ts, c, vwap",
+                "FROM",
                 self.table,
-                'WHERE',
-                f'symbol = {_quote_literal(symbol)}',
-                'AND',
-                f'event_ts >= {to_datetime64(lookback)}',
-                'AND',
-                f'event_ts <= {to_datetime64(target_ts)}',
-                'ORDER BY',
+                "WHERE",
+                f"symbol = {_quote_literal(symbol)}",
+                "AND",
+                f"event_ts >= {to_datetime64(lookback)}",
+                "AND",
+                f"event_ts <= {to_datetime64(target_ts)}",
+                "ORDER BY",
                 order_clause,
-                'LIMIT 1',
-                'FORMAT JSONEachRow',
+                "LIMIT 1",
+                "FORMAT JSONEachRow",
             ]
         )
         rows = self._query_clickhouse(query)
@@ -112,28 +157,32 @@ class ClickHousePriceFetcher(PriceFetcher):
         order_clause = "event_ts DESC"
         if self._supports_seq():
             order_clause = "event_ts DESC, seq DESC"
-        query = ' '.join(
+        query = " ".join(
             [
-                'SELECT event_ts, c, vwap',
-                'FROM',
+                "SELECT event_ts, c, vwap",
+                "FROM",
                 self.table,
-                'WHERE',
-                f'symbol = {_quote_literal(symbol)}',
-                'AND',
-                f'event_ts >= {to_datetime64(lookback)}',
-                'AND',
-                f'event_ts <= {to_datetime64(target_ts)}',
-                'ORDER BY',
+                "WHERE",
+                f"symbol = {_quote_literal(symbol)}",
+                "AND",
+                f"event_ts >= {to_datetime64(lookback)}",
+                "AND",
+                f"event_ts <= {to_datetime64(target_ts)}",
+                "ORDER BY",
                 order_clause,
-                'LIMIT 1',
-                'FORMAT JSONEachRow',
+                "LIMIT 1",
+                "FORMAT JSONEachRow",
             ]
         )
         rows = self._query_clickhouse(query)
         if not rows:
             return None
         row = rows[0]
-        as_of = _parse_ts(row.get("event_ts")) or _parse_ts(row.get("ts")) or signal.event_ts
+        as_of = (
+            _parse_ts(row.get("event_ts"))
+            or _parse_ts(row.get("ts"))
+            or signal.event_ts
+        )
         price = _select_price(row)
         spread = _optional_decimal(row.get("spread"))
         return MarketSnapshot(
@@ -149,10 +198,12 @@ class ClickHousePriceFetcher(PriceFetcher):
         request_url = f"{self.url}/?{urlencode(params)}"
         parsed = urlsplit(request_url)
         scheme = parsed.scheme.lower()
-        if scheme not in {'http', 'https'}:
-            raise RuntimeError(f'unsupported_clickhouse_url_scheme:{scheme or "missing"}')
+        if scheme not in {"http", "https"}:
+            raise RuntimeError(
+                f"unsupported_clickhouse_url_scheme:{scheme or 'missing'}"
+            )
         if not parsed.hostname:
-            raise RuntimeError('invalid_clickhouse_url_host')
+            raise RuntimeError("invalid_clickhouse_url_host")
 
         headers = {"Content-Type": "text/plain"}
         if self.username:
@@ -160,10 +211,10 @@ class ClickHousePriceFetcher(PriceFetcher):
         if self.password:
             headers["X-ClickHouse-Key"] = self.password
 
-        path = parsed.path or '/'
+        path = parsed.path or "/"
         if parsed.query:
-            path = f'{path}?{parsed.query}'
-        connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+            path = f"{path}?{parsed.query}"
+        connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
         connection = connection_class(
             parsed.hostname,
             parsed.port,
@@ -172,11 +223,11 @@ class ClickHousePriceFetcher(PriceFetcher):
 
         rows: list[dict[str, Any]] = []
         try:
-            connection.request('GET', path, headers=headers)
+            connection.request("GET", path, headers=headers)
             response = connection.getresponse()
             if response.status < 200 or response.status >= 300:
-                detail = response.read().decode('utf-8', errors='replace')
-                raise RuntimeError(f'clickhouse_http_{response.status}:{detail[:200]}')
+                detail = response.read().decode("utf-8", errors="replace")
+                raise RuntimeError(f"clickhouse_http_{response.status}:{detail[:200]}")
             payload = response.read().decode("utf-8")
         finally:
             connection.close()
@@ -200,13 +251,13 @@ class ClickHousePriceFetcher(PriceFetcher):
         if self._columns is not None:
             return self._columns
         database, table = _split_table(self.table)
-        query = ' '.join(
+        query = " ".join(
             [
-                'SELECT name FROM system.columns WHERE',
+                "SELECT name FROM system.columns WHERE",
                 f"database = {_quote_literal(database)}",
-                'AND',
+                "AND",
                 f"table = {_quote_literal(table)}",
-                'FORMAT JSONEachRow',
+                "FORMAT JSONEachRow",
             ]
         )
         try:
@@ -269,21 +320,21 @@ def _split_table(table: str) -> tuple[str, str]:
     return "default", table
 
 
-_IDENTIFIER_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _safe_identifier(value: str, *, kind: str) -> str:
     cleaned = value.strip()
     if not cleaned or not _IDENTIFIER_RE.fullmatch(cleaned):
-        raise ValueError(f'invalid_{kind}_identifier:{value}')
+        raise ValueError(f"invalid_{kind}_identifier:{value}")
     return cleaned
 
 
 def _qualified_table_name(table: str) -> str:
     database, raw_table = _split_table(table)
-    safe_database = _safe_identifier(database, kind='database')
-    safe_table = _safe_identifier(raw_table, kind='table')
-    return f'{safe_database}.{safe_table}'
+    safe_database = _safe_identifier(database, kind="database")
+    safe_table = _safe_identifier(raw_table, kind="table")
+    return f"{safe_database}.{safe_table}"
 
 
 def _quote_literal(value: str) -> str:

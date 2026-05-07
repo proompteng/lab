@@ -6,6 +6,7 @@ import { Effect, Exit } from 'effect'
 import { loadTemporalConfig } from '../../src/config'
 import { WorkerRuntime } from '../../src/worker/runtime'
 import { EventType } from '../../src/proto/temporal/api/enums/v1/event_type_pb'
+import { TimeoutType } from '../../src/proto/temporal/api/enums/v1/workflow_pb'
 import {
   findTemporalCliUnavailableError,
   runHarnessEffect,
@@ -114,8 +115,8 @@ describeIntegration('Activity lifecycle integration', () => {
   test('long-running heartbeat keeps activity alive', { timeout: scenarioTimeoutMs }, async () => {
     await runOrSkip('heartbeat-success', async () => {
       const handle = await executeWorkflow(heartbeatWorkflow.name, {
-        durationMs: 600,
-        heartbeatTimeoutMs: 300,
+        durationMs: 2_000,
+        heartbeatTimeoutMs: 1_000,
       })
       const history = await fetchWorkflowHistory(handle)
       const scheduled = history.filter((event) => event.eventType === EventType.ACTIVITY_TASK_SCHEDULED)
@@ -129,12 +130,19 @@ describeIntegration('Activity lifecycle integration', () => {
     await runOrSkip('heartbeat-timeout', async () => {
       const handle = await executeWorkflow(heartbeatTimeoutWorkflow.name, {
         initialBeats: 2,
-        stallMs: 800,
-        heartbeatTimeoutMs: 200,
+        stallMs: 2_000,
+        heartbeatTimeoutMs: 500,
       })
       const history = await fetchWorkflowHistory(handle)
-      const activityTimedOut = history.some((event) => event.eventType === EventType.ACTIVITY_TASK_TIMED_OUT)
-      expect(activityTimedOut).toBe(true)
+      const timedOutEvent = history.find((event) => event.eventType === EventType.ACTIVITY_TASK_TIMED_OUT)
+      const timeoutFailure = timedOutEvent?.attributes?.case === 'activityTaskTimedOutEventAttributes'
+        ? timedOutEvent.attributes.value.failure?.failureInfo
+        : undefined
+      const timeoutType = timeoutFailure?.case === 'timeoutFailureInfo'
+        ? timeoutFailure.value.timeoutType
+        : undefined
+      expect(timedOutEvent).toBeDefined()
+      expect(timeoutType).toBe(TimeoutType.HEARTBEAT)
     })
   })
 

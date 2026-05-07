@@ -6,6 +6,7 @@ from unittest import TestCase
 
 from app import config
 from app.trading.execution_policy import ExecutionPolicy, ExecutionPolicyConfig
+from app.trading.prices import MarketSnapshot
 from app.trading.tca import AdaptiveExecutionPolicyDecision
 from app.trading.models import StrategyDecision
 
@@ -124,6 +125,39 @@ class TestExecutionPolicy(TestCase):
         )
         self.assertFalse(outcome.approved)
         self.assertIn("max_notional_exceeded", outcome.reasons)
+
+    def test_price_snapshot_drives_notional_when_signal_price_is_stale(self) -> None:
+        policy = ExecutionPolicy(config=_config(max_notional=Decimal("1000")))
+        decision = _decision(qty=Decimal("3"), price=Decimal("412.6704331378219"))
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("412.6704331378219"),
+                    "price_snapshot": {
+                        "price": "316.93",
+                        "source": "ta_microbars",
+                        "as_of": "2026-03-31T13:38:20+00:00",
+                    },
+                }
+            }
+        )
+
+        outcome = policy.evaluate(
+            decision,
+            strategy=None,
+            positions=[],
+            market_snapshot=MarketSnapshot(
+                symbol="AAPL",
+                as_of=decision.event_ts,
+                price=Decimal("316.93"),
+                spread=None,
+                source="ta_microbars",
+            ),
+        )
+
+        self.assertTrue(outcome.approved)
+        self.assertEqual(outcome.notional, Decimal("950.79"))
+        self.assertNotIn("max_notional_exceeded", outcome.reasons)
 
     def test_min_notional_enforced(self) -> None:
         policy = ExecutionPolicy(config=_config(min_notional=Decimal("250")))
@@ -402,6 +436,42 @@ class TestExecutionPolicy(TestCase):
         self.assertEqual(outcome.decision.order_type, "market")
         self.assertIsNone(outcome.decision.limit_price)
 
+    def test_high_conviction_washout_entry_keeps_market_order(self) -> None:
+        policy = ExecutionPolicy(config=_config(prefer_limit=True))
+        decision = _decision(
+            action="buy",
+            qty=Decimal("1"),
+            price=Decimal("316.93"),
+            order_type="market",
+        ).model_copy(
+            update={
+                "params": {
+                    "price": Decimal("316.93"),
+                    "spread": Decimal("0.20"),
+                    "execution_features": {
+                        "spread_bps": Decimal("6.31"),
+                        "recent_microprice_bias_bps_avg": Decimal("0.06"),
+                        "cross_section_reversal_rank": Decimal("0.72"),
+                    },
+                    "strategy_runtime": {
+                        "source_strategy_runtime": [
+                            {"strategy_type": "washout_rebound_long_v1"}
+                        ]
+                    },
+                }
+            }
+        )
+
+        outcome = policy.evaluate(
+            decision,
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+        )
+
+        self.assertEqual(outcome.decision.order_type, "market")
+        self.assertIsNone(outcome.decision.limit_price)
+
     def test_microbar_cross_sectional_short_entry_keeps_market_order(self) -> None:
         policy = ExecutionPolicy(config=_config(prefer_limit=True))
         decision = _decision(
@@ -423,7 +493,7 @@ class TestExecutionPolicy(TestCase):
                             {"strategy_type": "microbar_cross_sectional_short_v1"}
                         ]
                     },
-                }
+                },
             }
         )
 

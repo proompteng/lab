@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 from unittest import TestCase
+from unittest.mock import patch
 
 from app.trading.models import SignalEnvelope
 from app.trading.prices import ClickHousePriceFetcher
@@ -35,7 +36,42 @@ class SeqAwarePriceFetcher(CapturingPriceFetcher):
         return {"event_ts", "seq", "symbol"}
 
 
+class FakeHTTPResponse:
+    def __init__(self, status: int, payload: str) -> None:
+        self.status = status
+        self._payload = payload
+
+    def read(self) -> bytes:
+        return self._payload.encode("utf-8")
+
+
+class CapturingHTTPConnection:
+    instances: list[CapturingHTTPConnection] = []
+    response = FakeHTTPResponse(200, '{"c": "123.45"}\n')
+
+    def __init__(self, host: str, port: int | None, timeout: float) -> None:
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self.requests: list[tuple[str, str, dict[str, str]]] = []
+        self.closed = False
+        self.__class__.instances.append(self)
+
+    def request(self, method: str, path: str, *, headers: dict[str, str]) -> None:
+        self.requests.append((method, path, dict(headers)))
+
+    def getresponse(self) -> FakeHTTPResponse:
+        return self.response
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class TestClickHousePriceFetcher(TestCase):
+    def setUp(self) -> None:
+        CapturingHTTPConnection.instances = []
+        CapturingHTTPConnection.response = FakeHTTPResponse(200, '{"c": "123.45"}\n')
+
     def test_fetch_price_prefers_close_c(self) -> None:
         signal = SignalEnvelope(
             event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -98,3 +134,74 @@ class TestClickHousePriceFetcher(TestCase):
         fetcher.fetch_price(signal)
         assert fetcher.last_query is not None
         self.assertIn("ORDER BY event_ts DESC, seq DESC", fetcher.last_query)
+
+    def test_query_clickhouse_sends_http_request_with_auth_headers(self) -> None:
+        fetcher = ClickHousePriceFetcher(
+            url="http://clickhouse.example",
+            username="reader",
+            password="secret",
+            table="torghut.ta_microbars",
+        )
+        CapturingHTTPConnection.response = FakeHTTPResponse(
+            200,
+            '{"c": "123.45"}\n\n{"vwap": "122.10"}\nnot-json\n',
+        )
+
+        with patch("app.trading.prices.HTTPConnection", CapturingHTTPConnection):
+            rows = fetcher._query_clickhouse("SELECT 1")
+
+        self.assertEqual(rows, [{"c": "123.45"}, {"vwap": "122.10"}])
+        self.assertEqual(len(CapturingHTTPConnection.instances), 1)
+        connection = CapturingHTTPConnection.instances[0]
+        self.assertEqual(connection.host, "clickhouse.example")
+        self.assertIsNone(connection.port)
+        self.assertTrue(connection.closed)
+        self.assertEqual(len(connection.requests), 1)
+        method, path, headers = connection.requests[0]
+        self.assertEqual(method, "GET")
+        self.assertEqual(path, "/?query=SELECT+1")
+        self.assertEqual(headers["Content-Type"], "text/plain")
+        self.assertEqual(headers["X-ClickHouse-User"], "reader")
+        self.assertEqual(headers["X-ClickHouse-Key"], "secret")
+
+    def test_query_clickhouse_raises_for_non_success_status(self) -> None:
+        fetcher = ClickHousePriceFetcher(
+            url="http://clickhouse.example",
+            table="torghut.ta_microbars",
+        )
+        CapturingHTTPConnection.response = FakeHTTPResponse(503, "temporarily down")
+
+        with patch("app.trading.prices.HTTPConnection", CapturingHTTPConnection):
+            with self.assertRaisesRegex(
+                RuntimeError, "clickhouse_http_503:temporarily down"
+            ):
+                fetcher._query_clickhouse("SELECT 1")
+
+        self.assertTrue(CapturingHTTPConnection.instances[0].closed)
+
+    def test_query_clickhouse_rejects_unsupported_url_scheme(self) -> None:
+        fetcher = ClickHousePriceFetcher(
+            url="ftp://clickhouse.example",
+            table="torghut.ta_microbars",
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError, "unsupported_clickhouse_url_scheme:ftp"
+        ):
+            fetcher._query_clickhouse("SELECT 1")
+
+    def test_query_clickhouse_rejects_missing_url_host(self) -> None:
+        fetcher = ClickHousePriceFetcher(
+            url="http://",
+            table="torghut.ta_microbars",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "invalid_clickhouse_url_host"):
+            fetcher._query_clickhouse("SELECT 1")
+
+    def test_rejects_invalid_price_table_identifier(self) -> None:
+        with self.assertRaisesRegex(ValueError, "invalid_table_identifier:bad-table"):
+            ClickHousePriceFetcher(
+                url="http://clickhouse.example",
+                table="torghut.bad-table",
+            )
