@@ -602,11 +602,21 @@ def _default_probabilities(verdict: str, confidence: float) -> dict[str, float]:
 
 
 class FakePriceFetcher(PriceFetcher):
-    def __init__(self, price: Decimal) -> None:
+    def __init__(self, price: Decimal, *, spread: Decimal | None = None) -> None:
         self.price = price
+        self.spread = spread
 
     def fetch_price(self, signal: SignalEnvelope) -> Decimal:
         return self.price
+
+    def fetch_market_snapshot(self, signal: SignalEnvelope) -> MarketSnapshot:
+        return MarketSnapshot(
+            symbol=signal.symbol,
+            as_of=signal.event_ts,
+            price=self.price,
+            spread=self.spread,
+            source="price_fetcher",
+        )
 
 
 class FakeCircuitBreaker:
@@ -6951,7 +6961,7 @@ class TestTradingPipeline(TestCase):
                 state=TradingState(),
                 account_label="paper",
                 session_factory=self.session_local,
-                price_fetcher=FakePriceFetcher(Decimal("101.5")),
+                price_fetcher=FakePriceFetcher(Decimal("101.5"), spread=Decimal("0.02")),
             )
 
             pipeline.run_once()
