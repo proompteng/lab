@@ -39,6 +39,10 @@ import {
   maybeUseSplitTopologyRuntimeRollout,
   unknownRolloutHealth,
 } from '~/server/control-plane-rollout-health'
+import {
+  buildSourceRolloutTruthExchange,
+  resolveSourceRolloutTruthEnvironment,
+} from '~/server/control-plane-source-rollout-truth-exchange'
 import type {
   AgentRunIngestionStatus,
   ControlPlaneStatus,
@@ -647,6 +651,23 @@ export const buildControlPlaneStatus = async (
     runtimeKits: runtimeAdmission.runtimeKits,
     controllerWitness,
   })
+  const sourceRolloutTruthEnvironment = resolveSourceRolloutTruthEnvironment()
+  const sourceRolloutTruthExchange = buildSourceRolloutTruthExchange({
+    now,
+    namespace: options.namespace,
+    service,
+    sourceHeadSha: sourceRolloutTruthEnvironment.sourceHeadSha,
+    gitopsRevision: sourceRolloutTruthEnvironment.gitopsRevision,
+    runtimeKits: runtimeAdmission.runtimeKits,
+    kubernetesEvidence: failureDomainKubernetesEvidence,
+    controllerWitness,
+    routeProbe,
+    database,
+    watchReliability: watchReliabilityStatus,
+    rolloutHealth,
+    actionSloBudgets: negativeEvidenceRouter.budgets,
+    torghutActionSloBudgets: negativeEvidenceRouter.torghutBudgets,
+  })
   const materialActionVerdictEpoch = buildMaterialActionVerdictEpoch({
     now,
     namespace: options.namespace,
@@ -659,6 +680,7 @@ export const buildControlPlaneStatus = async (
     database,
     watchReliability: watchReliabilityStatus,
     empiricalServices,
+    sourceRolloutTruthExchange,
   })
   const routeStabilityEscrow = buildRouteStabilityEscrow({
     now,
@@ -751,6 +773,7 @@ export const buildControlPlaneStatus = async (
     material_action_verdict_epoch: materialActionVerdictEpoch,
     material_action_verdicts: materialActionVerdictEpoch.final_verdicts,
     material_action_activation_receipts: materialActionActivationReceipts,
+    source_rollout_truth_exchange: sourceRolloutTruthExchange,
     route_stability_escrow: routeStabilityEscrow,
     empirical_services: empiricalServices,
     namespaces: [

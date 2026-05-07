@@ -303,6 +303,21 @@ Out of scope for this design artifact:
 - Enabling Torghut submit flags.
 - Replacing Argo CD as the GitOps authority.
 
+Implementation note: status projection and material-action consumption (2026-05-07).
+
+- `services/jangar/src/server/control-plane-source-rollout-truth-exchange.ts` now builds a deterministic
+  `source_rollout_truth_exchange` from already-collected runtime kits, pod image evidence, controller witness quorum,
+  route probe, database projection, watch cache, and Torghut action-budget proof-floor inputs.
+- `/api/agents/control-plane/status` exposes exchange receipts for `serve_readonly`, `dispatch_repair`,
+  `dispatch_normal`, `deploy_widen`, `merge_ready`, `torghut_observe`, and Torghut capital classes without adding any
+  synchronous downstream calls to the status route.
+- Material-action verdicts now consume the matching truth-settlement receipt as one more conservative signal. Serving
+  and bounded repair can stay allowed during normal source/GitOps lag, while `dispatch_normal` downgrades to
+  `repair_only` and `deploy_widen`/`merge_ready` hold until source, GitOps revision, desired image, live image, and
+  controller heartbeat settle.
+- Rollback is status-side only: ignore `source_rollout_truth_exchange` and remove it from material-action verdict input
+  to return to the previous verdict reducer while keeping route readiness and existing runtime-admission gates intact.
+
 ## Validation Gates
 
 Engineer validation:
