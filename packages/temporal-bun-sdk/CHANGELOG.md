@@ -2,17 +2,15 @@
 
 ## [0.10.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.9.0...temporal-bun-sdk-v0.10.0) (2026-05-07)
 
-
 ### Features
 
-* **temporal-bun-sdk:** add production readiness gates ([9eac9df](https://github.com/proompteng/lab/commit/9eac9df1ad09bc600ab600b30a39c71da654ba18))
-* **temporal-bun-sdk:** harden production readiness gates ([#5793](https://github.com/proompteng/lab/issues/5793)) ([840b22c](https://github.com/proompteng/lab/commit/840b22ce2fac7cd6aa2fc50c198ed3ecf8821ae3))
-
+- **temporal-bun-sdk:** add production readiness gates ([9eac9df](https://github.com/proompteng/lab/commit/9eac9df1ad09bc600ab600b30a39c71da654ba18))
+- **temporal-bun-sdk:** harden production readiness gates ([#5793](https://github.com/proompteng/lab/issues/5793)) ([840b22c](https://github.com/proompteng/lab/commit/840b22ce2fac7cd6aa2fc50c198ed3ecf8821ae3))
 
 ### Bug Fixes
 
-* **deploy:** roll out dependency upgrade images ([#5388](https://github.com/proompteng/lab/issues/5388)) ([527940a](https://github.com/proompteng/lab/commit/527940a9e714731ed9fd15533f72e81c5294d5d6))
-* **temporal-bun-sdk:** gate default choice on semantic evidence ([#5353](https://github.com/proompteng/lab/issues/5353)) ([80a4b65](https://github.com/proompteng/lab/commit/80a4b65124e53d9dd928ed78760a5cce28da1517))
+- **deploy:** roll out dependency upgrade images ([#5388](https://github.com/proompteng/lab/issues/5388)) ([527940a](https://github.com/proompteng/lab/commit/527940a9e714731ed9fd15533f72e81c5294d5d6))
+- **temporal-bun-sdk:** gate default choice on semantic evidence ([#5353](https://github.com/proompteng/lab/issues/5353)) ([80a4b65](https://github.com/proompteng/lab/commit/80a4b65124e53d9dd928ed78760a5cce28da1517))
 
 ## [0.9.1](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.9.0...temporal-bun-sdk-v0.9.1) (2026-05-05)
 

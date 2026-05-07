@@ -62,6 +62,30 @@ describe('classifyJangarImageMode', () => {
     expect(result.mode).toBe('build-local-image')
     expect(result.matchedPaths).toEqual(['packages/temporal-bun-sdk/src/index.ts'])
   })
+
+  it('reuses the published image for documentation-only changes under local image prefixes', () => {
+    expect(
+      classifyJangarImageMode([
+        'services/jangar/README.md',
+        'packages/temporal-bun-sdk/CHANGELOG.md',
+        'packages/codex/docs/worker.mdx',
+      ]),
+    ).toEqual({
+      mode: 'reuse-published-image',
+      needsLocalJangarImage: false,
+      matchedPaths: [],
+    })
+  })
+
+  it('ignores documentation paths while still matching source changes', () => {
+    const result = classifyJangarImageMode([
+      'packages/temporal-bun-sdk/CHANGELOG.md',
+      'packages/temporal-bun-sdk/src/index.ts',
+    ])
+
+    expect(result.mode).toBe('build-local-image')
+    expect(result.matchedPaths).toEqual(['packages/temporal-bun-sdk/src/index.ts'])
+  })
 })
 
 describe('agents-ci workflow local Jangar image build', () => {

@@ -21,6 +21,8 @@ const LOCAL_IMAGE_EXACT_PATHS = new Set([
   'tsconfig.base.json',
 ])
 
+const DOCUMENTATION_EXTENSIONS = ['.md', '.mdx']
+
 export type JangarImageMode = 'build-local-image' | 'reuse-published-image'
 
 export type JangarImageModeResult = {
@@ -31,9 +33,15 @@ export type JangarImageModeResult = {
 
 const normalizePath = (value: string) => value.trim().replace(/\\/g, '/')
 
+const isDocumentationPath = (path: string) => {
+  const lowerPath = path.toLowerCase()
+  return DOCUMENTATION_EXTENSIONS.some((extension) => lowerPath.endsWith(extension))
+}
+
 const needsLocalImageForPath = (path: string) => {
   const normalized = normalizePath(path)
   if (!normalized) return false
+  if (isDocumentationPath(normalized)) return false
   if (LOCAL_IMAGE_EXACT_PATHS.has(normalized)) return true
   return LOCAL_IMAGE_PREFIXES.some((prefix) => normalized.startsWith(prefix))
 }
