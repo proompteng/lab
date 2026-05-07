@@ -1049,13 +1049,13 @@ private class TaSignalsFunction(
   private val config: FlinkTaConfig,
 ) : KeyedCoProcessFunction<String, Envelope<MicroBarPayload>, Envelope<QuotePayload>, Envelope<TaSignalsPayload>>() {
   private lateinit var barsState: ListState<MicroBarPayload>
-  private lateinit var quoteState: ValueState<QuotePayload>
+  private lateinit var quoteState: ValueState<TimedQuoteState>
   private lateinit var sessionState: ValueState<SessionAccumulatorState>
 
   override fun open(openContext: OpenContext) {
     barsState =
       runtimeContext.getListState(ListStateDescriptor("bars", TypeInformation.of(MicroBarPayload::class.java)))
-    quoteState = runtimeContext.getState(ValueStateDescriptor("quote", QuotePayload::class.java))
+    quoteState = runtimeContext.getState(ValueStateDescriptor("quote-timed-v1", TimedQuoteState::class.java))
     sessionState = runtimeContext.getState(ValueStateDescriptor("session", SessionAccumulatorState::class.java))
   }
 
@@ -1087,7 +1087,7 @@ private class TaSignalsFunction(
     ctx: Context,
     out: Collector<Envelope<TaSignalsPayload>>,
   ) {
-    quoteState.update(value.payload)
+    quoteState.update(TimedQuoteState(eventTs = value.eventTs, payload = value.payload))
   }
 
   private fun computeSignals(
@@ -1144,7 +1144,7 @@ private class TaSignalsFunction(
     val vwap5m = rollingVwap(bars, config.vwapWindow)
     val realizedVol = realizedVol(series, config.realizedVolWindow)
 
-    val quote = quoteState.value()
+    val quote = freshQuotePayloadForBar(quoteState.value(), envelope.payload.t, config.quoteStaleAfterMs)
     val imbalance =
       quote?.let {
         val spread = it.ap - it.bp
@@ -1226,6 +1226,32 @@ private class TaSignalsFunction(
     val variance = returns.map { (it - mean) * (it - mean) }.average()
     return kotlin.math.sqrt(variance)
   }
+}
+
+data class TimedQuoteState(
+  val eventTs: Instant,
+  val payload: QuotePayload,
+) : Serializable
+
+internal fun freshQuotePayloadForBar(
+  quote: TimedQuoteState?,
+  barTs: Instant,
+  quoteStaleAfterMs: Long,
+): QuotePayload? =
+  if (quote != null && isQuoteFreshForBar(quote.eventTs, barTs, quoteStaleAfterMs)) {
+    quote.payload
+  } else {
+    null
+  }
+
+internal fun isQuoteFreshForBar(
+  quoteTs: Instant,
+  barTs: Instant,
+  quoteStaleAfterMs: Long,
+): Boolean {
+  if (quoteTs.isAfter(barTs)) return false
+  if (quoteStaleAfterMs <= 0) return true
+  return Duration.between(quoteTs, barTs).toMillis() <= quoteStaleAfterMs
 }
 
 data class SessionAccumulatorState(

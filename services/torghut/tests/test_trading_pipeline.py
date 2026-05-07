@@ -62,14 +62,52 @@ from app.trading.tca import AdaptiveExecutionPolicyDecision
 from app.trading.universe import UniverseResolver
 
 
+def _with_default_executable_quote(signal: SignalEnvelope) -> SignalEnvelope:
+    payload = dict(signal.payload)
+    if (
+        payload.get("price") is None
+        or payload.get("imbalance_bid_px") is not None
+        or payload.get("imbalance_ask_px") is not None
+    ):
+        return signal
+
+    try:
+        price = Decimal(str(payload["price"]))
+    except Exception:
+        return signal
+    if price <= 0:
+        return signal
+
+    spread = payload.get("spread")
+    try:
+        executable_spread = Decimal(str(spread)) if spread is not None else Decimal("0.02")
+    except Exception:
+        executable_spread = Decimal("0.02")
+    if executable_spread <= 0:
+        executable_spread = Decimal("0.02")
+    half_spread = executable_spread / Decimal("2")
+    bid = price - half_spread
+    if bid <= 0:
+        bid = Decimal("0.0001")
+        executable_spread = Decimal("0.02")
+    ask = bid + executable_spread
+    payload["spread"] = ask - bid
+    payload["imbalance_bid_px"] = bid
+    payload["imbalance_ask_px"] = ask
+    return signal.model_copy(update={"payload": payload})
+
+
 class FakeIngestor:
     def __init__(self, signals: list[SignalEnvelope]) -> None:
-        self.signals = signals
+        self.signals = [_with_default_executable_quote(signal) for signal in signals]
         self.committed_batches = 0
 
     def fetch_signals(self, session: Session) -> SignalBatch:
         return SignalBatch(
-            signals=self.signals, cursor_at=None, cursor_seq=None, cursor_symbol=None
+            signals=self.signals,
+            cursor_at=None,
+            cursor_seq=None,
+            cursor_symbol=None,
         )
 
     def commit_cursor(self, session: Session, batch: SignalBatch) -> None:
@@ -86,7 +124,9 @@ class WarmupIngestor(FakeIngestor):
         cursor_at: datetime,
     ) -> None:
         super().__init__(signals)
-        self.warmup_signals = warmup_signals
+        self.warmup_signals = [
+            _with_default_executable_quote(signal) for signal in warmup_signals
+        ]
         self.cursor_at = cursor_at
         self.warmup_ranges: list[tuple[datetime, datetime]] = []
 
@@ -562,11 +602,21 @@ def _default_probabilities(verdict: str, confidence: float) -> dict[str, float]:
 
 
 class FakePriceFetcher(PriceFetcher):
-    def __init__(self, price: Decimal) -> None:
+    def __init__(self, price: Decimal, *, spread: Decimal | None = None) -> None:
         self.price = price
+        self.spread = spread
 
     def fetch_price(self, signal: SignalEnvelope) -> Decimal:
         return self.price
+
+    def fetch_market_snapshot(self, signal: SignalEnvelope) -> MarketSnapshot:
+        return MarketSnapshot(
+            symbol=signal.symbol,
+            as_of=signal.event_ts,
+            price=self.price,
+            spread=self.spread,
+            source="price_fetcher",
+        )
 
 
 class FakeCircuitBreaker:
@@ -6893,7 +6943,14 @@ class TestTradingPipeline(TestCase):
             signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25},
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": Decimal("101.5"),
+                    "spread": Decimal("0.02"),
+                    "imbalance_bid_px": Decimal("101.49"),
+                    "imbalance_ask_px": Decimal("101.51"),
+                },
                 timeframe="1Min",
             )
 
@@ -6911,7 +6968,7 @@ class TestTradingPipeline(TestCase):
                 state=TradingState(),
                 account_label="paper",
                 session_factory=self.session_local,
-                price_fetcher=FakePriceFetcher(Decimal("101.5")),
+                price_fetcher=FakePriceFetcher(Decimal("101.5"), spread=Decimal("0.02")),
             )
 
             pipeline.run_once()
