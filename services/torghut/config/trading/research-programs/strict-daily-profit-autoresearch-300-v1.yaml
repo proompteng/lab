@@ -286,6 +286,38 @@ families:
       max_position_pct_equity:
         mode: explicit_values
         values: ['3.0', '4.0']
+  - family_template_id: end_of_day_reversal_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-end-of-day-reversal.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    parameter_mutations:
+      min_cross_section_reversal_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.65'
+        maximum: '0.85'
+      entry_start_minute_utc:
+        mode: numeric_step
+        deltas: ['-10', '0', '10']
+        minimum: '1130'
+        maximum: '1170'
+      max_price_vs_session_open_bps:
+        mode: numeric_step
+        deltas: ['-10', '0', '10']
+        minimum: '-60'
+        maximum: '-20'
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['63180', '126360']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['2.0', '4.0']
   - family_template_id: breakout_reclaim_v2
     seed_sweep_config: ../profitability-frontier-strict-daily-breakout-reclaim.yaml
     max_iterations: 2

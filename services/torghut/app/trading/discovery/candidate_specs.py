@@ -44,6 +44,10 @@ _FAMILY_RUNTIME = {
         "late_day_continuation_consistent",
         "late-day-continuation-long-v1",
     ),
+    "end_of_day_reversal_v1": (
+        "end_of_day_reversal_consistent",
+        "end-of-day-reversal-long-v1",
+    ),
 }
 
 _FAMILY_TIEBREAK = {
@@ -55,6 +59,7 @@ _FAMILY_TIEBREAK = {
             "intraday_tsmom_v2",
             "momentum_pullback_v1",
             "late_day_continuation_v1",
+            "end_of_day_reversal_v1",
             "breakout_reclaim_v2",
             "washout_rebound_v2",
             "mean_reversion_rebound_v1",
@@ -662,6 +667,50 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
             },
         },
     ),
+    "end_of_day_reversal_v1": (
+        {
+            "universe_symbols": list(_BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "4.0",
+            "max_notional_per_trade": "126360",
+            "params": {
+                "min_bull_rsi": "34",
+                "max_bull_rsi": "48",
+                "min_macd_hist": "-0.012",
+                "max_macd_hist": "0.012",
+                "max_price_vs_session_open_bps": "-35",
+                "max_opening_window_return_bps": "-10",
+                "max_cross_section_continuation_rank": "0.35",
+                "min_cross_section_reversal_rank": "0.72",
+                "entry_start_minute_utc": "1150",
+                "entry_end_minute_utc": "1188",
+                "max_gross_exposure_pct_equity": "4.0",
+                "entry_cooldown_seconds": "3600",
+                "min_hold_seconds": "60",
+                "max_hold_seconds": "480",
+            },
+        },
+        {
+            "universe_symbols": list(_BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "2.0",
+            "max_notional_per_trade": "63180",
+            "params": {
+                "min_bull_rsi": "38",
+                "max_bull_rsi": "48",
+                "min_macd_hist": "-0.010",
+                "max_macd_hist": "0.012",
+                "max_price_vs_session_open_bps": "-45",
+                "max_opening_window_return_bps": "-15",
+                "max_cross_section_continuation_rank": "0.45",
+                "min_cross_section_reversal_rank": "0.78",
+                "entry_start_minute_utc": "1160",
+                "entry_end_minute_utc": "1188",
+                "max_gross_exposure_pct_equity": "4.0",
+                "entry_cooldown_seconds": "7200",
+                "min_hold_seconds": "60",
+                "max_hold_seconds": "480",
+            },
+        },
+    ),
 }
 
 
@@ -844,8 +893,21 @@ def _family_scores_for_hypothesis(
         )
     ):
         bump("late_day_continuation_v1", 6, "late_session_or_announcement_momentum")
+        bump("end_of_day_reversal_v1", 4, "late_session_or_announcement_momentum")
         bump("intraday_tsmom_v2", 2, "late_session_or_announcement_momentum")
         bump("momentum_pullback_v1", 2, "late_session_or_announcement_momentum")
+    if has_any(
+        (
+            "final 30",
+            "final half-hour",
+            "late-session loser",
+            "late session loser",
+            "closing-window",
+            "closing window",
+            "close reversion",
+        )
+    ):
+        bump("end_of_day_reversal_v1", 7, "closing_window_reversal")
     if has_any(("breakout", "continuation", "reclaim", "leader")):
         bump("breakout_reclaim_v2", 5, "continuation_or_reclaim")
         bump(
@@ -856,6 +918,7 @@ def _family_scores_for_hypothesis(
     if has_any(("washout", "reversal", "rebound", "mean reversion", "dislocation")):
         bump("washout_rebound_v2", 5, "reversal_or_rebound")
         bump("mean_reversion_rebound_v1", 5, "reversal_or_rebound")
+        bump("end_of_day_reversal_v1", 4, "reversal_or_rebound")
     if has_any(("relative_volume", "relative volume", "turnover")):
         bump("intraday_tsmom_v2", 2, "relative_volume_or_turnover")
         bump("breakout_reclaim_v2", 2, "relative_volume_or_turnover")

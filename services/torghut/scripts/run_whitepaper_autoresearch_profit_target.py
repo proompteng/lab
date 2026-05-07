@@ -82,6 +82,7 @@ _DEFAULT_DAILY_PROFIT_TARGET = "300"
 _DEFAULT_STRICT_DAILY_PROFIT_PROGRAM = Path(
     "config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml"
 )
+_DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC = 8
 _PROGRAM_SOURCE_DEFAULT_CONFIDENCE = "0.70"
 
 
@@ -143,7 +144,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk-minutes", type=int, default=10)
     parser.add_argument("--symbols", default=_DEFAULT_CHIP_UNIVERSE_CSV)
     parser.add_argument("--progress-log-seconds", type=int, default=30)
-    parser.add_argument("--max-frontier-candidates-per-spec", type=int, default=64)
+    parser.add_argument(
+        "--max-frontier-candidates-per-spec",
+        type=int,
+        default=_DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
+    )
     parser.add_argument("--real-replay-timeout-seconds", type=int, default=0)
     parser.add_argument("--train-days", type=int, default=6)
     parser.add_argument("--holdout-days", type=int, default=3)
@@ -1147,7 +1152,9 @@ def _pre_replay_candidate_score(spec: CandidateSpec) -> Decimal:
         "momentum_pullback_v1": Decimal("60"),
         "washout_rebound_v2": Decimal("55"),
         "breakout_reclaim_v2": Decimal("50"),
+        "end_of_day_reversal_v1": Decimal("48"),
         "mean_reversion_rebound_v1": Decimal("45"),
+        "late_day_continuation_v1": Decimal("45"),
     }.get(spec.family_template_id, Decimal("40"))
     required_features = spec.feature_contract.get("required_features")
     feature_count = (
@@ -1481,6 +1488,8 @@ def _synthetic_net_for_spec(spec: CandidateSpec, *, rank: int) -> Decimal:
         "momentum_pullback_v1": Decimal("175"),
         "washout_rebound_v2": Decimal("165"),
         "breakout_reclaim_v2": Decimal("155"),
+        "end_of_day_reversal_v1": Decimal("150"),
+        "late_day_continuation_v1": Decimal("145"),
     }.get(spec.family_template_id, Decimal("125"))
     return family_bonus + Decimal(max(0, 12 - rank) * 5)
 
@@ -1663,7 +1672,9 @@ def _run_real_replay(
         prefetch_full_window_rows=args.prefetch_full_window_rows,
         top_n=args.top_k,
         max_candidates_to_evaluate=getattr(
-            args, "max_frontier_candidates_per_spec", 64
+            args,
+            "max_frontier_candidates_per_spec",
+            _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
         ),
         persist_results=args.persist_results,
     )
@@ -2056,7 +2067,6 @@ def run_whitepaper_autoresearch_profit_target(
     candidate_specs = _candidate_specs_with_oracle_policy(
         candidate_specs, oracle_policy=oracle_policy
     )
-    candidate_specs = candidate_specs[: max(1, int(args.max_candidates))]
     blocker_by_spec: dict[str, list[CandidateCompilationBlocker]] = {}
     for blocker in compilation.blockers:
         blocker_by_spec.setdefault(blocker.candidate_spec_id, []).append(blocker)
@@ -2190,7 +2200,12 @@ def run_whitepaper_autoresearch_profit_target(
                 getattr(args, "real_replay_timeout_seconds", 0) or 0
             ),
             max_frontier_candidates_per_spec=int(
-                getattr(args, "max_frontier_candidates_per_spec", 64) or 64
+                getattr(
+                    args,
+                    "max_frontier_candidates_per_spec",
+                    _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
+                )
+                or _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC
             ),
         )
         remediation_path = output_dir / "candidate-search-remediation.json"
@@ -2329,7 +2344,12 @@ def run_whitepaper_autoresearch_profit_target(
                 getattr(args, "real_replay_timeout_seconds", 0) or 0
             ),
             max_frontier_candidates_per_spec=int(
-                getattr(args, "max_frontier_candidates_per_spec", 64) or 64
+                getattr(
+                    args,
+                    "max_frontier_candidates_per_spec",
+                    _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
+                )
+                or _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC
             ),
         )
         _write_json(remediation_path, candidate_search_remediation)
