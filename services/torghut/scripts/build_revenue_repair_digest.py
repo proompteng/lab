@@ -211,16 +211,11 @@ def _collect_blocking_reasons(
     readyz_payload: Mapping[str, Any],
     status_payload: Mapping[str, Any],
 ) -> list[str]:
-    proof_floor = _choose_mapping(
-        status_payload.get("proof_floor"), readyz_payload.get("proof_floor")
-    )
+    proof_floor = _choose_mapping(status_payload.get("proof_floor"), readyz_payload.get("proof_floor"))
     live_submission_gate = _choose_mapping(
-        status_payload.get("live_submission_gate"),
-        readyz_payload.get("live_submission_gate"),
+        status_payload.get("live_submission_gate"), readyz_payload.get("live_submission_gate")
     )
-    quant_evidence = _choose_mapping(
-        status_payload.get("quant_evidence"), readyz_payload.get("quant_evidence")
-    )
+    quant_evidence = _choose_mapping(status_payload.get("quant_evidence"), readyz_payload.get("quant_evidence"))
     reasons = _string_items(proof_floor.get("blocking_reasons"))
     reasons.extend(_string_items(live_submission_gate.get("blocked_reasons")))
     reasons.extend(_string_items(quant_evidence.get("blocking_reasons")))
@@ -230,11 +225,7 @@ def _collect_blocking_reasons(
     quant_status = _text(quant_evidence.get("status")).lower()
     if not quant_ok and quant_reason:
         reasons.append(quant_reason)
-    elif (
-        quant_status
-        and quant_status not in {"ok", "healthy", "pass", "not_required"}
-        and quant_reason
-    ):
+    elif quant_status and quant_status not in {"ok", "healthy", "pass", "not_required"} and quant_reason:
         reasons.append(quant_reason)
 
     dependencies = _mapping(readyz_payload.get("dependencies"))
@@ -260,21 +251,13 @@ def _repair_from_ladder_item(
         item.get("code"),
         _text(_REPAIR_CATALOG.get(reason, {}).get("code"), f"repair_{reason}"),
     )
-    priority = _int(
-        item.get("priority"), _int(_REPAIR_CATALOG.get(reason, {}).get("priority"), 40)
-    )
+    priority = _int(item.get("priority"), _int(_REPAIR_CATALOG.get(reason, {}).get("priority"), 40))
     expected_unblock_value = _int(
         item.get("expected_unblock_value"),
         _int(_REPAIR_CATALOG.get(reason, {}).get("expected_unblock_value"), 1),
     )
-    action = _text(
-        item.get("action"),
-        _text(_REPAIR_CATALOG.get(reason, {}).get("action"), "investigate_blocker"),
-    )
-    dimension = _text(
-        item.get("dimension"),
-        _text(_REPAIR_CATALOG.get(reason, {}).get("dimension"), "unknown"),
-    )
+    action = _text(item.get("action"), _text(_REPAIR_CATALOG.get(reason, {}).get("action"), "investigate_blocker"))
+    dimension = _text(item.get("dimension"), _text(_REPAIR_CATALOG.get(reason, {}).get("dimension"), "unknown"))
     if proof_floor_repair_only and code == "live_submit_gate_closed":
         priority = min(priority, 50)
         action = "keep_submit_disabled_until_evidence_repairs_pass"
@@ -308,9 +291,7 @@ def _repair_from_reason(
         "dimension": _text(catalog.get("dimension"), "unknown"),
         "action": action,
         "priority": priority,
-        "expected_unblock_value": max(
-            1, _int(catalog.get("expected_unblock_value"), count)
-        ),
+        "expected_unblock_value": max(1, _int(catalog.get("expected_unblock_value"), count)),
         "source": "derived.blocking_reason",
         "observed_count": max(1, count),
     }
@@ -327,9 +308,7 @@ def _build_repair_queue(
         item = _mapping(raw_item)
         if not item:
             continue
-        repair = _repair_from_ladder_item(
-            item, proof_floor_repair_only=proof_floor_repair_only
-        )
+        repair = _repair_from_ladder_item(item, proof_floor_repair_only=proof_floor_repair_only)
         repairs_by_code[_text(repair.get("code"))] = repair
 
     reason_counts = _collect_reason_counts(status_payload)
@@ -337,19 +316,14 @@ def _build_repair_queue(
         if not reason:
             continue
         repair = _repair_from_reason(
-            reason,
-            count=reason_counts.get(reason, 1),
-            proof_floor_repair_only=proof_floor_repair_only,
+            reason, count=reason_counts.get(reason, 1), proof_floor_repair_only=proof_floor_repair_only
         )
         code = _text(repair.get("code"))
         existing = repairs_by_code.get(code)
         if existing is None:
             repairs_by_code[code] = repair
             continue
-        existing["observed_count"] = max(
-            _int(existing.get("observed_count"), 1),
-            _int(repair.get("observed_count"), 1),
-        )
+        existing["observed_count"] = max(_int(existing.get("observed_count"), 1), _int(repair.get("observed_count"), 1))
 
     return sorted(
         repairs_by_code.values(),
@@ -361,9 +335,7 @@ def _build_repair_queue(
     )
 
 
-def _summarize_alpha(
-    status_payload: Mapping[str, Any], proof_floor: Mapping[str, Any]
-) -> dict[str, object]:
+def _summarize_alpha(status_payload: Mapping[str, Any], proof_floor: Mapping[str, Any]) -> dict[str, object]:
     alpha = _mapping(status_payload.get("alpha_readiness"))
     summary = _mapping(alpha.get("summary"))
     if not summary:
@@ -440,16 +412,11 @@ def build_revenue_repair_digest(
         raise ValueError("generated_at_missing_timezone")
     generated = generated.astimezone(timezone.utc)
 
-    proof_floor = _choose_mapping(
-        status_payload.get("proof_floor"), readyz_payload.get("proof_floor")
-    )
+    proof_floor = _choose_mapping(status_payload.get("proof_floor"), readyz_payload.get("proof_floor"))
     live_submission_gate = _choose_mapping(
-        status_payload.get("live_submission_gate"),
-        readyz_payload.get("live_submission_gate"),
+        status_payload.get("live_submission_gate"), readyz_payload.get("live_submission_gate")
     )
-    quant_evidence = _choose_mapping(
-        status_payload.get("quant_evidence"), readyz_payload.get("quant_evidence")
-    )
+    quant_evidence = _choose_mapping(status_payload.get("quant_evidence"), readyz_payload.get("quant_evidence"))
     dependencies = _mapping(readyz_payload.get("dependencies"))
     blocking_reasons = _collect_blocking_reasons(readyz_payload, status_payload)
     repair_queue = _build_repair_queue(proof_floor, status_payload, blocking_reasons)
@@ -486,30 +453,21 @@ def build_revenue_repair_digest(
             "readyz_ok": readiness_ok,
             "mode": _text(status_payload.get("mode"), "unknown"),
             "pipeline_mode": _text(status_payload.get("pipeline_mode"), "unknown"),
-            "active_revision": _text(
-                build.get("active_revision"), _text(build.get("commit"), "unknown")
-            ),
+            "active_revision": _text(build.get("active_revision"), _text(build.get("commit"), "unknown")),
             "dependency_failures": [
                 {
                     "name": name,
                     "detail": _text(_mapping(raw_dependency).get("detail"), "unknown"),
                 }
                 for name, raw_dependency in dependencies.items()
-                if _mapping(raw_dependency)
-                and not _bool(_mapping(raw_dependency).get("ok"), default=True)
+                if _mapping(raw_dependency) and not _bool(_mapping(raw_dependency).get("ok"), default=True)
             ],
         },
         "capital": {
             "live_submission_allowed": live_gate_allowed,
-            "live_submission_reason": _text(
-                live_submission_gate.get("reason"), "unknown"
-            ),
-            "configured_live_promotion": _bool(
-                live_submission_gate.get("configured_live_promotion")
-            ),
-            "capital_stage": _text(
-                live_submission_gate.get("capital_stage"), "unknown"
-            ),
+            "live_submission_reason": _text(live_submission_gate.get("reason"), "unknown"),
+            "configured_live_promotion": _bool(live_submission_gate.get("configured_live_promotion")),
+            "capital_stage": _text(live_submission_gate.get("capital_stage"), "unknown"),
             "proof_floor_state": _text(proof_floor.get("floor_state"), "unknown"),
             "route_state": proof_floor_route_state,
             "capital_state": capital_state,
@@ -522,9 +480,7 @@ def build_revenue_repair_digest(
                 "status": _text(quant_evidence.get("status"), "unknown"),
                 "reason": _text(quant_evidence.get("reason"), "unknown"),
                 "max_stage_lag_seconds": quant_evidence.get("max_stage_lag_seconds"),
-                "blocking_reasons": _string_items(
-                    quant_evidence.get("blocking_reasons")
-                ),
+                "blocking_reasons": _string_items(quant_evidence.get("blocking_reasons")),
             },
             "execution_tca": _summarize_tca(proof_floor),
             "simple_lane_reject_reason_totals": _collect_reason_counts(status_payload),
@@ -569,12 +525,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         help="Path to a Torghut /trading/status JSON payload.",
     )
-    parser.add_argument(
-        "--generated-at", help="Optional ISO-8601 timestamp for deterministic output."
-    )
-    parser.add_argument(
-        "--output", type=Path, help="Optional output path. Defaults to stdout."
-    )
+    parser.add_argument("--generated-at", help="Optional ISO-8601 timestamp for deterministic output.")
+    parser.add_argument("--output", type=Path, help="Optional output path. Defaults to stdout.")
     return parser.parse_args(argv)
 
 
