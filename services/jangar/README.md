@@ -218,8 +218,9 @@ Schedule-runner pods also verify the stamped passport and sealed warrant against
 OrchestrationRun. A launch-capable swarm runner manifest missing its admission passport stamp, a stale passport id,
 changed runtime-kit digest, non-`allow` decision, stale freshness window, unhealthy cited runtime kit, non-sealed
 recovery warrant, or stale/unhealthy required proof cell fails the runner before work is launched. Emergency rollback
-for this fire-time check only is `JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false`; keep the controller-level
-`JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT` gate enabled unless you intentionally want advisory-only launch behavior.
+for this fire-time check only is `JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false`; setting
+`JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` also disables generated runner admission and proof checks so advisory
+rollback schedules do not fail because they intentionally lack passport stamps.
 
 Binary runtime-kit components must be executable, not just present on disk. The source Codex NATS helpers and the
 installed `/usr/local/bin/codex-nats-*` wrappers both satisfy that command-path contract; a non-executable helper keeps
