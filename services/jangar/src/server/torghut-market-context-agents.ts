@@ -15,10 +15,16 @@ import {
 } from '~/server/metrics'
 import { clearMarketContextCache } from '~/server/torghut-market-context'
 import {
+  dispatchMarketContextRefreshIfNeeded,
+  type MarketContextDispatchResult,
+} from '~/server/torghut-market-context-dispatch'
+import {
   resolveMarketContextIngestAuthConfig,
   resolveMarketContextRuntimeConfig,
 } from '~/server/torghut-market-context-config'
 import { normalizeTorghutSymbol } from '~/server/torghut-symbols'
+
+export type { MarketContextDispatchResult } from '~/server/torghut-market-context-dispatch'
 
 export type MarketContextProviderDomain = 'fundamentals' | 'news'
 
@@ -26,14 +32,6 @@ export type MarketContextProviderCitation = {
   source: string
   publishedAt: string
   url: string | null
-}
-
-export type MarketContextDispatchResult = {
-  attempted: boolean
-  dispatched: boolean
-  reason: string | null
-  runName: string | null
-  error: string | null
 }
 
 export type MarketContextProviderResult = {
@@ -205,26 +203,8 @@ type MarketContextRunStatusPayload = {
   }>
 }
 
-const DEFAULT_FUNDAMENTALS_MAX_FRESHNESS_SECONDS = 24 * 60 * 60
-const DEFAULT_NEWS_MAX_FRESHNESS_SECONDS = 5 * 60
-const DEFAULT_ALLOWED_SERVICE_ACCOUNT_PREFIX = 'system:serviceaccount:agents:'
 const IN_CLUSTER_SERVICE_ACCOUNT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
 const IN_CLUSTER_SERVICE_ACCOUNT_CA_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
-
-const parseBoolean = (value: string | undefined, fallback: boolean) => {
-  if (!value) return fallback
-  const normalized = value.trim().toLowerCase()
-  if (['1', 'true', 'yes', 'on', 'enabled'].includes(normalized)) return true
-  if (['0', 'false', 'no', 'off', 'disabled'].includes(normalized)) return false
-  return fallback
-}
-
-const parsePositiveInt = (value: string | undefined, fallback: number) => {
-  if (!value) return fallback
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
-  return parsed
-}
 
 const parseProviderChain = (value: string | undefined, fallback: string[]) => {
   if (!value) return fallback
@@ -361,6 +341,14 @@ const resolveSettings = () => {
     providerChain: parseProviderChain(config.providerChain.join(','), ['codex-spark', 'codex']),
     providerFailureThreshold: config.providerFailureThreshold,
     providerCooldownSeconds: config.providerCooldownSeconds,
+    onDemandDispatchEnabled: config.onDemandDispatchEnabled,
+    onDemandDispatchCooldownSeconds: config.onDemandDispatchCooldownSeconds,
+    onDemandDispatchActiveRunSeconds: config.onDemandDispatchActiveRunSeconds,
+    onDemandDispatchNamespace: config.onDemandDispatchNamespace,
+    onDemandDispatchServiceAccountName: config.onDemandDispatchServiceAccountName,
+    onDemandDispatchPriorityClassName: config.onDemandDispatchPriorityClassName,
+    onDemandDispatchCallbackUrl: config.onDemandDispatchCallbackUrl,
+    onDemandDispatchTtlSeconds: config.onDemandDispatchTtlSeconds,
   }
 }
 
@@ -714,6 +702,14 @@ export const getMarketContextProviderResult = async (params: {
   if (!snapshot) {
     const missingContext = buildMissingContext({ domain: params.domain, symbol })
     const riskFlags = new Set(missingContext.riskFlags)
+    const dispatch = await dispatchMarketContextRefreshIfNeeded({
+      db,
+      symbol,
+      domain: params.domain,
+      snapshotState: 'missing',
+      settings,
+      now,
+    })
     if (latestRun?.status === 'failed' || latestRun?.status === 'cancelled') {
       riskFlags.add(`${params.domain}_generation_failed_all_models`)
       riskFlags.add('market_context_degraded_last_good')
@@ -735,18 +731,21 @@ export const getMarketContextProviderResult = async (params: {
         },
         riskFlags: Array.from(riskFlags),
       },
-      dispatch: {
-        attempted: false,
-        dispatched: false,
-        reason: null,
-        runName: null,
-        error: null,
-      },
+      dispatch,
     }
   }
 
   const freshnessSeconds = resolveFreshnessSeconds(now, snapshot.asOf)
   const isStale = freshnessSeconds > maxFreshnessSeconds
+  const snapshotState = isStale ? 'stale' : 'fresh'
+  const dispatch = await dispatchMarketContextRefreshIfNeeded({
+    db,
+    symbol,
+    domain: params.domain,
+    snapshotState,
+    settings,
+    now,
+  })
 
   const riskFlags = new Set(snapshot.riskFlags)
   if (isStale) riskFlags.add(`${params.domain}_stale`)
@@ -761,7 +760,7 @@ export const getMarketContextProviderResult = async (params: {
   return {
     symbol,
     domain: params.domain,
-    snapshotState: isStale ? 'stale' : 'fresh',
+    snapshotState,
     context: {
       asOfUtc: toIso(snapshot.asOf),
       sourceCount: snapshot.sourceCount,
@@ -770,13 +769,7 @@ export const getMarketContextProviderResult = async (params: {
       citations: snapshot.citations,
       riskFlags: Array.from(riskFlags),
     },
-    dispatch: {
-      attempted: false,
-      dispatched: false,
-      reason: null,
-      runName: null,
-      error: null,
-    },
+    dispatch,
   }
 }
 
