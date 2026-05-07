@@ -190,13 +190,32 @@ jobs:
             --commit "${TORGHUT_WS_COMMIT}" \
             --version "main-${TORGHUT_WS_IMAGE_TAG}"
 
+      - name: Update torghut-ws equity manifest
+        if: steps.meta.outputs.promote == 'true'
+        shell: bash
+        env:
+          TORGHUT_WS_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+          TORGHUT_WS_IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+          TORGHUT_WS_COMMIT: ${{ steps.meta.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          bun run packages/scripts/src/torghut/update-ws-manifest.ts \
+            --tag "${TORGHUT_WS_IMAGE_TAG}" \
+            --digest "${TORGHUT_WS_IMAGE_DIGEST}" \
+            --commit "${TORGHUT_WS_COMMIT}" \
+            --version "main-${TORGHUT_WS_IMAGE_TAG}" \
+            --manifest-path argocd/applications/torghut/ws/deployment.yaml \
+            --container-name torghut-ws
+
       - name: Check for manifest changes
         if: steps.meta.outputs.promote == 'true'
         id: changes
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- argocd/applications/torghut-options/ws/deployment.yaml; then
+          if git diff --quiet -- \
+            argocd/applications/torghut/ws/deployment.yaml \
+            argocd/applications/torghut-options/ws/deployment.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -211,16 +230,17 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
-          branch: codex/torghut-ws-options-release-${{ steps.meta.outputs.tag }}
+          branch: codex/torghut-ws-release-${{ steps.meta.outputs.tag }}
           base: main
-          title: 'chore(torghut-options): promote ws image ${{ steps.meta.outputs.tag }}'
-          commit-message: 'chore(torghut-options): promote ws image ${{ steps.meta.outputs.tag }}'
+          title: 'chore(torghut): promote ws image ${{ steps.meta.outputs.tag }}'
+          commit-message: 'chore(torghut): promote ws image ${{ steps.meta.outputs.tag }}'
           delete-branch: true
           add-paths: |
+            argocd/applications/torghut/ws/deployment.yaml
             argocd/applications/torghut-options/ws/deployment.yaml
           body: |
             ## Summary
-            Promote the Torghut options websocket image into GitOps manifests.
+            Promote the Torghut websocket image into GitOps manifests.
 
             - Source commit: `${{ steps.meta.outputs.source_sha }}`
             - Image tag: `${{ steps.meta.outputs.tag }}`
