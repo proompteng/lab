@@ -220,7 +220,7 @@ jobs:
             >"${EVIDENCE_DIR}/torghut-ws-ready.json"
 
           export TORGHUT_REVENUE_REPAIR_DIGEST="${EVIDENCE_DIR}/torghut-revenue-repair-digest.json"
-          node <<'JS'
+          bun run - <<'JS'
           const fs = require('node:fs')
 
           const digestPath = process.env.TORGHUT_REVENUE_REPAIR_DIGEST
