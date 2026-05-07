@@ -1627,6 +1627,18 @@ describe('supporting primitives controller', () => {
     expect(deleteFn).toHaveBeenCalledWith(RESOURCE_MAP.Schedule, expect.stringContaining('plan-sched'), 'agents', {
       wait: false,
     })
+    expect(deleteFn).toHaveBeenCalledWith('configmap', expect.stringContaining('discover-sched-template'), 'agents', {
+      wait: false,
+    })
+    expect(deleteFn).toHaveBeenCalledWith('cronjob', expect.stringContaining('discover-sched-cron'), 'agents', {
+      wait: false,
+    })
+    expect(deleteFn).toHaveBeenCalledWith('configmap', expect.stringContaining('plan-sched-template'), 'agents', {
+      wait: false,
+    })
+    expect(deleteFn).toHaveBeenCalledWith('cronjob', expect.stringContaining('plan-sched-cron'), 'agents', {
+      wait: false,
+    })
 
     const statusCall = applyStatus.mock.calls.at(-1)
     const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
@@ -1838,6 +1850,14 @@ describe('supporting primitives controller', () => {
     expect(deleteFn).toHaveBeenCalledWith(RESOURCE_MAP.Schedule, expect.stringContaining('verify-sched'), 'agents', {
       wait: false,
     })
+    for (const stage of ['discover', 'plan', 'implement', 'verify']) {
+      expect(deleteFn).toHaveBeenCalledWith('configmap', expect.stringContaining(`${stage}-sched-template`), 'agents', {
+        wait: false,
+      })
+      expect(deleteFn).toHaveBeenCalledWith('cronjob', expect.stringContaining(`${stage}-sched-cron`), 'agents', {
+        wait: false,
+      })
+    }
 
     const statusCall = applyStatus.mock.calls.at(-1)
     const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
@@ -3056,7 +3076,7 @@ describe('supporting primitives controller', () => {
     await __test__.reconcileSwarm(kube, swarm, 'agents')
 
     expect(apply).not.toHaveBeenCalled()
-    expect(deleteFn).toHaveBeenCalledTimes(4)
+    expect(deleteFn).toHaveBeenCalledTimes(12)
     const firstStatusCall = applyStatus.mock.calls[0]
     const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     expect(status.phase).toBe('Frozen')
@@ -3258,7 +3278,7 @@ describe('supporting primitives controller', () => {
     await __test__.reconcileSwarm(kube, swarm, 'agents')
 
     expect(apply).not.toHaveBeenCalled()
-    expect(deleteFn).toHaveBeenCalledTimes(4)
+    expect(deleteFn).toHaveBeenCalledTimes(12)
     const firstStatusCall = applyStatus.mock.calls[0]
     const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     expect(status.phase).toBe('Frozen')
@@ -3347,7 +3367,7 @@ describe('supporting primitives controller', () => {
       'swarm.proompteng.ai/name=torghut-quant,swarm.proompteng.ai/uid=swarm-uid',
     )
     expect(apply).not.toHaveBeenCalled()
-    expect(deleteFn).toHaveBeenCalledTimes(4)
+    expect(deleteFn).toHaveBeenCalledTimes(12)
     const firstStatusCall = applyStatus.mock.calls[0]
     const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     expect(status.phase).toBe('Frozen')
@@ -3432,7 +3452,7 @@ describe('supporting primitives controller', () => {
     await __test__.reconcileSwarm(kube, swarm, 'agents')
 
     expect(apply).not.toHaveBeenCalled()
-    expect(deleteFn).toHaveBeenCalledTimes(4)
+    expect(deleteFn).toHaveBeenCalledTimes(12)
     const firstStatusCall = applyStatus.mock.calls[0]
     const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     expect(status.phase).toBe('Frozen')
@@ -3785,7 +3805,7 @@ describe('supporting primitives controller', () => {
     await __test__.reconcileSwarm(kube, swarm, 'agents')
 
     expect(apply).not.toHaveBeenCalled()
-    expect(deleteFn).toHaveBeenCalledTimes(4)
+    expect(deleteFn).toHaveBeenCalledTimes(12)
     const firstStatusCall = applyStatus.mock.calls[0]
     const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     expect(status.phase).toBe('Invalid')
