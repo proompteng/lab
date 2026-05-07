@@ -5,7 +5,9 @@ supported_markets:
   - us_equities_intraday
 required_features:
   - session_drawdown
+  - session_selloff_bps
   - reversal_rank
+  - cross_section_reversal_rank
   - quote_quality
   - rebid_confirmation
 allowed_normalizations:

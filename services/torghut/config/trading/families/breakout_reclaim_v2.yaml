@@ -6,6 +6,8 @@ supported_markets:
 required_features:
   - session_high_reclaim_bps
   - cross_section_continuation_rank
+  - intraday_momentum_rank
+  - prior_day_return
   - recent_microprice_bias_bps
   - quote_quality
 allowed_normalizations:
