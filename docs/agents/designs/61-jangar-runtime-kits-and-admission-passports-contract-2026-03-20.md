@@ -370,6 +370,9 @@ The first enforcement slice is the stage and requirement launcher gate:
   `block`.
 - blocked or held implement passports prevent requirement dispatch and mark the `RequirementsBridge` condition with
   `RuntimeAdmissionBlocked`.
+- hard-blocked implement passports also mark the matching requirement Signal `Rejected` with the passport refusal so the
+  requirement fails once with typed runtime-admission evidence; held passports and unavailable admission snapshots remain
+  pending for recovery.
 - if the current admission snapshot cannot be compiled, launch admission fails closed as
   `RuntimeAdmissionUnavailable`, deletes stale schedule runner resources, and records the unavailable passport state in
   stage and requirement status.

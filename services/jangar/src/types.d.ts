@@ -7,6 +7,25 @@ declare module '@xterm/addon-ligatures/lib/addon-ligatures.mjs' {
   export { LigaturesAddon } from '@xterm/addon-ligatures'
 }
 
+declare module 'echarts' {
+  export type EChartsSetOptionOptions = {
+    notMerge?: boolean
+    lazyUpdate?: boolean
+  }
+
+  export type EChartsInstance = {
+    setOption: (option: unknown, options?: EChartsSetOptionOptions) => void
+    resize: () => void
+    dispose: () => void
+  }
+
+  export const init: (
+    element: HTMLElement,
+    theme?: string | Record<string, unknown>,
+    options?: { renderer?: 'canvas' | 'svg' },
+  ) => EChartsInstance
+}
+
 type JangarServerRouteArgs = {
   request: Request
   params: Record<string, string>
