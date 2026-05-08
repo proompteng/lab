@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -22,6 +23,7 @@ from app.main import (
     _TRADING_DEPENDENCY_HEALTH_CACHE,
     _assert_dspy_cutover_migration_guard,
     _check_alpaca,
+    healthz,
     _readiness_dependency_cache_key,
     _readiness_dependency_checks,
     app,
@@ -203,6 +205,14 @@ class TestTradingApi(TestCase):
         app.dependency_overrides.clear()
         if hasattr(app.state, "trading_scheduler"):
             delattr(app.state, "trading_scheduler")
+
+    def test_healthz_handler_stays_async_for_liveness_probe(self) -> None:
+        self.assertTrue(inspect.iscoroutinefunction(healthz))
+
+        response = self.client.get("/healthz")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok", "service": "torghut"})
 
     def test_trading_decisions_endpoint(self) -> None:
         response = self.client.get("/trading/decisions?symbol=AAPL")

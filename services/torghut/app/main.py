@@ -353,7 +353,7 @@ def sqlalchemy_exception_handler(
 
 
 @app.get("/healthz")
-def healthz() -> dict[str, str]:
+async def healthz() -> dict[str, str]:
     """Liveness endpoint for Kubernetes/Knative probes."""
 
     return {"status": "ok", "service": "torghut"}
