@@ -316,3 +316,11 @@ The next bounded implementation milestone is the observe-mode cohort reducer plu
 remain zero-notional. The smallest blocker preventing revenue impact is not service liveness; it is the missing
 receipt-settled path from AAPL's probing route evidence to a paper canary that Jangar can admit without weakening
 capital safety.
+
+## Implementation Note
+
+PR implementation adds the observe-mode `capital_reentry_cohort_ledger` runtime projection to Torghut status,
+readiness, health, and consumer-evidence payloads. Jangar consumes the ledger id and cohort ids as evidence refs for
+paper/live material-action verdicts while keeping the existing decisions conservative. This closes the first engineer
+stage without changing live capital defaults: all initial cohorts still emit `max_notional=0`, and rollback remains a
+PR revert or disabling Jangar cohort consumption.

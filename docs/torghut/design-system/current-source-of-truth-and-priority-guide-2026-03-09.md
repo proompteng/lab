@@ -2,7 +2,7 @@
 
 ## Status
 
-- Date: `2026-05-07`
+- Date: `2026-05-08`
 - Purpose: distinguish live source-of-truth docs from historical milestone records and identify the current highest-priority work
 - Scope: `docs/torghut/design-system/**`, `docs/torghut/**`, `argocd/applications/torghut/**`, `services/torghut/**`, `services/jangar/**`
 
@@ -127,6 +127,8 @@ If the question is "what should I trust right now?", start here:
 
 The current highest-priority work is:
 
+The May 8 handoff is `docs/torghut/design-system/v6/183-torghut-receipt-settled-capital-reentry-cohorts-2026-05-08.md`,
+the observe-mode capital reentry cohort ledger.
 The May 7 contract-graduation and executable-alpha contracts are the current implementation handoff:
 
 - make Jangar graduate accepted design contracts through live runtime receipts before they can widen material action in

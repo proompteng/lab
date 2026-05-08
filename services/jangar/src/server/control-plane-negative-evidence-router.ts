@@ -47,6 +47,10 @@ export type TorghutNegativeEvidenceInput = {
   consumer_evidence_status?: 'current' | 'stale' | 'missing' | 'unavailable' | 'route_missing' | 'schema_mismatch'
   consumer_evidence_fresh_until?: string | null
   consumer_evidence_reason_codes?: string[]
+  capital_reentry_cohort_ledger_id?: string | null
+  capital_reentry_aggregate_state?: string | null
+  capital_reentry_cohort_ids?: string[]
+  capital_reentry_blocking_reason_codes?: string[]
 }
 
 export type NegativeEvidenceRouterInput = {
@@ -209,6 +213,9 @@ const buildPositiveRefs = (input: NegativeEvidenceRouterInput) => {
   if (input.torghut?.consumer_evidence_status === 'current' && input.torghut.consumer_evidence_receipt_id) {
     refs.push(input.torghut.consumer_evidence_receipt_id)
   }
+  if (input.torghut?.capital_reentry_cohort_ledger_id) {
+    refs.push(input.torghut.capital_reentry_cohort_ledger_id)
+  }
   if (
     input.controllerWitness &&
     (input.controllerWitness.decision === 'allow' || input.controllerWitness.decision === 'allow_with_split')
@@ -314,6 +321,30 @@ const buildNegativeEvidenceRefs = (input: NegativeEvidenceRouterInput) => {
     }
     for (const reason of torghut.consumer_evidence_reason_codes ?? []) {
       addEvidence(evidence, 'data_freshness_negative', reason, [consumerEvidenceRef])
+    }
+
+    const cohortRefs = uniqueStrings([
+      torghut.capital_reentry_cohort_ledger_id ?? '',
+      ...(torghut.capital_reentry_cohort_ids ?? []),
+    ])
+    if (
+      torghut.capital_reentry_aggregate_state &&
+      !['observe', 'paper_candidate'].includes(torghut.capital_reentry_aggregate_state)
+    ) {
+      addEvidence(
+        evidence,
+        'data_freshness_negative',
+        `capital_reentry_${torghut.capital_reentry_aggregate_state}`,
+        cohortRefs.length > 0 ? cohortRefs : [consumerEvidenceRef],
+      )
+    }
+    for (const reason of torghut.capital_reentry_blocking_reason_codes ?? []) {
+      addEvidence(
+        evidence,
+        'data_freshness_negative',
+        reason,
+        cohortRefs.length > 0 ? cohortRefs : [consumerEvidenceRef],
+      )
     }
 
     if (torghut.readiness_status && torghut.readiness_status !== 'healthy') {
