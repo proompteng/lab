@@ -5,9 +5,79 @@ Repository: `proompteng/lab`
 Branch: `codex/swarm-torghut-quant-verify`
 Base: `main`
 Owner channel: `swarm://owner/trading`
-Last refreshed: 2026-05-08T08:43:00Z
+Last refreshed: 2026-05-08T10:18:00Z
 
-## Final release refresh
+## Final release refresh - 2026-05-08T10:18Z
+
+This section supersedes the earlier no-go snapshots below.
+
+Final merge and rollout gate is go. PR #5412, `feat(torghut): add profit escrow runtime projections`, was
+squash-merged after terminal-green checks at merge commit `7a5c2788f23fc622760ff11dd7c4fd989e3ed64f`. The
+large-diff Codex review connector was usage-limited, but the maintainer waiver was recorded on the PR before merge.
+
+The generated deploy PR #6091 was reviewed and manually approved for additive migration
+`0030_evidence_epochs.py`, then closed as superseded. Main had already merged newer descendant promotion PR #6093,
+`chore(torghut): promote image 8a01e3d2`, at `8d4afcbcdb8b0e74b1cd7c3f731bd9c5d403319d`. Because #6093 includes
+#5412 and promotes source commit `8a01e3d20e26be623a3fa2dd234d161a5c78218d`, conflict-resolving #6091 would have
+risked rolling Torghut back to the older #5412-only image digest.
+
+The active rollout is #6093:
+
+- Source commit: `8a01e3d20e26be623a3fa2dd234d161a5c78218d`
+- Merge commit: `8d4afcbcdb8b0e74b1cd7c3f731bd9c5d403319d`
+- Image digest: `sha256:dbd4b1b267f2387aeecf7e3f3f242b8630b7fdddb7f2a69f4c827a7069ae6afa`
+- Post-deploy verify: `torghut-post-deploy-verify` run `25549826301`, success at 2026-05-08T10:16:55Z
+
+Argo CD reports `torghut` and `torghut-options` as `Synced` and `Healthy` at revision
+`8d4afcbcdb8b0e74b1cd7c3f731bd9c5d403319d`. Live/sim/options workloads are ready on the promoted digest:
+`torghut-00306-deployment`, `torghut-sim-00404-deployment`, `torghut-options-catalog`, and
+`torghut-options-enricher` all report `1/1` ready. The service account cannot read Knative `ksvc` objects, so the
+rollout was verified through Argo Application state, deployments, pods, events, post-deploy CI, and in-cluster HTTP
+checks.
+
+Runtime evidence is healthy for service rollout but still capital-safe and revenue-inactive. `/healthz`,
+`/trading/status`, and `/trading/revenue-repair` return HTTP 200; `/readyz` returns HTTP 503 because readiness/capital
+conditions remain blocked. `/trading/status` reports active revision `torghut-00306`, mode `live`, enabled `true`,
+running `true`, kill switch `false`, proof floor `repair_only`, route state `repair_only`, capital state
+`zero_notional`, `max_notional=0`, and `simple_lane_orders_submitted_total=0`.
+
+Value-gate evidence after rollout:
+
+- `post_cost_daily_net_pnl`: no live revenue impact claimed; runtime is intentionally `repair_only` with
+  `revenue_ready=false`.
+- `routeable_candidate_count`: execution TCA shows one routeable symbol; route board has `probing=1`, `blocked=4`,
+  `missing=3`, and `capital_eligible_symbol_count=0`.
+- `zero_notional_or_stale_evidence_rate`: route board row count `8`, zero-notional row count `8`, and max notional
+  remains `0`.
+- `fill_tca_or_slippage_quality`: TCA is fresh enough to pass as evidence, but route-universe exclusions remain
+  enforced; aggregate average absolute slippage is about `13.82` bps versus the 8 bps guardrail.
+- `capital_gate_safety`: live submission is not allowed, capital remains zero-notional, and blockers include
+  `alpha_readiness_not_promotion_eligible`, `simple_submit_disabled`, and quant/forecast evidence gaps.
+
+Profit-evidence surfaces are live on `torghut-00306`: profit lease projection has three repair-only leases,
+route-proven profit receipt decision is `repair`, renewal bond profit escrow verdict is `repair_only`, and the
+consumer evidence receipt is present with empirical jobs `healthy`, forecast registry `degraded`, and TCA `pass`.
+The revenue metric advanced is routeable post-cost profit evidence observability and repair prioritization, not live
+PnL. The smallest blocker preventing revenue impact is evidence repair: alpha readiness, quant pipeline stage
+coverage, route universe/TCA slippage quality, market-context freshness, and simple submit enablement.
+
+Rollback path: revert #6093 or promote the prior known-good Torghut digest
+`sha256:fbe830e2803933df61deb7d13bfd26f9a1c640f90b24b20f5fb40909d4256110` through the normal GitOps release PR path.
+The additive evidence epoch tables from #5412 can remain unused if the image is rolled back, and capital is already
+held at the rollback target of zero notional with live submit disabled.
+
+## Owner update message - 2026-05-08T10:18Z
+
+#5412 is merged and rolled out through the newer descendant Torghut promotion #6093, not the stale #6091 promotion
+branch. Argo reports `torghut` and `torghut-options` `Synced`/`Healthy` at
+`8d4afcbcdb8b0e74b1cd7c3f731bd9c5d403319d`, post-deploy verify run `25549826301` passed, and live/sim/options
+workloads are ready on digest `sha256:dbd4b1b267f2387aeecf7e3f3f242b8630b7fdddb7f2a69f4c827a7069ae6afa`.
+
+Runtime evidence is safe but still repair-only: revenue_ready=false, capital_state=zero_notional, max_notional=0,
+TCA routeable symbol count=1, route board zero-notional rows=8/8, expected unblock value=14. Next action is evidence
+repair before revenue activation, not another rollout.
+
+## Historical release refresh - 2026-05-08T08:43Z
 
 This section supersedes earlier rollout snapshots in this document.
 
