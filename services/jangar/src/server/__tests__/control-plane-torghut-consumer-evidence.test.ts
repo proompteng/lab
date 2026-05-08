@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 import { resolveTorghutConsumerEvidence } from '~/server/control-plane-torghut-consumer-evidence'
 
@@ -79,5 +81,18 @@ describe('control-plane Torghut consumer evidence', () => {
       reason_codes: ['torghut_consumer_evidence_missing'],
     })
     expect(result.negativeEvidence).toBeUndefined()
+  })
+
+  it('configures Jangar to read the non-recursive Torghut consumer evidence endpoint', () => {
+    const manifest = readFileSync(
+      resolve(process.cwd(), '..', '..', 'argocd/applications/jangar/deployment.yaml'),
+      'utf8',
+    )
+
+    expect(manifest).toContain('name: JANGAR_TORGHUT_STATUS_URL')
+    expect(manifest).toContain('value: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence')
+    expect(manifest).not.toContain(
+      'name: JANGAR_TORGHUT_STATUS_URL\n              value: http://torghut.torghut.svc.cluster.local/trading/status',
+    )
   })
 })

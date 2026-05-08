@@ -102,6 +102,10 @@ BUILD_IMAGE_DIGEST = os.getenv("TORGHUT_IMAGE_DIGEST", "").strip() or None
 RUNTIME_PROFITABILITY_LOOKBACK_HOURS = 72
 RUNTIME_PROFITABILITY_SCHEMA_VERSION = "torghut.runtime-profitability.v1"
 PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS = 86_400
+CONSUMER_EVIDENCE_CONTROL_PLANE_DEPENDENCY_MESSAGE = (
+    "Jangar dependency quorum is evaluated by the calling control plane; "
+    "Torghut omits the recursive control-plane status fetch for consumer evidence."
+)
 LEAN_LANE_MANAGER = LeanLaneManager()
 WHITEPAPER_WORKFLOW = WhitepaperWorkflowService()
 _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = Lock()
@@ -1987,6 +1991,105 @@ def trading_status() -> dict[str, object]:
         "control_plane_contract": control_plane_contract,
         "evidence_continuity": state.last_evidence_continuity_report,
     }
+
+
+def _consumer_evidence_dependency_quorum() -> JangarDependencyQuorumStatus:
+    return JangarDependencyQuorumStatus(
+        decision="allow",
+        reasons=[],
+        message=CONSUMER_EVIDENCE_CONTROL_PLANE_DEPENDENCY_MESSAGE,
+    )
+
+
+def _build_trading_consumer_evidence_payload() -> dict[str, object]:
+    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    if scheduler is None:
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
+    state = scheduler.state
+    dependency_quorum = _consumer_evidence_dependency_quorum()
+    empirical_jobs = _empirical_jobs_status()
+    quant_evidence = load_quant_evidence_status(
+        account_label=settings.trading_account_label,
+    )
+    forecast_service_status = _forecast_service_status()
+    lean_authority_status = _lean_authority_status()
+    with SessionLocal() as session:
+        tca_summary = _load_tca_summary(session, scheduler=scheduler)
+    market_context_status = scheduler.market_context_status()
+    hypothesis_payload, hypothesis_summary, _dependency_quorum = (
+        _build_hypothesis_runtime_payload(
+            scheduler,
+            tca_summary=tca_summary,
+            market_context_status=market_context_status,
+            dependency_quorum=dependency_quorum,
+        )
+    )
+    with SessionLocal() as session:
+        live_submission_gate = _build_live_submission_gate_payload(
+            state,
+            session=session,
+            hypothesis_summary=hypothesis_payload,
+            empirical_jobs_status=empirical_jobs,
+            dspy_runtime_status=cast(
+                dict[str, object],
+                scheduler.llm_status().get("dspy_runtime", {}),
+            ),
+            quant_health_status=quant_evidence,
+        )
+    simple_lane_status = _build_simple_lane_status_payload()
+    shadow_first_runtime = _build_shadow_first_runtime_payload(
+        state=state,
+        hypothesis_summary=hypothesis_summary,
+    )
+    proof_floor = _build_profitability_proof_floor_payload(
+        state=state,
+        torghut_revision=str(shadow_first_runtime["active_revision"]),
+        live_submission_gate=live_submission_gate,
+        hypothesis_payload=hypothesis_payload,
+        empirical_jobs_status=empirical_jobs,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        tca_summary=tca_summary,
+        simple_lane_status=simple_lane_status,
+    )
+    consumer_evidence_receipt = build_torghut_consumer_evidence_receipt(
+        forecast_service_status=forecast_service_status,
+        empirical_jobs_status=empirical_jobs,
+        proof_floor=proof_floor,
+        live_submission_gate=live_submission_gate,
+    )
+    return {
+        "schema_version": "torghut.consumer-evidence-status.v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "enabled": settings.trading_enabled,
+        "mode": settings.trading_mode,
+        "running": state.running,
+        "build": {
+            "version": BUILD_VERSION,
+            "commit": BUILD_COMMIT,
+            "image_digest": BUILD_IMAGE_DIGEST,
+            "active_revision": shadow_first_runtime["active_revision"],
+        },
+        "control_plane_dependency_mode": "caller_evaluated",
+        "dependency_quorum": dependency_quorum.as_payload(),
+        "forecast_service": forecast_service_status,
+        "lean_authority": lean_authority_status,
+        "empirical_jobs": empirical_jobs,
+        "market_context": market_context_status,
+        "quant_evidence": quant_evidence,
+        "live_submission_gate": live_submission_gate,
+        "proof_floor": proof_floor,
+        "simple_lane_status": simple_lane_status,
+        "torghut_consumer_evidence_receipt": consumer_evidence_receipt,
+    }
+
+
+@app.get("/trading/consumer-evidence")
+def trading_consumer_evidence() -> dict[str, object]:
+    """Return Jangar-facing Torghut evidence without recursive Jangar status fetches."""
+
+    return _build_trading_consumer_evidence_payload()
 
 
 @app.get("/trading/metrics")
