@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: 2026-05-08T01:13:35Z
+    deploy.knative.dev/rollout: 2026-05-08T01:44:50Z
 spec:
   replicas: 1
   strategy:
@@ -57,7 +57,7 @@ spec:
             - name: UI_PORT
               value: "8080"
             - name: JANGAR_RUNTIME_IMAGE
-              value: registry.ide-newton.ts.net/lab/jangar:7a737336@sha256:c76d5d0ad0c698317e9c5f308129eb3ad01f45b72693144251271255af90e320
+              value: registry.ide-newton.ts.net/lab/jangar:9e7b87d8@sha256:758e880b2e9ec439d2dfceb41a170c2352ca63108c90be81be321f8d56cafda4
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: "120"
             - name: JANGAR_BUMBA_TASK_QUEUE
@@ -274,7 +274,7 @@ spec:
             - name: JANGAR_TORGHUT_QUANT_POLICY_MAX_TA_FRESHNESS_SECONDS
               value: "120"
             - name: JANGAR_TORGHUT_STATUS_URL
-              value: http://torghut.torghut.svc.cluster.local/trading/autonomy
+              value: http://torghut.torghut.svc.cluster.local/trading/status
             - name: JANGAR_TORGHUT_STATUS_TIMEOUT_MS
               value: "3000"
             - name: JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS

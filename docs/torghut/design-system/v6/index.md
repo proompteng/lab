@@ -8,10 +8,14 @@
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM
   reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-08T01:14Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-08T02:12Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-08T01:14Z`):
+- Evidence (current next-work priority, refreshed `2026-05-08T02:12Z`):
+  - `178-torghut-route-sample-mint-and-capital-proof-ratchet-2026-05-08.md`
+  - `docs/agents/designs/174-jangar-observer-rights-and-source-settled-capital-ledger-2026-05-08.md`
+  - `177-torghut-profit-repair-broker-and-capital-promotion-gates-2026-05-08.md`
+  - `docs/agents/designs/173-jangar-action-broker-and-proof-carrying-rollout-cells-2026-05-08.md`
   - `176-torghut-source-bound-evidence-reconciliation-and-capital-admission-ledger-2026-05-08.md`
   - `docs/agents/designs/172-jangar-evidence-reconciliation-broker-and-capital-action-firewall-2026-05-08.md`
   - `176-torghut-revision-priced-route-frontier-and-capital-carry-2026-05-08.md`

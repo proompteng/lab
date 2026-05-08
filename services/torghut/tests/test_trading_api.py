@@ -1014,6 +1014,17 @@ class TestTradingApi(TestCase):
         self.assertEqual(status_response.status_code, 200)
         self.assertIn(health_response.status_code, {200, 503})
         self.assertEqual(status_response.json()["proof_floor"], proof_floor)
+        status_consumer_evidence = status_response.json()[
+            "torghut_consumer_evidence_receipt"
+        ]
+        self.assertEqual(
+            status_consumer_evidence["schema_version"],
+            "torghut.consumer-evidence-receipt.v1",
+        )
+        self.assertEqual(status_consumer_evidence["paper_readiness_state"], "blocked")
+        self.assertIn(
+            "forecast_registry_degraded", status_consumer_evidence["reason_codes"]
+        )
         self.assertEqual(
             status_response.json()["route_reacquisition_book"],
             proof_floor["route_reacquisition_book"],
@@ -1028,6 +1039,12 @@ class TestTradingApi(TestCase):
         self.assertEqual(status_board["rows"][0]["symbol"], "NVDA")
         self.assertEqual(status_board["rows"][0]["max_notional"], "0")
         self.assertEqual(health_response.json()["proof_floor"], proof_floor)
+        self.assertEqual(
+            health_response.json()["torghut_consumer_evidence_receipt"][
+                "schema_version"
+            ],
+            "torghut.consumer-evidence-receipt.v1",
+        )
         self.assertEqual(
             health_response.json()["route_reacquisition_book"],
             proof_floor["route_reacquisition_book"],
