@@ -89,6 +89,61 @@ def test_continuity_ledger_allow_packet_can_admit_paper_candidate() -> None:
     }
 
 
+def test_continuity_packet_preserves_evidence_quality_fields() -> None:
+    packet = build_jangar_route_continuity_packet(
+        {
+            "source_rollout_truth_exchange": {
+                "exchange_id": "source-rollout-truth-exchange:quality",
+                "quality_ledger_ref": "quality-ledger:exchange",
+                "quality_state": "degraded",
+                "receipts": [
+                    {
+                        "receipt_id": "truth-settlement:paper_canary:quality",
+                        "action_class": "paper_canary",
+                        "action_decision": "hold",
+                        "fresh_until": "2026-05-08T01:35:00+00:00",
+                        "evidence_quality_ref": "quality-ledger:receipt",
+                        "evidence_quality_state": "dirty",
+                        "non_promoting_receipt": True,
+                    }
+                ],
+            }
+        },
+        now=NOW,
+    )
+
+    assert packet["epoch_id"] == "truth-settlement:paper_canary:quality"
+    assert packet["jangar_evidence_quality_ref"] == "quality-ledger:receipt"
+    assert packet["quality_state"] == "dirty"
+    assert packet["non_promoting_receipt"] is True
+
+
+def test_quality_non_promoting_flag_can_fallback_from_exchange() -> None:
+    packet = build_jangar_route_continuity_packet(
+        {
+            "source_rollout_truth_exchange": {
+                "exchange_id": "source-rollout-truth-exchange:quality",
+                "quality_ledger_ref": "quality-ledger:exchange",
+                "quality_state": "clean",
+                "non_promoting_receipt": True,
+                "receipts": [
+                    {
+                        "receipt_id": "truth-settlement:paper_canary:quality",
+                        "action_class": "paper_canary",
+                        "action_decision": "allow",
+                        "fresh_until": "2026-05-08T01:35:00+00:00",
+                    }
+                ],
+            }
+        },
+        now=NOW,
+    )
+
+    assert packet["jangar_evidence_quality_ref"] == "quality-ledger:exchange"
+    assert packet["quality_state"] == "clean"
+    assert packet["non_promoting_receipt"] is True
+
+
 def test_expired_jangar_packet_is_reduced_to_hold() -> None:
     packet = build_jangar_route_continuity_packet(
         {

@@ -87,6 +87,40 @@ def _normalize_packet(
     return packet
 
 
+def _quality_ref_fields(
+    source: Mapping[str, Any],
+    *,
+    fallback: Mapping[str, Any] | None = None,
+) -> dict[str, object]:
+    fallback_payload = _mapping(fallback)
+    quality_ref = (
+        _text(source.get("jangar_evidence_quality_ref"))
+        or _text(source.get("evidence_quality_ref"))
+        or _text(source.get("quality_ledger_ref"))
+        or _text(fallback_payload.get("jangar_evidence_quality_ref"))
+        or _text(fallback_payload.get("evidence_quality_ref"))
+        or _text(fallback_payload.get("quality_ledger_ref"))
+    )
+    payload: dict[str, object] = {}
+    if quality_ref:
+        payload["jangar_evidence_quality_ref"] = quality_ref
+    quality_state = (
+        _text(source.get("quality_state"))
+        or _text(source.get("evidence_quality_state"))
+        or _text(fallback_payload.get("quality_state"))
+        or _text(fallback_payload.get("evidence_quality_state"))
+    )
+    if quality_state:
+        payload["quality_state"] = quality_state
+    if "non_promoting_receipt" in source:
+        payload["non_promoting_receipt"] = bool(source.get("non_promoting_receipt"))
+    elif "non_promoting_receipt" in fallback_payload:
+        payload["non_promoting_receipt"] = bool(
+            fallback_payload.get("non_promoting_receipt")
+        )
+    return payload
+
+
 def _status_payload_from_url(url: str) -> Mapping[str, Any] | None:
     ttl_seconds = max(0, int(settings.trading_jangar_control_plane_cache_ttl_seconds))
     now = datetime.now(timezone.utc)
@@ -147,6 +181,7 @@ def build_jangar_route_continuity_packet(
             "source": "continuity_witness_ledger",
             "action_class": action_class,
         }
+        packet.update(_quality_ref_fields(ledger))
         return _normalize_packet(packet, now=now)
 
     truth_exchange = _mapping(status_payload.get("source_rollout_truth_exchange"))
@@ -181,6 +216,7 @@ def build_jangar_route_continuity_packet(
             "settlement_state": selected.get("settlement_state"),
             "rollback_target": selected.get("rollback_target"),
         }
+        packet.update(_quality_ref_fields(selected, fallback=truth_exchange))
         return _normalize_packet(packet, now=now)
 
     return _normalize_packet(

@@ -193,6 +193,10 @@ Testing rules for the trading core:
   `torghut.executable-alpha-receipts.v1` candidate receipts. The initial board is observation-only, seeds AAPL route
   rehab, NVDA scoped proof refill, and missing megacap breadth probes from proof-floor/route evidence, and keeps every
   replay and receipt at `max_notional=0` until Jangar contract graduation and fresh scoped proof close.
+- `GET /trading/status` and `GET /readyz` now include the May 8 doc 181
+  `quality_adjusted_profit_frontier` shadow projection. The reducer ranks zero-notional repair packets from quant
+  quality, market-context risk flags, route/TCA state, simulation-cache freshness, and Jangar evidence-quality refs
+  while keeping `paper_probe_notional_limit=0` whenever evidence is missing, stale, degraded, or non-promoting.
 - `GET /trading/consumer-evidence` is the Jangar-facing action boundary for May 8 doc 182. It returns
   `torghut.consumer-evidence-status.v1`, the compatibility `torghut_consumer_evidence_receipt`, a
   `route_proven_profit_receipt` with serving revision, image digest, route canary id, Jangar parity escrow ref,
