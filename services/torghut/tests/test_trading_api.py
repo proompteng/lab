@@ -853,6 +853,25 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(receipt["paper_readiness_state"], "blocked")
         self.assertIn("simple_submit_disabled", receipt["reason_codes"])
+        route_proven_receipt = payload["route_proven_profit_receipt"]
+        self.assertEqual(
+            route_proven_receipt["schema_version"],
+            "torghut.route-proven-profit-receipt.v1",
+        )
+        self.assertEqual(route_proven_receipt["decision"], "repair")
+        self.assertEqual(route_proven_receipt["capital_state"], "zero_notional")
+        self.assertEqual(
+            route_proven_receipt["consumer_evidence_receipt_id"],
+            receipt["receipt_id"],
+        )
+        self.assertEqual(
+            payload["consumer_evidence_canary"],
+            route_proven_receipt["route_canary"],
+        )
+        self.assertEqual(
+            payload["consumer_evidence_canary"]["expected_schema"],
+            "torghut.consumer-evidence-status.v1",
+        )
         dependency_fetch.assert_not_called()
         continuity_fetch.assert_not_called()
 
@@ -1139,6 +1158,20 @@ class TestTradingApi(TestCase):
         self.assertIn(
             "forecast_registry_degraded", status_consumer_evidence["reason_codes"]
         )
+        status_route_receipt = status_response.json()["route_proven_profit_receipt"]
+        self.assertEqual(
+            status_route_receipt["schema_version"],
+            "torghut.route-proven-profit-receipt.v1",
+        )
+        self.assertEqual(status_route_receipt["decision"], "repair")
+        self.assertEqual(
+            status_route_receipt["consumer_evidence_receipt_id"],
+            status_consumer_evidence["receipt_id"],
+        )
+        self.assertEqual(
+            status_response.json()["consumer_evidence_canary"],
+            status_route_receipt["route_canary"],
+        )
         self.assertEqual(
             status_response.json()["route_reacquisition_book"],
             proof_floor["route_reacquisition_book"],
@@ -1158,6 +1191,10 @@ class TestTradingApi(TestCase):
                 "schema_version"
             ],
             "torghut.consumer-evidence-receipt.v1",
+        )
+        self.assertEqual(
+            health_response.json()["route_proven_profit_receipt"]["schema_version"],
+            "torghut.route-proven-profit-receipt.v1",
         )
         self.assertEqual(
             health_response.json()["route_reacquisition_book"],

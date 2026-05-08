@@ -55,7 +55,10 @@ from .trading.autonomy import (
 )
 from .trading.autoresearch_routes import router as autoresearch_router
 from .trading.completion import build_doc29_completion_status
-from .trading.consumer_evidence import build_torghut_consumer_evidence_receipt
+from .trading.consumer_evidence import (
+    build_route_proven_profit_receipt,
+    build_torghut_consumer_evidence_receipt,
+)
 from .trading.empirical_jobs import build_empirical_jobs_status
 from .trading.evidence_epochs import (
     EvidenceEpoch,
@@ -738,11 +741,14 @@ def _evaluate_trading_health_payload(
         quant_evidence=quant_evidence,
         market_context_status=market_context_status,
     )
-    consumer_evidence_receipt = build_torghut_consumer_evidence_receipt(
-        forecast_service_status=_forecast_service_status(),
-        empirical_jobs_status=empirical_jobs,
-        proof_floor=proof_floor,
-        live_submission_gate=live_submission_gate,
+    consumer_evidence_receipt, route_proven_profit_receipt = (
+        _build_consumer_evidence_receipt_projection(
+            forecast_service_status=_forecast_service_status(),
+            empirical_jobs_status=empirical_jobs,
+            proof_floor=proof_floor,
+            live_submission_gate=live_submission_gate,
+            serving_revision=_active_runtime_revision() or BUILD_COMMIT,
+        )
     )
     live_mode = settings.trading_mode == "live"
     empirical_jobs_required = (
@@ -831,6 +837,8 @@ def _evaluate_trading_health_payload(
                 "executable_alpha_receipts"
             ],
             "torghut_consumer_evidence_receipt": consumer_evidence_receipt,
+            "route_proven_profit_receipt": route_proven_profit_receipt,
+            "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
             "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
             "route_reacquisition_board": route_reacquisition_board,
             "quant_evidence": quant_evidence,
@@ -1926,11 +1934,14 @@ def trading_status() -> dict[str, object]:
         quant_evidence=quant_evidence,
         market_context_status=market_context_status,
     )
-    consumer_evidence_receipt = build_torghut_consumer_evidence_receipt(
-        forecast_service_status=forecast_service_status,
-        empirical_jobs_status=empirical_jobs,
-        proof_floor=proof_floor,
-        live_submission_gate=live_submission_gate,
+    consumer_evidence_receipt, route_proven_profit_receipt = (
+        _build_consumer_evidence_receipt_projection(
+            forecast_service_status=forecast_service_status,
+            empirical_jobs_status=empirical_jobs,
+            proof_floor=proof_floor,
+            live_submission_gate=live_submission_gate,
+            serving_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        )
     )
     return {
         "enabled": settings.trading_enabled,
@@ -1962,6 +1973,8 @@ def trading_status() -> dict[str, object]:
             "executable_alpha_receipts"
         ],
         "torghut_consumer_evidence_receipt": consumer_evidence_receipt,
+        "route_proven_profit_receipt": route_proven_profit_receipt,
+        "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
         "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
         "route_reacquisition_board": route_reacquisition_board,
         "quant_evidence": quant_evidence,
@@ -2103,6 +2116,30 @@ def _consumer_evidence_dependency_quorum() -> JangarDependencyQuorumStatus:
     )
 
 
+def _build_consumer_evidence_receipt_projection(
+    *,
+    forecast_service_status: Mapping[str, Any],
+    empirical_jobs_status: Mapping[str, Any],
+    proof_floor: Mapping[str, Any],
+    live_submission_gate: Mapping[str, Any],
+    serving_revision: str | None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    consumer_evidence_receipt = build_torghut_consumer_evidence_receipt(
+        forecast_service_status=forecast_service_status,
+        empirical_jobs_status=empirical_jobs_status,
+        proof_floor=proof_floor,
+        live_submission_gate=live_submission_gate,
+    )
+    route_proven_profit_receipt = build_route_proven_profit_receipt(
+        consumer_evidence_receipt=consumer_evidence_receipt,
+        proof_floor=proof_floor,
+        source_commit=BUILD_COMMIT,
+        serving_revision=serving_revision,
+        image_digest=BUILD_IMAGE_DIGEST,
+    )
+    return consumer_evidence_receipt, route_proven_profit_receipt
+
+
 def _build_trading_consumer_evidence_payload() -> dict[str, object]:
     scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
     if scheduler is None:
@@ -2155,11 +2192,14 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         tca_summary=tca_summary,
         simple_lane_status=simple_lane_status,
     )
-    consumer_evidence_receipt = build_torghut_consumer_evidence_receipt(
-        forecast_service_status=forecast_service_status,
-        empirical_jobs_status=empirical_jobs,
-        proof_floor=proof_floor,
-        live_submission_gate=live_submission_gate,
+    consumer_evidence_receipt, route_proven_profit_receipt = (
+        _build_consumer_evidence_receipt_projection(
+            forecast_service_status=forecast_service_status,
+            empirical_jobs_status=empirical_jobs,
+            proof_floor=proof_floor,
+            live_submission_gate=live_submission_gate,
+            serving_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        )
     )
     return {
         "schema_version": "torghut.consumer-evidence-status.v1",
@@ -2184,6 +2224,8 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         "proof_floor": proof_floor,
         "simple_lane_status": simple_lane_status,
         "torghut_consumer_evidence_receipt": consumer_evidence_receipt,
+        "route_proven_profit_receipt": route_proven_profit_receipt,
+        "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
     }
 
 

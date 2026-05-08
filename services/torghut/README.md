@@ -193,6 +193,12 @@ Testing rules for the trading core:
   `torghut.executable-alpha-receipts.v1` candidate receipts. The initial board is observation-only, seeds AAPL route
   rehab, NVDA scoped proof refill, and missing megacap breadth probes from proof-floor/route evidence, and keeps every
   replay and receipt at `max_notional=0` until Jangar contract graduation and fresh scoped proof close.
+- `GET /trading/consumer-evidence` is the Jangar-facing action boundary for May 8 doc 182. It returns
+  `torghut.consumer-evidence-status.v1`, the compatibility `torghut_consumer_evidence_receipt`, a
+  `route_proven_profit_receipt` with serving revision, image digest, route canary id, Jangar parity escrow ref,
+  proof-floor state, decision, rollback target, and route repair value, plus the `consumer_evidence_canary` contract.
+  `/trading/status` and `/trading/health` include the same route-proven receipt for operators, but paper/live capital
+  remains gated by the dedicated consumer-evidence route, proof floor, and Jangar parity.
 - The simple direct-submit lane is no longer an authority bypass in live mode. Before submitting to Alpaca it evaluates
   the same live-submission gate as the scheduler path and persists the gate payload in decision metadata when a
   submission is blocked. Paper-mode simple execution remains unchanged.

@@ -8,6 +8,12 @@ from typing import Any, Mapping, Sequence, cast
 
 
 CONSUMER_EVIDENCE_SCHEMA_VERSION = "torghut.consumer-evidence-receipt.v1"
+CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION = "torghut.consumer-evidence-status.v1"
+CONSUMER_EVIDENCE_CANARY_SCHEMA_VERSION = "torghut.consumer-evidence-canary.v1"
+ROUTE_PROVEN_PROFIT_RECEIPT_SCHEMA_VERSION = "torghut.route-proven-profit-receipt.v1"
+CONSUMER_EVIDENCE_ROUTE_REF = "/trading/consumer-evidence"
+CONSUMER_EVIDENCE_CANARY_MAX_PAYLOAD_BYTES = 65_536
+CONSUMER_EVIDENCE_CANARY_MAX_LATENCY_MS = 3_000
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -56,6 +62,15 @@ def _first_text(value: object) -> str | None:
         if text:
             return text
     return None
+
+
+def _int(value: object, default: int = 0) -> int:
+    if value is None:
+        return default
+    try:
+        return int(Decimal(str(value)))
+    except (InvalidOperation, ValueError):
+        return default
 
 
 def _dimension(proof_floor: Mapping[str, Any], name: str) -> Mapping[str, Any]:
@@ -157,6 +172,185 @@ def _receipt_id(payload: Mapping[str, object]) -> str:
     return f"torghut-consumer-evidence:{sha256(encoded.encode()).hexdigest()[:16]}"
 
 
+def _stable_ref(prefix: str, payload: Mapping[str, object]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return f"{prefix}:{sha256(encoded.encode()).hexdigest()[:16]}"
+
+
+def _route_repair_value(proof_floor: Mapping[str, Any]) -> int:
+    route_book = _mapping(proof_floor.get("route_reacquisition_book"))
+    route_summary = _mapping(route_book.get("summary"))
+    summary_value = _int(route_summary.get("expected_unblock_value"), -1)
+    if summary_value >= 0:
+        return summary_value
+    return sum(
+        _int(_mapping(record).get("expected_unblock_value"))
+        for record in _sequence(route_book.get("records"))
+    )
+
+
+def _proof_floor_state(proof_floor: Mapping[str, Any]) -> str:
+    return (
+        _text(proof_floor.get("floor_state"))
+        or _text(proof_floor.get("route_state"))
+        or "unknown"
+    )
+
+
+def _route_proven_decision(
+    *,
+    consumer_evidence_receipt: Mapping[str, Any],
+    proof_floor: Mapping[str, Any],
+    route_canary_state: str,
+) -> str:
+    if route_canary_state in {"route_missing", "missing"}:
+        return "repair"
+    if route_canary_state in {"schema_mismatch", "stale", "unavailable"}:
+        return "hold"
+    if _text(proof_floor.get("route_state")) == "repair_only":
+        return "repair"
+    if _text(proof_floor.get("capital_state")) == "quarantine":
+        return "block"
+    if _sequence(consumer_evidence_receipt.get("reason_codes")):
+        return "hold"
+    return "observe"
+
+
+def build_consumer_evidence_canary(
+    *,
+    source_commit: str,
+    serving_revision: str | None,
+    image_digest: str | None,
+    observed_status: int = 200,
+    observed_schema: str = CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION,
+    observed_receipt_schema: str = CONSUMER_EVIDENCE_SCHEMA_VERSION,
+) -> dict[str, object]:
+    route_canary_id = _stable_ref(
+        "torghut-consumer-evidence-canary",
+        {
+            "route_ref": CONSUMER_EVIDENCE_ROUTE_REF,
+            "source_commit": source_commit,
+            "serving_revision": serving_revision,
+            "image_digest": image_digest,
+            "observed_status": observed_status,
+            "observed_schema": observed_schema,
+            "observed_receipt_schema": observed_receipt_schema,
+        },
+    )
+    state = "current"
+    reason_codes: list[str] = []
+    if observed_status == 404:
+        state = "route_missing"
+        reason_codes.append("consumer_evidence_route_missing")
+    elif observed_status != 200:
+        state = "unavailable"
+        reason_codes.append("consumer_evidence_route_unavailable")
+    elif observed_schema != CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION:
+        state = "schema_mismatch"
+        reason_codes.append("consumer_evidence_schema_mismatch")
+    elif observed_receipt_schema != CONSUMER_EVIDENCE_SCHEMA_VERSION:
+        state = "schema_mismatch"
+        reason_codes.append("consumer_evidence_receipt_schema_mismatch")
+
+    return {
+        "schema_version": CONSUMER_EVIDENCE_CANARY_SCHEMA_VERSION,
+        "canary_id": route_canary_id,
+        "route_ref": CONSUMER_EVIDENCE_ROUTE_REF,
+        "method": "GET",
+        "expected_status": 200,
+        "expected_schema": CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION,
+        "expected_receipt_schema": CONSUMER_EVIDENCE_SCHEMA_VERSION,
+        "max_payload_bytes": CONSUMER_EVIDENCE_CANARY_MAX_PAYLOAD_BYTES,
+        "max_latency_ms": CONSUMER_EVIDENCE_CANARY_MAX_LATENCY_MS,
+        "observed_status": observed_status,
+        "observed_schema": observed_schema,
+        "observed_receipt_schema": observed_receipt_schema,
+        "source_commit": source_commit,
+        "serving_revision": serving_revision,
+        "image_digest": image_digest,
+        "state": state,
+        "reason_codes": reason_codes,
+    }
+
+
+def build_route_proven_profit_receipt(
+    *,
+    consumer_evidence_receipt: Mapping[str, Any],
+    proof_floor: Mapping[str, Any],
+    source_commit: str,
+    serving_revision: str | None,
+    image_digest: str | None,
+    rollback_target: str = "previous_torghut_image_or_pr_revert",
+) -> dict[str, object]:
+    route_canary = build_consumer_evidence_canary(
+        source_commit=source_commit,
+        serving_revision=serving_revision,
+        image_digest=image_digest,
+    )
+    route_canary_id = _text(route_canary.get("canary_id"))
+    jangar_parity_escrow_ref = _stable_ref(
+        "jangar-source-serving-parity",
+        {
+            "route_ref": CONSUMER_EVIDENCE_ROUTE_REF,
+            "source_commit": source_commit,
+            "serving_revision": serving_revision,
+            "image_digest": image_digest,
+            "route_canary_id": route_canary_id,
+        },
+    )
+    route_canary_state = _text(route_canary.get("state"), "unknown")
+    reason_codes = _unique(
+        [
+            *[
+                _text(reason)
+                for reason in _sequence(consumer_evidence_receipt.get("reason_codes"))
+            ],
+            *[_text(reason) for reason in _sequence(route_canary.get("reason_codes"))],
+        ]
+    )
+    payload_for_id = {
+        "schema_version": ROUTE_PROVEN_PROFIT_RECEIPT_SCHEMA_VERSION,
+        "generated_at": consumer_evidence_receipt.get("generated_at"),
+        "fresh_until": consumer_evidence_receipt.get("fresh_until"),
+        "source_commit": source_commit,
+        "serving_revision": serving_revision,
+        "image_digest": image_digest,
+        "route_canary_id": route_canary_id,
+        "jangar_parity_escrow_ref": jangar_parity_escrow_ref,
+        "proof_floor_state": _proof_floor_state(proof_floor),
+        "route_state": _text(proof_floor.get("route_state"), "unknown"),
+        "capital_state": _text(proof_floor.get("capital_state"), "unknown"),
+        "max_notional": _text(proof_floor.get("max_notional"), "0"),
+        "candidate_id": consumer_evidence_receipt.get("candidate_id"),
+        "dataset_snapshot_ref": consumer_evidence_receipt.get("dataset_snapshot_ref"),
+        "route_repair_value": _route_repair_value(proof_floor),
+        "decision": _route_proven_decision(
+            consumer_evidence_receipt=consumer_evidence_receipt,
+            proof_floor=proof_floor,
+            route_canary_state=route_canary_state,
+        ),
+        "reason_codes": reason_codes,
+    }
+
+    return {
+        **payload_for_id,
+        "receipt_id": _stable_ref("torghut-route-proven-profit", payload_for_id),
+        "rollback_target": rollback_target,
+        "consumer_evidence_receipt_id": consumer_evidence_receipt.get("receipt_id"),
+        "consumer_evidence_schema_version": consumer_evidence_receipt.get(
+            "schema_version"
+        ),
+        "paper_readiness_state": consumer_evidence_receipt.get("paper_readiness_state"),
+        "live_readiness_state": consumer_evidence_receipt.get("live_readiness_state"),
+        "empirical_jobs_state": consumer_evidence_receipt.get("empirical_jobs_state"),
+        "forecast_registry_state": consumer_evidence_receipt.get(
+            "forecast_registry_state"
+        ),
+        "tca_state": consumer_evidence_receipt.get("tca_state"),
+        "route_canary": route_canary,
+    }
+
+
 def build_torghut_consumer_evidence_receipt(
     *,
     forecast_service_status: Mapping[str, Any],
@@ -204,5 +398,9 @@ def build_torghut_consumer_evidence_receipt(
 
 __all__ = [
     "CONSUMER_EVIDENCE_SCHEMA_VERSION",
+    "CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION",
+    "ROUTE_PROVEN_PROFIT_RECEIPT_SCHEMA_VERSION",
+    "build_consumer_evidence_canary",
+    "build_route_proven_profit_receipt",
     "build_torghut_consumer_evidence_receipt",
 ]
