@@ -225,6 +225,27 @@ spec:
                       minimum: 1
                     freezeDuration:
                       type: string
+                mission:
+                  type: object
+                  properties:
+                    ledgerRef:
+                      type: string
+                    sourceDesign:
+                      type: string
+                    businessMetric:
+                      type: string
+                    validationContract:
+                      type: array
+                      items:
+                        type: string
+                    valueGates:
+                      type: array
+                      items:
+                        type: string
+                    handoffRequiredFields:
+                      type: array
+                      items:
+                        type: string
                 execution:
                   type: object
                   properties:
