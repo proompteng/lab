@@ -5,7 +5,125 @@ Repository: `proompteng/lab`
 Branch: `codex/swarm-torghut-quant-verify`
 Base: `main`
 Owner channel: `swarm://owner/trading`
-Last refreshed: 2026-05-08T10:18:00Z
+Last refreshed: 2026-05-08T13:42:00Z
+
+## Final release refresh - 2026-05-08T13:42Z
+
+This section supersedes the earlier snapshots below.
+
+Final merge and rollout gate is go for the selected Torghut quant PRs. The governing runtime requirements were
+`docs/torghut/design-system/v6/184-torghut-execution-trusted-profit-repair-settlement-2026-05-08.md`, which requires
+profit-repair settlement evidence to keep live notional at zero until receipts settle, and
+`docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md`, which requires Torghut verify stages to prove
+green PR checks, image promotion, Argo sync, live service health, and trading or evidence status after rollout.
+
+Merged PRs:
+
+- #6115, `fix(torghut): honor optional quant evidence in profit gates`, merged at
+  `fa8a59fcffcf4b03777caccded1d3c2a26b1ac3f`.
+- #6118, `chore(torghut): promote image fa8a59fc`, merged at
+  `da9d831c2fda3afc7ed51f648965400b6fe2ce8e`, promoted Torghut digest
+  `sha256:561bd5d42db9b3c03567f59d475b21df1cd9bbb6a7b50e8155c7375b087d3d77`.
+- #6117, `feat(torghut): add profit repair settlement ledger`, merged at
+  `fa3d104cb600392d0cc6a91eb6e8d6a08df5b74a`.
+- #6119, `chore(torghut): promote image fa3d104c`, merged at
+  `a03d81bfee930dbec160b85078b44ad7bfc840ee`, promoted Torghut digest
+  `sha256:3b77bbd6fc7607d3f660cb2a1f8a4937f72359bff4929121a6086e166795ac98`.
+- #6120, `chore(jangar): promote image fa3d104c`, merged at
+  `74befb03e6df84d62b53f5732e0bcc6b90ef52d8`, promoted Jangar digest
+  `sha256:e4fda889861d807265ca5638218431f8ad841bf08b54f8482bf73e43b8d71bf2`.
+
+Merge gate evidence:
+
+- #6115 had no review threads or review requests, was conflict-free, and all non-skipped checks were green before
+  merge, including Torghut Pyright, bytecode/lint/migration guard, pytest shards, coverage, and quality signals.
+- #6117 had no review threads, no review requests, `mergeStateStatus=CLEAN`, `mergeable=MERGEABLE`, and changed
+  988 additions plus 2 deletions, below the 1000-line Codex review threshold.
+- #6117 checks were green before merge: semantic commits, semantic PR title, `CI / check_changed_files`,
+  `jangar-ci / lint-and-typecheck / run`, `agents-ci / validate`, `agents-ci / integration`, Torghut Pyright,
+  bytecode/lint/migration guard, pytest shards 0-3, coverage, and quality signals.
+- #6119 and #6120 release PR checks were green before auto-merge, including semantic checks, Argo lint,
+  kubeconform, release-manifest gating, Jangar typecheck for #6120, and Torghut deploy automerge for #6119.
+- Post-merge release workflows passed: `torghut-build-push` run `25557901556`, `torghut-release` run
+  `25558175648`, `torghut-post-deploy-verify` run `25558264463`, `jangar-build-push` run `25557901570`,
+  `jangar-release` run `25558419593`, and `jangar-post-deploy-verify` run `25558467878`.
+
+Rollout evidence:
+
+- Argo CD reports `torghut`, `torghut-options`, and `jangar` as `Synced` and `Healthy` at revision
+  `74befb03e6df84d62b53f5732e0bcc6b90ef52d8`.
+- `torghut-00310-deployment` and `torghut-sim-00408-deployment` are `1/1` ready, updated, and available on
+  `registry.ide-newton.ts.net/lab/torghut@sha256:3b77bbd6fc7607d3f660cb2a1f8a4937f72359bff4929121a6086e166795ac98`.
+- `torghut-options-catalog` and `torghut-options-enricher` are `1/1` ready, updated, and available on the same
+  Torghut digest.
+- The current pods have zero restarts for the Torghut live, sim, options catalog, and options enricher containers.
+- Events show the #6119 migration job completed, new Knative revisions `torghut-00310` and `torghut-sim-00408`
+  became ready, and old revisions scaled down. The remaining warnings were transient startup/readiness probes during
+  rollout plus pre-existing PDB and old whitepaper workflow noise.
+
+Runtime evidence:
+
+- `/healthz` returns HTTP 200 with `{"status":"ok","service":"torghut"}`.
+- `/trading/status` reports runtime build `v0.568.5-602-gfa3d104cb`, commit
+  `fa3d104cb600392d0cc6a91eb6e8d6a08df5b74a`, active revision `torghut-00310`, `enabled=true`, `running=true`,
+  mode `live`, and autonomy disabled.
+- Live submission remains blocked as intended: `allowed=false`, reason `simple_submit_disabled`, blockers
+  `alpha_readiness_not_promotion_eligible` and `simple_submit_disabled`, capital stage `shadow`, and
+  `promotion_eligible_total=0`.
+- Quant evidence is non-blocking but degraded: `required=false`, `ok=true`, latest metrics count `144`, latest
+  metrics at `2026-05-08T13:39:46.497Z`, and `metrics_pipeline_lag_seconds=67`.
+- `/trading/health` returns HTTP 503 with status `degraded`; dependencies `postgres`, `clickhouse`, `alpaca`,
+  `universe`, and `empirical_jobs` are ok, while `profitability_proof_floor` is `repair_only` and
+  `live_submission_gate` is blocked.
+- `/trading/consumer-evidence` now exposes `torghut.profit-repair-settlement-ledger.v1` on `torghut-00310`.
+  The ledger is `aggregate_state=repair`, `next_safe_action=zero_notional_repair`, with 7 repair lots, 7
+  zero-notional lots, 0 routeable candidates, 10 quality-frontier packets, and rollback target
+  `live_submit_enabled=false`.
+- The capital reentry ledger reports 5 repair cohorts, 5 zero-notional cohorts, 0 routeable candidates, and expected
+  unblock value 19.
+
+Value-gate evidence:
+
+- `post_cost_daily_net_pnl`: no live PnL claimed. Runtime remains revenue-inactive by design because live submission
+  is disabled and proof floor is repair-only.
+- `routeable_candidate_count`: still 0. The release improves repair visibility by making settlement lots and expected
+  unblock value explicit.
+- `zero_notional_or_stale_evidence_rate`: improved observability; all 7 profit repair lots remain zero-notional and
+  list their stale or missing evidence blockers.
+- `fill_tca_or_slippage_quality`: repair lots identify route TCA exclusions for AMD, AVGO, INTC, and NVDA and missing
+  TCA probes for AMZN, GOOGL, and ORCL.
+- `capital_gate_safety`: preserved. Every profit repair lot has `paper_notional_limit=0` and `live_notional_limit=0`;
+  submit enablement explicitly rolls back if proof floor is `repair_only` or max notional is zero.
+
+Rollback path:
+
+- Revert #6119 or promote the previous Torghut digest
+  `sha256:561bd5d42db9b3c03567f59d475b21df1cd9bbb6a7b50e8155c7375b087d3d77` through the normal GitOps release PR path.
+- If the Jangar evidence-router side regresses, revert #6120 or promote the previous known-good Jangar image through
+  the normal Jangar release PR path.
+- Capital rollback is already enforced at runtime: zero notional, live submit disabled, and profit-repair settlement
+  consumption disabled in rollback targets.
+
+The revenue metric advanced is routeable post-cost profit evidence readiness, specifically
+`zero_notional_or_stale_evidence_rate` and `fill_tca_or_slippage_quality` observability. The smallest blocker
+preventing revenue impact is not deployment health; it is evidence repair: zero routeable candidates, quant stage
+coverage degraded, route TCA gaps, schema/rejection-drag debt, alpha readiness not promotion-eligible, and simple
+submit disabled.
+
+## Owner update message - 2026-05-08T13:42Z
+
+Rollout gate is green. #6115 and #6117 are merged, Torghut promotion #6119 and Jangar promotion #6120 are merged, and
+Argo shows `torghut`, `torghut-options`, and `jangar` `Synced`/`Healthy` at
+`74befb03e6df84d62b53f5732e0bcc6b90ef52d8`.
+
+Live, sim, catalog, and enricher workloads are ready on Torghut digest
+`sha256:3b77bbd6fc7607d3f660cb2a1f8a4937f72359bff4929121a6086e166795ac98`; `/trading/status` reports commit
+`fa3d104cb600392d0cc6a91eb6e8d6a08df5b74a`, active revision `torghut-00310`, enabled live mode, and running.
+Trading remains capital-safe rather than revenue-active: routeable candidates are 0, the profit repair ledger has 7
+zero-notional repair lots, and live submission is blocked by `simple_submit_disabled` plus alpha readiness.
+
+Next action is evidence repair, not another deployment: clear quant stage coverage, route TCA gaps, schema/rejection
+drag debt, and alpha-readiness blockers before any paper or live notional opens.
 
 ## Final release refresh - 2026-05-08T10:18Z
 
