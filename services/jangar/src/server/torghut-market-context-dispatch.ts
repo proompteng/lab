@@ -26,6 +26,7 @@ export type MarketContextDispatchSettings = {
   onDemandDispatchPriorityClassName: string
   onDemandDispatchCallbackUrl: string
   onDemandDispatchTtlSeconds: number
+  batchTradingStatusUrl: string
 }
 
 type DispatchStateRow = {
@@ -272,7 +273,7 @@ const resolveAgentRunReferences = (domain: MarketContextProviderDomain) =>
         implementationSpecName: 'torghut-market-context-news-v1',
       }
 
-const buildMarketContextAgentRun = (params: {
+export const buildMarketContextAgentRun = (params: {
   symbol: string
   domain: MarketContextProviderDomain
   snapshotState: MarketContextSnapshotState
@@ -323,6 +324,7 @@ const buildMarketContextAgentRun = (params: {
         },
       },
       parameters: {
+        executionMode: 'batch_task',
         symbol: params.symbol,
         domain: params.domain,
         asOfUtc: toIso(params.now),
@@ -330,6 +332,7 @@ const buildMarketContextAgentRun = (params: {
         provider: params.provider,
         callbackUrl: params.settings.onDemandDispatchCallbackUrl,
         requestId: params.requestId,
+        tradingStatusUrl: params.settings.batchTradingStatusUrl,
       },
     },
   }
