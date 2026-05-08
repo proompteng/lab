@@ -15,7 +15,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-05-08T03:35:35Z"
+        client.knative.dev/updateTimestamp: "2026-05-08T01:51:37Z"
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
@@ -524,23 +524,17 @@ spec:
             httpGet:
               path: /healthz
               port: 8181
-            failureThreshold: 6
-            periodSeconds: 10
-            timeoutSeconds: 10
           startupProbe:
             httpGet:
               path: /healthz
               port: 8181
-            failureThreshold: 60
+            failureThreshold: 18
             periodSeconds: 5
-            timeoutSeconds: 10
+            timeoutSeconds: 2
           readinessProbe:
             httpGet:
               path: /healthz
               port: 8181
-            failureThreshold: 3
-            periodSeconds: 5
-            timeoutSeconds: 10
           resources:
             requests:
               cpu: 100m
