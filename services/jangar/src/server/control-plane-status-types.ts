@@ -1,4 +1,5 @@
 import type { ControlPlaneWatchReliabilitySummary } from '~/server/control-plane-watch-reliability'
+import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
 import type {
   ActionSloBudget,
   AdmissionPassportStatus,
@@ -180,5 +181,6 @@ export type ControlPlaneStatus = {
   stages: ExecutionTrustStage[]
   rollout_health: ControlPlaneRolloutHealth
   empirical_services: EmpiricalServicesStatus
+  torghut_consumer_evidence: TorghutConsumerEvidenceStatus
   namespaces: NamespaceStatus[]
 }

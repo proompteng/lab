@@ -43,6 +43,10 @@ export type TorghutNegativeEvidenceInput = {
   critical_quant_alerts?: number
   rollout_ambiguity_refs?: string[]
   paper_settlement_clean?: boolean
+  consumer_evidence_receipt_id?: string | null
+  consumer_evidence_status?: 'current' | 'stale' | 'missing' | 'unavailable'
+  consumer_evidence_fresh_until?: string | null
+  consumer_evidence_reason_codes?: string[]
 }
 
 export type NegativeEvidenceRouterInput = {
@@ -202,6 +206,9 @@ const buildPositiveRefs = (input: NegativeEvidenceRouterInput) => {
   if (input.executionTrust.status === 'healthy') {
     refs.push('execution_trust:healthy')
   }
+  if (input.torghut?.consumer_evidence_status === 'current' && input.torghut.consumer_evidence_receipt_id) {
+    refs.push(input.torghut.consumer_evidence_receipt_id)
+  }
   if (
     input.controllerWitness &&
     (input.controllerWitness.decision === 'allow' || input.controllerWitness.decision === 'allow_with_split')
@@ -296,6 +303,19 @@ const buildNegativeEvidenceRefs = (input: NegativeEvidenceRouterInput) => {
 
   const torghut = input.torghut
   if (torghut) {
+    const consumerEvidenceRef = torghut.consumer_evidence_receipt_id ?? 'torghut_consumer_evidence:missing'
+    if (torghut.consumer_evidence_status && torghut.consumer_evidence_status !== 'current') {
+      addEvidence(
+        evidence,
+        'data_freshness_negative',
+        `torghut_consumer_evidence_${torghut.consumer_evidence_status}`,
+        [consumerEvidenceRef],
+      )
+    }
+    for (const reason of torghut.consumer_evidence_reason_codes ?? []) {
+      addEvidence(evidence, 'data_freshness_negative', reason, [consumerEvidenceRef])
+    }
+
     if (torghut.readiness_status && torghut.readiness_status !== 'healthy') {
       addEvidence(evidence, 'data_freshness_negative', `torghut_readiness_${torghut.readiness_status}`, [
         evidenceRef('torghut:readyz', torghut.readyz_status_code),

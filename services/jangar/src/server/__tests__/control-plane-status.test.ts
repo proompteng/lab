@@ -654,6 +654,20 @@ describe('control-plane status', () => {
       kubeGateway: currentKubeGateway,
       resolveExecutionTrust: async () => healthyExecutionTrustSnapshot,
       resolveRuntimeAdmission: () => healthyRuntimeAdmissionSnapshot,
+      resolveTorghutConsumerEvidence: async () => ({
+        status: {
+          status: 'disabled',
+          endpoint: '',
+          receipt_id: null,
+          generated_at: null,
+          fresh_until: null,
+          candidate_id: null,
+          dataset_snapshot_ref: null,
+          max_notional: null,
+          reason_codes: [],
+          message: 'test consumer evidence disabled',
+        },
+      }),
       ...deps,
     })
 
@@ -920,6 +934,7 @@ describe('control-plane status', () => {
     expect(status.empirical_services.forecast.authoritative).toBe(true)
     expect(status.empirical_services.lean.authoritative).toBe(true)
     expect(status.empirical_services.jobs.authoritative).toBe(true)
+    expect(status.torghut_consumer_evidence.status).toBe('disabled')
   })
 
   it('projects source rollout truth and keeps normal dispatch repair-only when GitOps lags source', async () => {

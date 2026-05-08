@@ -206,6 +206,38 @@ describe('negative evidence router', () => {
     )
   })
 
+  it('uses current Torghut consumer evidence to replace the generic missing-evidence blocker', () => {
+    const result = buildNegativeEvidenceRouterStatus(
+      baseInput({
+        torghut: {
+          readiness_status: 'degraded',
+          readyz_status_code: 503,
+          market_context_status: 'healthy',
+          open_quant_alerts: 0,
+          critical_quant_alerts: 0,
+          paper_settlement_clean: false,
+          consumer_evidence_receipt_id: 'torghut-consumer-evidence:test',
+          consumer_evidence_status: 'current',
+          consumer_evidence_fresh_until: '2026-05-06T10:31:00.000Z',
+          consumer_evidence_reason_codes: ['forecast_registry_degraded', 'execution_tca_route_universe_incomplete'],
+        },
+      }),
+    )
+
+    const paperCanary = findBudget(result.budgets, 'paper_canary')
+    const liveMicro = findBudget(result.budgets, 'live_micro_canary')
+    expect(result.router.positive_evidence_refs).toContain('torghut-consumer-evidence:test')
+    expect(paperCanary.decision).toBe('hold')
+    expect(paperCanary.blocked_reasons).toEqual(
+      expect.arrayContaining(['forecast_registry_degraded', 'execution_tca_route_universe_incomplete']),
+    )
+    expect(paperCanary.blocked_reasons).not.toContain('torghut_consumer_evidence_missing')
+    expect(liveMicro.decision).toBe('block')
+    expect(liveMicro.blocked_reasons).toEqual(
+      expect.arrayContaining(['forecast_registry_degraded', 'execution_tca_route_universe_incomplete']),
+    )
+  })
+
   it('holds deploy widening on rollout ambiguity without blocking read-only service', () => {
     const result = buildNegativeEvidenceRouterStatus(
       baseInput({
