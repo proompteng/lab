@@ -5,7 +5,127 @@ Repository: `proompteng/lab`
 Branch: `codex/swarm-torghut-quant-verify`
 Base: `main`
 Owner channel: `swarm://owner/trading`
-Last refreshed: 2026-05-08T13:42:00Z
+Last refreshed: 2026-05-08T15:12:18Z
+
+## Final release refresh - 2026-05-08T15:12Z
+
+This section supersedes the earlier snapshots below.
+
+Final merge and rollout gate is go for the selected Torghut quant release. The governing runtime requirement was
+`docs/torghut/design-system/v6/184-torghut-profit-signal-quorum-and-context-routability-handoff-2026-05-08.md`,
+which requires the profit-signal quorum to expose routeability and stale-evidence blockers without widening capital.
+The runtime surfaces are the `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and
+`GET /trading/consumer-evidence` contracts documented in `services/torghut/README.md`.
+
+Open PR enumeration selected #6123 as the direct Torghut quant value-gate PR and #6124 as its generated GitOps
+promotion PR. #5889 was a Jangar control-plane PR, and #5767/#5316 were older automated release PRs; none were the
+primary Torghut quant blocker for this release gate.
+
+Merged PRs:
+
+- #6123, `feat(torghut): add profit signal quorum receipt`, squash-merged at
+  `59b57ebf0199f83136742cf71ed9379e073d6874`.
+- #6124, `chore(torghut): promote image 59b57ebf`, auto-squash-merged at
+  `0293bb824f2ee98fa72fe2ad5b07c83336516856`, promoted image digest
+  `sha256:cd9629c9e1e4c3a3565fb0d389f9a90d37fbf3b7b0a3a6253556485498079991`.
+
+Merge gate evidence:
+
+- #6123 was conflict-free, non-draft, comment-clean, and `MERGEABLE/CLEAN` before merge.
+- #6123 changed exactly 1000 additions and 0 deletions, so it did not exceed the large-diff Codex review threshold.
+  The attempted Codex review returned a usage-limit notice and did not create blocking review threads.
+- #6123 current checks were green before merge: Torghut Pyright, bytecode/lint/migration guard, pytest shards 0-3,
+  bytecode+pytest+coverage, quality signals, changed-file plan, semantic commit lint, and semantic PR title.
+- #6124 changed only allowlisted GitOps manifests, 24 additions and 24 deletions, with no migration-approval label.
+- #6124 release checks were green before automerge: semantic commit lint, semantic PR title, Argo lint, kubeconform,
+  Torghut release-manifest gating, and `torghut-deploy-automerge`.
+- Source commit CI after #6123 was green on run `25562499196`, including the aggregate coverage job. Image build
+  passed on `torghut-build-push` run `25562499215`, and `torghut-release` run `25562638267` created #6124.
+
+Rollout evidence:
+
+- Post-promotion checks passed on main commit `0293bb824f2ee98fa72fe2ad5b07c83336516856`: `argo-lint` run
+  `25562837370`, `torghut-ci` run `25562837401`, `kubeconform` run `25562837442`, and
+  `torghut-post-deploy-verify` run `25562837373`.
+- Argo CD reports `torghut` and `torghut-options` as `Synced` and `Healthy` at revision
+  `0293bb824f2ee98fa72fe2ad5b07c83336516856`. `torghut` finished sync at `2026-05-08T15:07:28Z`;
+  `torghut-options` finished at `2026-05-08T15:07:52Z`.
+- `torghut-00311-deployment`, `torghut-sim-00409-deployment`, `torghut-options-catalog`, and
+  `torghut-options-enricher` are each `1/1` ready, updated, and available on
+  `registry.ide-newton.ts.net/lab/torghut@sha256:cd9629c9e1e4c3a3565fb0d389f9a90d37fbf3b7b0a3a6253556485498079991`.
+- The live, sim, catalog, and enricher pods created during this rollout are running with zero restarts.
+- Events show the migration hook completed, Knative revisions `torghut-00311` and `torghut-sim-00409` became ready,
+  old revisions scaled down, and options catalog/enricher rolled to the new digest. The warning events were transient
+  startup/readiness probes during rollout plus pre-existing PDB and websocket readiness noise.
+- The service account cannot read Knative `services.serving.knative.dev` directly; Knative readiness was therefore
+  verified through Argo health, the successful post-deploy verifier, deployments, pods, and in-cluster HTTP checks.
+
+Runtime evidence:
+
+- `/healthz` returns HTTP 200.
+- `/readyz` and `/trading/health` return HTTP 503 with degraded trading health, which is expected while capital gates
+  remain repair-only; post-deploy verify accepted the HTTP response and validated the runtime evidence surfaces.
+- `/trading/status` reports build `v0.568.5-607-g59b57ebf0`, commit
+  `59b57ebf0199f83136742cf71ed9379e073d6874`, active revision `torghut-00311`, `enabled=true`, `running=true`,
+  mode `live`, autonomy disabled, and kill switch false.
+- `profit_signal_quorum` exposes schema `torghut.profit-signal-quorum.v1`, 3 quorums, 3 observe-only decisions,
+  3 zero-notional quorums, 0 paper candidates, 0 routeable candidates, and 16 blocked or stale evidence cells.
+- The live submission gate remains blocked as intended: `allowed=false`, reason `simple_submit_disabled`, capital
+  stage `shadow`.
+- Quant evidence is non-blocking but not revenue-clear: `ok=true`, reason `quant_metrics_update_missing`,
+  latest metrics count `180`, and metrics pipeline lag about `32` seconds at verification time.
+- `/trading/revenue-repair` reports `business_state=repair_only`, `revenue_ready=false`,
+  `capital_state=zero_notional`, `max_notional=0`, 7 repair queue items, and blockers
+  `alpha_readiness_not_promotion_eligible`, `market_context_stale`, `simple_submit_disabled`, and
+  `quant_pipeline_degraded`.
+- `/trading/consumer-evidence` exposes `torghut.consumer-evidence-status.v1` and
+  `torghut.profit-repair-settlement-ledger.v1` with aggregate state `repair`.
+
+Value-gate evidence:
+
+- `post_cost_daily_net_pnl`: no live PnL is claimed. Runtime is intentionally revenue-inactive because
+  `revenue_ready=false` and live submission remains blocked.
+- `routeable_candidate_count`: still 0. The release improves routeability evidence by making quorum membership and
+  blocked/stale evidence counts explicit for Jangar handoff.
+- `zero_notional_or_stale_evidence_rate`: all 3 quorum receipts remain zero-notional; 16 blocked/stale evidence cells
+  are visible instead of silent.
+- `fill_tca_or_slippage_quality`: the release surfaces route/TCA quality as a value gate in the quorum summary and
+  keeps repair blockers visible for follow-up.
+- `capital_gate_safety`: preserved. Max notional remains 0, capital state remains zero-notional, and live submission
+  remains blocked by `simple_submit_disabled`.
+
+Rollback path:
+
+- Fast rollback is to revert #6124 or promote the previous known-good Torghut digest
+  `sha256:3b77bbd6fc7607d3f660cb2a1f8a4937f72359bff4929121a6086e166795ac98` through the normal GitOps release PR
+  path.
+- If the runtime code regresses independently of the image promotion, revert #6123 and let the standard build,
+  release, and post-deploy verification workflows promote the reverted image.
+- Capital safety rollback is already active at runtime: max notional is zero, revenue is not ready, and live
+  submission is disabled.
+
+The revenue metric advanced is routeable post-cost profit evidence readiness, specifically
+`zero_notional_or_stale_evidence_rate` and `routeable_candidate_count` observability. The smallest blocker preventing
+revenue impact is not rollout health; it is evidence repair: zero routeable candidates, market-context staleness,
+quant pipeline degradation, alpha readiness not promotion-eligible, and simple submit disabled.
+
+## Owner update message - 2026-05-08T15:12Z
+
+Rollout gate is green. #6123 merged at `59b57ebf0199f83136742cf71ed9379e073d6874`, promotion #6124 merged at
+`0293bb824f2ee98fa72fe2ad5b07c83336516856`, and Argo reports `torghut` and `torghut-options` `Synced`/`Healthy` at
+the #6124 commit.
+
+Live `torghut-00311`, sim `torghut-sim-00409`, `torghut-options-catalog`, and `torghut-options-enricher` are ready on
+digest `sha256:cd9629c9e1e4c3a3565fb0d389f9a90d37fbf3b7b0a3a6253556485498079991`, with zero restarts in the new pods.
+Post-deploy verify run `25562837373` passed.
+
+Trading remains capital-safe rather than revenue-active: `/trading/status` exposes
+`torghut.profit-signal-quorum.v1` with 3 zero-notional quorums, 0 routeable candidates, and 16 blocked/stale evidence
+cells; `/trading/revenue-repair` reports `revenue_ready=false`, `capital_state=zero_notional`, `max_notional=0`, and
+blockers for alpha readiness, market context, simple submit, and quant pipeline degradation.
+
+Next action is evidence repair, not another deployment: clear market-context staleness, quant pipeline degradation,
+alpha-readiness blockers, and simple-submit gating before paper or live notional can open.
 
 ## Final release refresh - 2026-05-08T13:42Z
 
