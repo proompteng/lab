@@ -3646,6 +3646,7 @@ def _build_hypothesis_runtime_payload(
             bool | None,
             getattr(scheduler.state, "market_session_open", None),
         ),
+        route_symbol_filter_enabled=settings.trading_pipeline_mode == "simple",
     )
     summary = summarize_hypothesis_runtime_statuses(
         items,

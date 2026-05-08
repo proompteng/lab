@@ -19,6 +19,8 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Autonomous Jangar/Torghut production system design: `designs/autonomous-jangar-torghut-production-system.md`
 - Swarm agentic mission architecture notes: `designs/swarm-agentic-mission-architecture-2026-05-08.md`
 - Current Jangar/Torghut architecture contracts:
+  - `designs/179-jangar-controller-witness-stability-escrow-and-capital-reentry-backpressure-2026-05-08.md`
+  - `../torghut/design-system/v6/183-torghut-receipt-settled-capital-reentry-cohorts-2026-05-08.md`
   - `designs/178-jangar-source-serving-parity-escrow-and-route-independent-launch-passports-2026-05-08.md`
   - `../torghut/design-system/v6/182-torghut-route-proven-profit-receipts-and-consumer-evidence-canary-2026-05-08.md`
   - `designs/177-jangar-evidence-quality-admission-ledger-and-degradation-backpressure-2026-05-08.md`

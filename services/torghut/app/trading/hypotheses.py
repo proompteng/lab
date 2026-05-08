@@ -56,6 +56,27 @@ def _coerce_decimal(value: object, default: Decimal = Decimal("0")) -> Decimal:
     return default
 
 
+def _optional_decimal(value: object) -> Decimal | None:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, (int, float)):
+        return Decimal(str(value))
+    if isinstance(value, str) and value.strip():
+        try:
+            return Decimal(value.strip())
+        except Exception:
+            return None
+    return None
+
+
+def _sequence(value: object) -> Sequence[object]:
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return cast(Sequence[object], value)
+    return ()
+
+
 def _optional_int(value: object) -> int | None:
     if isinstance(value, bool):
         return int(value)
@@ -344,6 +365,150 @@ def _extract_controller_ingestion_settlement(
     )
 
 
+@dataclass(frozen=True)
+class _TcaReadinessInputs:
+    order_count: int
+    avg_abs_slippage_bps: Decimal
+    avg_realized_shortfall_bps: Decimal
+    post_cost_expectancy_bps_proxy: Decimal
+    last_computed_at: datetime | None
+    route_filter_applied: bool
+    routeable_symbols: tuple[str, ...]
+    route_excluded_symbol_count: int
+    route_missing_symbol_count: int
+
+
+def _weighted_decimal_average(
+    rows: Sequence[Mapping[str, Any]],
+    field_name: str,
+) -> Decimal | None:
+    total_weight = 0
+    weighted_sum = Decimal("0")
+    for row in rows:
+        weight = max(0, _optional_int(row.get("order_count")) or 0)
+        if weight <= 0:
+            continue
+        value = _optional_decimal(row.get(field_name))
+        if value is None:
+            return None
+        total_weight += weight
+        weighted_sum += value * Decimal(weight)
+    if total_weight <= 0:
+        return None
+    return weighted_sum / Decimal(total_weight)
+
+
+def _latest_tca_timestamp(rows: Sequence[Mapping[str, Any]]) -> datetime | None:
+    latest: datetime | None = None
+    for row in rows:
+        parsed = _parse_iso8601(row.get("last_computed_at"))
+        if parsed is not None and (latest is None or parsed > latest):
+            latest = parsed
+    return latest
+
+
+def _resolve_tca_readiness_inputs(
+    tca_summary: Mapping[str, Any],
+    *,
+    max_allowed_slippage_bps: Decimal,
+    route_symbol_filter_enabled: bool,
+) -> _TcaReadinessInputs:
+    aggregate_order_count = max(0, _optional_int(tca_summary.get("order_count")) or 0)
+    aggregate_avg_abs_slippage = _coerce_decimal(
+        tca_summary.get("avg_abs_slippage_bps")
+    )
+    aggregate_avg_realized_shortfall = _coerce_decimal(
+        tca_summary.get("avg_realized_shortfall_bps")
+    )
+    aggregate_last_computed_at = _parse_iso8601(tca_summary.get("last_computed_at"))
+    aggregate = _TcaReadinessInputs(
+        order_count=aggregate_order_count,
+        avg_abs_slippage_bps=aggregate_avg_abs_slippage,
+        avg_realized_shortfall_bps=aggregate_avg_realized_shortfall,
+        post_cost_expectancy_bps_proxy=-aggregate_avg_realized_shortfall,
+        last_computed_at=aggregate_last_computed_at,
+        route_filter_applied=False,
+        routeable_symbols=(),
+        route_excluded_symbol_count=0,
+        route_missing_symbol_count=0,
+    )
+    if not route_symbol_filter_enabled:
+        return aggregate
+
+    rows = [
+        cast(Mapping[str, Any], item)
+        for item in _sequence(tca_summary.get("symbol_breakdown"))
+        if isinstance(item, Mapping)
+    ]
+    if not rows:
+        return aggregate
+
+    routeable_rows: list[Mapping[str, Any]] = []
+    missing_symbol_count = 0
+    excluded_symbol_count = 0
+    for row in rows:
+        order_count = max(0, _optional_int(row.get("order_count")) or 0)
+        if order_count <= 0:
+            missing_symbol_count += 1
+            continue
+        avg_abs_slippage = _optional_decimal(row.get("avg_abs_slippage_bps"))
+        if (
+            avg_abs_slippage is not None
+            and avg_abs_slippage <= max_allowed_slippage_bps
+        ):
+            routeable_rows.append(row)
+        else:
+            excluded_symbol_count += 1
+
+    routeable_symbols = tuple(
+        str(row.get("symbol") or "").strip().upper()
+        for row in routeable_rows
+        if str(row.get("symbol") or "").strip()
+    )
+    route_order_count = sum(
+        max(0, _optional_int(row.get("order_count")) or 0) for row in routeable_rows
+    )
+    if route_order_count <= 0:
+        return _TcaReadinessInputs(
+            order_count=0,
+            avg_abs_slippage_bps=aggregate_avg_abs_slippage,
+            avg_realized_shortfall_bps=aggregate_avg_realized_shortfall,
+            post_cost_expectancy_bps_proxy=-aggregate_avg_realized_shortfall,
+            last_computed_at=aggregate_last_computed_at,
+            route_filter_applied=True,
+            routeable_symbols=(),
+            route_excluded_symbol_count=excluded_symbol_count,
+            route_missing_symbol_count=missing_symbol_count,
+        )
+
+    route_avg_abs_slippage = _weighted_decimal_average(
+        routeable_rows,
+        "avg_abs_slippage_bps",
+    )
+    route_avg_realized_shortfall = _weighted_decimal_average(
+        routeable_rows,
+        "avg_realized_shortfall_bps",
+    )
+    avg_abs_slippage = route_avg_abs_slippage or aggregate_avg_abs_slippage
+    avg_realized_shortfall = (
+        route_avg_realized_shortfall
+        if route_avg_realized_shortfall is not None
+        else aggregate_avg_realized_shortfall
+    )
+    return _TcaReadinessInputs(
+        order_count=route_order_count,
+        avg_abs_slippage_bps=avg_abs_slippage,
+        avg_realized_shortfall_bps=avg_realized_shortfall,
+        post_cost_expectancy_bps_proxy=-avg_realized_shortfall,
+        last_computed_at=_latest_tca_timestamp(routeable_rows)
+        or aggregate_last_computed_at,
+        route_filter_applied=True,
+        routeable_symbols=routeable_symbols,
+        route_excluded_symbol_count=excluded_symbol_count,
+        route_missing_symbol_count=missing_symbol_count,
+    )
+
+
 def resolve_hypothesis_registry_path(path_value: str | None = None) -> Path | None:
     raw = (path_value or settings.trading_hypothesis_registry_path or "").strip()
     if not raw:
@@ -585,6 +750,7 @@ def compile_hypothesis_runtime_statuses(
     jangar_dependency_quorum: JangarDependencyQuorumStatus,
     now: datetime | None = None,
     market_session_open: bool | None = None,
+    route_symbol_filter_enabled: bool = False,
 ) -> list[dict[str, object]]:
     if not registry.loaded:
         return []
@@ -627,22 +793,19 @@ def compile_hypothesis_runtime_statuses(
         market_context_status.get("last_freshness_seconds")
     )
 
-    tca_order_count = max(0, _optional_int(tca_summary.get("order_count")) or 0)
-    avg_abs_slippage_bps = _coerce_decimal(tca_summary.get("avg_abs_slippage_bps"))
-    avg_realized_shortfall_bps = _coerce_decimal(
-        tca_summary.get("avg_realized_shortfall_bps")
-    )
-    post_cost_expectancy_bps_proxy = -avg_realized_shortfall_bps
-    tca_last_computed_at = _parse_iso8601(tca_summary.get("last_computed_at"))
-    tca_age_minutes: int | None = None
-    if tca_last_computed_at is not None:
-        tca_age_minutes = max(
-            0,
-            int((now - tca_last_computed_at).total_seconds() / 60),
-        )
-
     statuses: list[dict[str, object]] = []
     for manifest in registry.items:
+        tca_inputs = _resolve_tca_readiness_inputs(
+            tca_summary,
+            max_allowed_slippage_bps=manifest.max_allowed_slippage_bps,
+            route_symbol_filter_enabled=route_symbol_filter_enabled,
+        )
+        tca_age_minutes: int | None = None
+        if tca_inputs.last_computed_at is not None:
+            tca_age_minutes = max(
+                0,
+                int((now - tca_inputs.last_computed_at).total_seconds() / 60),
+            )
         required_dependency_capabilities, unknown_dependency_capabilities = (
             _resolve_required_dependency_capabilities(manifest)
         )
@@ -752,7 +915,7 @@ def compile_hypothesis_runtime_statuses(
         ):
             reasons.append("required_feature_set_unavailable")
         if (
-            tca_order_count > 0
+            tca_inputs.order_count > 0
             and requirements.max_evidence_age_minutes is not None
             and (
                 tca_age_minutes is None
@@ -780,21 +943,27 @@ def compile_hypothesis_runtime_statuses(
         )
 
         if not readiness_blockers:
-            if tca_order_count < manifest.min_sample_count_for_live_canary:
+            if tca_inputs.route_filter_applied and not tca_inputs.routeable_symbols:
+                reasons.append("route_universe_empty")
+                rollback_required = True
+            elif tca_inputs.order_count < manifest.min_sample_count_for_live_canary:
                 reasons.append("sample_count_below_canary_minimum")
-            elif avg_abs_slippage_bps > manifest.max_allowed_slippage_bps:
+            elif tca_inputs.avg_abs_slippage_bps > manifest.max_allowed_slippage_bps:
                 reasons.append("slippage_budget_exceeded")
                 rollback_required = True
-            elif post_cost_expectancy_bps_proxy <= Decimal("0"):
+            elif tca_inputs.post_cost_expectancy_bps_proxy <= Decimal("0"):
                 reasons.append("post_cost_expectancy_non_positive")
                 rollback_required = True
-            elif post_cost_expectancy_bps_proxy < manifest.expected_gross_edge_bps:
+            elif (
+                tca_inputs.post_cost_expectancy_bps_proxy
+                < manifest.expected_gross_edge_bps
+            ):
                 reasons.append("post_cost_expectancy_below_manifest_threshold")
             else:
                 promotion_eligible = True
-                if tca_order_count >= manifest.min_sample_count_for_scale_up:
+                if tca_inputs.order_count >= manifest.min_sample_count_for_scale_up:
                     if (
-                        avg_abs_slippage_bps
+                        tca_inputs.avg_abs_slippage_bps
                         <= manifest.max_allowed_slippage_bps * Decimal("0.60")
                     ):
                         capital_stage = "1.00x live"
@@ -804,7 +973,7 @@ def compile_hypothesis_runtime_statuses(
                         capital_multiplier = Decimal("0.50")
                 else:
                     if (
-                        avg_abs_slippage_bps
+                        tca_inputs.avg_abs_slippage_bps
                         <= manifest.max_allowed_slippage_bps * Decimal("0.75")
                     ):
                         capital_stage = "0.25x canary"
@@ -827,6 +996,39 @@ def compile_hypothesis_runtime_statuses(
         else:
             state_name = "shadow"
 
+        observed: dict[str, object] = {
+            "signal_lag_seconds": signal_lag_seconds,
+            "no_signal_streak": no_signal_streak,
+            "feature_batch_rows_total": feature_batch_rows_total,
+            "drift_detection_checks_total": drift_detection_checks_total,
+            "evidence_continuity_checks_total": evidence_continuity_checks_total,
+            "evidence_continuity_ok": evidence_ok,
+            "evidence_age_minutes": evidence_age_minutes,
+            "market_context_freshness_seconds": market_context_freshness_seconds,
+            "tca_order_count": tca_inputs.order_count,
+            "tca_last_computed_at": (
+                tca_inputs.last_computed_at.isoformat()
+                if tca_inputs.last_computed_at is not None
+                else None
+            ),
+            "tca_age_minutes": tca_age_minutes,
+            "market_session_open": market_session_open,
+            "avg_abs_slippage_bps": _decimal_to_string(tca_inputs.avg_abs_slippage_bps),
+            "post_cost_expectancy_bps_proxy": _decimal_to_string(
+                tca_inputs.post_cost_expectancy_bps_proxy
+            ),
+        }
+        if tca_inputs.route_filter_applied:
+            observed.update(
+                {
+                    "route_symbol_filter_enabled": True,
+                    "route_tca_symbols": list(tca_inputs.routeable_symbols),
+                    "route_tca_symbol_count": len(tca_inputs.routeable_symbols),
+                    "route_tca_excluded_symbol_count": tca_inputs.route_excluded_symbol_count,
+                    "route_tca_missing_symbol_count": tca_inputs.route_missing_symbol_count,
+                }
+            )
+
         statuses.append(
             {
                 "hypothesis_id": manifest.hypothesis_id,
@@ -845,28 +1047,7 @@ def compile_hypothesis_runtime_statuses(
                     manifest.required_dependency_capabilities
                 ),
                 "segment_dependencies": list(manifest.segment_dependencies),
-                "observed": {
-                    "signal_lag_seconds": signal_lag_seconds,
-                    "no_signal_streak": no_signal_streak,
-                    "feature_batch_rows_total": feature_batch_rows_total,
-                    "drift_detection_checks_total": drift_detection_checks_total,
-                    "evidence_continuity_checks_total": evidence_continuity_checks_total,
-                    "evidence_continuity_ok": evidence_ok,
-                    "evidence_age_minutes": evidence_age_minutes,
-                    "market_context_freshness_seconds": market_context_freshness_seconds,
-                    "tca_order_count": tca_order_count,
-                    "tca_last_computed_at": (
-                        tca_last_computed_at.isoformat()
-                        if tca_last_computed_at is not None
-                        else None
-                    ),
-                    "tca_age_minutes": tca_age_minutes,
-                    "market_session_open": market_session_open,
-                    "avg_abs_slippage_bps": _decimal_to_string(avg_abs_slippage_bps),
-                    "post_cost_expectancy_bps_proxy": _decimal_to_string(
-                        post_cost_expectancy_bps_proxy
-                    ),
-                },
+                "observed": observed,
                 "dependency_capabilities": {
                     "required": sorted(required_dependency_capabilities),
                     "unknown": sorted(unknown_dependency_capabilities),

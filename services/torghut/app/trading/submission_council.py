@@ -422,6 +422,7 @@ def build_hypothesis_runtime_summary(
         market_session_open=cast(
             bool | None, getattr(state, "market_session_open", None)
         ),
+        route_symbol_filter_enabled=settings.trading_pipeline_mode == "simple",
     )
     summary = summarize_hypothesis_runtime_statuses(
         items,

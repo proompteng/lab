@@ -8,10 +8,12 @@
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM
   reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-08T03:31Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-08T08:27Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-08T03:31Z`):
+- Evidence (current next-work priority, refreshed `2026-05-08T08:27Z`):
+  - `183-torghut-receipt-settled-capital-reentry-cohorts-2026-05-08.md`
+  - `docs/agents/designs/179-jangar-controller-witness-stability-escrow-and-capital-reentry-backpressure-2026-05-08.md`
   - `182-torghut-route-proven-profit-receipts-and-consumer-evidence-canary-2026-05-08.md`
   - `docs/agents/designs/178-jangar-source-serving-parity-escrow-and-route-independent-launch-passports-2026-05-08.md`
   - `181-torghut-quality-adjusted-profit-frontier-and-hypothesis-escrow-2026-05-08.md`
