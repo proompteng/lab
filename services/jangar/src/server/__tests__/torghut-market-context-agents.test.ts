@@ -157,11 +157,11 @@ describe('torghut market-context agent helpers', () => {
       provider: 'codex-spark',
       callbackUrl: 'http://jangar/api/torghut/market-context',
       requestId: 'market-context-news-nvda-request',
-      tradingStatusUrl: 'http://torghut/trading/status',
       repository: 'proompteng/lab',
       base: 'main',
       head: 'main',
     })
+    expect(agentRun.spec.parameters).not.toHaveProperty('tradingStatusUrl')
   })
 
   it('suppresses on-demand dispatch when a provider run is already active', async () => {
