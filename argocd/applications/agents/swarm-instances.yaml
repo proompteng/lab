@@ -17,9 +17,9 @@ spec:
   mode: lights-out
   timezone: UTC
   cadence:
-    discoverEvery: 1h
-    planEvery: 1h
-    implementEvery: 1h
+    discoverEvery: 4h
+    planEvery: 4h
+    implementEvery: 30m
     verifyEvery: 1h
   integrations:
     nats:
@@ -105,9 +105,9 @@ spec:
   mode: lights-out
   timezone: UTC
   cadence:
-    discoverEvery: 1h
-    planEvery: 1h
-    implementEvery: 1h
+    discoverEvery: 4h
+    planEvery: 4h
+    implementEvery: 30m
     verifyEvery: 1h
   integrations:
     nats:
