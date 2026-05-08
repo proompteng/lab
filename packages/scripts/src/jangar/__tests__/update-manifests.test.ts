@@ -107,6 +107,8 @@ describe('updateJangarManifests', () => {
       kustomization: true,
       service: true,
       runtimeImageEnv: true,
+      sourceHeadShaEnv: false,
+      gitopsRevisionEnv: false,
       worker: false,
       agentsValues: false,
     })
@@ -134,6 +136,41 @@ describe('updateJangarManifests', () => {
 
     expect(workerManifest.metadata?.annotations?.['kubectl.kubernetes.io/restartedAt']).toBe(rolloutTimestamp)
     expect(result.changed.worker).toBe(true)
+
+    rmSync(fixture.dir, { recursive: true, force: true })
+  })
+
+  it('updates source rollout truth env when revision metadata is provided', () => {
+    const fixture = createFixture()
+    const sourceHeadSha = '9e7b87d813d9732d44586e213d9f47ec178f705a'
+    const gitopsRevision = '9e7b87d8'
+
+    const result = updateJangarManifests({
+      imageName,
+      tag: 'truth-tag',
+      digest: 'sha256:truthdigest',
+      sourceHeadSha,
+      gitopsRevision,
+      rolloutTimestamp: '2026-02-20T06:50:00.000Z',
+      kustomizationPath: relative(repoRoot, fixture.kustomizationPath),
+      serviceManifestPath: relative(repoRoot, fixture.serviceManifestPath),
+    })
+
+    const serviceManifest = YAML.parse(readFileSync(fixture.serviceManifestPath, 'utf8')) as {
+      spec?: { template?: { spec?: { containers?: Array<{ env?: Array<{ name?: string; value?: string }> }> } } }
+    }
+    const env = serviceManifest.spec?.template?.spec?.containers?.[0]?.env
+
+    expect(env).toContainEqual({
+      name: 'JANGAR_SOURCE_HEAD_SHA',
+      value: sourceHeadSha,
+    })
+    expect(env).toContainEqual({
+      name: 'JANGAR_GITOPS_REVISION',
+      value: gitopsRevision,
+    })
+    expect(result.changed.sourceHeadShaEnv).toBe(true)
+    expect(result.changed.gitopsRevisionEnv).toBe(true)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })

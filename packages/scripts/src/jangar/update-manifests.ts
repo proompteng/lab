@@ -25,6 +25,8 @@ export type UpdateManifestsOptions = {
   digest?: string
   controlPlaneImageName?: string
   controlPlaneDigest?: string
+  sourceHeadSha?: string
+  gitopsRevision?: string
   rolloutTimestamp: string
   kustomizationPath?: string
   serviceManifestPath?: string
@@ -39,6 +41,8 @@ type CliOptions = {
   digest?: string
   controlPlaneImageName?: string
   controlPlaneDigest?: string
+  sourceHeadSha?: string
+  gitopsRevision?: string
   rolloutTimestamp?: string
   kustomizationPath?: string
   serviceManifestPath?: string
@@ -53,6 +57,11 @@ const normalizeDigest = (digest: string): string => {
   if (!trimmed) return trimmed
   const atIndex = trimmed.lastIndexOf('@')
   return atIndex >= 0 ? trimmed.slice(atIndex + 1) : trimmed
+}
+
+const normalizeOptional = (value: string | undefined): string | undefined => {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
 }
 
 const asRecord = (value: unknown): Record<string, unknown> | null => {
@@ -152,6 +161,30 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
     console.log(`Updated ${serviceManifestPath} env JANGAR_RUNTIME_IMAGE to ${runtimeImageRef}`)
   }
 
+  const sourceHeadSha = normalizeOptional(options.sourceHeadSha)
+  const sourceHeadShaEnvChanged = sourceHeadSha
+    ? upsertDeploymentContainerEnvValue(serviceManifestPath, 'app', 'JANGAR_SOURCE_HEAD_SHA', sourceHeadSha)
+    : false
+  if (sourceHeadSha) {
+    if (!sourceHeadShaEnvChanged) {
+      console.warn('Warning: jangar source head env was not updated; manifest may already match.')
+    } else {
+      console.log(`Updated ${serviceManifestPath} env JANGAR_SOURCE_HEAD_SHA to ${sourceHeadSha}`)
+    }
+  }
+
+  const gitopsRevision = normalizeOptional(options.gitopsRevision)
+  const gitopsRevisionEnvChanged = gitopsRevision
+    ? upsertDeploymentContainerEnvValue(serviceManifestPath, 'app', 'JANGAR_GITOPS_REVISION', gitopsRevision)
+    : false
+  if (gitopsRevision) {
+    if (!gitopsRevisionEnvChanged) {
+      console.warn('Warning: jangar GitOps revision env was not updated; manifest may already match.')
+    } else {
+      console.log(`Updated ${serviceManifestPath} env JANGAR_GITOPS_REVISION to ${gitopsRevision}`)
+    }
+  }
+
   const workerChanged = workerManifestPath
     ? updateManifestAnnotation(workerManifestPath, 'kubectl.kubernetes.io/restartedAt', options.rolloutTimestamp)
     : false
@@ -184,6 +217,8 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
       kustomization: kustomizationChanged,
       service: serviceChanged,
       runtimeImageEnv: runtimeImageEnvChanged,
+      sourceHeadShaEnv: sourceHeadShaEnvChanged,
+      gitopsRevisionEnv: gitopsRevisionEnvChanged,
       worker: workerChanged,
       agentsValues: agentsValuesChanged,
     },
@@ -204,6 +239,8 @@ Options:
   --digest <value>
   --control-plane-image-name <value>
   --control-plane-digest <value>
+  --source-head-sha <sha>
+  --gitops-revision <sha>
   --rollout-timestamp <ISO8601>
   --kustomization-path <path>
   --service-manifest-path <path>
@@ -244,6 +281,12 @@ Options:
       case '--control-plane-digest':
         options.controlPlaneDigest = value
         break
+      case '--source-head-sha':
+        options.sourceHeadSha = value
+        break
+      case '--gitops-revision':
+        options.gitopsRevision = value
+        break
       case '--rollout-timestamp':
         options.rolloutTimestamp = value
         break
@@ -282,6 +325,12 @@ export const main = (cliOptions?: CliOptions) => {
     digest,
     controlPlaneImageName: parsed.controlPlaneImageName ?? process.env.JANGAR_CONTROL_PLANE_IMAGE_NAME,
     controlPlaneDigest: parsed.controlPlaneDigest ?? process.env.JANGAR_CONTROL_PLANE_IMAGE_DIGEST,
+    sourceHeadSha: parsed.sourceHeadSha ?? process.env.JANGAR_SOURCE_HEAD_SHA ?? process.env.JANGAR_COMMIT,
+    gitopsRevision:
+      parsed.gitopsRevision ??
+      process.env.JANGAR_GITOPS_REVISION ??
+      process.env.ARGOCD_APP_REVISION ??
+      process.env.ARGOCD_REVISION,
     rolloutTimestamp,
     kustomizationPath: parsed.kustomizationPath ?? process.env.JANGAR_KUSTOMIZATION_PATH,
     serviceManifestPath: parsed.serviceManifestPath ?? process.env.JANGAR_SERVICE_MANIFEST,

@@ -161,6 +161,8 @@ jobs:
           JANGAR_IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
           JANGAR_CONTROL_PLANE_IMAGE_NAME: ${{ steps.meta.outputs.control_plane_image }}
           JANGAR_CONTROL_PLANE_IMAGE_DIGEST: ${{ steps.control_plane_digest.outputs.digest }}
+          JANGAR_SOURCE_HEAD_SHA: ${{ steps.meta.outputs.source_sha }}
+          JANGAR_GITOPS_REVISION: ${{ steps.meta.outputs.source_sha }}
         run: |
           TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           bun run packages/scripts/src/jangar/update-manifests.ts \
@@ -168,6 +170,8 @@ jobs:
             --digest "${JANGAR_IMAGE_DIGEST}" \
             --control-plane-image-name "${JANGAR_CONTROL_PLANE_IMAGE_NAME}" \
             --control-plane-digest "${JANGAR_CONTROL_PLANE_IMAGE_DIGEST}" \
+            --source-head-sha "${JANGAR_SOURCE_HEAD_SHA}" \
+            --gitops-revision "${JANGAR_GITOPS_REVISION}" \
             --rollout-timestamp "${TIMESTAMP}" \
             --agents-values-path "argocd/applications/agents/values.yaml"
 
