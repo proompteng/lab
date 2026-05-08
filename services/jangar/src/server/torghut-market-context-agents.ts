@@ -18,6 +18,7 @@ import {
   dispatchMarketContextRefreshIfNeeded,
   type MarketContextDispatchResult,
 } from '~/server/torghut-market-context-dispatch'
+import { resolveFailureCategoryFromMetadata, resolveFailureSignal } from '~/server/torghut-market-context-failures'
 import {
   resolveMarketContextIngestAuthConfig,
   resolveMarketContextRuntimeConfig,
@@ -25,6 +26,8 @@ import {
 import { normalizeTorghutSymbol } from '~/server/torghut-symbols'
 
 export type { MarketContextDispatchResult } from '~/server/torghut-market-context-dispatch'
+export { resolveFailureSignal } from '~/server/torghut-market-context-failures'
+export type { MarketContextFailureCategory } from '~/server/torghut-market-context-failures'
 
 export type MarketContextProviderDomain = 'fundamentals' | 'news'
 
@@ -73,16 +76,6 @@ type LatestRunRow = {
   updatedAt: Date
   finishedAt: Date | null
 }
-
-export type MarketContextFailureCategory =
-  | 'provider_circuit_open'
-  | 'provider_bootstrap_failure'
-  | 'provider_attempt_timeout'
-  | 'provider_turn_failed'
-  | 'payload_validation_failure'
-  | 'finalize_callback_failure'
-  | 'attempt_budget_exhausted'
-  | 'unknown_failure'
 
 type ProviderCircuitState = {
   provider: string
@@ -492,51 +485,6 @@ const readLatestRun = async (params: {
     error: row.error,
     updatedAt: row.updated_at,
     finishedAt: row.finished_at,
-  }
-}
-
-const parseFailureCategory = (value: unknown): MarketContextFailureCategory | null => {
-  if (typeof value !== 'string') return null
-  const normalized = value.trim()
-  if (
-    normalized === 'provider_circuit_open' ||
-    normalized === 'provider_bootstrap_failure' ||
-    normalized === 'provider_attempt_timeout' ||
-    normalized === 'provider_turn_failed' ||
-    normalized === 'payload_validation_failure' ||
-    normalized === 'finalize_callback_failure' ||
-    normalized === 'attempt_budget_exhausted' ||
-    normalized === 'unknown_failure'
-  ) {
-    return normalized
-  }
-  return null
-}
-
-const resolveFailureCategoryFromMetadata = (metadata: Record<string, unknown>): MarketContextFailureCategory | null => {
-  const direct = parseFailureCategory(metadata.failureCategory)
-  if (direct) return direct
-  const attempts = Array.isArray(metadata.providerAttempts) ? metadata.providerAttempts : []
-  for (let index = attempts.length - 1; index >= 0; index -= 1) {
-    const attempt = attempts[index]
-    if (!attempt || typeof attempt !== 'object' || Array.isArray(attempt)) continue
-    const category = parseFailureCategory((attempt as Record<string, unknown>).failureCategory)
-    if (category) return category
-  }
-  return null
-}
-
-export const resolveFailureSignal = (params: {
-  metadata: Record<string, unknown>
-  message?: string | null
-  error?: string | null
-}): { category: MarketContextFailureCategory | null; error: string | null; message: string | null } => {
-  const category = resolveFailureCategoryFromMetadata(params.metadata)
-  const message = parseNonEmptyString(params.message ?? params.error)
-  return {
-    category,
-    error: category ?? message,
-    message,
   }
 }
 

@@ -101,6 +101,60 @@ describe('torghut market-context agent helpers', () => {
     expect(signal.message).toBe('jangar auth failed')
   })
 
+  it('surfaces all-provider capacity exhaustion from fallback attempts', async () => {
+    const { resolveFailureSignal } = await import('../torghut-market-context-agents')
+
+    const signal = resolveFailureSignal({
+      metadata: {
+        failureCategory: 'attempt_budget_exhausted',
+        providerAttempts: [
+          {
+            provider: 'codex',
+            failureCategory: 'provider_fallback_eligible',
+            error: "You've hit your usage limit. Try again later.",
+          },
+          {
+            provider: 'codex-spark',
+            failureCategory: 'provider_fallback_eligible',
+            error: 'quota exceeded',
+          },
+        ],
+      },
+      message: 'all_provider_attempts_failed',
+    })
+
+    expect(signal.category).toBe('provider_capacity_exhausted')
+    expect(signal.error).toBe('provider_capacity_exhausted')
+    expect(signal.message).toBe('all_provider_attempts_failed')
+  })
+
+  it('keeps non-capacity provider attempt failures specific', async () => {
+    const { resolveFailureSignal } = await import('../torghut-market-context-agents')
+
+    const signal = resolveFailureSignal({
+      metadata: {
+        failureCategory: 'attempt_budget_exhausted',
+        providerAttempts: [
+          {
+            provider: 'codex',
+            failureCategory: 'provider_fallback_eligible',
+            error: 'quota exceeded',
+          },
+          {
+            provider: 'codex-spark',
+            failureCategory: 'payload_validation_failure',
+            error: 'missing analysis payload',
+          },
+        ],
+      },
+      message: 'all_provider_attempts_failed',
+    })
+
+    expect(signal.category).toBe('payload_validation_failure')
+    expect(signal.error).toBe('payload_validation_failure')
+    expect(signal.message).toBe('all_provider_attempts_failed')
+  })
+
   it('dispatches stale snapshots when no active run or cooldown exists', async () => {
     const { resolveMarketContextDispatchDecisionFromRows } = await import('../torghut-market-context-dispatch')
 
