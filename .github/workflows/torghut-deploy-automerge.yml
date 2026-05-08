@@ -148,6 +148,57 @@ jobs:
             exit 1
           fi
 
+          required_source_jobs=(
+            'Pyright'
+            'Bytecode + lint + migration guard'
+            'Pytest shard 0'
+            'Pytest shard 1'
+            'Pytest shard 2'
+            'Pytest shard 3'
+            'Bytecode + pytest + coverage'
+          )
+
+          assert_required_source_jobs() {
+            local run_id="$1"
+            local job_lines
+            job_lines="$(
+              gh run view "${run_id}" \
+                -R "${GH_REPO}" \
+                --json jobs \
+                --jq '.jobs[] | [.name, (.conclusion // ""), (.status // "")] | @tsv'
+            )"
+
+            for required_job in "${required_source_jobs[@]}"; do
+              state="$(
+                printf '%s\n' "${job_lines}" |
+                  awk -F '\t' \
+                    -v name="${required_job}" \
+                    '$1 == name { print ($2 == "" ? "PENDING" : $2) "\t" $3; found = 1; exit } END { if (!found) print "MISSING\t" }'
+              )"
+              IFS=$'\t' read -r conclusion status <<< "${state}"
+              case "${conclusion}" in
+                success)
+                  ;;
+                MISSING)
+                  echo "Required source CI job is missing from run ${run_id}: ${required_job}"
+                  exit 1
+                  ;;
+                PENDING)
+                  echo "Required source CI job did not complete in successful run ${run_id}: ${required_job} (${status:-unknown})"
+                  exit 1
+                  ;;
+                failure | cancelled | skipped | timed_out | action_required | startup_failure)
+                  echo "Required source CI job failed in run ${run_id}: ${required_job} -> ${conclusion}"
+                  exit 1
+                  ;;
+                *)
+                  echo "Required source CI job has unexpected conclusion in run ${run_id}: ${required_job} -> ${conclusion}"
+                  exit 1
+                  ;;
+              esac
+            done
+          }
+
           deadline=$((SECONDS + 2700))
           while true; do
             run_line="$(
@@ -161,6 +212,7 @@ jobs:
             IFS=$'\t' read -r run_id run_status run_conclusion run_url <<< "${run_line}"
 
             if [ -n "${run_id}" ] && [ "${run_status}" = 'completed' ] && [ "${run_conclusion}" = 'success' ]; then
+              assert_required_source_jobs "${run_id}"
               echo "Source commit Torghut CI passed for ${source_sha}: ${run_url}"
               break
             fi
