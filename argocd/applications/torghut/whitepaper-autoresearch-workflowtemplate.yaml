@@ -41,11 +41,11 @@ spec:
       - name: portfolioSizeMax
         value: '8'
       - name: maxFrontierCandidatesPerSpec
-        value: '8'
+        value: '2'
       - name: maxTotalFrontierCandidates
-        value: '64'
+        value: '24'
       - name: realReplayTimeoutSeconds
-        value: '3600'
+        value: '7200'
       - name: prefetchFullWindowRows
         value: 'true'
       - name: allowStaleTape
@@ -56,7 +56,7 @@ spec:
     - name: run
       nodeSelector:
         kubernetes.io/arch: arm64
-      activeDeadlineSeconds: 7200
+      activeDeadlineSeconds: 10800
       inputs:
         parameters:
           - name: runId
