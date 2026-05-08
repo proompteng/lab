@@ -266,9 +266,24 @@ def _quant_source(
     window: str | None,
     quant_evidence: Mapping[str, Any],
 ) -> dict[str, object]:
+    required = bool(quant_evidence.get("required", True))
     blocking_reasons = _string_list(quant_evidence.get("blocking_reasons"))
     informational_reasons = _string_list(quant_evidence.get("informational_reasons"))
     reason_codes = sorted({*blocking_reasons, *informational_reasons})
+    if not required:
+        return _source_record(
+            proof_id=proof_id,
+            hypothesis_id=hypothesis_id,
+            account=account,
+            window=window,
+            source_class="quant_metrics",
+            source_ref=quant_evidence.get("source_url"),
+            observed_at=quant_evidence.get("latest_metrics_updated_at")
+            or quant_evidence.get("as_of"),
+            freshness_state="current",
+            rows=_safe_int(quant_evidence.get("latest_metrics_count")),
+            decision="observe_only",
+        )
     if bool(quant_evidence.get("ok")) and not reason_codes:
         return _source_record(
             proof_id=proof_id,

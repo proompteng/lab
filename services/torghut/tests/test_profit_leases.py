@@ -228,6 +228,51 @@ class TestProfitLeaseProjection(TestCase):
         )
         self.assertEqual(lease["rehydration_lane"], "promotion_table_repair")
 
+    def test_optional_quant_evidence_does_not_force_repair_lane(self) -> None:
+        quant = _healthy_quant()
+        quant.update(
+            {
+                "required": False,
+                "ok": True,
+                "status": "degraded",
+                "reason": "quant_pipeline_stages_missing",
+                "blocking_reasons": [],
+                "informational_reasons": ["quant_pipeline_stages_missing"],
+            }
+        )
+
+        projection = build_profit_lease_projection(
+            runtime_items=[_runtime_item()],
+            quant_evidence=quant,
+            empirical_jobs_status=_current_empirical(),
+            dependency_quorum={"decision": "allow", "reasons": []},
+            rejection_summary={
+                "rejected": 1,
+                "blocked": 1,
+                "filled": 10,
+                "total": 12,
+            },
+            promotion_table_counts=_promotion_counts(),
+            data_readiness={"equity_ta_rows": 100, "equity_ta_symbols": 20},
+            now=datetime(2026, 5, 6, 12, 0, tzinfo=timezone.utc),
+        )
+
+        lease = projection["leases"][0]
+        quant_source = next(
+            source
+            for source in projection["source_provenance"]
+            if source["source_class"] == "quant_metrics"
+        )
+
+        self.assertEqual(lease["capital_decision"], "paper_candidate")
+        self.assertEqual(lease["proof_state"], "current")
+        self.assertNotIn(
+            "quant_pipeline_stages_missing", lease["blocking_reason_codes"]
+        )
+        self.assertEqual(quant_source["decision"], "observe_only")
+        self.assertEqual(quant_source["freshness_state"], "current")
+        self.assertTrue(projection["jangar_consumer"]["allowed"])
+
     def test_jangar_capital_holdback_blocks_consumer_allowed(self) -> None:
         projection = build_profit_lease_projection(
             runtime_items=[_runtime_item()],
