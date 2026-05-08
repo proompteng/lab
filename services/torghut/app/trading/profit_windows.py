@@ -112,6 +112,7 @@ def _quant_escrow(
     hypothesis_id: str,
     quant_evidence: Mapping[str, Any],
 ) -> dict[str, object]:
+    required = bool(quant_evidence.get("required", True))
     blocking_reasons = _string_list(quant_evidence.get("blocking_reasons") or [])
     informational_reasons = _string_list(
         quant_evidence.get("informational_reasons") or []
@@ -135,7 +136,7 @@ def _quant_escrow(
         hypothesis_id=hypothesis_id,
         escrow_type="jangar_quant",
         status=status,
-        required=True,
+        required=required,
         reason_codes=reason_codes,
         source_ref=quant_evidence.get("source_url"),
     )
@@ -148,6 +149,7 @@ def _clickhouse_freshness_escrow(
     hypothesis_id: str,
     quant_evidence: Mapping[str, Any],
 ) -> dict[str, object]:
+    required = bool(quant_evidence.get("required", True))
     blocking_reasons = _string_list(quant_evidence.get("blocking_reasons") or [])
     informational_reasons = _string_list(
         quant_evidence.get("informational_reasons") or []
@@ -162,7 +164,7 @@ def _clickhouse_freshness_escrow(
         hypothesis_id=hypothesis_id,
         escrow_type="clickhouse_freshness",
         status=status,
-        required=True,
+        required=required,
         reason_codes=[] if funded else freshness_reasons or health_reasons,
         source_ref=quant_evidence.get("source_url"),
     )
