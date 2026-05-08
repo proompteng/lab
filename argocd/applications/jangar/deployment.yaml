@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: 2026-05-08T00:12:20Z
+    deploy.knative.dev/rollout: 2026-05-08T01:13:35Z
 spec:
   replicas: 1
   strategy:
@@ -57,7 +57,7 @@ spec:
             - name: UI_PORT
               value: "8080"
             - name: JANGAR_RUNTIME_IMAGE
-              value: registry.ide-newton.ts.net/lab/jangar:ef2bba88@sha256:d8e2313b88b899f27009bdc8637d5bec066e52b1c87abbdb20fc66fc133861aa
+              value: registry.ide-newton.ts.net/lab/jangar:7a737336@sha256:c76d5d0ad0c698317e9c5f308129eb3ad01f45b72693144251271255af90e320
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: "120"
             - name: JANGAR_BUMBA_TASK_QUEUE
@@ -315,6 +315,14 @@ spec:
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context
             - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_TTL_SECONDS
               value: "7200"
+            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_REPOSITORY
+              value: proompteng/lab
+            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_BASE_BRANCH
+              value: main
+            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_HEAD_BRANCH
+              value: main
+            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_VCS_REF_NAME
+              value: github
             - name: JANGAR_MARKET_CONTEXT_REQUIRE_TECHNICALS_SOURCE_HEALTH
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS

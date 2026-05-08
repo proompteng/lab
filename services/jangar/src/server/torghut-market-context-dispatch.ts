@@ -27,6 +27,10 @@ export type MarketContextDispatchSettings = {
   onDemandDispatchCallbackUrl: string
   onDemandDispatchTtlSeconds: number
   batchTradingStatusUrl: string
+  onDemandDispatchRepository: string
+  onDemandDispatchBaseBranch: string
+  onDemandDispatchHeadBranch: string
+  onDemandDispatchVcsRefName: string
 }
 
 type DispatchStateRow = {
@@ -307,9 +311,12 @@ export const buildMarketContextAgentRun = (params: {
         },
       },
       ttlSecondsAfterFinished: params.settings.onDemandDispatchTtlSeconds,
+      vcsRef: {
+        name: params.settings.onDemandDispatchVcsRefName,
+      },
       vcsPolicy: {
-        required: false,
-        mode: 'none',
+        required: true,
+        mode: 'read-only',
       },
       workload: {
         resources: {
@@ -332,7 +339,9 @@ export const buildMarketContextAgentRun = (params: {
         provider: params.provider,
         callbackUrl: params.settings.onDemandDispatchCallbackUrl,
         requestId: params.requestId,
-        tradingStatusUrl: params.settings.batchTradingStatusUrl,
+        repository: params.settings.onDemandDispatchRepository,
+        base: params.settings.onDemandDispatchBaseBranch,
+        head: params.settings.onDemandDispatchHeadBranch,
       },
     },
   }
