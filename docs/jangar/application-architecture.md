@@ -1,6 +1,6 @@
 # Jangar Application Architecture
 
-This is the authoritative architecture index for the Jangar application as of 2026-05-07.
+This is the authoritative architecture index for the Jangar application as of 2026-05-08.
 
 Use this document together with:
 
@@ -82,16 +82,21 @@ until they are decomposed further.
 
 ## Current control-plane decision contract
 
-The current architecture priority is source-heartbeat witness settlement and material-action bonds. Final verdicts
-remain the consumer surface, but they must now carry explicit bond evidence before they are treated as durable
-admission: source or GitOps revision truth, rollout truth, controller heartbeat truth, AgentRun ingestion truth,
-terminal evidence carry, and Torghut consumer proof. Serving readiness, route health, rollout health, watch
-reliability, and database freshness can stay green while source truth is missing, AgentRun ingestion is unknown, or a
+The current architecture priority is resource-pressure escrow on top of failure-debt clearance and source-heartbeat
+witness settlement. Final verdicts remain the consumer surface, but they must now carry explicit evidence before they
+are treated as durable admission: runner QoS and ephemeral-storage budgets, source or GitOps revision truth, rollout
+truth, controller heartbeat truth, AgentRun ingestion truth, terminal evidence carry, and Torghut consumer proof.
+Serving readiness, route health, rollout health, watch reliability, bounded summary reads, and database freshness can
+stay green while runner resource pressure is dirty, source truth is missing, AgentRun ingestion is unknown, or a
 material verdict still sees stale controller authority. That disagreement is witness variance, not a reason to widen
 dispatch or Torghut capital.
 
 Current source-of-truth design:
 
+- `docs/agents/designs/176-jangar-resource-pressure-escrow-and-runner-qos-gates-2026-05-08.md`
+- `docs/torghut/design-system/v6/180-torghut-resource-priced-evidence-frontier-and-context-spend-escrow-2026-05-08.md`
+- `docs/agents/designs/175-jangar-failure-debt-clearance-and-action-reentry-frontier-2026-05-08.md`
+- `docs/torghut/design-system/v6/179-torghut-capital-repair-frontier-and-route-yield-clearance-2026-05-08.md`
 - `docs/agents/designs/168-jangar-source-heartbeat-witness-settlement-and-material-action-bonds-2026-05-07.md`
 - `docs/torghut/design-system/v6/172-torghut-repair-yield-ledger-and-session-proof-capital-gates-2026-05-07.md`
 - `docs/agents/designs/169-jangar-ready-action-evidence-exchange-and-deployer-custody-2026-05-07.md`
@@ -114,13 +119,15 @@ Current source-of-truth design:
 - `docs/torghut/design-system/v6/128-torghut-data-plane-disruption-premium-and-freshness-settlement-2026-05-06.md`
 
 The immediate invariant is that serving readiness, rollout availability, a route-level controller heartbeat, direct SQL
-heartbeat freshness, an action clock `allow`, or fresh quant metrics cannot upgrade a stricter source-heartbeat witness
-bond, launch cohort, source provenance lease, heartbeat stability receipt, run-settlement watermark, terminal evidence
-half-life ledger, ready-action packet, Torghut repair-yield gate, or Torghut promotion-custody packet. In the current
-live state, missing source or GitOps revision truth, AgentRun ingestion unknowns, retained failed runner pods, failed
-jobs, retry-only schedule successes, stale database statistics, oversized quant proof carry, stale market-context
-domains, routeability debt, and missing promotion evidence must keep normal dispatch, deploy widening, merge readiness,
-paper canary, and live capital inside explicit hold or observe-only decisions until action-specific proof arrives.
+heartbeat freshness, an action clock `allow`, a successful retry, or fresh quant metrics cannot upgrade a stricter
+resource-pressure escrow, source-heartbeat witness bond, launch cohort, source provenance lease, heartbeat stability
+receipt, run-settlement watermark, terminal evidence half-life ledger, ready-action packet, Torghut repair-yield gate,
+or Torghut promotion-custody packet. In the current live state, BestEffort runner evidence, missing ephemeral-storage
+budgets, node eviction debt, full-status latency timeouts, missing source or GitOps revision truth, AgentRun ingestion
+unknowns, retained failed runner pods, failed jobs, retry-only schedule successes, stale database statistics, oversized
+quant proof carry, stale market-context domains, routeability debt, and missing promotion evidence must keep normal
+dispatch, deploy widening, merge readiness, paper canary, and live capital inside explicit hold or observe-only
+decisions until action-specific proof arrives.
 
 ## Ownership map
 
@@ -169,6 +176,10 @@ Current operational docs:
 Historical or design context docs:
 
 - `docs/jangar/current-state.md`
+- `docs/agents/designs/176-jangar-resource-pressure-escrow-and-runner-qos-gates-2026-05-08.md`
+- `docs/torghut/design-system/v6/180-torghut-resource-priced-evidence-frontier-and-context-spend-escrow-2026-05-08.md`
+- `docs/agents/designs/175-jangar-failure-debt-clearance-and-action-reentry-frontier-2026-05-08.md`
+- `docs/torghut/design-system/v6/179-torghut-capital-repair-frontier-and-route-yield-clearance-2026-05-08.md`
 - `docs/agents/designs/168-jangar-source-heartbeat-witness-settlement-and-material-action-bonds-2026-05-07.md`
 - `docs/torghut/design-system/v6/172-torghut-repair-yield-ledger-and-session-proof-capital-gates-2026-05-07.md`
 - `docs/agents/designs/169-jangar-ready-action-evidence-exchange-and-deployer-custody-2026-05-07.md`
