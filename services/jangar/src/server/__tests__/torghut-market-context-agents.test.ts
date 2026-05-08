@@ -119,7 +119,7 @@ describe('torghut market-context agent helpers', () => {
     expect(decision.reason).toBe('stale_snapshot_refresh')
   })
 
-  it('builds on-demand market-context AgentRuns as no-VCS batch tasks', async () => {
+  it('builds on-demand market-context AgentRuns as repository-bound batch tasks', async () => {
     const { buildMarketContextAgentRun } = await import('../torghut-market-context-dispatch')
 
     const agentRun = buildMarketContextAgentRun({
@@ -140,10 +140,15 @@ describe('torghut market-context agent helpers', () => {
         onDemandDispatchCallbackUrl: 'http://jangar/api/torghut/market-context',
         onDemandDispatchTtlSeconds: 7200,
         batchTradingStatusUrl: 'http://torghut/trading/status',
+        onDemandDispatchRepository: 'proompteng/lab',
+        onDemandDispatchBaseBranch: 'main',
+        onDemandDispatchHeadBranch: 'main',
+        onDemandDispatchVcsRefName: 'github',
       },
     })
 
-    expect(agentRun.spec.vcsPolicy).toEqual({ required: false, mode: 'none' })
+    expect(agentRun.spec.vcsRef).toEqual({ name: 'github' })
+    expect(agentRun.spec.vcsPolicy).toEqual({ required: true, mode: 'read-only' })
     expect(agentRun.spec.parameters).toMatchObject({
       executionMode: 'batch_task',
       symbol: 'NVDA',
@@ -153,6 +158,9 @@ describe('torghut market-context agent helpers', () => {
       callbackUrl: 'http://jangar/api/torghut/market-context',
       requestId: 'market-context-news-nvda-request',
       tradingStatusUrl: 'http://torghut/trading/status',
+      repository: 'proompteng/lab',
+      base: 'main',
+      head: 'main',
     })
   })
 
@@ -196,5 +204,44 @@ describe('torghut market-context agent helpers', () => {
     expect(decision.attempted).toBe(true)
     expect(decision.reason).toBe('dispatch_cooldown')
     expect(decision.runName).toBe('torghut-market-context-fundamentals-nvda-abcde')
+  })
+
+  it('builds market-context AgentRuns with repository metadata for the provider runner', async () => {
+    const { buildMarketContextAgentRun } = await import('../torghut-market-context-dispatch')
+
+    const agentRun = buildMarketContextAgentRun({
+      symbol: 'ORCL',
+      domain: 'fundamentals',
+      snapshotState: 'missing',
+      provider: 'codex-spark',
+      requestId: 'market-context-fundamentals-orcl-test',
+      now: new Date('2026-05-08T00:15:50.336Z'),
+      settings: {
+        providerChain: ['codex-spark', 'codex'],
+        onDemandDispatchEnabled: true,
+        onDemandDispatchCooldownSeconds: 900,
+        onDemandDispatchActiveRunSeconds: 3600,
+        onDemandDispatchNamespace: 'agents',
+        onDemandDispatchServiceAccountName: 'agents-sa',
+        onDemandDispatchPriorityClassName: 'torghut-market-context-low',
+        onDemandDispatchCallbackUrl: 'http://jangar.jangar.svc.cluster.local/api/torghut/market-context',
+        onDemandDispatchTtlSeconds: 7200,
+        batchTradingStatusUrl: 'http://torghut/trading/status',
+        onDemandDispatchRepository: 'proompteng/lab',
+        onDemandDispatchBaseBranch: 'main',
+        onDemandDispatchHeadBranch: 'main',
+        onDemandDispatchVcsRefName: 'github',
+      },
+    })
+
+    expect(agentRun.spec.vcsRef).toEqual({ name: 'github' })
+    expect(agentRun.spec.vcsPolicy).toEqual({ required: true, mode: 'read-only' })
+    expect(agentRun.spec.parameters).toMatchObject({
+      symbol: 'ORCL',
+      domain: 'fundamentals',
+      repository: 'proompteng/lab',
+      base: 'main',
+      head: 'main',
+    })
   })
 })

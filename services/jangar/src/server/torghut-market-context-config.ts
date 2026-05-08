@@ -2,6 +2,10 @@ type EnvSource = Record<string, string | undefined>
 
 const DEFAULT_MARKET_CONTEXT_ENABLED_FLAG_KEY = 'jangar.market_context.enabled'
 const DEFAULT_ALLOWED_SERVICE_ACCOUNT_PREFIX = 'system:serviceaccount:torghut:'
+const DEFAULT_ON_DEMAND_DISPATCH_REPOSITORY = 'proompteng/lab'
+const DEFAULT_ON_DEMAND_DISPATCH_BASE_BRANCH = 'main'
+const DEFAULT_ON_DEMAND_DISPATCH_HEAD_BRANCH = 'main'
+const DEFAULT_ON_DEMAND_DISPATCH_VCS_REF = 'github'
 
 const normalizeNonEmpty = (value: string | undefined | null) => {
   const normalized = value?.trim()
@@ -60,6 +64,10 @@ export type MarketContextRuntimeConfig = {
   onDemandDispatchPriorityClassName: string
   onDemandDispatchCallbackUrl: string
   onDemandDispatchTtlSeconds: number
+  onDemandDispatchRepository: string
+  onDemandDispatchBaseBranch: string
+  onDemandDispatchHeadBranch: string
+  onDemandDispatchVcsRefName: string
 }
 
 export type MarketContextIngestAuthConfig = {
@@ -114,6 +122,16 @@ export const resolveMarketContextRuntimeConfig = (env: EnvSource = process.env):
     normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_CALLBACK_URL) ??
     'http://jangar.jangar.svc.cluster.local/api/torghut/market-context',
   onDemandDispatchTtlSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_TTL_SECONDS, 7200),
+  onDemandDispatchRepository:
+    normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_REPOSITORY) ?? DEFAULT_ON_DEMAND_DISPATCH_REPOSITORY,
+  onDemandDispatchBaseBranch:
+    normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_BASE_BRANCH) ??
+    DEFAULT_ON_DEMAND_DISPATCH_BASE_BRANCH,
+  onDemandDispatchHeadBranch:
+    normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_HEAD_BRANCH) ??
+    DEFAULT_ON_DEMAND_DISPATCH_HEAD_BRANCH,
+  onDemandDispatchVcsRefName:
+    normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_VCS_REF_NAME) ?? DEFAULT_ON_DEMAND_DISPATCH_VCS_REF,
 })
 
 export const resolveMarketContextIngestAuthConfig = (env: EnvSource = process.env): MarketContextIngestAuthConfig => ({

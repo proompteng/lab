@@ -349,6 +349,10 @@ const resolveSettings = () => {
     onDemandDispatchPriorityClassName: config.onDemandDispatchPriorityClassName,
     onDemandDispatchCallbackUrl: config.onDemandDispatchCallbackUrl,
     onDemandDispatchTtlSeconds: config.onDemandDispatchTtlSeconds,
+    onDemandDispatchRepository: config.onDemandDispatchRepository,
+    onDemandDispatchBaseBranch: config.onDemandDispatchBaseBranch,
+    onDemandDispatchHeadBranch: config.onDemandDispatchHeadBranch,
+    onDemandDispatchVcsRefName: config.onDemandDispatchVcsRefName,
   }
 }
 
