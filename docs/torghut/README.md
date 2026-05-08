@@ -4,6 +4,14 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/178-torghut-route-sample-mint-and-capital-proof-ratchet-2026-05-08.md`
+  (current route sample mint and capital proof ratchet contract)
+- `docs/agents/designs/174-jangar-observer-rights-and-source-settled-capital-ledger-2026-05-08.md`
+  (current Jangar observer-rights and source-settled capital ledger contract)
+- `docs/torghut/design-system/v6/177-torghut-profit-repair-broker-and-capital-promotion-gates-2026-05-08.md`
+  (current profit repair broker and capital promotion gate contract)
+- `docs/agents/designs/173-jangar-action-broker-and-proof-carrying-rollout-cells-2026-05-08.md`
+  (current Jangar action broker and proof-carrying rollout contract)
 - `docs/torghut/design-system/v6/168-torghut-executable-alpha-receipts-and-capital-replay-board-2026-05-07.md`
   (current executable alpha receipt and capital replay board contract)
 - `docs/agents/designs/164-jangar-contract-graduation-brake-and-runtime-receipt-gates-2026-05-07.md`
