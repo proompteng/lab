@@ -41,11 +41,15 @@ spec:
       - name: portfolioSizeMax
         value: '8'
       - name: maxFrontierCandidatesPerSpec
-        value: '8'
+        value: '2'
       - name: maxTotalFrontierCandidates
-        value: '64'
+        value: '24'
       - name: realReplayTimeoutSeconds
-        value: '3600'
+        value: '7200'
+      - name: realReplayShardSize
+        value: '2'
+      - name: realReplayShardTimeoutSeconds
+        value: '900'
       - name: prefetchFullWindowRows
         value: 'true'
       - name: allowStaleTape
@@ -56,7 +60,7 @@ spec:
     - name: run
       nodeSelector:
         kubernetes.io/arch: arm64
-      activeDeadlineSeconds: 7200
+      activeDeadlineSeconds: 10800
       inputs:
         parameters:
           - name: runId
@@ -76,11 +80,13 @@ spec:
           - name: maxFrontierCandidatesPerSpec
           - name: maxTotalFrontierCandidates
           - name: realReplayTimeoutSeconds
+          - name: realReplayShardSize
+          - name: realReplayShardTimeoutSeconds
           - name: prefetchFullWindowRows
           - name: allowStaleTape
           - name: persistResults
       container:
-        image: registry.ide-newton.ts.net/lab/torghut@sha256:056d6b0bc237adec3e3aa5e89a3f08ee81523ec18d8374c4a4e7d072e436f0f3
+        image: registry.ide-newton.ts.net/lab/torghut@sha256:9990cbcc5214e04b541d78009ced9930b3b18d062d4d5a1ff525b43e2560ebba
         imagePullPolicy: IfNotPresent
         command:
           - /bin/bash
@@ -150,6 +156,8 @@ spec:
               --max-frontier-candidates-per-spec "{{inputs.parameters.maxFrontierCandidatesPerSpec}}"
               --max-total-frontier-candidates "{{inputs.parameters.maxTotalFrontierCandidates}}"
               --real-replay-timeout-seconds "{{inputs.parameters.realReplayTimeoutSeconds}}"
+              --real-replay-shard-size "{{inputs.parameters.realReplayShardSize}}"
+              --real-replay-shard-timeout-seconds "{{inputs.parameters.realReplayShardTimeoutSeconds}}"
               --train-days 6
               --holdout-days 3
               --full-window-start-date "{{inputs.parameters.fullWindowStartDate}}"

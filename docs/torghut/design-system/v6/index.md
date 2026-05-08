@@ -1043,3 +1043,10 @@ This pack is positioned as the next architecture layer above:
   capital at zero. The contract makes Jangar availability, scoped quant health, market context, empirical evidence,
   alpha readiness, route/TCA, and submission toggles contribute explicit capital prices before any session can reenter
   paper or live action.
+- `183-torghut-session-open-route-microcanaries-and-profit-evidence-notary-2026-05-08.md` follows the route-proven
+  receipt and session-reentry contracts because the 2026-05-08 refresh shows recovered rollout health but still no
+  revenue-active capital path. It selects paper-only route microcanaries and a profit evidence notary over slippage
+  threshold loosening or a big-bang wait on large profit-escrow work. The first implementation milestone must repair
+  scoped quant/TCA/alpha receipts, keep live notional at zero, and rank repairs by the value gates
+  `routeable_candidate_count`, `zero_notional_or_stale_evidence_rate`, `fill_tca_or_slippage_quality`, and
+  `capital_gate_safety` before any `post_cost_daily_net_pnl` claim is allowed.

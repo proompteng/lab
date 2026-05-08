@@ -6,7 +6,7 @@ from argparse import Namespace
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import cast
+from typing import Sequence, cast
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -110,6 +110,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             progress_log_seconds=30,
             max_frontier_candidates_per_spec=runner._DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
             max_total_frontier_candidates=0,
+            real_replay_timeout_seconds=0,
+            real_replay_shard_size=0,
+            real_replay_shard_timeout_seconds=0,
             train_days=6,
             holdout_days=3,
             full_window_start_date="2026-02-23",
@@ -852,6 +855,37 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(remediation["next_actions"])
         self.assertIn("candidate_search_remediation", summary)
 
+    def test_timeout_remediation_recommends_smaller_replay_frontier(self) -> None:
+        remediation = runner._candidate_search_remediation(
+            failure_reason="TimeoutError:real_replay_timeout_seconds:3600",
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": "spec-selected",
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            evidence_bundles=(),
+            false_positive_table=(),
+            best_false_negative_table=(),
+            replay_timeout_seconds=3600,
+            max_frontier_candidates_per_spec=8,
+        )
+
+        timeout_action = remediation["next_actions"][0]
+        self.assertEqual(
+            timeout_action["action"], "shrink_per_spec_frontier_or_extend_timeout"
+        )
+        self.assertEqual(
+            timeout_action["recommended_flags"]["--max-frontier-candidates-per-spec"],
+            "2",
+        )
+        self.assertEqual(
+            timeout_action["recommended_flags"]["--real-replay-timeout-seconds"],
+            "7200",
+        )
+
     def test_train_ranker_script_main_writes_model_and_scores(self) -> None:
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
@@ -1157,6 +1191,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             runner._DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
         )
         self.assertEqual(parsed.max_total_frontier_candidates, 7)
+        self.assertEqual(parsed.real_replay_shard_size, 0)
+        self.assertEqual(parsed.real_replay_shard_timeout_seconds, 0)
         self.assertFalse(parsed.persist_results)
 
     def test_clickhouse_password_env_resolution_keeps_secret_out_of_argv(
@@ -1509,6 +1545,128 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
 
         self.assertEqual(captured_budget, [24])
         self.assertEqual(len(result.evidence_bundles), 0)
+
+    def test_sharded_real_replay_continues_after_candidate_timeout(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
+                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+            )
+            compilation = runner.compile_whitepaper_candidate_specs(
+                hypothesis_cards=cards,
+                family_template_dir=Path("config/trading/families"),
+                seed_sweep_dir=Path("config/trading"),
+            )
+            specs = compilation.executable_specs[:3]
+            calls: list[list[str]] = []
+
+            def fake_replay(
+                _args: Namespace,
+                *,
+                output_dir: Path,
+                specs: Sequence[runner.CandidateSpec],
+            ) -> runner.EpochReplayResult:
+                spec_ids = [spec.candidate_spec_id for spec in specs]
+                calls.append(spec_ids)
+                if len(calls) == 2:
+                    raise TimeoutError("real_replay_timeout_seconds:7")
+                bundle = runner.evidence_bundle_from_frontier_candidate(
+                    candidate_spec_id=spec_ids[0],
+                    candidate={
+                        "candidate_id": f"cand-{spec_ids[0]}",
+                        "objective_scorecard": {
+                            "net_pnl_per_day": "10",
+                            "active_day_ratio": "1",
+                            "positive_day_ratio": "1",
+                        },
+                    },
+                    dataset_snapshot_id="snap-shard",
+                    result_path=str(output_dir / f"{spec_ids[0]}.json"),
+                )
+                return runner.EpochReplayResult(
+                    evidence_bundles=(bundle,),
+                    replay_results=({"status": "ok", "spec_ids": spec_ids},),
+                )
+
+            args = self._args(output_dir)
+            args.replay_mode = "real"
+            args.real_replay_shard_size = 1
+            args.real_replay_shard_timeout_seconds = 7
+            with patch.object(runner, "_run_real_replay", side_effect=fake_replay):
+                result = runner._run_replay_with_optional_timeout(
+                    args=args,
+                    output_dir=output_dir,
+                    specs=specs,
+                )
+
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(result.incomplete)
+        self.assertEqual(len(result.evidence_bundles), 2)
+        self.assertTrue(
+            any(
+                item.get("status") == "partial_replay_shards_interrupted"
+                for item in result.replay_results
+            )
+        )
+        self.assertIn(
+            "TimeoutError:real_replay_timeout_seconds:7", result.failure_reasons
+        )
+
+    def test_incomplete_sharded_replay_cannot_report_oracle_candidate_found(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+
+            def fake_replay(
+                *,
+                args: Namespace,
+                output_dir: Path,
+                specs: Sequence[runner.CandidateSpec],
+            ) -> runner.EpochReplayResult:
+                spec = specs[0]
+                bundle = runner.evidence_bundle_from_frontier_candidate(
+                    candidate_spec_id=spec.candidate_spec_id,
+                    candidate={
+                        "candidate_id": "cand-incomplete",
+                        "objective_scorecard": {
+                            "net_pnl_per_day": "400",
+                            "active_day_ratio": "1",
+                            "positive_day_ratio": "1",
+                            "daily_net": {
+                                "2026-02-23": "400",
+                                "2026-02-24": "400",
+                                "2026-02-25": "400",
+                                "2026-02-26": "400",
+                            },
+                            "avg_filled_notional_per_day": "350000",
+                        },
+                    },
+                    dataset_snapshot_id="snap-incomplete",
+                    result_path=str(output_dir / "incomplete.json"),
+                )
+                return runner.EpochReplayResult(
+                    evidence_bundles=(bundle,),
+                    replay_results=({"status": "partial_replay_shards_interrupted"},),
+                    incomplete=True,
+                    failure_reasons=("TimeoutError:real_replay_timeout_seconds:7",),
+                )
+
+            args = self._args(output_dir)
+            args.replay_mode = "real"
+            args.portfolio_size_min = 1
+            with patch.object(
+                runner, "_run_replay_with_optional_timeout", side_effect=fake_replay
+            ):
+                payload = runner.run_whitepaper_autoresearch_profit_target(args)
+
+        self.assertEqual(payload["status"], "no_profit_target_candidate")
+        self.assertEqual(payload["status_reason"], "selected_replay_incomplete")
+        self.assertTrue(payload["replay_incomplete"])
+        self.assertFalse(payload["oracle_candidate_found"])
+        self.assertIn(
+            "selected_replay_incomplete", payload["promotion_readiness"]["blockers"]
+        )
 
     def test_main_returns_nonzero_without_sources(self) -> None:
         with (

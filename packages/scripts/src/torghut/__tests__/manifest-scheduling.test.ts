@@ -66,6 +66,20 @@ const getAtPath = (root: unknown, selectorPath: Array<string | number>): JsonRec
 
 const parseManifest = (path: string): JsonRecord => YAML.parse(readFileSync(join(repoRoot, path), 'utf8')) as JsonRecord
 
+const parameterValue = (manifest: JsonRecord, name: string): string => {
+  const parameters = getAtPath(manifest, ['spec', 'arguments']).parameters
+  if (!Array.isArray(parameters)) {
+    throw new Error('Manifest arguments.parameters is not an array')
+  }
+  const parameter = parameters.find((item) => typeof item === 'object' && item !== null && item.name === name) as
+    | { value?: unknown }
+    | undefined
+  if (typeof parameter?.value !== 'string') {
+    throw new Error(`Missing string parameter ${name}`)
+  }
+  return parameter.value
+}
+
 describe('Torghut manifest scheduling', () => {
   it('pins arm64-only Torghut image consumers to arm64 nodes', () => {
     for (const check of torghutArm64ImageChecks) {
@@ -95,5 +109,17 @@ describe('Torghut manifest scheduling', () => {
     )
     expect(JSON.stringify(template)).toContain('run_whitepaper_autoresearch_profit_target.py')
     expect(JSON.stringify(template)).toContain('--require-no-flat-days')
+    expect(JSON.stringify(template)).toContain('--real-replay-shard-size')
+    expect(JSON.stringify(template)).toContain('--real-replay-shard-timeout-seconds')
+  })
+
+  it('bounds whitepaper autoresearch real replay so profit runs emit evidence before timeout', () => {
+    const manifest = parseManifest('argocd/applications/torghut/whitepaper-autoresearch-workflowtemplate.yaml')
+    const template = getAtPath(manifest, ['spec', 'templates', 0])
+
+    expect(parameterValue(manifest, 'maxFrontierCandidatesPerSpec')).toBe('2')
+    expect(parameterValue(manifest, 'maxTotalFrontierCandidates')).toBe('24')
+    expect(parameterValue(manifest, 'realReplayTimeoutSeconds')).toBe('7200')
+    expect(template.activeDeadlineSeconds).toBe(10800)
   })
 })
