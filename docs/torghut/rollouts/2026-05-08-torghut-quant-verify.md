@@ -5,171 +5,213 @@ Repository: `proompteng/lab`
 Branch: `codex/swarm-torghut-quant-verify`
 Base: `main`
 Owner channel: `swarm://owner/trading`
-Last refreshed: 2026-05-08T01:59:17Z
+Last refreshed: 2026-05-08T03:37:09Z
 
 ## Owner update message
 
-Torghut rollout state is green for the latest merged production commit and no-go for the remaining
-open Torghut runtime PR.
+Torghut rollout state is go after rollback, with one runtime PR still held no-go.
 
-#6002, `fix(torghut): gate route packets on jangar continuity`, squash-merged at
-`7d88cb2a34d47c2d857c8c0824bbaa5d8cdcdcf4` after PR checks passed. #6005,
-`chore(torghut): promote image 7d88cb2a`, promoted that source commit through GitOps at
-`227aaa46b75071da8f237f0f3f99ba75e9e27187` with image digest
-`sha256:a5f1bfde242b80a1c18d7776859dcb1b56d69c5ec5d742bb59b5244ec54c87a2`.
+I merged #6014, `revert(torghut): rollback failed promotion
+19432a44f628c25d18a537970058468eb3330cf1`, by squash at
+`f82ea3e78bd398ebd0ff53744d86270a7cbc4835` after required checks were green. That reverted the
+failed #6013 promotion at `19432a44f628c25d18a537970058468eb3330cf1`, whose post-deploy verifier
+failed on Torghut `/readyz` with HTTP 504.
 
-Argo CD reports `torghut` `Synced` / `Healthy` at
-`227aaa46b75071da8f237f0f3f99ba75e9e27187`. The current live and simulation Knative deployments,
-`torghut-00292` and `torghut-sim-00391`, are rolled out and `2/2` ready. The options catalog and
-options enricher deployments are rolled out and ready. Mainline `torghut-ci`, `argo-lint`,
-`kubeconform`, and `torghut-post-deploy-verify` passed on the promotion commit.
+Argo CD now reports the `torghut` application `Synced` / `Healthy` at main revision
+`1e3b516eecfbe0ee5a7c401b058b69c61ace25e5`. The last Torghut sync operation completed successfully
+for rollback revision `f82ea3e78bd398ebd0ff53744d86270a7cbc4835`; subsequent main commits
+`8f981ed88b8f6e7fac718b6546e67159ca6f2f80` and
+`1e3b516eecfbe0ee5a7c401b058b69c61ace25e5` changed Jangar-only files, with no Torghut manifest,
+Torghut service, or Torghut CI workflow diff from the rollback commit.
 
-#5412, `feat(torghut): add profit escrow runtime projections`, remains no-go. It is clean,
-mergeable, and green on hosted checks at head `d416dcfc0f87bf97fbee0291a99871ff11a0857e`, with zero
-review threads, but the current diff is 7,099 additions and 498 deletions. That exceeds the mandatory
-large-diff Codex review threshold. The latest review request returned the Codex code-review
-usage-limit blocker instead of a posted review. Smallest unblocker: restore Codex review capacity or
-record an explicit maintainer waiver, then refresh against `main`, resolve any review threads, rerun
-required checks, and only then squash-merge.
+Current Torghut workloads are rolled out and available on the restored image digest
+`sha256:a5f1bfde242b80a1c18d7776859dcb1b56d69c5ec5d742bb59b5244ec54c87a2`:
+`torghut-00294-deployment`, `torghut-sim-00393-deployment`, `torghut-options-catalog`, and
+`torghut-options-enricher`. Mainline `torghut-ci`, `torghut-post-deploy-verify`, `argo-lint`, and
+`kubeconform` passed on the rollback commit, and Jangar CI/post-deploy verification passed after the
+later Jangar dependency promotion.
 
-Runtime trading promotion remains intentionally closed, not rolled back: the post-deploy revenue
-repair artifact reports `business_state=repair_only`, `revenue_ready=false`,
+Runtime trading promotion remains intentionally closed. Torghut `/healthz`, `/trading/status`, and
+`/trading/revenue-repair` respond successfully; `/readyz` returns degraded because the business
+safety gates are closed, not because the core rollout is unavailable. The revenue-repair digest
+reports `business_state=repair_only`, `revenue_ready=false`,
 `live_submission_reason=simple_submit_disabled`, `capital_state=zero_notional`, and
 `max_notional=0`.
+
+#5412, `feat(torghut): add profit escrow runtime projections`, remains no-go. It is clean,
+mergeable, and green on hosted checks at head `9a4c424b4a855046408cbc7895381eccce233a9f`, with no
+review threads, but the diff is 7,099 additions and 498 deletions. That exceeds the mandatory
+large-diff Codex review threshold. The latest Codex review request returned the connector
+usage-limit blocker at 2026-05-08T03:03:08Z instead of a posted review. Smallest unblocker: restore
+Codex review capacity or record an explicit maintainer waiver, then resolve any review threads,
+rerun required checks, and only then squash-merge.
 
 ## Open PR enumeration
 
 - #5412, `feat(torghut): add profit escrow runtime projections`
   - Selected as the only open Torghut runtime PR.
   - Held no-go on the mandatory large-diff Codex review gate.
-- #5889, `feat(jangar): add repair warrant exchange`
-  - Open Jangar control-plane PR, not selected for the Torghut release lane.
-  - It also remains over the large-diff review threshold without a posted Codex review.
-- #5767 and #5316, automated release PRs
-  - Older release automation PRs, not selected because they are not the unblock-first path for the
-    current Torghut runtime gate.
+- #6006, `docs(torghut): record quant verify gate`
+  - Selected as the audit PR for this release-engineering pass.
+  - Updated to replace stale pre-rollback evidence with the final rollback and rollout record.
+- #6014, `revert(torghut): rollback failed promotion 19432a44f628c25d18a537970058468eb3330cf1`
+  - Selected as the unblock-first item after #6013 post-deploy failed.
+  - Merged by squash after checks were green.
+- #6013, `chore(torghut): promote image da8b6386`
+  - Treated as the failed promotion to roll back.
+  - Post-deploy verifier failed on `/readyz` HTTP 504.
+- #5767 and #5316, older automated release PRs
+  - Not selected because they are not the unblock-first path for the current Torghut runtime gate.
 
 ## PRs touched
 
 - #5412
-  - Rechecked open PR state, mergeability, hosted checks, review threads, and latest Codex review
-    blocker.
-  - Updated the anchored `<!-- codex:progress -->` comment with current no-go evidence.
+  - Rechecked mergeability, hosted checks, review threads, latest review blocker, and conflict state.
+  - Validated the refreshed branch locally in a temporary worktree after the `services/torghut/app/main.py`
+    merge conflict was resolved by preserving both mainline consumer-evidence receipts and the PR's
+    profit-escrow runtime projections.
   - Did not merge because the large-diff review gate is unmet.
-- #6002
-  - Verified after merge as the source commit behind the current Torghut promotion.
-  - PR checks passed before merge, including Torghut Pyright, quality signals, bytecode + pytest +
-    coverage, changed-files, Semantic PR title, and Semantic commit messages.
-- #6005
-  - Verified as the GitOps image promotion for #6002.
-  - Confirmed mainline CI, post-deploy verifier, Argo sync, workload readiness, image digest, and
-    event posture.
+- #6006
+  - Rebased the audit branch onto current `main`.
+  - Refreshed this rollout record with the failed promotion, rollback merge, post-rollback evidence,
+    transient degraded state, residual risk, and rollback path.
+- #6014
+  - Verified PR checks, mergeability, and scope before merge.
+  - Squash-merged to restore the last healthy Torghut image digest.
+- #6013
+  - Verified failure evidence from the post-deploy workflow and cluster probes.
+  - Confirmed it was rolled back by #6014.
+- #6017 and #6019
+  - Observed as Jangar-only follow-up commits after the Torghut rollback.
+  - Confirmed they did not change Torghut manifests, Torghut service code, or Torghut CI workflows.
+  - Waited for their Jangar CI/post-deploy checks to pass because Jangar is a Torghut dependency.
 
 ## Comments and conflicts
 
-- #5412 has `mergeStateStatus=CLEAN`, `mergeable=MERGEABLE`, zero review threads, zero posted
-  reviews, and no visible blocking review comments.
+- #5412 currently reports `mergeStateStatus=CLEAN` and `mergeable=MERGEABLE`.
+- #5412 has no posted reviews and no open review threads in the data returned by GitHub.
 - #5412 remains blocked by policy because the required large-diff Codex review has not posted.
-- Latest #5412 progress evidence before this refresh cited the current head
-  `d416dcfc0f87bf97fbee0291a99871ff11a0857e` and connector usage-limit blocker.
-- No direct production mutations were made from the local shell. Production promotion occurred
-  through PR merge, release automation, and Argo CD reconciliation.
+- The latest #5412 Codex review attempt was followed by the connector usage-limit response instead
+  of a code review.
+- The only #5412 code conflict observed during this pass was in `services/torghut/app/main.py`; the
+  refreshed remote head now includes both mainline Jangar continuity evidence and the PR profit-escrow
+  projection payloads.
+- #6014 was clean and mergeable before squash merge.
+- No direct production mutations were made from the local shell. Production movement happened through
+  PR merge, release automation, and Argo CD reconciliation.
 - Live release updates were published through `/usr/local/bin/codex-nats-publish --publish-general`.
 
 ## Validation
 
 - PASS: NATS context soak was read before action with `/usr/local/bin/codex-nats-soak`; a broader
   general-channel read was also taken for recent teammate state.
-- PASS: `gh pr list --repo proompteng/lab --state open --limit 100 --json ...`; open PRs were
-  enumerated and #5412 was selected as the only open Torghut runtime PR.
-- PASS: `gh pr checks 5412 --repo proompteng/lab`; hosted checks are pass or intentionally skipped:
+- PASS: Open PRs were enumerated with `gh pr list --repo proompteng/lab --state open --limit 100`.
+- PASS: #5412 hosted checks passed or were intentionally skipped on head
+  `9a4c424b4a855046408cbc7895381eccce233a9f`, including:
   - `torghut-ci / Bytecode + pytest + coverage`
   - `torghut-ci / Pyright`
   - `torghut-ci / Quality signals (complexity + security)`
   - `CI / check_changed_files`
-  - `Semantic Commits / Lint commit messages`
-  - `Semantic Pull Request / Validate PR title`
-- PASS: GitHub GraphQL review-thread query for #5412 returned `totalCount=0`; latest reviews are
-  empty.
+  - semantic commit and semantic PR title checks
+- PASS: #5412 local validation in `/tmp/lab-pr5412-merge/services/torghut`:
+  - `/root/.local/bin/uv sync --frozen --extra dev`
+  - `/root/.local/bin/uv run --frozen ruff check app/main.py tests/test_trading_api.py`
+  - `/root/.local/bin/uv run --frozen python scripts/check_migration_graph.py`
+  - all three Pyright profiles: `pyrightconfig.json`, `pyrightconfig.alpha.json`, and
+    `pyrightconfig.scripts.json`
+  - targeted pytest set for trading API, consumer evidence, Jangar continuity, submission council,
+    renewal-bond profit escrow, and executable-alpha receipts: 113 passed, 1 warning
 - BLOCKED: #5412 changed lines are 7,597 total, above the 1,000-line Codex review gate; no Codex
   review has posted.
-- PASS: #6002 PR checks passed before merge, with one superseded semantic-commit run cancelled and
-  a later semantic-commit run passing.
-- PASS: #6005 PR checks passed before merge: argo-lint, kubeconform, Torghut Pyright, Torghut
-  quality signals, Torghut bytecode + pytest + coverage, Semantic PR title, Semantic commits, and
-  deploy-automerge enable.
-- PASS: `gh run view 25532144730 --repo proompteng/lab --json ...`; mainline `torghut-ci` passed on
-  `227aaa46b75071da8f237f0f3f99ba75e9e27187`.
-- PASS: `gh run view 25532144727 --repo proompteng/lab --json ...`; `torghut-post-deploy-verify`
-  passed on `227aaa46b75071da8f237f0f3f99ba75e9e27187`.
-- PASS: `gh run list --repo proompteng/lab --branch main --limit 10 --json ...`; latest Torghut
-  `argo-lint`, `kubeconform`, `torghut-ci`, and `torghut-post-deploy-verify` runs are green.
+- PASS: #6014 PR checks were green before merge, including Torghut bytecode + pytest + coverage,
+  Pyright, quality signals, semantic checks, and manifest validation.
+- PASS: #6014 squash-merged at `f82ea3e78bd398ebd0ff53744d86270a7cbc4835`.
+- PASS: `gh run watch 25534861744 --repo proompteng/lab --exit-status`; mainline `torghut-ci`
+  passed on the rollback commit.
+- PASS: `gh run watch 25534861747 --repo proompteng/lab --exit-status`;
+  `torghut-post-deploy-verify` passed on the rollback commit.
+- PASS: `gh run watch 25535170753 --repo proompteng/lab --exit-status`; Jangar CI passed after the
+  later dependency promotion.
+- PASS: `gh run watch 25535175186 --repo proompteng/lab --exit-status`; Jangar post-deploy
+  verification passed after the later dependency promotion.
 - PASS: `kubectl get application -n argocd torghut -o jsonpath=...`; Argo CD reports `Synced`,
-  `Healthy`, revision `227aaa46b75071da8f237f0f3f99ba75e9e27187`, operation `Succeeded`, and
+  `Healthy`, revision `1e3b516eecfbe0ee5a7c401b058b69c61ace25e5`, operation `Succeeded`, and
   `successfully synced (no more tasks)`.
-- PASS: `kubectl rollout status -n torghut deployment/torghut-00292-deployment --timeout=120s`.
-- PASS: `kubectl rollout status -n torghut deployment/torghut-sim-00391-deployment --timeout=120s`.
+- PASS: `kubectl rollout status -n torghut deployment/torghut-00294-deployment --timeout=120s`.
+- PASS: `kubectl rollout status -n torghut deployment/torghut-sim-00393-deployment --timeout=120s`.
 - PASS: `kubectl rollout status -n torghut deployment/torghut-options-catalog --timeout=120s`.
 - PASS: `kubectl rollout status -n torghut deployment/torghut-options-enricher --timeout=120s`.
-- PASS: `kubectl get pods -n torghut -o custom-columns=...`; current live, sim, options catalog,
-  options enricher, databases, ClickHouse, Flink, exporters, and web-socket pods are Running and
-  ready.
-- LIMITATION: `kubectl get ksvc -n torghut` is forbidden for the runner service account. Knative
-  readiness was verified through the underlying deployment rollout, pods, Argo health, and
-  post-deploy verifier.
+- PASS: Current deployment availability shows all four Torghut runtime deployments available.
+- PASS: Current service probes from the runner:
+  - `/healthz`: HTTP 200
+  - `/trading/status`: HTTP 200
+  - `/trading/revenue-repair`: HTTP 200
+  - `torghut-ws /readyz`: HTTP 200
+- EXPECTED DEGRADED: Torghut `/readyz` returns HTTP 503 because business safety gates are closed.
+- LIMITATION: The runner service account cannot list Knative Services or exec into Torghut pods, so
+  rollout verification used Argo, Deployments, Pods, events, logs, service HTTP probes, and CI
+  post-deploy artifacts.
 
 ## Deployment evidence
 
-GitOps state:
+Rollback and GitOps state:
 
-- `torghut`: `Synced` / `Healthy`
-- Revision: `227aaa46b75071da8f237f0f3f99ba75e9e27187`
-- Operation: `Succeeded`
-- Finished at: 2026-05-08T01:55:39Z
-- Message: `successfully synced (no more tasks)`
-
-Image evidence:
-
-- Source commit: `7d88cb2a34d47c2d857c8c0824bbaa5d8cdcdcf4`
-- Promotion commit: `227aaa46b75071da8f237f0f3f99ba75e9e27187`
-- Torghut image digest:
+- Failed promotion PR: #6013
+- Failed promotion commit: `19432a44f628c25d18a537970058468eb3330cf1`
+- Failed image digest:
+  `sha256:822106feadcbae3cf78241f0508533133339a995327325e4668870294d763f2b`
+- Failed verifier: `torghut-post-deploy-verify` run `25534396528`
+- Failure symptom: Torghut `/readyz` returned HTTP 504 and the subsequent readiness curl timed out.
+- Rollback PR: #6014
+- Rollback merge commit: `f82ea3e78bd398ebd0ff53744d86270a7cbc4835`
+- Restored Torghut image digest:
   `sha256:a5f1bfde242b80a1c18d7776859dcb1b56d69c5ec5d742bb59b5244ec54c87a2`
-- Current `torghut-00292`, `torghut-sim-00391`, `torghut-options-catalog`, and
-  `torghut-options-enricher` deployments use that digest.
+- Current Argo comparison revision: `1e3b516eecfbe0ee5a7c401b058b69c61ace25e5`
+- Current Argo health: `Synced` / `Healthy`
+- Last Torghut operation revision: `f82ea3e78bd398ebd0ff53744d86270a7cbc4835`
+- Last Torghut operation phase: `Succeeded`
+- Argo message: `successfully synced (no more tasks)`
 
 Workload readiness:
 
-- `torghut-00292-deployment-68579d98b7-h5ctj`: `2/2` ready, Running, zero restarts.
-- `torghut-sim-00391-deployment-74c5c47749-lcmjq`: `2/2` ready, Running, zero restarts.
-- `torghut-options-catalog-6c68597999-hgqh9`: ready, Running, zero restarts.
-- `torghut-options-enricher-586c7cc756-nmx4j`: ready, Running, zero restarts.
-- `torghut-db-1`, ClickHouse pods, keeper, TA Flink deployments, exporters, and web-socket pods are
-  Running and ready.
+- `torghut-00294-deployment`: `1/1` ready and available.
+- `torghut-sim-00393-deployment`: `1/1` ready and available.
+- `torghut-options-catalog`: `1/1` ready and available.
+- `torghut-options-enricher`: `1/1` ready and available.
+- Current live pod `torghut-00294-deployment-7b944c8867-pxz5s` is Running with both containers
+  ready after two user-container restarts during rollout recovery.
+- Current sim pod `torghut-sim-00393-deployment-79df845bb6-cwr4c` is Running with both containers
+  ready.
 
-Post-deploy verifier:
+Runtime probes:
 
-- `torghut-post-deploy-verify` run `25532144727` passed.
-- Artifact `torghut-revenue-repair-25532144727-1` was uploaded.
-- `torghut-ws /readyz`: `ready=true`, `alpaca_ws=true`, `kafka=true`, `trade_updates=true`.
-- Torghut `/readyz`: degraded for safety gates, not rollout failure. Core dependencies report
-  `postgres=true`, `clickhouse=true`, `alpaca=true`, and `universe=true`.
+- `/healthz`: HTTP 200 with `{"status":"ok","service":"torghut"}`.
+- `/trading/status`: HTTP 200 with build commit `7d88cb2a34d47c2d857c8c0824bbaa5d8cdcdcf4`.
+- `/trading/revenue-repair`: HTTP 200 with `business_state=repair_only` and
+  `revenue_ready=false`.
+- `/readyz`: HTTP 503 degraded because safety gates remain closed.
+- `torghut-ws /readyz`: HTTP 200 with `ready=true`.
+
+Post-deploy artifacts:
+
+- `torghut-post-deploy-verify` run `25534861747` passed on the rollback commit.
+- Artifact `torghut-revenue-repair-25534861747-1` was uploaded.
 - Revenue repair digest: `business_state=repair_only`, `revenue_ready=false`,
   `live_submission_allowed=false`, `live_submission_reason=simple_submit_disabled`,
   `proof_floor_state=repair_only`, `capital_state=zero_notional`, `max_notional=0`.
-- Runtime blockers in the digest: `alpha_readiness_not_promotion_eligible`,
+- Runtime blockers in the digest include `alpha_readiness_not_promotion_eligible`,
   `execution_tca_route_universe_incomplete`, `simple_submit_disabled`, and
-  `quant_pipeline_degraded`.
+  `quant_pipeline_stages_missing`.
 
 Event review:
 
-- Recent rollout events show normal creation, image pull, revision-ready, ingress update, hook-job
-  completion, and old-revision scale-down events.
-- Transient startup/readiness probe warnings occurred during rollout for live, sim, options catalog,
-  and options enricher pods; all active replacements are now ready.
-- Recurring ClickHouse `MultiplePodDisruptionBudgets` and `torghut-keeper` `NoPods` events remain
-  cluster hygiene debt, not a rollback trigger for #6002/#6005.
-- `torghut-whitepaper-autoresearch-profit-target-8r6w6` is an older failed pod and is unrelated
-  residual noise, not part of the current rollout.
+- A transient degraded window occurred after the rollback sync: the live Knative revision reported
+  readiness/liveness probe failures and the `torghut-00294` user container restarted twice.
+- The transient state recovered without local mutation; rollout status later completed and Argo
+  returned to `Healthy`.
+- Persistent hygiene noise remains: ClickHouse `MultiplePodDisruptionBudgets`,
+  `torghut-keeper` `NoPods`, and an older failed `torghut-whitepaper-autoresearch-profit-target`
+  pod. These are not tied to the rollback commit but should stay visible to operators.
 
 ## Risk
 
@@ -177,36 +219,41 @@ Event review:
   must not merge until the large-diff review gate is satisfied.
 - Codex code-review capacity is the blocker for #5412. The connector is returning the usage-limit
   response rather than a review.
-- Runtime trading promotion is still deliberately closed by safety gates. That is the expected
-  posture for this rollout, but it means production is in `repair_only` / zero-notional mode.
+- Torghut runtime trading remains in `repair_only` / zero-notional mode by design. That is the
+  expected safety posture, but it is not a live-capital promotion.
+- The live Torghut pod had transient liveness/readiness failures after rollback before recovering.
+  A repeat of that behavior is a rollback trigger if it persists or expands beyond a single
+  recovery window.
 - Route-universe and execution-TCA evidence remain incomplete for live capital promotion.
-- The runner service account cannot list Knative Services in the `torghut` namespace, so rollout
-  verification used Argo, Deployments, Pods, events, and the post-deploy verifier.
+- The runner service account lacks permissions for Knative Service listing and pod exec, so those
+  checks were substituted with permitted Argo, Deployment, Pod, event, log, service-probe, and CI
+  verifier evidence.
 
 ## Rollback path
 
-- Immediate GitOps rollback for #6005: open a PR reverting
-  `227aaa46b75071da8f237f0f3f99ba75e9e27187`, or restore the previous healthy Torghut image digest
-  in the Torghut and Torghut options manifests, then let Argo CD reconcile.
-- Source rollback for #6002: revert `7d88cb2a34d47c2d857c8c0824bbaa5d8cdcdcf4`, let
-  `torghut-build-push` build the revert, and let `torghut-release` open the normal GitOps promotion
-  PR.
-- Runtime safety rollback: keep live submission disabled and `capital_state=zero_notional` until the
-  route universe, execution TCA, alpha readiness, and quant pipeline evidence clear.
+- If the failed #6013 image digest reappears, revert the promotion or restore digest
+  `sha256:a5f1bfde242b80a1c18d7776859dcb1b56d69c5ec5d742bb59b5244ec54c87a2` through a PR and let
+  Argo CD reconcile.
+- If the restored image digest becomes unstable, revert source commit
+  `7d88cb2a34d47c2d857c8c0824bbaa5d8cdcdcf4`, let `torghut-build-push` produce the revert image,
+  and let normal release automation open the GitOps promotion PR.
+- Runtime safety rollback remains to keep live submission disabled and `capital_state=zero_notional`
+  until route universe, execution TCA, alpha readiness, and quant pipeline evidence clear.
 - #5412 needs no runtime rollback because it was not merged.
 
-Rollback triggers for #6002/#6005:
+Rollback triggers:
 
-- `torghut` becomes Degraded or stuck OutOfSync on the promoted revision.
-- Mainline Torghut checks fail on the current promotion commit.
+- `torghut` becomes Degraded or stuck OutOfSync on the current main revision.
+- Mainline Torghut checks fail on the current promotion or rollback commit.
 - Active live/sim/options workloads lose readiness or restart repeatedly.
-- Post-deploy revenue repair or web-socket readiness regresses.
-- Runtime blockers expand beyond the documented safety-gate posture into core dependency failure
-  such as Postgres, ClickHouse, Alpaca, or universe resolution failure.
+- `/healthz`, `/trading/status`, `/trading/revenue-repair`, or `torghut-ws /readyz` regress.
+- Runtime blockers expand beyond the documented safety-gate posture into core dependency failure,
+  including Postgres, ClickHouse, Alpaca, or universe resolution failure.
 
 ## Next action
 
-Keep #5412 open and blocked. The next release captain should not merge it until Codex review capacity
-is restored or a maintainer explicitly waives the large-diff gate. After that, refresh against
-current `main`, resolve all review threads, rerun required checks, squash-merge only with all required
-checks green, and repeat GitOps, workload, post-deploy, and event verification.
+Merge #6006 only after its docs-only checks are green. Keep #5412 open and blocked. The next release
+captain should not merge #5412 until Codex review capacity is restored or a maintainer explicitly
+waives the large-diff gate. After that, refresh against current `main`, resolve all review threads,
+rerun required checks, squash-merge only with all required checks green, and repeat GitOps, workload,
+post-deploy, and event verification.
