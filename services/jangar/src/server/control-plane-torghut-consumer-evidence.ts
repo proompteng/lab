@@ -5,7 +5,7 @@ import type { TorghutNegativeEvidenceInput } from '~/server/control-plane-negati
 import { asRecord } from '~/server/primitives-http'
 
 export type TorghutConsumerEvidenceStatus = {
-  status: 'disabled' | 'current' | 'stale' | 'missing' | 'unavailable'
+  status: 'disabled' | 'current' | 'stale' | 'missing' | 'unavailable' | 'route_missing' | 'schema_mismatch'
   endpoint: string
   receipt_id: string | null
   generated_at: string | null
@@ -13,6 +13,12 @@ export type TorghutConsumerEvidenceStatus = {
   candidate_id: string | null
   dataset_snapshot_ref: string | null
   max_notional: string | null
+  route_canary_id?: string | null
+  jangar_parity_escrow_ref?: string | null
+  serving_revision?: string | null
+  image_digest?: string | null
+  route_repair_value?: number | null
+  decision?: string | null
   reason_codes: string[]
   message: string
 }
@@ -52,7 +58,17 @@ const parseNumber = (value: string | null) => {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-const requestJson = async (url: string, timeoutMs: number): Promise<Record<string, unknown> | null> => {
+const CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION = 'torghut.consumer-evidence-status.v1'
+const CONSUMER_EVIDENCE_RECEIPT_SCHEMA_VERSION = 'torghut.consumer-evidence-receipt.v1'
+const ROUTE_PROVEN_PROFIT_RECEIPT_SCHEMA_VERSION = 'torghut.route-proven-profit-receipt.v1'
+
+type JsonRouteResult = {
+  ok: boolean
+  statusCode: number | null
+  payload: Record<string, unknown> | null
+}
+
+const requestJson = async (url: string, timeoutMs: number): Promise<JsonRouteResult> => {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -62,10 +78,12 @@ const requestJson = async (url: string, timeoutMs: number): Promise<Record<strin
       signal: controller.signal,
     })
     const payload = (await response.json().catch(() => null)) as unknown
-    if (!response.ok || !payload || typeof payload !== 'object' || Array.isArray(payload)) return null
-    return payload as Record<string, unknown>
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return { ok: response.ok, statusCode: response.status, payload: null }
+    }
+    return { ok: response.ok, statusCode: response.status, payload: payload as Record<string, unknown> }
   } catch {
-    return null
+    return { ok: false, statusCode: null, payload: null }
   } finally {
     clearTimeout(timeout)
   }
@@ -120,11 +138,14 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     }
   }
 
-  const payload = await requestJson(endpoint, config.torghutStatusTimeoutMs)
-  if (!payload) {
+  const routeResult = await requestJson(endpoint, config.torghutStatusTimeoutMs)
+  if (!routeResult.ok) {
+    const routeMissing = routeResult.statusCode === 404
+    const status = routeMissing ? 'route_missing' : 'unavailable'
+    const reason = routeMissing ? 'torghut_consumer_evidence_route_missing' : 'torghut_consumer_evidence_unavailable'
     return {
       status: {
-        status: 'unavailable',
+        status,
         endpoint,
         receipt_id: null,
         generated_at: null,
@@ -132,13 +153,54 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
         candidate_id: null,
         dataset_snapshot_ref: null,
         max_notional: null,
-        reason_codes: ['torghut_consumer_evidence_unavailable'],
-        message: 'torghut consumer evidence endpoint unavailable',
+        reason_codes: [reason],
+        message: routeMissing
+          ? 'torghut consumer evidence route returned 404'
+          : 'torghut consumer evidence endpoint unavailable',
+      },
+      negativeEvidence: {
+        readiness_status: 'degraded',
+        readyz_status_code: routeResult.statusCode,
+        paper_settlement_clean: false,
+        consumer_evidence_receipt_id: null,
+        consumer_evidence_status: status,
+        consumer_evidence_fresh_until: null,
+        consumer_evidence_reason_codes: [reason],
       },
     }
   }
 
-  const receipt = asRecord(payload.torghut_consumer_evidence_receipt ?? payload.consumer_evidence_receipt)
+  const payload = routeResult.payload ?? {}
+  const payloadSchema = normalizeNonEmpty(payload.schema_version)
+  if (payloadSchema && payloadSchema !== CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION) {
+    return {
+      status: {
+        status: 'schema_mismatch',
+        endpoint,
+        receipt_id: null,
+        generated_at: null,
+        fresh_until: null,
+        candidate_id: null,
+        dataset_snapshot_ref: null,
+        max_notional: null,
+        reason_codes: ['torghut_consumer_evidence_schema_mismatch'],
+        message: `torghut consumer evidence status schema mismatch: ${payloadSchema}`,
+      },
+      negativeEvidence: {
+        readiness_status: 'degraded',
+        readyz_status_code: routeResult.statusCode,
+        paper_settlement_clean: false,
+        consumer_evidence_receipt_id: null,
+        consumer_evidence_status: 'schema_mismatch',
+        consumer_evidence_fresh_until: null,
+        consumer_evidence_reason_codes: ['torghut_consumer_evidence_schema_mismatch'],
+      },
+    }
+  }
+
+  const routeProvenReceipt = asRecord(payload.route_proven_profit_receipt)
+  const compatibilityReceipt = asRecord(payload.torghut_consumer_evidence_receipt ?? payload.consumer_evidence_receipt)
+  const receipt = routeProvenReceipt ?? compatibilityReceipt
   if (!receipt) {
     return {
       status: {
@@ -152,6 +214,38 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
         max_notional: null,
         reason_codes: ['torghut_consumer_evidence_missing'],
         message: 'torghut status payload did not include torghut_consumer_evidence_receipt',
+      },
+    }
+  }
+
+  const receiptSchema = normalizeNonEmpty(receipt.schema_version)
+  const expectedReceiptSchema = routeProvenReceipt
+    ? ROUTE_PROVEN_PROFIT_RECEIPT_SCHEMA_VERSION
+    : CONSUMER_EVIDENCE_RECEIPT_SCHEMA_VERSION
+  if (receiptSchema && receiptSchema !== expectedReceiptSchema) {
+    const receiptId = normalizeNonEmpty(receipt.receipt_id)
+    return {
+      status: {
+        status: 'schema_mismatch',
+        endpoint,
+        receipt_id: receiptId,
+        generated_at: normalizeNonEmpty(receipt.generated_at),
+        fresh_until: normalizeNonEmpty(receipt.fresh_until),
+        candidate_id: normalizeNonEmpty(receipt.candidate_id),
+        dataset_snapshot_ref: normalizeNonEmpty(receipt.dataset_snapshot_ref),
+        max_notional: normalizeNonEmpty(receipt.max_notional),
+        reason_codes: ['torghut_consumer_evidence_receipt_schema_mismatch'],
+        message: `torghut consumer evidence receipt schema mismatch: ${receiptSchema}`,
+      },
+      negativeEvidence: {
+        readiness_status: 'degraded',
+        readyz_status_code: routeResult.statusCode,
+        ...readMarketContext(payload ?? {}),
+        paper_settlement_clean: false,
+        consumer_evidence_receipt_id: receiptId,
+        consumer_evidence_status: 'schema_mismatch',
+        consumer_evidence_fresh_until: normalizeNonEmpty(receipt.fresh_until),
+        consumer_evidence_reason_codes: ['torghut_consumer_evidence_receipt_schema_mismatch'],
       },
     }
   }
@@ -188,6 +282,12 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       candidate_id: normalizeNonEmpty(receipt.candidate_id),
       dataset_snapshot_ref: normalizeNonEmpty(receipt.dataset_snapshot_ref),
       max_notional: maxNotional,
+      route_canary_id: normalizeNonEmpty(receipt.route_canary_id),
+      jangar_parity_escrow_ref: normalizeNonEmpty(receipt.jangar_parity_escrow_ref),
+      serving_revision: normalizeNonEmpty(receipt.serving_revision),
+      image_digest: normalizeNonEmpty(receipt.image_digest),
+      route_repair_value: parseNumber(normalizeNonEmpty(receipt.route_repair_value)),
+      decision: normalizeNonEmpty(receipt.decision),
       reason_codes: reasonCodes,
       message:
         status === 'current'

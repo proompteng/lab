@@ -175,6 +175,53 @@ Testing rules for the trading core:
   `TRADING_JANGAR_QUANT_HEALTH_URL` when it does not target the typed
   `/api/torghut/trading/control-plane/quant/health` surface; use `TRADING_JANGAR_QUANT_WINDOW` to align the expected
   freshness window.
+- The shared live-submission gate now projects `profit_window_contract` with deterministic `profit_window_id` and
+  `evidence_escrow_id` values per hypothesis lane. The contract records session class, funded/expired/underfunded
+  escrow state for quant health, ClickHouse freshness, empirical jobs, market context, forecast/feature coverage, and
+  schema lineage so status, readiness, runtime-profitability, and decision metadata can cite the same lane-local
+  authority snapshot.
+- `GET /trading/status` and `GET /readyz` also surface `profit_lease_projection`, a shadow-only
+  `torghut.profit-lease-provenance.v1` payload for Jangar `torghut_capital` consumers. It source-qualifies proof by
+  empirical job freshness, quant metrics, relevant data readiness, promotion-table presence, rejection drag, and the
+  Jangar action lease before emitting `observe_only`, `repair_only`, `paper_candidate`, or `live_candidate`.
+- `GET /trading/status` and `GET /readyz` also surface `renewal_bond_profit_escrow`, a shadow-only
+  `torghut.renewal-bond-profit-escrow.v1` receipt for the May 7 doc 137 contract. It consumes Jangar stage trust,
+  stage renewal bonds, proof floor, empirical jobs, quant evidence, market context, TCA, and hypothesis readiness,
+  then keeps `max_notional=0` while ranking zero-notional repairs and carrying fresh empirical proof value.
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/autonomy` also surface the May 7 doc
+  168 executable-alpha projection: a `torghut.capital-replay-board.v1` board plus
+  `torghut.executable-alpha-receipts.v1` candidate receipts. The initial board is observation-only, seeds AAPL route
+  rehab, NVDA scoped proof refill, and missing megacap breadth probes from proof-floor/route evidence, and keeps every
+  replay and receipt at `max_notional=0` until Jangar contract graduation and fresh scoped proof close.
+- `GET /trading/consumer-evidence` is the Jangar-facing action boundary for May 8 doc 182. It returns
+  `torghut.consumer-evidence-status.v1`, the compatibility `torghut_consumer_evidence_receipt`, a
+  `route_proven_profit_receipt` with serving revision, image digest, route canary id, Jangar parity escrow ref,
+  proof-floor state, decision, rollback target, and route repair value, plus the `consumer_evidence_canary` contract.
+  `/trading/status` and `/trading/health` include the same route-proven receipt for operators, but paper/live capital
+  remains gated by the dedicated consumer-evidence route, proof floor, and Jangar parity.
+- The simple direct-submit lane is no longer an authority bypass in live mode. Before submitting to Alpaca it evaluates
+  the same live-submission gate as the scheduler path and persists the gate payload in decision metadata when a
+  submission is blocked. Paper-mode simple execution remains unchanged.
+
+## Evidence epochs
+
+The May 5 cross-plane contract is implemented as an additive, shadow-first receipt surface:
+
+- `GET /trading/evidence-epochs/latest` compiles a `torghut.evidence-epoch.v1` payload and persists append-only
+  `evidence_epochs` / `evidence_receipts` rows by default.
+- `GET /trading/evidence-epochs/{evidence_epoch_id}` returns a persisted epoch by id.
+- Query `stage_scope=shadow|research|paper|canary|live|scale` to see the decision that would apply to that stage.
+  Shadow stays available while non-shadow scopes quarantine on missing Jangar authority, Torghut health timeouts,
+  stale data/empirical jobs, missing artifact parity, or missing portfolio proof.
+- Optional artifact parity inputs:
+  - `TORGHUT_REQUIRED_IMAGE_PLATFORMS=linux/amd64,linux/arm64`
+  - `TORGHUT_OBSERVED_IMAGE_PLATFORMS=linux/amd64,linux/arm64`
+  - `TORGHUT_RUNTIME_PULL_FAILURES_JSON='["torghut-sim ImagePullBackOff"]'`
+
+Runtime-closure bundles now also write `runtime-closure/promotion/portfolio-proof-receipt.json`. This does not change
+live capital behavior; it gives deployers a receipt id and reason codes before any non-shadow capital request. Rollback
+is epoch-scoped: quarantine the active epoch, revert the GitOps image or strategy config through the normal release PR,
+and leave prior receipts available for audit.
 
 ## Whitepaper workflow (GitHub issue -> Kafka -> AgentRun)
 

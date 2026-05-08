@@ -56,6 +56,67 @@ _SIMPLE_MARKET_CONTEXT_RETRY_INTERVAL = timedelta(seconds=30)
 class SimpleTradingPipeline(TradingPipeline):
     """Minimal signal -> hard-risk -> direct execution lane."""
 
+    def _live_submission_gate(
+        self,
+        *,
+        session: Session | None = None,
+        hypothesis_summary: Mapping[str, Any] | None = None,
+        empirical_jobs_status: Mapping[str, Any] | None = None,
+        dspy_runtime_status: Mapping[str, Any] | None = None,
+        quant_health_status: Mapping[str, Any] | None = None,
+    ) -> dict[str, object]:
+        gate = super()._live_submission_gate(
+            session=session,
+            hypothesis_summary=hypothesis_summary,
+            empirical_jobs_status=empirical_jobs_status,
+            dspy_runtime_status=dspy_runtime_status,
+            quant_health_status=quant_health_status,
+        )
+        if settings.trading_mode != "live":
+            return gate
+
+        simple_blocked_reasons: list[str] = []
+        if not settings.trading_enabled:
+            simple_blocked_reasons.append("trading_disabled")
+        if settings.trading_kill_switch_enabled:
+            simple_blocked_reasons.append("kill_switch_enabled")
+        if not settings.trading_simple_submit_enabled:
+            simple_blocked_reasons.append("simple_submit_disabled")
+        if settings.trading_emergency_stop_enabled and bool(
+            getattr(self.state, "emergency_stop_active", False)
+        ):
+            simple_blocked_reasons.append(
+                str(
+                    getattr(self.state, "emergency_stop_reason", "")
+                    or "emergency_stop_active"
+                )
+            )
+
+        gate_blocked_reasons = [
+            str(item).strip()
+            for item in cast(list[object], gate.get("blocked_reasons") or [])
+            if str(item).strip()
+        ]
+        merged_blocked_reasons = list(
+            dict.fromkeys([*gate_blocked_reasons, *simple_blocked_reasons])
+        )
+        gate["allowed"] = (
+            bool(gate.get("allowed", False)) and not simple_blocked_reasons
+        )
+        gate["blocked_reasons"] = merged_blocked_reasons
+        if simple_blocked_reasons:
+            gate["reason"] = simple_blocked_reasons[0]
+            gate["capital_stage"] = "shadow"
+            gate["capital_state"] = "observe"
+        gate["pipeline_mode"] = "simple"
+        gate["simple_lane"] = {
+            "submit_enabled": settings.trading_simple_submit_enabled,
+            "shared_gate_enforced": True,
+            "blocked_reasons": simple_blocked_reasons,
+        }
+        self._last_live_submission_gate = dict(gate)
+        return gate
+
     def _prepare_run_once(self, session: Session) -> list[Strategy]:
         if settings.trading_simple_order_feed_telemetry_enabled:
             self._ingest_order_feed(session)
@@ -505,18 +566,6 @@ class SimpleTradingPipeline(TradingPipeline):
                 decision_row=decision_row,
                 reasons=["kill_switch_enabled"],
                 log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
-            )
-            return False
-        if (
-            settings.trading_mode == "live"
-            and not settings.trading_simple_submit_enabled
-        ):
-            self._block_decision_submission(
-                session=session,
-                decision=decision,
-                decision_row=decision_row,
-                reason="trading_simple_submit_disabled",
-                submission_stage="blocked_simple_submit_disabled",
             )
             return False
         if settings.trading_mode == "live":

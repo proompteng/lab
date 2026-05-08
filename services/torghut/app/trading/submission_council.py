@@ -11,15 +11,18 @@ from typing import Any, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models import (
+    ResearchCandidate,
+    ResearchPromotion,
     StrategyHypothesis,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
     VNextDatasetSnapshot,
+    VNextPromotionDecision,
 )
 from .hypotheses import (
     compile_hypothesis_runtime_statuses,
@@ -27,6 +30,8 @@ from .hypotheses import (
     resolve_hypothesis_dependency_quorum,
     summarize_hypothesis_runtime_statuses,
 )
+from .profit_windows import build_profit_window_contract
+from .profit_leases import build_profit_lease_projection
 from .tca import build_tca_gate_inputs
 
 _CAPITAL_STAGE_ORDER = (
@@ -891,6 +896,71 @@ def _attach_lineage_refs(
     return attached_rows
 
 
+def _load_profit_promotion_table_counts(session: Session) -> dict[str, int]:
+    return {
+        "research_candidates": int(
+            session.execute(select(func.count(ResearchCandidate.id))).scalar_one()
+        ),
+        "research_promotions": int(
+            session.execute(select(func.count(ResearchPromotion.id))).scalar_one()
+        ),
+        "strategy_promotion_decisions": int(
+            session.execute(
+                select(func.count(StrategyPromotionDecision.id))
+            ).scalar_one()
+        ),
+        "vnext_promotion_decisions": int(
+            session.execute(select(func.count(VNextPromotionDecision.id))).scalar_one()
+        ),
+    }
+
+
+def _build_profit_rejection_summary(state: object) -> dict[str, object]:
+    metrics = getattr(state, "metrics", None)
+    state_totals = getattr(metrics, "decision_state_total", {}) if metrics else {}
+    decision_state_total = (
+        dict(cast(Mapping[str, int], state_totals))
+        if isinstance(state_totals, Mapping)
+        else {}
+    )
+    rejected = _safe_int(decision_state_total.get("rejected"))
+    blocked = _safe_int(decision_state_total.get("blocked"))
+    filled = _safe_int(decision_state_total.get("filled"))
+    planned = _safe_int(decision_state_total.get("planned"))
+    total = sum(_safe_int(value) for value in decision_state_total.values())
+    if total == 0:
+        total = rejected + blocked + filled + planned
+    rejection_drag_ratio = (
+        float(rejected + blocked) / float(total) if total > 0 else None
+    )
+    return {
+        "rejected": rejected,
+        "blocked": blocked,
+        "filled": filled,
+        "planned": planned,
+        "total": total,
+        "rejection_drag_ratio": rejection_drag_ratio,
+        "source_ref": "scheduler.metrics.decision_state_total",
+    }
+
+
+def _build_profit_live_controls(state: object) -> dict[str, object]:
+    rollback_ready = not bool(getattr(state, "emergency_stop_active", False)) and bool(
+        getattr(state, "rollback_incident_evidence_path", None)
+    )
+    live_submission_enabled = (
+        settings.trading_mode == "live"
+        and settings.trading_enabled
+        and not settings.trading_kill_switch_enabled
+        and settings.trading_autonomy_allow_live_promotion
+    )
+    return {
+        "live_submission_enabled": live_submission_enabled,
+        "rollback_ready": rollback_ready,
+        "deployer_approved": False,
+    }
+
+
 def build_live_submission_gate_payload(
     state: object,
     *,
@@ -974,8 +1044,35 @@ def build_live_submission_gate_payload(
         dspy_mode=dspy_mode,
         dspy_live_ready=dspy_live_ready,
     )
+    promotion_table_counts = (
+        _load_profit_promotion_table_counts(session) if session is not None else {}
+    )
+    profit_lease_projection = build_profit_lease_projection(
+        runtime_items=runtime_items,
+        quant_evidence=quant_evidence,
+        empirical_jobs_status=empirical_jobs_status,
+        dependency_quorum=dependency_quorum_payload,
+        rejection_summary=_build_profit_rejection_summary(state),
+        promotion_table_counts=promotion_table_counts,
+        live_controls=_build_profit_live_controls(state),
+        account=_safe_text(quant_evidence.get("account")),
+        window=_safe_text(quant_evidence.get("window")),
+        now=now,
+    )
 
     if settings.trading_mode != "live":
+        profit_window_contract = build_profit_window_contract(
+            runtime_items=runtime_items,
+            quant_evidence=quant_evidence,
+            empirical_jobs_status=empirical_jobs_status,
+            market_context_ref=market_context_ref,
+            segment_summary=segment_summary,
+            account=_safe_text(quant_evidence.get("account")),
+            window=_safe_text(quant_evidence.get("window")),
+            market_session_open=getattr(state, "market_session_open", None),
+            replay=bool(getattr(state, "simulation_replay_active", False)),
+            now=now,
+        )
         return {
             "allowed": True,
             "reason": "non_live_mode",
@@ -1019,6 +1116,8 @@ def build_live_submission_gate_payload(
             },
             "lineage_ref": _default_lineage_ref(),
             "evaluated_tuples": [],
+            "profit_window_contract": profit_window_contract,
+            "profit_lease_projection": profit_lease_projection,
         }
 
     blocked_reasons: list[str] = []
@@ -1149,6 +1248,20 @@ def build_live_submission_gate_payload(
             cast(Mapping[str, object], evaluated_tuples[0].get("lineage_ref"))
         )
 
+    profit_window_contract = build_profit_window_contract(
+        runtime_items=runtime_items,
+        quant_evidence=quant_evidence,
+        empirical_jobs_status=empirical_jobs_status,
+        market_context_ref=market_context_ref,
+        segment_summary=segment_summary,
+        lineage_ref=lineage_ref,
+        account=_safe_text(quant_evidence.get("account")),
+        window=_safe_text(quant_evidence.get("window")),
+        market_session_open=getattr(state, "market_session_open", None),
+        replay=bool(getattr(state, "simulation_replay_active", False)),
+        now=now,
+    )
+
     return {
         "allowed": allowed,
         "reason": reason,
@@ -1188,6 +1301,8 @@ def build_live_submission_gate_payload(
         "evidence_tuple": evidence_tuple,
         "lineage_ref": lineage_ref,
         "evaluated_tuples": evaluated_tuples,
+        "profit_window_contract": profit_window_contract,
+        "profit_lease_projection": profit_lease_projection,
     }
 
 

@@ -218,6 +218,14 @@ Engineer:
 - Add tests for stale empirical jobs, empty options tables, empty promotion tables, and Jangar holdback consumption.
 - Keep live capital disabled until the proof lease can cite current empirical and Jangar action authority.
 
+Implementation trace:
+
+- `services/torghut/app/trading/profit_leases.py` adds the shadow-only
+  `torghut.profit-lease-provenance.v1` reducer consumed by the shared live-submission gate.
+- `/trading/status` and `/readyz` expose `profit_lease_projection` without changing live capital defaults.
+- `services/torghut/tests/test_profit_leases.py` covers stale empirical jobs, empty options feature readiness, empty
+  promotion tables, and Jangar `torghut_capital` holdbacks.
+
 Deployer:
 
 - Treat route health and Argo health as prerequisites only.

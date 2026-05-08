@@ -44,7 +44,7 @@ export type TorghutNegativeEvidenceInput = {
   rollout_ambiguity_refs?: string[]
   paper_settlement_clean?: boolean
   consumer_evidence_receipt_id?: string | null
-  consumer_evidence_status?: 'current' | 'stale' | 'missing' | 'unavailable'
+  consumer_evidence_status?: 'current' | 'stale' | 'missing' | 'unavailable' | 'route_missing' | 'schema_mismatch'
   consumer_evidence_fresh_until?: string | null
   consumer_evidence_reason_codes?: string[]
 }

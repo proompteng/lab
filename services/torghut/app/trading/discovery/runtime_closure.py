@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import Any, Mapping, Sequence, cast
 
 import yaml
 
@@ -34,6 +34,7 @@ from app.trading.discovery.objectives import (
     evaluate_vetoes,
 )
 from app.trading.discovery.portfolio_candidates import PortfolioCandidateSpec
+from app.trading.evidence_receipts import build_portfolio_proof_receipt
 from app.trading.hypotheses import (
     hypothesis_registry_requires_dependency_capability,
     load_hypothesis_registry,
@@ -252,6 +253,48 @@ def _runtime_closure_policy(
         "rollback_dry_run_max_age_hours": 72,
     }
     return policy
+
+
+def _portfolio_proof_receipt_payload(
+    *,
+    best_candidate: Mapping[str, Any],
+    manifest: MlxSnapshotManifest,
+    target_net_pnl_per_day: Decimal,
+    runtime_closure_artifact_refs: Sequence[str],
+) -> dict[str, Any]:
+    objective_scorecard = _mapping(best_candidate.get("objective_scorecard"))
+    portfolio_candidate_id = _string(
+        best_candidate.get("portfolio_candidate_id")
+    ) or _string(best_candidate.get("candidate_id"))
+    post_cost_net_pnl_per_day = _decimal(
+        best_candidate.get("net_pnl_per_day")
+        or objective_scorecard.get("net_pnl_per_day")
+    )
+    holdout_status = (
+        "pass"
+        if bool(best_candidate.get("objective_met")) and manifest.holdout_days > 0
+        else "missing"
+    )
+    receipt = build_portfolio_proof_receipt(
+        portfolio_candidate_id=portfolio_candidate_id,
+        target_net_pnl_per_day=target_net_pnl_per_day,
+        post_cost_net_pnl_per_day=post_cost_net_pnl_per_day,
+        holdout_result={
+            "status": holdout_status,
+            "holdout_days": manifest.holdout_days,
+            "source_window_start": manifest.source_window_start,
+            "source_window_end": manifest.source_window_end,
+        },
+        runtime_closure_artifact_refs=runtime_closure_artifact_refs,
+        contribution={
+            "objective_scorecard": objective_scorecard,
+            "portfolio_optimizer": _portfolio_optimizer_evidence(best_candidate),
+            "runtime_strategy_names": list(
+                _portfolio_runtime_strategy_names(best_candidate)
+            ),
+        },
+    )
+    return receipt.to_payload()
 
 
 @dataclass(frozen=True)
@@ -1357,6 +1400,7 @@ def _gate_report(
     approval_report: Mapping[str, Any] | None,
     shadow_plan: Mapping[str, Any],
     portfolio_optimizer_evidence_ref: str | None = None,
+    portfolio_proof_receipt_ref: str | None = None,
 ) -> dict[str, Any]:
     runtime_family = _runtime_family(best_candidate) or "unknown"
     parity_pass = (
@@ -1462,6 +1506,15 @@ def _gate_report(
                 "shadow_validation_status": shadow_status,
                 "rationale_text": "Runtime closure replays executed, but promotion stays blocked until parity, approval, and shadow requirements are satisfied.",
             },
+            **(
+                {
+                    "portfolio_proof": {
+                        "artifact_ref": portfolio_proof_receipt_ref,
+                    },
+                }
+                if portfolio_proof_receipt_ref
+                else {}
+            ),
             **(
                 {
                     "portfolio_optimizer": {
@@ -1616,6 +1669,7 @@ def _profitability_stage_manifest(
     gate_report_path: Path,
     rollback_readiness_path: Path,
     portfolio_optimizer_evidence_path: Path | None,
+    portfolio_proof_receipt_path: Path | None,
     parity_replay_path: Path | None,
     approval_replay_path: Path | None,
     shadow_validation_path: Path | None,
@@ -1666,6 +1720,13 @@ def _profitability_stage_manifest(
         artifact_hashes[str(portfolio_optimizer_evidence_path.relative_to(root))] = (
             _sha256_path(portfolio_optimizer_evidence_path)
         )
+    if (
+        portfolio_proof_receipt_path is not None
+        and portfolio_proof_receipt_path.exists()
+    ):
+        artifact_hashes[str(portfolio_proof_receipt_path.relative_to(root))] = (
+            _sha256_path(portfolio_proof_receipt_path)
+        )
     payload = {
         "schema_version": "profitability-stage-manifest-v1",
         "candidate_id": candidate_id,
@@ -1693,6 +1754,17 @@ def _profitability_stage_manifest(
                         ]
                         if portfolio_optimizer_evidence_path is not None
                         and portfolio_optimizer_evidence_path.exists()
+                        else []
+                    ),
+                    *(
+                        [
+                            {
+                                "check": "portfolio_proof_receipt_present",
+                                "status": "pass",
+                            }
+                        ]
+                        if portfolio_proof_receipt_path is not None
+                        and portfolio_proof_receipt_path.exists()
                         else []
                     ),
                 ],
@@ -1727,6 +1799,18 @@ def _profitability_stage_manifest(
                         }
                         if portfolio_optimizer_evidence_path is not None
                         and portfolio_optimizer_evidence_path.exists()
+                        else {}
+                    ),
+                    **(
+                        {
+                            "portfolio_proof_receipt": _artifact(
+                                portfolio_proof_receipt_path,
+                                stage="research",
+                                check="portfolio_proof_receipt_present",
+                            )
+                        }
+                        if portfolio_proof_receipt_path is not None
+                        and portfolio_proof_receipt_path.exists()
                         else {}
                     ),
                 },
@@ -1912,6 +1996,7 @@ class RuntimeClosureBundleSummary:
     rollback_readiness_evaluation_path: str
     policy_path: str
     portfolio_optimizer_evidence_path: str
+    portfolio_proof_receipt_path: str
     profitability_stage_manifest_path: str
     promotion_prerequisites_path: str
     replay_plan_path: str
@@ -1938,6 +2023,7 @@ class RuntimeClosureBundleSummary:
             "rollback_readiness_evaluation_path": self.rollback_readiness_evaluation_path,
             "policy_path": self.policy_path,
             "portfolio_optimizer_evidence_path": self.portfolio_optimizer_evidence_path,
+            "portfolio_proof_receipt_path": self.portfolio_proof_receipt_path,
             "profitability_stage_manifest_path": self.profitability_stage_manifest_path,
             "promotion_prerequisites_path": self.promotion_prerequisites_path,
             "replay_plan_path": self.replay_plan_path,
@@ -1977,6 +2063,7 @@ def write_runtime_closure_bundle(
             rollback_readiness_evaluation_path="",
             policy_path="",
             portfolio_optimizer_evidence_path="",
+            portfolio_proof_receipt_path="",
             profitability_stage_manifest_path="",
             promotion_prerequisites_path="",
             replay_plan_path="",
@@ -2010,6 +2097,9 @@ def write_runtime_closure_bundle(
     policy_path = closure_root / "promotion" / "policy.json"
     portfolio_optimizer_evidence_path = (
         closure_root / "promotion" / "portfolio-optimizer-evidence.json"
+    )
+    portfolio_proof_receipt_path = (
+        closure_root / "promotion" / "portfolio-proof-receipt.json"
     )
     profitability_stage_manifest_path = (
         closure_root / "profitability" / "profitability-stage-manifest-v1.json"
@@ -2122,6 +2212,18 @@ def write_runtime_closure_bundle(
         execution_context=execution_context,
     )
     _write_json(shadow_validation_path, shadow_plan)
+    portfolio_proof_receipt = _portfolio_proof_receipt_payload(
+        best_candidate=best_candidate,
+        manifest=manifest,
+        target_net_pnl_per_day=program.objective.target_net_pnl_per_day,
+        runtime_closure_artifact_refs=(
+            str(candidate_spec_path.relative_to(closure_root)),
+            str(candidate_generation_manifest_path.relative_to(closure_root)),
+            str(replay_plan_path.relative_to(closure_root)),
+            str(shadow_validation_path.relative_to(closure_root)),
+        ),
+    )
+    _write_json(portfolio_proof_receipt_path, portfolio_proof_receipt)
     gate_report = _gate_report(
         runner_run_id=runner_run_id,
         best_candidate=best_candidate,
@@ -2133,6 +2235,9 @@ def write_runtime_closure_bundle(
             str(portfolio_optimizer_evidence_path.relative_to(closure_root))
             if portfolio_optimizer_evidence
             else None
+        ),
+        portfolio_proof_receipt_ref=str(
+            portfolio_proof_receipt_path.relative_to(closure_root)
         ),
     )
     _write_json(gate_report_path, gate_report)
@@ -2179,6 +2284,9 @@ def write_runtime_closure_bundle(
         rollback_readiness_path=rollback_readiness_artifact_path,
         portfolio_optimizer_evidence_path=portfolio_optimizer_evidence_path
         if portfolio_optimizer_evidence_path.exists()
+        else None,
+        portfolio_proof_receipt_path=portfolio_proof_receipt_path
+        if portfolio_proof_receipt_path.exists()
         else None,
         parity_replay_path=parity_replay_path if parity_replay_path.exists() else None,
         approval_replay_path=approval_replay_path
@@ -2244,6 +2352,7 @@ def write_runtime_closure_bundle(
         portfolio_optimizer_evidence_path=str(portfolio_optimizer_evidence_path)
         if portfolio_optimizer_evidence_path.exists()
         else "",
+        portfolio_proof_receipt_path=str(portfolio_proof_receipt_path),
         profitability_stage_manifest_path=str(profitability_stage_manifest_path),
         promotion_prerequisites_path=str(promotion_prerequisites_path),
         replay_plan_path=str(replay_plan_path),

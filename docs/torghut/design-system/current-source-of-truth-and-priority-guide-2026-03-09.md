@@ -40,6 +40,10 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v6/152-torghut-proof-floor-settlement-bonds-and-tca-repair-auction-2026-05-07.md`
    - `docs/agents/designs/147-jangar-hypothesis-scoped-capital-adjudication-ledger-2026-05-07.md`
    - `docs/torghut/design-system/v6/151-torghut-hypothesis-scoped-capital-adjudication-and-profit-gates-2026-05-07.md`
+   - `docs/torghut/design-system/v6/137-torghut-renewal-bond-profit-escrow-and-evidence-carry-2026-05-07.md`
+   - `docs/agents/designs/133-jangar-in-flight-stage-renewal-bonds-and-controller-ingestion-settlement-2026-05-07.md`
+   - `docs/torghut/design-system/v6/136-torghut-stage-coherent-profit-escrow-and-proof-age-arbitrage-2026-05-07.md`
+   - `docs/agents/designs/132-jangar-stage-freshness-escrow-and-capital-authority-reclocking-2026-05-07.md`
    - `docs/agents/designs/115-jangar-watch-quiescence-and-evidence-renewal-arbiter-2026-05-06.md`
    - `docs/torghut/design-system/v6/119-torghut-evidence-renewal-batches-and-capital-quiescence-gates-2026-05-06.md`
    - `docs/agents/designs/114-jangar-evidence-transport-ledger-and-watch-restart-circuit-breakers-2026-05-06.md`
@@ -139,6 +143,19 @@ The May 7 source-rollout and proof-floor settlement contracts are the current im
 - price Torghut proof-floor blockers as settlement bonds, distinguish stale TCA recompute from bad TCA policy repair,
   and keep capital zero-notional until closure receipts and Jangar source-rollout settlement agree in
   `docs/torghut/design-system/v6/152-torghut-proof-floor-settlement-bonds-and-tca-repair-auction-2026-05-07.md`.
+
+The May 7 renewal-bond and stage-coherence contracts remain the preceding implementation handoff:
+
+- make Torghut preserve fresh empirical proof as evidence carry while Jangar stage renewal, stale TCA, market-context
+  contradictions, quant ingestion lag, or alpha-readiness blockers keep paper/live notional at zero in
+  `docs/torghut/design-system/v6/137-torghut-renewal-bond-profit-escrow-and-evidence-carry-2026-05-07.md`;
+- make Jangar expose active stage renewal bonds and controller ingestion settlement so Torghut can distinguish
+  `current`, `renewing`, `repair_only`, `stale`, and `blocked` platform proof states in
+  `docs/agents/designs/133-jangar-in-flight-stage-renewal-bonds-and-controller-ingestion-settlement-2026-05-07.md`;
+- keep stale but promising proof available only for zero-notional repair ranking, not capital authority, in
+  `docs/torghut/design-system/v6/136-torghut-stage-coherent-profit-escrow-and-proof-age-arbitrage-2026-05-07.md`;
+- reclock Jangar stage freshness into explicit capital-authority inputs in
+  `docs/agents/designs/132-jangar-stage-freshness-escrow-and-capital-authority-reclocking-2026-05-07.md`.
 
 The May 6 provenance and lease-graduation contracts remain the preceding implementation handoff:
 

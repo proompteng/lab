@@ -1373,6 +1373,9 @@ class TestTradingPipeline(TestCase):
                     "blocked_reasons": [],
                     "capital_stage": "live",
                     "capital_state": "live",
+                    "profit_window_contract": {
+                        "summary": {"windows_total": 1},
+                    },
                 },
             ),
             patch.object(
@@ -1991,6 +1994,9 @@ class TestTradingPipeline(TestCase):
                 "blocked_reasons": ["profit_window_underfunded"],
                 "capital_stage": "shadow",
                 "capital_state": "observe",
+                "profit_window_contract": {
+                    "summary": {"windows_total": 1},
+                },
             },
         ):
             pipeline.run_once()
@@ -2009,6 +2015,104 @@ class TestTradingPipeline(TestCase):
                 "profit_window_underfunded",
             )
             self.assertEqual(gate.get("reason"), "profit_window_underfunded")
+
+    def test_simple_pipeline_blocks_live_order_when_simple_submit_disabled_with_shared_gate_metadata(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_simple_submit_enabled = False
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "NVDA"
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="simple-live-submit-disabled",
+                description="simple live lane keeps shared gate metadata",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 13, 30, 5, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Min",
+            seq=1,
+            payload={
+                "feature_schema_version": "3.0.0",
+                "macd": {"macd": 1.2, "signal": 0.5},
+                "rsi14": 25,
+                "price": 100,
+            },
+        )
+
+        alpaca_client = FakeAlpacaClient()
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([signal]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        with patch.object(
+            TradingPipeline,
+            "_live_submission_gate",
+            return_value={
+                "allowed": True,
+                "reason": "promotion_certificate_valid",
+                "blocked_reasons": [],
+                "capital_stage": "live",
+                "capital_state": "live",
+                "profit_window_contract": {
+                    "summary": {"windows_total": 1},
+                },
+            },
+        ):
+            pipeline.run_once()
+
+        self.assertEqual(len(alpaca_client.submitted), 0)
+        with self.session_local() as session:
+            decision = session.execute(select(TradeDecision)).scalar_one()
+            decision_json = cast(dict[str, Any], decision.decision_json)
+            control_plane = cast(
+                dict[str, Any], decision_json.get("control_plane_snapshot")
+            )
+            gate = cast(dict[str, Any], control_plane.get("live_submission_gate"))
+            simple_lane = cast(dict[str, Any], gate.get("simple_lane"))
+            self.assertEqual(decision.status, "blocked")
+            self.assertEqual(
+                decision_json.get("submission_block_reason"),
+                "simple_submit_disabled",
+            )
+            self.assertEqual(gate.get("reason"), "simple_submit_disabled")
+            self.assertEqual(
+                gate.get("profit_window_contract", {}).get("summary"),
+                {"windows_total": 1},
+            )
+            self.assertEqual(simple_lane.get("shared_gate_enforced"), True)
+            self.assertEqual(
+                simple_lane.get("blocked_reasons"), ["simple_submit_disabled"]
+            )
 
     def test_simple_pipeline_blocks_paper_order_when_profitability_floor_zero_notional(
         self,

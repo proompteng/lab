@@ -1050,6 +1050,63 @@ class VNextCompletionGateResult(Base, TimestampMixin):
     )
 
 
+class EvidenceReceiptRecord(Base, CreatedAtMixin):
+    """Append-only receipt row for Torghut evidence epochs."""
+
+    __tablename__ = "evidence_receipts"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    receipt_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    evidence_epoch_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    receipt_type: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    producer: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    subject_ref: Mapped[str] = mapped_column(String(length=255), nullable=False)
+    state: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    decision: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    fresh_until: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    reason_codes_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("uq_evidence_receipts_receipt_id", "receipt_id", unique=True),
+        Index("ix_evidence_receipts_epoch_id", "evidence_epoch_id"),
+        Index("ix_evidence_receipts_type_state", "receipt_type", "state"),
+        Index("ix_evidence_receipts_fresh_until", "fresh_until"),
+    )
+
+
+class EvidenceEpochRecord(Base, CreatedAtMixin):
+    """Append-only cross-plane evidence epoch row."""
+
+    __tablename__ = "evidence_epochs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    evidence_epoch_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    account_label: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    stage_scope: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    decision: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    fresh_until: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    reason_codes_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    receipt_ids_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("uq_evidence_epochs_epoch_id", "evidence_epoch_id", unique=True),
+        Index("ix_evidence_epochs_account_stage", "account_label", "stage_scope"),
+        Index("ix_evidence_epochs_decision", "decision"),
+        Index("ix_evidence_epochs_fresh_until", "fresh_until"),
+    )
+
+
 class StrategyHypothesis(Base, TimestampMixin):
     """Persistent hypothesis registry rows used for live capital governance."""
 

@@ -55,8 +55,29 @@ from .trading.autonomy import (
 )
 from .trading.autoresearch_routes import router as autoresearch_router
 from .trading.completion import build_doc29_completion_status
-from .trading.consumer_evidence import build_torghut_consumer_evidence_receipt
+from .trading.consumer_evidence import (
+    build_route_proven_profit_receipt,
+    build_torghut_consumer_evidence_receipt,
+)
 from .trading.empirical_jobs import build_empirical_jobs_status
+from .trading.evidence_epochs import (
+    EvidenceEpoch,
+    compile_evidence_epoch,
+    load_evidence_epoch_payload,
+    load_latest_evidence_epoch_payload,
+    persist_evidence_epoch,
+)
+from .trading.evidence_receipts import (
+    EvidenceReceipt,
+    build_artifact_parity_receipt,
+    build_data_freshness_receipt,
+    build_empirical_jobs_receipt,
+    build_jangar_authority_receipt,
+    build_portfolio_proof_receipt,
+    build_schema_receipt,
+    build_service_health_receipt,
+)
+from .trading.executable_alpha_receipts import build_capital_replay_projection
 from .trading.forecast_runtime import forecast_status
 from .trading.hypotheses import (
     JangarDependencyQuorumStatus,
@@ -72,6 +93,7 @@ from .trading.lean_lanes import LeanLaneManager
 from .trading.lean_runtime import lean_authority_status
 from .trading.llm.evaluation import build_llm_evaluation_metrics
 from .trading.proof_floor import build_profitability_proof_floor_receipt
+from .trading.renewal_bond_profit_escrow import build_renewal_bond_profit_escrow
 from .trading.revenue_repair import build_revenue_repair_digest
 from .trading.route_reacquisition_board import build_route_reacquisition_board
 from .trading.submission_council import (
@@ -143,6 +165,65 @@ def _require_whitepaper_control_token(request: Request) -> None:
 def _env_or_none(name: str) -> str | None:
     value = os.getenv(name, "").strip()
     return value or None
+
+
+def _env_csv(name: str) -> tuple[str, ...]:
+    raw_value = os.getenv(name, "")
+    return tuple(item.strip() for item in raw_value.split(",") if item.strip())
+
+
+def _env_json_string_list(name: str) -> tuple[str, ...]:
+    raw_value = os.getenv(name, "").strip()
+    if not raw_value:
+        return ()
+    try:
+        decoded = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return (raw_value,)
+    if not isinstance(decoded, list):
+        return ()
+    decoded_items = cast(list[object], decoded)
+    return tuple(item for raw_item in decoded_items if (item := str(raw_item).strip()))
+
+
+def _evaluate_scheduler_status(
+    scheduler: TradingScheduler,
+) -> tuple[bool, dict[str, object]]:
+    scheduler_ok = True
+    scheduler_detail = "ok"
+
+    startup_grace_seconds = max(0, settings.trading_startup_readiness_grace_seconds)
+    in_startup_grace = False
+    startup_started_at = scheduler.state.startup_started_at
+    if settings.trading_enabled and not scheduler.state.running:
+        if (
+            startup_started_at is not None
+            and startup_grace_seconds > 0
+            and datetime.now(timezone.utc) - startup_started_at
+            <= timedelta(seconds=startup_grace_seconds)
+        ):
+            in_startup_grace = True
+            scheduler_ok = True
+            scheduler_detail = f"trading loop starting (within {startup_grace_seconds}s readiness grace)"
+        else:
+            scheduler_ok = False
+            scheduler_detail = (
+                "trading loop not started"
+                if scheduler.state.last_run_at is None
+                else "trading loop not running"
+            )
+
+    scheduler_payload: dict[str, object] = {
+        "ok": scheduler_ok,
+        "detail": scheduler_detail,
+        "running": scheduler.state.running,
+    }
+    if startup_started_at is not None:
+        scheduler_payload["startup_started_at"] = startup_started_at.isoformat()
+        scheduler_payload["startup_readiness_grace_seconds"] = startup_grace_seconds
+        scheduler_payload["startup_readiness_grace_active"] = in_startup_grace
+
+    return scheduler_ok, scheduler_payload
 
 
 def _assert_dspy_cutover_migration_guard() -> None:
@@ -538,39 +619,7 @@ def _evaluate_trading_health_payload(
     if scheduler is None:
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
-    scheduler_ok = True
-    scheduler_detail = "ok"
-
-    startup_grace_seconds = max(0, settings.trading_startup_readiness_grace_seconds)
-    in_startup_grace = False
-    startup_started_at = scheduler.state.startup_started_at
-    if settings.trading_enabled and not scheduler.state.running:
-        if (
-            startup_started_at is not None
-            and startup_grace_seconds > 0
-            and datetime.now(timezone.utc) - startup_started_at
-            <= timedelta(seconds=startup_grace_seconds)
-        ):
-            in_startup_grace = True
-            scheduler_ok = True
-            scheduler_detail = f"trading loop starting (within {startup_grace_seconds}s readiness grace)"
-        else:
-            scheduler_ok = False
-            scheduler_detail = (
-                "trading loop not started"
-                if scheduler.state.last_run_at is None
-                else "trading loop not running"
-            )
-
-    scheduler_payload: dict[str, object] = {
-        "ok": scheduler_ok,
-        "detail": scheduler_detail,
-        "running": scheduler.state.running,
-    }
-    if startup_started_at is not None:
-        scheduler_payload["startup_started_at"] = startup_started_at.isoformat()
-        scheduler_payload["startup_readiness_grace_seconds"] = startup_grace_seconds
-        scheduler_payload["startup_readiness_grace_active"] = in_startup_grace
+    scheduler_ok, scheduler_payload = _evaluate_scheduler_status(scheduler)
 
     now = datetime.now(timezone.utc)
     with SessionLocal() as session:
@@ -600,6 +649,11 @@ def _evaluate_trading_health_payload(
     tca_summary: dict[str, object] = {}
     market_context_status = scheduler.market_context_status()
     _hypothesis_payload: Mapping[str, object] = {}
+    _dependency_quorum = JangarDependencyQuorumStatus(
+        decision="unknown",
+        reasons=["alpha_readiness_not_evaluated"],
+        message="alpha readiness not evaluated",
+    )
     try:
         with SessionLocal() as session:
             tca_summary = _load_tca_summary(session, scheduler=scheduler)
@@ -633,6 +687,11 @@ def _evaluate_trading_health_payload(
                 "message": str(exc),
             },
         }
+        _dependency_quorum = JangarDependencyQuorumStatus(
+            decision="unknown",
+            reasons=["alpha_readiness_unavailable"],
+            message=str(exc),
+        )
         hypothesis_summary = {}
 
     llm_status = scheduler.llm_status()
@@ -664,15 +723,40 @@ def _evaluate_trading_health_payload(
         market_context_status=market_context_status,
         tca_summary=tca_summary,
     )
+    renewal_bond_profit_escrow = _build_renewal_bond_profit_escrow_payload(
+        state=scheduler.state,
+        torghut_revision=BUILD_COMMIT,
+        dependency_quorum=_dependency_quorum.as_payload(),
+        live_submission_gate=live_submission_gate,
+        proof_floor=proof_floor,
+        hypothesis_payload=_hypothesis_payload,
+        empirical_jobs_status=empirical_jobs,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        tca_summary=tca_summary,
+    )
     route_reacquisition_board = _build_route_reacquisition_board_payload(
         proof_floor=proof_floor,
         active_revision=BUILD_COMMIT,
     )
-    consumer_evidence_receipt = build_torghut_consumer_evidence_receipt(
-        forecast_service_status=_forecast_service_status(),
-        empirical_jobs_status=empirical_jobs,
-        proof_floor=proof_floor,
+    capital_replay_projection = _build_capital_replay_projection_payload(
+        torghut_revision=BUILD_COMMIT,
+        dependency_quorum=_dependency_quorum.as_payload(),
         live_submission_gate=live_submission_gate,
+        proof_floor=proof_floor,
+        route_reacquisition_board=route_reacquisition_board,
+        empirical_jobs_status=empirical_jobs,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+    )
+    consumer_evidence_receipt, route_proven_profit_receipt = (
+        _build_consumer_evidence_receipt_projection(
+            forecast_service_status=_forecast_service_status(),
+            empirical_jobs_status=empirical_jobs,
+            proof_floor=proof_floor,
+            live_submission_gate=live_submission_gate,
+            serving_revision=_active_runtime_revision() or BUILD_COMMIT,
+        )
     )
     live_mode = settings.trading_mode == "live"
     empirical_jobs_required = (
@@ -755,10 +839,20 @@ def _evaluate_trading_health_payload(
             "alpha_readiness": alpha_readiness,
             "live_submission_gate": live_submission_gate,
             "proof_floor": proof_floor,
+            "renewal_bond_profit_escrow": renewal_bond_profit_escrow,
+            "capital_replay_board": capital_replay_projection["capital_replay_board"],
+            "executable_alpha_receipts": capital_replay_projection[
+                "executable_alpha_receipts"
+            ],
             "torghut_consumer_evidence_receipt": consumer_evidence_receipt,
+            "route_proven_profit_receipt": route_proven_profit_receipt,
+            "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
             "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
             "route_reacquisition_board": route_reacquisition_board,
             "quant_evidence": quant_evidence,
+            "profit_lease_projection": live_submission_gate.get(
+                "profit_lease_projection"
+            ),
         },
         status_code,
     )
@@ -941,14 +1035,11 @@ def _refresh_universe_state_for_readiness(
     setattr(state, "universe_source_reason", resolution.reason)
     setattr(state, "universe_symbols_count", symbols_count)
     setattr(state, "universe_cache_age_seconds", resolution.cache_age_seconds)
-    fail_safe_blocked = (
-        symbols_count == 0
-        and (
-            settings.trading_universe_source == "static"
-            or (
-                settings.trading_universe_source == "jangar"
-                and settings.trading_universe_require_non_empty_jangar
-            )
+    fail_safe_blocked = symbols_count == 0 and (
+        settings.trading_universe_source == "static"
+        or (
+            settings.trading_universe_source == "jangar"
+            and settings.trading_universe_require_non_empty_jangar
         )
     )
     setattr(state, "universe_fail_safe_blocked", fail_safe_blocked)
@@ -1833,15 +1924,40 @@ def trading_status() -> dict[str, object]:
         tca_summary=tca_summary,
         simple_lane_status=simple_lane_status,
     )
+    renewal_bond_profit_escrow = _build_renewal_bond_profit_escrow_payload(
+        state=state,
+        torghut_revision=str(shadow_first_runtime["active_revision"]),
+        dependency_quorum=hypothesis_dependency_quorum.as_payload(),
+        live_submission_gate=live_submission_gate,
+        proof_floor=proof_floor,
+        hypothesis_payload=hypothesis_payload,
+        empirical_jobs_status=empirical_jobs,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        tca_summary=tca_summary,
+    )
     route_reacquisition_board = _build_route_reacquisition_board_payload(
         proof_floor=proof_floor,
         active_revision=str(shadow_first_runtime["active_revision"]),
     )
-    consumer_evidence_receipt = build_torghut_consumer_evidence_receipt(
-        forecast_service_status=forecast_service_status,
-        empirical_jobs_status=empirical_jobs,
-        proof_floor=proof_floor,
+    capital_replay_projection = _build_capital_replay_projection_payload(
+        torghut_revision=str(shadow_first_runtime["active_revision"]),
+        dependency_quorum=hypothesis_dependency_quorum.as_payload(),
         live_submission_gate=live_submission_gate,
+        proof_floor=proof_floor,
+        route_reacquisition_board=route_reacquisition_board,
+        empirical_jobs_status=empirical_jobs,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+    )
+    consumer_evidence_receipt, route_proven_profit_receipt = (
+        _build_consumer_evidence_receipt_projection(
+            forecast_service_status=forecast_service_status,
+            empirical_jobs_status=empirical_jobs,
+            proof_floor=proof_floor,
+            live_submission_gate=live_submission_gate,
+            serving_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        )
     )
     return {
         "enabled": settings.trading_enabled,
@@ -1865,8 +1981,16 @@ def trading_status() -> dict[str, object]:
         },
         "running": state.running,
         "live_submission_gate": live_submission_gate,
+        "profit_lease_projection": live_submission_gate.get("profit_lease_projection"),
         "proof_floor": proof_floor,
+        "renewal_bond_profit_escrow": renewal_bond_profit_escrow,
+        "capital_replay_board": capital_replay_projection["capital_replay_board"],
+        "executable_alpha_receipts": capital_replay_projection[
+            "executable_alpha_receipts"
+        ],
         "torghut_consumer_evidence_receipt": consumer_evidence_receipt,
+        "route_proven_profit_receipt": route_proven_profit_receipt,
+        "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
         "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
         "route_reacquisition_board": route_reacquisition_board,
         "quant_evidence": quant_evidence,
@@ -2008,6 +2132,30 @@ def _consumer_evidence_dependency_quorum() -> JangarDependencyQuorumStatus:
     )
 
 
+def _build_consumer_evidence_receipt_projection(
+    *,
+    forecast_service_status: Mapping[str, Any],
+    empirical_jobs_status: Mapping[str, Any],
+    proof_floor: Mapping[str, Any],
+    live_submission_gate: Mapping[str, Any],
+    serving_revision: str | None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    consumer_evidence_receipt = build_torghut_consumer_evidence_receipt(
+        forecast_service_status=forecast_service_status,
+        empirical_jobs_status=empirical_jobs_status,
+        proof_floor=proof_floor,
+        live_submission_gate=live_submission_gate,
+    )
+    route_proven_profit_receipt = build_route_proven_profit_receipt(
+        consumer_evidence_receipt=consumer_evidence_receipt,
+        proof_floor=proof_floor,
+        source_commit=BUILD_COMMIT,
+        serving_revision=serving_revision,
+        image_digest=BUILD_IMAGE_DIGEST,
+    )
+    return consumer_evidence_receipt, route_proven_profit_receipt
+
+
 def _build_trading_consumer_evidence_payload() -> dict[str, object]:
     scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
     if scheduler is None:
@@ -2060,11 +2208,14 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         tca_summary=tca_summary,
         simple_lane_status=simple_lane_status,
     )
-    consumer_evidence_receipt = build_torghut_consumer_evidence_receipt(
-        forecast_service_status=forecast_service_status,
-        empirical_jobs_status=empirical_jobs,
-        proof_floor=proof_floor,
-        live_submission_gate=live_submission_gate,
+    consumer_evidence_receipt, route_proven_profit_receipt = (
+        _build_consumer_evidence_receipt_projection(
+            forecast_service_status=forecast_service_status,
+            empirical_jobs_status=empirical_jobs,
+            proof_floor=proof_floor,
+            live_submission_gate=live_submission_gate,
+            serving_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        )
     )
     return {
         "schema_version": "torghut.consumer-evidence-status.v1",
@@ -2089,6 +2240,8 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         "proof_floor": proof_floor,
         "simple_lane_status": simple_lane_status,
         "torghut_consumer_evidence_receipt": consumer_evidence_receipt,
+        "route_proven_profit_receipt": route_proven_profit_receipt,
+        "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
     }
 
 
@@ -2246,6 +2399,7 @@ def trading_autonomy() -> dict[str, object]:
         app.state.trading_scheduler = scheduler
     state = scheduler.state
     active_simulation_context = active_simulation_runtime_context()
+    capital_replay_projection = _build_autonomy_capital_replay_projection(scheduler)
     return {
         "enabled": settings.trading_autonomy_enabled,
         "gate_policy_path": settings.trading_autonomy_gate_policy_path,
@@ -2273,6 +2427,10 @@ def trading_autonomy() -> dict[str, object]:
         "forecast_service": _forecast_service_status(),
         "lean_authority": _lean_authority_status(),
         "empirical_jobs": _empirical_jobs_status(),
+        "capital_replay_board": capital_replay_projection["capital_replay_board"],
+        "executable_alpha_receipts": capital_replay_projection[
+            "executable_alpha_receipts"
+        ],
         "simulation": {
             "enabled": settings.trading_simulation_enabled,
             "run_id": (active_simulation_context or {}).get("run_id")
@@ -2325,6 +2483,201 @@ def trading_autonomy() -> dict[str, object]:
         },
         "evidence_continuity": state.last_evidence_continuity_report,
     }
+
+
+def _build_current_evidence_epoch(
+    *,
+    session: Session,
+    account_label: str,
+    stage_scope: str,
+) -> EvidenceEpoch:
+    observed_at = datetime.now(timezone.utc)
+    receipts: list[EvidenceReceipt] = []
+    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    if scheduler is None:
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
+    trading_status_ok, _scheduler_payload = _evaluate_scheduler_status(scheduler)
+
+    try:
+        database_contract = _evaluate_database_contract(session)
+        database_ok = bool(database_contract.get("ok"))
+        schema_current = bool(database_contract.get("schema_current"))
+        schema_lineage_ready = bool(database_contract.get("schema_graph_lineage_ready"))
+        schema_reasons = [
+            str(item)
+            for item in cast(
+                Sequence[object],
+                database_contract.get("schema_graph_lineage_errors") or [],
+            )
+            if str(item).strip()
+        ]
+        schema_head_signature = (
+            str(database_contract.get("schema_head_signature"))
+            if database_contract.get("schema_head_signature") is not None
+            else None
+        )
+    except Exception as exc:
+        database_ok = False
+        schema_current = False
+        schema_lineage_ready = False
+        schema_reasons = [f"database_contract_unavailable:{type(exc).__name__}"]
+        schema_head_signature = None
+
+    receipts.append(
+        build_jangar_authority_receipt(
+            quorum_payload=resolve_hypothesis_dependency_quorum(
+                load_hypothesis_registry()
+            ).as_payload(),
+            observed_at=observed_at,
+        )
+    )
+    receipts.append(
+        build_service_health_receipt(
+            role="torghut-live",
+            liveness_ok=True,
+            readiness_ok=database_ok,
+            db_check_ok=database_ok,
+            trading_status_ok=trading_status_ok,
+            image_digest=BUILD_IMAGE_DIGEST,
+            revision=BUILD_COMMIT,
+            observed_at=observed_at,
+        )
+    )
+    receipts.append(
+        build_schema_receipt(
+            schema_current=schema_current,
+            lineage_ready=schema_lineage_ready,
+            schema_head_signature=schema_head_signature,
+            reason_codes=schema_reasons,
+            observed_at=observed_at,
+        )
+    )
+    receipts.append(
+        build_data_freshness_receipt(
+            source="database_contract",
+            fresh=database_ok,
+            as_of=observed_at,
+            observed_at=observed_at,
+            max_age_seconds=settings.trading_empirical_job_stale_after_seconds,
+            reason_codes=[] if database_ok else ["database_contract_not_ready"],
+        )
+    )
+
+    empirical_status: dict[str, object]
+    try:
+        empirical_status = build_empirical_jobs_status(
+            session=session,
+            stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
+        )
+    except Exception as exc:
+        empirical_status = {
+            "ready": False,
+            "status": "unknown",
+            "authority": "blocked",
+            "stale_after_seconds": settings.trading_empirical_job_stale_after_seconds,
+            "message": "empirical jobs status unavailable",
+            "eligible_jobs": [],
+            "missing_jobs": [],
+            "stale_jobs": [],
+            "ineligible_jobs": [],
+            "candidate_ids": [],
+            "dataset_snapshot_refs": [],
+            "blocked_reasons": [
+                f"empirical_jobs_status_unavailable:{type(exc).__name__}"
+            ],
+            "jobs": {},
+        }
+    receipts.append(
+        build_empirical_jobs_receipt(
+            empirical_status=empirical_status,
+            observed_at=observed_at,
+            ttl_seconds=settings.trading_empirical_job_stale_after_seconds,
+        )
+    )
+    receipts.append(
+        build_artifact_parity_receipt(
+            consumer_ref="torghut-live",
+            image_ref=BUILD_IMAGE_DIGEST,
+            required_platforms=_env_csv("TORGHUT_REQUIRED_IMAGE_PLATFORMS"),
+            observed_platforms=_env_csv("TORGHUT_OBSERVED_IMAGE_PLATFORMS"),
+            runtime_pull_failures=_env_json_string_list(
+                "TORGHUT_RUNTIME_PULL_FAILURES_JSON"
+            ),
+            observed_at=observed_at,
+        )
+    )
+    receipts.append(
+        build_portfolio_proof_receipt(
+            portfolio_candidate_id="",
+            target_net_pnl_per_day=Decimal("500"),
+            post_cost_net_pnl_per_day=Decimal("0"),
+            holdout_result=None,
+            runtime_closure_artifact_refs=(),
+            observed_at=observed_at,
+        )
+    )
+    return compile_evidence_epoch(
+        account_label=account_label,
+        stage_scope=stage_scope,
+        receipts=receipts,
+        created_at=observed_at,
+    )
+
+
+@app.get("/trading/evidence-epochs/latest")
+def trading_evidence_epoch_latest(
+    stage_scope: str = Query("shadow", min_length=1, max_length=32),
+    account_label: str = Query(
+        settings.trading_account_label, min_length=1, max_length=64
+    ),
+    refresh: bool = Query(True),
+    persist: bool = Query(True),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Compile or return the latest cross-plane evidence epoch for operators."""
+
+    if not refresh:
+        persisted_payload = load_latest_evidence_epoch_payload(
+            session,
+            account_label=account_label,
+            stage_scope=stage_scope,
+        )
+        if persisted_payload is not None:
+            return persisted_payload
+
+    epoch = _build_current_evidence_epoch(
+        session=session,
+        account_label=account_label,
+        stage_scope=stage_scope,
+    )
+    payload = epoch.to_payload()
+    if persist:
+        try:
+            persist_evidence_epoch(session, epoch)
+            session.commit()
+            payload["persisted"] = True
+        except SQLAlchemyError as exc:
+            session.rollback()
+            logger.warning("Failed to persist evidence epoch: %s", exc)
+            payload["persisted"] = False
+            payload["persist_error"] = type(exc).__name__
+    else:
+        payload["persisted"] = False
+    return payload
+
+
+@app.get("/trading/evidence-epochs/{evidence_epoch_id}")
+def trading_evidence_epoch_detail(
+    evidence_epoch_id: str,
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Return one persisted cross-plane evidence epoch."""
+
+    payload = load_evidence_epoch_payload(session, evidence_epoch_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="evidence_epoch_not_found")
+    return payload
 
 
 @app.get("/trading/empirical-jobs")
@@ -3354,19 +3707,42 @@ def _build_live_submission_gate_payload(
                     or "emergency_stop_active"
                 )
             )
-        return {
-            "allowed": len(blocked_reasons) == 0,
-            "reason": "ready" if not blocked_reasons else blocked_reasons[0],
+        gate = build_live_submission_gate_payload(
+            state,
+            session=session,
+            hypothesis_summary=hypothesis_summary,
+            empirical_jobs_status=empirical_jobs_status,
+            dspy_runtime_status=dspy_runtime_status,
+            quant_health_status=quant_health_status,
+        )
+        merged_blocked_reasons = list(
+            dict.fromkeys(
+                [
+                    *[
+                        str(item).strip()
+                        for item in cast(
+                            Sequence[object],
+                            gate.get("blocked_reasons") or [],
+                        )
+                        if str(item).strip()
+                    ],
+                    *blocked_reasons,
+                ]
+            )
+        )
+        gate["allowed"] = bool(gate.get("allowed", False)) and not blocked_reasons
+        gate["blocked_reasons"] = merged_blocked_reasons
+        if blocked_reasons:
+            gate["reason"] = blocked_reasons[0]
+            gate["capital_stage"] = "shadow"
+            gate["capital_state"] = "observe"
+        gate["pipeline_mode"] = "simple"
+        gate["simple_lane"] = {
+            "submit_enabled": settings.trading_simple_submit_enabled,
+            "shared_gate_enforced": True,
             "blocked_reasons": blocked_reasons,
-            "capital_stage": "live" if not blocked_reasons else "shadow",
-            "configured_live_promotion": settings.trading_simple_submit_enabled,
-            "autonomy_promotion_eligible": False,
-            "drift_live_promotion_eligible": False,
-            "promotion_eligible_total": 0,
-            "dependency_quorum_decision": "informational_only",
-            "empirical_jobs_ready": None,
-            "dspy_live_ready": None,
         }
+        return gate
     return build_live_submission_gate_payload(
         state,
         session=session,
@@ -3435,6 +3811,39 @@ def _build_profitability_proof_floor_payload(
     )
 
 
+def _build_renewal_bond_profit_escrow_payload(
+    *,
+    state: object,
+    torghut_revision: str | None,
+    dependency_quorum: Mapping[str, Any],
+    live_submission_gate: Mapping[str, Any],
+    proof_floor: Mapping[str, Any],
+    hypothesis_payload: Mapping[str, Any],
+    empirical_jobs_status: Mapping[str, Any],
+    quant_evidence: Mapping[str, Any],
+    market_context_status: Mapping[str, Any],
+    tca_summary: Mapping[str, Any],
+) -> dict[str, object]:
+    return build_renewal_bond_profit_escrow(
+        account_label=settings.trading_account_label,
+        torghut_revision=torghut_revision,
+        trading_mode=settings.trading_mode,
+        market_session_open=cast(
+            bool | None,
+            getattr(state, "market_session_open", None),
+        ),
+        jangar_dependency_quorum=dependency_quorum,
+        live_submission_gate=live_submission_gate,
+        proof_floor=proof_floor,
+        hypothesis_payload=hypothesis_payload,
+        empirical_jobs_status=empirical_jobs_status,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        tca_summary=tca_summary,
+        tca_max_age_seconds=PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS,
+    )
+
+
 def _build_route_reacquisition_board_payload(
     *,
     proof_floor: Mapping[str, Any],
@@ -3449,6 +3858,132 @@ def _build_route_reacquisition_board_payload(
         active_revision=active_revision,
         jangar_continuity=_route_continuity_packet_for_proof_floor(proof_floor),
     )
+
+
+def _build_jangar_contract_graduation_ref(
+    dependency_quorum: Mapping[str, Any],
+) -> dict[str, object]:
+    decision = str(dependency_quorum.get("decision") or "unknown").strip().lower()
+    reasons = [
+        str(item).strip()
+        for item in cast(Sequence[object], dependency_quorum.get("reasons") or [])
+        if str(item).strip()
+    ]
+    return {
+        "contract_ref": "docs/agents/designs/164-jangar-contract-graduation-brake-and-runtime-receipt-gates-2026-05-07.md",
+        "state": "current" if decision == "allow" else "missing",
+        "decision": decision,
+        "reasons": reasons,
+        "generated_at": dependency_quorum.get("generated_at"),
+    }
+
+
+def _build_capital_replay_projection_payload(
+    *,
+    torghut_revision: str | None,
+    dependency_quorum: Mapping[str, Any],
+    live_submission_gate: Mapping[str, Any],
+    proof_floor: Mapping[str, Any],
+    route_reacquisition_board: Mapping[str, Any],
+    empirical_jobs_status: Mapping[str, Any],
+    quant_evidence: Mapping[str, Any],
+    market_context_status: Mapping[str, Any],
+) -> dict[str, object]:
+    return build_capital_replay_projection(
+        account_label=settings.trading_account_label,
+        trading_mode=settings.trading_mode,
+        torghut_revision=torghut_revision,
+        proof_floor_receipt=proof_floor,
+        route_reacquisition_board=route_reacquisition_board,
+        live_submission_gate=live_submission_gate,
+        empirical_jobs_status=empirical_jobs_status,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        jangar_contract_graduation_ref=_build_jangar_contract_graduation_ref(
+            dependency_quorum
+        ),
+    )
+
+
+def _build_autonomy_capital_replay_projection(
+    scheduler: TradingScheduler,
+) -> dict[str, object]:
+    dependency_quorum = resolve_hypothesis_dependency_quorum(load_hypothesis_registry())
+    try:
+        empirical_jobs = _empirical_jobs_status()
+        quant_evidence = load_quant_evidence_status(
+            account_label=settings.trading_account_label,
+        )
+        market_context_status = scheduler.market_context_status()
+        with SessionLocal() as session:
+            tca_summary = _load_tca_summary(session, scheduler=scheduler)
+        hypothesis_payload, _hypothesis_summary, dependency_quorum = (
+            _build_hypothesis_runtime_payload(
+                scheduler,
+                tca_summary=tca_summary,
+                market_context_status=market_context_status,
+                dependency_quorum=dependency_quorum,
+            )
+        )
+        with SessionLocal() as session:
+            live_submission_gate = _build_live_submission_gate_payload(
+                scheduler.state,
+                session=session,
+                hypothesis_summary=hypothesis_payload,
+                empirical_jobs_status=empirical_jobs,
+                dspy_runtime_status=cast(
+                    dict[str, object],
+                    scheduler.llm_status().get("dspy_runtime", {}),
+                ),
+                quant_health_status=quant_evidence,
+            )
+        proof_floor = _build_profitability_proof_floor_payload(
+            state=scheduler.state,
+            torghut_revision=BUILD_COMMIT,
+            live_submission_gate=live_submission_gate,
+            hypothesis_payload=hypothesis_payload,
+            empirical_jobs_status=empirical_jobs,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+            tca_summary=tca_summary,
+        )
+        route_reacquisition_board = _build_route_reacquisition_board_payload(
+            proof_floor=proof_floor,
+            active_revision=BUILD_COMMIT,
+        )
+        return _build_capital_replay_projection_payload(
+            torghut_revision=BUILD_COMMIT,
+            dependency_quorum=dependency_quorum.as_payload(),
+            live_submission_gate=live_submission_gate,
+            proof_floor=proof_floor,
+            route_reacquisition_board=route_reacquisition_board,
+            empirical_jobs_status=empirical_jobs,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+        )
+    except Exception as exc:  # pragma: no cover - additive autonomy surface only
+        return build_capital_replay_projection(
+            account_label=settings.trading_account_label,
+            trading_mode=settings.trading_mode,
+            torghut_revision=BUILD_COMMIT,
+            proof_floor_receipt={
+                "route_state": "unavailable",
+                "capital_state": "zero_notional",
+                "blocking_reasons": [
+                    f"capital_replay_projection_unavailable:{type(exc).__name__}"
+                ],
+            },
+            route_reacquisition_board={"rows": []},
+            live_submission_gate={
+                "blocked_reasons": ["capital_replay_projection_unavailable"]
+            },
+            empirical_jobs_status={},
+            quant_evidence={},
+            market_context_status={},
+            jangar_contract_graduation_ref=_build_jangar_contract_graduation_ref(
+                dependency_quorum.as_payload()
+            ),
+        )
 
 
 def _route_continuity_packet_for_proof_floor(

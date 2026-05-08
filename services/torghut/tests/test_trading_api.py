@@ -22,6 +22,7 @@ from app.main import (
     _ALPACA_HEALTH_STATE,
     _TRADING_DEPENDENCY_HEALTH_CACHE,
     _assert_dspy_cutover_migration_guard,
+    _build_live_submission_gate_payload,
     _check_alpaca,
     healthz,
     _readiness_dependency_cache_key,
@@ -859,10 +860,31 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(receipt["paper_readiness_state"], "blocked")
         self.assertIn("simple_submit_disabled", receipt["reason_codes"])
+        route_proven_receipt = payload["route_proven_profit_receipt"]
+        self.assertEqual(
+            route_proven_receipt["schema_version"],
+            "torghut.route-proven-profit-receipt.v1",
+        )
+        self.assertEqual(route_proven_receipt["decision"], "repair")
+        self.assertEqual(route_proven_receipt["capital_state"], "zero_notional")
+        self.assertEqual(
+            route_proven_receipt["consumer_evidence_receipt_id"],
+            receipt["receipt_id"],
+        )
+        self.assertEqual(
+            payload["consumer_evidence_canary"],
+            route_proven_receipt["route_canary"],
+        )
+        self.assertEqual(
+            payload["consumer_evidence_canary"]["expected_schema"],
+            "torghut.consumer-evidence-status.v1",
+        )
         dependency_fetch.assert_not_called()
         continuity_fetch.assert_not_called()
 
-    def test_route_continuity_delegates_to_jangar_when_registry_requires_it(self) -> None:
+    def test_route_continuity_delegates_to_jangar_when_registry_requires_it(
+        self,
+    ) -> None:
         expected_packet = {
             "epoch_id": "jangar-epoch",
             "state": "present",
@@ -1000,7 +1022,18 @@ class TestTradingApi(TestCase):
 
             self.assertEqual(payload["pipeline_mode"], "simple")
             self.assertEqual(payload["execution_lane"], "simple")
-            self.assertTrue(payload["live_submission_gate"]["allowed"])
+            self.assertFalse(payload["live_submission_gate"]["allowed"])
+            self.assertEqual(
+                payload["live_submission_gate"]["reason"],
+                "alpha_readiness_not_promotion_eligible",
+            )
+            self.assertTrue(
+                payload["live_submission_gate"]["simple_lane"]["shared_gate_enforced"]
+            )
+            self.assertIn(
+                "profit_window_contract",
+                payload["live_submission_gate"],
+            )
             self.assertEqual(payload["simple_lane_orders_submitted_total"], 7)
             self.assertEqual(
                 payload["simple_lane_reject_reason_totals"],
@@ -1024,6 +1057,65 @@ class TestTradingApi(TestCase):
             settings.trading_mode = original_trading_mode
             settings.trading_simple_submit_enabled = original_simple_submit_enabled
             settings.trading_kill_switch_enabled = original_kill_switch_enabled
+
+    def test_simple_lane_shared_gate_applies_local_block_reason(self) -> None:
+        original = {
+            "trading_pipeline_mode": settings.trading_pipeline_mode,
+            "trading_enabled": settings.trading_enabled,
+            "trading_mode": settings.trading_mode,
+            "trading_simple_submit_enabled": settings.trading_simple_submit_enabled,
+            "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
+            "trading_emergency_stop_enabled": settings.trading_emergency_stop_enabled,
+        }
+        settings.trading_pipeline_mode = "simple"
+        settings.trading_enabled = False
+        settings.trading_mode = "live"
+        settings.trading_simple_submit_enabled = True
+        settings.trading_kill_switch_enabled = False
+        settings.trading_emergency_stop_enabled = False
+        try:
+            with patch(
+                "app.main.build_live_submission_gate_payload",
+                return_value={
+                    "allowed": True,
+                    "reason": "ready",
+                    "blocked_reasons": [],
+                    "capital_stage": "live",
+                    "capital_state": "live",
+                },
+            ):
+                gate = _build_live_submission_gate_payload(
+                    SimpleNamespace(emergency_stop_active=False),
+                    session=None,
+                    hypothesis_summary={},
+                )
+        finally:
+            settings.trading_pipeline_mode = original["trading_pipeline_mode"]
+            settings.trading_enabled = original["trading_enabled"]
+            settings.trading_mode = original["trading_mode"]
+            settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
+            ]
+            settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            settings.trading_emergency_stop_enabled = original[
+                "trading_emergency_stop_enabled"
+            ]
+
+        self.assertFalse(gate["allowed"])
+        self.assertEqual(gate["reason"], "trading_disabled")
+        self.assertEqual(gate["capital_stage"], "shadow")
+        self.assertEqual(gate["capital_state"], "observe")
+        self.assertEqual(gate["blocked_reasons"], ["trading_disabled"])
+        self.assertEqual(
+            gate["simple_lane"],
+            {
+                "submit_enabled": True,
+                "shared_gate_enforced": True,
+                "blocked_reasons": ["trading_disabled"],
+            },
+        )
 
     def test_trading_status_and_health_include_profitability_proof_floor(
         self,
@@ -1073,6 +1165,20 @@ class TestTradingApi(TestCase):
         self.assertIn(
             "forecast_registry_degraded", status_consumer_evidence["reason_codes"]
         )
+        status_route_receipt = status_response.json()["route_proven_profit_receipt"]
+        self.assertEqual(
+            status_route_receipt["schema_version"],
+            "torghut.route-proven-profit-receipt.v1",
+        )
+        self.assertEqual(status_route_receipt["decision"], "repair")
+        self.assertEqual(
+            status_route_receipt["consumer_evidence_receipt_id"],
+            status_consumer_evidence["receipt_id"],
+        )
+        self.assertEqual(
+            status_response.json()["consumer_evidence_canary"],
+            status_route_receipt["route_canary"],
+        )
         self.assertEqual(
             status_response.json()["route_reacquisition_book"],
             proof_floor["route_reacquisition_book"],
@@ -1094,6 +1200,10 @@ class TestTradingApi(TestCase):
             "torghut.consumer-evidence-receipt.v1",
         )
         self.assertEqual(
+            health_response.json()["route_proven_profit_receipt"]["schema_version"],
+            "torghut.route-proven-profit-receipt.v1",
+        )
+        self.assertEqual(
             health_response.json()["route_reacquisition_book"],
             proof_floor["route_reacquisition_book"],
         )
@@ -1111,6 +1221,77 @@ class TestTradingApi(TestCase):
             ],
             "repair_only",
         )
+
+    def test_trading_status_and_health_include_renewal_bond_profit_escrow(
+        self,
+    ) -> None:
+        escrow = {
+            "schema_version": "torghut.renewal-bond-profit-escrow.v1",
+            "receipt_id": "rbpe-test",
+            "escrow_verdict": "repair_only",
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "selected_zero_notional_repairs": [
+                {"code": "refresh_execution_tca_settlement"}
+            ],
+        }
+
+        with patch(
+            "app.main.build_renewal_bond_profit_escrow",
+            return_value=escrow,
+        ):
+            status_response = self.client.get("/trading/status")
+            health_response = self.client.get("/trading/health")
+
+        self.assertEqual(status_response.status_code, 200)
+        self.assertIn(health_response.status_code, {200, 503})
+        self.assertEqual(status_response.json()["renewal_bond_profit_escrow"], escrow)
+        self.assertEqual(health_response.json()["renewal_bond_profit_escrow"], escrow)
+
+    def test_trading_status_health_and_autonomy_include_alpha_replay_projection(
+        self,
+    ) -> None:
+        projection = {
+            "capital_replay_board": {
+                "schema_version": "torghut.capital-replay-board.v1",
+                "board_id": "capital-replay:test",
+                "summary": {"replay_item_count": 1},
+                "replay_items": [{"max_notional": "0"}],
+            },
+            "executable_alpha_receipts": {
+                "schema_version": "torghut.executable-alpha-receipts.v1",
+                "summary": {"receipts_total": 1},
+                "receipts": [{"graduation_state": "candidate"}],
+            },
+        }
+
+        with (
+            patch(
+                "app.main.build_capital_replay_projection",
+                return_value=projection,
+            ),
+            patch(
+                "app.main._build_autonomy_capital_replay_projection",
+                return_value=projection,
+            ),
+        ):
+            status_response = self.client.get("/trading/status")
+            health_response = self.client.get("/trading/health")
+            autonomy_response = self.client.get("/trading/autonomy")
+
+        self.assertEqual(status_response.status_code, 200)
+        self.assertIn(health_response.status_code, {200, 503})
+        self.assertEqual(autonomy_response.status_code, 200)
+        for response in (status_response, health_response, autonomy_response):
+            payload = response.json()
+            self.assertEqual(
+                payload["capital_replay_board"],
+                projection["capital_replay_board"],
+            )
+            self.assertEqual(
+                payload["executable_alpha_receipts"],
+                projection["executable_alpha_receipts"],
+            )
 
     def test_trading_health_requires_profitability_proof_floor_in_live(self) -> None:
         original_enabled = settings.trading_enabled
@@ -2638,6 +2819,20 @@ class TestTradingApi(TestCase):
         self.assertIn("forecast_service", payload)
         self.assertIn("lean_authority", payload)
         self.assertIn("empirical_jobs", payload)
+        self.assertIn("profit_lease_projection", payload)
+        self.assertIn("renewal_bond_profit_escrow", payload)
+        self.assertEqual(
+            payload["profit_lease_projection"]["schema_version"],
+            "torghut.profit-lease-provenance.v1",
+        )
+        self.assertEqual(
+            payload["renewal_bond_profit_escrow"]["schema_version"],
+            "torghut.renewal-bond-profit-escrow.v1",
+        )
+        self.assertEqual(
+            payload["profit_lease_projection"]["jangar_consumer"]["action_class"],
+            "torghut_capital",
+        )
         evaluation = payload["llm_evaluation"]
         self.assertTrue(evaluation["ok"])
         self.assertGreaterEqual(evaluation["metrics"]["total_reviews"], 1)
