@@ -7,14 +7,85 @@ Release engineer: Marco Silva
 ## Owner update message
 
 Jangar rollout is healthy at the latest observed main revision
-`94fa92a40a561a7c9d7f39d383ed1bb2b848e3f9`. Argo CD reports `jangar`, `agents`, `symphony-jangar`, and
-`agents-ci` synced and healthy; `deployment/jangar` is rolled out on
-`registry.ide-newton.ts.net/lab/jangar:03eea88e@sha256:30c7b317810bcbc543757ec08f55f3f6b0abf907bb2fad0e950cde7bac924862`.
+`02157285492418fff35e70beae53e65ee776f353`. Argo CD reports `jangar`, `agents`, `symphony-jangar`, `agents-ci`,
+`torghut`, `symphony-torghut`, and `torghut-options` Synced and Healthy. Jangar `/health`, Symphony `/readyz`,
+controller authority, database connectivity, and migration consistency are healthy.
 
-#5889 remains a no-go even though its mergeability and CI are clean. It is still a 1,639-line direct-control-plane
-diff, and the required Codex review has not posted because the connector is returning code-review usage-limit
-responses. Adjacent Torghut/Jangar-continuity PRs #6002 and #6005 also finished green; GitHub cancelled the
-superseded #6002 `torghut-ci` run in favor of #6005, and the Torghut apps are synced and healthy.
+#5412 merged outside this verifier pass at 2026-05-08T09:57:29Z as
+`7a5c2788f23fc622760ff11dd7c4fd989e3ed64f`; its post-merge main CI is now green, including `agents-ci /
+integration`. #6092 promoted Jangar image `7a5c2788` and #6093 promoted Torghut image `8a01e3d2`; both post-deploy
+verification paths passed and the superseded #6091 promotion was closed.
+
+#5889 remains a no-go even though its mergeability and hosted checks are clean. It is still a 1,639-line direct
+control-plane diff, and the required Codex review has not posted because the connector is returning code-review
+usage-limit responses. Because main has advanced after #5889's last runtime check run, the future gate is: restore
+Codex review capacity, post the current-head review, resolve any threads, refresh/recheck the branch, then make a new
+merge decision.
+
+## Latest gate refresh - 2026-05-08T10:28Z
+
+Governing release requirement: verify stages must merge only green PRs and prove Argo sync, workload readiness, and
+service health after rollout. The direct Jangar implementation still maps to
+`docs/agents/designs/146-jangar-repair-warrant-exchange-and-schedule-debt-firebreak-2026-05-07.md`, which keeps repair
+warrants observe-mode, zero-notional, and non-capital-authorizing until closure evidence exists.
+
+- #5412 `feat(torghut): add profit escrow runtime projections`
+  - Merge outcome: merged by `gregkonush` at 2026-05-08T09:57:29Z as
+    `7a5c2788f23fc622760ff11dd7c4fd989e3ed64f`; merged head was
+    `33c711fe3ed5ceb868d44bc516b893948c41b37a`.
+  - Large-diff evidence: 8,203 additions and 737 deletions. No Codex review posted because the connector returned the
+    usage-limit blocker; a maintainer waiver comment exists at
+    https://github.com/proompteng/lab/pull/5412#issuecomment-4405085130.
+  - Post-merge CI evidence: main commit `7a5c2788f23fc622760ff11dd7c4fd989e3ed64f` passed `Docker Build and Push`,
+    `torghut-build-push`, `torghut-ci`, `jangar-build-push`, and `agents-ci`; `agents-ci / integration` completed at
+    2026-05-08T10:26:02Z.
+  - Promotion evidence: #6092 promoted Jangar image `7a5c2788` and merged as
+    `5bbe0f360738a011d4644e306ee947dc70385882`; `jangar-post-deploy-verify` run `25549824671` passed. #6093 promoted
+    Torghut image `8a01e3d2` and merged as `8d4afcbcdb8b0e74b1cd7c3f731bd9c5d403319d`; `torghut-ci`,
+    `torghut-post-deploy-verify`, `argo-lint`, and `kubeconform` passed.
+- #5889 `feat(jangar): add repair warrant exchange`
+  - Head: `d9809859bd619b004f2f14dcf8acb75ae73aff53`.
+  - Mergeability: `MERGEABLE` / `CLEAN`.
+  - Checks: pass or intentionally skipped, including `CI / check_changed_files`, semantic title and commit checks,
+    `agents-ci / validate`, `agents-ci / integration`, and `jangar-ci / lint-and-typecheck / run`.
+  - Review evidence: zero posted reviews and zero review threads. The diff is 18 files, 1,591 additions, and 48
+    deletions.
+  - Merge decision: no-go. The mandatory large-diff Codex review has not posted. Latest current-head request:
+    https://github.com/proompteng/lab/pull/5889#issuecomment-4405559488. Latest connector blocker:
+    https://github.com/proompteng/lab/pull/5889#issuecomment-4405560890.
+- Current rollout health:
+  - Argo: `jangar`, `agents`, `symphony-jangar`, `agents-ci`, `torghut`, `symphony-torghut`, and `torghut-options` are
+    `Synced`, `Healthy`, operation `Succeeded`, revision `02157285492418fff35e70beae53e65ee776f353`.
+  - Workloads: `deployment/jangar`, `deployment/agents`, `deployment/agents-controllers`,
+    `deployment/symphony-jangar`, and `deployment/symphony-torghut` reported successful rollout.
+  - Active Jangar images: `deployment/jangar` and `deployment/agents-controllers` run
+    `registry.ide-newton.ts.net/lab/jangar:7a5c2788@sha256:2c455fdbd3accf2dfadaf525e463ad6b23261ec4cbcb00dbaa70c16882d5a5df`;
+    `deployment/agents` runs
+    `registry.ide-newton.ts.net/lab/jangar-control-plane:7a5c2788@sha256:203c8009b3c559fdf32a123a3978ec77fc0fe641ed163f1cedae0e9045d04674`.
+  - Service health: Jangar `/health` returned `status=ok`; Symphony `/readyz` returned `ok=true`; control-plane
+    controller authority, database connectivity, and migration consistency are healthy with 28 registered and 28
+    applied migrations.
+  - Events: recent rollout warnings were startup readiness probes that cleared after replacement pods became ready.
+    Torghut still reports unrelated PodDisruptionBudget selection warnings.
+- Runtime and business metric evidence:
+  - `failed_agentrun_rate`: since 2026-05-08T00:00Z, matching Jangar control-plane AgentRuns show 35 total, 34
+    succeeded, 1 running, and 0 failed.
+  - `ready_status_truth`: Argo, rollout status, pod readiness, service health, controller authority, database health,
+    migration state, and image digests agree for the deployed baseline.
+  - `manual_intervention_count`: zero production workload mutations from this shell.
+  - `pr_to_rollout_latency`: improved for #5412/#6092/#6093 because merge-to-healthy GitOps rollout is now proven;
+    blocked for #5889 by Codex review capacity.
+  - `handoff_evidence_quality`: progress comments, rollout evidence, risk, rollback, and next action are recorded here
+    and in `/workspace/.agentrun/swarm/jangar-control-plane-verify.md`.
+- Rollback path:
+  - For the #5412 rollout, revert `7a5c2788f23fc622760ff11dd7c4fd989e3ed64f` through a normal PR or promote the
+    previous Torghut/Jangar image through the normal GitOps release PR path.
+  - For the current Jangar image, open a GitOps revert PR to restore the previous promoted image if service health
+    regresses.
+  - #5889 has no runtime rollback because it was not merged.
+  - Do not mutate production workloads directly from a local shell.
+  - Next action: keep #5889 held until Codex review capacity is restored, then rebase/recheck it on current main before
+    any merge decision.
 
 ## PRs touched
 
