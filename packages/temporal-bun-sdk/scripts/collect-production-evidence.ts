@@ -144,6 +144,11 @@ type WorkerLoadReport = {
   readonly scenarioCoverage?: Record<string, number>
 }
 
+type LoadEvidenceResult = {
+  readonly passed: boolean
+  readonly detail: string
+}
+
 type AsyncFuzzReport = {
   readonly passed?: boolean
   readonly seedCount?: number
@@ -160,7 +165,20 @@ type SoakReport = {
   readonly failureModeCoverage?: Record<string, number>
   readonly failureModeEvidence?: Record<string, Record<string, number>>
   readonly memorySummary?: SoakMemorySummary
-  readonly iterations?: readonly { readonly exitCode?: number; readonly mode?: string }[]
+  readonly iterations?: readonly {
+    readonly exitCode?: number
+    readonly mode?: string
+    readonly loadReportSummary?: {
+      readonly submitted?: number
+      readonly completed?: number
+      readonly peakConcurrent?: number
+      readonly workflowThroughputPerSecond?: number
+      readonly stickyHitRatio?: number
+      readonly workflowPollP95Ms?: number
+      readonly activityPollP95Ms?: number
+      readonly scenarioCoverage?: Record<string, number>
+    }
+  }[]
 }
 
 type SoakMemorySummary = {
@@ -598,7 +616,7 @@ const validateReplayCorpusReport = (
   }
 }
 
-const validateLoadReport = (report: WorkerLoadReport | null): { passed: boolean; detail: string } => {
+const validateLoadReport = (report: WorkerLoadReport | null): LoadEvidenceResult => {
   if (!report) {
     return { passed: false, detail: 'missing' }
   }
@@ -634,6 +652,42 @@ const validateLoadReport = (report: WorkerLoadReport | null): { passed: boolean;
       `peakConcurrent=${peakConcurrent}/${minimumLoadPeakConcurrency}; throughput=${throughput.toFixed(2)}/${throughputFloor}; ` +
       `sticky=${stickyHitRatio.toFixed(3)}/${stickyHitRatioTarget}; workflowP95=${workflowP95}/${workflowP95Target}; ` +
       `activityP95=${activityP95}/${activityP95Target}; missingScenarios=${missingScenarios.join(',') || 'none'}`,
+  }
+}
+
+const validateReleaseSoakLoadEvidence = (report: SoakReport | null): LoadEvidenceResult => {
+  if (!report) {
+    return { passed: false, detail: 'missing release-soak report' }
+  }
+
+  const summaries = (report.iterations ?? []).flatMap((iteration) =>
+    iteration.exitCode === 0 && iteration.loadReportSummary ? [iteration.loadReportSummary] : [],
+  )
+  const submitted = summaries.reduce((sum, summary) => sum + (summary.submitted ?? 0), 0)
+  const completed = summaries.reduce((sum, summary) => sum + (summary.completed ?? 0), 0)
+  const peakConcurrent = summaries.reduce((max, summary) => Math.max(max, summary.peakConcurrent ?? 0), 0)
+  const scenarioCoverage = summaries.reduce<Record<string, number>>((coverage, summary) => {
+    for (const [scenario, count] of Object.entries(summary.scenarioCoverage ?? {})) {
+      coverage[scenario] = (coverage[scenario] ?? 0) + count
+    }
+    return coverage
+  }, {})
+  const missingScenarios = requiredLoadScenarios.filter((scenario) => (scenarioCoverage[scenario] ?? 0) <= 0)
+
+  const passed =
+    report.passed === true &&
+    summaries.length > 0 &&
+    submitted >= minimumLoadWorkflows &&
+    completed >= submitted &&
+    peakConcurrent >= minimumLoadPeakConcurrency &&
+    missingScenarios.length === 0
+
+  return {
+    passed,
+    detail:
+      `source=worker-soak; iterations=${summaries.length}; completed=${completed}/${submitted}; ` +
+      `minimumWorkflows=${minimumLoadWorkflows}; peakConcurrent=${peakConcurrent}/${minimumLoadPeakConcurrency}; ` +
+      `missingScenarios=${missingScenarios.join(',') || 'none'}`,
   }
 }
 
@@ -778,7 +832,6 @@ const main = async () => {
   const loadReportPath = join(packageRoot, '.artifacts', 'worker-load', 'report.json')
   const loadReportPresent = existsSync(loadReportPath)
   const loadReport = await readOptionalJson<WorkerLoadReport>(loadReportPath)
-  const loadEvidence = validateLoadReport(loadReport)
   const asyncFuzzReportPath = join(packageRoot, '.artifacts', 'async-fuzz', 'report.json')
   const asyncFuzzReport = await readOptionalJson<AsyncFuzzReport>(asyncFuzzReportPath)
   const asyncFuzzSeedCount = asyncFuzzReport?.seedCount ?? 0
@@ -790,6 +843,24 @@ const main = async () => {
   const asyncFuzzPassed = asyncFuzzReport?.passed === true
   const soakReportPath = join(packageRoot, '.artifacts', 'worker-soak', 'report.json')
   const soakReport = await readOptionalJson<SoakReport>(soakReportPath)
+  const loadReportEvidence = validateLoadReport(loadReport)
+  const loadEvidenceFromReport: LoadEvidenceResult = {
+    passed: loadReportEvidence.passed,
+    detail: `source=worker-load; ${loadReportEvidence.detail}; path=${relative(packageRoot, loadReportPath)}`,
+  }
+  const soakLoadEvidence = validateReleaseSoakLoadEvidence(soakReport)
+  const loadEvidenceFromSoak: LoadEvidenceResult = {
+    passed: soakLoadEvidence.passed,
+    detail: `${soakLoadEvidence.detail}; path=${relative(packageRoot, soakReportPath)}`,
+  }
+  const loadEvidence = loadEvidenceFromReport.passed
+    ? loadEvidenceFromReport
+    : loadEvidenceFromSoak.passed
+      ? loadEvidenceFromSoak
+      : {
+          passed: false,
+          detail: `${loadEvidenceFromReport.detail}; releaseSoak=${loadEvidenceFromSoak.detail}`,
+        }
   const soakIterationCount = soakReport?.iterations?.length ?? 0
   const soakIterationsPassed = soakReport?.iterations?.every((entry) => entry.exitCode === 0) ?? false
   const soakDurationMs = soakReport?.durationMs ?? 0
@@ -856,10 +927,7 @@ const main = async () => {
       loadReportPresent,
       loadReportPresent ? relative(packageRoot, loadReportPath) : 'missing',
     ),
-    loadEvidence: buildGate(
-      loadEvidence.passed,
-      `${loadEvidence.detail}; path=${relative(packageRoot, loadReportPath)}`,
-    ),
+    loadEvidence: buildGate(loadEvidence.passed, loadEvidence.detail),
     asyncFuzzEvidence: buildGate(
       asyncFuzzPassed &&
         asyncFuzzSeedCount >= minimumAsyncFuzzSeeds &&

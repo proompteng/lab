@@ -11,7 +11,9 @@
   `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-08T08:27Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-08T08:27Z`):
+- Evidence (current next-work priority, refreshed `2026-05-08T12:16Z`):
+  - `184-torghut-execution-trusted-profit-repair-settlement-2026-05-08.md`
+  - `docs/agents/designs/180-jangar-execution-trust-debt-retirement-and-profit-repair-settlement-2026-05-08.md`
   - `183-torghut-receipt-settled-capital-reentry-cohorts-2026-05-08.md`
   - `docs/agents/designs/179-jangar-controller-witness-stability-escrow-and-capital-reentry-backpressure-2026-05-08.md`
   - `182-torghut-route-proven-profit-receipts-and-consumer-evidence-canary-2026-05-08.md`
