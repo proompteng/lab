@@ -19,8 +19,138 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Classify Torghut changes
+    runs-on: ubuntu-latest
+    outputs:
+      run_service_ci: ${{ steps.classify.outputs.run_service_ci }}
+      reason: ${{ steps.classify.outputs.reason }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed files
+        id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+
+          if [ "${EVENT_NAME}" = 'workflow_dispatch' ]; then
+            echo "run_service_ci=true" >> "$GITHUB_OUTPUT"
+            echo "reason=manual-dispatch" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${EVENT_NAME}" = 'pull_request' ]; then
+            BASE_SHA="${PR_BASE_SHA}"
+            DIFF_HEAD_SHA="${PR_HEAD_SHA}"
+          else
+            BASE_SHA="${BEFORE_SHA}"
+            DIFF_HEAD_SHA="${HEAD_SHA}"
+          fi
+
+          if [ -z "${BASE_SHA}" ] || ! git cat-file -e "${BASE_SHA}^{commit}" >/dev/null 2>&1; then
+            BASE_SHA="$(git rev-parse "${DIFF_HEAD_SHA}^")"
+          fi
+
+          mapfile -t changed_files < <(git diff --name-only "${BASE_SHA}" "${DIFF_HEAD_SHA}" --)
+          if [ "${#changed_files[@]}" -eq 0 ]; then
+            echo "run_service_ci=true" >> "$GITHUB_OUTPUT"
+            echo "reason=no-files-changed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          allowed_release_paths=(
+            'argocd/applications/torghut/knative-service.yaml'
+            'argocd/applications/torghut/knative-service-sim.yaml'
+            'argocd/applications/torghut/db-migrations-job.yaml'
+            'argocd/applications/torghut/historical-simulation-workflowtemplate.yaml'
+            'argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml'
+            'argocd/applications/torghut/whitepaper-autoresearch-workflowtemplate.yaml'
+            'argocd/applications/torghut/analysis-template-runtime-ready.yaml'
+            'argocd/applications/torghut/analysis-template-activity.yaml'
+            'argocd/applications/torghut/analysis-template-teardown-clean.yaml'
+            'argocd/applications/torghut/analysis-template-artifact-bundle.yaml'
+            'argocd/applications/torghut/empirical-jobs-backfill-job.yaml'
+            'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'
+            'argocd/applications/torghut-options/catalog/deployment.yaml'
+            'argocd/applications/torghut-options/enricher/deployment.yaml'
+          )
+
+          contains() {
+            local needle="$1"
+            shift
+            for item in "$@"; do
+              if [ "${item}" = "${needle}" ]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          only_release_paths=true
+          for path in "${changed_files[@]}"; do
+            if ! contains "${path}" "${allowed_release_paths[@]}"; then
+              only_release_paths=false
+              break
+            fi
+          done
+
+          commit_subject="$(git log -1 --pretty=%s "${DIFF_HEAD_SHA}")"
+          release_like=false
+          if [[ "${PR_HEAD_REF}" == codex/torghut-release-* ]]; then
+            release_like=true
+          elif [[ "${commit_subject}" =~ ^chore\(torghut\):[[:space:]]promote[[:space:]]image[[:space:]][0-9a-f]+$ ]]; then
+            release_like=true
+          fi
+
+          if [ "${release_like}" = 'true' ] && [ "${only_release_paths}" = 'true' ]; then
+            echo "run_service_ci=false" >> "$GITHUB_OUTPUT"
+            echo "reason=automated-release-manifest-only" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_service_ci=true" >> "$GITHUB_OUTPUT"
+            echo "reason=service-or-behavioral-change" >> "$GITHUB_OUTPUT"
+          fi
+
+          {
+            echo "### Torghut CI change classifier"
+            echo ""
+            echo "- Base: \`${BASE_SHA}\`"
+            echo "- Head: \`${DIFF_HEAD_SHA}\`"
+            echo "- Commit subject: \`${commit_subject}\`"
+            echo "- Release-like: \`${release_like}\`"
+            echo "- Only release manifest paths: \`${only_release_paths}\`"
+            echo "- Run service CI: \`$(grep '^run_service_ci=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2-)\`"
+            echo ""
+            echo "Changed files:"
+            printf -- "- \`%s\`\n" "${changed_files[@]}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release-manifest-fast-path:
+    name: Release manifest fast path
+    needs: changes
+    if: needs.changes.outputs.run_service_ci != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain service CI skip
+        run: |
+          echo "Skipping Torghut service Pyright and pytest jobs."
+          echo "Reason: ${{ needs.changes.outputs.reason }}"
+          echo "Deployment manifests are still covered by the repository Argo/kube validation workflows."
+
   pyright:
     name: Pyright
+    needs: changes
+    if: needs.changes.outputs.run_service_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -58,6 +188,8 @@ jobs:
 
   lint-and-tests:
     name: Bytecode + pytest + coverage
+    needs: changes
+    if: needs.changes.outputs.run_service_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -110,6 +242,8 @@ jobs:
 
   quality-signals:
     name: Quality signals (complexity + security)
+    needs: changes
+    if: needs.changes.outputs.run_service_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
