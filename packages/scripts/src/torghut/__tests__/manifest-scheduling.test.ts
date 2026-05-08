@@ -109,6 +109,8 @@ describe('Torghut manifest scheduling', () => {
     )
     expect(JSON.stringify(template)).toContain('run_whitepaper_autoresearch_profit_target.py')
     expect(JSON.stringify(template)).toContain('--require-no-flat-days')
+    expect(JSON.stringify(template)).toContain('--real-replay-shard-size')
+    expect(JSON.stringify(template)).toContain('--real-replay-shard-timeout-seconds')
   })
 
   it('bounds whitepaper autoresearch real replay so profit runs emit evidence before timeout', () => {
