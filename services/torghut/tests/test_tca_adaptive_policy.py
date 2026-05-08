@@ -210,6 +210,7 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
                 slippages=[Decimal("4")],
                 shortfalls=[Decimal("1")],
                 expected_shortfall_p50_values=[Decimal("1")],
+                realized_shortfall_bps_values=[Decimal("-2")],
                 adaptive_applied=False,
             )
             self._insert_observations(
@@ -220,6 +221,7 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
                 slippages=[Decimal("12")],
                 shortfalls=[Decimal("1")],
                 expected_shortfall_p50_values=[Decimal("1")],
+                realized_shortfall_bps_values=[Decimal("1")],
                 adaptive_applied=False,
             )
             self._insert_observations(
@@ -230,6 +232,7 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
                 slippages=[Decimal("100")],
                 shortfalls=[Decimal("1")],
                 expected_shortfall_p50_values=[Decimal("1")],
+                realized_shortfall_bps_values=[Decimal("99")],
                 adaptive_applied=False,
             )
 
@@ -250,7 +253,9 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
         }
         self.assertEqual(breakdown["AAPL"]["order_count"], 1)
         self.assertEqual(breakdown["NVDA"]["avg_abs_slippage_bps"], Decimal("12"))
+        self.assertEqual(breakdown["NVDA"]["avg_realized_shortfall_bps"], Decimal("1"))
         self.assertEqual(breakdown["ORCL"]["order_count"], 0)
+        self.assertIsNone(breakdown["ORCL"]["avg_realized_shortfall_bps"])
         self.assertNotIn("META", breakdown)
 
     def test_build_tca_gate_inputs_reports_execution_settlement_coverage(self) -> None:

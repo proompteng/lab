@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -16,6 +17,9 @@ from app.trading.hypotheses import (
     hypothesis_registry_requires_dependency_capability,
     load_hypothesis_registry,
     load_jangar_dependency_quorum,
+    _optional_decimal,
+    _sequence,
+    _weighted_decimal_average,
     resolve_hypothesis_dependency_quorum,
     summarize_hypothesis_runtime_statuses,
 )
@@ -125,6 +129,26 @@ class TestHypothesisReadiness(TestCase):
         ]
         _JANGAR_QUORUM_CACHE.clear()
 
+    def test_route_tca_helper_edge_cases_are_defensive(self) -> None:
+        self.assertIsNone(_optional_decimal(None))
+        self.assertEqual(_optional_decimal(Decimal('1.25')), Decimal('1.25'))
+        self.assertEqual(_optional_decimal('2.50'), Decimal('2.50'))
+        self.assertIsNone(_optional_decimal('not-a-decimal'))
+        self.assertIsNone(_optional_decimal([]))
+        self.assertEqual(_sequence('AAPL'), ())
+        self.assertIsNone(
+            _weighted_decimal_average(
+                [{'order_count': 0, 'avg_abs_slippage_bps': Decimal('4')}],
+                'avg_abs_slippage_bps',
+            )
+        )
+        self.assertIsNone(
+            _weighted_decimal_average(
+                [{'order_count': 2, 'avg_abs_slippage_bps': None}],
+                'avg_abs_slippage_bps',
+            )
+        )
+
     def test_load_hypothesis_registry_reads_directory_payloads(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -217,6 +241,190 @@ class TestHypothesisReadiness(TestCase):
         self.assertTrue(cont['promotion_eligible'])
         self.assertEqual(rev['state'], 'canary_live')
         self.assertEqual(cont['observed']['tca_age_minutes'], 10)
+
+    def test_compile_hypothesis_runtime_statuses_uses_route_filtered_tca_when_enabled(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=5,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=15,
+            evidence_report={
+                'ok': True,
+                'checked_at': '2026-03-06T15:45:00+00:00',
+            },
+        )
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                'order_count': 145,
+                'avg_abs_slippage_bps': 25,
+                'avg_realized_shortfall_bps': 4,
+                'last_computed_at': '2026-03-06T15:50:00+00:00',
+                'symbol_breakdown': [
+                    {
+                        'symbol': 'AAPL',
+                        'order_count': 90,
+                        'avg_abs_slippage_bps': 6,
+                        'avg_realized_shortfall_bps': -8,
+                        'last_computed_at': '2026-03-06T15:50:00+00:00',
+                    },
+                    {
+                        'symbol': 'NVDA',
+                        'order_count': 55,
+                        'avg_abs_slippage_bps': 25,
+                        'avg_realized_shortfall_bps': 5,
+                        'last_computed_at': '2026-03-06T15:50:00+00:00',
+                    },
+                ],
+            },
+            market_context_status={'last_freshness_seconds': 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision='allow',
+                reasons=[],
+                message='ok',
+            ),
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+            market_session_open=True,
+            route_symbol_filter_enabled=True,
+        )
+
+        cont = next(item for item in statuses if item['hypothesis_id'] == 'H-CONT-01')
+        self.assertEqual(cont['state'], 'scaled_live')
+        self.assertEqual(cont['capital_stage'], '1.00x live')
+        self.assertEqual(cont['capital_multiplier'], '1')
+        self.assertTrue(cont['promotion_eligible'])
+        self.assertNotIn('slippage_budget_exceeded', cont['reasons'])
+        observed = cont['observed']
+        self.assertEqual(observed['tca_order_count'], 90)
+        self.assertEqual(observed['avg_abs_slippage_bps'], '6')
+        self.assertEqual(observed['post_cost_expectancy_bps_proxy'], '8')
+        self.assertEqual(observed['route_tca_symbols'], ['AAPL'])
+        self.assertEqual(observed['route_tca_excluded_symbol_count'], 1)
+
+    def test_compile_hypothesis_runtime_statuses_blocks_empty_route_universe(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=5,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=15,
+            evidence_report={
+                'ok': True,
+                'checked_at': '2026-03-06T15:45:00+00:00',
+            },
+        )
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                'order_count': 100,
+                'avg_abs_slippage_bps': 25,
+                'avg_realized_shortfall_bps': -8,
+                'last_computed_at': '2026-03-06T15:50:00+00:00',
+                'symbol_breakdown': [
+                    {
+                        'symbol': 'AAPL',
+                        'order_count': 0,
+                        'avg_abs_slippage_bps': None,
+                        'avg_realized_shortfall_bps': None,
+                        'last_computed_at': None,
+                    },
+                    {
+                        'symbol': 'ORCL',
+                        'order_count': 0,
+                        'avg_abs_slippage_bps': None,
+                        'avg_realized_shortfall_bps': None,
+                        'last_computed_at': None,
+                    },
+                ],
+            },
+            market_context_status={'last_freshness_seconds': 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision='allow',
+                reasons=[],
+                message='ok',
+            ),
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+            market_session_open=True,
+            route_symbol_filter_enabled=True,
+        )
+
+        cont = next(item for item in statuses if item['hypothesis_id'] == 'H-CONT-01')
+        self.assertEqual(cont['state'], 'shadow')
+        self.assertFalse(cont['promotion_eligible'])
+        self.assertTrue(cont['rollback_required'])
+        self.assertIn('route_universe_empty', cont['reasons'])
+        observed = cont['observed']
+        self.assertEqual(observed['route_tca_symbols'], [])
+        self.assertEqual(observed['route_tca_symbol_count'], 0)
+        self.assertEqual(observed['route_tca_missing_symbol_count'], 2)
+
+    def test_compile_hypothesis_runtime_statuses_keeps_route_negative_expectancy_blocked(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=5,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=15,
+            evidence_report={
+                'ok': True,
+                'checked_at': '2026-03-06T15:45:00+00:00',
+            },
+        )
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                'order_count': 100,
+                'avg_abs_slippage_bps': 25,
+                'avg_realized_shortfall_bps': 4,
+                'last_computed_at': '2026-03-06T15:50:00+00:00',
+                'symbol_breakdown': [
+                    {
+                        'symbol': 'AAPL',
+                        'order_count': 45,
+                        'avg_abs_slippage_bps': 6,
+                        'avg_realized_shortfall_bps': 1,
+                        'last_computed_at': '2026-03-06T15:50:00+00:00',
+                    },
+                    {
+                        'symbol': 'NVDA',
+                        'order_count': 55,
+                        'avg_abs_slippage_bps': 25,
+                        'avg_realized_shortfall_bps': 5,
+                        'last_computed_at': '2026-03-06T15:50:00+00:00',
+                    },
+                ],
+            },
+            market_context_status={'last_freshness_seconds': 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision='allow',
+                reasons=[],
+                message='ok',
+            ),
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+            market_session_open=True,
+            route_symbol_filter_enabled=True,
+        )
+
+        cont = next(item for item in statuses if item['hypothesis_id'] == 'H-CONT-01')
+        self.assertEqual(cont['state'], 'shadow')
+        self.assertFalse(cont['promotion_eligible'])
+        self.assertTrue(cont['rollback_required'])
+        self.assertNotIn('slippage_budget_exceeded', cont['reasons'])
+        self.assertIn('post_cost_expectancy_non_positive', cont['reasons'])
+        observed = cont['observed']
+        self.assertEqual(observed['avg_abs_slippage_bps'], '6')
+        self.assertEqual(observed['post_cost_expectancy_bps_proxy'], '-1')
+        self.assertEqual(observed['route_tca_symbols'], ['AAPL'])
 
     def test_compile_hypothesis_runtime_statuses_blocks_stale_tca_evidence(self) -> None:
         registry = load_hypothesis_registry()
