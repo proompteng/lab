@@ -73,6 +73,22 @@ describe('control-plane Torghut consumer evidence', () => {
               },
             ],
           },
+          profit_repair_settlement_ledger: {
+            schema_version: 'torghut.profit-repair-settlement-ledger.v1',
+            ledger_id: 'profit-repair-settlement-ledger:test',
+            aggregate_state: 'repair',
+            aggregate_blocking_reason_codes: ['quant_pipeline_degraded'],
+            repair_lots: [
+              {
+                lot_id: 'profit-repair-lot:quant',
+                lot_class: 'quant_freshness',
+                current_state: 'repair',
+                blocking_reason_codes: ['quant_pipeline_degraded'],
+                paper_notional_limit: '0',
+                live_notional_limit: '0',
+              },
+            ],
+          },
           market_context: {
             health: { status: 'healthy' },
           },
@@ -97,6 +113,9 @@ describe('control-plane Torghut consumer evidence', () => {
       capital_reentry_cohort_ledger_id: 'capital-reentry-ledger:test',
       capital_reentry_aggregate_state: 'repair',
       capital_reentry_cohort_ids: ['capital-reentry-cohort:aapl'],
+      profit_repair_settlement_ledger_id: 'profit-repair-settlement-ledger:test',
+      profit_repair_aggregate_state: 'repair',
+      profit_repair_lot_ids: ['profit-repair-lot:quant'],
       reason_codes: ['forecast_registry_degraded', 'execution_tca_route_universe_incomplete'],
     })
     expect(result.negativeEvidence).toMatchObject({
@@ -109,6 +128,10 @@ describe('control-plane Torghut consumer evidence', () => {
       capital_reentry_aggregate_state: 'repair',
       capital_reentry_cohort_ids: ['capital-reentry-cohort:aapl'],
       capital_reentry_blocking_reason_codes: ['forecast_registry_degraded'],
+      profit_repair_settlement_ledger_id: 'profit-repair-settlement-ledger:test',
+      profit_repair_aggregate_state: 'repair',
+      profit_repair_lot_ids: ['profit-repair-lot:quant'],
+      profit_repair_blocking_reason_codes: ['quant_pipeline_degraded'],
     })
   })
 

@@ -51,6 +51,10 @@ export type TorghutNegativeEvidenceInput = {
   capital_reentry_aggregate_state?: string | null
   capital_reentry_cohort_ids?: string[]
   capital_reentry_blocking_reason_codes?: string[]
+  profit_repair_settlement_ledger_id?: string | null
+  profit_repair_aggregate_state?: string | null
+  profit_repair_lot_ids?: string[]
+  profit_repair_blocking_reason_codes?: string[]
 }
 
 export type NegativeEvidenceRouterInput = {
@@ -216,6 +220,9 @@ const buildPositiveRefs = (input: NegativeEvidenceRouterInput) => {
   if (input.torghut?.capital_reentry_cohort_ledger_id) {
     refs.push(input.torghut.capital_reentry_cohort_ledger_id)
   }
+  if (input.torghut?.profit_repair_settlement_ledger_id) {
+    refs.push(input.torghut.profit_repair_settlement_ledger_id)
+  }
   if (
     input.controllerWitness &&
     (input.controllerWitness.decision === 'allow' || input.controllerWitness.decision === 'allow_with_split')
@@ -344,6 +351,30 @@ const buildNegativeEvidenceRefs = (input: NegativeEvidenceRouterInput) => {
         'data_freshness_negative',
         reason,
         cohortRefs.length > 0 ? cohortRefs : [consumerEvidenceRef],
+      )
+    }
+
+    const profitRepairRefs = uniqueStrings([
+      torghut.profit_repair_settlement_ledger_id ?? '',
+      ...(torghut.profit_repair_lot_ids ?? []),
+    ])
+    if (
+      torghut.profit_repair_aggregate_state &&
+      !['observe', 'paper_candidate'].includes(torghut.profit_repair_aggregate_state)
+    ) {
+      addEvidence(
+        evidence,
+        'data_freshness_negative',
+        `profit_repair_${torghut.profit_repair_aggregate_state}`,
+        profitRepairRefs.length > 0 ? profitRepairRefs : [consumerEvidenceRef],
+      )
+    }
+    for (const reason of torghut.profit_repair_blocking_reason_codes ?? []) {
+      addEvidence(
+        evidence,
+        'data_freshness_negative',
+        reason,
+        profitRepairRefs.length > 0 ? profitRepairRefs : [consumerEvidenceRef],
       )
     }
 

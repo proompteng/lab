@@ -889,6 +889,16 @@ class TestTradingApi(TestCase):
             receipt["receipt_id"],
         )
         self.assertEqual(ledger["summary"]["zero_notional_cohort_count"], 5)
+        profit_repair = payload["profit_repair_settlement_ledger"]
+        self.assertEqual(
+            profit_repair["schema_version"],
+            "torghut.profit-repair-settlement-ledger.v1",
+        )
+        self.assertEqual(
+            profit_repair["consumer_evidence_receipt_id"],
+            receipt["receipt_id"],
+        )
+        self.assertEqual(profit_repair["summary"]["zero_notional_lot_count"], 7)
         dependency_fetch.assert_not_called()
         continuity_fetch.assert_not_called()
 
@@ -1246,6 +1256,17 @@ class TestTradingApi(TestCase):
             str(health_ledger["consumer_evidence_receipt_id"]).startswith(
                 "torghut-consumer-evidence:"
             )
+        )
+        status_profit_repair = status_response.json()["profit_repair_settlement_ledger"]
+        health_profit_repair = health_response.json()["profit_repair_settlement_ledger"]
+        self.assertEqual(
+            status_profit_repair["schema_version"],
+            "torghut.profit-repair-settlement-ledger.v1",
+        )
+        self.assertEqual(status_profit_repair["summary"]["zero_notional_lot_count"], 7)
+        self.assertEqual(
+            health_profit_repair["schema_version"],
+            status_profit_repair["schema_version"],
         )
 
     def test_trading_status_and_health_include_renewal_bond_profit_escrow(
