@@ -307,14 +307,20 @@ describe('temporal-bun-sdk packaging manifest', () => {
     expect(agentReadiness.blockers).toEqual(productionEvidence.defaultChoice?.blockers)
   })
 
-  test('does not claim default-choice readiness on smoke-level evidence', async () => {
+  test('does not claim default-choice readiness before release-soak evidence exists', async () => {
     const productionEvidence = JSON.parse(
       await readFile(join(packageRoot, 'dist', 'production-readiness.json'), 'utf8'),
     ) as {
+      gates?: Record<string, { passed?: boolean }>
       defaultChoice?: {
         recommended?: boolean
         blockers?: string[]
       }
+    }
+
+    if (productionEvidence.gates?.soakEvidence?.passed === true) {
+      expect(productionEvidence.defaultChoice?.blockers?.join('\n') ?? '').not.toContain('soak evidence')
+      return
     }
 
     expect(productionEvidence.defaultChoice?.recommended).toBeFalse()
