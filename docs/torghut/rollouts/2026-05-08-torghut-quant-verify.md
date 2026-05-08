@@ -5,7 +5,32 @@ Repository: `proompteng/lab`
 Branch: `codex/swarm-torghut-quant-verify`
 Base: `main`
 Owner channel: `swarm://owner/trading`
-Last refreshed: 2026-05-08T08:25:00Z
+Last refreshed: 2026-05-08T08:43:00Z
+
+## Final release refresh
+
+This section supersedes earlier rollout snapshots in this document.
+
+Final merge gate is no-go for #5412. The PR is open, non-draft, conflict-free, and green on hosted checks at head
+`489ef179d7d6b8c5fae0cbbc9f339876db3c32f5`, but it is 8,074 additions and 617 deletions. No Codex review is posted,
+no review thread exists, and no maintainer waiver is recorded. The latest `@codex review` request for this head
+returned the Codex usage-limit blocker at 2026-05-08T08:11:33Z.
+
+Audit PRs #6066 and #6071 were squash-merged. Torghut promotion PR #6073 was also merged with green checks, and the
+repository has advanced through current main `61f2e2e4a6b68787b7fcd1fcbb7a75094cc4cace` after Bilig-only automated
+release PRs #6076 and #6077. Argo CD reports Torghut apps as `Synced` and `Healthy` on the promoted Torghut image;
+`root` and `symphony-torghut` are also `Synced` and `Healthy` at their latest relevant revisions.
+
+Torghut live and sim workloads are ready on image digest
+`sha256:9990cbcc5214e04b541d78009ced9930b3b18d062d4d5a1ff525b43e2560ebba`, runtime build commit
+`171fa3f14ae53adf17f3426d13e7fe3a27cb2438`, active revision `torghut-00304`. `/healthz`, `/trading/status`, and
+`/trading/consumer-evidence` return HTTP 200. Runtime remains capital-safe: proof floor `repair_only`, route state
+`repair_only`, capital state `zero_notional`, `max_notional=0`, and live submission blocked by
+`simple_submit_disabled`.
+
+Revenue impact remains blocked rather than realized. The smallest blocker preventing revenue impact is the missing
+large-diff Codex review or explicit maintainer waiver for #5412; after that, alpha readiness and live submission gates
+must still clear before non-zero notional.
 
 ## Owner update message
 
@@ -14,12 +39,12 @@ head `489ef179d7d6b8c5fae0cbbc9f339876db3c32f5`, but it is still above the large
 at 8,074 additions and 617 deletions. There is no posted Codex review and no review thread; the latest
 `@codex review` request for this head returned the Codex usage-limit blocker at 2026-05-08T08:11:33Z.
 
-The audit PR for this pass, #6066, merged at `f45234fc501469f947ad8c055e50ebfb95e6565f`. Current main
-then advanced to `819e30031328b4b6f0d5fbc51cd6078589ecee64` via #6067, #6068, and #6070. The Torghut
-rollout remains healthy: Argo CD reports `torghut`, `torghut-options`, and `symphony-torghut` as `Synced`
-and `Healthy`. Live and sim Torghut workloads are ready on image digest
-`sha256:056d6b0bc237adec3e3aa5e89a3f08ee81523ec18d8374c4a4e7d072e436f0f3`, runtime build commit
-`809276e6db88bf4546f3fc6c75bd16c54815fb1d`, active revision `torghut-00302`.
+The audit PRs for this pass, #6066 and #6071, merged at `f45234fc501469f947ad8c055e50ebfb95e6565f` and
+`6a8dcc517167507c391af3ddc3442d38994f6eb5`. Current main then advanced to
+`61f2e2e4a6b68787b7fcd1fcbb7a75094cc4cace` through #6073, #6076, and #6077. The Torghut rollout remains healthy:
+Argo CD reports Torghut apps as `Synced` and `Healthy`. Live and sim Torghut workloads are ready on image digest
+`sha256:9990cbcc5214e04b541d78009ced9930b3b18d062d4d5a1ff525b43e2560ebba`, runtime build commit
+`171fa3f14ae53adf17f3426d13e7fe3a27cb2438`, active revision `torghut-00304`.
 
 Trading remains intentionally capital-safe: `/trading/status` reports `floor_state=repair_only`,
 `route_state=repair_only`, `capital_state=zero_notional`, `max_notional=0`, and live submission blocked by
@@ -64,7 +89,7 @@ live-submission gates to clear before non-zero notional.
     https://github.com/proompteng/lab/pull/5412#issuecomment-4404818477
   - Kept open and unmerged.
 - Current main rollout
-  - Verified current main `819e30031328b4b6f0d5fbc51cd6078589ecee64` in Argo CD and live Torghut workloads.
+  - Verified current main `61f2e2e4a6b68787b7fcd1fcbb7a75094cc4cace` in Argo CD and live Torghut workloads.
   - No direct production mutation was made from the local shell.
 
 ## Comments and conflicts resolved
@@ -103,7 +128,8 @@ live-submission gates to clear before non-zero notional.
   continued advancing while this audit branch was rebased.
 - PASS: `kubectl get deploy -n torghut ...` reports live, sim, options, websocket, and TA deployments ready and
   available.
-- PASS: `kubectl get events -n torghut --sort-by=.lastTimestamp` returned no current namespace events.
+- PASS: `kubectl get events -n torghut --sort-by=.lastTimestamp` showed only expected rollout events and transient
+  readiness warnings on old scaled-down revisions; new revisions became ready and backfill jobs completed.
 - PASS: `curl -fsS http://torghut.torghut.svc.cluster.local/healthz` returns HTTP 200 with
   `{"status":"ok","service":"torghut"}`.
 - PASS: `curl -fsS http://torghut.torghut.svc.cluster.local/trading/status | jq ...` reports the runtime build,
@@ -118,22 +144,24 @@ live-submission gates to clear before non-zero notional.
 
 - No new rollout was triggered from #5412 because no merge occurred.
 - Audit PR #6066 merge revision: `f45234fc501469f947ad8c055e50ebfb95e6565f`.
-- Current main revision: `819e30031328b4b6f0d5fbc51cd6078589ecee64`.
-- Current main subject: `docs(torghut): define session route microcanaries (#6070)`.
-- Current main changes after #6066 include #6068, `fix(torghut): bound autoresearch replay budget`, and #6070,
-  `docs(torghut): define session route microcanaries`; both were checked for CI status and rollout health.
+- Current main revision: `61f2e2e4a6b68787b7fcd1fcbb7a75094cc4cace`.
+- Current main subject: `chore(release/4afde74): automated release PR (#6077)`.
+- Current main changes after #6066 include #6071, `docs(torghut): refresh quant release hold`; #6073,
+  `chore(torghut): promote image 171fa3f1`; #6076, `chore(release/b467628): automated release PR`; and #6077,
+  `chore(release/4afde74): automated release PR`. PR #6073 checks are green and the promoted image is live in
+  cluster; #6076 and #6077 are Bilig-only release changes.
 - Torghut GitOps image digest in current manifests:
-  `sha256:056d6b0bc237adec3e3aa5e89a3f08ee81523ec18d8374c4a4e7d072e436f0f3`.
-- Runtime build: `v0.568.5-541-g809276e6d`.
-- Runtime build commit: `809276e6db88bf4546f3fc6c75bd16c54815fb1d`.
-- Active revision from `/trading/status`: `torghut-00302`.
+  `sha256:9990cbcc5214e04b541d78009ced9930b3b18d062d4d5a1ff525b43e2560ebba`.
+- Runtime build: `v0.568.5-556-g171fa3f14`.
+- Runtime build commit: `171fa3f14ae53adf17f3426d13e7fe3a27cb2438`.
+- Active revision from `/trading/status`: `torghut-00304`.
 - Argo state:
   - `torghut`: `Synced` / `Healthy`
   - `torghut-options`: `Synced` / `Healthy`
   - `symphony-torghut`: `Synced` / `Healthy`
 - Workload readiness:
-  - `torghut-00302-deployment`: `1/1` ready, available, and updated
-  - `torghut-sim-00400-deployment`: `1/1` ready, available, and updated
+  - `torghut-00304-deployment`: `1/1` ready, available, and updated
+  - `torghut-sim-00402-deployment`: `1/1` ready, available, and updated
   - `torghut-options-catalog`: `1/1` ready, available, and updated
   - `torghut-options-enricher`: `1/1` ready, available, and updated
   - `torghut-ws`, `torghut-ws-options`, `torghut-ta`, and `torghut-ta-sim`: `1/1` ready and available
@@ -144,8 +172,8 @@ live-submission gates to clear before non-zero notional.
   zero-notional; #5412 is the smallest unmerged blocker for additional profit-evidence projection.
 - `routeable_candidate_count`: current proof-floor execution TCA dimension reports one routeable symbol candidate and
   the consumer-evidence route reports candidate `chip-paper-microbar-composite@execution-proof`.
-- `zero_notional_or_stale_evidence_rate`: capital is held at `zero_notional`, `max_notional=0`, and
-  quant ingestion is degraded with `quant_pipeline_stages_missing`.
+- `zero_notional_or_stale_evidence_rate`: capital is held at `zero_notional`, `max_notional=0`, empirical evidence is
+  healthy, and quant evidence is informational/degraded with ingestion lag.
 - `fill_tca_or_slippage_quality`: execution TCA reports 7,334 orders, 7,245 filled executions, average absolute
   slippage `13.8203637593029676` bps versus the 8 bps guardrail, and route-universe exclusions enforced.
 - `capital_gate_safety`: live submission is not allowed; blockers are `simple_submit_disabled` and
@@ -162,7 +190,7 @@ live-submission gates to clear before non-zero notional.
 
 ## Rollback path
 
-- If the current `809276e6` rollout becomes unhealthy, open a rollback PR against current `main` that restores the
+- If the current `171fa3f14` rollout becomes unhealthy, open a rollback PR against current `main` that restores the
   previous healthy Torghut digest, then let release automation and Argo CD reconcile. Do not mutate production
   directly from a local shell.
 - If #5412 is later merged and regresses runtime health, revert the squash merge through a PR and allow release
