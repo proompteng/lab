@@ -310,6 +310,11 @@ def build_profitability_proof_floor_receipt(
                 "promotion_eligible_total": promotion_eligible_total,
                 "rollback_required_total": rollback_required_total,
                 "state_totals": summary.get("state_totals") or {},
+                "reason_totals": summary.get("reason_totals") or {},
+                "informational_reason_totals": summary.get(
+                    "informational_reason_totals"
+                )
+                or {},
             },
         )
         _add_repair(
