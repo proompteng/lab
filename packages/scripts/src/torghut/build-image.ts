@@ -2,7 +2,7 @@
 
 import { resolve } from 'node:path'
 import { repoRoot } from '../shared/cli'
-import { buildAndPushDockerImage } from '../shared/docker'
+import { buildAndPushDockerImage, type DockerCacheMode } from '../shared/docker'
 import { execGit } from '../shared/git'
 
 export type BuildImageOptions = {
@@ -13,7 +13,24 @@ export type BuildImageOptions = {
   dockerfile?: string
   platforms?: string[]
   codexAuthPath?: string
+  cacheRef?: string
+  cacheMode?: DockerCacheMode
 }
+
+const optionalEnvText = (value: string | undefined): string | undefined => {
+  const normalized = value?.trim()
+  if (!normalized || normalized.toLowerCase() === 'none') return undefined
+  return normalized
+}
+
+const optionalCacheMode = (value: string | undefined): DockerCacheMode | undefined => {
+  const normalized = value?.trim().toLowerCase()
+  if (normalized === 'max' || normalized === 'min') return normalized
+  return undefined
+}
+
+let buildAndPushDockerImageImpl = buildAndPushDockerImage
+let execGitImpl = execGit
 
 export const buildImage = async (options: BuildImageOptions = {}) => {
   const registry = options.registry ?? process.env.TORGHUT_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
@@ -21,6 +38,8 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   const tag = options.tag ?? process.env.TORGHUT_IMAGE_TAG ?? 'latest'
   const context = resolve(repoRoot, options.context ?? 'services/torghut')
   const dockerfile = resolve(repoRoot, options.dockerfile ?? 'services/torghut/Dockerfile')
+  const cacheRef = options.cacheRef ?? optionalEnvText(process.env.TORGHUT_IMAGE_CACHE_REF)
+  const cacheMode = options.cacheMode ?? optionalCacheMode(process.env.TORGHUT_IMAGE_CACHE_MODE)
   const platformsEnv = process.env.TORGHUT_IMAGE_PLATFORMS
   const platforms =
     options.platforms ??
@@ -31,16 +50,18 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
           .filter((p) => p.length > 0 && p.toLowerCase() !== 'none')
       : ['linux/arm64'])
 
-  const version = execGit(['describe', '--tags', '--always'])
-  const commit = execGit(['rev-parse', 'HEAD'])
+  const version = execGitImpl(['describe', '--tags', '--always'])
+  const commit = execGitImpl(['rev-parse', 'HEAD'])
 
-  const result = await buildAndPushDockerImage({
+  const result = await buildAndPushDockerImageImpl({
     registry,
     repository,
     tag,
     context,
     dockerfile,
     platforms,
+    cacheRef,
+    cacheMode,
     buildArgs: {
       TORGHUT_VERSION: version,
       TORGHUT_COMMIT: commit,
@@ -59,4 +80,12 @@ if (import.meta.main) {
 
 export const __private = {
   execGit,
+  optionalEnvText,
+  optionalCacheMode,
+  setBuildAndPushDockerImage: (impl: typeof buildAndPushDockerImage = buildAndPushDockerImage) => {
+    buildAndPushDockerImageImpl = impl
+  },
+  setExecGit: (impl: typeof execGit = execGit) => {
+    execGitImpl = impl
+  },
 }
