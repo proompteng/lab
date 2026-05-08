@@ -6,7 +6,7 @@
   "initial_state": "blocked",
   "market_regimes": ["R3", "R5"],
   "required_feature_sets": ["order_book_liquidity", "microstructure"],
-  "required_dependency_capabilities": ["jangar_dependency_quorum", "drift_governance", "feature_coverage"],
+  "required_dependency_capabilities": ["drift_governance", "feature_coverage"],
   "segment_dependencies": ["execution", "empirical", "ta-core"],
   "expected_gross_edge_bps": "10",
   "max_allowed_slippage_bps": "8",
@@ -16,8 +16,7 @@
   "rollback_triggers": [
     "required_feature_set_unavailable",
     "drift_checks_missing",
-    "slippage_budget_exceeded",
-    "jangar_dependency_block"
+    "slippage_budget_exceeded"
   ],
   "promotion_gates": [
     "microstructure_features_present",
@@ -32,7 +31,6 @@
     "min_feature_batch_rows": 1,
     "require_feature_rows": true,
     "require_drift_checks": true,
-    "require_evidence_continuity": true,
-    "required_dependency_quorum": "allow"
+    "require_evidence_continuity": true
   }
 }
