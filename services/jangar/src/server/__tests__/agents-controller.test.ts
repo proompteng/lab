@@ -4517,6 +4517,65 @@ describe('agents controller reconcileAgentRun', () => {
     expect(status.message).toBe('job exceeded active deadline')
   })
 
+  it('classifies direct job pod usage-limit logs as provider capacity exhaustion', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === 'job' && name === 'job-1') {
+          return {
+            metadata: { name: 'job-1', namespace: 'agents' },
+            status: {
+              failed: 1,
+              conditions: [
+                {
+                  type: 'Failed',
+                  status: 'True',
+                  reason: 'BackoffLimitExceeded',
+                  message: 'Job has reached the specified backoff limit',
+                },
+              ],
+            },
+          }
+        }
+        return null
+      }),
+      list: vi.fn(async (resource: string, _namespace: string, labelSelector?: string) => {
+        if (resource === 'pods' && labelSelector?.startsWith('job-name=')) {
+          return {
+            items: [
+              {
+                metadata: { name: 'job-1-pod' },
+                spec: { containers: [{ name: 'main' }] },
+              },
+            ],
+          }
+        }
+        return { items: [] }
+      }),
+      logs: vi.fn(async () =>
+        [
+          'Turn started',
+          "Turn failed -> You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at May 11th, 2026 11:15 PM.",
+        ].join('\n'),
+      ),
+    })
+
+    const agentRun = buildAgentRun({
+      status: {
+        phase: 'Running',
+        runtimeRef: { type: 'job', name: 'job-1', namespace: 'agents' },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    expect(status.phase).toBe('Failed')
+    expect(status.reason).toBe('ProviderCapacityExhausted')
+    expect(status.message).toContain('provider capacity exhausted')
+    const failedCondition = findCondition(status, 'Failed')
+    expect(failedCondition?.reason).toBe('ProviderCapacityExhausted')
+  })
+
   it('fails workflow steps when timeout is exceeded', async () => {
     const apply = vi.fn(async (resource: Record<string, unknown>) => {
       const metadata = (resource.metadata ?? {}) as Record<string, unknown>
