@@ -339,7 +339,6 @@ export const buildMarketContextAgentRun = (params: {
         provider: params.provider,
         callbackUrl: params.settings.onDemandDispatchCallbackUrl,
         requestId: params.requestId,
-        tradingStatusUrl: params.settings.batchTradingStatusUrl,
         repository: params.settings.onDemandDispatchRepository,
         base: params.settings.onDemandDispatchBaseBranch,
         head: params.settings.onDemandDispatchHeadBranch,
