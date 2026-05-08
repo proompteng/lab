@@ -3899,6 +3899,102 @@ describe('supporting primitives controller', () => {
     })
   })
 
+  it('freezes with provider-capacity reason for consecutive provider exhaustion failures', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue(null)
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'run-2',
+                creationTimestamp: '2026-01-20T00:01:00Z',
+                labels: {
+                  'swarm.proompteng.ai/name': 'torghut-quant',
+                  'swarm.proompteng.ai/stage': 'implement',
+                },
+              },
+              status: {
+                phase: 'Failed',
+                reason: 'ProviderCapacityExhausted',
+                message: 'workflow step implement: provider capacity exhausted: usage limit',
+              },
+            },
+            {
+              metadata: {
+                name: 'run-1',
+                creationTimestamp: '2026-01-20T00:00:00Z',
+                labels: {
+                  'swarm.proompteng.ai/name': 'torghut-quant',
+                  'swarm.proompteng.ai/stage': 'implement',
+                },
+              },
+              status: {
+                phase: 'Failed',
+                conditions: [
+                  {
+                    type: 'Failed',
+                    status: 'True',
+                    reason: 'ProviderCapacityExhausted',
+                    message: 'workflow step implement: provider capacity exhausted: usage limit',
+                  },
+                ],
+              },
+            },
+          ],
+        }
+      }
+      if (resource === RESOURCE_MAP.OrchestrationRun) {
+        return { items: [] }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'torghut-quant', namespace: 'agents', generation: 1, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'trading-owner', channel: 'swarm://owner/trading' },
+        domains: ['autonomous-trading'],
+        objectives: ['improve risk-adjusted return'],
+        mode: 'lights-out',
+        cadence: {
+          discoverEvery: '1m',
+          planEvery: '5m',
+          implementEvery: '15m',
+          verifyEvery: '1m',
+        },
+        discovery: { sources: [{ name: 'market-feed' }] },
+        delivery: { deploymentTargets: ['torghut'] },
+        risk: { freezeAfterFailures: 2, freezeDuration: '60m' },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'OrchestrationRun', name: 'orchestrationrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const firstStatusCall = applyStatus.mock.calls[0]
+    const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(status.freeze).toMatchObject({
+      reason: 'ProviderCapacityExhausted',
+      evidence: {
+        triggeringRuns: expect.arrayContaining([
+          expect.objectContaining({ reason: expect.stringContaining('provider capacity exhausted') }),
+        ]),
+      },
+    })
+  })
+
   it('freezes when consecutive timed-out implement failures remain active', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
