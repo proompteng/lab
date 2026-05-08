@@ -119,6 +119,43 @@ describe('torghut market-context agent helpers', () => {
     expect(decision.reason).toBe('stale_snapshot_refresh')
   })
 
+  it('builds on-demand market-context AgentRuns as no-VCS batch tasks', async () => {
+    const { buildMarketContextAgentRun } = await import('../torghut-market-context-dispatch')
+
+    const agentRun = buildMarketContextAgentRun({
+      symbol: 'NVDA',
+      domain: 'news',
+      snapshotState: 'stale',
+      provider: 'codex-spark',
+      requestId: 'market-context-news-nvda-request',
+      now: new Date('2026-05-07T20:00:00.000Z'),
+      settings: {
+        providerChain: ['codex-spark', 'codex'],
+        onDemandDispatchEnabled: true,
+        onDemandDispatchCooldownSeconds: 900,
+        onDemandDispatchActiveRunSeconds: 3600,
+        onDemandDispatchNamespace: 'agents',
+        onDemandDispatchServiceAccountName: 'agents-sa',
+        onDemandDispatchPriorityClassName: 'torghut-market-context-low',
+        onDemandDispatchCallbackUrl: 'http://jangar/api/torghut/market-context',
+        onDemandDispatchTtlSeconds: 7200,
+        batchTradingStatusUrl: 'http://torghut/trading/status',
+      },
+    })
+
+    expect(agentRun.spec.vcsPolicy).toEqual({ required: false, mode: 'none' })
+    expect(agentRun.spec.parameters).toMatchObject({
+      executionMode: 'batch_task',
+      symbol: 'NVDA',
+      domain: 'news',
+      reason: 'on_demand_stale_snapshot_refresh',
+      provider: 'codex-spark',
+      callbackUrl: 'http://jangar/api/torghut/market-context',
+      requestId: 'market-context-news-nvda-request',
+      tradingStatusUrl: 'http://torghut/trading/status',
+    })
+  })
+
   it('suppresses on-demand dispatch when a provider run is already active', async () => {
     const { resolveMarketContextDispatchDecisionFromRows } = await import('../torghut-market-context-dispatch')
 
