@@ -232,8 +232,10 @@ spec:
         cpu: 750m
         memory: 1Gi
   parameters:
+    executionMode: batch_task
     domain: fundamentals
     reason: pre_open_probe
+    provider: codex-spark
     callbackUrl: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/ingest
     symbolsUrl: http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity&format=compact
     tradingStatusUrl: http://torghut.torghut.svc.cluster.local/trading/status
@@ -265,8 +267,10 @@ spec:
         cpu: 750m
         memory: 1Gi
   parameters:
+    executionMode: batch_task
     domain: news
     reason: pre_open_probe
+    provider: codex-spark
     callbackUrl: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/ingest
     symbolsUrl: http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity&format=compact
     tradingStatusUrl: http://torghut.torghut.svc.cluster.local/trading/status
