@@ -49,6 +49,37 @@ test('worker load config uses release-safe activity timeouts by default', async 
       expect(config.workflowPollP95TargetMs).toBe(6_000)
       expect(config.activityPollP95TargetMs).toBe(6_000)
       expect(config.workflowDescribeConcurrency).toBe(32)
+      expect(config.workflowDurationBudgetMs).toBe(300_000)
+    },
+  )
+})
+
+test('worker load config keeps small smoke timeout compact', async () => {
+  await withEnvironment(
+    {
+      TEMPORAL_LOAD_TEST_TIMEOUT_MS: undefined,
+      TEMPORAL_LOAD_TEST_WORKFLOWS: '64',
+      TEMPORAL_LOAD_TEST_WORKFLOW_CONCURRENCY: '10',
+    },
+    async () => {
+      const config = readWorkerLoadConfig()
+
+      expect(config.workflowDurationBudgetMs).toBe(105_000)
+    },
+  )
+})
+
+test('worker load config allows explicit timeout overrides', async () => {
+  await withEnvironment(
+    {
+      TEMPORAL_LOAD_TEST_TIMEOUT_MS: '420000',
+      TEMPORAL_LOAD_TEST_WORKFLOWS: '1000',
+      TEMPORAL_LOAD_TEST_WORKFLOW_CONCURRENCY: '50',
+    },
+    async () => {
+      const config = readWorkerLoadConfig()
+
+      expect(config.workflowDurationBudgetMs).toBe(420_000)
     },
   )
 })

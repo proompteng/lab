@@ -172,3 +172,12 @@ acceptance criteria are satisfied.
   because Temporal queries are not history events. A regression test now covers
   the sequence that failed in CI: query while blocked, then process a signal and
   query the updated state without tripping nondeterminism.
+- May 8, 2026: the publish-mode six-hour soak completed 40 consecutive
+  `1000`-workflow iterations across baseline, worker restart, sticky churn,
+  update rejection/termination, and activity cancellation before the 41st
+  iteration hit the worker-load runner's fixed `105s` completion budget. The
+  gate now scales the default completion budget with workflow count and
+  concurrency, records that derived budget in load reports, and writes partial
+  workflow completion status plus a serialized completion failure before
+  returning nonzero. Default choice remains blocked until the publish-mode soak
+  reruns and publishes `0.10.0`.
