@@ -17,9 +17,9 @@ no review thread exists, and no maintainer waiver is recorded. The latest `@code
 returned the Codex usage-limit blocker at 2026-05-08T08:11:33Z.
 
 Audit PRs #6066 and #6071 were squash-merged. Torghut promotion PR #6073 was also merged with green checks, and the
-cluster has reconciled through current main `2dcd448b8dc3f4f8b8adcd70a314c1b867abfc72` after the Bilig-only automated
-release PR #6076. Argo CD reports `torghut` and `torghut-options` as `Synced` and `Healthy` at `2dcd448b8`; `root`
-and `symphony-torghut` are also `Synced` and `Healthy` at their latest relevant revisions.
+repository has advanced through current main `61f2e2e4a6b68787b7fcd1fcbb7a75094cc4cace` after Bilig-only automated
+release PRs #6076 and #6077. Argo CD reports Torghut apps as `Synced` and `Healthy` on the promoted Torghut image;
+`root` and `symphony-torghut` are also `Synced` and `Healthy` at their latest relevant revisions.
 
 Torghut live and sim workloads are ready on image digest
 `sha256:9990cbcc5214e04b541d78009ced9930b3b18d062d4d5a1ff525b43e2560ebba`, runtime build commit
@@ -41,7 +41,7 @@ at 8,074 additions and 617 deletions. There is no posted Codex review and no rev
 
 The audit PRs for this pass, #6066 and #6071, merged at `f45234fc501469f947ad8c055e50ebfb95e6565f` and
 `6a8dcc517167507c391af3ddc3442d38994f6eb5`. Current main then advanced to
-`2dcd448b8dc3f4f8b8adcd70a314c1b867abfc72` through #6073 and #6076. The Torghut rollout remains healthy:
+`61f2e2e4a6b68787b7fcd1fcbb7a75094cc4cace` through #6073, #6076, and #6077. The Torghut rollout remains healthy:
 Argo CD reports Torghut apps as `Synced` and `Healthy`. Live and sim Torghut workloads are ready on image digest
 `sha256:9990cbcc5214e04b541d78009ced9930b3b18d062d4d5a1ff525b43e2560ebba`, runtime build commit
 `171fa3f14ae53adf17f3426d13e7fe3a27cb2438`, active revision `torghut-00304`.
@@ -89,7 +89,7 @@ live-submission gates to clear before non-zero notional.
     https://github.com/proompteng/lab/pull/5412#issuecomment-4404818477
   - Kept open and unmerged.
 - Current main rollout
-  - Verified current main `2dcd448b8dc3f4f8b8adcd70a314c1b867abfc72` in Argo CD and live Torghut workloads.
+  - Verified current main `61f2e2e4a6b68787b7fcd1fcbb7a75094cc4cace` in Argo CD and live Torghut workloads.
   - No direct production mutation was made from the local shell.
 
 ## Comments and conflicts resolved
@@ -144,11 +144,12 @@ live-submission gates to clear before non-zero notional.
 
 - No new rollout was triggered from #5412 because no merge occurred.
 - Audit PR #6066 merge revision: `f45234fc501469f947ad8c055e50ebfb95e6565f`.
-- Current main revision: `2dcd448b8dc3f4f8b8adcd70a314c1b867abfc72`.
-- Current main subject: `chore(release/b467628): automated release PR (#6076)`.
+- Current main revision: `61f2e2e4a6b68787b7fcd1fcbb7a75094cc4cace`.
+- Current main subject: `chore(release/4afde74): automated release PR (#6077)`.
 - Current main changes after #6066 include #6071, `docs(torghut): refresh quant release hold`; #6073,
-  `chore(torghut): promote image 171fa3f1`; and #6076, `chore(release/b467628): automated release PR`.
-  PR #6073 checks are green and the promoted image is live in cluster.
+  `chore(torghut): promote image 171fa3f1`; #6076, `chore(release/b467628): automated release PR`; and #6077,
+  `chore(release/4afde74): automated release PR`. PR #6073 checks are green and the promoted image is live in
+  cluster; #6076 and #6077 are Bilig-only release changes.
 - Torghut GitOps image digest in current manifests:
   `sha256:9990cbcc5214e04b541d78009ced9930b3b18d062d4d5a1ff525b43e2560ebba`.
 - Runtime build: `v0.568.5-556-g171fa3f14`.

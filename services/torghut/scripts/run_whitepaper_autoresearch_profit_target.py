@@ -166,6 +166,24 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--real-replay-timeout-seconds", type=int, default=0)
+    parser.add_argument(
+        "--real-replay-shard-size",
+        type=int,
+        default=0,
+        help=(
+            "Replay selected candidate specs in bounded shards. A value <= 0 "
+            "keeps the legacy single-batch replay path."
+        ),
+    )
+    parser.add_argument(
+        "--real-replay-shard-timeout-seconds",
+        type=int,
+        default=0,
+        help=(
+            "Per-shard timeout for sharded real replay. Defaults to "
+            "--real-replay-timeout-seconds when omitted."
+        ),
+    )
     parser.add_argument("--train-days", type=int, default=6)
     parser.add_argument("--holdout-days", type=int, default=3)
     parser.add_argument("--full-window-start-date", default="")
@@ -202,6 +220,8 @@ def _parse_args() -> argparse.Namespace:
 class EpochReplayResult:
     evidence_bundles: tuple[CandidateEvidenceBundle, ...]
     replay_results: tuple[Mapping[str, Any], ...]
+    incomplete: bool = False
+    failure_reasons: tuple[str, ...] = ()
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> Path:
@@ -1757,6 +1777,19 @@ def _real_replay_result_from_factory_payload(
     )
 
 
+def _dedupe_replay_evidence(
+    bundles: Sequence[CandidateEvidenceBundle],
+) -> tuple[CandidateEvidenceBundle, ...]:
+    seen: set[str] = set()
+    deduped: list[CandidateEvidenceBundle] = []
+    for bundle in bundles:
+        if bundle.evidence_bundle_id in seen:
+            continue
+        seen.add(bundle.evidence_bundle_id)
+        deduped.append(bundle)
+    return tuple(deduped)
+
+
 def _candidate_spec_id_from_experiment_result_path(path: Path) -> str:
     name = path.parent.name
     return name[:-4] if name.endswith("-exp") else name
@@ -1824,16 +1857,43 @@ def _run_replay_with_optional_timeout(
     specs: Sequence[CandidateSpec],
 ) -> EpochReplayResult:
     timeout_seconds = max(0, int(getattr(args, "real_replay_timeout_seconds", 0) or 0))
-    if args.replay_mode == "synthetic" or timeout_seconds <= 0:
-        return (
-            _run_synthetic_replay(
-                specs=specs,
-                output_dir=output_dir,
-                max_candidates=len(specs),
-            )
-            if args.replay_mode == "synthetic"
-            else _run_real_replay(args, output_dir=output_dir, specs=specs)
+    if args.replay_mode == "synthetic":
+        return _run_synthetic_replay(
+            specs=specs,
+            output_dir=output_dir,
+            max_candidates=len(specs),
         )
+
+    shard_size = max(0, int(getattr(args, "real_replay_shard_size", 0) or 0))
+    if shard_size > 0 and len(specs) > shard_size:
+        shard_timeout_seconds = max(
+            0, int(getattr(args, "real_replay_shard_timeout_seconds", 0) or 0)
+        )
+        return _run_real_replay_shards(
+            args=args,
+            output_dir=output_dir,
+            specs=specs,
+            shard_size=shard_size,
+            shard_timeout_seconds=shard_timeout_seconds or timeout_seconds,
+        )
+
+    return _run_real_replay_once_with_optional_timeout(
+        args=args,
+        output_dir=output_dir,
+        specs=specs,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def _run_real_replay_once_with_optional_timeout(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+    specs: Sequence[CandidateSpec],
+    timeout_seconds: int,
+) -> EpochReplayResult:
+    if timeout_seconds <= 0:
+        return _run_real_replay(args, output_dir=output_dir, specs=specs)
 
     previous_handler = signal.getsignal(signal.SIGALRM)
 
@@ -1847,6 +1907,121 @@ def _run_replay_with_optional_timeout(
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, previous_handler)
+
+
+def _run_real_replay_shards(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+    specs: Sequence[CandidateSpec],
+    shard_size: int,
+    shard_timeout_seconds: int,
+) -> EpochReplayResult:
+    evidence_bundles: list[CandidateEvidenceBundle] = []
+    replay_results: list[Mapping[str, Any]] = []
+    shard_failures: list[dict[str, Any]] = []
+    ordered_specs = list(specs)
+    bounded_shard_size = max(1, int(shard_size))
+    max_frontier_candidates_per_spec = max(
+        1,
+        int(
+            getattr(
+                args,
+                "max_frontier_candidates_per_spec",
+                _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
+            )
+            or _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC
+        ),
+    )
+    configured_total_frontier_budget = max(
+        1,
+        int(
+            getattr(args, "max_total_frontier_candidates", 0)
+            or getattr(args, "max_candidates", 1)
+        ),
+    )
+
+    for shard_index, start in enumerate(
+        range(0, len(ordered_specs), bounded_shard_size), start=1
+    ):
+        shard_specs = ordered_specs[start : start + bounded_shard_size]
+        shard_frontier_budget = min(
+            configured_total_frontier_budget,
+            max(1, len(shard_specs) * max_frontier_candidates_per_spec),
+        )
+        shard_args = argparse.Namespace(
+            **{
+                **vars(args),
+                "max_candidates": len(shard_specs),
+                "top_k": min(
+                    int(getattr(args, "top_k", len(shard_specs))), len(shard_specs)
+                ),
+                "max_total_frontier_candidates": shard_frontier_budget,
+            }
+        )
+        try:
+            shard_result = _run_real_replay_once_with_optional_timeout(
+                args=shard_args,
+                output_dir=output_dir,
+                specs=shard_specs,
+                timeout_seconds=shard_timeout_seconds,
+            )
+            evidence_bundles.extend(shard_result.evidence_bundles)
+            replay_results.extend(shard_result.replay_results)
+            if shard_result.incomplete:
+                shard_failures.append(
+                    {
+                        "shard_index": shard_index,
+                        "candidate_spec_ids": [
+                            spec.candidate_spec_id for spec in shard_specs
+                        ],
+                        "reason": ";".join(shard_result.failure_reasons)
+                        or "nested_shard_incomplete",
+                    }
+                )
+        except TimeoutError as exc:
+            partial_result = _collect_partial_real_replay(
+                output_dir=output_dir, specs=shard_specs
+            )
+            evidence_bundles.extend(partial_result.evidence_bundles)
+            replay_results.extend(partial_result.replay_results)
+            shard_failures.append(
+                {
+                    "shard_index": shard_index,
+                    "candidate_spec_ids": [
+                        spec.candidate_spec_id for spec in shard_specs
+                    ],
+                    "reason": f"{type(exc).__name__}:{exc}",
+                    "partial_evidence_bundle_count": len(
+                        partial_result.evidence_bundles
+                    ),
+                    "shard_timeout_seconds": shard_timeout_seconds,
+                }
+            )
+
+    deduped_evidence = _dedupe_replay_evidence(evidence_bundles)
+    if shard_failures and not deduped_evidence:
+        raise TimeoutError(f"real_replay_shards_failed:{len(shard_failures)}")
+    if shard_failures:
+        replay_results.append(
+            {
+                "status": "partial_replay_shards_interrupted",
+                "schema_version": "torghut.whitepaper-autoresearch-shards.v1",
+                "shard_size": bounded_shard_size,
+                "shard_timeout_seconds": shard_timeout_seconds,
+                "selected_candidate_spec_count": len(ordered_specs),
+                "evidence_bundle_count": len(deduped_evidence),
+                "failures": shard_failures,
+            }
+        )
+    return EpochReplayResult(
+        evidence_bundles=deduped_evidence,
+        replay_results=tuple(replay_results),
+        incomplete=bool(shard_failures),
+        failure_reasons=tuple(
+            _string(item.get("reason")) for item in shard_failures if item.get("reason")
+        ),
+    )
 
 
 def _load_epoch_program(args: argparse.Namespace) -> StrategyAutoresearchProgram:
@@ -2319,12 +2494,26 @@ def run_whitepaper_autoresearch_profit_target(
     oracle_candidate_found = bool(
         portfolio is not None
         and portfolio.objective_scorecard.get("oracle_passed") is True
+        and not replay_result.incomplete
     )
+    replay_failure_reasons = list(replay_result.failure_reasons)
     profit_target_oracle = (
         portfolio.objective_scorecard.get("profit_target_oracle")
         if portfolio is not None
         else None
     )
+    if portfolio is None:
+        promotion_status = "no_candidate"
+        promotion_blockers: list[str] = []
+    elif replay_result.incomplete:
+        promotion_status = "blocked_pending_complete_replay"
+        promotion_blockers = ["selected_replay_incomplete", *replay_failure_reasons]
+    else:
+        promotion_status = "blocked_pending_runtime_parity"
+        promotion_blockers = [
+            "scheduler_v3_parity_missing",
+            "shadow_validation_missing",
+        ]
     runtime_closure_program = _runtime_closure_program_for_candidate(
         program=program,
         manifest=mlx_snapshot_manifest,
@@ -2342,7 +2531,9 @@ def run_whitepaper_autoresearch_profit_target(
     status = "ok" if oracle_candidate_found else "no_profit_target_candidate"
     status_reason = None
     if not oracle_candidate_found:
-        if portfolio is None:
+        if replay_result.incomplete:
+            status_reason = "selected_replay_incomplete"
+        elif portfolio is None:
             status_reason = "portfolio_optimizer_produced_no_candidate"
         else:
             status_reason = "portfolio_candidate_failed_profit_target_oracle"
@@ -2391,6 +2582,8 @@ def run_whitepaper_autoresearch_profit_target(
         "candidate_compiler_blocker_count": len(compilation.blockers),
         "evidence_bundle_count": len(replay_result.evidence_bundles),
         "replay_candidate_spec_count": len(replay_candidate_specs),
+        "replay_incomplete": replay_result.incomplete,
+        "replay_failure_reasons": replay_failure_reasons,
         "pre_replay_proposal_score_count": len(pre_replay_proposal_rows),
         "proposal_score_count": len(proposal_rows),
         "portfolio_candidate_count": len(portfolio_rows),
@@ -2405,13 +2598,9 @@ def run_whitepaper_autoresearch_profit_target(
         "oracle_candidate_found": oracle_candidate_found,
         "profit_target_oracle": profit_target_oracle,
         "promotion_readiness": {
-            "status": "blocked_pending_runtime_parity"
-            if portfolio is not None
-            else "no_candidate",
+            "status": promotion_status,
             "promotable": False,
-            "blockers": ["scheduler_v3_parity_missing", "shadow_validation_missing"]
-            if portfolio is not None
-            else [],
+            "blockers": promotion_blockers,
         },
         "runtime_closure": runtime_closure,
         "artifacts": {
@@ -2462,8 +2651,16 @@ def run_whitepaper_autoresearch_profit_target(
             "top_k": int(args.top_k),
             "exploration_slots": int(args.exploration_slots),
             "replay_candidate_spec_count": len(replay_candidate_specs),
+            "replay_incomplete": replay_result.incomplete,
+            "replay_failure_reasons": replay_failure_reasons,
             "portfolio_size_min": int(args.portfolio_size_min),
             "portfolio_size_max": int(args.portfolio_size_max),
+            "real_replay_shard_size": int(
+                getattr(args, "real_replay_shard_size", 0) or 0
+            ),
+            "real_replay_shard_timeout_seconds": int(
+                getattr(args, "real_replay_shard_timeout_seconds", 0) or 0
+            ),
             "source_jsonl": [str(path) for path in getattr(args, "source_jsonl", [])],
         }
         try:
