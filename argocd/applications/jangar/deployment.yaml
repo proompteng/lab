@@ -58,6 +58,10 @@ spec:
               value: "8080"
             - name: JANGAR_RUNTIME_IMAGE
               value: registry.ide-newton.ts.net/lab/jangar:9e7b87d8@sha256:758e880b2e9ec439d2dfceb41a170c2352ca63108c90be81be321f8d56cafda4
+            - name: JANGAR_SOURCE_HEAD_SHA
+              value: 9e7b87d813d9732d44586e213d9f47ec178f705a
+            - name: JANGAR_GITOPS_REVISION
+              value: 9e7b87d813d9732d44586e213d9f47ec178f705a
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: "120"
             - name: JANGAR_BUMBA_TASK_QUEUE

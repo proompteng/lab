@@ -167,6 +167,7 @@ export const buildHelmArgs = ({
     namespace,
     '--values',
     valuesFile,
+    '--skip-crds',
   ]
 
   if (createNamespace) {

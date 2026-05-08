@@ -42,6 +42,7 @@ describe('buildHelmArgs', () => {
       'agents-ci',
       '--values',
       valuesFile,
+      '--skip-crds',
       '--create-namespace',
       '--set-string',
       'database.url=postgresql://agents:pw@agents-postgres:5432/agents?sslmode=disable',
