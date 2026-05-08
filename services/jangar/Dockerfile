@@ -556,6 +556,8 @@ RUN --mount=type=cache,id=bun-install-cache-jangar-deps-prod,target=/root/.bun/i
 # - Defaults to controllers + agent comms disabled; can be overridden via env vars.
 # - Still includes `kubectl` because the control plane uses it for list/watch/logs.
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS control-plane
+ARG JANGAR_VERSION=""
+ARG JANGAR_COMMIT=""
 
 COPY --from=tools /usr/local/bin/kubectl /usr/local/bin/kubectl
 COPY --from=tools /usr/local/bin/nats /usr/local/bin/nats
@@ -607,10 +609,14 @@ ENV JANGAR_AGENTS_CONTROLLER_ENABLED=0 \
   JANGAR_SUPPORTING_CONTROLLER_ENABLED=0 \
   JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED=true \
   JANGAR_PRIMITIVES_RECONCILER=0
+ENV JANGAR_VERSION=${JANGAR_VERSION} \
+  JANGAR_COMMIT=${JANGAR_COMMIT}
 
 CMD ["bun", "run", ".output/server/index.mjs"]
 
 FROM tools AS runtime
+ARG JANGAR_VERSION=""
+ARG JANGAR_COMMIT=""
 
 ENV PATH="/usr/local/go/bin:${PATH}"
 
@@ -665,6 +671,9 @@ COPY --from=jangar-build /app/services/jangar/scripts/agent-providers /etc/agent
 COPY skills/ /root/.codex/skills/
 RUN ln -sf /app/services/jangar/scripts/codex/codex-implement.ts /usr/local/bin/codex-implement \
   && chmod +x /usr/local/bin/agent-runner /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak /app/services/jangar/scripts/codex/codex-implement.ts
+
+ENV JANGAR_VERSION=${JANGAR_VERSION} \
+  JANGAR_COMMIT=${JANGAR_COMMIT}
 
 # Start the compiled Jangar server produced by the Vite client/server build
 CMD ["bun", "run", ".output/server/index.mjs"]

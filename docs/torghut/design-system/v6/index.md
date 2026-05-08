@@ -8,10 +8,16 @@
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM
   reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-08T02:12Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-08T03:31Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-08T02:12Z`):
+- Evidence (current next-work priority, refreshed `2026-05-08T03:31Z`):
+  - `181-torghut-quality-adjusted-profit-frontier-and-hypothesis-escrow-2026-05-08.md`
+  - `docs/agents/designs/177-jangar-evidence-quality-admission-ledger-and-degradation-backpressure-2026-05-08.md`
+  - `180-torghut-resource-priced-evidence-frontier-and-context-spend-escrow-2026-05-08.md`
+  - `docs/agents/designs/176-jangar-resource-pressure-escrow-and-runner-qos-gates-2026-05-08.md`
+  - `179-torghut-capital-repair-frontier-and-route-yield-clearance-2026-05-08.md`
+  - `docs/agents/designs/175-jangar-failure-debt-clearance-and-action-reentry-frontier-2026-05-08.md`
   - `178-torghut-route-sample-mint-and-capital-proof-ratchet-2026-05-08.md`
   - `docs/agents/designs/174-jangar-observer-rights-and-source-settled-capital-ledger-2026-05-08.md`
   - `177-torghut-profit-repair-broker-and-capital-promotion-gates-2026-05-08.md`
@@ -1028,3 +1034,10 @@ This pack is positioned as the next architecture layer above:
   debts they retire before paper or live capital can move. The 2026-05-07 21:10Z refresh narrows the current before
   state to route/TCA repair, market-context staleness, degraded empirical jobs, account-scope bypass debt, and Jangar
   scoped-debt agreement, with all paper/live notional still held at zero.
+- `180-torghut-dependency-priced-capital-frontier-and-session-reentry-2026-05-08.md` follows the route-yield frontier
+  because the refreshed evidence shifted the primary risk from a route-only repair problem to a dependency-priced
+  capital problem. Torghut remained readable while Jangar had a zero-pod brownout, scoped quant latest-store evidence
+  was empty, market context was degraded, alpha readiness had zero promotion-eligible hypotheses, and proof floor held
+  capital at zero. The contract makes Jangar availability, scoped quant health, market context, empirical evidence,
+  alpha readiness, route/TCA, and submission toggles contribute explicit capital prices before any session can reenter
+  paper or live action.

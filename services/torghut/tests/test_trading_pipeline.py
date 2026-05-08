@@ -2108,6 +2108,120 @@ class TestTradingPipeline(TestCase):
             self.assertEqual(proof_floor.get("capital_state"), "zero_notional")
             self.assertEqual(control_plane.get("execution_lane"), "simple")
 
+    def test_simple_pipeline_blocks_symbol_excluded_from_route_candidates(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "NVDA"
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="simple-live-route-filter",
+                description="simple live lane route candidate filter",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["NVDA"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 13, 30, 5, tzinfo=timezone.utc),
+            symbol="NVDA",
+            timeframe="1Min",
+            seq=1,
+            payload={
+                "feature_schema_version": "3.0.0",
+                "macd": {"macd": 1.2, "signal": 0.5},
+                "rsi14": 25,
+                "price": 100,
+            },
+        )
+
+        alpaca_client = FakeAlpacaClient()
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([signal]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        proof_floor = {
+            "route_state": "live_micro_candidate",
+            "capital_state": "live_allowed",
+            "max_notional": "1000",
+            "blocking_reasons": [],
+            "route_reacquisition_book": {
+                "summary": {
+                    "scope_symbol_count": 2,
+                    "candidate_symbols": ["AAPL"],
+                    "repair_candidate_symbols": ["NVDA"],
+                }
+            },
+        }
+        with (
+            patch.object(
+                SimpleTradingPipeline,
+                "_live_submission_gate",
+                return_value={
+                    "allowed": True,
+                    "reason": "promotion_certificate_valid",
+                    "blocked_reasons": [],
+                    "capital_stage": "live",
+                    "capital_state": "live",
+                },
+            ),
+            patch.object(
+                SimpleTradingPipeline,
+                "_profitability_proof_floor",
+                return_value=proof_floor,
+            ),
+        ):
+            pipeline.run_once()
+
+        self.assertEqual(len(alpaca_client.submitted), 0)
+        with self.session_local() as session:
+            decision = session.execute(select(TradeDecision)).scalar_one()
+            decision_json = cast(dict[str, Any], decision.decision_json)
+            persisted_floor = cast(
+                dict[str, Any], decision_json.get("profitability_proof_floor")
+            )
+            route_book = cast(
+                dict[str, Any], persisted_floor.get("route_reacquisition_book")
+            )
+            route_summary = cast(dict[str, Any], route_book.get("summary"))
+
+            self.assertEqual(decision.status, "blocked")
+            self.assertEqual(
+                decision_json.get("submission_stage"),
+                "blocked_profitability_route_symbol",
+            )
+            self.assertEqual(
+                decision_json.get("submission_block_reason"),
+                "profitability_route_symbol_excluded",
+            )
+            self.assertEqual(route_summary.get("candidate_symbols"), ["AAPL"])
+
     def test_simple_pipeline_skips_out_of_strategy_universe_signals_before_quote_quality(
         self,
     ) -> None:

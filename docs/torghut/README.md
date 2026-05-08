@@ -4,6 +4,14 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/181-torghut-quality-adjusted-profit-frontier-and-hypothesis-escrow-2026-05-08.md`
+  (current quality-adjusted profit frontier and hypothesis escrow contract)
+- `docs/agents/designs/177-jangar-evidence-quality-admission-ledger-and-degradation-backpressure-2026-05-08.md`
+  (current Jangar evidence-quality admission and degradation backpressure contract)
+- `docs/torghut/design-system/v6/180-torghut-resource-priced-evidence-frontier-and-context-spend-escrow-2026-05-08.md`
+  (current resource-priced evidence frontier and context spend escrow contract)
+- `docs/agents/designs/176-jangar-resource-pressure-escrow-and-runner-qos-gates-2026-05-08.md`
+  (current Jangar resource-pressure escrow and runner QoS gate contract)
 - `docs/torghut/design-system/v6/179-torghut-capital-repair-frontier-and-route-yield-clearance-2026-05-08.md`
   (current capital repair frontier and route yield clearance contract)
 - `docs/agents/designs/175-jangar-failure-debt-clearance-and-action-reentry-frontier-2026-05-08.md`

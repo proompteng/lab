@@ -59,6 +59,12 @@ type ActivityCancellationEvent = {
   readonly error?: string
 }
 
+type SerializedError = {
+  readonly name: string
+  readonly message: string
+  readonly stack?: string
+}
+
 const prepareArtifactsDir = async (root: string): Promise<string> => {
   await rm(root, { recursive: true, force: true })
   await mkdir(root, { recursive: true })
@@ -92,6 +98,8 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
   let runtimeGeneration = 0
   let managedRuntime: ManagedWorkerRuntime | null = null
   let completionResults: WorkflowCompletionResult[] = []
+  let completionFailure: SerializedError | undefined
+  const completionBudgetMs = calculateLoadCompletionBudgetMs(loadConfig)
 
   const startRuntime = async (reason: string): Promise<ManagedWorkerRuntime> => {
     runtimeGeneration += 1
@@ -170,21 +178,33 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
         await driveWorkflowUpdates(temporalClient, updateSubmissions, loadConfig)
         await memoryRecorder.sample('updates-driven', { updateWorkflows: updateSubmissions.length })
       }
-      const completionBudgetMs =
-        loadConfig.workflowDurationBudgetMs + Math.max(loadConfig.metricsFlushTimeoutMs, 5_000)
-      completionResults = await runWithTimeout(
-        waitForWorkflowCompletionsRpc({
-          client: temporalClient,
-          handles,
-          namespace: resolvedConfig.namespace,
-          timeoutMs: completionBudgetMs,
-          describeConcurrency: loadConfig.workflowDescribeConcurrency,
-        }),
-        completionBudgetMs,
-        `Worker load suite exceeded ${completionBudgetMs}ms without completing`,
-      )
-      stats.completed = stats.submitted
-      await memoryRecorder.sample('workflows-completed', { completed: stats.completed })
+      const observedCompletionResults: WorkflowCompletionResult[] = []
+      try {
+        completionResults = await runWithTimeout(
+          waitForWorkflowCompletionsRpc({
+            client: temporalClient,
+            handles,
+            namespace: resolvedConfig.namespace,
+            timeoutMs: completionBudgetMs,
+            describeConcurrency: loadConfig.workflowDescribeConcurrency,
+            onCompletion: (result) => {
+              observedCompletionResults.push(result)
+            },
+          }),
+          completionBudgetMs,
+          `Worker load suite exceeded ${completionBudgetMs}ms without completing`,
+        )
+        stats.completed = stats.submitted
+        await memoryRecorder.sample('workflows-completed', { completed: stats.completed })
+      } catch (error) {
+        completionResults = [...observedCompletionResults]
+        completionFailure = serializeError(error)
+        await memoryRecorder.sample('workflow-completion-failed', {
+          completed: stats.completed,
+          observedTerminalStatuses: completionResults.length,
+          error: completionFailure.message,
+        })
+      }
     } finally {
       await temporalClient.shutdown()
       await memoryRecorder.sample('client-shutdown')
@@ -247,12 +267,16 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
           workflowPollP95TargetMs: loadConfig.workflowPollP95TargetMs,
           activityPollP95TargetMs: loadConfig.activityPollP95TargetMs,
           workflowDescribeConcurrency: loadConfig.workflowDescribeConcurrency,
+          workflowDurationBudgetMs: loadConfig.workflowDurationBudgetMs,
+          completionBudgetMs,
+          metricsFlushTimeoutMs: loadConfig.metricsFlushTimeoutMs,
           throughputFloorPerSecond: loadConfig.throughputFloorPerSecond,
           memorySampleIntervalMs: loadConfig.memorySampleIntervalMs,
           memorySlopeMaxMbPerHour: loadConfig.memorySlopeMaxMbPerHour,
           memorySlopeMinElapsedMs: loadConfig.memorySlopeMinElapsedMs,
         },
         stats,
+        completionFailure,
         workflowStatusCounts,
         workflowCompletions: completionResults,
         metrics: summary,
@@ -288,6 +312,10 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
     ),
     'utf8',
   )
+
+  if (completionFailure) {
+    throw new WorkflowCompletionError(`Worker load completion failed: ${completionFailure.message}`)
+  }
 
   const failedWorkflow = completionResults.find((result) => !isAcceptedTerminalWorkflowStatus(result.status))
   if (failedWorkflow) {
@@ -574,12 +602,14 @@ const waitForWorkflowCompletionsRpc = async ({
   namespace,
   timeoutMs,
   describeConcurrency,
+  onCompletion,
 }: {
   client: TemporalClient
   handles: WorkflowHandle[]
   namespace: string
   timeoutMs: number
   describeConcurrency: number
+  onCompletion?: (result: WorkflowCompletionResult) => void
 }): Promise<WorkflowCompletionResult[]> => {
   const deadline = Date.now() + timeoutMs
   const queue = [...handles]
@@ -632,12 +662,19 @@ const waitForWorkflowCompletionsRpc = async ({
         if (!handle) {
           return
         }
-        completions.push(await describe(handle))
+        const completion = await describe(handle)
+        completions.push(completion)
+        onCompletion?.(completion)
       }
     }),
   )
   return completions
 }
+
+const calculateLoadCompletionBudgetMs = (
+  config: Pick<WorkerLoadConfig, 'workflowDurationBudgetMs' | 'metricsFlushTimeoutMs'>,
+): number =>
+  config.workflowDurationBudgetMs + Math.max(config.metricsFlushTimeoutMs, 5_000)
 
 const isAcceptedTerminalWorkflowStatus = (status: string): boolean =>
   status === 'COMPLETED' || status === 'TERMINATED' || status === 'CANCELED'
@@ -767,6 +804,20 @@ const normalizeWorkflowStatus = (status: unknown): string | undefined => {
   return status.toUpperCase()
 }
 
+const serializeError = (error: unknown): SerializedError => {
+  if (error instanceof Error) {
+    return {
+      name: error.name || 'Error',
+      message: error.message,
+      ...(error.stack ? { stack: error.stack } : {}),
+    }
+  }
+  return {
+    name: 'NonError',
+    message: String(error),
+  }
+}
+
 const workflowExecutionStatusNames: Record<number, string> = {
   [WorkflowExecutionStatus.RUNNING]: 'RUNNING',
   [WorkflowExecutionStatus.COMPLETED]: 'COMPLETED',
@@ -779,6 +830,7 @@ const workflowExecutionStatusNames: Record<number, string> = {
 }
 
 export const __workerLoadTestHooks = {
+  calculateLoadCompletionBudgetMs,
   normalizeWorkflowStatus,
 }
 

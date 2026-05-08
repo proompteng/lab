@@ -169,6 +169,7 @@ export const main = async (options: DeployOptions = {}) => {
   const registry = options.registry ?? process.env.JANGAR_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = options.repository ?? process.env.JANGAR_IMAGE_REPOSITORY ?? 'lab/jangar'
   const defaultTag = execGit(['rev-parse', '--short', 'HEAD'])
+  const sourceHeadSha = execGit(['rev-parse', 'HEAD'])
   const tag = options.tag ?? process.env.JANGAR_IMAGE_TAG ?? defaultTag
   const imageName = `${registry}/${repository}`
   const image = `${registry}/${repository}:${tag}`
@@ -195,6 +196,8 @@ export const main = async (options: DeployOptions = {}) => {
     imageName,
     tag,
     digest,
+    sourceHeadSha,
+    gitopsRevision: sourceHeadSha,
     rolloutTimestamp: new Date().toISOString(),
     kustomizationPath: `${kustomizePath}/kustomization.yaml`,
     serviceManifestPath: serviceManifest,
