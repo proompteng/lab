@@ -135,6 +135,39 @@ def _is_dependency_required(required: set[str], capability: str) -> bool:
     return capability in required
 
 
+def hypothesis_registry_requires_dependency_capability(
+    registry: HypothesisRegistryLoadResult,
+    capability: str,
+) -> bool:
+    """Return whether any loaded hypothesis requires an external dependency capability."""
+
+    normalized = _normalize_dependency_capability(capability)
+    if normalized is None or not registry.loaded:
+        return False
+    for manifest in registry.items:
+        required, _unknown = _resolve_required_dependency_capabilities(manifest)
+        if normalized in required:
+            return True
+    return False
+
+
+def resolve_hypothesis_dependency_quorum(
+    registry: HypothesisRegistryLoadResult,
+) -> JangarDependencyQuorumStatus:
+    """Fetch Jangar quorum only when the active hypothesis registry requires it."""
+
+    if hypothesis_registry_requires_dependency_capability(
+        registry,
+        "jangar_dependency_quorum",
+    ):
+        return load_jangar_dependency_quorum()
+    return JangarDependencyQuorumStatus(
+        decision="allow",
+        reasons=["jangar_dependency_quorum_not_required"],
+        message="Torghut hypothesis registry is self-governed for dependency quorum.",
+    )
+
+
 class HypothesisEntryRequirements(BaseModel):
     """Entry requirements that determine whether a lane can leave shadow or blocked."""
 
@@ -918,8 +951,10 @@ __all__ = [
     "HypothesisRegistryLoadResult",
     "JangarDependencyQuorumStatus",
     "compile_hypothesis_runtime_statuses",
+    "hypothesis_registry_requires_dependency_capability",
     "load_hypothesis_registry",
     "load_jangar_dependency_quorum",
+    "resolve_hypothesis_dependency_quorum",
     "resolve_hypothesis_registry_path",
     "summarize_hypothesis_runtime_statuses",
     "validate_hypothesis_registry_from_settings",

@@ -5,9 +5,9 @@ home: https://github.com/proompteng/charts/tree/main/charts/agents
 sources:
   - https://github.com/proompteng/charts/tree/main/charts/agents
 type: application
-kubeVersion: '>=1.25.0-0'
-version: 0.9.13
-appVersion: '0.9.0'
+kubeVersion: ">=1.25.0-0"
+version: 0.9.14
+appVersion: "0.9.0"
 icon: https://avatars.githubusercontent.com/u/234536857
 keywords:
   - agents
@@ -239,5 +239,5 @@ annotations:
       description: "Align chart package license metadata with the repository MIT license."
     - kind: changed
       description: "Extend image digest policy to runner, GitOps hook, and Helm test images."
-  artifacthub.io/operator: 'true'
+  artifacthub.io/operator: "true"
   artifacthub.io/operatorCapabilities: Full Lifecycle

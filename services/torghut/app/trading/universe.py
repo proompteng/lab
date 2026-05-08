@@ -129,28 +129,6 @@ class UniverseResolver:
         return self.get_resolution().symbols
 
     def get_resolution(self) -> UniverseResolution:
-        if (
-            settings.trading_universe_source != "jangar"
-            and (
-                settings.trading_enabled
-                or settings.trading_autonomy_enabled
-                or settings.trading_mode == "live"
-            )
-        ):
-            logger.error(
-                "Invalid universe source for active trading/autonomy: source=%s",
-                settings.trading_universe_source,
-            )
-            resolution = UniverseResolution(
-                symbols=set(),
-                source=str(settings.trading_universe_source),
-                status='error',
-                reason='invalid_universe_source_for_active_trading',
-                fetched_at=None,
-                cache_age_seconds=None,
-            )
-            self._last_resolution = resolution
-            return resolution
         if settings.trading_universe_source == "static":
             symbols = set(settings.trading_static_symbols)
             filtered = self._apply_symbol_allowlist(_filter_symbols(symbols))

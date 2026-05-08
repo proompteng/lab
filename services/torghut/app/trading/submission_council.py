@@ -27,7 +27,7 @@ from ..models import (
 from .hypotheses import (
     compile_hypothesis_runtime_statuses,
     load_hypothesis_registry,
-    load_jangar_dependency_quorum,
+    resolve_hypothesis_dependency_quorum,
     summarize_hypothesis_runtime_statuses,
 )
 from .profit_windows import build_profit_window_contract
@@ -409,7 +409,7 @@ def build_hypothesis_runtime_summary(
     market_context_status: Mapping[str, Any],
 ) -> dict[str, object]:
     registry = load_hypothesis_registry()
-    dependency_quorum = load_jangar_dependency_quorum()
+    dependency_quorum = resolve_hypothesis_dependency_quorum(registry)
     items = compile_hypothesis_runtime_statuses(
         registry=registry,
         state=state,
