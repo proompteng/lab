@@ -52,6 +52,14 @@ export type MarketContextRuntimeConfig = {
   providerChain: string[]
   providerFailureThreshold: number
   providerCooldownSeconds: number
+  onDemandDispatchEnabled: boolean
+  onDemandDispatchCooldownSeconds: number
+  onDemandDispatchActiveRunSeconds: number
+  onDemandDispatchNamespace: string
+  onDemandDispatchServiceAccountName: string
+  onDemandDispatchPriorityClassName: string
+  onDemandDispatchCallbackUrl: string
+  onDemandDispatchTtlSeconds: number
 }
 
 export type MarketContextIngestAuthConfig = {
@@ -91,6 +99,21 @@ export const resolveMarketContextRuntimeConfig = (env: EnvSource = process.env):
   providerChain: parseStringList(env.JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN, ['codex-spark', 'codex']),
   providerFailureThreshold: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_PROVIDER_FAILURE_THRESHOLD, 3),
   providerCooldownSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_PROVIDER_COOLDOWN_SECONDS, 900),
+  onDemandDispatchEnabled: parseBoolean(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_ENABLED, false),
+  onDemandDispatchCooldownSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_COOLDOWN_SECONDS, 900),
+  onDemandDispatchActiveRunSeconds: parsePositiveInt(
+    env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_ACTIVE_RUN_SECONDS,
+    3600,
+  ),
+  onDemandDispatchNamespace: normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_NAMESPACE) ?? 'agents',
+  onDemandDispatchServiceAccountName:
+    normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_SERVICE_ACCOUNT_NAME) ?? 'agents-sa',
+  onDemandDispatchPriorityClassName:
+    normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_PRIORITY_CLASS_NAME) ?? 'torghut-market-context-low',
+  onDemandDispatchCallbackUrl:
+    normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_CALLBACK_URL) ??
+    'http://jangar.jangar.svc.cluster.local/api/torghut/market-context',
+  onDemandDispatchTtlSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_TTL_SECONDS, 7200),
 })
 
 export const resolveMarketContextIngestAuthConfig = (env: EnvSource = process.env): MarketContextIngestAuthConfig => ({
@@ -108,5 +131,6 @@ export const validateMarketContextConfig = (env: EnvSource = process.env) => {
   if (runtime.fundamentalsSourceUrl) new URL(runtime.fundamentalsSourceUrl)
   if (runtime.newsSourceUrl) new URL(runtime.newsSourceUrl)
   new URL(runtime.batchTradingStatusUrl)
+  new URL(runtime.onDemandDispatchCallbackUrl)
   resolveMarketContextIngestAuthConfig(env)
 }

@@ -100,4 +100,64 @@ describe('torghut market-context agent helpers', () => {
     expect(signal.error).toBe('provider_bootstrap_failure')
     expect(signal.message).toBe('jangar auth failed')
   })
+
+  it('dispatches stale snapshots when no active run or cooldown exists', async () => {
+    const { resolveMarketContextDispatchDecisionFromRows } = await import('../torghut-market-context-dispatch')
+
+    const decision = resolveMarketContextDispatchDecisionFromRows({
+      enabled: true,
+      snapshotState: 'stale',
+      activeRun: null,
+      dispatchState: null,
+      cooldownSeconds: 900,
+      now: new Date('2026-05-07T20:00:00.000Z'),
+    })
+
+    expect(decision.shouldDispatch).toBe(true)
+    expect(decision.attempted).toBe(true)
+    expect(decision.dispatched).toBe(false)
+    expect(decision.reason).toBe('stale_snapshot_refresh')
+  })
+
+  it('suppresses on-demand dispatch when a provider run is already active', async () => {
+    const { resolveMarketContextDispatchDecisionFromRows } = await import('../torghut-market-context-dispatch')
+
+    const decision = resolveMarketContextDispatchDecisionFromRows({
+      enabled: true,
+      snapshotState: 'missing',
+      activeRun: {
+        requestId: 'request-1',
+        runName: 'torghut-market-context-news-aapl-abcde',
+      },
+      dispatchState: null,
+      cooldownSeconds: 900,
+      now: new Date('2026-05-07T20:00:00.000Z'),
+    })
+
+    expect(decision.shouldDispatch).toBe(false)
+    expect(decision.attempted).toBe(true)
+    expect(decision.reason).toBe('active_run_in_progress')
+    expect(decision.runName).toBe('torghut-market-context-news-aapl-abcde')
+  })
+
+  it('suppresses repeated dispatch inside the cooldown window', async () => {
+    const { resolveMarketContextDispatchDecisionFromRows } = await import('../torghut-market-context-dispatch')
+
+    const decision = resolveMarketContextDispatchDecisionFromRows({
+      enabled: true,
+      snapshotState: 'stale',
+      activeRun: null,
+      dispatchState: {
+        lastDispatchedAt: new Date('2026-05-07T19:54:00.000Z'),
+        lastRunName: 'torghut-market-context-fundamentals-nvda-abcde',
+      },
+      cooldownSeconds: 900,
+      now: new Date('2026-05-07T20:00:00.000Z'),
+    })
+
+    expect(decision.shouldDispatch).toBe(false)
+    expect(decision.attempted).toBe(true)
+    expect(decision.reason).toBe('dispatch_cooldown')
+    expect(decision.runName).toBe('torghut-market-context-fundamentals-nvda-abcde')
+  })
 })
