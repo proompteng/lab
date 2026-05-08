@@ -12,6 +12,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority, refreshed `2026-05-08T12:20Z`):
+  - `184-torghut-profit-frontier-reclocking-and-capital-reentry-guardrails-2026-05-08.md`
+  - `docs/agents/designs/180-jangar-evidence-settlement-reclocking-and-profit-gated-rollouts-2026-05-08.md`
   - `184-torghut-profit-signal-quorum-and-context-routability-handoff-2026-05-08.md`
   - `docs/agents/designs/180-jangar-stage-clearance-exchange-and-scheduler-routability-contract-2026-05-08.md`
   - `184-torghut-execution-trusted-profit-repair-settlement-2026-05-08.md`
