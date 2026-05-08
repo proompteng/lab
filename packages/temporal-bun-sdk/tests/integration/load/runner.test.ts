@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test'
 
+import { Code, ConnectError } from '@connectrpc/connect'
+
 import { WorkflowExecutionStatus } from '../../../src/proto/temporal/api/enums/v1/workflow_pb'
 import { __workerLoadTestHooks } from './runner'
 
@@ -29,4 +31,31 @@ test('worker load completion budget includes metrics flush window', () => {
       metricsFlushTimeoutMs: 30_000,
     }),
   ).toBe(330_000)
+})
+
+test('worker load update termination treats already-completed races as terminal success', () => {
+  expect(
+    __workerLoadTestHooks.isWorkflowAlreadyCompletedForTermination(
+      new ConnectError('workflow execution already completed', Code.NotFound),
+    ),
+  ).toBe(true)
+  expect(
+    __workerLoadTestHooks.isWorkflowAlreadyCompletedForTermination({
+      _tag: 'UnknownException',
+      cause: new ConnectError('[not_found] workflow execution already completed', Code.NotFound),
+    }),
+  ).toBe(true)
+})
+
+test('worker load update termination keeps unrelated not-found failures fatal', () => {
+  expect(
+    __workerLoadTestHooks.isWorkflowAlreadyCompletedForTermination(
+      new ConnectError('workflow execution not found', Code.NotFound),
+    ),
+  ).toBe(false)
+  expect(
+    __workerLoadTestHooks.isWorkflowAlreadyCompletedForTermination(
+      new ConnectError('workflow execution already completed', Code.Unavailable),
+    ),
+  ).toBe(false)
 })
