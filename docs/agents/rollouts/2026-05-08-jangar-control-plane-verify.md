@@ -7,20 +7,66 @@ Release engineer: Marco Silva
 ## Owner update message
 
 Merge gate remains no-go for the selected direct Jangar PR. #5889 is clean and mergeable at head
-`c8164ef2bb9e3bc7f19ae05ad7ecafc374fe9ba1`, and the current `gh pr checks` view is pass or intentionally skipped, but
+`1eb9840f7f465e433d4a7eab6175d92bd9b525dc`, and the current `gh pr checks` view is pass or intentionally skipped, but
 the PR is still a 1,639-line direct control-plane diff with no posted Codex review. The latest current-head review
-request at https://github.com/proompteng/lab/pull/5889#issuecomment-4406651322 received the usage-limit response at
-https://github.com/proompteng/lab/pull/5889#issuecomment-4406652965 instead of a review. The future gate is unchanged:
+request at https://github.com/proompteng/lab/pull/5889#issuecomment-4407395847 received the usage-limit response at
+https://github.com/proompteng/lab/pull/5889#issuecomment-4407396834 instead of a review. The future gate is unchanged:
 restore Codex review capacity, post the current-head review, resolve any threads, recheck the branch, then make a new
 merge decision.
 
-The live baseline is healthy and does not include #5889. Argo CD reports `jangar` Synced/Healthy at
+The latest read-only live baseline evidence is healthy and does not include #5889. Argo CD reports `jangar` Synced/Healthy at
 `370622b6755b955c1edf4e0e59b64572083f9e3f` and `agents` Synced/Healthy at
 `74befb03e6df84d62b53f5732e0bcc6b90ef52d8`; `deployment/jangar`, `deployment/agents`, and
 `deployment/agents-controllers` rolled out successfully. Current selected pods are Ready, Jangar and agents Services
 have live HTTP endpoints, and AgentRuns created in the last two hours show 35 total, 32 succeeded, 3 running, and
-0 failed. Pod exec is forbidden for this service account, so service health proof for this pass is Argo sync, rollout
-status, readiness probes, endpoints, and event review.
+0 failed. Pod exec is forbidden for this service account, so service health proof for that read-only pass is Argo sync,
+rollout status, readiness probes, endpoints, and event review.
+
+## Latest gate refresh - 2026-05-08T14:56Z
+
+Governing release requirement: verify stages must merge only green PRs and prove Argo sync, workload readiness, and
+service health after rollout. The selected direct implementation still maps to
+`docs/agents/designs/146-jangar-repair-warrant-exchange-and-schedule-debt-firebreak-2026-05-07.md`, which keeps repair
+warrants observe-mode, zero-notional, and non-capital-authorizing until closure evidence exists.
+
+- PR enumeration:
+  - #5889 `feat(jangar): add repair warrant exchange` is the only open direct Jangar control-plane implementation PR.
+  - #6123 `feat(torghut): add profit signal quorum receipt` is Torghut-scoped and was not selected for this release
+    lane; list-level enumeration showed it UNSTABLE with a cancelled hosted check.
+  - Open release automation PRs #5767 and #5316 were not selected; they are automated release PRs with UNKNOWN merge
+    state and no direct Jangar control-plane blocker identified.
+  - Historical soak PRs #5387, #5364, and #5376 are already merged.
+- #5889 merge gate:
+  - Head: `1eb9840f7f465e433d4a7eab6175d92bd9b525dc`.
+  - Base: `main` `12d023e8badfbb716262b3975859aed323667297`.
+  - Mergeability: GitHub reports `MERGEABLE` and `CLEAN`.
+  - Checks: current `gh pr checks` is pass or skipped only, including `CI / check_changed_files`, semantic title and
+    commit checks, `agents-ci / validate`, `agents-ci / integration`, and `jangar-ci / lint-and-typecheck / run`.
+  - Comments/reviews: zero posted reviews and zero review threads.
+  - Diff: 18 files, 1,591 additions, 48 deletions, 1,639 total changed lines.
+  - Progress comment refreshed at https://github.com/proompteng/lab/pull/5889#issuecomment-4398288855.
+  - Decision: no-go. The PR exceeds the mandatory 1,000-line Codex-review gate, and the current-head review request at
+    https://github.com/proompteng/lab/pull/5889#issuecomment-4407395847 received the connector usage-limit response at
+    https://github.com/proompteng/lab/pull/5889#issuecomment-4407396834.
+- Current live rollout health:
+  - No new rollout was triggered by #5889 because it was not merged.
+  - The latest live baseline evidence remains the read-only 13:56Z pass below; do not treat it as rollout proof for
+    #5889.
+- Runtime and business metric evidence:
+  - `failed_agentrun_rate`: no production improvement from #5889 yet because the merge was held.
+  - `ready_status_truth`: preserved by recording the no-go gate and not claiming rollout success for an unmerged PR.
+  - `manual_intervention_count`: zero production workload mutations were made from the local shell.
+  - `pr_to_rollout_latency`: blocked by Codex review capacity, not CI or merge conflict repair.
+  - `handoff_evidence_quality`: current PR enumeration, check state, review blocker, progress comment, mission ledger,
+    and swarm verify artifact are current as of 14:56Z.
+- Rollback path:
+  - #5889 has no runtime rollback from this pass because it was not merged.
+  - If #5889 later merges and regresses, revert the PR or stop consuming `repair_warrant_exchange`; no database,
+    Kubernetes, broker, or direct cluster mutation is required.
+- Next action:
+  - Restore Codex review capacity for #5889, post a current-head review for
+    `1eb9840f7f465e433d4a7eab6175d92bd9b525dc`, resolve any threads, then recheck mergeability, hosted checks, review
+    threads, and rollout health before any squash merge.
 
 ## Latest gate refresh - 2026-05-08T13:56Z
 
