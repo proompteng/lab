@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir, rm, writeFile } from 'node:fs/promises'
 import { create } from '@bufbuild/protobuf'
+import { Code, ConnectError } from '@connectrpc/connect'
 import { Effect } from 'effect'
 
 import { createTemporalClient, temporalCallOptions, type TemporalClient } from '../../../src/client'
@@ -521,10 +522,58 @@ const driveWorkflowUpdates = async (
         waitForStage: 'completed',
       })
       // After exercising update flows, terminate to keep the load suite bounded.
-      await client.workflow.terminate(workflowHandle, { reason: 'worker-load-finish' })
+      try {
+        await client.workflow.terminate(workflowHandle, { reason: 'worker-load-finish' })
+      } catch (error) {
+        if (!isWorkflowAlreadyCompletedForTermination(error)) {
+          throw error
+        }
+      }
     }),
   )
 }
+
+const unwrapErrorChain = (error: unknown, seen = new Set<unknown>()): unknown[] => {
+  if (!error || (typeof error !== 'object' && typeof error !== 'function')) {
+    return [error]
+  }
+  if (seen.has(error)) {
+    return [error]
+  }
+  seen.add(error)
+
+  const values: unknown[] = [error]
+  const candidate = error as { _tag?: string; cause?: unknown; error?: unknown; message?: unknown }
+  if (candidate._tag === 'UnknownException') {
+    if (candidate.cause !== undefined) {
+      values.push(...unwrapErrorChain(candidate.cause, seen))
+    }
+    if (candidate.error !== undefined) {
+      values.push(...unwrapErrorChain(candidate.error, seen))
+    }
+  } else if (candidate.cause !== undefined) {
+    values.push(...unwrapErrorChain(candidate.cause, seen))
+  }
+
+  return values
+}
+
+const isWorkflowAlreadyCompletedForTermination = (error: unknown): boolean =>
+  unwrapErrorChain(error).some((candidate) => {
+    let message: string
+    if (candidate instanceof Error) {
+      message = candidate.message
+    } else if (typeof candidate === 'object' && candidate && 'message' in candidate) {
+      message = String((candidate as { message?: unknown }).message)
+    } else {
+      message = String(candidate)
+    }
+
+    if (!/workflow execution already completed/i.test(message)) {
+      return false
+    }
+    return !(candidate instanceof ConnectError) || candidate.code === Code.NotFound
+  })
 
 const cancelActivityWorkflows = async (
   client: TemporalClient,
@@ -831,6 +880,7 @@ const workflowExecutionStatusNames: Record<number, string> = {
 
 export const __workerLoadTestHooks = {
   calculateLoadCompletionBudgetMs,
+  isWorkflowAlreadyCompletedForTermination,
   normalizeWorkflowStatus,
 }
 
