@@ -43,6 +43,7 @@ import {
   buildSourceRolloutTruthExchange,
   resolveSourceRolloutTruthEnvironment,
 } from '~/server/control-plane-source-rollout-truth-exchange'
+import { resolveTorghutConsumerEvidence } from '~/server/control-plane-torghut-consumer-evidence'
 import type {
   AgentRunIngestionStatus,
   ControlPlaneStatus,
@@ -97,6 +98,7 @@ export type ControlPlaneStatusDeps = {
   getWatchReliabilitySummary?: () => ControlPlaneWatchReliabilitySummary
   getWorkflowsReliabilityStatus?: (input: WorkflowsReliabilityStatusInput) => Promise<WorkflowsReliabilityStatus>
   resolveEmpiricalServices?: typeof resolveEmpiricalServices
+  resolveTorghutConsumerEvidence?: typeof resolveTorghutConsumerEvidence
   resolveExecutionTrust?: (input: ExecutionTrustInput) => Promise<ExecutionTrustSnapshot>
   resolveRuntimeAdmission?: (input: { now: Date; executionTrust: ExecutionTrustStatus }) => RuntimeAdmissionSnapshot
   resolveRouteProbe?: (input: { now: Date; namespace: string; service: string }) => Promise<FailureDomainRouteProbe>
@@ -635,6 +637,7 @@ export const buildControlPlaneStatus = async (
     watchReliabilityBlockRestartsThreshold,
     executionTrust: executionTrust.executionTrust,
   })
+  const torghutConsumerEvidence = await (deps.resolveTorghutConsumerEvidence ?? resolveTorghutConsumerEvidence)(now)
   const negativeEvidenceRouter = buildNegativeEvidenceRouterStatus({
     now,
     namespace: options.namespace,
@@ -650,6 +653,7 @@ export const buildControlPlaneStatus = async (
     executionTrust: executionTrust.executionTrust,
     runtimeKits: runtimeAdmission.runtimeKits,
     controllerWitness,
+    torghut: torghutConsumerEvidence.negativeEvidence,
   })
   const sourceRolloutTruthEnvironment = resolveSourceRolloutTruthEnvironment()
   const sourceRolloutTruthExchange = buildSourceRolloutTruthExchange({
@@ -725,6 +729,7 @@ export const buildControlPlaneStatus = async (
     ...(empiricalServices.forecast.status === 'degraded' ? ['empirical:forecast'] : []),
     ...(empiricalServices.lean.status === 'degraded' ? ['empirical:lean'] : []),
     ...(empiricalServices.jobs.status === 'degraded' ? ['empirical:jobs'] : []),
+    ...(torghutConsumerEvidence.status.status === 'unavailable' ? ['torghut_consumer_evidence'] : []),
     ...(executionTrust.executionTrust.status !== 'healthy' ? ['execution_trust'] : []),
     ...runtimeAdmission.runtimeKits
       .filter((kit) => kit.decision !== 'healthy')
@@ -776,6 +781,7 @@ export const buildControlPlaneStatus = async (
     source_rollout_truth_exchange: sourceRolloutTruthExchange,
     route_stability_escrow: routeStabilityEscrow,
     empirical_services: empiricalServices,
+    torghut_consumer_evidence: torghutConsumerEvidence.status,
     namespaces: [
       {
         namespace: options.namespace,

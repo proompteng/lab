@@ -55,6 +55,7 @@ from .trading.autonomy import (
 )
 from .trading.autoresearch_routes import router as autoresearch_router
 from .trading.completion import build_doc29_completion_status
+from .trading.consumer_evidence import build_torghut_consumer_evidence_receipt
 from .trading.empirical_jobs import build_empirical_jobs_status
 from .trading.forecast_runtime import forecast_status
 from .trading.hypotheses import (
@@ -665,6 +666,12 @@ def _evaluate_trading_health_payload(
         proof_floor=proof_floor,
         active_revision=BUILD_COMMIT,
     )
+    consumer_evidence_receipt = build_torghut_consumer_evidence_receipt(
+        forecast_service_status=_forecast_service_status(),
+        empirical_jobs_status=empirical_jobs,
+        proof_floor=proof_floor,
+        live_submission_gate=live_submission_gate,
+    )
     live_mode = settings.trading_mode == "live"
     empirical_jobs_required = (
         live_mode and settings.trading_empirical_jobs_health_required
@@ -746,6 +753,7 @@ def _evaluate_trading_health_payload(
             "alpha_readiness": alpha_readiness,
             "live_submission_gate": live_submission_gate,
             "proof_floor": proof_floor,
+            "torghut_consumer_evidence_receipt": consumer_evidence_receipt,
             "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
             "route_reacquisition_board": route_reacquisition_board,
             "quant_evidence": quant_evidence,
@@ -1818,6 +1826,12 @@ def trading_status() -> dict[str, object]:
         proof_floor=proof_floor,
         active_revision=str(shadow_first_runtime["active_revision"]),
     )
+    consumer_evidence_receipt = build_torghut_consumer_evidence_receipt(
+        forecast_service_status=forecast_service_status,
+        empirical_jobs_status=empirical_jobs,
+        proof_floor=proof_floor,
+        live_submission_gate=live_submission_gate,
+    )
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -1841,6 +1855,7 @@ def trading_status() -> dict[str, object]:
         "running": state.running,
         "live_submission_gate": live_submission_gate,
         "proof_floor": proof_floor,
+        "torghut_consumer_evidence_receipt": consumer_evidence_receipt,
         "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
         "route_reacquisition_board": route_reacquisition_board,
         "quant_evidence": quant_evidence,
