@@ -222,3 +222,69 @@ without the large-diff review gate.
     threads are resolved, or a maintainer explicitly waives the large-diff gate.
   - If #5889 is rebased or changed, rerun the smallest relevant local Jangar validation plus hosted PR checks before
     any merge decision.
+
+## Current gate refresh - 2026-05-08T06:57Z
+
+Governing release requirement: verify stages must merge only green PRs and prove Argo sync, workload readiness, and
+service health after rollout. I used that gate, plus the same repair-warrant design provenance above, to re-evaluate
+the remaining open Jangar control-plane work without changing production.
+
+- PR enumeration:
+  - #5889 `feat(jangar): add repair warrant exchange` is the only open direct Jangar control-plane implementation PR.
+  - #5412 `feat(torghut): add profit escrow runtime projections` is Torghut-owned and also over the large-diff
+    threshold, with Codex review blocked by the same connector usage-limit response.
+  - #6058 `ci(torghut): keep release manifest checks complete` is Torghut CI-only, green, and not selected for this
+    Jangar release gate.
+- #5889 merge gate:
+  - Head: `eb42fef4febc720b6fad47188c6c34913da465b8`.
+  - Mergeability: GitHub reports `CLEAN` / `MERGEABLE`; REST reports `mergeable_state=clean`.
+  - Checks: pass or skipped only, including `CI / check_changed_files`, semantic title and commit checks,
+    `agents-ci / validate`, `agents-ci / integration`, and `jangar-ci / lint-and-typecheck / run`.
+  - Comments: GraphQL returned no review threads and no posted opinionated reviews.
+  - Diff: 18 files, 1,591 additions, 48 deletions, 1,639 total changed lines.
+  - Decision: no-go. The PR exceeds the 1,000-line large-diff gate and no Codex review has posted. Repeated
+    `@codex review` requests for the current and prior heads received the connector usage-limit response.
+  - Progress comment refreshed at https://github.com/proompteng/lab/pull/5889#issuecomment-4398288855.
+- Current live rollout health:
+  - `argocd/jangar`: `Synced`, `Healthy`, operation `Succeeded`, revision
+    `61c0fe2459b3cfc9db45e65518e85ab17d693775`.
+  - `argocd/agents`: `Synced`, `Healthy`, operation `Succeeded`, revision
+    `61c0fe2459b3cfc9db45e65518e85ab17d693775`.
+  - `argocd/symphony-jangar`: `Synced`, `Healthy`, operation `Succeeded`, revision
+    `61c0fe2459b3cfc9db45e65518e85ab17d693775`.
+  - `deployment/jangar`, `deployment/agents`, `deployment/agents-controllers`, and `deployment/symphony-jangar`
+    reported rollout success.
+  - Active images: `deployment/jangar` and `deployment/agents-controllers` are on
+    `registry.ide-newton.ts.net/lab/jangar:03eea88e@sha256:30c7b317810bcbc543757ec08f55f3f6b0abf907bb2fad0e950cde7bac924862`;
+    `deployment/agents` is on
+    `registry.ide-newton.ts.net/lab/jangar-control-plane:03eea88e@sha256:94aaf5282dab1183e176885d345806d855d09e4ad7e9197dc3347864a4dcd64a`.
+  - Service health: Jangar service proxy `/health` returned `status=ok`; Symphony `/readyz` returned `ok=true`.
+    Agents service proxy and pod exec were blocked by RBAC, but `deployment/agents` was `1/1` ready and its service had
+    a ready endpoint on port 8080.
+  - Event scan: recent Jangar/Agents warnings were readiness-probe timeouts during pod replacement and are cleared by
+    current rollout readiness. Current non-Jangar warnings include Torghut rollout-start probes, Keycloak restart,
+    Rook/Ceph, and persistent-volume cleanup issues; none blocks the Jangar rollout gate.
+- Runtime and business metric evidence:
+  - `failed_agentrun_rate`: Jangar control-plane AgentRuns since 2026-05-08T00:00Z show 23 total, 22 succeeded, 1
+    running, and 0 failed. Historical non-template Jangar control-plane AgentRuns show 213 total, 205 succeeded, 7
+    failed, and 1 running.
+  - `ready_status_truth`: Argo sync, rollout status, pod readiness, service proxy health where permitted, endpoints,
+    and image digests agree for the deployed Jangar control-plane state.
+  - `manual_intervention_count`: zero production workload mutations were made from the local shell; cluster work was
+    read-only inspection plus local kubeconfig bootstrap using the in-cluster service account.
+  - `pr_to_rollout_latency`: no new Jangar PR merged in this refresh because #5889 is held by the mandatory
+    large-diff review gate.
+  - `handoff_evidence_quality`: the PR check state, review blocker, progress comment, Argo status, rollout status,
+    service health signals, event scan, and AgentRun counts are recorded here and in
+    `/workspace/.agentrun/swarm/jangar-control-plane-verify.md`.
+- Rollback path:
+  - #5889 has no runtime rollback because it was not merged.
+  - For the currently deployed Jangar image, use a normal GitOps revert PR for the `03eea88e` promotion to restore the
+    previous promoted image, then revert the underlying runtime PR if the image rollback does not clear the issue.
+  - Do not mutate production workloads directly from a local shell.
+- Next action:
+  - Keep #5889 held until an actual Codex review posts for
+    `eb42fef4febc720b6fad47188c6c34913da465b8` and all review threads are resolved, or a maintainer explicitly waives
+    the large-diff gate.
+  - After review capacity or waiver is available, recheck mergeability, hosted checks, review threads, and live rollout
+    health before any squash merge.
