@@ -852,6 +852,37 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(remediation["next_actions"])
         self.assertIn("candidate_search_remediation", summary)
 
+    def test_timeout_remediation_recommends_smaller_replay_frontier(self) -> None:
+        remediation = runner._candidate_search_remediation(
+            failure_reason="TimeoutError:real_replay_timeout_seconds:3600",
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": "spec-selected",
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            evidence_bundles=(),
+            false_positive_table=(),
+            best_false_negative_table=(),
+            replay_timeout_seconds=3600,
+            max_frontier_candidates_per_spec=8,
+        )
+
+        timeout_action = remediation["next_actions"][0]
+        self.assertEqual(
+            timeout_action["action"], "shrink_per_spec_frontier_or_extend_timeout"
+        )
+        self.assertEqual(
+            timeout_action["recommended_flags"]["--max-frontier-candidates-per-spec"],
+            "2",
+        )
+        self.assertEqual(
+            timeout_action["recommended_flags"]["--real-replay-timeout-seconds"],
+            "7200",
+        )
+
     def test_train_ranker_script_main_writes_model_and_scores(self) -> None:
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
