@@ -39,18 +39,16 @@ describe('migration registration', () => {
     expect(normalized).toContain("(account, ((details->>'window')), as_of desc)")
   })
 
-  it('keeps the Torghut quant pipeline health account/window/created-at index registered', () => {
+  it('keeps the Torghut quant pipeline health created-at index out of startup migrations', () => {
     const migrationPath = new URL(
       '../migrations/20260508_torghut_quant_pipeline_health_account_window_created_at_index.ts',
       import.meta.url,
     )
     const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase().replace(/\s+/g, ' ')
 
-    expect(normalized).toContain(
-      'create index if not exists torghut_quant_pipeline_health_account_window_created_at_idx',
-    )
-    expect(normalized).toContain('on torghut_control_plane.quant_pipeline_health')
-    expect(normalized).toContain("(account, ((details->>'window')), created_at desc, strategy_id, stage, as_of desc)")
+    expect(normalized).toContain('performance-only index')
+    expect(normalized).toContain('non-blocking')
+    expect(normalized).not.toContain('create index')
   })
 
   it('keeps the Torghut latest quant metric account/window index registered', () => {

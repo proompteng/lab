@@ -57,11 +57,11 @@ spec:
             - name: UI_PORT
               value: "8080"
             - name: JANGAR_RUNTIME_IMAGE
-              value: registry.ide-newton.ts.net/lab/jangar:2888595e@sha256:5836a6839faa7c539b8587301ee5bf4e429a19ac4b641da967755c167ae6ae58
+              value: registry.ide-newton.ts.net/lab/jangar:7a5c2788@sha256:2c455fdbd3accf2dfadaf525e463ad6b23261ec4cbcb00dbaa70c16882d5a5df
             - name: JANGAR_SOURCE_HEAD_SHA
-              value: 2888595e84c965e73908fac392190cbde332d10b
+              value: 7a5c2788f23fc622760ff11dd7c4fd989e3ed64f
             - name: JANGAR_GITOPS_REVISION
-              value: 2888595e84c965e73908fac392190cbde332d10b
+              value: 7a5c2788f23fc622760ff11dd7c4fd989e3ed64f
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: "120"
             - name: JANGAR_BUMBA_TASK_QUEUE
