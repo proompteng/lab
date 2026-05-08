@@ -1032,3 +1032,10 @@ This pack is positioned as the next architecture layer above:
   debts they retire before paper or live capital can move. The 2026-05-07 21:10Z refresh narrows the current before
   state to route/TCA repair, market-context staleness, degraded empirical jobs, account-scope bypass debt, and Jangar
   scoped-debt agreement, with all paper/live notional still held at zero.
+- `180-torghut-dependency-priced-capital-frontier-and-session-reentry-2026-05-08.md` follows the route-yield frontier
+  because the refreshed evidence shifted the primary risk from a route-only repair problem to a dependency-priced
+  capital problem. Torghut remained readable while Jangar had a zero-pod brownout, scoped quant latest-store evidence
+  was empty, market context was degraded, alpha readiness had zero promotion-eligible hypotheses, and proof floor held
+  capital at zero. The contract makes Jangar availability, scoped quant health, market context, empirical evidence,
+  alpha readiness, route/TCA, and submission toggles contribute explicit capital prices before any session can reenter
+  paper or live action.
