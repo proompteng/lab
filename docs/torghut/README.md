@@ -4,6 +4,10 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/184-torghut-profit-signal-quorum-and-context-routability-handoff-2026-05-08.md`
+  (current profit-signal quorum and Jangar stage-clearance handoff contract)
+- `docs/agents/designs/180-jangar-stage-clearance-exchange-and-scheduler-routability-contract-2026-05-08.md`
+  (current Jangar stage-clearance and scheduler-routability contract)
 - `docs/torghut/design-system/v6/181-torghut-quality-adjusted-profit-frontier-and-hypothesis-escrow-2026-05-08.md`
   (current quality-adjusted profit frontier and hypothesis escrow contract)
 - `docs/agents/designs/177-jangar-evidence-quality-admission-ledger-and-degradation-backpressure-2026-05-08.md`
