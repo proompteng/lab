@@ -856,7 +856,9 @@ class TestTradingApi(TestCase):
         dependency_fetch.assert_not_called()
         continuity_fetch.assert_not_called()
 
-    def test_route_continuity_delegates_to_jangar_when_registry_requires_it(self) -> None:
+    def test_route_continuity_delegates_to_jangar_when_registry_requires_it(
+        self,
+    ) -> None:
         expected_packet = {
             "epoch_id": "jangar-epoch",
             "state": "present",
