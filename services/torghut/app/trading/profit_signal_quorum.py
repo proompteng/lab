@@ -443,8 +443,6 @@ def _stage_clearance_signal(packet: Mapping[str, Any]) -> dict[str, object]:
 
 
 def _stage_allows_repair(stage_signal: Mapping[str, Any]) -> bool:
-    if _text(stage_signal.get("state")) == "missing":
-        return False
     details = _mapping(stage_signal.get("details"))
     decision = _text(details.get("decision"), "missing").lower()
     return decision in _REPAIR_DECISIONS

@@ -39,7 +39,8 @@ def _build(
     quant_evidence: Mapping[str, Any] | None = None,
     market_context_status: Mapping[str, Any] | None = None,
     jangar_stage_clearance_packet: Mapping[str, Any] | None = None,
-    route_rows: list[Mapping[str, Any]] | None = None,
+    live_submission_gate: Mapping[str, Any] | None = None,
+    route_rows: list[object] | None = None,
 ) -> dict[str, object]:
     hypothesis_item = dict(hypothesis or _hypothesis())
     return build_profit_signal_quorum(
@@ -76,10 +77,8 @@ def _build(
                 }
             ],
         },
-        live_submission_gate={
-            "allowed": False,
-            "blocked_reasons": ["simple_submit_disabled"],
-        },
+        live_submission_gate=live_submission_gate
+        or {"allowed": False, "blocked_reasons": ["simple_submit_disabled"]},
         jangar_stage_clearance_packet=(
             {
                 "packet_id": "stage-clearance:repair",
@@ -169,3 +168,80 @@ def test_missing_stage_clearance_packet_keeps_quorum_observe_only() -> None:
         quorum["required_repair_action"]
         == "publish_current_jangar_stage_clearance_packet"
     )
+
+
+def test_degraded_signal_details_name_route_repair_without_notional() -> None:
+    payload = _build(
+        quant_evidence={
+            "ok": False,
+            "status": "stale",
+            "reason": "quant_health_stale",
+            "latest_metrics_count": 0,
+            "degraded_latest_metrics_count": 2,
+            "blocking_reasons": ["pipeline_ingestion_stale"],
+            "pipeline_stages": [
+                {
+                    "stage": "ingestion",
+                    "status": "stale",
+                    "ok": False,
+                    "lag_seconds": 91,
+                    "max_allowed_lag_seconds": 60,
+                }
+            ],
+            "compute_ok": False,
+        },
+        market_context_status={
+            "overallState": "ok",
+            "stale_snapshot_count": 1,
+            "stale_fundamentals_count": 1,
+            "domains": {"news": {"status": "stale"}},
+        },
+        route_rows=[
+            "ignored-row",
+            {
+                "symbol": "AAPL",
+                "state": "blocked",
+                "hypothesis_ids": ["H-CONT-01"],
+                "current_blocker": "alpaca_route_rejected",
+                "avg_abs_slippage_bps": "12",
+                "slippage_guardrail_bps": "8",
+            },
+        ],
+        jangar_stage_clearance_packet={
+            "packet_id": "stage-clearance:denied",
+            "decision": "denied",
+        },
+    )
+    quorum = _only_quorum(payload)
+    reason_codes = set(cast(list[str], quorum["reason_codes"]))
+
+    assert quorum["decision"] == "observe_only"
+    assert quorum["required_repair_action"] == "repair_route_tca_or_route_routability"
+    assert quorum["max_notional"] == "0"
+    assert {
+        "quant_status_stale",
+        "quant_latest_metrics_empty",
+        "quant_latest_metrics_degraded",
+        "quant_pipeline_stage_ingestion_degraded",
+        "quant_pipeline_stage_ingestion_stale",
+        "quant_pipeline_stage_compute_degraded",
+        "market_context_snapshot_stale",
+        "market_context_fundamentals_stale",
+        "market_context_domain_news_stale",
+        "alpaca_route_rejected",
+        "execution_tca_slippage_above_guardrail",
+        "stage_clearance_denied",
+    }.issubset(reason_codes)
+
+
+def test_clean_quorum_projects_paper_candidate_and_canary_as_shadow_only() -> None:
+    for allowed, expected in ((False, "paper_candidate"), (True, "paper_canary")):
+        payload = _build(
+            live_submission_gate={"allowed": allowed, "blocked_reasons": []}
+        )
+        quorum = _only_quorum(payload)
+
+        assert quorum["decision"] == expected
+        assert quorum["reason_codes"] == []
+        assert payload["summary"]["routeable_candidate_count"] == 1
+        assert payload["max_notional"] == "0"
