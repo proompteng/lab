@@ -193,6 +193,17 @@ def _tca_symbol_routes(
     return payload
 
 
+def _route_symbol_filter_enabled(
+    simple_lane_status: Mapping[str, Any] | None,
+) -> bool:
+    if not isinstance(simple_lane_status, Mapping):
+        return False
+    value = simple_lane_status.get("route_symbol_filter_enabled")
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "enabled"}
+    return bool(value)
+
+
 def _add_repair(
     repairs: list[dict[str, object]],
     *,
@@ -529,16 +540,42 @@ def build_profitability_proof_floor_receipt(
     if symbol_routes is not None:
         tca_source_ref["symbol_routes"] = symbol_routes
         routeable_symbol_count = _int(symbol_routes.get("routeable_symbol_count"))
+        blocked_symbol_count = _int(symbol_routes.get("blocked_symbol_count"))
         missing_symbol_count = _int(symbol_routes.get("missing_symbol_count"))
         scope_symbol_count = _int(symbol_routes.get("scope_symbol_count"))
+        excluded_symbol_count = blocked_symbol_count + missing_symbol_count
+        route_filter_enabled = _route_symbol_filter_enabled(simple_lane_status)
         route_universe_reason = None
         if scope_symbol_count > 0 and routeable_symbol_count <= 0:
             route_universe_reason = "execution_tca_route_universe_empty"
-        elif missing_symbol_count > 0:
-            route_universe_reason = "execution_tca_route_universe_incomplete"
+        elif excluded_symbol_count > 0:
+            tca_source_ref["route_universe_exclusions"] = {
+                "state": "enforced" if route_filter_enabled else "missing_enforcement",
+                "enforcement": "route_symbol_filter",
+                "candidate_symbol_count": routeable_symbol_count,
+                "excluded_symbol_count": excluded_symbol_count,
+                "blocked_symbol_count": blocked_symbol_count,
+                "missing_symbol_count": missing_symbol_count,
+                "max_notional_for_excluded_symbols": "0",
+            }
+            route_universe_reason = (
+                "execution_tca_route_universe_exclusions_applied"
+                if route_filter_enabled
+                else "execution_tca_route_universe_incomplete"
+            )
         if route_universe_reason is not None:
-            tca_state = "fail"
-            tca_reason = route_universe_reason
+            if route_universe_reason == "execution_tca_route_universe_empty":
+                tca_state = "fail"
+                tca_reason = route_universe_reason
+            elif route_filter_enabled and aggregate_tca_reason in {
+                "fresh",
+                "execution_tca_slippage_guardrail_exceeded",
+            }:
+                tca_state = "pass"
+                tca_reason = route_universe_reason
+            elif not route_filter_enabled:
+                tca_state = "fail"
+                tca_reason = route_universe_reason
             if aggregate_tca_reason != "fresh":
                 tca_source_ref["aggregate_reason"] = aggregate_tca_reason
             _add_repair(
@@ -550,8 +587,7 @@ def build_profitability_proof_floor_receipt(
                 priority=78,
                 expected_unblock_value=max(
                     1,
-                    _int(symbol_routes.get("blocked_symbol_count"))
-                    + missing_symbol_count,
+                    excluded_symbol_count,
                 ),
             )
     if tca_state != "pass":
