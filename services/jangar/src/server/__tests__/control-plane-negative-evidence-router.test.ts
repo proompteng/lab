@@ -220,6 +220,10 @@ describe('negative evidence router', () => {
           consumer_evidence_status: 'current',
           consumer_evidence_fresh_until: '2026-05-06T10:31:00.000Z',
           consumer_evidence_reason_codes: ['forecast_registry_degraded', 'execution_tca_route_universe_incomplete'],
+          capital_reentry_cohort_ledger_id: 'capital-reentry-ledger:test',
+          capital_reentry_aggregate_state: 'repair',
+          capital_reentry_cohort_ids: ['capital-reentry-cohort:aapl'],
+          capital_reentry_blocking_reason_codes: ['forecast_registry_degraded'],
         },
       }),
     )
@@ -229,12 +233,27 @@ describe('negative evidence router', () => {
     expect(result.router.positive_evidence_refs).toContain('torghut-consumer-evidence:test')
     expect(paperCanary.decision).toBe('hold')
     expect(paperCanary.blocked_reasons).toEqual(
-      expect.arrayContaining(['forecast_registry_degraded', 'execution_tca_route_universe_incomplete']),
+      expect.arrayContaining([
+        'forecast_registry_degraded',
+        'execution_tca_route_universe_incomplete',
+        'capital_reentry_repair',
+      ]),
+    )
+    expect(paperCanary.evidence_refs).toEqual(
+      expect.arrayContaining([
+        'torghut-consumer-evidence:test',
+        'capital-reentry-ledger:test',
+        'capital-reentry-cohort:aapl',
+      ]),
     )
     expect(paperCanary.blocked_reasons).not.toContain('torghut_consumer_evidence_missing')
     expect(liveMicro.decision).toBe('block')
     expect(liveMicro.blocked_reasons).toEqual(
-      expect.arrayContaining(['forecast_registry_degraded', 'execution_tca_route_universe_incomplete']),
+      expect.arrayContaining([
+        'forecast_registry_degraded',
+        'execution_tca_route_universe_incomplete',
+        'capital_reentry_repair',
+      ]),
     )
   })
 

@@ -58,6 +58,21 @@ describe('control-plane Torghut consumer evidence', () => {
             max_notional: '0',
             reason_codes: ['forecast_registry_degraded', 'execution_tca_route_universe_incomplete'],
           },
+          capital_reentry_cohort_ledger: {
+            schema_version: 'torghut.capital-reentry-cohort-ledger.v1',
+            ledger_id: 'capital-reentry-ledger:test',
+            aggregate_state: 'repair',
+            aggregate_blocking_reason_codes: ['forecast_registry_degraded'],
+            cohorts: [
+              {
+                cohort_id: 'capital-reentry-cohort:aapl',
+                cohort_class: 'receipt_settlement',
+                current_state: 'repair',
+                blocking_reason_codes: ['forecast_registry_degraded'],
+                max_notional: '0',
+              },
+            ],
+          },
           market_context: {
             health: { status: 'healthy' },
           },
@@ -79,6 +94,9 @@ describe('control-plane Torghut consumer evidence', () => {
       image_digest: 'sha256:test',
       route_repair_value: 14,
       decision: 'repair',
+      capital_reentry_cohort_ledger_id: 'capital-reentry-ledger:test',
+      capital_reentry_aggregate_state: 'repair',
+      capital_reentry_cohort_ids: ['capital-reentry-cohort:aapl'],
       reason_codes: ['forecast_registry_degraded', 'execution_tca_route_universe_incomplete'],
     })
     expect(result.negativeEvidence).toMatchObject({
@@ -87,6 +105,10 @@ describe('control-plane Torghut consumer evidence', () => {
       consumer_evidence_receipt_id: 'torghut-route-proven-profit:test',
       consumer_evidence_status: 'current',
       consumer_evidence_reason_codes: ['forecast_registry_degraded', 'execution_tca_route_universe_incomplete'],
+      capital_reentry_cohort_ledger_id: 'capital-reentry-ledger:test',
+      capital_reentry_aggregate_state: 'repair',
+      capital_reentry_cohort_ids: ['capital-reentry-cohort:aapl'],
+      capital_reentry_blocking_reason_codes: ['forecast_registry_degraded'],
     })
   })
 

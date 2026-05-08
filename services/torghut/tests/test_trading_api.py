@@ -879,6 +879,16 @@ class TestTradingApi(TestCase):
             payload["consumer_evidence_canary"]["expected_schema"],
             "torghut.consumer-evidence-status.v1",
         )
+        ledger = payload["capital_reentry_cohort_ledger"]
+        self.assertEqual(
+            ledger["schema_version"],
+            "torghut.capital-reentry-cohort-ledger.v1",
+        )
+        self.assertEqual(
+            ledger["consumer_evidence_receipt_id"],
+            receipt["receipt_id"],
+        )
+        self.assertEqual(ledger["summary"]["zero_notional_cohort_count"], 5)
         dependency_fetch.assert_not_called()
         continuity_fetch.assert_not_called()
 
@@ -1220,6 +1230,22 @@ class TestTradingApi(TestCase):
                 "detail"
             ],
             "repair_only",
+        )
+        status_ledger = status_response.json()["capital_reentry_cohort_ledger"]
+        health_ledger = health_response.json()["capital_reentry_cohort_ledger"]
+        self.assertEqual(
+            status_ledger["schema_version"],
+            "torghut.capital-reentry-cohort-ledger.v1",
+        )
+        self.assertEqual(status_ledger["aggregate_state"], "repair")
+        self.assertEqual(status_ledger["summary"]["zero_notional_cohort_count"], 5)
+        self.assertEqual(
+            health_ledger["schema_version"], status_ledger["schema_version"]
+        )
+        self.assertTrue(
+            str(health_ledger["consumer_evidence_receipt_id"]).startswith(
+                "torghut-consumer-evidence:"
+            )
         )
 
     def test_trading_status_and_health_include_renewal_bond_profit_escrow(

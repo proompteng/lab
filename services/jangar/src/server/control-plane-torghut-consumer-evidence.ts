@@ -19,6 +19,9 @@ export type TorghutConsumerEvidenceStatus = {
   image_digest?: string | null
   route_repair_value?: number | null
   decision?: string | null
+  capital_reentry_cohort_ledger_id?: string | null
+  capital_reentry_aggregate_state?: string | null
+  capital_reentry_cohort_ids?: string[]
   reason_codes: string[]
   message: string
 }
@@ -271,6 +274,19 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   const liveReadinessState = normalizeNonEmpty(receipt.live_readiness_state)
   const readyzStatusCode = normalizeNonEmpty(asRecord(payload.readiness)?.status_code)
   const marketContext = readMarketContext(payload)
+  const cohortLedger = asRecord(payload.capital_reentry_cohort_ledger)
+  const cohortRows = Array.isArray(cohortLedger?.cohorts)
+    ? cohortLedger.cohorts
+        .map((cohort) => asRecord(cohort))
+        .filter((cohort): cohort is Record<string, unknown> => Boolean(cohort))
+    : []
+  const capitalReentryCohortIds = uniqueStrings(cohortRows.map((cohort) => normalizeNonEmpty(cohort.cohort_id)))
+  const capitalReentryReasonCodes = uniqueStrings([
+    ...stringList(cohortLedger?.aggregate_blocking_reason_codes),
+    ...cohortRows.flatMap((cohort) => stringList(cohort.blocking_reason_codes)),
+  ])
+  const capitalReentryAggregateState = normalizeNonEmpty(cohortLedger?.aggregate_state)
+  const capitalReentryLedgerId = normalizeNonEmpty(cohortLedger?.ledger_id)
 
   return {
     status: {
@@ -288,6 +304,9 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       image_digest: normalizeNonEmpty(receipt.image_digest),
       route_repair_value: parseNumber(normalizeNonEmpty(receipt.route_repair_value)),
       decision: normalizeNonEmpty(receipt.decision),
+      capital_reentry_cohort_ledger_id: capitalReentryLedgerId,
+      capital_reentry_aggregate_state: capitalReentryAggregateState,
+      capital_reentry_cohort_ids: capitalReentryCohortIds,
       reason_codes: reasonCodes,
       message:
         status === 'current'
@@ -306,6 +325,10 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       consumer_evidence_status: status,
       consumer_evidence_fresh_until: freshUntil,
       consumer_evidence_reason_codes: reasonCodes,
+      capital_reentry_cohort_ledger_id: capitalReentryLedgerId,
+      capital_reentry_aggregate_state: capitalReentryAggregateState,
+      capital_reentry_cohort_ids: capitalReentryCohortIds,
+      capital_reentry_blocking_reason_codes: capitalReentryReasonCodes,
     },
   }
 }
