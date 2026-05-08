@@ -80,6 +80,7 @@ import {
   parseDurationToMs,
   parseTimeOrNull,
   requirementIdForSignal,
+  resolveConsecutiveFailureFreezeReason,
   resolveLatestSuccessfulRunTime,
   resolveStageApiVersion,
   resolveStageEvery,
@@ -2089,8 +2090,9 @@ const reconcileSwarm = async (
   if (!freezeActive) {
     consecutiveFailures = countConsecutiveFailures(recentImplementRuns)
     const failureRunSummary = collectRecentFailureRuns(recentImplementRuns)
-    if (consecutiveFailures >= freezeAfterFailures) {
-      freezeTriggerReasons.push('ConsecutiveFailures')
+    const failureFreezeReason = resolveConsecutiveFailureFreezeReason(recentImplementRuns, freezeAfterFailures)
+    if (failureFreezeReason) {
+      freezeTriggerReasons.push(failureFreezeReason)
     } else {
       if (failureRunSummary.length > 0) {
         console.info('[jangar] swarm freeze check', {

@@ -1,5 +1,6 @@
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import { PROVIDER_CAPACITY_EXHAUSTED_REASON } from '~/server/agents-controller/provider-capacity'
 import { hashNameSuffix, makeHashedName } from '~/server/supporting-primitives-naming'
 import {
   deriveStageStaggerMinute,
@@ -178,6 +179,58 @@ export const countConsecutiveFailures = (resources: Record<string, unknown>[]) =
     if (TERMINAL_SUCCESS_PHASES.has(phase) || ACTIVE_PHASES.has(phase)) break
   }
   return failures
+}
+
+export const isProviderCapacityFailureRun = (resource: Record<string, unknown>) => {
+  const conditionValues = (
+    Array.isArray(readNested(resource, ['status', 'conditions']))
+      ? (readNested(resource, ['status', 'conditions']) as unknown[])
+      : []
+  ).flatMap((condition) => {
+    const record = asRecord(condition)
+    return [record?.reason, record?.message]
+  })
+  const stepValues = (
+    Array.isArray(readNested(resource, ['status', 'workflow', 'steps']))
+      ? (readNested(resource, ['status', 'workflow', 'steps']) as unknown[])
+      : []
+  ).flatMap((step) => {
+    const record = asRecord(step)
+    return [record?.reason, record?.message]
+  })
+  const candidates = [
+    readNested(resource, ['status', 'reason']),
+    readNested(resource, ['status', 'message']),
+    ...conditionValues,
+    ...stepValues,
+  ]
+  return candidates.some((candidate) => {
+    const value = asString(candidate)
+    return value === PROVIDER_CAPACITY_EXHAUSTED_REASON || value?.includes(PROVIDER_CAPACITY_EXHAUSTED_REASON)
+  })
+}
+
+export const countConsecutiveProviderCapacityFailures = (resources: Record<string, unknown>[]) => {
+  const sorted = sortByMostRecentRun(resources)
+  let failures = 0
+  for (const resource of sorted) {
+    if (isIdempotencyDuplicateRun(resource)) continue
+    const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
+    if (!phase) continue
+    if (TERMINAL_FAILURE_PHASES.has(phase)) {
+      if (!isProviderCapacityFailureRun(resource)) break
+      failures += 1
+      continue
+    }
+    if (TERMINAL_SUCCESS_PHASES.has(phase) || ACTIVE_PHASES.has(phase)) break
+  }
+  return failures
+}
+
+export const resolveConsecutiveFailureFreezeReason = (resources: Record<string, unknown>[], threshold: number) => {
+  if (countConsecutiveProviderCapacityFailures(resources) >= threshold) return 'ProviderCapacityExhausted'
+  if (countConsecutiveFailures(resources) >= threshold) return 'ConsecutiveFailures'
+  return null
 }
 
 export const countIdempotencyDuplicates = (resources: Record<string, unknown>[]) => {
