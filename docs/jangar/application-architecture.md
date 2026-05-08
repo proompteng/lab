@@ -82,18 +82,25 @@ until they are decomposed further.
 
 ## Current control-plane decision contract
 
-The current architecture priority is evidence-quality admission on top of resource-pressure escrow, failure-debt
-clearance, and source-heartbeat witness settlement. Final verdicts remain the consumer surface, but they must now carry
-explicit evidence before they are treated as durable admission: metric quality, market-context risk flags, schedule
-runner route outcomes, runner QoS and ephemeral-storage budgets, source or GitOps revision truth, rollout truth,
-controller heartbeat truth, AgentRun ingestion truth, terminal evidence carry, and Torghut consumer proof. Serving
-readiness, route health, rollout health, watch reliability, bounded summary reads, and database freshness can stay
-green while evidence quality is dirty, runner resource pressure is dirty, source truth is missing, AgentRun ingestion
-is unknown, or a material verdict still sees stale controller authority. That disagreement is witness variance, not a
-reason to widen dispatch or Torghut capital.
+The current architecture priority is attested action custody on top of controller-witness carry, failure-debt maturity,
+stage clearance, evidence settlement, evidence-quality admission, resource-pressure escrow, and source-heartbeat witness
+settlement. Final verdicts remain an input, but action custody is the consumer surface for scheduler, deployer,
+validator, and Torghut capital decisions. A custody receipt must carry explicit evidence before it is treated as durable
+admission: metric quality, market-context risk flags, schedule runner route outcomes, runner QoS and ephemeral-storage
+budgets, source or GitOps revision truth, rollout truth, controller heartbeat truth, AgentRun ingestion truth, terminal
+evidence carry, failure-debt maturity, Torghut consumer proof, and profit-window custody. Serving readiness, route
+health, rollout health, watch reliability, bounded summary reads, and database freshness can stay green while evidence
+quality is dirty, runner resource pressure is dirty, source truth is missing, AgentRun ingestion is unknown, retained
+failure debt is not yet retired, Torghut profit windows are underfunded, or a material verdict still sees stale
+controller authority. That disagreement is witness variance, not a reason to widen dispatch, claim merge readiness, or
+spend Torghut capital.
 
 Current source-of-truth design:
 
+- `docs/agents/designs/183-jangar-attested-action-custody-and-profit-window-admission-2026-05-08.md`
+- `docs/torghut/design-system/v6/187-torghut-profit-window-custody-and-repair-value-market-2026-05-08.md`
+- `docs/agents/designs/182-jangar-controller-witness-carry-and-failure-debt-maturity-2026-05-08.md`
+- `docs/torghut/design-system/v6/186-torghut-proof-lease-repair-market-and-capital-hold-2026-05-08.md`
 - `docs/agents/designs/177-jangar-evidence-quality-admission-ledger-and-degradation-backpressure-2026-05-08.md`
 - `docs/torghut/design-system/v6/181-torghut-quality-adjusted-profit-frontier-and-hypothesis-escrow-2026-05-08.md`
 - `docs/agents/designs/176-jangar-resource-pressure-escrow-and-runner-qos-gates-2026-05-08.md`
@@ -123,12 +130,13 @@ Current source-of-truth design:
 
 The immediate invariant is that serving readiness, rollout availability, a route-level controller heartbeat, direct SQL
 heartbeat freshness, an action clock `allow`, a successful retry, or fresh quant metrics cannot upgrade a stricter
-resource-pressure escrow, source-heartbeat witness bond, launch cohort, source provenance lease, heartbeat stability
-receipt, run-settlement watermark, terminal evidence half-life ledger, ready-action packet, Torghut repair-yield gate,
-or Torghut promotion-custody packet. In the current live state, BestEffort runner evidence, missing ephemeral-storage
-budgets, node eviction debt, full-status latency timeouts, missing source or GitOps revision truth, AgentRun ingestion
-unknowns, retained failed runner pods, failed jobs, retry-only schedule successes, stale database statistics, oversized
-quant proof carry, stale market-context domains, routeability debt, and missing promotion evidence must keep normal
+controller-witness carry receipt, failure-debt maturity state, resource-pressure escrow, source-heartbeat witness bond,
+launch cohort, source provenance lease, heartbeat stability receipt, run-settlement watermark, terminal evidence
+half-life ledger, ready-action packet, Torghut repair-yield gate, proof-lease repair bid, or Torghut promotion-custody
+packet. In the current live state, BestEffort runner evidence, missing ephemeral-storage budgets, node eviction debt,
+full-status latency timeouts, missing source or GitOps revision truth, AgentRun ingestion unknowns, retained failed
+runner pods, failed jobs, retry-only schedule successes, stale database statistics, oversized quant proof carry, stale
+market-context domains, routeability debt, missing proof leases, and missing promotion evidence must keep normal
 dispatch, deploy widening, merge readiness, paper canary, and live capital inside explicit hold or observe-only
 decisions until action-specific proof arrives.
 
@@ -178,6 +186,8 @@ Current operational docs:
 
 Historical or design context docs:
 
+- `docs/agents/designs/182-jangar-controller-witness-carry-and-failure-debt-maturity-2026-05-08.md`
+- `docs/torghut/design-system/v6/186-torghut-proof-lease-repair-market-and-capital-hold-2026-05-08.md`
 - `docs/jangar/current-state.md`
 - `docs/agents/designs/176-jangar-resource-pressure-escrow-and-runner-qos-gates-2026-05-08.md`
 - `docs/torghut/design-system/v6/180-torghut-resource-priced-evidence-frontier-and-context-spend-escrow-2026-05-08.md`

@@ -4,6 +4,14 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/187-torghut-profit-window-custody-and-repair-value-market-2026-05-08.md`
+  (current profit-window custody and repair-value market contract)
+- `docs/agents/designs/183-jangar-attested-action-custody-and-profit-window-admission-2026-05-08.md`
+  (current Jangar action-custody and profit-window admission contract)
+- `docs/torghut/design-system/v6/186-torghut-proof-lease-repair-market-and-capital-hold-2026-05-08.md`
+  (current proof-lease repair market and capital-hold contract)
+- `docs/agents/designs/182-jangar-controller-witness-carry-and-failure-debt-maturity-2026-05-08.md`
+  (current Jangar controller-witness carry and failure-debt maturity contract)
 - `docs/torghut/design-system/v6/184-torghut-profit-signal-quorum-and-context-routability-handoff-2026-05-08.md`
   (current profit-signal quorum and Jangar stage-clearance handoff contract)
 - `docs/agents/designs/180-jangar-stage-clearance-exchange-and-scheduler-routability-contract-2026-05-08.md`

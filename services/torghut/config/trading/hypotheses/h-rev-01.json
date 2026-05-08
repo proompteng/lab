@@ -13,10 +13,7 @@
   "min_sample_count_for_live_canary": 30,
   "min_sample_count_for_scale_up": 60,
   "max_rolling_drawdown_bps": "120",
-  "rollback_triggers": [
-    "market_context_stale",
-    "post_cost_expectancy_non_positive"
-  ],
+  "rollback_triggers": ["market_context_stale", "post_cost_expectancy_non_positive"],
   "promotion_gates": [
     "market_context_fresh",
     "fresh_signal_continuity",

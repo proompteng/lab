@@ -8,10 +8,18 @@
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM
   reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-08T08:27Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-08T16:10Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-08T12:20Z`):
+- Evidence (current next-work priority, refreshed `2026-05-08T16:40Z`):
+  - `187-torghut-profit-window-custody-and-repair-value-market-2026-05-08.md`
+  - `docs/agents/designs/183-jangar-attested-action-custody-and-profit-window-admission-2026-05-08.md`
+  - `186-torghut-routeability-acceptance-cutover-and-fill-quality-loop-2026-05-08.md`
+  - `docs/agents/designs/182-jangar-routeability-cutover-backpressure-and-proof-run-admission-2026-05-08.md`
+  - `185-torghut-routeability-repair-acceptance-ledger-2026-05-08.md`
+  - `docs/agents/designs/181-jangar-proof-production-debt-and-routeability-admission-2026-05-08.md`
+  - `186-torghut-proof-lease-repair-market-and-capital-hold-2026-05-08.md`
+  - `docs/agents/designs/182-jangar-controller-witness-carry-and-failure-debt-maturity-2026-05-08.md`
   - `184-torghut-profit-frontier-reclocking-and-capital-reentry-guardrails-2026-05-08.md`
   - `docs/agents/designs/180-jangar-evidence-settlement-reclocking-and-profit-gated-rollouts-2026-05-08.md`
   - `184-torghut-profit-signal-quorum-and-context-routability-handoff-2026-05-08.md`
@@ -1067,3 +1075,11 @@ This pack is positioned as the next architecture layer above:
   is current, quant latest metrics exist, but scoped pipeline stages and market-context domains are stale or missing.
   It defines the acceptance ledger that lets zero-notional repair work retire value-gate debt while preventing routeable
   candidate or capital claims until receipts settle and Jangar admission is current.
+- `186-torghut-routeability-acceptance-cutover-and-fill-quality-loop-2026-05-08.md` follows the routeability acceptance
+  ledger because the `2026-05-08T16:12Z` refresh shows the production cutover has not happened yet. Torghut revision
+  `00311` is serving, Argo reports the relevant apps healthy, and the database contract is current at
+  `0030_evidence_epochs`, but live status, revenue repair, and consumer evidence still expose
+  `routeability_acceptance_ledger=null`, routeable candidates remain `0`, market context is degraded by stale news,
+  scoped quant evidence can still lag or disappear by sample, and TCA is historical with no samples for several
+  symbols. The contract makes the acceptance ledger a production payload requirement, ties every accepted lot to
+  current fill-quality proof, and keeps paper/live capital closed until the cutover packet passes all value gates.
