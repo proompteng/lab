@@ -987,6 +987,9 @@ class TestTradingApi(TestCase):
                 {"strategy-1|exit_only_sell_without_long_position": 4},
             )
             self.assertTrue(payload["simple_lane_status"]["enabled"])
+            self.assertTrue(
+                payload["simple_lane_status"]["route_symbol_filter_enabled"]
+            )
             self.assertEqual(
                 payload["simple_lane_status"]["allowed_reject_reasons"][0],
                 "broker_precheck_failed",
