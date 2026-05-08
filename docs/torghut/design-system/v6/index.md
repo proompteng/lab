@@ -12,6 +12,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority, refreshed `2026-05-08T03:31Z`):
+  - `182-torghut-route-proven-profit-receipts-and-consumer-evidence-canary-2026-05-08.md`
+  - `docs/agents/designs/178-jangar-source-serving-parity-escrow-and-route-independent-launch-passports-2026-05-08.md`
   - `181-torghut-quality-adjusted-profit-frontier-and-hypothesis-escrow-2026-05-08.md`
   - `docs/agents/designs/177-jangar-evidence-quality-admission-ledger-and-degradation-backpressure-2026-05-08.md`
   - `180-torghut-resource-priced-evidence-frontier-and-context-spend-escrow-2026-05-08.md`
