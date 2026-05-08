@@ -13,8 +13,10 @@ from app.trading.hypotheses import (
     _JANGAR_QUORUM_CACHE,
     JangarDependencyQuorumStatus,
     compile_hypothesis_runtime_statuses,
+    hypothesis_registry_requires_dependency_capability,
     load_hypothesis_registry,
     load_jangar_dependency_quorum,
+    resolve_hypothesis_dependency_quorum,
     summarize_hypothesis_runtime_statuses,
 )
 
@@ -437,7 +439,7 @@ class TestHypothesisReadiness(TestCase):
         self.assertEqual(summary["state_totals"], {"blocked": 1, "shadow": 2})
         self.assertEqual(summary["capital_stage_totals"], {"shadow": 3})
         self.assertEqual(summary["promotion_eligible_total"], 0)
-        self.assertEqual(summary["rollback_required_total"], 3)
+        self.assertEqual(summary["rollback_required_total"], 0)
         self.assertEqual(
             summary["dependency_quorum"],
             {
@@ -476,6 +478,89 @@ class TestHypothesisReadiness(TestCase):
         self.assertEqual(result.items, [])
         self.assertEqual(len(result.errors), 1)
         self.assertIn("duplicate hypothesis_id H-CONT-01", result.errors[0])
+
+    def test_default_hypothesis_registry_self_governs_without_jangar_quorum(
+        self,
+    ) -> None:
+        settings.trading_jangar_control_plane_status_url = (
+            "https://jangar.example/status"
+        )
+        settings.trading_jangar_control_plane_cache_ttl_seconds = 0
+        registry = load_hypothesis_registry()
+
+        self.assertTrue(registry.loaded)
+        self.assertFalse(
+            hypothesis_registry_requires_dependency_capability(
+                registry,
+                "jangar_dependency_quorum",
+            )
+        )
+        with patch("app.trading.hypotheses.urlopen") as urlopen_mock:
+            status = resolve_hypothesis_dependency_quorum(registry)
+
+        urlopen_mock.assert_not_called()
+        self.assertEqual(status.decision, "allow")
+        self.assertEqual(status.reasons, ["jangar_dependency_quorum_not_required"])
+
+    def test_hypothesis_registry_dependency_check_rejects_blank_capability(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+
+        self.assertFalse(
+            hypothesis_registry_requires_dependency_capability(registry, "")
+        )
+
+    def test_resolve_hypothesis_dependency_quorum_fetches_when_manifest_requires_it(
+        self,
+    ) -> None:
+        settings.trading_jangar_control_plane_status_url = (
+            "https://jangar.example/status"
+        )
+        settings.trading_jangar_control_plane_cache_ttl_seconds = 0
+        settings.trading_jangar_control_plane_timeout_seconds = 1.0
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "h-cont-01.json").write_text(
+                json.dumps(
+                    _hypothesis_manifest_payload(
+                        hypothesis_id="H-CONT-01",
+                        lane_id="continuation",
+                        strategy_family="intraday_continuation",
+                        required_dependency_capabilities=[
+                            "jangar_dependency_quorum",
+                            "signal_continuity",
+                        ],
+                    )
+                ),
+                encoding="utf-8",
+            )
+            settings.trading_hypothesis_registry_path = str(root)
+            registry = load_hypothesis_registry()
+
+        self.assertTrue(
+            hypothesis_registry_requires_dependency_capability(
+                registry,
+                "jangar_dependency_quorum",
+            )
+        )
+        with patch(
+            "app.trading.hypotheses.urlopen",
+            return_value=_FakeHttpResponse(
+                {
+                    "dependency_quorum": {
+                        "decision": "delay",
+                        "reasons": ["workflow_backoff_warning"],
+                        "message": "degraded",
+                    }
+                }
+            ),
+        ) as urlopen_mock:
+            status = resolve_hypothesis_dependency_quorum(registry)
+
+        urlopen_mock.assert_called_once()
+        self.assertEqual(status.decision, "delay")
+        self.assertEqual(status.reasons, ["workflow_backoff_warning"])
 
     def test_load_jangar_dependency_quorum_prefers_dependency_quorum_contract(
         self,

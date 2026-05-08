@@ -79,8 +79,9 @@ from .trading.forecast_runtime import forecast_status
 from .trading.hypotheses import (
     JangarDependencyQuorumStatus,
     compile_hypothesis_runtime_statuses,
+    hypothesis_registry_requires_dependency_capability,
     load_hypothesis_registry,
-    load_jangar_dependency_quorum,
+    resolve_hypothesis_dependency_quorum,
     summarize_hypothesis_runtime_statuses,
     validate_hypothesis_registry_from_settings,
 )
@@ -575,8 +576,6 @@ def _evaluate_trading_health_payload(
     if scheduler is None:
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
-    dependency_quorum = load_jangar_dependency_quorum()
-
     scheduler_ok = True
     scheduler_detail = "ok"
 
@@ -639,6 +638,11 @@ def _evaluate_trading_health_payload(
     tca_summary: dict[str, object] = {}
     market_context_status = scheduler.market_context_status()
     _hypothesis_payload: Mapping[str, object] = {}
+    _dependency_quorum = JangarDependencyQuorumStatus(
+        decision="unknown",
+        reasons=["alpha_readiness_not_evaluated"],
+        message="alpha readiness not evaluated",
+    )
     try:
         with SessionLocal() as session:
             tca_summary = _load_tca_summary(session, scheduler=scheduler)
@@ -647,7 +651,6 @@ def _evaluate_trading_health_payload(
                 scheduler,
                 tca_summary=tca_summary,
                 market_context_status=market_context_status,
-                dependency_quorum=dependency_quorum,
             )
         )
         alpha_readiness = {
@@ -673,6 +676,11 @@ def _evaluate_trading_health_payload(
                 "message": str(exc),
             },
         }
+        _dependency_quorum = JangarDependencyQuorumStatus(
+            decision="unknown",
+            reasons=["alpha_readiness_unavailable"],
+            message=str(exc),
+        )
         hypothesis_summary = {}
 
     llm_status = scheduler.llm_status()
@@ -707,7 +715,7 @@ def _evaluate_trading_health_payload(
     renewal_bond_profit_escrow = _build_renewal_bond_profit_escrow_payload(
         state=scheduler.state,
         torghut_revision=BUILD_COMMIT,
-        dependency_quorum=dependency_quorum.as_payload(),
+        dependency_quorum=_dependency_quorum.as_payload(),
         live_submission_gate=live_submission_gate,
         proof_floor=proof_floor,
         hypothesis_payload=_hypothesis_payload,
@@ -722,7 +730,7 @@ def _evaluate_trading_health_payload(
     )
     capital_replay_projection = _build_capital_replay_projection_payload(
         torghut_revision=BUILD_COMMIT,
-        dependency_quorum=dependency_quorum.as_payload(),
+        dependency_quorum=_dependency_quorum.as_payload(),
         live_submission_gate=live_submission_gate,
         proof_floor=proof_floor,
         route_reacquisition_board=route_reacquisition_board,
@@ -1836,7 +1844,6 @@ def trading_status() -> dict[str, object]:
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
     state = scheduler.state
-    hypothesis_dependency_quorum = load_jangar_dependency_quorum()
     active_simulation_context = active_simulation_runtime_context()
     empirical_jobs = _empirical_jobs_status()
     quant_evidence = load_quant_evidence_status(
@@ -1853,7 +1860,6 @@ def trading_status() -> dict[str, object]:
             scheduler,
             tca_summary=tca_summary,
             market_context_status=market_context_status,
-            dependency_quorum=hypothesis_dependency_quorum,
         )
     )
     shadow_first_runtime = _build_shadow_first_runtime_payload(
@@ -2197,7 +2203,6 @@ def trading_metrics(session: Session = Depends(get_session)) -> dict[str, object
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
-    hypothesis_dependency_quorum = load_jangar_dependency_quorum()
     market_context_status = scheduler.market_context_status()
     tca_summary = _load_tca_summary(session, scheduler=scheduler)
     _hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
@@ -2205,7 +2210,6 @@ def trading_metrics(session: Session = Depends(get_session)) -> dict[str, object
             scheduler,
             tca_summary=tca_summary,
             market_context_status=market_context_status,
-            dependency_quorum=hypothesis_dependency_quorum,
         )
     )
     shadow_first_runtime = _build_shadow_first_runtime_payload(
@@ -2459,7 +2463,9 @@ def _build_current_evidence_epoch(
 
     receipts.append(
         build_jangar_authority_receipt(
-            quorum_payload=load_jangar_dependency_quorum().as_payload(),
+            quorum_payload=resolve_hypothesis_dependency_quorum(
+                load_hypothesis_registry()
+            ).as_payload(),
             observed_at=observed_at,
         )
     )
@@ -2706,7 +2712,6 @@ def prometheus_metrics(session: Session = Depends(get_session)) -> Response:
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
-    hypothesis_dependency_quorum = load_jangar_dependency_quorum()
     market_context_status = scheduler.market_context_status()
     shorting_metadata_status = scheduler.shorting_metadata_status()
     rejection_alert_status = scheduler.rejection_alert_status()
@@ -2716,7 +2721,6 @@ def prometheus_metrics(session: Session = Depends(get_session)) -> Response:
             scheduler,
             tca_summary=tca_summary,
             market_context_status=market_context_status,
-            dependency_quorum=hypothesis_dependency_quorum,
         )
     )
     payload = render_trading_metrics(
@@ -2862,7 +2866,6 @@ def trading_runtime_profitability(
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
 
-    dependency_quorum = load_jangar_dependency_quorum()
     empirical_jobs = _empirical_jobs_status()
     quant_evidence = load_quant_evidence_status(
         account_label=settings.trading_account_label,
@@ -2888,7 +2891,6 @@ def trading_runtime_profitability(
             scheduler,
             tca_summary=tca_summary,
             market_context_status=market_context_status,
-            dependency_quorum=dependency_quorum,
         )
     )
     live_submission_gate = _build_live_submission_gate_payload(
@@ -3570,7 +3572,7 @@ def _build_hypothesis_runtime_payload(
 ) -> tuple[dict[str, object], dict[str, object], JangarDependencyQuorumStatus]:
     registry = load_hypothesis_registry()
     if dependency_quorum is None:
-        dependency_quorum = load_jangar_dependency_quorum()
+        dependency_quorum = resolve_hypothesis_dependency_quorum(registry)
     items = compile_hypothesis_runtime_statuses(
         registry=registry,
         state=scheduler.state,
@@ -3707,6 +3709,7 @@ def _build_simple_lane_status_payload() -> dict[str, object]:
         "order_feed_telemetry_enabled": (
             settings.trading_simple_order_feed_telemetry_enabled
         ),
+        "route_symbol_filter_enabled": settings.trading_pipeline_mode == "simple",
         "max_notional_per_order": settings.trading_simple_max_notional_per_order,
         "max_notional_per_symbol": settings.trading_simple_max_notional_per_symbol,
         "allowed_reject_reasons": sorted(_SIMPLE_LANE_ALLOWED_REJECT_REASONS),
@@ -3789,9 +3792,7 @@ def _build_route_reacquisition_board_payload(
             proof_floor.get("route_reacquisition_book"),
         ),
         active_revision=active_revision,
-        jangar_continuity=load_jangar_route_continuity_packet(
-            action_class="paper_canary",
-        ),
+        jangar_continuity=_route_continuity_packet_for_proof_floor(proof_floor),
     )
 
 
@@ -3843,7 +3844,7 @@ def _build_capital_replay_projection_payload(
 def _build_autonomy_capital_replay_projection(
     scheduler: TradingScheduler,
 ) -> dict[str, object]:
-    dependency_quorum = load_jangar_dependency_quorum()
+    dependency_quorum = resolve_hypothesis_dependency_quorum(load_hypothesis_registry())
     try:
         empirical_jobs = _empirical_jobs_status()
         quant_evidence = load_quant_evidence_status(
@@ -3919,6 +3920,32 @@ def _build_autonomy_capital_replay_projection(
                 dependency_quorum.as_payload()
             ),
         )
+
+
+def _route_continuity_packet_for_proof_floor(
+    proof_floor: Mapping[str, Any],
+) -> dict[str, object]:
+    registry = load_hypothesis_registry()
+    if hypothesis_registry_requires_dependency_capability(
+        registry,
+        "jangar_dependency_quorum",
+    ):
+        return load_jangar_route_continuity_packet(action_class="paper_canary")
+
+    continuity_ref = (
+        str(proof_floor.get("generated_at") or "").strip()
+        or str(proof_floor.get("torghut_revision") or "").strip()
+        or "unknown"
+    )
+    return {
+        "epoch_id": f"torghut-self-continuity:{continuity_ref}",
+        "state": "present",
+        "decision": "allow",
+        "fresh_until": proof_floor.get("fresh_until"),
+        "blocking_reasons": [],
+        "source": "torghut_hypothesis_registry",
+        "action_class": "paper_canary",
+    }
 
 
 def _simple_lane_reject_reason_totals(state: object) -> dict[str, int]:

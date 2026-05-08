@@ -164,3 +164,61 @@ superseded #6002 `torghut-ci` run in favor of #6005, and the Torghut apps are sy
   large-diff gate.
 - Continue normal post-release watch on market-context AgentRuns, Torghut/Jangar continuity route signals, Jangar logs,
   and readiness signals for the promoted `9e7b87d8` image.
+
+## Later gate refresh - 2026-05-08T05:59Z
+
+Governing runtime requirement: `docs/agents/designs/146-jangar-repair-warrant-exchange-and-schedule-debt-firebreak-2026-05-07.md`
+requires observe-mode repair warrants to stay zero-notional, fresh, and non-capital-authorizing until closure evidence is
+present. I used that contract to keep #5889 selected as the remaining direct Jangar control-plane PR, but not mergeable
+without the large-diff review gate.
+
+- #5889 `feat(jangar): add repair warrant exchange`
+  - Head: `306c069941bcbddb6e21b6f42591d14503272e9f`.
+  - Mergeability: `CLEAN` / `MERGEABLE`.
+  - Diff: 18 files, 1,591 additions, 48 deletions, 1,639 total changed lines.
+  - Checks: pass or skipped only, including `agents-ci / integration` in 12m01s,
+    `jangar-ci / lint-and-typecheck`, `agents-ci / validate`, semantic title, semantic commits, and changed-file
+    checks.
+  - Comments: no unresolved review threads returned by GraphQL; no posted Codex review exists.
+  - Merge decision: no-go. The PR exceeds the 1,000-line threshold and repeated `@codex review` requests for the
+    current and prior heads received the Codex usage-limit response instead of a review.
+  - Progress comment refreshed at https://github.com/proompteng/lab/pull/5889#issuecomment-4398288855.
+- Current live GitOps health after main advanced to `afda308ea5af1658d173d2b3d2dbd014519be6e5`:
+  - `argocd/jangar`: `Synced`, `Healthy`, operation `Succeeded`, revision
+    `afda308ea5af1658d173d2b3d2dbd014519be6e5`.
+  - `argocd/agents`: `Synced`, `Healthy`, operation `Succeeded`, revision
+    `afda308ea5af1658d173d2b3d2dbd014519be6e5`.
+  - `argocd/symphony-jangar`: `Synced`, `Healthy`, operation `Succeeded`, revision
+    `ce7dd3a8158d1085c74e8d1bf6116e62110a6b50`.
+  - `argocd/agents-ci`: `Synced`, `Healthy`, operation `Succeeded`, revision
+    `ce7dd3a8158d1085c74e8d1bf6116e62110a6b50`.
+  - Rollout status succeeded for `deployment/jangar`, `deployment/agents`, `deployment/agents-controllers`, and
+    `deployment/symphony-jangar`.
+  - Active images: `deployment/jangar` and `deployment/agents-controllers` are on
+    `registry.ide-newton.ts.net/lab/jangar:03eea88e@sha256:30c7b317810bcbc543757ec08f55f3f6b0abf907bb2fad0e950cde7bac924862`;
+    `deployment/agents` is on
+    `registry.ide-newton.ts.net/lab/jangar-control-plane:03eea88e@sha256:94aaf5282dab1183e176885d345806d855d09e4ad7e9197dc3347864a4dcd64a`.
+  - Recent Jangar/Agents warnings were rollout-start readiness and liveness probes that cleared after the new pods
+    became ready; recurring `elasticsearch-master-pdb` `NoPods` events are unrelated to the Jangar rollout gate.
+- Runtime/business metric evidence:
+  - `failed_agentrun_rate`: Jangar control-plane AgentRuns created since 2026-05-08T00:00Z show 20 total, 17
+    succeeded, 0 failed, and 3 running at the observation point. Historical Jangar control-plane AgentRuns in the
+    namespace show 210 total, 200 succeeded, 7 failed, and 3 running.
+  - `ready_status_truth`: Argo, rollout status, pod readiness, and active images agree for the deployed control-plane
+    state.
+  - `manual_intervention_count`: zero production workload mutations were made from the local shell; validation was
+    read-only cluster inspection plus local kubeconfig context setup.
+  - `pr_to_rollout_latency`: no new Jangar PR merged in this refresh because #5889 is held by the mandatory review
+    gate, so the smallest blocker preventing improvement is Codex review capacity or an explicit maintainer waiver.
+  - `handoff_evidence_quality`: PR checks, review blocker, Argo status, rollout status, image digests, events, and
+    AgentRun counts are recorded here and in `/workspace/.agentrun/swarm/jangar-control-plane-verify.md`.
+- Rollback path:
+  - #5889 has no runtime rollback because it was not merged.
+  - For the currently deployed Jangar image, use a normal GitOps revert PR for #6045 to restore the previous
+    `9b1bc3dc` image, then revert #6043/#6039 if the mission-contract runtime slice is implicated.
+  - Do not mutate production workloads directly from a local shell.
+- Next action:
+  - Keep #5889 held until an actual Codex review posts for `306c069941bcbddb6e21b6f42591d14503272e9f` and all review
+    threads are resolved, or a maintainer explicitly waives the large-diff gate.
+  - If #5889 is rebased or changed, rerun the smallest relevant local Jangar validation plus hosted PR checks before
+    any merge decision.

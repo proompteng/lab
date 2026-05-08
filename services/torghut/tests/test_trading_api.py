@@ -27,9 +27,9 @@ from app.main import (
     healthz,
     _readiness_dependency_cache_key,
     _readiness_dependency_checks,
+    _route_continuity_packet_for_proof_floor,
     app,
 )
-from app.trading.hypotheses import JangarDependencyQuorumStatus
 from app.trading.scheduler import TradingScheduler
 from app.trading.completion import (
     DOC29_SIMULATION_FULL_DAY_GATE,
@@ -748,16 +748,10 @@ class TestTradingApi(TestCase):
             latest_created_at,
         )
 
-    def test_trading_status_loads_dependency_quorum_before_db_reads(self) -> None:
+    def test_trading_status_does_not_fetch_jangar_dependency_for_self_governed_registry(
+        self,
+    ) -> None:
         call_order: list[str] = []
-
-        def _load_dependency_quorum() -> JangarDependencyQuorumStatus:
-            call_order.append("dependency_quorum")
-            return JangarDependencyQuorumStatus(
-                decision="unknown",
-                reasons=["not_configured"],
-                message="not configured",
-            )
 
         def _load_llm_evaluation(_session: Session) -> dict[str, object]:
             call_order.append("llm_evaluation")
@@ -768,10 +762,7 @@ class TestTradingApi(TestCase):
             return {}
 
         with (
-            patch(
-                "app.main.load_jangar_dependency_quorum",
-                side_effect=_load_dependency_quorum,
-            ),
+            patch("app.trading.hypotheses.urlopen") as jangar_status_fetch,
             patch("app.main._load_llm_evaluation", side_effect=_load_llm_evaluation),
             patch("app.main._load_tca_summary", side_effect=_load_tca),
             patch("app.main.SessionLocal", self.session_local),
@@ -779,11 +770,9 @@ class TestTradingApi(TestCase):
             response = self.client.get("/trading/status")
 
         self.assertEqual(response.status_code, 200)
-        self.assertLess(
-            call_order.index("dependency_quorum"),
-            call_order.index("llm_evaluation"),
-        )
-        self.assertLess(call_order.index("dependency_quorum"), call_order.index("tca"))
+        self.assertIn("llm_evaluation", call_order)
+        self.assertIn("tca", call_order)
+        jangar_status_fetch.assert_not_called()
 
     def test_trading_consumer_evidence_avoids_recursive_jangar_status_fetch(
         self,
@@ -808,7 +797,7 @@ class TestTradingApi(TestCase):
         }
 
         with (
-            patch("app.main.load_jangar_dependency_quorum") as dependency_fetch,
+            patch("app.main.resolve_hypothesis_dependency_quorum") as dependency_fetch,
             patch("app.main.load_jangar_route_continuity_packet") as continuity_fetch,
             patch(
                 "app.main._forecast_service_status",
@@ -866,6 +855,34 @@ class TestTradingApi(TestCase):
         self.assertIn("simple_submit_disabled", receipt["reason_codes"])
         dependency_fetch.assert_not_called()
         continuity_fetch.assert_not_called()
+
+    def test_route_continuity_delegates_to_jangar_when_registry_requires_it(self) -> None:
+        expected_packet = {
+            "epoch_id": "jangar-epoch",
+            "state": "present",
+            "decision": "allow",
+            "fresh_until": "2026-05-08T21:00:00+00:00",
+            "blocking_reasons": [],
+            "action_class": "paper_canary",
+        }
+
+        with (
+            patch(
+                "app.main.hypothesis_registry_requires_dependency_capability",
+                return_value=True,
+            ) as requires_capability,
+            patch(
+                "app.main.load_jangar_route_continuity_packet",
+                return_value=expected_packet,
+            ) as continuity_fetch,
+        ):
+            packet = _route_continuity_packet_for_proof_floor(
+                {"generated_at": "2026-05-08T20:00:00+00:00"}
+            )
+
+        self.assertEqual(packet, expected_packet)
+        requires_capability.assert_called_once()
+        continuity_fetch.assert_called_once_with(action_class="paper_canary")
 
     def test_trading_status_uses_isolated_db_sessions_for_late_reads(self) -> None:
         observed_sessions: list[Session] = []
@@ -999,6 +1016,9 @@ class TestTradingApi(TestCase):
                 {"strategy-1|exit_only_sell_without_long_position": 4},
             )
             self.assertTrue(payload["simple_lane_status"]["enabled"])
+            self.assertTrue(
+                payload["simple_lane_status"]["route_symbol_filter_enabled"]
+            )
             self.assertEqual(
                 payload["simple_lane_status"]["allowed_reject_reasons"][0],
                 "broker_precheck_failed",
@@ -2632,7 +2652,11 @@ class TestTradingApi(TestCase):
         hypotheses = payload["hypotheses"]
         self.assertTrue(hypotheses["registry_loaded"])
         self.assertEqual(len(hypotheses["items"]), 3)
-        self.assertEqual(hypotheses["dependency_quorum"]["decision"], "unknown")
+        self.assertEqual(hypotheses["dependency_quorum"]["decision"], "allow")
+        self.assertEqual(
+            hypotheses["dependency_quorum"]["reasons"],
+            ["jangar_dependency_quorum_not_required"],
+        )
         control_plane_contract = payload["control_plane_contract"]
         self.assertEqual(
             control_plane_contract["contract_version"], "torghut.quant-producer.v1"
@@ -2664,7 +2688,7 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(
             control_plane_contract["alpha_readiness_dependency_quorum_decision"],
-            "unknown",
+            "allow",
         )
         self.assertIn(
             payload["forecast_service"]["authority"], {"empirical", "blocked"}

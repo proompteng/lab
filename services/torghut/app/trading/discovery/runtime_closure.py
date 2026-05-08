@@ -35,6 +35,10 @@ from app.trading.discovery.objectives import (
 )
 from app.trading.discovery.portfolio_candidates import PortfolioCandidateSpec
 from app.trading.evidence_receipts import build_portfolio_proof_receipt
+from app.trading.hypotheses import (
+    hypothesis_registry_requires_dependency_capability,
+    load_hypothesis_registry,
+)
 from app.trading.reporting import summarize_replay_profitability
 import scripts.local_intraday_tsmom_replay as replay_mod
 from scripts.search_consistent_profitability_frontier import (
@@ -228,7 +232,10 @@ def _runtime_closure_policy(
         "promotion_require_portfolio_optimizer_evidence": portfolio_optimizer_evidence_required,
         "promotion_portfolio_optimizer_evidence_artifact": "promotion/portfolio-optimizer-evidence.json",
         "promotion_require_alpha_readiness_contract": True,
-        "promotion_require_jangar_dependency_quorum": True,
+        "promotion_require_jangar_dependency_quorum": hypothesis_registry_requires_dependency_capability(
+            load_hypothesis_registry(),
+            "jangar_dependency_quorum",
+        ),
         "promotion_require_benchmark_parity": False,
         "promotion_require_foundation_router_parity": False,
         "promotion_require_deeplob_bdlob_contract": False,

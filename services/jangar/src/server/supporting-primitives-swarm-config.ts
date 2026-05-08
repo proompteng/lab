@@ -55,6 +55,12 @@ export const SWARM_SCHEDULE_ANNOTATION_NATS_URL = 'swarm.proompteng.ai/nats-url'
 export const SWARM_SCHEDULE_ANNOTATION_NATS_SUBJECT_PREFIX = 'swarm.proompteng.ai/nats-subject-prefix'
 export const SWARM_SCHEDULE_ANNOTATION_NATS_CHANNEL = 'swarm.proompteng.ai/nats-channel'
 export const SWARM_SCHEDULE_ANNOTATION_HUMAN_NAME = 'swarm.proompteng.ai/human-name'
+export const SWARM_MISSION_ANNOTATION_LEDGER_REF = 'swarm.proompteng.ai/mission-ledger-ref'
+export const SWARM_MISSION_ANNOTATION_BUSINESS_METRIC = 'swarm.proompteng.ai/business-metric'
+export const SWARM_MISSION_ANNOTATION_VALIDATION_CONTRACT = 'swarm.proompteng.ai/validation-contract'
+export const SWARM_MISSION_ANNOTATION_VALUE_GATES = 'swarm.proompteng.ai/value-gates'
+export const SWARM_MISSION_ANNOTATION_HANDOFF_FIELDS = 'swarm.proompteng.ai/handoff-fields'
+export const SWARM_MISSION_ANNOTATION_SOURCE_DESIGN = 'swarm.proompteng.ai/source-design'
 export const SWARM_ADMISSION_ANNOTATION_PASSPORT_ID = 'swarm.proompteng.ai/admission-passport-id'
 export const SWARM_ADMISSION_ANNOTATION_DECISION = 'swarm.proompteng.ai/admission-decision'
 export const SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST = 'swarm.proompteng.ai/recovery-case-set-digest'
@@ -185,6 +191,15 @@ type SwarmPersona = {
   workerIdentity: string
 }
 
+export type SwarmMissionContract = {
+  ledgerRef: string
+  businessMetric: string
+  validationContract: string[]
+  valueGates: string[]
+  handoffRequiredFields: string[]
+  sourceDesign: string
+}
+
 const DEFAULT_SWARM_PERSONAS: Record<string, { personas: Record<SwarmPersonaRole, SwarmPersona> }> = {
   'jangar-control-plane': {
     personas: {
@@ -260,6 +275,93 @@ export const resolveDefaultWorkloadImage = () => {
 export const parseStringList = (raw: unknown) => {
   if (!Array.isArray(raw)) return []
   return raw.map((item) => (typeof item === 'string' ? item.trim() : '')).filter((item) => item.length > 0)
+}
+
+const SWARM_AGENTIC_MISSION_DESIGN = 'docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md'
+
+const DEFAULT_HANDOFF_FIELDS = [
+  'objective',
+  'files_changed_or_inspected',
+  'commands_and_exit_codes',
+  'tests_passed_or_failed',
+  'unresolved_issues',
+  'risk_and_rollback',
+  'exact_next_action',
+]
+
+const resolveDefaultMissionContract = (swarmName: string, owner: Record<string, unknown>): SwarmMissionContract => {
+  const ownerId = asString(owner.id)?.toLowerCase() ?? ''
+  const isTorghut = swarmName.toLowerCase().includes('torghut') || ownerId.includes('trading')
+  if (isTorghut) {
+    return {
+      ledgerRef: `/workspace/.agentrun/swarm/${swarmName}-mission-ledger.md`,
+      businessMetric:
+        'increase Torghut revenue readiness through post-cost profit evidence, routeable hypotheses, data freshness, execution quality, or safer capital gates',
+      validationContract: [
+        'cite the governing Torghut design or runtime requirement before implementation',
+        'produce a production PR for code/config changes, with targeted tests and all required Torghut checks green',
+        'prove merged runtime changes through image promotion, GitOps sync, live Torghut health/readiness, and relevant trading/evidence status',
+        'record the business metric moved or the exact blocker preventing revenue impact',
+      ],
+      valueGates: [
+        'post_cost_daily_net_pnl',
+        'routeable_candidate_count',
+        'zero_notional_or_stale_evidence_rate',
+        'fill_tca_or_slippage_quality',
+        'capital_gate_safety',
+      ],
+      handoffRequiredFields: DEFAULT_HANDOFF_FIELDS,
+      sourceDesign: SWARM_AGENTIC_MISSION_DESIGN,
+    }
+  }
+
+  return {
+    ledgerRef: `/workspace/.agentrun/swarm/${swarmName}-mission-ledger.md`,
+    businessMetric:
+      'increase Jangar control-plane throughput and reliability through fewer failed runs, faster green PR-to-rollout loops, stronger admission, memory, NATS, CI, deploy verification, or observability',
+    validationContract: [
+      'cite the governing Jangar design or runtime requirement before implementation',
+      'produce a production PR for code/config changes, with targeted tests and all required Jangar checks green',
+      'prove merged runtime changes through GitOps sync, live readiness/control-plane status, and rollout evidence',
+      'record the machine-improvement metric moved or the exact blocker preventing autonomy impact',
+    ],
+    valueGates: [
+      'failed_agentrun_rate',
+      'pr_to_rollout_latency',
+      'ready_status_truth',
+      'manual_intervention_count',
+      'handoff_evidence_quality',
+    ],
+    handoffRequiredFields: DEFAULT_HANDOFF_FIELDS,
+    sourceDesign: SWARM_AGENTIC_MISSION_DESIGN,
+  }
+}
+
+const resolveMissionList = (value: unknown, fallback: string[]) => {
+  const resolved = parseStringList(value)
+  return resolved.length > 0 ? resolved : fallback
+}
+
+const resolveMissionString = (value: unknown, fallback: string) => {
+  const resolved = asString(value)?.trim()
+  return resolved && resolved.length > 0 ? resolved : fallback
+}
+
+export const resolveSwarmMissionContract = (
+  spec: Record<string, unknown>,
+  owner: Record<string, unknown>,
+  swarmName: string,
+): SwarmMissionContract => {
+  const mission = asRecord(spec.mission) ?? {}
+  const defaults = resolveDefaultMissionContract(swarmName, owner)
+  return {
+    ledgerRef: resolveMissionString(mission.ledgerRef, defaults.ledgerRef),
+    businessMetric: resolveMissionString(mission.businessMetric, defaults.businessMetric),
+    validationContract: resolveMissionList(mission.validationContract, defaults.validationContract),
+    valueGates: resolveMissionList(mission.valueGates, defaults.valueGates),
+    handoffRequiredFields: resolveMissionList(mission.handoffRequiredFields, defaults.handoffRequiredFields),
+    sourceDesign: resolveMissionString(mission.sourceDesign, defaults.sourceDesign),
+  }
 }
 
 const mergeUniqueStrings = (...values: string[][]) => {
@@ -357,6 +459,7 @@ export const buildSwarmRuntimeParameters = (input: {
   ownerChannel: string | null
   nats: SwarmNatsIntegration
   identity: SwarmAgentIdentity
+  mission?: SwarmMissionContract
 }) => {
   const parameters: Record<string, string> = {
     swarmAgentWorkerId: input.identity.workerId,
@@ -368,6 +471,14 @@ export const buildSwarmRuntimeParameters = (input: {
     natsChannel: input.nats.channel,
   }
   if (input.ownerChannel) parameters.ownerChannel = input.ownerChannel
+  if (input.mission) {
+    parameters.swarmMissionLedgerRef = input.mission.ledgerRef
+    parameters.swarmBusinessMetric = input.mission.businessMetric
+    parameters.swarmValidationContract = JSON.stringify(input.mission.validationContract)
+    parameters.swarmValueGates = JSON.stringify(input.mission.valueGates)
+    parameters.swarmHandoffRequiredFields = JSON.stringify(input.mission.handoffRequiredFields)
+    parameters.swarmSourceDesign = input.mission.sourceDesign
+  }
   return parameters
 }
 
@@ -375,6 +486,7 @@ export const buildSwarmScheduleAnnotations = (input: {
   ownerChannel: string | null
   nats: SwarmNatsIntegration
   identity: SwarmAgentIdentity
+  mission?: SwarmMissionContract
 }) => {
   const annotations: Record<string, string> = {
     [SWARM_SCHEDULE_ANNOTATION_WORKER_ID]: input.identity.workerId,
@@ -386,6 +498,14 @@ export const buildSwarmScheduleAnnotations = (input: {
     [SWARM_SCHEDULE_ANNOTATION_NATS_CHANNEL]: input.nats.channel,
   }
   if (input.ownerChannel) annotations[SWARM_SCHEDULE_ANNOTATION_OWNER_CHANNEL] = input.ownerChannel
+  if (input.mission) {
+    annotations[SWARM_MISSION_ANNOTATION_LEDGER_REF] = input.mission.ledgerRef
+    annotations[SWARM_MISSION_ANNOTATION_BUSINESS_METRIC] = input.mission.businessMetric
+    annotations[SWARM_MISSION_ANNOTATION_VALIDATION_CONTRACT] = JSON.stringify(input.mission.validationContract)
+    annotations[SWARM_MISSION_ANNOTATION_VALUE_GATES] = JSON.stringify(input.mission.valueGates)
+    annotations[SWARM_MISSION_ANNOTATION_HANDOFF_FIELDS] = JSON.stringify(input.mission.handoffRequiredFields)
+    annotations[SWARM_MISSION_ANNOTATION_SOURCE_DESIGN] = input.mission.sourceDesign
+  }
   return annotations
 }
 
@@ -399,6 +519,12 @@ export const resolveScheduleRuntimeInjection = (schedule: Record<string, unknown
   const natsUrl = asString(annotations[SWARM_SCHEDULE_ANNOTATION_NATS_URL])
   const natsSubjectPrefix = asString(annotations[SWARM_SCHEDULE_ANNOTATION_NATS_SUBJECT_PREFIX])
   const natsChannel = asString(annotations[SWARM_SCHEDULE_ANNOTATION_NATS_CHANNEL])
+  const missionLedgerRef = asString(annotations[SWARM_MISSION_ANNOTATION_LEDGER_REF])
+  const businessMetric = asString(annotations[SWARM_MISSION_ANNOTATION_BUSINESS_METRIC])
+  const validationContract = asString(annotations[SWARM_MISSION_ANNOTATION_VALIDATION_CONTRACT])
+  const valueGates = asString(annotations[SWARM_MISSION_ANNOTATION_VALUE_GATES])
+  const handoffRequiredFields = asString(annotations[SWARM_MISSION_ANNOTATION_HANDOFF_FIELDS])
+  const sourceDesign = asString(annotations[SWARM_MISSION_ANNOTATION_SOURCE_DESIGN])
   const admissionPassportId = asString(annotations[SWARM_ADMISSION_ANNOTATION_PASSPORT_ID])
   const admissionDecision = asString(annotations[SWARM_ADMISSION_ANNOTATION_DECISION])
   const recoveryCaseSetDigest = asString(annotations[SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST])
@@ -418,6 +544,12 @@ export const resolveScheduleRuntimeInjection = (schedule: Record<string, unknown
   if (natsUrl) parameters.natsUrl = natsUrl
   if (natsSubjectPrefix) parameters.natsSubjectPrefix = natsSubjectPrefix
   if (natsChannel) parameters.natsChannel = natsChannel
+  if (missionLedgerRef) parameters.swarmMissionLedgerRef = missionLedgerRef
+  if (businessMetric) parameters.swarmBusinessMetric = businessMetric
+  if (validationContract) parameters.swarmValidationContract = validationContract
+  if (valueGates) parameters.swarmValueGates = valueGates
+  if (handoffRequiredFields) parameters.swarmHandoffRequiredFields = handoffRequiredFields
+  if (sourceDesign) parameters.swarmSourceDesign = sourceDesign
   if (admissionPassportId) parameters.swarmAdmissionPassportId = admissionPassportId
   if (admissionDecision) parameters.swarmAdmissionDecision = admissionDecision
   if (recoveryCaseSetDigest) parameters.swarmRecoveryCaseSetDigest = recoveryCaseSetDigest
