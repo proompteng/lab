@@ -64,8 +64,8 @@ jobs:
         working-directory: services/torghut
         run: uv run --frozen pyright --project pyrightconfig.scripts.json
 
-  lint-and-tests:
-    name: Bytecode + pytest + coverage
+  static-guards:
+    name: Bytecode + lint + migration guard
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -105,17 +105,143 @@ jobs:
         working-directory: services/torghut
         run: uv run --frozen python scripts/check_migration_graph.py
 
-      - name: Pytest + branch coverage
+  pytest-shards:
+    name: Pytest shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache uv downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-python-3.11-torghut-uv-${{ hashFiles('services/torghut/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-python-3.11-torghut-uv-
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Sync dependencies (locked)
         working-directory: services/torghut
-        run: >
-          uv run --frozen pytest
-          -n auto
-          --dist=worksteal
-          --cov
-          --cov-branch
-          --cov-report=term-missing
-          --cov-report=xml
-          --cov-fail-under=70
+        run: uv sync --frozen --extra dev
+
+      - name: Pytest shard coverage
+        working-directory: services/torghut
+        shell: bash
+        env:
+          COVERAGE_FILE: .coverage.${{ matrix.shard }}
+          SHARD_INDEX: ${{ matrix.shard }}
+          SHARD_TOTAL: 4
+        run: |
+          set -euo pipefail
+          mapfile -t TEST_FILES < <(
+            find tests -name 'test_*.py' -print |
+              sort |
+              awk -v shard="${SHARD_INDEX}" -v total="${SHARD_TOTAL}" '((NR - 1) % total) == shard'
+          )
+          printf 'Running %s test files in shard %s/%s\n' "${#TEST_FILES[@]}" "${SHARD_INDEX}" "${SHARD_TOTAL}"
+          if [ "${#TEST_FILES[@]}" -eq 0 ]; then
+            echo "No test files selected for shard ${SHARD_INDEX}"
+            exit 1
+          fi
+
+          uv run --frozen pytest \
+            -n auto \
+            --dist=worksteal \
+            --cov \
+            --cov-branch \
+            --cov-fail-under=0 \
+            --cov-report= \
+            "${TEST_FILES[@]}"
+
+      - name: Upload coverage data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: torghut-coverage-shard-${{ matrix.shard }}
+          path: services/torghut/.coverage.${{ matrix.shard }}*
+          if-no-files-found: error
+          include-hidden-files: true
+
+  lint-and-tests:
+    name: Bytecode + pytest + coverage
+    runs-on: ubuntu-latest
+    needs:
+      - static-guards
+      - pytest-shards
+    if: always()
+    steps:
+      - name: Check prerequisite jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.static-guards.result }}" != "success" ]; then
+            echo "Static guard job failed: ${{ needs.static-guards.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.pytest-shards.result }}" != "success" ]; then
+            echo "Pytest shard job failed: ${{ needs.pytest-shards.result }}"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache uv downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-python-3.11-torghut-uv-${{ hashFiles('services/torghut/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-python-3.11-torghut-uv-
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Sync dependencies (locked)
+        working-directory: services/torghut
+        run: uv sync --frozen --extra dev
+
+      - name: Download coverage data
+        uses: actions/download-artifact@v4
+        with:
+          pattern: torghut-coverage-shard-*
+          path: services/torghut/.coverage-shards
+          merge-multiple: true
+
+      - name: Combine coverage
+        working-directory: services/torghut
+        run: |
+          set -euo pipefail
+          mapfile -t COVERAGE_FILES < <(find .coverage-shards -type f -name '.coverage*' -print | sort)
+          printf 'Combining %s coverage data files\n' "${#COVERAGE_FILES[@]}"
+          if [ "${#COVERAGE_FILES[@]}" -lt 4 ]; then
+            echo "Expected coverage data from all 4 pytest shards"
+            exit 1
+          fi
+          uv run --frozen coverage combine "${COVERAGE_FILES[@]}"
+          uv run --frozen coverage report --fail-under=70
+          uv run --frozen coverage xml -o coverage.xml
 
       - name: Changed-file coverage
         working-directory: services/torghut
