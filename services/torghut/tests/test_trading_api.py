@@ -774,6 +774,88 @@ class TestTradingApi(TestCase):
         )
         self.assertLess(call_order.index("dependency_quorum"), call_order.index("tca"))
 
+    def test_trading_consumer_evidence_avoids_recursive_jangar_status_fetch(
+        self,
+    ) -> None:
+        proof_floor = {
+            "schema_version": "torghut.profitability-proof-floor.v1",
+            "generated_at": "2026-05-08T03:54:41.769374+00:00",
+            "account_label": "PA3SX7FYNUTF",
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "blocking_reasons": ["simple_submit_disabled"],
+            "proof_dimensions": [],
+            "repair_ladder": [],
+        }
+        live_submission_gate = {
+            "allowed": False,
+            "reason": "simple_submit_disabled",
+            "blocked_reasons": ["simple_submit_disabled"],
+            "capital_stage": "shadow",
+            "dependency_quorum_decision": "allow",
+        }
+
+        with (
+            patch("app.main.load_jangar_dependency_quorum") as dependency_fetch,
+            patch("app.main.load_jangar_route_continuity_packet") as continuity_fetch,
+            patch(
+                "app.main._forecast_service_status",
+                return_value={
+                    "status": "healthy",
+                    "authority": "empirical",
+                    "promotion_authority_eligible_models": ["candidate-a"],
+                },
+            ),
+            patch(
+                "app.main._lean_authority_status",
+                return_value={"status": "healthy", "authority": "empirical"},
+            ),
+            patch(
+                "app.main._empirical_jobs_status",
+                return_value={
+                    "status": "healthy",
+                    "ready": True,
+                    "candidate_ids": ["candidate-a"],
+                    "dataset_snapshot_refs": ["dataset-a"],
+                },
+            ),
+            patch(
+                "app.main.load_quant_evidence_status",
+                return_value={"ok": True, "required": False},
+            ),
+            patch("app.main._load_tca_summary", return_value={}),
+            patch(
+                "app.main._build_live_submission_gate_payload",
+                return_value=live_submission_gate,
+            ),
+            patch(
+                "app.main.build_profitability_proof_floor_receipt",
+                return_value=proof_floor,
+            ),
+            patch("app.main.SessionLocal", self.session_local),
+        ):
+            response = self.client.get("/trading/consumer-evidence")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(
+            payload["schema_version"], "torghut.consumer-evidence-status.v1"
+        )
+        self.assertEqual(payload["control_plane_dependency_mode"], "caller_evaluated")
+        self.assertEqual(payload["dependency_quorum"]["decision"], "allow")
+        self.assertEqual(payload["proof_floor"], proof_floor)
+        self.assertNotIn("route_reacquisition_board", payload)
+        receipt = payload["torghut_consumer_evidence_receipt"]
+        self.assertEqual(
+            receipt["schema_version"],
+            "torghut.consumer-evidence-receipt.v1",
+        )
+        self.assertEqual(receipt["paper_readiness_state"], "blocked")
+        self.assertIn("simple_submit_disabled", receipt["reason_codes"])
+        dependency_fetch.assert_not_called()
+        continuity_fetch.assert_not_called()
+
     def test_trading_status_uses_isolated_db_sessions_for_late_reads(self) -> None:
         observed_sessions: list[Session] = []
 
