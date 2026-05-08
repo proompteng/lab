@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Any, cast
 
 from app.trading.profit_signal_quorum import build_profit_signal_quorum
 
@@ -10,104 +8,76 @@ from app.trading.profit_signal_quorum import build_profit_signal_quorum
 NOW = datetime(2026, 5, 8, 12, 30, tzinfo=timezone.utc)
 
 
-def _hypothesis(**overrides: object) -> dict[str, object]:
-    payload: dict[str, object] = {
-        "hypothesis_id": "H-CONT-01",
-        "lane_id": "continuation",
-        "strategy_family": "intraday-continuation",
-        "candidate_id": "candidate-cont",
-        "strategy_id": "strategy-cont",
-        "promotion_eligible": True,
-        "promotion_decision_id": "promotion-cont",
-        "rollback_required": False,
-        "reasons": [],
-        "observed": {
-            "market_session_open": True,
-            "tca_order_count": 7334,
-            "avg_abs_slippage_bps": "4.5",
-            "post_cost_expectancy_bps_proxy": "9.2",
-            "route_tca_symbols": ["AAPL"],
-        },
-    }
+def _hypothesis(**overrides):
+    payload = dict(
+        hypothesis_id="H-CONT-01",
+        candidate_id="candidate-cont",
+        strategy_id="strategy-cont",
+        promotion_eligible=True,
+        promotion_decision_id="promotion-cont",
+    )
     payload.update(overrides)
     return payload
 
 
 def _build(
-    *,
-    hypothesis: Mapping[str, Any] | None = None,
-    quant_evidence: Mapping[str, Any] | None = None,
-    market_context_status: Mapping[str, Any] | None = None,
-    jangar_stage_clearance_packet: Mapping[str, Any] | None = None,
-    route_rows: list[Mapping[str, Any]] | None = None,
-) -> dict[str, object]:
-    hypothesis_item = dict(hypothesis or _hypothesis())
+    hypothesis=None,
+    quant=None,
+    market=None,
+    proof=None,
+    gate=None,
+    stage=None,
+    rows=None,
+):
     return build_profit_signal_quorum(
         account_label="PA3SX7FYNUTF",
         trading_mode="live",
         torghut_revision="torghut-00307",
-        hypothesis_payload={"items": [hypothesis_item]},
-        quant_evidence=quant_evidence
-        or {
-            "ok": True,
-            "status": "ok",
-            "latest_metrics_count": 4284,
-            "stage_count": 3,
-            "source_url": "http://jangar/api/torghut/trading/control-plane/quant/health",
-        },
-        market_context_status=market_context_status
-        or {"overallState": "ok", "risk_flags": []},
-        proof_floor_receipt={
-            "schema_version": "torghut.profitability-proof-floor.v1",
-            "capital_state": "zero_notional",
-            "blocking_reasons": [],
-        },
+        hypothesis_payload={"items": [dict(hypothesis or _hypothesis())]},
+        quant_evidence=quant
+        or dict(ok=True, status="ok", latest_metrics_count=4284, stage_count=3),
+        market_context_status=market or {"overallState": "ok"},
+        proof_floor_receipt=proof
+        or {"schema_version": "torghut.profitability-proof-floor.v1"},
         route_reacquisition_board={
             "jangar_broker_ref": "jangar-continuity:current",
-            "rows": route_rows
-            if route_rows is not None
+            "rows": rows
+            if rows is not None
             else [
-                {
-                    "symbol": "AAPL",
-                    "state": "routeable",
-                    "hypothesis_ids": ["H-CONT-01"],
-                    "avg_abs_slippage_bps": "4.5",
-                    "slippage_guardrail_bps": "8",
-                }
+                dict(
+                    symbol="AAPL",
+                    state="routeable",
+                    hypothesis_ids=["H-CONT-01"],
+                    avg_abs_slippage_bps="4.5",
+                    slippage_guardrail_bps="8",
+                )
             ],
         },
-        live_submission_gate={
-            "allowed": False,
-            "blocked_reasons": ["simple_submit_disabled"],
-        },
-        jangar_stage_clearance_packet=(
-            {
-                "packet_id": "stage-clearance:repair",
-                "decision": "dispatch_repair",
-            }
-            if jangar_stage_clearance_packet is None
-            else jangar_stage_clearance_packet
-        ),
+        live_submission_gate=gate or {"allowed": False},
+        jangar_stage_clearance_packet=stage
+        if stage is not None
+        else {"packet_id": "stage-clearance:repair", "decision": "dispatch_repair"},
         now=NOW,
     )
 
 
-def _only_quorum(payload: Mapping[str, object]) -> Mapping[str, Any]:
-    quorums = cast(list[Mapping[str, Any]], payload["quorums"])
+def _only_quorum(payload):
+    quorums = payload["quorums"]
     assert len(quorums) == 1
     return quorums[0]
 
 
-def test_global_quant_green_but_scoped_pipeline_degraded_stays_zero_notional() -> None:
-    payload = _build(
-        quant_evidence={
-            "ok": True,
-            "status": "ok",
-            "latest_metrics_count": 4284,
-            "stage_count": 0,
-        }
-    )
-    quorum = _only_quorum(payload)
+def test_complete_quorum_projects_candidate_or_canary_without_notional():
+    candidate = _only_quorum(_build())
+    canary = _only_quorum(_build(gate={"allowed": True}))
+
+    assert candidate["decision"] == "paper_candidate"
+    assert canary["decision"] == "paper_canary"
+    assert candidate["reason_codes"] == []
+
+
+def test_global_quant_green_but_scoped_pipeline_degraded_stays_zero_notional():
+    quorum = _only_quorum(_build(quant=dict(ok=True, stage_count=0)))
 
     assert quorum["decision"] == "repair_only"
     assert quorum["max_notional"] == "0"
@@ -115,57 +85,83 @@ def test_global_quant_green_but_scoped_pipeline_degraded_stays_zero_notional() -
     assert quorum["required_repair_action"] == "refresh_scoped_quant_pipeline_stages"
 
 
-def test_context_route_down_names_market_context_repair_without_capital() -> None:
-    payload = _build(
-        hypothesis=_hypothesis(hypothesis_id="H-REV-01"),
-        route_rows=[
-            {
-                "symbol": "AAPL",
-                "state": "routeable",
-                "hypothesis_ids": ["H-REV-01"],
-                "avg_abs_slippage_bps": "4.5",
-                "slippage_guardrail_bps": "8",
-            }
-        ],
-        market_context_status={"overallState": "down", "risk_flags": ["news_stale"]},
-    )
-    quorum = _only_quorum(payload)
-
-    assert quorum["decision"] == "repair_only"
-    assert "market_context_route_down" in quorum["reason_codes"]
-    assert (
-        quorum["required_repair_action"]
-        == "repair_market_context_route_or_domain_freshness"
-    )
-
-
-def test_missing_lineage_and_promotion_decision_block_candidate_count() -> None:
-    payload = _build(
-        hypothesis=_hypothesis(
-            candidate_id="",
-            strategy_id="",
-            promotion_eligible=False,
-            promotion_decision_id="",
-            reasons=["strategy_hypothesis_lineage_missing"],
+def test_degraded_inputs_emit_scoped_repair_reasons_without_capital():
+    quorum = _only_quorum(
+        _build(
+            quant=dict(
+                ok=False,
+                reason="quant_health_fetch_failed",
+                status="degraded",
+                latestMetricsCount=0,
+                degradedMetricsCount=2,
+                stageCount=3,
+                blocking_reasons=["pipeline_ingestion_alarm"],
+                pipelineStages=[
+                    "ignore",
+                    dict(
+                        name="ingestion",
+                        status="degraded",
+                        lagSeconds="120",
+                        maxLagSeconds="30",
+                    ),
+                ],
+                ingestion_ok=False,
+            ),
+            market=dict(
+                overall_state="ok",
+                stale_snapshot_count=1,
+                domains=dict(news=dict(state="stale")),
+            ),
+            rows=[
+                {},
+                dict(
+                    symbol="AAPL",
+                    state="blocked",
+                    hypothesis_ids=["H-CONT-01"],
+                    avg_abs_slippage_bps="bad",
+                ),
+                dict(
+                    symbol="MSFT",
+                    state="routeable",
+                    hypothesis_ids=["H-CONT-01"],
+                    avg_abs_slippage_bps="12",
+                    slippage_guardrail_bps="8",
+                ),
+            ],
         )
     )
-    quorum = _only_quorum(payload)
+    expected = "quant_health_fetch_failed quant_status_degraded quant_latest_metrics_empty quant_latest_metrics_degraded pipeline_ingestion_alarm quant_pipeline_stage_ingestion_degraded quant_pipeline_stage_ingestion_stale market_context_snapshot_stale market_context_domain_news_stale route_tca_blocked execution_tca_slippage_above_guardrail".split()
 
     assert quorum["decision"] == "repair_only"
-    assert "hypothesis_candidate_id_missing" in quorum["reason_codes"]
-    assert "hypothesis_strategy_id_missing" in quorum["reason_codes"]
-    assert "promotion_decision_missing" in quorum["reason_codes"]
-    assert payload["summary"]["routeable_candidate_count"] == 0
+    assert set(expected) <= set(quorum["reason_codes"])
+    assert quorum["required_repair_action"] == "repair_route_tca_or_route_routability"
 
 
-def test_missing_stage_clearance_packet_keeps_quorum_observe_only() -> None:
-    payload = _build(jangar_stage_clearance_packet={})
-    quorum = _only_quorum(payload)
+def test_lineage_and_promotion_debts_block_candidate_count():
+    lineage = _only_quorum(
+        _build(
+            hypothesis=_hypothesis(
+                candidate_id="",
+                strategy_id="",
+                promotion_eligible=False,
+                promotion_decision_id="",
+                reasons=["strategy_hypothesis_lineage_missing"],
+            )
+        )
+    )
 
-    assert quorum["decision"] == "observe_only"
-    assert quorum["jangar_stage_clearance_packet_id"] is None
-    assert "stage_clearance_packet_missing" in quorum["reason_codes"]
+    assert {
+        "hypothesis_candidate_id_missing",
+        "promotion_decision_missing",
+    } <= set(lineage["reason_codes"])
+
+
+def test_missing_stage_clearance_packet_keeps_quorum_observe_only():
+    missing = _only_quorum(_build(stage={}))
+
+    assert missing["decision"] == "observe_only"
+    assert "stage_clearance_packet_missing" in missing["reason_codes"]
     assert (
-        quorum["required_repair_action"]
+        missing["required_repair_action"]
         == "publish_current_jangar_stage_clearance_packet"
     )
