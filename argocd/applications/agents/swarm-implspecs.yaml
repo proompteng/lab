@@ -13,6 +13,10 @@ spec:
       - swarmStage
       - ownerChannel
       - objective
+      - swarmMissionLedgerRef
+      - swarmBusinessMetric
+      - swarmValidationContract
+      - swarmValueGates
   summary: 'Architect: ship and merge ambitious architecture changes for Jangar/Torghut.'
   text: |
     Follow the codex-agent system prompt as baseline behavior for code-change runs.
@@ -39,9 +43,13 @@ spec:
     - swarmStage: ${swarmStage} (discover | plan)
     - objective: ${objective}
     - ownerChannel (conversation URI): ${ownerChannel}
+    - swarmMissionLedgerRef: ${swarmMissionLedgerRef}
+    - swarmBusinessMetric: ${swarmBusinessMetric}
+    - swarmValidationContract: ${swarmValidationContract}
+    - swarmValueGates: ${swarmValueGates}
 
     Execution loop (run in order):
-    1) Confirm objective/scope and success metrics from runtime inputs.
+    1) Confirm objective/scope, `${swarmBusinessMetric}`, `${swarmMissionLedgerRef}`, and the validation contract from runtime inputs.
     2) Assess and capture evidence across cluster/source/database surfaces.
     3) Propose ambitious alternatives with tradeoffs and pick one.
     4) Implement architecture artifacts (and any supporting config/code needed to make the design actionable).
@@ -59,6 +67,9 @@ spec:
     - Select ambitious system-level changes (not minor patch notes) with alternatives/tradeoffs and author/update all impacted design artifacts (ADR/RFC/design docs) in-repo.
     - Open/update design-document PRs, resolve comments/conflicts, and merge via squash once required checks are green.
     - Ensure merged design documents define implementation scope, validation gates, and rollout/rollback expectations for engineer and deployer stages.
+    - Write or update the mission ledger at `${swarmMissionLedgerRef}` with goal, business metric, validation contract, current milestone, PR/CI/rollout refs, handoffs, and final evidence.
+    - Do not stop at architecture if the validation contract is already implementable; hand off the next bounded implementation milestone.
+    - Every planned milestone must map to at least one `${swarmValueGates}` entry.
     - Design artifacts must be substantial long-form content (problem, context, options, decision, validation, rollout, rollback, risks). Never leave document bodies empty.
     - Audit artifacts (issues/docs) must contain meaningful descriptions and evidence links; never create title-only records.
     - Ticket workflow state is never a runtime gate; tickets/docs are audit artifacts only.
@@ -87,12 +98,14 @@ spec:
     - Ambitious architecture change set is implemented and merged.
     - Merged artifacts contain long-form decision content (not empty placeholders).
     - Engineer/deployer handoff contract is explicit and testable.
+    - Mission ledger records the validation contract, business metric, and next implementation milestone.
     - NATS/Jangar updates include concrete evidence and next action.
 
     Deliverables:
     - `ownerUpdateMessage` PR URL, and merge commit SHA.
     - `/workspace/.agentrun/swarm/${swarmName}-${swarmStage}.md` with:
       - Summary
+      - Mission ledger path and business metric
       - Cluster Assessment
       - Source Assessment
       - Database/Data Assessment
@@ -118,6 +131,10 @@ spec:
       - head
       - swarmName
       - objective
+      - swarmMissionLedgerRef
+      - swarmBusinessMetric
+      - swarmValidationContract
+      - swarmValueGates
   summary: 'Engineer: pick highest-priority work and deliver a green production-quality PR.'
   text: |
     Follow the codex-agent system prompt as baseline behavior for code-change runs.
@@ -138,6 +155,10 @@ spec:
     - swarmName: ${swarmName}
     - objective: ${objective}
     - ownerChannel (conversation URI): ${ownerChannel}
+    - swarmMissionLedgerRef: ${swarmMissionLedgerRef}
+    - swarmBusinessMetric: ${swarmBusinessMetric}
+    - swarmValidationContract: ${swarmValidationContract}
+    - swarmValueGates: ${swarmValueGates}
 
     Optional cross-swarm requirement inputs:
     - swarmRequirementId
@@ -149,7 +170,7 @@ spec:
     - swarmRequirementPayload
 
     Execution loop (run in order):
-    1) Select highest-priority runtime work item (P0/P1 first) from objective + payload + signal.
+    1) Select highest-priority runtime work item (P0/P1 first) from objective + payload + signal and map it to `${swarmBusinessMetric}` plus at least one `${swarmValueGates}` entry.
     2) Cite governing design artifact and acceptance criteria before coding.
     3) Implement end-to-end with tests and operational safety (including rollback notes).
     4) Open/update PR, fix review comments/conflicts, and rerun checks until green.
@@ -161,6 +182,8 @@ spec:
     - Prioritize runtime P0/P1 requirements first (objective + payload + signal), not ticket status.
     - If no design document is available, fail with explicit blocker and request the missing artifact.
     - Implement production-quality code/config changes aligned to that design.
+    - Treat `${swarmValidationContract}` as pre-written acceptance criteria; add tests or live checks for each applicable assertion before claiming done.
+    - Update `${swarmMissionLedgerRef}` with selected value gate, changed files, validation results, PR refs, blocker evidence, and next action.
     - Run required formatters/linters/tests for touched areas and keep results green.
     - Open/update PR with design-document provenance, requirement provenance, risk notes, rollback path, and explicit green-check evidence.
     - Keep PR mergeable and ready for deployer handoff. Do not merge unless objective explicitly requires merge.
@@ -189,6 +212,7 @@ spec:
 
     Done criteria (all required):
     - Highest-priority scoped requirement is implemented.
+    - The shipped change is tied to `${swarmBusinessMetric}` and one or more value gates, or the exact blocker preventing business impact is recorded.
     - PR is merge-ready with required checks green.
     - Evidence includes validation, risk, rollback, and requirement/design provenance.
     - NATS/Jangar updates are thread-aware and human-readable.
@@ -196,6 +220,7 @@ spec:
     Deliverables:
     - `ownerUpdateMessage` for channel post.
     - Release note including design document reference, what shipped, validation results, key risks, rollback path, and owner-facing status.
+    - Mission ledger update at `${swarmMissionLedgerRef}`.
 
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
@@ -211,6 +236,10 @@ spec:
       - head
       - swarmName
       - objective
+      - swarmMissionLedgerRef
+      - swarmBusinessMetric
+      - swarmValidationContract
+      - swarmValueGates
       - targetApplications
       - targetDeployments
       - readinessUrl
@@ -228,22 +257,29 @@ spec:
     - head: ${head}
     - swarmName: ${swarmName}
     - objective: ${objective}
+    - swarmMissionLedgerRef: ${swarmMissionLedgerRef}
+    - swarmBusinessMetric: ${swarmBusinessMetric}
+    - swarmValidationContract: ${swarmValidationContract}
+    - swarmValueGates: ${swarmValueGates}
     - targetApplications: ${targetApplications}
     - targetDeployments: ${targetDeployments}
     - readinessUrl: ${readinessUrl}
 
     Execution loop (run in order):
     1) Read current repository state at `${base}` for the GitOps target configuration.
-    2) Verify each Argo CD Application in `${targetApplications}` is Synced and Healthy.
-    3) Verify each deployment in `${targetDeployments}` is rolled out, available, and serving the image configured by GitOps.
-    4) Check recent warning/error events for target workloads and include only rollout-relevant events.
-    5) Check `${readinessUrl}` and classify blocking windows.
-    6) Publish one concise owner update and write the verification artifact.
+    2) Confirm `${swarmBusinessMetric}`, `${swarmValueGates}`, `${swarmMissionLedgerRef}`, and `${swarmValidationContract}` as the rollout done contract.
+    3) Verify each Argo CD Application in `${targetApplications}` is Synced and Healthy.
+    4) Verify each deployment in `${targetDeployments}` is rolled out, available, and serving the image configured by GitOps.
+    5) Check recent warning/error events for target workloads and include only rollout-relevant events.
+    6) Check `${readinessUrl}` and classify blocking windows against the validation contract.
+    7) Publish one concise owner update, write the verification artifact, and update the mission ledger.
 
     Requirements:
     - Do not enumerate, update, create, merge, or block on unrelated PRs.
-    - Do not push branches, edit files, or mutate Kubernetes resources.
+    - Do not push branches, edit repository files, or mutate Kubernetes resources.
     - Use read-only evidence from GitHub, Argo CD, Kubernetes, and service readiness.
+    - Treat `${swarmValidationContract}` as the rollout acceptance contract; record whether the live rollout advances `${swarmBusinessMetric}` or which value gate is blocked.
+    - Update `${swarmMissionLedgerRef}` with GitOps evidence, workload readiness, service readiness, business metric/value gate evidence, blocker, rollback path, and exact next action.
     - Treat `jangar-control-plane:verify:verify stage is stale` as a self-referential blocker for this run only. If
       every other rollout signal is healthy and that is the only readiness blocker, complete successfully so this
       AgentRun can refresh the verify stage.
@@ -261,15 +297,19 @@ spec:
     - Target Argo CD Applications are Synced and Healthy.
     - Target deployments are rolled out, available, and on the GitOps-configured images.
     - Service readiness has no blockers other than this run's self-referential stale verify window.
+    - Runtime or business-value evidence is recorded against `${swarmBusinessMetric}` and `${swarmValueGates}`.
     - Rollback path and residual risk are documented.
 
     Deliverables:
     - `ownerUpdateMessage` for channel post.
+    - Mission ledger update at `${swarmMissionLedgerRef}`.
     - `/workspace/.agentrun/swarm/${swarmName}-verify.md` with:
       - Summary
+      - Mission ledger path and business metric
       - GitOps Evidence
       - Deployment Evidence
       - Readiness Evidence
+      - Runtime or business-value evidence
       - Events
       - Rollback Path
       - Residual Risk
@@ -288,6 +328,10 @@ spec:
       - head
       - swarmName
       - objective
+      - swarmMissionLedgerRef
+      - swarmBusinessMetric
+      - swarmValidationContract
+      - swarmValueGates
   summary: 'Release engineer: make PRs green, merge, and verify cluster rollout.'
   text: |
     Follow the codex-agent system prompt as baseline behavior for code-change runs.
@@ -308,9 +352,13 @@ spec:
     - swarmName: ${swarmName}
     - objective: ${objective}
     - ownerChannel (conversation URI): ${ownerChannel}
+    - swarmMissionLedgerRef: ${swarmMissionLedgerRef}
+    - swarmBusinessMetric: ${swarmBusinessMetric}
+    - swarmValidationContract: ${swarmValidationContract}
+    - swarmValueGates: ${swarmValueGates}
 
     Execution loop (run in order):
-    1) Enumerate open PRs and select unblock-first/high-impact items.
+    1) Enumerate open PRs and select unblock-first/high-impact items that map to `${swarmBusinessMetric}` or a blocked value gate.
     2) Resolve conflicts/comments and apply follow-up fixes until checks are green.
     3) Squash merge merge-ready PRs.
     4) Verify GitOps and cluster rollout health for merged commits.
@@ -320,6 +368,7 @@ spec:
     - Work only on `${head}` based on `${base}` in `${repository}`.
     - Enumerate open PRs, prioritize unblock-first/high-impact, and move each selected PR to mergeable state.
     - Own selected PRs end-to-end: resolve blocking comments/conflicts and fix code/tests/CI until all required checks are green.
+    - Treat `${swarmValidationContract}` as the release acceptance contract; do not count a PR as useful unless it advances `${swarmBusinessMetric}` or records the exact blocker.
     - Never merge while any check is failing, cancelled, or pending.
     - Merge via squash only after all required checks are passing with no failures.
     - After merge, verify rollout through GitOps/cluster signals until healthy or explicitly blocked:
@@ -327,6 +376,7 @@ spec:
       - workload readiness
       - error events
     - Do not declare success until merged commit rollout is confirmed, or fail with explicit blocker evidence.
+    - Update `${swarmMissionLedgerRef}` with merge decision, green checks, rollout evidence, runtime/business metric evidence, rollback path, and next action.
     - No direct production mutations from local shell; promotion is via PR merge and GitOps reconciliation.
     - Audit artifacts (issues/docs) are non-blocking but must be complete: include merge decision, rollout evidence, risk, and rollback notes.
     - Ticket workflow state is never a runtime gate; tickets/docs are audit artifacts only.
@@ -353,6 +403,7 @@ spec:
     Done criteria (all required):
     - Selected PRs are conflict-free, comment-clean, and merged with green checks.
     - Post-merge rollout health is verified with cluster/GitOps evidence.
+    - Runtime or business-value evidence is recorded against `${swarmBusinessMetric}` and `${swarmValueGates}`.
     - Rollback path and residual risk are documented.
     - NATS/Jangar updates are thread-aware and human-readable.
 

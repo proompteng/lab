@@ -2,6 +2,7 @@
 
 Status: Proposed operating guidance
 Source: YouTube automatic-caption transcript for `The Multi-Agent Architecture That Actually Ships - Luke Alvoeiro, Factory`, video id `ow1we5PzK-o`, retrieved 2026-05-08.
+Visual review: sampled the video every 30 seconds from 00:00 through 18:30 on 2026-05-08, then checked the resulting contact sheet to verify the slide sequence behind the transcript: problem scale, five multi-agent strategies, mission workflow, three-role architecture, validation loop, structured handoffs, serial execution, mission control, role-specific models, mission breakdown, shipped examples, non-obsolescence guidance, unlocked mission duration, and mission composition.
 
 This document records the useful system-design lessons from the transcript and translates them into the Jangar and Torghut swarm operating model. It is intentionally concise. The transcript itself is not checked into the repo; this is a derived implementation guide.
 

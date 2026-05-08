@@ -14,6 +14,29 @@ spec:
     - operate as the Jangar Engineering team through NATS-backed swarm communication
     - continuously discover and implement control-plane improvements
     - deliver Torghut platform requirements safely to production
+  mission:
+    ledgerRef: /workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md
+    sourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md
+    businessMetric: reduce failed AgentRuns and shorten green PR-to-healthy GitOps rollout time for the Jangar control plane
+    validationContract:
+      - every run must cite the governing design or runtime requirement before changing code
+      - implement stages must produce production PRs with tests or report the exact blocker to code
+      - verify stages must merge only green PRs and prove Argo, workload readiness, and service health after rollout
+      - final handoff must name the control-plane metric improved or the smallest blocker preventing improvement
+    valueGates:
+      - failed_agentrun_rate
+      - pr_to_rollout_latency
+      - ready_status_truth
+      - manual_intervention_count
+      - handoff_evidence_quality
+    handoffRequiredFields:
+      - objective
+      - files_changed_or_inspected
+      - commands_and_exit_codes
+      - tests_passed_or_failed
+      - unresolved_issues
+      - risk_and_rollback
+      - exact_next_action
   mode: lights-out
   timezone: UTC
   cadence:
@@ -102,6 +125,29 @@ spec:
     - operate as the Torghut Traders team through NATS-backed swarm communication
     - continuously discover and implement quant alpha and risk-control improvements
     - issue platform requirements to jangar-control-plane via NATS requirement channels
+  mission:
+    ledgerRef: /workspace/.agentrun/swarm/torghut-quant-mission-ledger.md
+    sourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md
+    businessMetric: increase routeable post-cost profit evidence and live trading readiness without weakening capital safety
+    validationContract:
+      - every run must cite the governing Torghut design or runtime requirement before changing code
+      - implement stages must produce production PRs that improve readiness, profit evidence, data freshness, execution quality, or capital safety
+      - verify stages must merge only green PRs and prove image promotion, Argo sync, live service health, and trading or evidence status after rollout
+      - final handoff must name the revenue metric improved or the smallest blocker preventing revenue impact
+    valueGates:
+      - post_cost_daily_net_pnl
+      - routeable_candidate_count
+      - zero_notional_or_stale_evidence_rate
+      - fill_tca_or_slippage_quality
+      - capital_gate_safety
+    handoffRequiredFields:
+      - objective
+      - files_changed_or_inspected
+      - commands_and_exit_codes
+      - tests_passed_or_failed
+      - unresolved_issues
+      - risk_and_rollback
+      - exact_next_action
   mode: lights-out
   timezone: UTC
   cadence:

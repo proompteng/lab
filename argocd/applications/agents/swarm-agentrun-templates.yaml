@@ -39,6 +39,15 @@ spec:
     natsChannel: general
     natsSubjectPrefix: workflow
     objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate the Jangar control plane
+    swarmMissionLedgerRef: /workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md
+    swarmBusinessMetric: reduce failed AgentRuns and shorten green PR-to-healthy GitOps rollout time for the Jangar control plane
+    swarmValidationContract: >-
+      ["cite the governing Jangar design or runtime requirement before changing code","produce production PRs with tests or report the exact blocker to code","merge only green PRs and prove Argo, workload readiness, and service health after rollout","name the control-plane metric improved or the smallest blocker preventing improvement"]
+    swarmValueGates: >-
+      ["failed_agentrun_rate","pr_to_rollout_latency","ready_status_truth","manual_intervention_count","handoff_evidence_quality"]
+    swarmHandoffRequiredFields: >-
+      ["objective","files_changed_or_inspected","commands_and_exit_codes","tests_passed_or_failed","unresolved_issues","risk_and_rollback","exact_next_action"]
+    swarmSourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md
   vcsRef:
     name: github
   vcsPolicy:
@@ -89,6 +98,15 @@ spec:
     natsChannel: general
     natsSubjectPrefix: workflow
     objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate the Jangar control plane
+    swarmMissionLedgerRef: /workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md
+    swarmBusinessMetric: reduce failed AgentRuns and shorten green PR-to-healthy GitOps rollout time for the Jangar control plane
+    swarmValidationContract: >-
+      ["cite the governing Jangar design or runtime requirement before changing code","produce production PRs with tests or report the exact blocker to code","merge only green PRs and prove Argo, workload readiness, and service health after rollout","name the control-plane metric improved or the smallest blocker preventing improvement"]
+    swarmValueGates: >-
+      ["failed_agentrun_rate","pr_to_rollout_latency","ready_status_truth","manual_intervention_count","handoff_evidence_quality"]
+    swarmHandoffRequiredFields: >-
+      ["objective","files_changed_or_inspected","commands_and_exit_codes","tests_passed_or_failed","unresolved_issues","risk_and_rollback","exact_next_action"]
+    swarmSourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md
   vcsRef:
     name: github
   vcsPolicy:
@@ -140,6 +158,15 @@ spec:
     ownerChannel: swarm://owner/platform
     natsChannel: general
     natsSubjectPrefix: workflow
+    swarmMissionLedgerRef: /workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md
+    swarmBusinessMetric: reduce failed AgentRuns and shorten green PR-to-healthy GitOps rollout time for the Jangar control plane
+    swarmValidationContract: >-
+      ["cite the governing Jangar design or runtime requirement before changing code","produce production PRs with tests or report the exact blocker to code","merge only green PRs and prove Argo, workload readiness, and service health after rollout","name the control-plane metric improved or the smallest blocker preventing improvement"]
+    swarmValueGates: >-
+      ["failed_agentrun_rate","pr_to_rollout_latency","ready_status_truth","manual_intervention_count","handoff_evidence_quality"]
+    swarmHandoffRequiredFields: >-
+      ["objective","files_changed_or_inspected","commands_and_exit_codes","tests_passed_or_failed","unresolved_issues","risk_and_rollback","exact_next_action"]
+    swarmSourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md
   vcsRef:
     name: github
   vcsPolicy:
@@ -194,6 +221,15 @@ spec:
     targetDeployments: agents/agents,agents/agents-controllers,jangar/jangar
     readinessUrl: http://agents.agents.svc.cluster.local/ready
     objective: as release engineer, make Jangar PRs production-ready by fixing blockers until all required checks are green, then squash-merge and verify in-cluster GitOps rollout health
+    swarmMissionLedgerRef: /workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md
+    swarmBusinessMetric: reduce failed AgentRuns and shorten green PR-to-healthy GitOps rollout time for the Jangar control plane
+    swarmValidationContract: >-
+      ["cite the governing Jangar design or runtime requirement before changing code","produce production PRs with tests or report the exact blocker to code","merge only green PRs and prove Argo, workload readiness, and service health after rollout","name the control-plane metric improved or the smallest blocker preventing improvement"]
+    swarmValueGates: >-
+      ["failed_agentrun_rate","pr_to_rollout_latency","ready_status_truth","manual_intervention_count","handoff_evidence_quality"]
+    swarmHandoffRequiredFields: >-
+      ["objective","files_changed_or_inspected","commands_and_exit_codes","tests_passed_or_failed","unresolved_issues","risk_and_rollback","exact_next_action"]
+    swarmSourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md
   vcsRef:
     name: github
   vcsPolicy:
@@ -244,6 +280,15 @@ spec:
     natsChannel: general
     natsSubjectPrefix: workflow
     objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate Torghut quant
+    swarmMissionLedgerRef: /workspace/.agentrun/swarm/torghut-quant-mission-ledger.md
+    swarmBusinessMetric: increase routeable post-cost profit evidence and live trading readiness without weakening capital safety
+    swarmValidationContract: >-
+      ["cite the governing Torghut design or runtime requirement before changing code","produce production PRs that improve readiness, profit evidence, data freshness, execution quality, or capital safety","merge only green PRs and prove image promotion, Argo sync, live service health, and trading or evidence status after rollout","name the revenue metric improved or the smallest blocker preventing revenue impact"]
+    swarmValueGates: >-
+      ["post_cost_daily_net_pnl","routeable_candidate_count","zero_notional_or_stale_evidence_rate","fill_tca_or_slippage_quality","capital_gate_safety"]
+    swarmHandoffRequiredFields: >-
+      ["objective","files_changed_or_inspected","commands_and_exit_codes","tests_passed_or_failed","unresolved_issues","risk_and_rollback","exact_next_action"]
+    swarmSourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md
   vcsRef:
     name: github
   vcsPolicy:
@@ -294,6 +339,15 @@ spec:
     natsChannel: general
     natsSubjectPrefix: workflow
     objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate Torghut quant
+    swarmMissionLedgerRef: /workspace/.agentrun/swarm/torghut-quant-mission-ledger.md
+    swarmBusinessMetric: increase routeable post-cost profit evidence and live trading readiness without weakening capital safety
+    swarmValidationContract: >-
+      ["cite the governing Torghut design or runtime requirement before changing code","produce production PRs that improve readiness, profit evidence, data freshness, execution quality, or capital safety","merge only green PRs and prove image promotion, Argo sync, live service health, and trading or evidence status after rollout","name the revenue metric improved or the smallest blocker preventing revenue impact"]
+    swarmValueGates: >-
+      ["post_cost_daily_net_pnl","routeable_candidate_count","zero_notional_or_stale_evidence_rate","fill_tca_or_slippage_quality","capital_gate_safety"]
+    swarmHandoffRequiredFields: >-
+      ["objective","files_changed_or_inspected","commands_and_exit_codes","tests_passed_or_failed","unresolved_issues","risk_and_rollback","exact_next_action"]
+    swarmSourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md
   vcsRef:
     name: github
   vcsPolicy:
@@ -345,6 +399,15 @@ spec:
     ownerChannel: swarm://owner/trading
     natsChannel: general
     natsSubjectPrefix: workflow
+    swarmMissionLedgerRef: /workspace/.agentrun/swarm/torghut-quant-mission-ledger.md
+    swarmBusinessMetric: increase routeable post-cost profit evidence and live trading readiness without weakening capital safety
+    swarmValidationContract: >-
+      ["cite the governing Torghut design or runtime requirement before changing code","produce production PRs that improve readiness, profit evidence, data freshness, execution quality, or capital safety","merge only green PRs and prove image promotion, Argo sync, live service health, and trading or evidence status after rollout","name the revenue metric improved or the smallest blocker preventing revenue impact"]
+    swarmValueGates: >-
+      ["post_cost_daily_net_pnl","routeable_candidate_count","zero_notional_or_stale_evidence_rate","fill_tca_or_slippage_quality","capital_gate_safety"]
+    swarmHandoffRequiredFields: >-
+      ["objective","files_changed_or_inspected","commands_and_exit_codes","tests_passed_or_failed","unresolved_issues","risk_and_rollback","exact_next_action"]
+    swarmSourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md
   vcsRef:
     name: github
   vcsPolicy:
@@ -396,6 +459,15 @@ spec:
     natsChannel: general
     natsSubjectPrefix: workflow
     objective: as release engineer, make Torghut PRs production-ready by fixing blockers until all required checks are green, then squash-merge and verify in-cluster GitOps rollout health
+    swarmMissionLedgerRef: /workspace/.agentrun/swarm/torghut-quant-mission-ledger.md
+    swarmBusinessMetric: increase routeable post-cost profit evidence and live trading readiness without weakening capital safety
+    swarmValidationContract: >-
+      ["cite the governing Torghut design or runtime requirement before changing code","produce production PRs that improve readiness, profit evidence, data freshness, execution quality, or capital safety","merge only green PRs and prove image promotion, Argo sync, live service health, and trading or evidence status after rollout","name the revenue metric improved or the smallest blocker preventing revenue impact"]
+    swarmValueGates: >-
+      ["post_cost_daily_net_pnl","routeable_candidate_count","zero_notional_or_stale_evidence_rate","fill_tca_or_slippage_quality","capital_gate_safety"]
+    swarmHandoffRequiredFields: >-
+      ["objective","files_changed_or_inspected","commands_and_exit_codes","tests_passed_or_failed","unresolved_issues","risk_and_rollback","exact_next_action"]
+    swarmSourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md
   vcsRef:
     name: github
   vcsPolicy:
