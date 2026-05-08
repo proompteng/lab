@@ -94,6 +94,7 @@ from .trading.lean_lanes import LeanLaneManager
 from .trading.lean_runtime import lean_authority_status
 from .trading.llm.evaluation import build_llm_evaluation_metrics
 from .trading.profit_repair_settlement import build_profit_repair_settlement_ledger
+from .trading.profit_signal_quorum import build_profit_signal_quorum
 from .trading.proof_floor import build_profitability_proof_floor_receipt
 from .trading.quality_adjusted_profit_frontier import (
     build_quality_adjusted_profit_frontier,
@@ -744,6 +745,16 @@ def _evaluate_trading_health_payload(
         proof_floor=proof_floor,
         active_revision=BUILD_COMMIT,
     )
+    profit_signal_quorum = _build_profit_signal_quorum_payload(
+        torghut_revision=BUILD_COMMIT,
+        dependency_quorum=_dependency_quorum.as_payload(),
+        hypothesis_payload=_hypothesis_payload,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        proof_floor=proof_floor,
+        route_reacquisition_board=route_reacquisition_board,
+        live_submission_gate=live_submission_gate,
+    )
     capital_replay_projection = _build_capital_replay_projection_payload(
         torghut_revision=BUILD_COMMIT,
         dependency_quorum=_dependency_quorum.as_payload(),
@@ -883,6 +894,7 @@ def _evaluate_trading_health_payload(
             "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
             "capital_reentry_cohort_ledger": capital_reentry_cohort_ledger,
             "profit_repair_settlement_ledger": profit_repair_settlement_ledger,
+            "profit_signal_quorum": profit_signal_quorum,
             "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
             "route_reacquisition_board": route_reacquisition_board,
             "quant_evidence": quant_evidence,
@@ -1976,6 +1988,16 @@ def trading_status() -> dict[str, object]:
         proof_floor=proof_floor,
         active_revision=str(shadow_first_runtime["active_revision"]),
     )
+    profit_signal_quorum = _build_profit_signal_quorum_payload(
+        torghut_revision=str(shadow_first_runtime["active_revision"]),
+        dependency_quorum=hypothesis_dependency_quorum.as_payload(),
+        hypothesis_payload=hypothesis_payload,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        proof_floor=proof_floor,
+        route_reacquisition_board=route_reacquisition_board,
+        live_submission_gate=live_submission_gate,
+    )
     capital_replay_projection = _build_capital_replay_projection_payload(
         torghut_revision=str(shadow_first_runtime["active_revision"]),
         dependency_quorum=hypothesis_dependency_quorum.as_payload(),
@@ -2058,6 +2080,7 @@ def trading_status() -> dict[str, object]:
         "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
         "capital_reentry_cohort_ledger": capital_reentry_cohort_ledger,
         "profit_repair_settlement_ledger": profit_repair_settlement_ledger,
+        "profit_signal_quorum": profit_signal_quorum,
         "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
         "route_reacquisition_board": route_reacquisition_board,
         "quant_evidence": quant_evidence,
@@ -4153,6 +4176,81 @@ def _build_profit_repair_settlement_ledger_payload(
         live_submission_gate=live_submission_gate,
         quant_evidence=quant_evidence,
         jangar_execution_trust_admission_ref=_build_jangar_execution_trust_admission_ref(
+            dependency_quorum
+        ),
+    )
+
+
+def _build_jangar_stage_clearance_packet_ref(
+    dependency_quorum: Mapping[str, Any],
+) -> dict[str, object]:
+    raw_packet = dependency_quorum.get("stage_clearance_packet")
+    packet: Mapping[str, Any] = (
+        cast(Mapping[str, Any], raw_packet) if isinstance(raw_packet, Mapping) else {}
+    )
+    decision = (
+        str(
+            packet.get("decision")
+            or packet.get("state")
+            or dependency_quorum.get("decision")
+            or "missing"
+        )
+        .strip()
+        .lower()
+    )
+    raw_reasons: object = (
+        packet.get("reason_codes")
+        or packet.get("blocking_reasons")
+        or dependency_quorum.get("reasons")
+        or []
+    )
+    reason_items: Sequence[object] = (
+        cast(Sequence[object], raw_reasons)
+        if isinstance(raw_reasons, Sequence)
+        and not isinstance(raw_reasons, (str, bytes, bytearray))
+        else ()
+    )
+    return {
+        "packet_id": packet.get("packet_id") or packet.get("id"),
+        "decision": decision,
+        "state": packet.get("state")
+        or ("current" if decision == "allow" else "missing"),
+        "action_class": packet.get("action_class") or "torghut_capital",
+        "reason_codes": [
+            str(item).strip() for item in reason_items if str(item).strip()
+        ],
+        "source": "stage_clearance_packet"
+        if packet.get("packet_id") or packet.get("id")
+        else "dependency_quorum_proxy",
+        "generated_at": packet.get("generated_at")
+        or dependency_quorum.get("generated_at"),
+        "fresh_until": packet.get("fresh_until")
+        or dependency_quorum.get("fresh_until"),
+    }
+
+
+def _build_profit_signal_quorum_payload(
+    *,
+    torghut_revision: str | None,
+    dependency_quorum: Mapping[str, Any],
+    hypothesis_payload: Mapping[str, Any],
+    quant_evidence: Mapping[str, Any],
+    market_context_status: Mapping[str, Any],
+    proof_floor: Mapping[str, Any],
+    route_reacquisition_board: Mapping[str, Any],
+    live_submission_gate: Mapping[str, Any],
+) -> dict[str, object]:
+    return build_profit_signal_quorum(
+        account_label=settings.trading_account_label,
+        trading_mode=settings.trading_mode,
+        torghut_revision=torghut_revision,
+        hypothesis_payload=hypothesis_payload,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        proof_floor_receipt=proof_floor,
+        route_reacquisition_board=route_reacquisition_board,
+        live_submission_gate=live_submission_gate,
+        jangar_stage_clearance_packet=_build_jangar_stage_clearance_packet_ref(
             dependency_quorum
         ),
     )

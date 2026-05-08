@@ -121,6 +121,9 @@ Start here:
 - Runtime quality gate surface: `GET /trading/status` and `GET /readyz` expose
   `quality_adjusted_profit_frontier`, the doc 181 shadow reducer that ranks zero-notional repairs without widening
   paper or live capital.
+- Runtime profit-signal handoff surface: `GET /trading/status` and `GET /readyz` expose
+  `profit_signal_quorum`, the doc 184 shadow receipt that keeps per-hypothesis scoped quant, context, route/TCA,
+  lineage, promotion, rejection-drag, and Jangar stage-clearance evidence tied to zero-notional repair decisions.
 - TA replay procedure (concrete steps): `argocd/applications/torghut/README.md`
 - Historical simulation operations playbook: `docs/torghut/rollouts/historical-simulation-playbook.md`
 - Incident context (example): `docs/incidents/2025-12-20-longhorn-upgrade-kafka-failure.md`
