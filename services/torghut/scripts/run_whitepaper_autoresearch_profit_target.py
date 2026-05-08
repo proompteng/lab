@@ -1056,15 +1056,17 @@ def _candidate_search_remediation(
     ]
     next_actions: list[dict[str, Any]] = []
     if "TimeoutError:real_replay_timeout_seconds" in failure_reason:
+        current_per_spec = max(1, int(max_frontier_candidates_per_spec))
+        retry_per_spec = (
+            max(1, min(4, current_per_spec // 4)) if current_per_spec > 2 else 1
+        )
         next_actions.append(
             {
                 "priority": 1,
                 "action": "shrink_per_spec_frontier_or_extend_timeout",
                 "reason": "real replay timed out before all selected candidate specs emitted evidence",
                 "recommended_flags": {
-                    "--max-frontier-candidates-per-spec": str(
-                        max(1, min(max_frontier_candidates_per_spec, 8))
-                    ),
+                    "--max-frontier-candidates-per-spec": str(retry_per_spec),
                     "--real-replay-timeout-seconds": str(
                         max(replay_timeout_seconds * 2, 900)
                         if replay_timeout_seconds > 0
