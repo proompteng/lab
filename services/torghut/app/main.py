@@ -767,16 +767,20 @@ def _evaluate_trading_health_payload(
 def _evaluate_universe_dependency(
     scheduler: TradingScheduler | None,
 ) -> dict[str, object]:
-    if scheduler is None or settings.trading_universe_source != "jangar":
+    require_non_empty = (
+        settings.trading_universe_source == "static"
+        or settings.trading_universe_require_non_empty_jangar
+    )
+    if scheduler is None:
         return {
-            "ok": True,
-            "detail": "skipped",
+            "ok": not require_non_empty,
+            "detail": "universe state unavailable",
             "source": settings.trading_universe_source,
             "status": None,
             "reason": None,
             "symbols_count": None,
             "cache_age_seconds": None,
-            "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+            "require_non_empty": require_non_empty,
         }
 
     state = getattr(scheduler, "state", None)
@@ -789,14 +793,13 @@ def _evaluate_universe_dependency(
             "reason": None,
             "symbols_count": None,
             "cache_age_seconds": None,
-            "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+            "require_non_empty": require_non_empty,
         }
 
     universe_status = getattr(state, "universe_source_status", None)
     universe_symbols_count = getattr(state, "universe_symbols_count", None)
     if universe_status in {"unknown", "not_evaluated", None} or (
-        settings.trading_universe_require_non_empty_jangar
-        and not universe_symbols_count
+        require_non_empty and not universe_symbols_count
     ):
         _refresh_universe_state_for_readiness(scheduler=scheduler, state=state)
 
@@ -812,27 +815,27 @@ def _evaluate_universe_dependency(
     if universe_status == "error":
         return {
             "ok": False,
-            "detail": "jangar universe unavailable",
+            "detail": f"{settings.trading_universe_source} universe unavailable",
             "source": settings.trading_universe_source,
             "status": universe_status,
             "reason": universe_reason,
             "symbols_count": universe_symbols_count,
             "cache_age_seconds": universe_cache_age_seconds,
             "max_stale_seconds": max_stale_seconds,
-            "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+            "require_non_empty": require_non_empty,
         }
 
-    if universe_status == "empty" and universe_fail_safe_blocked:
+    if universe_status == "empty" and (universe_fail_safe_blocked or require_non_empty):
         return {
             "ok": False,
-            "detail": "jangar universe empty",
+            "detail": f"{settings.trading_universe_source} universe empty",
             "source": settings.trading_universe_source,
             "status": universe_status,
             "reason": universe_reason,
             "symbols_count": universe_symbols_count,
             "cache_age_seconds": universe_cache_age_seconds,
             "max_stale_seconds": max_stale_seconds,
-            "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+            "require_non_empty": require_non_empty,
         }
 
     if universe_status == "degraded":
@@ -848,25 +851,28 @@ def _evaluate_universe_dependency(
             "symbols_count": universe_symbols_count,
             "cache_age_seconds": universe_cache_age_seconds,
             "max_stale_seconds": max_stale_seconds,
-            "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+            "require_non_empty": require_non_empty,
         }
 
     if universe_status == "ok":
+        detail = f"{settings.trading_universe_source} universe fresh"
+        if settings.trading_universe_source == "static":
+            detail = "static universe loaded"
         return {
             "ok": True,
-            "detail": "jangar universe fresh",
+            "detail": detail,
             "source": settings.trading_universe_source,
             "status": universe_status,
             "reason": universe_reason,
             "symbols_count": universe_symbols_count,
             "cache_age_seconds": universe_cache_age_seconds,
             "max_stale_seconds": max_stale_seconds,
-            "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+            "require_non_empty": require_non_empty,
         }
 
     if universe_status in {"unknown", "not_evaluated", None}:
         return {
-            "ok": not settings.trading_universe_require_non_empty_jangar,
+            "ok": not require_non_empty,
             "detail": "universe not yet evaluated",
             "source": settings.trading_universe_source,
             "status": universe_status,
@@ -874,7 +880,7 @@ def _evaluate_universe_dependency(
             "symbols_count": universe_symbols_count,
             "cache_age_seconds": universe_cache_age_seconds,
             "max_stale_seconds": max_stale_seconds,
-            "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+            "require_non_empty": require_non_empty,
         }
 
     if universe_fail_safe_blocked:
@@ -887,19 +893,19 @@ def _evaluate_universe_dependency(
             "symbols_count": universe_symbols_count,
             "cache_age_seconds": universe_cache_age_seconds,
             "max_stale_seconds": max_stale_seconds,
-            "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+            "require_non_empty": require_non_empty,
         }
 
     return {
         "ok": True,
-        "detail": "jangar universe ok",
+        "detail": f"{settings.trading_universe_source} universe ok",
         "source": settings.trading_universe_source,
         "status": universe_status,
         "reason": universe_reason,
         "symbols_count": universe_symbols_count,
         "cache_age_seconds": universe_cache_age_seconds,
         "max_stale_seconds": max_stale_seconds,
-        "require_non_empty": settings.trading_universe_require_non_empty_jangar,
+        "require_non_empty": require_non_empty,
     }
 
 
@@ -936,9 +942,14 @@ def _refresh_universe_state_for_readiness(
     setattr(state, "universe_symbols_count", symbols_count)
     setattr(state, "universe_cache_age_seconds", resolution.cache_age_seconds)
     fail_safe_blocked = (
-        settings.trading_universe_source == "jangar"
-        and settings.trading_universe_require_non_empty_jangar
-        and symbols_count == 0
+        symbols_count == 0
+        and (
+            settings.trading_universe_source == "static"
+            or (
+                settings.trading_universe_source == "jangar"
+                and settings.trading_universe_require_non_empty_jangar
+            )
+        )
     )
     setattr(state, "universe_fail_safe_blocked", fail_safe_blocked)
     setattr(
