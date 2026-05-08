@@ -1108,6 +1108,37 @@ def _candidate_search_remediation(
                 ],
             }
         )
+    promotion_proof_failures = (
+        "shadow_parity_status_not_within_budget",
+        "executable_replay_not_passed",
+        "executable_replay_artifact_missing",
+        "executable_replay_order_count_below_oracle",
+        "executable_replay_account_buying_power_missing",
+        "executable_replay_max_notional_missing",
+        "executable_replay_notional_exceeds_buying_power",
+    )
+    proof_failure_counts = {
+        reason: count
+        for reason, count in failure_counts.items()
+        if reason in promotion_proof_failures
+    }
+    if proof_failure_counts:
+        next_actions.append(
+            {
+                "priority": 3,
+                "action": "complete_executable_replay_and_shadow_parity_evidence",
+                "reason": "replayed candidates are missing promotion-closure evidence required by the oracle",
+                "blocking_failure_counts": proof_failure_counts,
+                "required_scorecard_fields": [
+                    "shadow_parity_status",
+                    "executable_replay_passed",
+                    "executable_replay_artifact_ref",
+                    "executable_replay_order_count",
+                    "executable_replay_account_buying_power",
+                    "executable_replay_max_notional_per_trade",
+                ],
+            }
+        )
     if any(
         reason in failure_counts
         for reason in (
@@ -1117,7 +1148,7 @@ def _candidate_search_remediation(
     ):
         next_actions.append(
             {
-                "priority": 3,
+                "priority": 4,
                 "action": "increase_breadth_and_portfolio_diversity",
                 "reason": "replayed candidates had flat or non-positive days",
                 "recommended_flags": {
@@ -1137,7 +1168,7 @@ def _candidate_search_remediation(
     ):
         next_actions.append(
             {
-                "priority": 4,
+                "priority": 5,
                 "action": "pivot_family_mix_away_from_failed_exposures",
                 "reason": "partial replay evidence failed profit or risk gates",
                 "recommended_review_fields": [
@@ -1151,7 +1182,7 @@ def _candidate_search_remediation(
     if best_false_negative_table:
         next_actions.append(
             {
-                "priority": 5,
+                "priority": 6,
                 "action": "expand_exploration_for_unreplayed_high_ranked_specs",
                 "reason": "ranked specs were not replayed because of budget",
                 "candidate_spec_ids": [

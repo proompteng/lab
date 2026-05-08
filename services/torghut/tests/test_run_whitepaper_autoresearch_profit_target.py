@@ -886,6 +886,51 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "7200",
         )
 
+    def test_remediation_prioritizes_missing_promotion_proof(self) -> None:
+        remediation = runner._candidate_search_remediation(
+            failure_reason="portfolio_optimizer_produced_no_candidate",
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": "spec-selected",
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            evidence_bundles=(),
+            false_positive_table=(
+                {
+                    "candidate_spec_id": "spec-selected",
+                    "evidence_status": "replayed",
+                    "failure_reasons": [
+                        "active_day_ratio_below_oracle",
+                        "shadow_parity_status_not_within_budget",
+                        "executable_replay_not_passed",
+                        "executable_replay_artifact_missing",
+                        "executable_replay_account_buying_power_missing",
+                        "executable_replay_max_notional_missing",
+                    ],
+                },
+            ),
+            best_false_negative_table=(),
+            replay_timeout_seconds=7200,
+            max_frontier_candidates_per_spec=2,
+        )
+
+        proof_action = remediation["next_actions"][0]
+        self.assertEqual(
+            proof_action["action"],
+            "complete_executable_replay_and_shadow_parity_evidence",
+        )
+        self.assertEqual(
+            proof_action["blocking_failure_counts"]["executable_replay_not_passed"],
+            1,
+        )
+        self.assertIn(
+            "executable_replay_artifact_ref",
+            proof_action["required_scorecard_fields"],
+        )
+
     def test_train_ranker_script_main_writes_model_and_scores(self) -> None:
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
