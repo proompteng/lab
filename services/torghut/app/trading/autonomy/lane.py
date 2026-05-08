@@ -75,7 +75,11 @@ from ..features import (
     normalize_feature_vector_v3,
 )
 from ..forecasting import build_default_forecast_router
-from ..hypotheses import load_hypothesis_registry, load_jangar_dependency_quorum
+from ..hypotheses import (
+    hypothesis_registry_requires_dependency_capability,
+    load_hypothesis_registry,
+    resolve_hypothesis_dependency_quorum,
+)
 from ..llm.evaluation import build_llm_evaluation_metrics
 from ..models import SignalEnvelope
 from ..parity import (
@@ -287,7 +291,7 @@ def _build_candidate_alpha_readiness_payload(
     runtime_strategies: Sequence[StrategyRuntimeConfig],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     registry = load_hypothesis_registry()
-    dependency_quorum = load_jangar_dependency_quorum()
+    dependency_quorum = resolve_hypothesis_dependency_quorum(registry)
     strategy_families = sorted(
         {
             str(strategy.strategy_type).strip()
@@ -3321,11 +3325,23 @@ def run_autonomous_lane(
         promotion_policy_payload = dict(raw_gate_policy)
         promotion_policy_payload["promotion_require_profitability_stage_manifest"] = True
         promotion_policy_payload["promotion_require_truthful_evidence_contracts"] = True
-        promotion_policy_payload["promotion_require_jangar_dependency_quorum"] = True
-        promotion_policy_payload.setdefault(
-            "promotion_jangar_dependency_quorum_required_targets",
-            ["paper", "live"],
+        require_jangar_dependency_quorum = hypothesis_registry_requires_dependency_capability(
+            load_hypothesis_registry(),
+            "jangar_dependency_quorum",
         )
+        promotion_policy_payload["promotion_require_jangar_dependency_quorum"] = (
+            require_jangar_dependency_quorum
+        )
+        if require_jangar_dependency_quorum:
+            promotion_policy_payload.setdefault(
+                "promotion_jangar_dependency_quorum_required_targets",
+                ["paper", "live"],
+            )
+        else:
+            promotion_policy_payload.pop(
+                "promotion_jangar_dependency_quorum_required_targets",
+                None,
+            )
         promotion_policy_payload["promotion_require_alpha_readiness_contract"] = True
         promotion_policy_payload.setdefault(
             "promotion_alpha_readiness_required_targets",

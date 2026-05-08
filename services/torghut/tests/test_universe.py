@@ -82,12 +82,25 @@ class TestUniverseResolver(TestCase):
         with patch("app.trading.universe.urlopen", side_effect=RuntimeError("boom")):
             self.assertEqual(resolver.get_symbols(), set())
 
-    def test_active_trading_rejects_static_universe_source(self) -> None:
+    def test_active_trading_allows_static_universe_source_for_simple_lane(self) -> None:
         config.settings.trading_enabled = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL,MSFT"
         resolver = UniverseResolver()
-        self.assertEqual(resolver.get_symbols(), set())
+        resolution = resolver.get_resolution()
+        self.assertEqual(resolution.status, "ok")
+        self.assertEqual(resolution.reason, "static_symbols_loaded")
+        self.assertEqual(resolution.symbols, {"AAPL", "MSFT"})
+
+    def test_active_trading_static_universe_still_fails_closed_on_empty(self) -> None:
+        config.settings.trading_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = ""
+        resolver = UniverseResolver()
+        resolution = resolver.get_resolution()
+        self.assertEqual(resolution.status, "empty")
+        self.assertEqual(resolution.reason, "static_symbols_empty")
+        self.assertEqual(resolution.symbols, set())
 
     def test_jangar_failure_uses_cached_symbols(self) -> None:
         config.settings.trading_universe_source = "jangar"

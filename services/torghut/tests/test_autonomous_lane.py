@@ -1460,8 +1460,12 @@ class TestAutonomousLane(TestCase):
         self.assertTrue(
             policy_payload.get("promotion_require_profitability_stage_manifest")
         )
-        self.assertTrue(
+        self.assertFalse(
             policy_payload.get("promotion_require_jangar_dependency_quorum")
+        )
+        self.assertNotIn(
+            "promotion_jangar_dependency_quorum_required_targets",
+            policy_payload,
         )
         self.assertTrue(
             policy_payload.get("promotion_require_alpha_readiness_contract")
@@ -1474,6 +1478,74 @@ class TestAutonomousLane(TestCase):
         assert isinstance(candidate_state_payload, dict)
         self.assertIn("dependencyQuorum", candidate_state_payload)
         self.assertIn("alphaReadiness", candidate_state_payload)
+
+    @patch(
+        "app.trading.autonomy.lane.hypothesis_registry_requires_dependency_capability",
+        return_value=True,
+    )
+    @patch(
+        "app.trading.autonomy.lane.evaluate_promotion_prerequisites",
+    )
+    def test_lane_keeps_jangar_policy_targets_when_registry_requires_quorum(
+        self,
+        mock_promotion_prerequisites: object,
+        _mock_requires_dependency_capability: object,
+    ) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        call_payload: dict[str, object] = {}
+
+        def _mock_evaluate_promotion_prerequisites(
+            *,
+            policy_payload: dict[str, Any],
+            gate_report_payload: dict[str, Any],
+            candidate_state_payload: dict[str, Any],
+            promotion_target: str,
+            artifact_root: Path,
+            now: Any | None = None,
+        ) -> PromotionPrerequisiteResult:
+            call_payload["policy_payload"] = dict(policy_payload)
+            return PromotionPrerequisiteResult(
+                allowed=False,
+                reasons=["jangar_dependency_quorum_delay"],
+                required_artifacts=[],
+                missing_artifacts=[],
+                reason_details=[],
+                artifact_refs=[],
+                required_throughput={"signal_count": 1, "decision_count": 1},
+                observed_throughput={"signal_count": 1, "decision_count": 1},
+            )
+
+        mock_promotion_prerequisites.side_effect = (
+            _mock_evaluate_promotion_prerequisites
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "lane-jangar-policy-enforced"
+            run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+            )
+
+        policy_payload = call_payload["policy_payload"]
+        assert isinstance(policy_payload, dict)
+        self.assertTrue(
+            policy_payload.get("promotion_require_jangar_dependency_quorum")
+        )
+        self.assertEqual(
+            policy_payload.get("promotion_jangar_dependency_quorum_required_targets"),
+            ["paper", "live"],
+        )
 
     @patch(
         "app.trading.autonomy.lane._evaluate_drift_promotion_gate",

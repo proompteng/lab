@@ -180,26 +180,20 @@ spec:
               value: sync
             - name: TRADING_STRATEGY_RELOAD_SECONDS
               value: "10"
-            - name: TRADING_JANGAR_CONTROL_PLANE_STATUS_URL
-              value: http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents
-            - name: TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS
-              value: "15"
-            - name: TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS
-              value: "10"
             - name: TRADING_UNIVERSE_SOURCE
-              value: jangar
+              value: static
             - name: TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR
-              value: "true"
+              value: "false"
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED
-              value: "true"
+              value: "false"
+            - name: TRADING_STATIC_SYMBOLS
+              value: NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS
               value: NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC
             - name: TRADING_UNIVERSE_SYMBOL_ALLOWLIST
               value: NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC
             - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
               value: "900"
-            - name: JANGAR_SYMBOLS_URL
-              value: http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity&format=compact
             - name: POSTHOG_ENABLED
               value: "false"
             - name: WHITEPAPER_WORKFLOW_ENABLED

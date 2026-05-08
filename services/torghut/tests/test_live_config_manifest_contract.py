@@ -226,7 +226,7 @@ class TestLiveConfigManifestContract(TestCase):
 
         self.assertEqual(settings.trading_mode, "live")
         self.assertEqual(settings.trading_pipeline_mode, "simple")
-        self.assertEqual(settings.trading_universe_source, "jangar")
+        self.assertEqual(settings.trading_universe_source, "static")
         self.assertEqual(env.get("TRADING_STRATEGY_SCHEDULER_ENABLED"), "true")
         self.assertFalse(settings.trading_autonomy_enabled)
         self.assertFalse(settings.trading_autonomy_allow_live_promotion)
@@ -241,16 +241,14 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(settings.llm_dspy_runtime_mode, "disabled")
         self.assertFalse(settings.posthog_enabled)
         self.assertTrue(settings.trading_fractional_equities_enabled)
-        self.assertTrue(settings.trading_universe_require_non_empty_jangar)
-        self.assertTrue(settings.trading_universe_static_fallback_enabled)
+        self.assertFalse(settings.trading_universe_require_non_empty_jangar)
+        self.assertFalse(settings.trading_universe_static_fallback_enabled)
         self.assertEqual(settings.trading_universe_max_stale_seconds, 900)
+        self.assertIsNone(settings.trading_jangar_symbols_url)
+        self.assertIsNone(settings.trading_jangar_control_plane_status_url)
         self.assertEqual(
-            settings.trading_jangar_symbols_url,
-            "http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity&format=compact",
-        )
-        self.assertEqual(
-            settings.trading_jangar_control_plane_status_url,
-            "http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents",
+            set(settings.trading_static_symbols),
+            _LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS,
         )
         self.assertEqual(
             settings.trading_jangar_quant_health_url,
@@ -273,14 +271,10 @@ class TestLiveConfigManifestContract(TestCase):
             env.get("TRADING_MARKET_CONTEXT_URL"),
             "http://jangar.jangar.svc.cluster.local/api/torghut/market-context/",
         )
-        self.assertEqual(
-            env.get("TRADING_JANGAR_CONTROL_PLANE_STATUS_URL"),
-            "http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents",
-        )
-        self.assertEqual(
-            env.get("TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS"), "15"
-        )
-        self.assertEqual(env.get("TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS"), "10")
+        self.assertNotIn("JANGAR_SYMBOLS_URL", env)
+        self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_STATUS_URL", env)
+        self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS", env)
+        self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS", env)
         self.assertNotIn("JANGAR_BASE_URL", env)
 
     def test_live_manifest_sets_typed_quant_health_route(self) -> None:
@@ -678,7 +672,14 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertTrue(_manifest_bool(env, "TRADING_ENABLED"))
         self.assertEqual(env.get("TRADING_MODE"), "live")
         self.assertEqual(env.get("TRADING_PIPELINE_MODE"), "simple")
-        self.assertEqual(env.get("TRADING_UNIVERSE_SOURCE"), "jangar")
+        self.assertEqual(env.get("TRADING_UNIVERSE_SOURCE"), "static")
+        self.assertEqual(env.get("TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR"), "false")
+        self.assertEqual(env.get("TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED"), "false")
+        _assert_exact_live_execution_chip_universe(
+            self,
+            str(env.get("TRADING_STATIC_SYMBOLS", "")).split(","),
+            context="live static universe",
+        )
         self.assertFalse(_manifest_bool(env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ENABLED"))
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION"))
