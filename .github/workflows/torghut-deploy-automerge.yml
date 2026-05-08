@@ -116,6 +116,79 @@ jobs:
           echo "eligible=${{ steps.gates.outputs.eligible }}"
           echo "reason=${{ steps.gates.outputs.reason }}"
 
+      - name: Wait for required release checks
+        if: steps.gates.outputs.eligible == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          required_checks=(
+            'Semantic Commits|Lint commit messages'
+            'Semantic Pull Request|Validate PR title'
+            'argo-lint|lint'
+            'kubeconform|validate'
+            'torghut-ci|Pyright'
+            'torghut-ci|Bytecode + lint + migration guard'
+            'torghut-ci|Pytest shard 0'
+            'torghut-ci|Pytest shard 1'
+            'torghut-ci|Pytest shard 2'
+            'torghut-ci|Pytest shard 3'
+            'torghut-ci|Bytecode + pytest + coverage'
+          )
+
+          deadline=$((SECONDS + 2700))
+          while true; do
+            check_lines="$(
+              gh pr checks "${PR_NUMBER}" \
+                -R "${GH_REPO}" \
+                --json name,state,workflow \
+                --jq '.[] | [.workflow, .name, .state] | @tsv'
+            )"
+
+            pending=()
+            for check in "${required_checks[@]}"; do
+              IFS='|' read -r workflow name <<< "${check}"
+              state="$(
+                printf '%s\n' "${check_lines}" |
+                  awk -F '\t' \
+                    -v workflow="${workflow}" \
+                    -v name="${name}" \
+                    '$1 == workflow && $2 == name { print $3; found = 1; exit } END { if (!found) print "MISSING" }'
+              )"
+
+              case "${state}" in
+                SUCCESS)
+                  ;;
+                FAILURE | ERROR | CANCELLED | SKIPPED | TIMED_OUT | ACTION_REQUIRED | STARTUP_FAILURE)
+                  echo "Required check failed: ${workflow} / ${name} -> ${state}"
+                  exit 1
+                  ;;
+                *)
+                  pending+=("${workflow} / ${name} -> ${state}")
+                  ;;
+              esac
+            done
+
+            if [ "${#pending[@]}" -eq 0 ]; then
+              echo "All required Torghut release checks passed."
+              break
+            fi
+
+            if [ "${SECONDS}" -ge "${deadline}" ]; then
+              echo "Timed out waiting for required release checks:"
+              printf '%s\n' "${pending[@]}"
+              exit 1
+            fi
+
+            echo "Waiting for required release checks:"
+            printf '%s\n' "${pending[@]}"
+            sleep 15
+          done
+
       - name: Enable squash auto-merge
         if: steps.gates.outputs.eligible == 'true'
         shell: bash
