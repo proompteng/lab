@@ -1369,6 +1369,32 @@ class TestTradingApi(TestCase):
             frontier,
         )
 
+    def test_trading_status_and_health_include_profit_signal_quorum(self) -> None:
+        quorum = {
+            "schema_version": "torghut.profit-signal-quorum.v1",
+            "quorum_set_id": "profit-signal-quorum-ledger:test",
+            "aggregate_decision": "observe_only",
+            "summary": {"quorum_count": 1, "zero_notional_quorum_count": 1},
+            "quorums": [
+                {
+                    "quorum_id": "profit-signal-quorum:test",
+                    "hypothesis_id": "H-CONT-01",
+                    "decision": "observe_only",
+                    "max_notional": "0",
+                }
+            ],
+            "max_notional": "0",
+        }
+
+        with patch("app.main.build_profit_signal_quorum", return_value=quorum):
+            status_response = self.client.get("/trading/status")
+            health_response = self.client.get("/trading/health")
+
+        self.assertEqual(status_response.status_code, 200)
+        self.assertIn(health_response.status_code, {200, 503})
+        self.assertEqual(status_response.json()["profit_signal_quorum"], quorum)
+        self.assertEqual(health_response.json()["profit_signal_quorum"], quorum)
+
     def test_trading_health_requires_profitability_proof_floor_in_live(self) -> None:
         original_enabled = settings.trading_enabled
         original_mode = settings.trading_mode
