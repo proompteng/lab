@@ -17,9 +17,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.drop_index(
+    op.drop_constraint(
         "uq_autoresearch_candidate_specs_candidate_spec_id",
-        table_name="autoresearch_candidate_specs",
+        "autoresearch_candidate_specs",
+        type_="unique",
     )
     op.create_index(
         "uq_autoresearch_candidate_specs_epoch_candidate_spec",
@@ -34,9 +35,8 @@ def downgrade() -> None:
         "uq_autoresearch_candidate_specs_epoch_candidate_spec",
         table_name="autoresearch_candidate_specs",
     )
-    op.create_index(
+    op.create_unique_constraint(
         "uq_autoresearch_candidate_specs_candidate_spec_id",
         "autoresearch_candidate_specs",
         ["candidate_spec_id"],
-        unique=True,
     )
