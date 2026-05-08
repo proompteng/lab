@@ -53,7 +53,7 @@ export const getQuantHealthHandler = async (request: Request) => {
       60,
       (Number.isFinite(missingUpdateThresholdSeconds) ? missingUpdateThresholdSeconds : 15) * 4,
     )
-    const stageMinAsOf = new Date(Date.now() - stageLookbackSeconds * 1000).toISOString()
+    const stageMinRecordedAt = new Date(Date.now() - stageLookbackSeconds * 1000).toISOString()
     const duringMarketHours = isMarketHoursNy()
     const missingUpdateAlarm =
       duringMarketHours &&
@@ -66,12 +66,15 @@ export const getQuantHealthHandler = async (request: Request) => {
           strategyId: strategyIdResult.value,
           account,
           window: windowResult.value,
-          minAsOf: stageMinAsOf,
+          minCreatedAt: stageMinRecordedAt,
         })
       : []
     const maxStageLagSeconds = stages.reduce((max, stage) => Math.max(max, stage.lagSeconds), 0)
+    const missingPipelineHealthStages = pipelineHealthScoped && stages.length === 0
     const overallState =
-      stages.some((stage) => !stage.ok) || missingUpdateAlarm || emptyLatestStoreAlarm ? 'degraded' : 'ok'
+      missingPipelineHealthStages || stages.some((stage) => !stage.ok) || missingUpdateAlarm || emptyLatestStoreAlarm
+        ? 'degraded'
+        : 'ok'
     const runtime = getTorghutQuantRuntimeStatus()
 
     return jsonResponse({
@@ -94,7 +97,8 @@ export const getQuantHealthHandler = async (request: Request) => {
       runtimeStreamHeartbeatMs: runtime.streamHeartbeatMs,
       stageScopeOmitted: !pipelineHealthScoped,
       stageLookbackSeconds,
-      stageMinAsOf,
+      stageMinRecordedAt,
+      missingPipelineHealthStages,
       stages,
       maxStageLagSeconds,
       pipelineHealthScoped,
