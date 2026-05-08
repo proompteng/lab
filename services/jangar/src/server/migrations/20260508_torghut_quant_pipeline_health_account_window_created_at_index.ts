@@ -1,8 +1,11 @@
-export const up = async () => {
-  // This is a performance-only index. Creating it from the app startup migrator
-  // timed out on production data and left Jangar unable to serve health checks.
-  // Keep runtime migration non-blocking; add the index later through an
-  // operational/concurrent migration path that does not run in process startup.
+import { type Kysely } from 'kysely'
+
+import type { Database } from '../db'
+
+export const up = async (_db: Kysely<Database>) => {
+  // Keep the migration name registered without running heavyweight DDL from the serving control plane.
 }
 
-export const down = async () => {}
+export const down = async (_db: Kysely<Database>) => {
+  // The hotfix migration does not own an index to drop.
+}

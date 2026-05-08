@@ -355,3 +355,13 @@ Acceptance gates:
 - Degraded quant and market-context receipts are visible but non-promoting.
 - The top repair packet has bounded stop conditions and a rollback target.
 - Paper/live remain disabled while Jangar quality or hypothesis escrow is dirty.
+
+## Implementation note: 2026-05-08 shadow reducer
+
+The first Torghut-owned slice adds `torghut.quality-adjusted-profit-frontier.v1` in shadow mode on `/trading/status`
+and `/readyz`. It ranks zero-notional repair packets and hypothesis escrows from proof-floor, route/TCA, quant-health,
+market-context, simulation-cache, and Jangar evidence-quality inputs.
+
+Degraded quant rows, empty scoped stages, market-context risk flags, open critical quant alerts, stale simulation
+cache, or missing Jangar quality refs keep paper/live notional at zero. Rollback is to stop exposing the frontier
+payload and leave the existing proof-floor/live-submission gates authoritative.
