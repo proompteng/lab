@@ -228,7 +228,8 @@ export const countConsecutiveProviderCapacityFailures = (resources: Record<strin
 }
 
 export const resolveConsecutiveFailureFreezeReason = (resources: Record<string, unknown>[], threshold: number) => {
-  if (countConsecutiveProviderCapacityFailures(resources) >= threshold) return 'ProviderCapacityExhausted'
+  // Provider quota exhaustion is deterministic during the reset window; retrying immediately only burns schedule slots.
+  if (countConsecutiveProviderCapacityFailures(resources) >= 1) return 'ProviderCapacityExhausted'
   if (countConsecutiveFailures(resources) >= threshold) return 'ConsecutiveFailures'
   return null
 }
