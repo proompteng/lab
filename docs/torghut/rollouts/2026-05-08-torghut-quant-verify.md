@@ -5,19 +5,19 @@ Repository: `proompteng/lab`
 Branch: `codex/swarm-torghut-quant-verify`
 Base: `main`
 Owner channel: `swarm://owner/trading`
-Last refreshed: 2026-05-08T07:58:30Z
+Last refreshed: 2026-05-08T08:25:00Z
 
 ## Owner update message
 
 Merge gate is no-go for #5412. The PR is open, non-draft, conflict-free, and green on hosted checks at
-head `d0a7480ba4a2eaed9d56e0a87d63631d54792234`, but it is still above the large-diff review threshold
+head `489ef179d7d6b8c5fae0cbbc9f339876db3c32f5`, but it is still above the large-diff review threshold
 at 8,074 additions and 617 deletions. There is no posted Codex review and no review thread; the latest
-`@codex review` request for this head returned the Codex usage-limit blocker at 2026-05-08T07:47:00Z.
+`@codex review` request for this head returned the Codex usage-limit blocker at 2026-05-08T08:11:33Z.
 
-Current in-cluster Torghut rollout is healthy for current main
-`94fa92a40a561a7c9d7f39d383ed1bb2b848e3f9`, `chore(release/e77318d): automated release PR (#6065)`.
-Argo CD reports `torghut`, `torghut-options`, and `symphony-torghut` as `Synced` and `Healthy`. Live and
-sim Torghut workloads are ready on image digest
+The audit PR for this pass, #6066, merged at `f45234fc501469f947ad8c055e50ebfb95e6565f`. Current main
+then advanced to `d63fb1c866c3c1bbe79ff647eaa4727818f36222` via #6067, a Bilig-only release PR. The
+Torghut rollout remains healthy: Argo CD reports `torghut`, `torghut-options`, and `symphony-torghut` as
+`Synced` and `Healthy`. Live and sim Torghut workloads are ready on image digest
 `sha256:056d6b0bc237adec3e3aa5e89a3f08ee81523ec18d8374c4a4e7d072e436f0f3`, runtime build commit
 `809276e6db88bf4546f3fc6c75bd16c54815fb1d`, active revision `torghut-00302`.
 
@@ -57,14 +57,14 @@ live-submission gates to clear before non-zero notional.
 
 - #5412
   - Rechecked mergeability, hosted checks, review state, comments, review threads, and changed-line count.
-  - Latest reviewed head: `d0a7480ba4a2eaed9d56e0a87d63631d54792234`.
+  - Latest reviewed head: `489ef179d7d6b8c5fae0cbbc9f339876db3c32f5`.
   - Latest Codex review request:
-    https://github.com/proompteng/lab/pull/5412#issuecomment-4404664226
+    https://github.com/proompteng/lab/pull/5412#issuecomment-4404817379
   - Latest connector blocker:
-    https://github.com/proompteng/lab/pull/5412#issuecomment-4404665566
+    https://github.com/proompteng/lab/pull/5412#issuecomment-4404818477
   - Kept open and unmerged.
 - Current main rollout
-  - Verified current main `94fa92a40a561a7c9d7f39d383ed1bb2b848e3f9` in Argo CD and live Torghut workloads.
+  - Verified current main `d63fb1c866c3c1bbe79ff647eaa4727818f36222` in Argo CD and live Torghut workloads.
   - No direct production mutation was made from the local shell.
 
 ## Comments and conflicts resolved
@@ -90,16 +90,18 @@ live-submission gates to clear before non-zero notional.
 - PASS: open PR inventory from
   `gh pr list -R proompteng/lab --state open --limit 100 --json number,title,headRefName,baseRefName,...`.
 - PASS: `gh pr view 5412 -R proompteng/lab --json ...` reports head
-  `d0a7480ba4a2eaed9d56e0a87d63631d54792234`, `CLEAN`, `MERGEABLE`, 8,074 additions, and 617 deletions.
+  `489ef179d7d6b8c5fae0cbbc9f339876db3c32f5`, `CLEAN`, `MERGEABLE`, 8,074 additions, and 617 deletions.
 - PASS: `gh pr checks 5412 -R proompteng/lab --watch --interval 20` reports all non-skipped checks passing,
   including `Bytecode + pytest + coverage`, `Pyright`, `Quality signals (complexity + security)`,
-  `agents-ci / integration`, `agents-ci / validate`, `jangar-ci / lint-and-typecheck / run`,
+  `agents-ci / integration` after 14m46s, `agents-ci / validate`, `jangar-ci / lint-and-typecheck / run`,
   `check_changed_files`, semantic commits, and semantic PR title.
 - PASS: `gh api repos/proompteng/lab/pulls/5412/reviews --paginate` returned no reviews.
 - PASS: `gh api graphql ... reviewThreads(first:100)` returned `totalCount=0`.
 - BLOCKED: the latest `@codex review` request returned the Codex usage-limit response instead of posting a review.
 - PASS: `kubectl get applications.argoproj.io -n argocd torghut torghut-options symphony-torghut ...` reports all
-  three apps `Synced` and `Healthy` at revision `94fa92a40a561a7c9d7f39d383ed1bb2b848e3f9`.
+  three apps `Synced` and `Healthy`; `torghut` and `torghut-options` last reconciled at
+  `d9107e4fa36f509c8904a39b2f77d916693694ab`, while `symphony-torghut` reconciled at current main
+  `d63fb1c866c3c1bbe79ff647eaa4727818f36222`. The later current-main change is Bilig-only.
 - PASS: `kubectl get deploy -n torghut ...` reports live, sim, options, websocket, and TA deployments ready and
   available.
 - PASS: `kubectl get events -n torghut --sort-by=.lastTimestamp` returned no current namespace events.
@@ -116,8 +118,11 @@ live-submission gates to clear before non-zero notional.
 ## Deployment evidence
 
 - No new rollout was triggered from #5412 because no merge occurred.
-- Current main revision: `94fa92a40a561a7c9d7f39d383ed1bb2b848e3f9`.
-- Current main subject: `chore(release/e77318d): automated release PR (#6065)`.
+- Audit PR #6066 merge revision: `f45234fc501469f947ad8c055e50ebfb95e6565f`.
+- Current main revision: `d63fb1c866c3c1bbe79ff647eaa4727818f36222`.
+- Current main subject: `chore(release/8eccdf7): automated release PR (#6067)`.
+- Current main #6067 touched `argocd/applications/bilig/kustomization.yaml`; no Torghut manifests changed after
+  #6066.
 - Torghut GitOps image digest in current manifests:
   `sha256:056d6b0bc237adec3e3aa5e89a3f08ee81523ec18d8374c4a4e7d072e436f0f3`.
 - Runtime build: `v0.568.5-541-g809276e6d`.
