@@ -208,6 +208,12 @@ Testing rules for the trading core:
   high-activity TCA repair, missing-TCA probes, forecast registry repair, and alpha-readiness repair into compact
   cohorts Jangar can cite in paper/live material-action evidence refs. Every cohort stays at `max_notional=0`; the
   ledger is an observe-mode settlement surface, not a submit authorization.
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/consumer-evidence` now also surface
+  the May 8 doc 184 `torghut.profit-repair-settlement-ledger.v1` projection. It joins the proof floor, consumer
+  evidence receipt, capital reentry cohorts, quality frontier, route/TCA rows, scoped quant health, and Jangar
+  execution-trust admission into zero-notional repair lots. Jangar can carry the ledger id and lot ids as evidence refs,
+  but every lot keeps `paper_notional_limit=0` and `live_notional_limit=0` until forecast, alpha, quant, route/TCA, and
+  execution-trust settlement clear.
 - The simple direct-submit lane is no longer an authority bypass in live mode. Before submitting to Alpaca it evaluates
   the same live-submission gate as the scheduler path and persists the gate payload in decision metadata when a
   submission is blocked. Paper-mode simple execution remains unchanged.

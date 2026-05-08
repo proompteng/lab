@@ -224,6 +224,10 @@ describe('negative evidence router', () => {
           capital_reentry_aggregate_state: 'repair',
           capital_reentry_cohort_ids: ['capital-reentry-cohort:aapl'],
           capital_reentry_blocking_reason_codes: ['forecast_registry_degraded'],
+          profit_repair_settlement_ledger_id: 'profit-repair-settlement-ledger:test',
+          profit_repair_aggregate_state: 'repair',
+          profit_repair_lot_ids: ['profit-repair-lot:quant'],
+          profit_repair_blocking_reason_codes: ['quant_pipeline_degraded'],
         },
       }),
     )
@@ -237,6 +241,8 @@ describe('negative evidence router', () => {
         'forecast_registry_degraded',
         'execution_tca_route_universe_incomplete',
         'capital_reentry_repair',
+        'profit_repair_repair',
+        'quant_pipeline_degraded',
       ]),
     )
     expect(paperCanary.evidence_refs).toEqual(
@@ -244,6 +250,8 @@ describe('negative evidence router', () => {
         'torghut-consumer-evidence:test',
         'capital-reentry-ledger:test',
         'capital-reentry-cohort:aapl',
+        'profit-repair-settlement-ledger:test',
+        'profit-repair-lot:quant',
       ]),
     )
     expect(paperCanary.blocked_reasons).not.toContain('torghut_consumer_evidence_missing')
@@ -253,6 +261,8 @@ describe('negative evidence router', () => {
         'forecast_registry_degraded',
         'execution_tca_route_universe_incomplete',
         'capital_reentry_repair',
+        'profit_repair_repair',
+        'quant_pipeline_degraded',
       ]),
     )
   })

@@ -93,6 +93,7 @@ from .trading.jangar_continuity import load_jangar_route_continuity_packet
 from .trading.lean_lanes import LeanLaneManager
 from .trading.lean_runtime import lean_authority_status
 from .trading.llm.evaluation import build_llm_evaluation_metrics
+from .trading.profit_repair_settlement import build_profit_repair_settlement_ledger
 from .trading.proof_floor import build_profitability_proof_floor_receipt
 from .trading.quality_adjusted_profit_frontier import (
     build_quality_adjusted_profit_frontier,
@@ -779,6 +780,17 @@ def _evaluate_trading_health_payload(
         proof_floor=proof_floor,
         route_reacquisition_board=route_reacquisition_board,
     )
+    profit_repair_settlement_ledger = _build_profit_repair_settlement_ledger_payload(
+        torghut_revision=BUILD_COMMIT,
+        dependency_quorum=_dependency_quorum.as_payload(),
+        consumer_evidence_receipt=consumer_evidence_receipt,
+        proof_floor=proof_floor,
+        capital_reentry_cohort_ledger=capital_reentry_cohort_ledger,
+        quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
+        route_reacquisition_board=route_reacquisition_board,
+        live_submission_gate=live_submission_gate,
+        quant_evidence=quant_evidence,
+    )
     live_mode = settings.trading_mode == "live"
     empirical_jobs_required = (
         live_mode and settings.trading_empirical_jobs_health_required
@@ -870,6 +882,7 @@ def _evaluate_trading_health_payload(
             "route_proven_profit_receipt": route_proven_profit_receipt,
             "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
             "capital_reentry_cohort_ledger": capital_reentry_cohort_ledger,
+            "profit_repair_settlement_ledger": profit_repair_settlement_ledger,
             "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
             "route_reacquisition_board": route_reacquisition_board,
             "quant_evidence": quant_evidence,
@@ -1999,6 +2012,17 @@ def trading_status() -> dict[str, object]:
         proof_floor=proof_floor,
         route_reacquisition_board=route_reacquisition_board,
     )
+    profit_repair_settlement_ledger = _build_profit_repair_settlement_ledger_payload(
+        torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        dependency_quorum=hypothesis_dependency_quorum.as_payload(),
+        consumer_evidence_receipt=consumer_evidence_receipt,
+        proof_floor=proof_floor,
+        capital_reentry_cohort_ledger=capital_reentry_cohort_ledger,
+        quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
+        route_reacquisition_board=route_reacquisition_board,
+        live_submission_gate=live_submission_gate,
+        quant_evidence=quant_evidence,
+    )
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -2033,6 +2057,7 @@ def trading_status() -> dict[str, object]:
         "route_proven_profit_receipt": route_proven_profit_receipt,
         "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
         "capital_reentry_cohort_ledger": capital_reentry_cohort_ledger,
+        "profit_repair_settlement_ledger": profit_repair_settlement_ledger,
         "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
         "route_reacquisition_board": route_reacquisition_board,
         "quant_evidence": quant_evidence,
@@ -2277,6 +2302,27 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         proof_floor=proof_floor,
         route_reacquisition_board=route_reacquisition_board,
     )
+    quality_adjusted_profit_frontier = _build_quality_adjusted_profit_frontier_payload(
+        torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        live_submission_gate=live_submission_gate,
+        proof_floor=proof_floor,
+        route_reacquisition_board=route_reacquisition_board,
+        hypothesis_payload=hypothesis_payload,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        active_simulation_context=active_simulation_runtime_context(),
+    )
+    profit_repair_settlement_ledger = _build_profit_repair_settlement_ledger_payload(
+        torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        dependency_quorum=dependency_quorum.as_payload(),
+        consumer_evidence_receipt=consumer_evidence_receipt,
+        proof_floor=proof_floor,
+        capital_reentry_cohort_ledger=capital_reentry_cohort_ledger,
+        quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
+        route_reacquisition_board=route_reacquisition_board,
+        live_submission_gate=live_submission_gate,
+        quant_evidence=quant_evidence,
+    )
     return {
         "schema_version": "torghut.consumer-evidence-status.v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -2303,6 +2349,7 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         "route_proven_profit_receipt": route_proven_profit_receipt,
         "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
         "capital_reentry_cohort_ledger": capital_reentry_cohort_ledger,
+        "profit_repair_settlement_ledger": profit_repair_settlement_ledger,
     }
 
 
@@ -3962,6 +4009,62 @@ def _build_jangar_material_verdict_ref(
     }
 
 
+def _build_jangar_execution_trust_admission_ref(
+    dependency_quorum: Mapping[str, Any],
+) -> dict[str, object]:
+    raw_execution_trust = dependency_quorum.get("execution_trust")
+    empty_execution_trust: Mapping[str, Any] = {}
+    execution_trust: Mapping[str, Any] = (
+        cast(Mapping[str, Any], raw_execution_trust)
+        if isinstance(raw_execution_trust, Mapping)
+        else empty_execution_trust
+    )
+    decision = (
+        str(
+            execution_trust.get("decision")
+            or execution_trust.get("state")
+            or dependency_quorum.get("decision")
+            or "unknown"
+        )
+        .strip()
+        .lower()
+    )
+    state = (
+        str(
+            execution_trust.get("state")
+            or execution_trust.get("status")
+            or ("current" if decision == "allow" else "degraded")
+        )
+        .strip()
+        .lower()
+    )
+    raw_reasons: object = (
+        execution_trust.get("reason_codes")
+        or execution_trust.get("blocking_reasons")
+        or dependency_quorum.get("reasons")
+        or []
+    )
+    reason_items: Sequence[object] = (
+        cast(Sequence[object], raw_reasons)
+        if isinstance(raw_reasons, Sequence)
+        and not isinstance(raw_reasons, (str, bytes, bytearray))
+        else ()
+    )
+    reasons = [str(item).strip() for item in reason_items if str(item).strip()]
+    ref_suffix = decision if not reasons else f"{decision}:{','.join(sorted(reasons))}"
+    return {
+        "admission_ref": f"jangar-execution-trust:dependency-quorum:{ref_suffix}",
+        "decision": decision,
+        "state": state,
+        "reason_codes": reasons,
+        "source": "dependency_quorum_proxy",
+        "generated_at": execution_trust.get("generated_at")
+        or dependency_quorum.get("generated_at"),
+        "fresh_until": execution_trust.get("fresh_until")
+        or dependency_quorum.get("fresh_until"),
+    }
+
+
 def _consumer_evidence_jangar_continuity_packet(
     dependency_quorum: Mapping[str, Any],
 ) -> dict[str, object]:
@@ -4021,6 +4124,35 @@ def _build_capital_reentry_cohort_ledger_payload(
         proof_floor_receipt=proof_floor,
         route_reacquisition_board=route_reacquisition_board,
         jangar_material_verdict_ref=_build_jangar_material_verdict_ref(
+            dependency_quorum
+        ),
+    )
+
+
+def _build_profit_repair_settlement_ledger_payload(
+    *,
+    torghut_revision: str | None,
+    dependency_quorum: Mapping[str, Any],
+    consumer_evidence_receipt: Mapping[str, Any],
+    proof_floor: Mapping[str, Any],
+    capital_reentry_cohort_ledger: Mapping[str, Any],
+    quality_adjusted_profit_frontier: Mapping[str, Any],
+    route_reacquisition_board: Mapping[str, Any],
+    live_submission_gate: Mapping[str, Any],
+    quant_evidence: Mapping[str, Any],
+) -> dict[str, object]:
+    return build_profit_repair_settlement_ledger(
+        account_label=settings.trading_account_label,
+        trading_mode=settings.trading_mode,
+        torghut_revision=torghut_revision,
+        consumer_evidence_receipt=consumer_evidence_receipt,
+        proof_floor_receipt=proof_floor,
+        capital_reentry_cohort_ledger=capital_reentry_cohort_ledger,
+        quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
+        route_reacquisition_board=route_reacquisition_board,
+        live_submission_gate=live_submission_gate,
+        quant_evidence=quant_evidence,
+        jangar_execution_trust_admission_ref=_build_jangar_execution_trust_admission_ref(
             dependency_quorum
         ),
     )
