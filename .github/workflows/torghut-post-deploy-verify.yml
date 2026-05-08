@@ -179,7 +179,7 @@ jobs:
           kubectl rollout status deployment/torghut-ws -n torghut --timeout=10m
 
           set +e
-          KNSVC_READY="$(kubectl get ksvc torghut -n torghut -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}' 2> /tmp/torghut-ksvc-ready.err)"
+          KNSVC_READY="$(kubectl get ksvc torghut -n torghut -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2> /tmp/torghut-ksvc-ready.err)"
           KNSVC_READY_STATUS=$?
           set -e
           if [ "${KNSVC_READY_STATUS}" -ne 0 ]; then

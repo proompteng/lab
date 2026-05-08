@@ -17,6 +17,11 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('Failed to read Knative Service torghut')
   })
 
+  it('uses a shell-safe jsonpath for Knative Service readiness', () => {
+    expect(workflow).toContain(`jsonpath='{.status.conditions[?(@.type=="Ready")].status}'`)
+    expect(workflow).not.toContain(`jsonpath='{.status.conditions[?(@.type==\\"Ready\\")].status}'`)
+  })
+
   it('fails the deploy verifier when Torghut readyz is not 2xx', () => {
     expect(workflow).toContain('expected 2xx')
     expect(workflow).toContain('[ "${TORGHUT_READYZ_HTTP_STATUS}" -lt 200 ]')
