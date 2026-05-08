@@ -183,9 +183,7 @@ jobs:
           KNSVC_READY_STATUS=$?
           set -e
           if [ "${KNSVC_READY_STATUS}" -ne 0 ]; then
-            if grep -qi 'forbidden' /tmp/torghut-ksvc-ready.err; then
-              echo "Skipping Knative Service readiness check: runner lacks permission to read services.serving.knative.dev/ksvc"
-            elif grep -qi 'not found' /tmp/torghut-ksvc-ready.err; then
+            if grep -qi 'not found' /tmp/torghut-ksvc-ready.err; then
               echo "Knative Service torghut was not found"
               cat /tmp/torghut-ksvc-ready.err
               exit 1
@@ -208,6 +206,13 @@ jobs:
           )"
           if [ -z "${TORGHUT_READYZ_HTTP_STATUS}" ] || [ "${TORGHUT_READYZ_HTTP_STATUS}" = '000' ]; then
             echo "Torghut /readyz did not return an HTTP response"
+            exit 1
+          fi
+          if ! [[ "${TORGHUT_READYZ_HTTP_STATUS}" =~ ^[0-9]{3}$ ]] ||
+            [ "${TORGHUT_READYZ_HTTP_STATUS}" -lt 200 ] ||
+            [ "${TORGHUT_READYZ_HTTP_STATUS}" -ge 300 ]; then
+            echo "Torghut /readyz returned HTTP ${TORGHUT_READYZ_HTTP_STATUS}; expected 2xx"
+            cat "${EVIDENCE_DIR}/torghut-readyz.json"
             exit 1
           fi
           echo "Torghut /readyz HTTP ${TORGHUT_READYZ_HTTP_STATUS}"
