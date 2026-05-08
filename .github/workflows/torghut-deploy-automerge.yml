@@ -116,6 +116,77 @@ jobs:
           echo "eligible=${{ steps.gates.outputs.eligible }}"
           echo "reason=${{ steps.gates.outputs.reason }}"
 
+      - name: Wait for source commit Torghut CI
+        if: steps.gates.outputs.eligible == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          manifest="$(
+            gh api \
+              -H 'Accept: application/vnd.github.raw' \
+              "repos/${GH_REPO}/contents/argocd/applications/torghut/knative-service.yaml?ref=${PR_HEAD_SHA}"
+          )"
+          source_sha="$(
+            printf '%s\n' "${manifest}" |
+              awk '
+                /^[[:space:]]*- name:[[:space:]]*TORGHUT_COMMIT[[:space:]]*$/ { found = 1; next }
+                found && /^[[:space:]]*value:/ {
+                  sub(/^[[:space:]]*value:[[:space:]]*/, "")
+                  gsub(/"/, "")
+                  print
+                  exit
+                }
+              '
+          )"
+          if ! printf '%s' "${source_sha}" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Unable to resolve TORGHUT_COMMIT from release manifest"
+            exit 1
+          fi
+
+          deadline=$((SECONDS + 2700))
+          while true; do
+            run_line="$(
+              gh run list \
+                -R "${GH_REPO}" \
+                --workflow torghut-ci.yml \
+                --commit "${source_sha}" \
+                --json databaseId,status,conclusion,url,createdAt \
+                --jq 'sort_by(.createdAt) | reverse | .[0] // {} | [.databaseId // "", .status // "", .conclusion // "", .url // ""] | @tsv'
+            )"
+            IFS=$'\t' read -r run_id run_status run_conclusion run_url <<< "${run_line}"
+
+            if [ -n "${run_id}" ] && [ "${run_status}" = 'completed' ] && [ "${run_conclusion}" = 'success' ]; then
+              echo "Source commit Torghut CI passed for ${source_sha}: ${run_url}"
+              break
+            fi
+
+            if [ -n "${run_id}" ] && [ "${run_status}" = 'completed' ]; then
+              echo "Source commit Torghut CI did not pass for ${source_sha}: ${run_conclusion}"
+              echo "${run_url}"
+              exit 1
+            fi
+
+            if [ "${SECONDS}" -ge "${deadline}" ]; then
+              echo "Timed out waiting for source commit Torghut CI for ${source_sha}"
+              if [ -n "${run_url}" ]; then
+                echo "${run_url}"
+              fi
+              exit 1
+            fi
+
+            if [ -z "${run_id}" ]; then
+              echo "Waiting for source commit Torghut CI to appear for ${source_sha}"
+            else
+              echo "Waiting for source commit Torghut CI: status=${run_status} conclusion=${run_conclusion:-pending}"
+            fi
+            sleep 15
+          done
+
       - name: Wait for required release checks
         if: steps.gates.outputs.eligible == 'true'
         shell: bash
@@ -131,13 +202,6 @@ jobs:
             'Semantic Pull Request|Validate PR title'
             'argo-lint|lint'
             'kubeconform|validate'
-            'torghut-ci|Pyright'
-            'torghut-ci|Bytecode + lint + migration guard'
-            'torghut-ci|Pytest shard 0'
-            'torghut-ci|Pytest shard 1'
-            'torghut-ci|Pytest shard 2'
-            'torghut-ci|Pytest shard 3'
-            'torghut-ci|Bytecode + pytest + coverage'
           )
 
           deadline=$((SECONDS + 2700))
