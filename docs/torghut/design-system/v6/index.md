@@ -11,7 +11,9 @@
   `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-08T16:10Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-08T16:13Z`):
+- Evidence (current next-work priority, refreshed `2026-05-08T16:40Z`):
+  - `187-torghut-profit-window-custody-and-repair-value-market-2026-05-08.md`
+  - `docs/agents/designs/183-jangar-attested-action-custody-and-profit-window-admission-2026-05-08.md`
   - `186-torghut-routeability-acceptance-cutover-and-fill-quality-loop-2026-05-08.md`
   - `docs/agents/designs/182-jangar-routeability-cutover-backpressure-and-proof-run-admission-2026-05-08.md`
   - `185-torghut-routeability-repair-acceptance-ledger-2026-05-08.md`
