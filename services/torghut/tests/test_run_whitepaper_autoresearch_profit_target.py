@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from argparse import Namespace
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -692,6 +693,65 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(len(proposals), payload["proposal_score_count"])
         self.assertEqual(len(portfolios), 1)
         self.assertEqual(portfolios[0].status, "blocked")
+
+    def test_epoch_ledgers_allow_repeated_candidate_specs_across_epochs(
+        self,
+    ) -> None:
+        candidate_spec = runner.CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id="spec-repeatable",
+            hypothesis_id="hyp-repeatable",
+            family_template_id="microbar_cross_sectional_pairs_v1",
+            candidate_kind="sleeve",
+            runtime_family="microbar_cross_sectional_pairs_v1",
+            runtime_strategy_name="microbar_cross_sectional_pairs",
+            feature_contract={"mechanism": "repeatable deterministic spec"},
+            parameter_space={},
+            strategy_overrides={},
+            objective={"target_net_pnl_per_day": "300"},
+            hard_vetoes={},
+            expected_failure_modes=(),
+            promotion_contract={},
+        )
+        started_at = datetime(2026, 5, 8, 17, 0, 0)
+        completed_at = datetime(2026, 5, 8, 17, 1, 0)
+
+        with patch(
+            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            side_effect=lambda: Session(self.engine),
+        ):
+            for epoch_id in ("epoch-repeat-1", "epoch-repeat-2"):
+                runner._persist_epoch_ledgers(
+                    epoch_id=epoch_id,
+                    status="no_profit_target_candidate",
+                    target_net_pnl_per_day=Decimal("300"),
+                    paper_run_ids=[],
+                    sources=[],
+                    candidate_specs=[candidate_spec],
+                    proposal_rows=[],
+                    portfolio=None,
+                    summary={},
+                    runner_config={},
+                    started_at=started_at,
+                    completed_at=completed_at,
+                )
+
+        with Session(self.engine) as session:
+            specs = (
+                session.execute(
+                    select(AutoresearchCandidateSpec).order_by(
+                        AutoresearchCandidateSpec.epoch_id.asc()
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        self.assertEqual(
+            [spec.epoch_id for spec in specs],
+            ["epoch-repeat-1", "epoch-repeat-2"],
+        )
+        self.assertEqual({spec.candidate_spec_id for spec in specs}, {"spec-repeatable"})
 
     def test_persistence_failure_preserves_artifacts_and_returns_infra_failure(
         self,
