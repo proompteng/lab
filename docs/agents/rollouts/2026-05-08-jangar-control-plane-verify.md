@@ -6,11 +6,10 @@ Release engineer: Marco Silva
 
 ## Owner update message
 
-Jangar rollout is healthy after the #6001 on-demand market-context repair fix and generated #6004 image promotion.
-The live control-plane gate is green at latest observed main revision
-`227aaa46b75071da8f237f0f3f99ba75e9e27187`, with Argo CD `jangar` synced and healthy. `deployment/jangar` is
-rolled out on
-`registry.ide-newton.ts.net/lab/jangar:9e7b87d8@sha256:758e880b2e9ec439d2dfceb41a170c2352ca63108c90be81be321f8d56cafda4`.
+Jangar rollout is healthy at the latest observed main revision
+`94fa92a40a561a7c9d7f39d383ed1bb2b848e3f9`. Argo CD reports `jangar`, `agents`, `symphony-jangar`, and
+`agents-ci` synced and healthy; `deployment/jangar` is rolled out on
+`registry.ide-newton.ts.net/lab/jangar:03eea88e@sha256:30c7b317810bcbc543757ec08f55f3f6b0abf907bb2fad0e950cde7bac924862`.
 
 #5889 remains a no-go even though its mergeability and CI are clean. It is still a 1,639-line direct-control-plane
 diff, and the required Codex review has not posted because the connector is returning code-review usage-limit
@@ -68,9 +67,9 @@ superseded #6002 `torghut-ci` run in favor of #6005, and the Torghut apps are sy
   - Latest Codex review request: https://github.com/proompteng/lab/pull/5889#issuecomment-4402572839.
   - Latest connector blocker: https://github.com/proompteng/lab/pull/5889#issuecomment-4402573381.
   - Progress comment: https://github.com/proompteng/lab/pull/5889#issuecomment-4398288855.
-- #5993 `docs(jangar): record control plane release verification`
+- #6060 `docs(jangar): refresh control plane release gate`
   - Current audit PR on `codex/swarm-jangar-control-plane-verify`.
-  - Rebased onto `origin/main` at `227aaa46b75071da8f237f0f3f99ba75e9e27187`.
+  - Rebased onto `origin/main` at `94fa92a40a561a7c9d7f39d383ed1bb2b848e3f9`.
   - Refreshes the durable release record for the completed Jangar rollout and the remaining #5889 blocker.
 
 ## Comments and conflicts
@@ -78,7 +77,7 @@ superseded #6002 `torghut-ci` run in favor of #6005, and the Torghut apps are sy
 - #5995, #5998, #6001, and #6004 had no unresolved review threads at their final gates.
 - #5995, #5998, #6001, and #6004 stayed below the mandatory large-diff Codex review threshold.
 - #5889 had no active review threads, but it remains held because no Codex review has posted for the large diff.
-- #5993 was rebased onto current `origin/main`; no merge conflicts were present.
+- #6060 was rebased onto current `origin/main`; no merge conflicts were present.
 
 ## Merge outcomes
 
@@ -159,7 +158,7 @@ superseded #6002 `torghut-ci` run in favor of #6005, and the Torghut apps are sy
 
 ## Next action
 
-- Merge #5993 only after its rebased hosted checks are green.
+- Merge #6060 only after its rebased hosted checks are green.
 - Keep #5889 held until Codex review quota/access is restored and a review posts, or a maintainer explicitly waives the
   large-diff gate.
 - Continue normal post-release watch on market-context AgentRuns, Torghut/Jangar continuity route signals, Jangar logs,
@@ -276,6 +275,71 @@ the remaining open Jangar control-plane work without changing production.
     large-diff review gate.
   - `handoff_evidence_quality`: the PR check state, review blocker, progress comment, Argo status, rollout status,
     service health signals, event scan, and AgentRun counts are recorded here and in
+    `/workspace/.agentrun/swarm/jangar-control-plane-verify.md`.
+- Rollback path:
+  - #5889 has no runtime rollback because it was not merged.
+  - For the currently deployed Jangar image, use a normal GitOps revert PR for the `03eea88e` promotion to restore the
+    previous promoted image, then revert the underlying runtime PR if the image rollback does not clear the issue.
+  - Do not mutate production workloads directly from a local shell.
+- Next action:
+  - Keep #5889 held until an actual Codex review posts for
+    `eb42fef4febc720b6fad47188c6c34913da465b8` and all review threads are resolved, or a maintainer explicitly waives
+    the large-diff gate.
+  - After review capacity or waiver is available, recheck mergeability, hosted checks, review threads, and live rollout
+    health before any squash merge.
+
+## Current gate refresh - 2026-05-08T07:55Z
+
+Governing release requirement: verify stages must merge only green PRs and prove Argo sync, workload readiness, and
+service health after rollout. The active runtime contract for the selected implementation PR remains
+`docs/agents/designs/146-jangar-repair-warrant-exchange-and-schedule-debt-firebreak-2026-05-07.md`, which keeps repair
+warrants zero-notional and non-capital-authorizing until closure evidence is present.
+
+- PR enumeration:
+  - #5889 `feat(jangar): add repair warrant exchange` is the only open direct Jangar control-plane implementation PR.
+  - #6060 `docs(jangar): refresh control plane release gate` is the current audit PR on
+    `codex/swarm-jangar-control-plane-verify`.
+  - #5412 is Torghut-owned and #5767/#5316 are automated release PRs, so they are not selected for the Jangar
+    control-plane runtime gate.
+- #5889 merge gate:
+  - Head: `eb42fef4febc720b6fad47188c6c34913da465b8`.
+  - Mergeability: GitHub reports `CLEAN` / `MERGEABLE`.
+  - Checks: pass or skipped only, including `CI / check_changed_files`, semantic title and commit checks,
+    `agents-ci / validate`, `agents-ci / integration`, and `jangar-ci / lint-and-typecheck / run`.
+  - Comments: GraphQL returned zero review threads and zero posted reviews.
+  - Diff: 18 files, 1,591 additions, 48 deletions, 1,639 total changed lines.
+  - Decision: no-go. The PR exceeds the 1,000-line large-diff gate and no Codex review has posted. Repeated
+    `@codex review` requests for the current and prior heads received the connector usage-limit response.
+- Current live rollout health:
+  - `argocd/jangar`, `argocd/agents`, `argocd/symphony-jangar`, and `argocd/agents-ci`: `Synced`, `Healthy`,
+    operation `Succeeded`, revision `94fa92a40a561a7c9d7f39d383ed1bb2b848e3f9`.
+  - Rollout status succeeded for `deployment/jangar`, `deployment/agents`, `deployment/agents-controllers`, and
+    `deployment/symphony-jangar`.
+  - Active images: `deployment/jangar` and `deployment/agents-controllers` are on
+    `registry.ide-newton.ts.net/lab/jangar:03eea88e@sha256:30c7b317810bcbc543757ec08f55f3f6b0abf907bb2fad0e950cde7bac924862`;
+    `deployment/agents` is on
+    `registry.ide-newton.ts.net/lab/jangar-control-plane:03eea88e@sha256:94aaf5282dab1183e176885d345806d855d09e4ad7e9197dc3347864a4dcd64a`;
+    `deployment/symphony-jangar` is on
+    `registry.ide-newton.ts.net/lab/symphony:2ea968af@sha256:dcd024f0abcb0615f698211df530056b196f0e050cedd19c118ac566eb415243`.
+  - Service health: Jangar service proxy `/health` returned `status=ok`; Symphony `/readyz` returned `ok=true`.
+    Agents service proxy remained blocked by RBAC, but `deployment/agents` was `1/1` ready and had a ready endpoint on
+    port 8080.
+  - Control-plane service health: `/api/agents/control-plane/status?namespace=agents` reported leader election active,
+    controllers healthy, heartbeat authority fresh, database connected, and migrations consistent.
+  - Event scan: recent warnings in the Jangar/Agents surface were transient readiness probe timeouts on
+    `agents-controllers` pods that are now ready; Jangar namespace events were normal at the observation point.
+- Runtime and business metric evidence:
+  - `failed_agentrun_rate`: Jangar control-plane AgentRuns since 2026-05-08T00:00Z show 26 total, 25 succeeded, 1
+    running, and 0 failed. Historical Jangar control-plane AgentRuns show 216 total, 208 succeeded, 7 failed, and 1
+    running.
+  - `ready_status_truth`: Argo sync, rollout status, pod readiness, endpoints, service health where RBAC permits,
+    controller heartbeats, database health, and image digests agree for the deployed Jangar control-plane state.
+  - `manual_intervention_count`: zero production workload mutations were made from the local shell; cluster work was
+    read-only inspection plus local kubeconfig bootstrap using the in-cluster service account.
+  - `pr_to_rollout_latency`: no new Jangar runtime PR merged in this refresh because #5889 is held by the mandatory
+    large-diff review gate.
+  - `handoff_evidence_quality`: PR checks, review blocker, progress comment, Argo status, rollout status, service
+    health, event scan, and AgentRun counts are recorded here and in
     `/workspace/.agentrun/swarm/jangar-control-plane-verify.md`.
 - Rollback path:
   - #5889 has no runtime rollback because it was not merged.
