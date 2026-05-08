@@ -326,6 +326,7 @@ class SimpleTradingPipeline(TradingPipeline):
                 simple_lane_status={
                     "enabled": settings.trading_pipeline_mode == "simple",
                     "submit_enabled": settings.trading_simple_submit_enabled,
+                    "route_symbol_filter_enabled": True,
                     "max_notional_per_order": settings.trading_simple_max_notional_per_order,
                     "max_notional_per_symbol": settings.trading_simple_max_notional_per_symbol,
                     "allowed_reject_reasons": sorted(_SIMPLE_ALLOWED_REJECT_REASONS),
@@ -363,7 +364,8 @@ class SimpleTradingPipeline(TradingPipeline):
         freshness_seconds = self.state.last_market_context_freshness_seconds
         if (
             freshness_seconds is not None
-            and freshness_seconds <= settings.trading_market_context_max_staleness_seconds
+            and freshness_seconds
+            <= settings.trading_market_context_max_staleness_seconds
             and not self.state.market_context_alert_active
         ):
             return
@@ -442,6 +444,43 @@ class SimpleTradingPipeline(TradingPipeline):
             return "profitability_proof_floor_zero_notional"
         return None
 
+    @staticmethod
+    def _proof_floor_route_candidate_symbols(
+        proof_floor: Mapping[str, object],
+    ) -> set[str]:
+        route_book = proof_floor.get("route_reacquisition_book")
+        if not isinstance(route_book, Mapping):
+            return set()
+        route_book_mapping = cast(Mapping[str, Any], route_book)
+        summary = route_book_mapping.get("summary")
+        if not isinstance(summary, Mapping):
+            return set()
+        summary_mapping = cast(Mapping[str, Any], summary)
+        raw_symbols = summary_mapping.get("candidate_symbols")
+        if not isinstance(raw_symbols, list):
+            return set()
+        candidate_symbols: set[str] = set()
+        for raw_symbol in cast(list[object], raw_symbols):
+            symbol = str(raw_symbol).strip().upper()
+            if symbol:
+                candidate_symbols.add(symbol)
+        return candidate_symbols
+
+    @staticmethod
+    def _proof_floor_symbol_block_reason(
+        proof_floor: Mapping[str, object],
+        symbol: str,
+    ) -> str | None:
+        candidate_symbols = SimpleTradingPipeline._proof_floor_route_candidate_symbols(
+            proof_floor
+        )
+        if not candidate_symbols:
+            return None
+        normalized_symbol = symbol.strip().upper()
+        if normalized_symbol and normalized_symbol not in candidate_symbols:
+            return "profitability_route_symbol_excluded"
+        return None
+
     def _is_trading_submission_allowed(
         self,
         *,
@@ -506,6 +545,21 @@ class SimpleTradingPipeline(TradingPipeline):
                 decision_row=decision_row,
                 reason=proof_floor_block_reason,
                 submission_stage="blocked_profitability_proof_floor",
+                capital_stage=str(proof_floor.get("capital_state") or "zero_notional"),
+                extra_metadata={"profitability_proof_floor": dict(proof_floor)},
+            )
+            return False
+        proof_floor_symbol_block_reason = self._proof_floor_symbol_block_reason(
+            proof_floor,
+            decision.symbol,
+        )
+        if proof_floor_symbol_block_reason is not None:
+            self._block_decision_submission(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                reason=proof_floor_symbol_block_reason,
+                submission_stage="blocked_profitability_route_symbol",
                 capital_stage=str(proof_floor.get("capital_state") or "zero_notional"),
                 extra_metadata={"profitability_proof_floor": dict(proof_floor)},
             )

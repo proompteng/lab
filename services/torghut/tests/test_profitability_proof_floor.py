@@ -71,6 +71,7 @@ def _simple_lane_status() -> dict[str, object]:
     return {
         "enabled": True,
         "submit_enabled": True,
+        "route_symbol_filter_enabled": True,
         "max_notional_per_order": "250",
         "max_notional_per_symbol": "750",
     }
@@ -524,18 +525,30 @@ def test_execution_tca_source_ref_exposes_symbol_route_blockers() -> None:
     assert symbol_routes["blocked_symbols"][0]["symbol"] == "NVDA"
     assert symbol_routes["missing_symbols"] == ["ORCL"]
     assert source_ref["aggregate_reason"] == "execution_tca_slippage_guardrail_exceeded"
+    exclusions = cast(Mapping[str, Any], source_ref["route_universe_exclusions"])
+    assert exclusions["state"] == "enforced"
+    assert exclusions["candidate_symbol_count"] == 1
+    assert exclusions["excluded_symbol_count"] == 2
+    assert exclusions["max_notional_for_excluded_symbols"] == "0"
     route_book = cast(Mapping[str, Any], receipt["route_reacquisition_book"])
     route_summary = cast(Mapping[str, Any], route_book["summary"])
     route_records = cast(list[Mapping[str, Any]], route_book["records"])
     assert route_summary["routeable_symbol_count"] == 1
     assert route_summary["blocked_symbol_count"] == 1
     assert route_summary["missing_symbol_count"] == 1
+    assert route_summary["candidate_symbols"] == ["AAPL"]
     assert route_records[0]["symbol"] == "AAPL"
     assert route_records[0]["state"] == "routeable"
-    assert receipt["blocking_reasons"] == [
-        "execution_tca_route_universe_incomplete",
-    ]
+    assert tca_dimension["state"] == "pass"
+    assert tca_dimension["reason"] == "execution_tca_route_universe_exclusions_applied"
+    assert receipt["route_state"] == "live_micro_candidate"
+    assert receipt["capital_state"] == "live_allowed"
+    assert receipt["blocking_reasons"] == []
     assert receipt["repair_ladder"][0]["code"] == "repair_route_universe"
+    assert (
+        receipt["repair_ladder"][0]["reason"]
+        == "execution_tca_route_universe_exclusions_applied"
+    )
 
 
 def test_execution_tca_route_universe_uses_widest_hypothesis_guardrail() -> None:
@@ -613,8 +626,12 @@ def test_execution_tca_route_universe_uses_widest_hypothesis_guardrail() -> None
     source_ref = cast(Mapping[str, Any], tca_dimension["source_ref"])
     symbol_routes = cast(Mapping[str, Any], source_ref["symbol_routes"])
 
-    assert tca_dimension["reason"] == "execution_tca_route_universe_incomplete"
+    assert tca_dimension["state"] == "pass"
+    assert tca_dimension["reason"] == "execution_tca_route_universe_exclusions_applied"
     assert source_ref["aggregate_reason"] == "execution_tca_slippage_guardrail_exceeded"
+    exclusions = cast(Mapping[str, Any], source_ref["route_universe_exclusions"])
+    assert exclusions["state"] == "enforced"
+    assert exclusions["excluded_symbol_count"] == 2
     assert symbol_routes["slippage_guardrail_bps"] == "8"
     assert symbol_routes["route_slippage_guardrail_bps"] == "12"
     assert symbol_routes["routeable_symbol_count"] == 1
@@ -623,6 +640,65 @@ def test_execution_tca_route_universe_uses_widest_hypothesis_guardrail() -> None
     assert symbol_routes["blocked_symbols"][0]["symbol"] == "NVDA"
     assert symbol_routes["missing_symbol_count"] == 1
     assert symbol_routes["missing_symbols"] == ["ORCL"]
+    assert receipt["blocking_reasons"] == []
+
+
+def test_execution_tca_route_universe_requires_symbol_filter_before_unblock() -> None:
+    simple_lane_status = {
+        **_simple_lane_status(),
+        "route_symbol_filter_enabled": False,
+    }
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="PA3SX7FYNUTF",
+        torghut_revision="torghut-00268",
+        trading_mode="live",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "ready",
+            "blocked_reasons": [],
+            "capital_stage": "0.10x canary",
+        },
+        hypothesis_payload=_healthy_hypothesis_payload(),
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status=_healthy_market_context(),
+        tca_summary={
+            **_fresh_tca_summary(avg_abs_slippage_bps="25"),
+            "scope_symbols": ["AAPL", "NVDA"],
+            "scope_symbol_count": 2,
+            "symbol_breakdown": [
+                {
+                    "symbol": "AAPL",
+                    "order_count": 3,
+                    "avg_abs_slippage_bps": "6",
+                    "max_abs_slippage_bps": "9",
+                    "last_computed_at": NOW.isoformat(),
+                },
+                {
+                    "symbol": "NVDA",
+                    "order_count": 4,
+                    "avg_abs_slippage_bps": "25",
+                    "max_abs_slippage_bps": "31",
+                    "last_computed_at": NOW.isoformat(),
+                },
+            ],
+        },
+        simple_lane_status=simple_lane_status,
+        now=NOW,
+    )
+
+    tca_dimension = next(
+        item
+        for item in receipt["proof_dimensions"]
+        if item["dimension"] == "execution_tca"
+    )
+    source_ref = cast(Mapping[str, Any], tca_dimension["source_ref"])
+    exclusions = cast(Mapping[str, Any], source_ref["route_universe_exclusions"])
+
+    assert exclusions["state"] == "missing_enforcement"
+    assert receipt["route_state"] == "repair_only"
+    assert receipt["capital_state"] == "zero_notional"
     assert receipt["blocking_reasons"] == [
         "execution_tca_route_universe_incomplete",
     ]
