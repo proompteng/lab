@@ -1035,14 +1035,11 @@ def _refresh_universe_state_for_readiness(
     setattr(state, "universe_source_reason", resolution.reason)
     setattr(state, "universe_symbols_count", symbols_count)
     setattr(state, "universe_cache_age_seconds", resolution.cache_age_seconds)
-    fail_safe_blocked = (
-        symbols_count == 0
-        and (
-            settings.trading_universe_source == "static"
-            or (
-                settings.trading_universe_source == "jangar"
-                and settings.trading_universe_require_non_empty_jangar
-            )
+    fail_safe_blocked = symbols_count == 0 and (
+        settings.trading_universe_source == "static"
+        or (
+            settings.trading_universe_source == "jangar"
+            and settings.trading_universe_require_non_empty_jangar
         )
     )
     setattr(state, "universe_fail_safe_blocked", fail_safe_blocked)
