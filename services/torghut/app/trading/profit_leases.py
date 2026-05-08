@@ -527,8 +527,10 @@ def _decision_from_sources(
     proof_decision = _least_permissive_decision(candidate_decisions)
     if proof_decision != "paper_candidate":
         return proof_decision
-    if bool(live_controls.get("live_submission_enabled")) and bool(
-        live_controls.get("rollback_ready")
+    if (
+        bool(live_controls.get("live_submission_enabled"))
+        and bool(live_controls.get("rollback_ready"))
+        and bool(live_controls.get("deployer_approved"))
     ):
         return "live_candidate"
     return "paper_candidate"
@@ -539,7 +541,8 @@ def _rehydration_lane(reason_codes: Sequence[str]) -> str:
     if any(reason.startswith("options_feature") for reason in reasons):
         return "options_data_readiness"
     if reasons & _EMPIRICAL_REPAIR_REASONS or any(
-        reason.startswith("job_stale:") for reason in reasons
+        reason.startswith(("job_stale:", "job_missing:", "job_ineligible:"))
+        for reason in reasons
     ):
         return "empirical_replay"
     if reasons & _QUANT_METRICS_REASONS:

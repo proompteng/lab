@@ -186,6 +186,46 @@ def _env_json_string_list(name: str) -> tuple[str, ...]:
     return tuple(item for raw_item in decoded_items if (item := str(raw_item).strip()))
 
 
+def _evaluate_scheduler_status(
+    scheduler: TradingScheduler,
+) -> tuple[bool, dict[str, object]]:
+    scheduler_ok = True
+    scheduler_detail = "ok"
+
+    startup_grace_seconds = max(0, settings.trading_startup_readiness_grace_seconds)
+    in_startup_grace = False
+    startup_started_at = scheduler.state.startup_started_at
+    if settings.trading_enabled and not scheduler.state.running:
+        if (
+            startup_started_at is not None
+            and startup_grace_seconds > 0
+            and datetime.now(timezone.utc) - startup_started_at
+            <= timedelta(seconds=startup_grace_seconds)
+        ):
+            in_startup_grace = True
+            scheduler_ok = True
+            scheduler_detail = f"trading loop starting (within {startup_grace_seconds}s readiness grace)"
+        else:
+            scheduler_ok = False
+            scheduler_detail = (
+                "trading loop not started"
+                if scheduler.state.last_run_at is None
+                else "trading loop not running"
+            )
+
+    scheduler_payload: dict[str, object] = {
+        "ok": scheduler_ok,
+        "detail": scheduler_detail,
+        "running": scheduler.state.running,
+    }
+    if startup_started_at is not None:
+        scheduler_payload["startup_started_at"] = startup_started_at.isoformat()
+        scheduler_payload["startup_readiness_grace_seconds"] = startup_grace_seconds
+        scheduler_payload["startup_readiness_grace_active"] = in_startup_grace
+
+    return scheduler_ok, scheduler_payload
+
+
 def _assert_dspy_cutover_migration_guard() -> None:
     allowed, reasons = settings.llm_dspy_cutover_migration_guard()
     if allowed:
@@ -579,39 +619,7 @@ def _evaluate_trading_health_payload(
     if scheduler is None:
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
-    scheduler_ok = True
-    scheduler_detail = "ok"
-
-    startup_grace_seconds = max(0, settings.trading_startup_readiness_grace_seconds)
-    in_startup_grace = False
-    startup_started_at = scheduler.state.startup_started_at
-    if settings.trading_enabled and not scheduler.state.running:
-        if (
-            startup_started_at is not None
-            and startup_grace_seconds > 0
-            and datetime.now(timezone.utc) - startup_started_at
-            <= timedelta(seconds=startup_grace_seconds)
-        ):
-            in_startup_grace = True
-            scheduler_ok = True
-            scheduler_detail = f"trading loop starting (within {startup_grace_seconds}s readiness grace)"
-        else:
-            scheduler_ok = False
-            scheduler_detail = (
-                "trading loop not started"
-                if scheduler.state.last_run_at is None
-                else "trading loop not running"
-            )
-
-    scheduler_payload: dict[str, object] = {
-        "ok": scheduler_ok,
-        "detail": scheduler_detail,
-        "running": scheduler.state.running,
-    }
-    if startup_started_at is not None:
-        scheduler_payload["startup_started_at"] = startup_started_at.isoformat()
-        scheduler_payload["startup_readiness_grace_seconds"] = startup_grace_seconds
-        scheduler_payload["startup_readiness_grace_active"] = in_startup_grace
+    scheduler_ok, scheduler_payload = _evaluate_scheduler_status(scheduler)
 
     now = datetime.now(timezone.utc)
     with SessionLocal() as session:
@@ -2477,6 +2485,11 @@ def _build_current_evidence_epoch(
 ) -> EvidenceEpoch:
     observed_at = datetime.now(timezone.utc)
     receipts: list[EvidenceReceipt] = []
+    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    if scheduler is None:
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
+    trading_status_ok, _scheduler_payload = _evaluate_scheduler_status(scheduler)
 
     try:
         database_contract = _evaluate_database_contract(session)
@@ -2517,7 +2530,7 @@ def _build_current_evidence_epoch(
             liveness_ok=True,
             readiness_ok=database_ok,
             db_check_ok=database_ok,
-            trading_status_ok=True,
+            trading_status_ok=trading_status_ok,
             image_digest=BUILD_IMAGE_DIGEST,
             revision=BUILD_COMMIT,
             observed_at=observed_at,

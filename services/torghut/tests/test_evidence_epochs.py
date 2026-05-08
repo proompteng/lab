@@ -11,8 +11,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.config import settings
 from app.db import get_session
-from app.main import _env_json_string_list, app
+from app.main import _build_current_evidence_epoch, _env_json_string_list, app
 from app.models import Base, EvidenceEpochRecord
 from app.trading.evidence_epochs import (
     compile_evidence_epoch,
@@ -29,6 +30,7 @@ from app.trading.evidence_receipts import (
     build_schema_receipt,
     build_service_health_receipt,
 )
+from app.trading.scheduler import TradingScheduler
 
 
 class TestEvidenceEpochs(TestCase):
@@ -194,6 +196,70 @@ class TestEvidenceEpochs(TestCase):
             refs_missing_receipt.reason_codes,
         )
         self.assertEqual(serializable_receipt.state, "pass")
+
+    def test_current_epoch_reports_stopped_trading_scheduler(self) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        scheduler = TradingScheduler()
+        scheduler.state.running = False
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        original_enabled = settings.trading_enabled
+        original_grace = settings.trading_startup_readiness_grace_seconds
+        settings.trading_enabled = True
+        settings.trading_startup_readiness_grace_seconds = 0
+        app.state.trading_scheduler = scheduler
+        try:
+            with (
+                session_local() as session,
+                patch(
+                    "app.main._evaluate_database_contract",
+                    return_value={
+                        "ok": True,
+                        "schema_current": True,
+                        "schema_graph_lineage_ready": True,
+                        "schema_graph_lineage_errors": [],
+                        "schema_head_signature": "abc123",
+                    },
+                ),
+                patch(
+                    "app.main.build_empirical_jobs_status", return_value={"ready": True}
+                ),
+            ):
+                epoch = _build_current_evidence_epoch(
+                    session=session,
+                    account_label="paper",
+                    stage_scope="paper",
+                )
+        finally:
+            settings.trading_enabled = original_enabled
+            settings.trading_startup_readiness_grace_seconds = original_grace
+            if original_scheduler is None:
+                del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
+        service_receipts = [
+            receipt
+            for receipt in epoch.receipts
+            if receipt.receipt_type == "service_health"
+        ]
+        self.assertEqual(len(service_receipts), 1)
+        self.assertEqual(service_receipts[0].state, "fail")
+        self.assertIn("trading_status_failed", service_receipts[0].reason_codes)
+        self.assertEqual(
+            service_receipts[0].payload["trading_status_ok"],
+            False,
+        )
+        self.assertIn(
+            "service_health:trading_status_failed",
+            epoch.reason_codes,
+        )
 
     def test_compile_epoch_flags_missing_and_reasonless_required_receipts(self) -> None:
         observed_at = datetime(2026, 5, 5, 12, 0)

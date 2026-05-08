@@ -98,6 +98,76 @@ class TestProfitLeaseProjection(TestCase):
         self.assertEqual(empirical_source["freshness_state"], "stale")
         self.assertIn("job_stale:benchmark_parity", lease["blocking_reason_codes"])
 
+    def test_missing_empirical_jobs_route_to_empirical_replay(self) -> None:
+        projection = build_profit_lease_projection(
+            runtime_items=[_runtime_item()],
+            quant_evidence=_healthy_quant(),
+            empirical_jobs_status={
+                "ready": False,
+                "status": "degraded",
+                "stale_jobs": [],
+                "missing_jobs": ["benchmark_parity"],
+                "ineligible_jobs": ["fill_quality"],
+                "dataset_snapshot_refs": [],
+            },
+            dependency_quorum={"decision": "allow", "reasons": []},
+            rejection_summary={
+                "rejected": 1,
+                "blocked": 1,
+                "filled": 10,
+                "total": 12,
+            },
+            promotion_table_counts=_promotion_counts(),
+            data_readiness={"equity_ta_rows": 100, "equity_ta_symbols": 20},
+            now=datetime(2026, 5, 6, 12, 0, tzinfo=timezone.utc),
+        )
+
+        lease = projection["leases"][0]
+        self.assertEqual(lease["capital_decision"], "repair_only")
+        self.assertEqual(lease["proof_state"], "missing")
+        self.assertEqual(lease["rehydration_lane"], "empirical_replay")
+        self.assertIn("job_missing:benchmark_parity", lease["blocking_reason_codes"])
+        self.assertIn("job_ineligible:fill_quality", lease["blocking_reason_codes"])
+
+    def test_live_candidate_requires_deployer_approval(self) -> None:
+        base_payload = {
+            "runtime_items": [_runtime_item()],
+            "quant_evidence": _healthy_quant(),
+            "empirical_jobs_status": _current_empirical(),
+            "dependency_quorum": {"decision": "allow", "reasons": []},
+            "rejection_summary": {
+                "rejected": 1,
+                "blocked": 1,
+                "filled": 10,
+                "total": 12,
+            },
+            "promotion_table_counts": _promotion_counts(),
+            "data_readiness": {"equity_ta_rows": 100, "equity_ta_symbols": 20},
+            "now": datetime(2026, 5, 6, 12, 0, tzinfo=timezone.utc),
+        }
+
+        pending_approval = build_profit_lease_projection(
+            **base_payload,
+            live_controls={
+                "live_submission_enabled": True,
+                "rollback_ready": True,
+                "deployer_approved": False,
+            },
+        )
+        approved = build_profit_lease_projection(
+            **base_payload,
+            live_controls={
+                "live_submission_enabled": True,
+                "rollback_ready": True,
+                "deployer_approved": True,
+            },
+        )
+
+        self.assertEqual(
+            pending_approval["leases"][0]["capital_decision"], "paper_candidate"
+        )
+        self.assertEqual(approved["leases"][0]["capital_decision"], "live_candidate")
+
     def test_empty_options_features_block_options_paper_candidate(self) -> None:
         projection = build_profit_lease_projection(
             runtime_items=[
