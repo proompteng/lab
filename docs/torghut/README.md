@@ -4,6 +4,10 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/179-torghut-capital-repair-frontier-and-route-yield-clearance-2026-05-08.md`
+  (current capital repair frontier and route yield clearance contract)
+- `docs/agents/designs/175-jangar-failure-debt-clearance-and-action-reentry-frontier-2026-05-08.md`
+  (current Jangar failure-debt clearance and action reentry contract)
 - `docs/torghut/design-system/v6/178-torghut-route-sample-mint-and-capital-proof-ratchet-2026-05-08.md`
   (current route sample mint and capital proof ratchet contract)
 - `docs/agents/designs/174-jangar-observer-rights-and-source-settled-capital-ledger-2026-05-08.md`
