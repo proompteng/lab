@@ -30,6 +30,7 @@ import {
   resolveRequirementPriorityScore,
   resolveScheduleRuntimeInjection,
   resolveSwarmNatsIntegration,
+  resolveSwarmMissionContract,
   resolveSwarmPersonaForStage,
   resolveSwarmRunSecrets,
   sortRequirementSignalsForDispatch,
@@ -1873,6 +1874,7 @@ const reconcileSwarm = async (
   const risk = asRecord(spec.risk) ?? {}
   const ownerChannel = asString(owner.channel) ?? null
   const nats = resolveSwarmNatsIntegration(spec, owner, swarmName)
+  const mission = resolveSwarmMissionContract(spec, owner, swarmName)
 
   const freezeAfterFailuresRaw = Number(risk.freezeAfterFailures)
   const freezeAfterFailures =
@@ -2325,6 +2327,7 @@ const reconcileSwarm = async (
       ownerChannel,
       nats,
       identity: requirementIdentity,
+      mission,
     })
     const runLabels = {
       'swarm.proompteng.ai/name': swarmLabel,
@@ -2491,6 +2494,7 @@ const reconcileSwarm = async (
       ownerChannel,
       nats,
       identity: stageIdentity,
+      mission,
     })
     Object.assign(stageAnnotations, stageAdmission.annotations)
     const schedule = {
@@ -2601,6 +2605,13 @@ const reconcileSwarm = async (
     missions24h: runsIn24h.length,
     autonomousSuccessRate24h,
     lastProductionChangeRef,
+    mission: {
+      ledgerRef: mission.ledgerRef,
+      businessMetric: mission.businessMetric,
+      validationContract: mission.validationContract,
+      valueGates: mission.valueGates,
+      sourceDesign: mission.sourceDesign,
+    },
     stageStates,
     requirements: {
       pending: requirementStats.pending,

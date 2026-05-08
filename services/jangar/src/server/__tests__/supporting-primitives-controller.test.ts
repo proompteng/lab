@@ -1106,7 +1106,19 @@ describe('supporting primitives controller', () => {
     const schedule = {
       apiVersion: 'schedules.proompteng.ai/v1alpha1',
       kind: 'Schedule',
-      metadata: { name: 'torghut-quant-discover-sched', namespace: 'agents', generation: 1 },
+      metadata: {
+        name: 'torghut-quant-discover-sched',
+        namespace: 'agents',
+        generation: 1,
+        annotations: {
+          'swarm.proompteng.ai/mission-ledger-ref': '/workspace/.agentrun/swarm/torghut-quant-mission-ledger.md',
+          'swarm.proompteng.ai/business-metric': 'increase routeable post-cost profit evidence',
+          'swarm.proompteng.ai/validation-contract': JSON.stringify(['prove trading evidence status']),
+          'swarm.proompteng.ai/value-gates': JSON.stringify(['routeable_candidate_count']),
+          'swarm.proompteng.ai/handoff-fields': JSON.stringify(['objective', 'exact_next_action']),
+          'swarm.proompteng.ai/source-design': 'docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md',
+        },
+      },
       spec: {
         cron: '7 * * * *',
         timezone: 'UTC',
@@ -1137,6 +1149,14 @@ describe('supporting primitives controller', () => {
     const data = configMap.data as Record<string, string>
     const payload = JSON.parse(data['run.json'] ?? '{}') as Record<string, unknown>
     expect(payload.spec).toMatchObject({
+      parameters: {
+        swarmMissionLedgerRef: '/workspace/.agentrun/swarm/torghut-quant-mission-ledger.md',
+        swarmBusinessMetric: 'increase routeable post-cost profit evidence',
+        swarmValidationContract: JSON.stringify(['prove trading evidence status']),
+        swarmValueGates: JSON.stringify(['routeable_candidate_count']),
+        swarmHandoffRequiredFields: JSON.stringify(['objective', 'exact_next_action']),
+        swarmSourceDesign: 'docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md',
+      },
       workflow: {
         steps: [
           {
@@ -1248,6 +1268,14 @@ describe('supporting primitives controller', () => {
         },
         discovery: { sources: [{ name: 'github-issues' }] },
         delivery: { deploymentTargets: ['agents'] },
+        mission: {
+          ledgerRef: '/workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md',
+          businessMetric: 'reduce failed AgentRuns and rollout latency',
+          validationContract: ['produce a tested PR', 'verify rollout health'],
+          valueGates: ['failed_agentrun_rate', 'pr_to_rollout_latency'],
+          handoffRequiredFields: ['objective', 'commands_and_exit_codes', 'exact_next_action'],
+          sourceDesign: 'docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md',
+        },
         execution: {
           discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
           plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
@@ -1283,6 +1311,16 @@ describe('supporting primitives controller', () => {
         'swarm.proompteng.ai/nats-url': 'nats://nats.nats.svc.cluster.local:4222',
         'swarm.proompteng.ai/nats-subject-prefix': 'workflow',
         'swarm.proompteng.ai/nats-channel': 'general',
+        'swarm.proompteng.ai/mission-ledger-ref': '/workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md',
+        'swarm.proompteng.ai/business-metric': 'reduce failed AgentRuns and rollout latency',
+        'swarm.proompteng.ai/validation-contract': JSON.stringify(['produce a tested PR', 'verify rollout health']),
+        'swarm.proompteng.ai/value-gates': JSON.stringify(['failed_agentrun_rate', 'pr_to_rollout_latency']),
+        'swarm.proompteng.ai/handoff-fields': JSON.stringify([
+          'objective',
+          'commands_and_exit_codes',
+          'exact_next_action',
+        ]),
+        'swarm.proompteng.ai/source-design': 'docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md',
       })
       expect(typeof (annotations as Record<string, unknown>)['swarm.proompteng.ai/worker-id']).toBe('string')
       expect(typeof (annotations as Record<string, unknown>)['swarm.proompteng.ai/agent-identity']).toBe('string')
@@ -1293,6 +1331,12 @@ describe('supporting primitives controller', () => {
     const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     expect(status.phase).toBe('Active')
     expect(status.activeMissions).toBe(0)
+    expect(status.mission).toMatchObject({
+      ledgerRef: '/workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md',
+      businessMetric: 'reduce failed AgentRuns and rollout latency',
+      validationContract: ['produce a tested PR', 'verify rollout health'],
+      valueGates: ['failed_agentrun_rate', 'pr_to_rollout_latency'],
+    })
     expect(status.stageStates).toBeTruthy()
   })
 
@@ -1329,6 +1373,12 @@ describe('supporting primitives controller', () => {
         },
         discovery: { sources: [{ name: 'github-issues' }] },
         delivery: { deploymentTargets: ['agents'] },
+        mission: {
+          ledgerRef: '/workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md',
+          businessMetric: 'reduce failed AgentRuns',
+          validationContract: ['dispatch requirements only when business value is named'],
+          valueGates: ['failed_agentrun_rate'],
+        },
         execution: {
           discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
           plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
@@ -1415,6 +1465,12 @@ describe('supporting primitives controller', () => {
         },
         discovery: { sources: [{ name: 'github-issues' }] },
         delivery: { deploymentTargets: ['agents'] },
+        mission: {
+          ledgerRef: '/workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md',
+          businessMetric: 'reduce failed AgentRuns',
+          validationContract: ['dispatch requirements only when business value is named'],
+          valueGates: ['failed_agentrun_rate'],
+        },
         execution: {
           discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
           plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
@@ -1522,6 +1578,12 @@ describe('supporting primitives controller', () => {
         },
         discovery: { sources: [{ name: 'github-issues' }] },
         delivery: { deploymentTargets: ['agents'] },
+        mission: {
+          ledgerRef: '/workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md',
+          businessMetric: 'reduce failed AgentRuns',
+          validationContract: ['dispatch requirements only when business value is named'],
+          valueGates: ['failed_agentrun_rate'],
+        },
         execution: {
           discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
           plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
@@ -1578,6 +1640,13 @@ describe('supporting primitives controller', () => {
     expect(parameters.natsUrl).toBe('nats://nats.nats.svc.cluster.local:4222')
     expect(parameters.natsSubjectPrefix).toBe('workflow')
     expect(parameters.natsChannel).toBe('general')
+    expect(parameters.swarmMissionLedgerRef).toBe('/workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md')
+    expect(parameters.swarmBusinessMetric).toBe('reduce failed AgentRuns')
+    expect(parameters.swarmValidationContract).toBe(
+      JSON.stringify(['dispatch requirements only when business value is named']),
+    )
+    expect(parameters.swarmValueGates).toBe(JSON.stringify(['failed_agentrun_rate']))
+    expect(parameters.swarmSourceDesign).toBe('docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md')
     expect(parameters.swarmAgentTokenKey).toBeUndefined()
     expect(parameters.swarmAgentExpectedActorIdKey).toBeUndefined()
     const runSecrets = Array.isArray(requirementRun.spec.secrets) ? (requirementRun.spec.secrets as string[]) : []
