@@ -6,24 +6,82 @@ Release engineer: Marco Silva
 
 ## Owner update message
 
-Jangar rollout is healthy at the latest observed main revision
-`60b6be54a753cd91f6309db93b78d7d8dbe2d423`. Argo CD reports `jangar`, `agents`, `symphony-jangar`, `agents-ci`,
-`torghut`, `symphony-torghut`, and `torghut-options` Synced and Healthy. Rollout status succeeded for `jangar`,
-`agents`, `agents-controllers`, `symphony-jangar`, `symphony-torghut`, `torghut-options-catalog`, and
-`torghut-options-enricher`. Jangar `/health`, Symphony `/readyz`, and Agents `/ready` are serving.
+Merge gate remains no-go for the selected direct Jangar PR. #5889 is clean and mergeable at head
+`c8164ef2bb9e3bc7f19ae05ad7ecafc374fe9ba1`, and the current `gh pr checks` view is pass or intentionally skipped, but
+the PR is still a 1,639-line direct control-plane diff with no posted Codex review. The latest current-head review
+request at https://github.com/proompteng/lab/pull/5889#issuecomment-4406651322 received the usage-limit response at
+https://github.com/proompteng/lab/pull/5889#issuecomment-4406652965 instead of a review. The future gate is unchanged:
+restore Codex review capacity, post the current-head review, resolve any threads, recheck the branch, then make a new
+merge decision.
 
-#5889 remains a no-go even though its mergeability and hosted checks are clean. It is still a 1,639-line direct
-control-plane diff, and the required Codex review has not posted because the connector is returning code-review
-usage-limit responses. The latest current-head request at
-https://github.com/proompteng/lab/pull/5889#issuecomment-4406549526 received the same usage-limit response at
-https://github.com/proompteng/lab/pull/5889#issuecomment-4406550251. The future gate is: restore Codex review
-capacity, post the current-head review, resolve any threads, refresh/recheck the branch, then make a new merge
-decision.
+The live baseline is healthy and does not include #5889. Argo CD reports `jangar` Synced/Healthy at
+`370622b6755b955c1edf4e0e59b64572083f9e3f` and `agents` Synced/Healthy at
+`74befb03e6df84d62b53f5732e0bcc6b90ef52d8`; `deployment/jangar`, `deployment/agents`, and
+`deployment/agents-controllers` rolled out successfully. Current selected pods are Ready, Jangar and agents Services
+have live HTTP endpoints, and AgentRuns created in the last two hours show 35 total, 32 succeeded, 3 running, and
+0 failed. Pod exec is forbidden for this service account, so service health proof for this pass is Argo sync, rollout
+status, readiness probes, endpoints, and event review.
 
-The current deployed baseline is ready, but not risk-free. Agents `/ready` returns `status=ok`, leader election is
-active, memory provider health is good, and serving proof cells are healthy; it also reports `execution_trust=degraded`
-because the `jangar-control-plane` and `torghut-quant` swarms are frozen on stage staleness. That is a runtime
-follow-up blocker, not a reason to merge #5889 through the review gate.
+## Latest gate refresh - 2026-05-08T13:56Z
+
+Governing release requirement: verify stages must merge only green PRs and prove Argo sync, workload readiness, and
+service health after rollout. The selected direct implementation still maps to
+`docs/agents/designs/146-jangar-repair-warrant-exchange-and-schedule-debt-firebreak-2026-05-07.md`, which keeps repair
+warrants observe-mode, zero-notional, and non-capital-authorizing until closure evidence exists.
+
+- PR enumeration:
+  - #5889 `feat(jangar): add repair warrant exchange` is the only open direct Jangar control-plane implementation PR.
+  - Open release automation PRs #5767 and #5316 change app/docs manifests, not the Jangar control plane, and were not
+    selected for this release objective.
+- #5889 merge gate:
+  - Head: `c8164ef2bb9e3bc7f19ae05ad7ecafc374fe9ba1`.
+  - Mergeability: GitHub REST reports `mergeable=true`, and GraphQL reports `MERGEABLE` and `CLEAN`.
+  - Checks: current `gh pr checks` is pass or skipped only, including `CI / check_changed_files`, semantic title and
+    commit checks, `agents-ci / validate`, `agents-ci / integration`, and `jangar-ci / lint-and-typecheck / run`.
+  - Conservative note: raw check-run history for the head still includes two superseded cancelled semantic jobs, so the
+    gate stays closed even before applying the mandatory review blocker.
+  - Comments/reviews: zero posted reviews and zero review threads.
+  - Diff: 18 files, 1,591 additions, 48 deletions, 1,639 total changed lines.
+  - Progress comment refreshed at https://github.com/proompteng/lab/pull/5889#issuecomment-4398288855.
+  - Decision: no-go. The PR exceeds the mandatory 1,000-line Codex-review gate, and the current-head review request at
+    https://github.com/proompteng/lab/pull/5889#issuecomment-4406651322 received the connector usage-limit response at
+    https://github.com/proompteng/lab/pull/5889#issuecomment-4406652965.
+- Current live rollout health:
+  - Argo: `argocd/jangar` is `Synced`, `Healthy`, operation `Succeeded`, revision
+    `370622b6755b955c1edf4e0e59b64572083f9e3f`; `argocd/agents` is `Synced`, `Healthy`, operation `Succeeded`,
+    revision `74befb03e6df84d62b53f5732e0bcc6b90ef52d8`.
+  - Workloads: rollout status succeeded for `deployment/jangar`, `deployment/agents`, and
+    `deployment/agents-controllers`.
+  - Active pods: `jangar-77c49fd877-t4vcg` is `2/2 Running` with zero restarts; `agents-5b8d56c6f6-78nhr` is
+    `1/1 Running` with two restarts from the replacement window; both `agents-controllers` pods are `1/1 Running`
+    with zero restarts.
+  - Services: `service/jangar` has endpoint `10.244.5.136:8080`; `service/agents`, `service/agents-grpc`, and
+    `service/agents-metrics` have endpoints on the current agents pod.
+  - Events: current recent Jangar warnings are startup readiness probes during the replacement rollout and are cleared
+    by current rollout status. Recent agents warnings include startup readiness/liveness failures from the previous
+    agents replacement and unrelated Torghut scheduling delays; current selected agents pods are Ready.
+  - Access limitation: `pods/exec` is forbidden for `system:serviceaccount:agents:agents-sa`, so no in-pod curl was
+    performed from this runner.
+- Runtime and business metric evidence:
+  - `failed_agentrun_rate`: AgentRuns created in the last two hours show 35 total, 32 succeeded, 3 running, and
+    0 failed, for a 0 percent failed rate in the observed window.
+  - `ready_status_truth`: Argo sync, rollout status, pod readiness, Services/EndpointSlices, and event review agree
+    that the live baseline is ready; service-account exec limits are recorded as an evidence limitation.
+  - `manual_intervention_count`: zero production workload mutations were made from the local shell; cluster checks
+    were read-only.
+  - `pr_to_rollout_latency`: no new direct Jangar PR merged in this refresh because #5889 is held by the mandatory
+    large-diff review gate.
+  - `handoff_evidence_quality`: PR checks, review blockers, progress comment, GitOps health, rollout status, endpoint
+    readiness, event scan, AgentRun counts, risk, and rollback path are recorded here and in the swarm handoff files.
+- Rollback path:
+  - #5889 has no runtime rollback from this pass because it was not merged.
+  - For the currently deployed Jangar image, use a normal GitOps revert PR for the `fa3d104c` promotion to restore the
+    previous promoted image, then revert the underlying runtime PR if image rollback does not clear the issue.
+  - Do not mutate production workloads directly from a local shell.
+- Next action:
+  - Restore Codex review capacity for #5889, post a current-head review for
+    `c8164ef2bb9e3bc7f19ae05ad7ecafc374fe9ba1`, resolve any threads, then recheck mergeability, hosted checks, review
+    threads, and rollout health before any squash merge.
 
 ## Latest gate refresh - 2026-05-08T12:55Z
 
