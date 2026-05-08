@@ -10,6 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:${PATH}" \
     UV_PROJECT_ENVIRONMENT="/opt/venv" \
+    UV_LINK_MODE=copy \
     PIP_DEFAULT_TIMEOUT=120 \
     PIP_RETRIES=10
 
@@ -23,13 +24,16 @@ RUN apt-get update \
 
 COPY pyproject.toml uv.lock README.md ./
 COPY alembic.ini ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    /opt/venv/bin/uv sync --frozen --no-dev --no-install-project
 ARG TORGHUT_COMMIT
 COPY app ./app
 COPY migrations ./migrations
 RUN test -f /app/app/main.py \
  && test -f /app/app/trading/forecast_runtime.py \
  && test -f /app/app/trading/lean_runtime.py
-RUN /opt/venv/bin/uv sync --frozen --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    /opt/venv/bin/uv sync --frozen --no-dev
 
 
 FROM ${PYTHON_BASE_IMAGE} AS runtime
