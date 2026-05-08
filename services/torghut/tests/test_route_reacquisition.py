@@ -442,3 +442,59 @@ def test_route_reacquisition_board_preserves_candidate_notional_and_receipts() -
     summary = cast(Mapping[str, Any], board["summary"])
     assert summary["capital_eligible_symbol_count"] == 1
     assert summary["zero_notional_row_count"] == 1
+
+
+def test_route_reacquisition_board_holds_candidate_without_jangar_continuity() -> None:
+    proof_floor = {
+        "generated_at": "2026-05-07T22:11:12.125118+00:00",
+        "account_label": "PA3SX7FYNUTF",
+        "torghut_revision": "torghut-00285",
+        "route_state": "paper_candidate",
+        "capital_state": "paper_allowed",
+        "proof_dimensions": [
+            {"dimension": "execution_tca", "state": "pass", "reason": "fresh"},
+            {"dimension": "market_context", "state": "pass"},
+            {"dimension": "quant_ingestion", "state": "pass"},
+            {"dimension": "alpha_readiness", "state": "pass"},
+        ],
+        "route_reacquisition_book": {
+            "generated_at": "2026-05-07T22:11:12.125118+00:00",
+            "account_label": "PA3SX7FYNUTF",
+            "trading_mode": "paper",
+            "market_session_open": True,
+            "records": [
+                {
+                    "symbol": "NVDA",
+                    "state": "routeable",
+                    "reason": "fresh",
+                    "filled_execution_count": 25,
+                    "paper_probe_notional_limit": "125",
+                    "market_context_receipt_id": "mctx-1",
+                    "quant_pipeline_receipt_id": "quant-1",
+                    "hypothesis_ids": ["H-1"],
+                }
+            ],
+        },
+    }
+
+    board = build_route_reacquisition_board(
+        proof_floor_receipt=proof_floor,
+        active_revision="torghut-00285",
+    )
+
+    assert board["state"] == "candidate"
+    assert board["capital_rule"] == "zero_notional_until_jangar_continuity"
+    assert board["blocking_reasons"] == ["jangar_continuity_epoch_missing"]
+    continuity = cast(Mapping[str, Any], board["jangar_continuity"])
+    assert continuity["decision"] == "missing"
+    assert continuity["state"] == "missing"
+    rows = cast(list[Mapping[str, Any]], board["rows"])
+    assert rows[0]["symbol"] == "NVDA"
+    assert rows[0]["max_notional"] == "0"
+    receipts = cast(Mapping[str, Any], rows[0]["required_receipts"])
+    continuity_receipt = cast(Mapping[str, Any], receipts["jangar_continuity_epoch"])
+    assert continuity_receipt["state"] == "missing"
+    assert continuity_receipt["blocking_reasons"] == ["jangar_continuity_epoch_missing"]
+    summary = cast(Mapping[str, Any], board["summary"])
+    assert summary["capital_eligible_symbol_count"] == 0
+    assert summary["zero_notional_row_count"] == 1

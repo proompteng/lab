@@ -69,6 +69,13 @@ def _ready_status() -> dict[str, object]:
             'schema_version': 'torghut.route-reacquisition-board.v1',
             'state': 'candidate',
             'capital_state': 'paper_allowed',
+            'jangar_continuity': {
+                'epoch_id': 'truth-settlement:paper_canary:ready',
+                'state': 'present',
+                'decision': 'allow',
+                'fresh_until': '2026-05-08T12:00:00+00:00',
+                'blocking_reasons': [],
+            },
             'summary': {
                 'row_count': 2,
                 'state_counts': {'routeable': 2},
@@ -243,6 +250,7 @@ class TestVerifyTradingReadiness(TestCase):
         self.assertIn('routeable_symbol_count', result['failed_checks'])
         self.assertIn('blocked_symbol_count', result['failed_checks'])
         self.assertIn('missing_symbol_count', result['failed_checks'])
+        self.assertIn('route_board_jangar_continuity_ready', result['failed_checks'])
         self.assertIn('route_board_capital_eligible_symbols', result['failed_checks'])
         self.assertIn('route_board_zero_notional_rows', result['failed_checks'])
 

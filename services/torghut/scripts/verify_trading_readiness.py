@@ -313,6 +313,7 @@ def evaluate_trading_readiness(
 
     route_board = _mapping(status.get('route_reacquisition_board'))
     route_board_summary = _mapping(route_board.get('summary'))
+    route_board_continuity = _mapping(route_board.get('jangar_continuity'))
     route_board_capital_eligible_symbols = _int(
         route_board_summary.get('capital_eligible_symbol_count')
     )
@@ -333,6 +334,24 @@ def evaluate_trading_readiness(
         == ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION,
         observed=_text(route_board.get('schema_version')),
         expected=ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION,
+    )
+    route_board_continuity_decision = _text(route_board_continuity.get('decision'))
+    route_board_continuity_state = _text(route_board_continuity.get('state'))
+    route_board_continuity_ready = (
+        route_board_continuity_state == 'present'
+        and route_board_continuity_decision == 'allow'
+    )
+    _add_check(
+        checks,
+        'route_board_jangar_continuity_ready',
+        passed=route_board_continuity_ready,
+        observed={
+            'state': route_board_continuity_state,
+            'decision': route_board_continuity_decision,
+            'epoch_id': route_board_continuity.get('epoch_id'),
+            'blocking_reasons': route_board_continuity.get('blocking_reasons') or [],
+        },
+        expected={'state': 'present', 'decision': 'allow'},
     )
     _add_check(
         checks,

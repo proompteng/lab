@@ -8,6 +8,7 @@ from typing import Any, cast
 
 
 SCHEMA_VERSION = "torghut.route-reacquisition-board.v1"
+_CAPITAL_ALLOW_DECISIONS = {"allow"}
 
 
 def _text(value: object, default: str = "") -> str:
@@ -110,11 +111,52 @@ def _receipt_state(
     }
 
 
+def _jangar_continuity_packet(
+    *,
+    jangar_continuity: Mapping[str, Any] | None,
+    jangar_broker_ref: str | None,
+) -> dict[str, object]:
+    payload = _mapping(jangar_continuity)
+    epoch_id = _text(payload.get("epoch_id"), _text(jangar_broker_ref))
+    decision = _text(
+        payload.get("decision"),
+        "allow" if epoch_id else "missing",
+    )
+    state = _text(
+        payload.get("state"),
+        "present" if epoch_id else "missing",
+    )
+    fresh_until = payload.get("fresh_until")
+    blocking_reasons = [
+        _text(item)
+        for item in _sequence(payload.get("blocking_reasons"))
+        if _text(item)
+    ]
+    if not epoch_id and "jangar_continuity_epoch_missing" not in blocking_reasons:
+        blocking_reasons.append("jangar_continuity_epoch_missing")
+    if decision not in _CAPITAL_ALLOW_DECISIONS and not blocking_reasons:
+        blocking_reasons.append(f"jangar_continuity_{decision}")
+    return {
+        "epoch_id": epoch_id or None,
+        "state": state,
+        "decision": decision,
+        "fresh_until": fresh_until,
+        "blocking_reasons": blocking_reasons,
+    }
+
+
+def _continuity_allows_capital(continuity: Mapping[str, object]) -> bool:
+    return (
+        _text(continuity.get("state")) == "present"
+        and _text(continuity.get("decision")) in _CAPITAL_ALLOW_DECISIONS
+    )
+
+
 def _required_receipts(
     *,
     record: Mapping[str, Any],
     dimensions: Mapping[str, Mapping[str, Any]],
-    jangar_broker_ref: str | None,
+    jangar_continuity: Mapping[str, object],
 ) -> dict[str, object]:
     tca_dimension = _mapping(dimensions.get("execution_tca"))
     market_context_dimension = _mapping(dimensions.get("market_context"))
@@ -143,9 +185,18 @@ def _required_receipts(
             if hypothesis_ids
             else _text(alpha_dimension.get("state"), "missing"),
         },
+        "jangar_continuity_epoch": {
+            "epoch_id": jangar_continuity.get("epoch_id"),
+            "decision": jangar_continuity.get("decision"),
+            "fresh_until": jangar_continuity.get("fresh_until"),
+            "state": jangar_continuity.get("state"),
+            "blocking_reasons": list(
+                _sequence(jangar_continuity.get("blocking_reasons"))
+            ),
+        },
         "jangar_proof_packet": {
-            "ref": jangar_broker_ref,
-            "state": "present" if jangar_broker_ref else "missing",
+            "ref": jangar_continuity.get("epoch_id"),
+            "state": jangar_continuity.get("state"),
         },
     }
 
@@ -155,8 +206,8 @@ def _board_row(
     record: Mapping[str, Any],
     account_label: str,
     dimensions: Mapping[str, Mapping[str, Any]],
-    repair_only: bool,
-    jangar_broker_ref: str | None,
+    zero_notional_hold: bool,
+    jangar_continuity: Mapping[str, object],
 ) -> dict[str, object]:
     symbol = _text(record.get("symbol"), "unknown")
     state = _text(record.get("state"), "unknown")
@@ -179,13 +230,13 @@ def _board_row(
         "required_receipts": _required_receipts(
             record=record,
             dimensions=dimensions,
-            jangar_broker_ref=jangar_broker_ref,
+            jangar_continuity=jangar_continuity,
         ),
         "max_notional": "0"
-        if repair_only
+        if zero_notional_hold
         else _text(record.get("paper_probe_notional_limit"), "0"),
         "rollback_target": {
-            "state": "blocked" if repair_only else state,
+            "state": "blocked" if zero_notional_hold else state,
             "live_submit_enabled": False,
         },
     }
@@ -208,6 +259,7 @@ def build_route_reacquisition_board(
     proof_floor_receipt: Mapping[str, Any],
     route_reacquisition_book: Mapping[str, Any] | None = None,
     active_revision: str | None = None,
+    jangar_continuity: Mapping[str, Any] | None = None,
     jangar_broker_ref: str | None = None,
 ) -> dict[str, object]:
     """Build an observe-only route repair board from proof floor and route book.
@@ -227,14 +279,20 @@ def build_route_reacquisition_board(
         _text(proof_floor_receipt.get("route_state")) == "repair_only"
         or _text(proof_floor_receipt.get("capital_state")) == "zero_notional"
     )
+    continuity = _jangar_continuity_packet(
+        jangar_continuity=jangar_continuity,
+        jangar_broker_ref=jangar_broker_ref,
+    )
+    continuity_allows_capital = _continuity_allows_capital(continuity)
+    zero_notional_hold = repair_only or not continuity_allows_capital
     rows = sorted(
         [
             _board_row(
                 record=_mapping(raw_record),
                 account_label=account_label,
                 dimensions=dimensions,
-                repair_only=repair_only,
-                jangar_broker_ref=jangar_broker_ref,
+                zero_notional_hold=zero_notional_hold,
+                jangar_continuity=continuity,
             )
             for raw_record in _sequence(route_book.get("records"))
             if _text(_mapping(raw_record).get("symbol"))
@@ -254,13 +312,21 @@ def build_route_reacquisition_board(
         "trading_mode": route_book.get("trading_mode"),
         "active_revision": active_revision
         or proof_floor_receipt.get("torghut_revision"),
-        "jangar_broker_ref": jangar_broker_ref,
+        "jangar_broker_ref": continuity.get("epoch_id"),
+        "jangar_continuity": continuity,
+        "jangar_continuity_epoch_id": continuity.get("epoch_id"),
+        "jangar_continuity_decision": continuity.get("decision"),
         "capital_state": proof_floor_receipt.get("capital_state"),
         "market_session_open": route_book.get("market_session_open"),
         "state": "repair_only" if repair_only else "candidate",
         "capital_rule": "zero_notional_until_receipts_close"
         if repair_only
+        else "zero_notional_until_jangar_continuity"
+        if not continuity_allows_capital
         else "paper_probe_requires_receipt_chain",
+        "blocking_reasons": list(_sequence(continuity.get("blocking_reasons")))
+        if not continuity_allows_capital
+        else [],
         "rows": rows,
         "summary": {
             "row_count": len(rows),
@@ -273,8 +339,12 @@ def build_route_reacquisition_board(
                 if _text(row.get("state")) in {"probing", "blocked", "missing"}
             ][:5],
             "capital_eligible_symbol_count": 0
-            if repair_only
+            if zero_notional_hold
             else state_counts.get("routeable", 0),
+            "jangar_continuity_decision": continuity.get("decision"),
+            "jangar_continuity_blocking_reasons": list(
+                _sequence(continuity.get("blocking_reasons"))
+            ),
         },
         "rollback_target": {
             "capital_state": "zero_notional",

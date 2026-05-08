@@ -65,6 +65,7 @@ from .trading.hypotheses import (
     summarize_hypothesis_runtime_statuses,
     validate_hypothesis_registry_from_settings,
 )
+from .trading.jangar_continuity import load_jangar_route_continuity_packet
 from .trading.lean_lanes import LeanLaneManager
 from .trading.lean_runtime import lean_authority_status
 from .trading.llm.evaluation import build_llm_evaluation_metrics
@@ -3325,6 +3326,9 @@ def _build_route_reacquisition_board_payload(
             proof_floor.get("route_reacquisition_book"),
         ),
         active_revision=active_revision,
+        jangar_continuity=load_jangar_route_continuity_packet(
+            action_class="paper_canary",
+        ),
     )
 
 
