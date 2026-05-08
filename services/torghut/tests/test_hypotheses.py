@@ -273,51 +273,55 @@ class TestHypothesisReadiness(TestCase):
             evidence_checks=2,
             signal_lag_seconds=9_900,
             evidence_report={
-                'ok': True,
-                'checked_at': '2026-03-06T15:45:00+00:00',
+                "ok": True,
+                "checked_at": "2026-03-06T15:45:00+00:00",
             },
         )
         statuses = compile_hypothesis_runtime_statuses(
             registry=registry,
             state=state,
             tca_summary={
-                'order_count': 120,
-                'avg_abs_slippage_bps': 20,
-                'avg_realized_shortfall_bps': -12,
-                'last_computed_at': '2026-03-06T15:00:00+00:00',
+                "order_count": 120,
+                "avg_abs_slippage_bps": 20,
+                "avg_realized_shortfall_bps": -12,
+                "last_computed_at": "2026-03-06T15:00:00+00:00",
             },
-            market_context_status={'last_freshness_seconds': 10_000},
+            market_context_status={"last_freshness_seconds": 10_000},
             jangar_dependency_quorum=JangarDependencyQuorumStatus(
-                decision='allow',
+                decision="allow",
                 reasons=[],
-                message='ok',
+                message="ok",
             ),
             now=datetime(2026, 3, 6, 23, 0, tzinfo=timezone.utc),
             market_session_open=False,
         )
 
-        cont = next(item for item in statuses if item['hypothesis_id'] == 'H-CONT-01')
-        rev = next(item for item in statuses if item['hypothesis_id'] == 'H-REV-01')
-        self.assertNotIn('signal_lag_exceeded', cont['reasons'])
-        self.assertNotIn('tca_evidence_stale', cont['reasons'])
-        self.assertIn('slippage_budget_exceeded', cont['reasons'])
-        self.assertIn('closed_session_signal_hold', cont['informational_reasons'])
-        self.assertIn('closed_session_tca_evidence_hold', cont['informational_reasons'])
-        self.assertNotIn('market_context_stale', rev['reasons'])
-        self.assertIn('closed_session_market_context_hold', rev['informational_reasons'])
-        self.assertEqual(cont['observed']['market_session_open'], False)
+        cont = next(item for item in statuses if item["hypothesis_id"] == "H-CONT-01")
+        rev = next(item for item in statuses if item["hypothesis_id"] == "H-REV-01")
+        self.assertNotIn("signal_lag_exceeded", cont["reasons"])
+        self.assertNotIn("tca_evidence_stale", cont["reasons"])
+        self.assertIn("slippage_budget_exceeded", cont["reasons"])
+        self.assertIn("closed_session_signal_hold", cont["informational_reasons"])
+        self.assertIn("closed_session_tca_evidence_hold", cont["informational_reasons"])
+        self.assertNotIn("market_context_stale", rev["reasons"])
+        self.assertIn(
+            "closed_session_market_context_hold", rev["informational_reasons"]
+        )
+        self.assertEqual(cont["observed"]["market_session_open"], False)
 
         summary = summarize_hypothesis_runtime_statuses(
             statuses,
             registry=registry,
             dependency_quorum=JangarDependencyQuorumStatus(
-                decision='allow',
+                decision="allow",
                 reasons=[],
-                message='ok',
+                message="ok",
             ),
         )
-        self.assertEqual(summary['reason_totals']['slippage_budget_exceeded'], 3)
-        self.assertEqual(summary['informational_reason_totals']['closed_session_signal_hold'], 3)
+        self.assertEqual(summary["reason_totals"]["slippage_budget_exceeded"], 3)
+        self.assertEqual(
+            summary["informational_reason_totals"]["closed_session_signal_hold"], 3
+        )
 
     def test_compile_hypothesis_runtime_statuses_isolates_dependency_capabilities_between_hypotheses(
         self,
