@@ -81,7 +81,7 @@ describe('getQuantHealthHandler', () => {
       strategyId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       account: 'paper',
       window: '1d',
-      minAsOf: '2026-02-18T14:59:00.000Z',
+      minCreatedAt: '2026-02-18T14:59:00.000Z',
     })
     expect(getQuantLatestStoreStatus).toHaveBeenCalledWith({
       strategyId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -172,6 +172,33 @@ describe('getQuantHealthHandler', () => {
     expect(body.latestMetricsCount).toBe(0)
   })
 
+  it('returns degraded status when scoped pipeline health has no stage receipts', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-02-22T15:00:00.000Z')) // Sunday
+
+    const { getQuantHealthHandler } = await import('./health')
+
+    getQuantLatestStoreStatus.mockResolvedValueOnce({
+      updatedAt: '2026-02-22T14:59:55.000Z',
+      count: 7,
+    })
+    listLatestQuantPipelineHealth.mockResolvedValueOnce([])
+
+    const response = await getQuantHealthHandler(
+      new Request('http://localhost/api/torghut/trading/control-plane/quant/health?account=paper&window=1d'),
+    )
+
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body.ok).toBe(true)
+    expect(body.status).toBe('degraded')
+    expect(body.missingUpdateAlarm).toBe(false)
+    expect(body.emptyLatestStoreAlarm).toBe(false)
+    expect(body.missingPipelineHealthStages).toBe(true)
+    expect(body.pipelineHealthScoped).toBe(true)
+    expect(body.stageScopeOmitted).toBe(false)
+  })
+
   it('returns degraded status when any stage is not ok', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-02-18T15:00:00.000Z'))
@@ -205,7 +232,7 @@ describe('getQuantHealthHandler', () => {
       strategyId: undefined,
       account: 'paper',
       window: '1d',
-      minAsOf: '2026-02-18T14:56:00.000Z',
+      minCreatedAt: '2026-02-18T14:56:00.000Z',
     })
     const body = await response.json()
     expect(body.ok).toBe(true)
@@ -250,7 +277,7 @@ describe('getQuantHealthHandler', () => {
       strategyId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
       account: 'paper',
       window: '1d',
-      minAsOf: '2026-02-18T14:59:00.000Z',
+      minCreatedAt: '2026-02-18T14:59:00.000Z',
     })
     expect(getQuantLatestStoreStatus).toHaveBeenCalledWith({
       strategyId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',

@@ -90,16 +90,20 @@ describe('torghut quant metrics store', () => {
     dbMocks.getDb.mockReturnValue(db)
     const { listLatestQuantPipelineHealth } = await import('../torghut-quant-metrics-store')
 
-    await listLatestQuantPipelineHealth({ account: 'paper', window: '15m', minAsOf: '2026-05-05T15:00:00.000Z' })
+    await listLatestQuantPipelineHealth({
+      account: 'paper',
+      window: '15m',
+      minCreatedAt: '2026-05-05T15:00:00.000Z',
+    })
 
     const pipelineHealthSql = calls.find((call) => call.sql.includes('quant_pipeline_health'))?.sql
     expect(pipelineHealthSql).toBeTruthy()
     const normalized = String(pipelineHealthSql).toLowerCase().replace(/\s+/g, ' ')
 
     expect(normalized).toContain("select distinct on (account, (details->>'window'), strategy_id, stage)")
-    expect(normalized).toContain("where account = $1 and details->>'window' = $2 and as_of >= $3")
+    expect(normalized).toContain("where account = $1 and details->>'window' = $2 and created_at >= $3")
     expect(normalized).toContain(
-      "order by account asc, (details->>'window') asc, strategy_id asc, stage asc, as_of desc",
+      "order by account asc, (details->>'window') asc, strategy_id asc, stage asc, created_at desc, as_of desc",
     )
     expect(normalized).not.toContain('row_number() over')
   })

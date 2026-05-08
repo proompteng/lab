@@ -31,6 +31,7 @@ export type QuantPipelineHealth = {
   ok: boolean
   lagSeconds: number
   asOf: string
+  recordedAt?: string
   details: Record<string, unknown>
 }
 
@@ -345,22 +346,22 @@ export const listLatestQuantPipelineHealth = async (params: {
   strategyId?: string
   account?: string
   window?: string
-  minAsOf?: Date | string
+  minCreatedAt?: Date | string
 }) => {
   const db = await ensureQuantStoreReady()
   const filters: Array<unknown> = []
   if (params.strategyId) filters.push(sql`strategy_id = ${params.strategyId}::uuid`)
   if (params.account) filters.push(sql`account = ${params.account}`)
   if (params.window) filters.push(sql`details->>'window' = ${params.window}`)
-  if (params.minAsOf) filters.push(sql`as_of >= ${toDate(params.minAsOf)}`)
+  if (params.minCreatedAt) filters.push(sql`created_at >= ${toDate(params.minCreatedAt)}`)
   const whereSql = filters.length > 0 ? sql`where ${sql.join(filters, sql` and `)}` : sql``
   const scopedByAccountAndWindow = Boolean(params.account && params.window)
   const latestPartitionSql = scopedByAccountAndWindow
     ? sql`account, (details->>'window'), strategy_id, stage`
     : sql`strategy_id, account, stage, coalesce(details->>'window', '')`
   const latestOrderSql = scopedByAccountAndWindow
-    ? sql`account asc, (details->>'window') asc, strategy_id asc, stage asc, as_of desc`
-    : sql`strategy_id asc, account asc, stage asc, coalesce(details->>'window', '') asc, as_of desc`
+    ? sql`account asc, (details->>'window') asc, strategy_id asc, stage asc, created_at desc, as_of desc`
+    : sql`strategy_id asc, account asc, stage asc, coalesce(details->>'window', '') asc, created_at desc, as_of desc`
   const result = await sql<{
     strategy_id: string
     account: string
@@ -368,9 +369,10 @@ export const listLatestQuantPipelineHealth = async (params: {
     ok: boolean
     lag_seconds: number
     as_of: Date | string
+    created_at: Date | string
     details: Record<string, unknown> | null
   }>`
-    select strategy_id, account, stage, ok, lag_seconds, as_of, details
+    select strategy_id, account, stage, ok, lag_seconds, as_of, created_at, details
     from (
       select distinct on (${latestPartitionSql})
         strategy_id,
@@ -379,6 +381,7 @@ export const listLatestQuantPipelineHealth = async (params: {
         ok,
         lag_seconds,
         as_of,
+        created_at,
         details
       from torghut_control_plane.quant_pipeline_health
       ${whereSql}
@@ -394,6 +397,7 @@ export const listLatestQuantPipelineHealth = async (params: {
     ok: Boolean(row.ok),
     lagSeconds: Number(row.lag_seconds ?? 0),
     asOf: new Date(row.as_of as string | Date).toISOString(),
+    recordedAt: new Date(row.created_at as string | Date).toISOString(),
     details: (row.details as Record<string, unknown>) ?? {},
   })) satisfies QuantPipelineHealth[]
 }
