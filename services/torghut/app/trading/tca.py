@@ -447,6 +447,7 @@ def _build_tca_symbol_breakdown(
             func.avg(func.abs(ExecutionTCAMetric.slippage_bps)),
             func.max(func.abs(ExecutionTCAMetric.slippage_bps)),
             func.max(ExecutionTCAMetric.computed_at),
+            func.avg(ExecutionTCAMetric.realized_shortfall_bps),
         )
         .where(ExecutionTCAMetric.symbol.in_(symbols))
         .group_by(ExecutionTCAMetric.symbol)
@@ -467,6 +468,7 @@ def _build_tca_symbol_breakdown(
                     "order_count": 0,
                     "avg_abs_slippage_bps": None,
                     "max_abs_slippage_bps": None,
+                    "avg_realized_shortfall_bps": None,
                     "last_computed_at": None,
                 }
             )
@@ -478,6 +480,7 @@ def _build_tca_symbol_breakdown(
                 "avg_abs_slippage_bps": _decimal_or_none(row[2]),
                 "max_abs_slippage_bps": _decimal_or_none(row[3]),
                 "last_computed_at": row[4],
+                "avg_realized_shortfall_bps": _decimal_or_none(row[5]),
             }
         )
     return breakdown
