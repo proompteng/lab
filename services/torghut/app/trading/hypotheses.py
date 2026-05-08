@@ -551,6 +551,7 @@ def compile_hypothesis_runtime_statuses(
     market_context_status: Mapping[str, Any],
     jangar_dependency_quorum: JangarDependencyQuorumStatus,
     now: datetime | None = None,
+    market_session_open: bool | None = None,
 ) -> list[dict[str, object]]:
     if not registry.loaded:
         return []
@@ -613,6 +614,7 @@ def compile_hypothesis_runtime_statuses(
             _resolve_required_dependency_capabilities(manifest)
         )
         reasons: list[str] = []
+        informational_reasons: list[str] = []
         requirements = manifest.entry_requirements
 
         if (
@@ -655,7 +657,10 @@ def compile_hypothesis_runtime_statuses(
             signal_lag_seconds is None
             or signal_lag_seconds > requirements.max_signal_lag_seconds
         ):
-            reasons.append("signal_lag_exceeded")
+            if market_session_open is False:
+                informational_reasons.append("closed_session_signal_hold")
+            else:
+                reasons.append("signal_lag_exceeded")
         if (
             requirements.max_no_signal_streak is not None
             and no_signal_streak > requirements.max_no_signal_streak
@@ -679,7 +684,10 @@ def compile_hypothesis_runtime_statuses(
                 > requirements.max_market_context_freshness_seconds
             )
         ):
-            reasons.append("market_context_stale")
+            if market_session_open is False:
+                informational_reasons.append("closed_session_market_context_hold")
+            else:
+                reasons.append("market_context_stale")
         if (
             _is_dependency_required(
                 required_dependency_capabilities, "jangar_dependency_quorum"
@@ -718,7 +726,10 @@ def compile_hypothesis_runtime_statuses(
                 or tca_age_minutes > requirements.max_evidence_age_minutes
             )
         ):
-            reasons.append("tca_evidence_stale")
+            if market_session_open is False:
+                informational_reasons.append("closed_session_tca_evidence_hold")
+            else:
+                reasons.append("tca_evidence_stale")
 
         readiness_blockers = set(reasons)
 
@@ -795,6 +806,7 @@ def compile_hypothesis_runtime_statuses(
                 "promotion_eligible": promotion_eligible,
                 "rollback_required": rollback_required,
                 "reasons": sorted(set(reasons)),
+                "informational_reasons": sorted(set(informational_reasons)),
                 "required_feature_sets": list(manifest.required_feature_sets),
                 "required_dependency_capabilities": list(
                     manifest.required_dependency_capabilities
@@ -816,6 +828,7 @@ def compile_hypothesis_runtime_statuses(
                         else None
                     ),
                     "tca_age_minutes": tca_age_minutes,
+                    "market_session_open": market_session_open,
                     "avg_abs_slippage_bps": _decimal_to_string(avg_abs_slippage_bps),
                     "post_cost_expectancy_bps_proxy": _decimal_to_string(
                         post_cost_expectancy_bps_proxy
@@ -855,6 +868,18 @@ def summarize_hypothesis_runtime_statuses(
     dependency_quorum: JangarDependencyQuorumStatus,
 ) -> dict[str, object]:
     state_totals = Counter(str(item.get("state") or "unknown") for item in statuses)
+    reason_totals = Counter(
+        str(reason)
+        for item in statuses
+        for reason in cast(Sequence[object], item.get("reasons") or [])
+        if str(reason).strip()
+    )
+    informational_reason_totals = Counter(
+        str(reason)
+        for item in statuses
+        for reason in cast(Sequence[object], item.get("informational_reasons") or [])
+        if str(reason).strip()
+    )
     capital_stage_totals = Counter(
         str(item.get("capital_stage") or "shadow") for item in statuses
     )
@@ -876,6 +901,10 @@ def summarize_hypothesis_runtime_statuses(
         "registry_errors": list(registry.errors),
         "hypotheses_total": len(statuses),
         "state_totals": dict(sorted(state_totals.items())),
+        "reason_totals": dict(sorted(reason_totals.items())),
+        "informational_reason_totals": dict(
+            sorted(informational_reason_totals.items())
+        ),
         "capital_stage_totals": dict(sorted(capital_stage_totals.items())),
         "capital_multiplier_by_hypothesis": capital_multiplier_by_hypothesis,
         "promotion_eligible_total": promotion_eligible_total,

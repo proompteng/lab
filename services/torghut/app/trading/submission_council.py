@@ -419,6 +419,9 @@ def build_hypothesis_runtime_summary(
         ),
         market_context_status=market_context_status,
         jangar_dependency_quorum=dependency_quorum,
+        market_session_open=cast(
+            bool | None, getattr(state, "market_session_open", None)
+        ),
     )
     summary = summarize_hypothesis_runtime_statuses(
         items,
