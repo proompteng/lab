@@ -188,6 +188,11 @@ Testing rules for the trading core:
   `torghut.renewal-bond-profit-escrow.v1` receipt for the May 7 doc 137 contract. It consumes Jangar stage trust,
   stage renewal bonds, proof floor, empirical jobs, quant evidence, market context, TCA, and hypothesis readiness,
   then keeps `max_notional=0` while ranking zero-notional repairs and carrying fresh empirical proof value.
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/autonomy` also surface the May 7 doc
+  168 executable-alpha projection: a `torghut.capital-replay-board.v1` board plus
+  `torghut.executable-alpha-receipts.v1` candidate receipts. The initial board is observation-only, seeds AAPL route
+  rehab, NVDA scoped proof refill, and missing megacap breadth probes from proof-floor/route evidence, and keeps every
+  replay and receipt at `max_notional=0` until Jangar contract graduation and fresh scoped proof close.
 - The simple direct-submit lane is no longer an authority bypass in live mode. Before submitting to Alpaca it evaluates
   the same live-submission gate as the scheduler path and persists the gate payload in decision metadata when a
   submission is blocked. Paper-mode simple execution remains unchanged.

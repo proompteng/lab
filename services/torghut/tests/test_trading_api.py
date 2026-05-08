@@ -1073,6 +1073,51 @@ class TestTradingApi(TestCase):
         self.assertEqual(status_response.json()["renewal_bond_profit_escrow"], escrow)
         self.assertEqual(health_response.json()["renewal_bond_profit_escrow"], escrow)
 
+    def test_trading_status_health_and_autonomy_include_alpha_replay_projection(
+        self,
+    ) -> None:
+        projection = {
+            "capital_replay_board": {
+                "schema_version": "torghut.capital-replay-board.v1",
+                "board_id": "capital-replay:test",
+                "summary": {"replay_item_count": 1},
+                "replay_items": [{"max_notional": "0"}],
+            },
+            "executable_alpha_receipts": {
+                "schema_version": "torghut.executable-alpha-receipts.v1",
+                "summary": {"receipts_total": 1},
+                "receipts": [{"graduation_state": "candidate"}],
+            },
+        }
+
+        with (
+            patch(
+                "app.main.build_capital_replay_projection",
+                return_value=projection,
+            ),
+            patch(
+                "app.main._build_autonomy_capital_replay_projection",
+                return_value=projection,
+            ),
+        ):
+            status_response = self.client.get("/trading/status")
+            health_response = self.client.get("/trading/health")
+            autonomy_response = self.client.get("/trading/autonomy")
+
+        self.assertEqual(status_response.status_code, 200)
+        self.assertIn(health_response.status_code, {200, 503})
+        self.assertEqual(autonomy_response.status_code, 200)
+        for response in (status_response, health_response, autonomy_response):
+            payload = response.json()
+            self.assertEqual(
+                payload["capital_replay_board"],
+                projection["capital_replay_board"],
+            )
+            self.assertEqual(
+                payload["executable_alpha_receipts"],
+                projection["executable_alpha_receipts"],
+            )
+
     def test_trading_health_requires_profitability_proof_floor_in_live(self) -> None:
         original_enabled = settings.trading_enabled
         original_mode = settings.trading_mode
