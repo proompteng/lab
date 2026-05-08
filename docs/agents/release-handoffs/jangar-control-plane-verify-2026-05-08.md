@@ -3,11 +3,11 @@
 Owner update message:
 
 Merge gate remains no-go for #5889. It is clean and mergeable at head
-`c8164ef2bb9e3bc7f19ae05ad7ecafc374fe9ba1`, and the current `gh pr checks` view is pass or intentionally skipped, but
+`1eb9840f7f465e433d4a7eab6175d92bd9b525dc`, and the current `gh pr checks` view is pass or intentionally skipped, but
 the PR is a 1,639-line direct-control-plane diff with no posted Codex review. The latest current-head review request
-at https://github.com/proompteng/lab/pull/5889#issuecomment-4406651322 received the usage-limit response at
-https://github.com/proompteng/lab/pull/5889#issuecomment-4406652965 instead of a review. Jangar and agents are healthy
-on the live baseline: Argo reports `jangar` Synced/Healthy at `370622b6755b955c1edf4e0e59b64572083f9e3f` and
+at https://github.com/proompteng/lab/pull/5889#issuecomment-4407395847 received the usage-limit response at
+https://github.com/proompteng/lab/pull/5889#issuecomment-4407396834 instead of a review. The latest read-only live
+baseline evidence does not include #5889: Argo reports `jangar` Synced/Healthy at `370622b6755b955c1edf4e0e59b64572083f9e3f` and
 `agents` Synced/Healthy at `74befb03e6df84d62b53f5732e0bcc6b90ef52d8`; the watched deployments rolled out; current
 pods are Ready; and AgentRuns created in the last two hours show 35 total, 32 succeeded, 3 running, and 0 failed.
 
@@ -31,7 +31,7 @@ pods are Ready; and AgentRuns created in the last two hours show 35 total, 32 su
   - Audit PR merged at 2026-05-08T10:00:38Z as `7488d10a5f42adbc91445aee7c4ceb3b65251dcc`.
   - Superseded by this correction because #5412 and the image promotions moved after #6090 was prepared.
 - #5889 `feat(jangar): add repair warrant exchange`
-  - Current head: `c8164ef2bb9e3bc7f19ae05ad7ecafc374fe9ba1`.
+  - Current head: `1eb9840f7f465e433d4a7eab6175d92bd9b525dc`.
   - Progress comment refreshed:
     https://github.com/proompteng/lab/pull/5889#issuecomment-4398288855.
   - Merge decision: no-go. The PR is clean and green, but it exceeds the mandatory large-diff Codex review gate and no
@@ -44,8 +44,8 @@ pods are Ready; and AgentRuns created in the last two hours show 35 total, 32 su
   maintainer waiver comment exists at https://github.com/proompteng/lab/pull/5412#issuecomment-4405085130. I did not
   merge #5412.
 - #5889 has zero posted reviews and zero review threads. Latest current-head Codex review request:
-  https://github.com/proompteng/lab/pull/5889#issuecomment-4406651322. Latest connector blocker:
-  https://github.com/proompteng/lab/pull/5889#issuecomment-4406652965.
+  https://github.com/proompteng/lab/pull/5889#issuecomment-4407395847. Latest connector blocker:
+  https://github.com/proompteng/lab/pull/5889#issuecomment-4407396834.
 - No production manifests were manually applied from this shell.
 
 ## Checks
