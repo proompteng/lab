@@ -1056,3 +1056,12 @@ This pack is positioned as the next architecture layer above:
   scoped quant/TCA/alpha receipts, keep live notional at zero, and rank repairs by the value gates
   `routeable_candidate_count`, `zero_notional_or_stale_evidence_rate`, `fill_tca_or_slippage_quality`, and
   `capital_gate_safety` before any `post_cost_daily_net_pnl` claim is allowed.
+- `184-torghut-execution-trusted-profit-repair-settlement-2026-05-08.md` follows the route microcanary contract
+  because serving health and route activity are still not enough proof for capital. It makes every paper/live proposal
+  cite Jangar execution trust, quant freshness, route/TCA, forecast, alpha, and proof-floor receipts before a repair lot
+  can move out of zero notional.
+- `185-torghut-routeability-repair-acceptance-ledger-2026-05-08.md` follows the execution-trusted settlement contract
+  because the current runtime is serving but still `repair_only`: Torghut revision `00308` is running, database schema
+  is current, quant latest metrics exist, but scoped pipeline stages and market-context domains are stale or missing.
+  It defines the acceptance ledger that lets zero-notional repair work retire value-gate debt while preventing routeable
+  candidate or capital claims until receipts settle and Jangar admission is current.
