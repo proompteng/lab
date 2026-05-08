@@ -46,6 +46,10 @@ spec:
         value: '24'
       - name: realReplayTimeoutSeconds
         value: '7200'
+      - name: realReplayShardSize
+        value: '2'
+      - name: realReplayShardTimeoutSeconds
+        value: '900'
       - name: prefetchFullWindowRows
         value: 'true'
       - name: allowStaleTape
@@ -76,6 +80,8 @@ spec:
           - name: maxFrontierCandidatesPerSpec
           - name: maxTotalFrontierCandidates
           - name: realReplayTimeoutSeconds
+          - name: realReplayShardSize
+          - name: realReplayShardTimeoutSeconds
           - name: prefetchFullWindowRows
           - name: allowStaleTape
           - name: persistResults
@@ -150,6 +156,8 @@ spec:
               --max-frontier-candidates-per-spec "{{inputs.parameters.maxFrontierCandidatesPerSpec}}"
               --max-total-frontier-candidates "{{inputs.parameters.maxTotalFrontierCandidates}}"
               --real-replay-timeout-seconds "{{inputs.parameters.realReplayTimeoutSeconds}}"
+              --real-replay-shard-size "{{inputs.parameters.realReplayShardSize}}"
+              --real-replay-shard-timeout-seconds "{{inputs.parameters.realReplayShardTimeoutSeconds}}"
               --train-days 6
               --holdout-days 3
               --full-window-start-date "{{inputs.parameters.fullWindowStartDate}}"
