@@ -22,6 +22,9 @@ export type TorghutConsumerEvidenceStatus = {
   capital_reentry_cohort_ledger_id?: string | null
   capital_reentry_aggregate_state?: string | null
   capital_reentry_cohort_ids?: string[]
+  profit_repair_settlement_ledger_id?: string | null
+  profit_repair_aggregate_state?: string | null
+  profit_repair_lot_ids?: string[]
   reason_codes: string[]
   message: string
 }
@@ -287,6 +290,19 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   ])
   const capitalReentryAggregateState = normalizeNonEmpty(cohortLedger?.aggregate_state)
   const capitalReentryLedgerId = normalizeNonEmpty(cohortLedger?.ledger_id)
+  const profitRepairLedger = asRecord(payload.profit_repair_settlement_ledger)
+  const profitRepairLots = Array.isArray(profitRepairLedger?.repair_lots)
+    ? profitRepairLedger.repair_lots
+        .map((lot) => asRecord(lot))
+        .filter((lot): lot is Record<string, unknown> => Boolean(lot))
+    : []
+  const profitRepairLotIds = uniqueStrings(profitRepairLots.map((lot) => normalizeNonEmpty(lot.lot_id)))
+  const profitRepairReasonCodes = uniqueStrings([
+    ...stringList(profitRepairLedger?.aggregate_blocking_reason_codes),
+    ...profitRepairLots.flatMap((lot) => stringList(lot.blocking_reason_codes)),
+  ])
+  const profitRepairAggregateState = normalizeNonEmpty(profitRepairLedger?.aggregate_state)
+  const profitRepairLedgerId = normalizeNonEmpty(profitRepairLedger?.ledger_id)
 
   return {
     status: {
@@ -307,6 +323,9 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       capital_reentry_cohort_ledger_id: capitalReentryLedgerId,
       capital_reentry_aggregate_state: capitalReentryAggregateState,
       capital_reentry_cohort_ids: capitalReentryCohortIds,
+      profit_repair_settlement_ledger_id: profitRepairLedgerId,
+      profit_repair_aggregate_state: profitRepairAggregateState,
+      profit_repair_lot_ids: profitRepairLotIds,
       reason_codes: reasonCodes,
       message:
         status === 'current'
@@ -329,6 +348,10 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       capital_reentry_aggregate_state: capitalReentryAggregateState,
       capital_reentry_cohort_ids: capitalReentryCohortIds,
       capital_reentry_blocking_reason_codes: capitalReentryReasonCodes,
+      profit_repair_settlement_ledger_id: profitRepairLedgerId,
+      profit_repair_aggregate_state: profitRepairAggregateState,
+      profit_repair_lot_ids: profitRepairLotIds,
+      profit_repair_blocking_reason_codes: profitRepairReasonCodes,
     },
   }
 }

@@ -127,8 +127,11 @@ If the question is "what should I trust right now?", start here:
 
 The current highest-priority work is:
 
-The May 8 handoff is `docs/torghut/design-system/v6/183-torghut-receipt-settled-capital-reentry-cohorts-2026-05-08.md`,
-the observe-mode capital reentry cohort ledger.
+The May 8 execution-trust handoff is
+`docs/torghut/design-system/v6/184-torghut-execution-trusted-profit-repair-settlement-2026-05-08.md`, the
+zero-notional profit-repair settlement ledger. It follows
+`docs/torghut/design-system/v6/183-torghut-receipt-settled-capital-reentry-cohorts-2026-05-08.md`, the observe-mode
+capital reentry cohort ledger.
 The May 7 contract-graduation and executable-alpha contracts are the current implementation handoff:
 
 - make Jangar graduate accepted design contracts through live runtime receipts before they can widen material action in

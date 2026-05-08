@@ -109,6 +109,44 @@ class TestProfitWindowContracts(TestCase):
         self.assertIn("quant_latest_metrics_empty", quant_escrow["reason_codes"])
         self.assertIn("quant_latest_store_alarm", clickhouse_escrow["reason_codes"])
 
+    def test_contract_keeps_optional_quant_debt_from_shadowing_lane(self) -> None:
+        contract = build_profit_window_contract(
+            runtime_items=[
+                {
+                    "hypothesis_id": "hyp-optional-quant",
+                    "lane_id": "lane-optional-quant",
+                    "capital_stage": "live",
+                }
+            ],
+            quant_evidence={
+                "required": False,
+                "ok": True,
+                "blocking_reasons": [],
+                "informational_reasons": ["quant_pipeline_stages_missing"],
+                "source_url": "http://jangar.test/quant/health",
+            },
+            empirical_jobs_status={
+                "ready": True,
+                "dataset_snapshot_refs": ["snap-1"],
+            },
+            market_context_ref={"last_domain_states": {}, "last_as_of": "fresh"},
+            segment_summary={"market-context": {"reason_codes": []}},
+            lineage_ref={"status": "ready", "dataset_snapshot_ref": "snap-1"},
+            now=datetime(2026, 5, 5, 12, 0, tzinfo=timezone.utc),
+        )
+
+        window = self._window_by_hypothesis(contract, "hyp-optional-quant")
+        quant_escrow = self._escrow_by_type(contract, "jangar_quant")
+        clickhouse_escrow = self._escrow_by_type(contract, "clickhouse_freshness")
+
+        self.assertEqual(window["decision"], "funded")
+        self.assertEqual(window["capital_state"], "live")
+        self.assertFalse(quant_escrow["required"])
+        self.assertFalse(clickhouse_escrow["required"])
+        self.assertEqual(quant_escrow["status"], "expired")
+        self.assertEqual(clickhouse_escrow["status"], "expired")
+        self.assertIn("quant_pipeline_stages_missing", quant_escrow["reason_codes"])
+
     def test_contract_marks_missing_empirical_jobs_underfunded(self) -> None:
         contract = build_profit_window_contract(
             runtime_items=[
