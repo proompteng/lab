@@ -92,10 +92,8 @@ jobs:
                 exit 1
               fi
             else
-              echo "::warning::Release contract artifact is missing at ${CONTRACT_PATH}; falling back to workflow_run head SHA and registry digest inspection."
-              SOURCE_SHA="${WORKFLOW_RUN_HEAD_SHA}"
-              TAG="$(git rev-parse --short=8 "${SOURCE_SHA}")"
-              CONTRACT_DIGEST=''
+              echo "Release contract artifact is missing at ${CONTRACT_PATH}"
+              exit 1
             fi
 
             if [ "${SOURCE_SHA}" != "${WORKFLOW_RUN_HEAD_SHA}" ]; then
@@ -114,6 +112,9 @@ jobs:
                     packages/scripts/src/torghut \
                     packages/scripts/src/shared \
                     .github/workflows/torghut-build-push.yaml \
+                    .github/workflows/torghut-ci.yml \
+                    .github/workflows/torghut-deploy-automerge.yml \
+                    .github/workflows/torghut-post-deploy-verify.yml \
                     .github/workflows/torghut-release.yml \
                     package.json \
                     bun.lock
