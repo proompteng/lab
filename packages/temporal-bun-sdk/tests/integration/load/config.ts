@@ -69,6 +69,7 @@ const DEFAULT_ACTIVITY_CANCELLATION_DELAY_MS = 250
 const DEFAULT_WORKFLOW_POLL_P95_MS = 6_000
 const DEFAULT_ACTIVITY_POLL_P95_MS = 6_000
 const DEFAULT_WORKFLOW_DEADLINE_MS = 100_000
+const DEFAULT_WORKFLOW_DEADLINE_PER_CONCURRENCY_SLOT_MS = 15_000
 const DEFAULT_WORKFLOW_DESCRIBE_CONCURRENCY = 16
 const DEFAULT_METRICS_FLUSH_MS = 5_000
 const DEFAULT_MEMORY_SAMPLE_INTERVAL_MS = 5_000
@@ -131,7 +132,7 @@ export const readWorkerLoadConfig = (): WorkerLoadConfig => {
   )
   const workflowDurationBudgetMs = readInt(
     'TEMPORAL_LOAD_TEST_TIMEOUT_MS',
-    DEFAULT_WORKFLOW_DEADLINE_MS,
+    defaultWorkflowDurationBudgetMs(workflowCount, workflowConcurrencyTarget),
     { min: 10_000 },
   )
   const workflowDescribeConcurrency = readInt(
@@ -280,6 +281,12 @@ export const readWorkerLoadConfig = (): WorkerLoadConfig => {
       TEMPORAL_METRICS_ENDPOINT: metricsStreamPath,
     },
   }
+}
+
+const defaultWorkflowDurationBudgetMs = (workflowCount: number, workflowConcurrencyTarget: number): number => {
+  const concurrency = Math.max(1, workflowConcurrencyTarget)
+  const requiredSlots = Math.ceil(Math.max(1, workflowCount) / concurrency)
+  return Math.max(DEFAULT_WORKFLOW_DEADLINE_MS, requiredSlots * DEFAULT_WORKFLOW_DEADLINE_PER_CONCURRENCY_SLOT_MS)
 }
 
 const readInt = (name: string, fallback: number, options: { min?: number; max?: number } = {}): number => {
