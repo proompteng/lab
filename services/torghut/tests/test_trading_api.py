@@ -1319,6 +1319,35 @@ class TestTradingApi(TestCase):
                 projection["executable_alpha_receipts"],
             )
 
+    def test_trading_status_and_health_include_quality_adjusted_frontier(
+        self,
+    ) -> None:
+        frontier = {
+            "schema_version": "torghut.quality-adjusted-profit-frontier.v1",
+            "frontier_id": "quality-frontier:test",
+            "summary": {"packet_count": 1, "capital_ready": False},
+            "packets": [{"repair_class": "quant", "max_notional": "0"}],
+            "paper_probe_notional_limit": "0",
+        }
+
+        with patch(
+            "app.main.build_quality_adjusted_profit_frontier",
+            return_value=frontier,
+        ):
+            status_response = self.client.get("/trading/status")
+            health_response = self.client.get("/trading/health")
+
+        self.assertEqual(status_response.status_code, 200)
+        self.assertIn(health_response.status_code, {200, 503})
+        self.assertEqual(
+            status_response.json()["quality_adjusted_profit_frontier"],
+            frontier,
+        )
+        self.assertEqual(
+            health_response.json()["quality_adjusted_profit_frontier"],
+            frontier,
+        )
+
     def test_trading_health_requires_profitability_proof_floor_in_live(self) -> None:
         original_enabled = settings.trading_enabled
         original_mode = settings.trading_mode

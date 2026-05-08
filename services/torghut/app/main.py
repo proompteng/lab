@@ -94,6 +94,9 @@ from .trading.lean_lanes import LeanLaneManager
 from .trading.lean_runtime import lean_authority_status
 from .trading.llm.evaluation import build_llm_evaluation_metrics
 from .trading.proof_floor import build_profitability_proof_floor_receipt
+from .trading.quality_adjusted_profit_frontier import (
+    build_quality_adjusted_profit_frontier,
+)
 from .trading.renewal_bond_profit_escrow import build_renewal_bond_profit_escrow
 from .trading.revenue_repair import build_revenue_repair_digest
 from .trading.route_reacquisition_board import build_route_reacquisition_board
@@ -750,6 +753,16 @@ def _evaluate_trading_health_payload(
         quant_evidence=quant_evidence,
         market_context_status=market_context_status,
     )
+    quality_adjusted_profit_frontier = _build_quality_adjusted_profit_frontier_payload(
+        torghut_revision=BUILD_COMMIT,
+        live_submission_gate=live_submission_gate,
+        proof_floor=proof_floor,
+        route_reacquisition_board=route_reacquisition_board,
+        hypothesis_payload=_hypothesis_payload,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        active_simulation_context=active_simulation_runtime_context(),
+    )
     consumer_evidence_receipt, route_proven_profit_receipt = (
         _build_consumer_evidence_receipt_projection(
             forecast_service_status=_forecast_service_status(),
@@ -852,6 +865,7 @@ def _evaluate_trading_health_payload(
             "executable_alpha_receipts": capital_replay_projection[
                 "executable_alpha_receipts"
             ],
+            "quality_adjusted_profit_frontier": quality_adjusted_profit_frontier,
             "torghut_consumer_evidence_receipt": consumer_evidence_receipt,
             "route_proven_profit_receipt": route_proven_profit_receipt,
             "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
@@ -1959,6 +1973,16 @@ def trading_status() -> dict[str, object]:
         quant_evidence=quant_evidence,
         market_context_status=market_context_status,
     )
+    quality_adjusted_profit_frontier = _build_quality_adjusted_profit_frontier_payload(
+        torghut_revision=str(shadow_first_runtime["active_revision"]),
+        live_submission_gate=live_submission_gate,
+        proof_floor=proof_floor,
+        route_reacquisition_board=route_reacquisition_board,
+        hypothesis_payload=hypothesis_payload,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        active_simulation_context=active_simulation_context,
+    )
     consumer_evidence_receipt, route_proven_profit_receipt = (
         _build_consumer_evidence_receipt_projection(
             forecast_service_status=forecast_service_status,
@@ -2004,6 +2028,7 @@ def trading_status() -> dict[str, object]:
         "executable_alpha_receipts": capital_replay_projection[
             "executable_alpha_receipts"
         ],
+        "quality_adjusted_profit_frontier": quality_adjusted_profit_frontier,
         "torghut_consumer_evidence_receipt": consumer_evidence_receipt,
         "route_proven_profit_receipt": route_proven_profit_receipt,
         "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
@@ -3998,6 +4023,51 @@ def _build_capital_reentry_cohort_ledger_payload(
         jangar_material_verdict_ref=_build_jangar_material_verdict_ref(
             dependency_quorum
         ),
+    )
+
+
+def _simulation_cache_status_payload(
+    active_simulation_context: Mapping[str, Any] | None,
+) -> dict[str, object]:
+    context = active_simulation_context or {}
+    return {
+        "enabled": settings.trading_simulation_enabled,
+        "run_id": context.get("run_id") or settings.trading_simulation_run_id,
+        "dataset_id": context.get("dataset_id")
+        or settings.trading_simulation_dataset_id,
+        "window_start": context.get("window_start")
+        or settings.trading_simulation_window_start,
+        "window_end": context.get("window_end")
+        or settings.trading_simulation_window_end,
+        "last_updated_at": context.get("last_updated_at") or context.get("updated_at"),
+    }
+
+
+def _build_quality_adjusted_profit_frontier_payload(
+    *,
+    torghut_revision: str | None,
+    live_submission_gate: Mapping[str, Any],
+    proof_floor: Mapping[str, Any],
+    route_reacquisition_board: Mapping[str, Any],
+    hypothesis_payload: Mapping[str, Any],
+    quant_evidence: Mapping[str, Any],
+    market_context_status: Mapping[str, Any],
+    active_simulation_context: Mapping[str, Any] | None,
+) -> dict[str, object]:
+    return build_quality_adjusted_profit_frontier(
+        account_label=settings.trading_account_label,
+        trading_mode=settings.trading_mode,
+        torghut_revision=torghut_revision,
+        proof_floor_receipt=proof_floor,
+        route_reacquisition_board=route_reacquisition_board,
+        live_submission_gate=live_submission_gate,
+        hypothesis_payload=hypothesis_payload,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        simulation_cache_status=_simulation_cache_status_payload(
+            active_simulation_context
+        ),
+        jangar_evidence_quality=_route_continuity_packet_for_proof_floor(proof_floor),
     )
 
 

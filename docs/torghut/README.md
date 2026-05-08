@@ -114,6 +114,9 @@ Start here:
   - Live and sim runtime manifests explicitly set `TRADING_JANGAR_QUANT_HEALTH_URL`; do not rely on route-time
     derivation from other Jangar URLs, and keep it pointed at the typed
     `/api/torghut/trading/control-plane/quant/health` surface.
+- Runtime quality gate surface: `GET /trading/status` and `GET /readyz` expose
+  `quality_adjusted_profit_frontier`, the doc 181 shadow reducer that ranks zero-notional repairs without widening
+  paper or live capital.
 - TA replay procedure (concrete steps): `argocd/applications/torghut/README.md`
 - Historical simulation operations playbook: `docs/torghut/rollouts/historical-simulation-playbook.md`
 - Incident context (example): `docs/incidents/2025-12-20-longhorn-upgrade-kafka-failure.md`
