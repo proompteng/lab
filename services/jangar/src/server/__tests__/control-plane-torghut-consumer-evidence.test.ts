@@ -89,6 +89,21 @@ describe('control-plane Torghut consumer evidence', () => {
               },
             ],
           },
+          routeability_repair_acceptance_ledger: {
+            schema_version: 'torghut.routeability-repair-acceptance-ledger.v1',
+            ledger_id: 'routeability-acceptance-ledger:test',
+            aggregate_state: 'blocked',
+            accepted_routeable_candidate_count: 0,
+            aggregate_blocking_reason_codes: ['proof_floor_repair_only'],
+            lots: [
+              {
+                lot_id: 'routeability-repair-lot:submit',
+                lot_type: 'submit_gate_hold',
+                current_state: 'blocked',
+                blocking_reason_codes: ['simple_submit_disabled'],
+              },
+            ],
+          },
           market_context: {
             health: { status: 'healthy' },
           },
@@ -116,6 +131,10 @@ describe('control-plane Torghut consumer evidence', () => {
       profit_repair_settlement_ledger_id: 'profit-repair-settlement-ledger:test',
       profit_repair_aggregate_state: 'repair',
       profit_repair_lot_ids: ['profit-repair-lot:quant'],
+      routeability_repair_acceptance_ledger_id: 'routeability-acceptance-ledger:test',
+      routeability_aggregate_state: 'blocked',
+      routeability_lot_ids: ['routeability-repair-lot:submit'],
+      accepted_routeable_candidate_count: 0,
       reason_codes: ['forecast_registry_degraded', 'execution_tca_route_universe_incomplete'],
     })
     expect(result.negativeEvidence).toMatchObject({
@@ -132,6 +151,11 @@ describe('control-plane Torghut consumer evidence', () => {
       profit_repair_aggregate_state: 'repair',
       profit_repair_lot_ids: ['profit-repair-lot:quant'],
       profit_repair_blocking_reason_codes: ['quant_pipeline_degraded'],
+      routeability_repair_acceptance_ledger_id: 'routeability-acceptance-ledger:test',
+      routeability_aggregate_state: 'blocked',
+      routeability_lot_ids: ['routeability-repair-lot:submit'],
+      routeability_blocking_reason_codes: ['proof_floor_repair_only', 'simple_submit_disabled'],
+      accepted_routeable_candidate_count: 0,
     })
   })
 

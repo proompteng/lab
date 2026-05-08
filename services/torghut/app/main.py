@@ -101,6 +101,9 @@ from .trading.quality_adjusted_profit_frontier import (
 )
 from .trading.renewal_bond_profit_escrow import build_renewal_bond_profit_escrow
 from .trading.revenue_repair import build_revenue_repair_digest
+from .trading.routeability_repair_acceptance import (
+    build_routeability_repair_acceptance_ledger,
+)
 from .trading.route_reacquisition_board import build_route_reacquisition_board
 from .trading.submission_council import (
     build_live_submission_gate_payload,
@@ -802,6 +805,21 @@ def _evaluate_trading_health_payload(
         live_submission_gate=live_submission_gate,
         quant_evidence=quant_evidence,
     )
+    routeability_repair_acceptance_ledger = (
+        _build_routeability_repair_acceptance_ledger_payload(
+            torghut_revision=BUILD_COMMIT,
+            dependency_quorum=_dependency_quorum.as_payload(),
+            consumer_evidence_receipt=consumer_evidence_receipt,
+            proof_floor=proof_floor,
+            capital_reentry_cohort_ledger=capital_reentry_cohort_ledger,
+            quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
+            profit_repair_settlement_ledger=profit_repair_settlement_ledger,
+            route_reacquisition_board=route_reacquisition_board,
+            live_submission_gate=live_submission_gate,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+        )
+    )
     live_mode = settings.trading_mode == "live"
     empirical_jobs_required = (
         live_mode and settings.trading_empirical_jobs_health_required
@@ -894,6 +912,7 @@ def _evaluate_trading_health_payload(
             "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
             "capital_reentry_cohort_ledger": capital_reentry_cohort_ledger,
             "profit_repair_settlement_ledger": profit_repair_settlement_ledger,
+            "routeability_repair_acceptance_ledger": routeability_repair_acceptance_ledger,
             "profit_signal_quorum": profit_signal_quorum,
             "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
             "route_reacquisition_board": route_reacquisition_board,
@@ -2045,6 +2064,21 @@ def trading_status() -> dict[str, object]:
         live_submission_gate=live_submission_gate,
         quant_evidence=quant_evidence,
     )
+    routeability_repair_acceptance_ledger = (
+        _build_routeability_repair_acceptance_ledger_payload(
+            torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+            dependency_quorum=hypothesis_dependency_quorum.as_payload(),
+            consumer_evidence_receipt=consumer_evidence_receipt,
+            proof_floor=proof_floor,
+            capital_reentry_cohort_ledger=capital_reentry_cohort_ledger,
+            quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
+            profit_repair_settlement_ledger=profit_repair_settlement_ledger,
+            route_reacquisition_board=route_reacquisition_board,
+            live_submission_gate=live_submission_gate,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+        )
+    )
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -2080,6 +2114,7 @@ def trading_status() -> dict[str, object]:
         "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
         "capital_reentry_cohort_ledger": capital_reentry_cohort_ledger,
         "profit_repair_settlement_ledger": profit_repair_settlement_ledger,
+        "routeability_repair_acceptance_ledger": routeability_repair_acceptance_ledger,
         "profit_signal_quorum": profit_signal_quorum,
         "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
         "route_reacquisition_board": route_reacquisition_board,
@@ -2346,6 +2381,21 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         live_submission_gate=live_submission_gate,
         quant_evidence=quant_evidence,
     )
+    routeability_repair_acceptance_ledger = (
+        _build_routeability_repair_acceptance_ledger_payload(
+            torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+            dependency_quorum=dependency_quorum.as_payload(),
+            consumer_evidence_receipt=consumer_evidence_receipt,
+            proof_floor=proof_floor,
+            capital_reentry_cohort_ledger=capital_reentry_cohort_ledger,
+            quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
+            profit_repair_settlement_ledger=profit_repair_settlement_ledger,
+            route_reacquisition_board=route_reacquisition_board,
+            live_submission_gate=live_submission_gate,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+        )
+    )
     return {
         "schema_version": "torghut.consumer-evidence-status.v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -2373,6 +2423,7 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
         "capital_reentry_cohort_ledger": capital_reentry_cohort_ledger,
         "profit_repair_settlement_ledger": profit_repair_settlement_ledger,
+        "routeability_repair_acceptance_ledger": routeability_repair_acceptance_ledger,
     }
 
 
@@ -4179,6 +4230,100 @@ def _build_profit_repair_settlement_ledger_payload(
             dependency_quorum
         ),
     )
+
+
+def _build_routeability_repair_acceptance_ledger_payload(
+    *,
+    torghut_revision: str | None,
+    dependency_quorum: Mapping[str, Any],
+    consumer_evidence_receipt: Mapping[str, Any],
+    proof_floor: Mapping[str, Any],
+    capital_reentry_cohort_ledger: Mapping[str, Any],
+    quality_adjusted_profit_frontier: Mapping[str, Any],
+    profit_repair_settlement_ledger: Mapping[str, Any],
+    route_reacquisition_board: Mapping[str, Any],
+    live_submission_gate: Mapping[str, Any],
+    quant_evidence: Mapping[str, Any],
+    market_context_status: Mapping[str, Any],
+) -> dict[str, object]:
+    return build_routeability_repair_acceptance_ledger(
+        account_label=settings.trading_account_label,
+        window=settings.trading_jangar_quant_window,
+        trading_mode=settings.trading_mode,
+        torghut_revision=torghut_revision,
+        revenue_repair_digest_ref="/trading/revenue-repair",
+        consumer_evidence_receipt=consumer_evidence_receipt,
+        proof_floor_receipt=proof_floor,
+        capital_reentry_cohort_ledger=capital_reentry_cohort_ledger,
+        quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
+        profit_repair_settlement_ledger=profit_repair_settlement_ledger,
+        route_reacquisition_board=route_reacquisition_board,
+        live_submission_gate=live_submission_gate,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        jangar_routeability_admission_ref=_build_jangar_routeability_admission_ref(
+            dependency_quorum
+        ),
+    )
+
+
+def _build_jangar_routeability_admission_ref(
+    dependency_quorum: Mapping[str, Any],
+) -> dict[str, object]:
+    raw_admission = dependency_quorum.get("routeability_admission")
+    empty_admission: Mapping[str, Any] = {}
+    admission: Mapping[str, Any] = (
+        cast(Mapping[str, Any], raw_admission)
+        if isinstance(raw_admission, Mapping)
+        else empty_admission
+    )
+    decision = (
+        str(
+            admission.get("decision")
+            or admission.get("state")
+            or dependency_quorum.get("decision")
+            or "missing"
+        )
+        .strip()
+        .lower()
+    )
+    state = (
+        str(
+            admission.get("state")
+            or admission.get("status")
+            or ("current" if decision == "allow" else "missing")
+        )
+        .strip()
+        .lower()
+    )
+    raw_reasons: object = (
+        admission.get("reason_codes")
+        or admission.get("blocking_reasons")
+        or dependency_quorum.get("reasons")
+        or []
+    )
+    reason_items: Sequence[object] = (
+        cast(Sequence[object], raw_reasons)
+        if isinstance(raw_reasons, Sequence)
+        and not isinstance(raw_reasons, (str, bytes, bytearray))
+        else ()
+    )
+    reasons = [str(item).strip() for item in reason_items if str(item).strip()]
+    ref_suffix = decision if not reasons else f"{decision}:{','.join(sorted(reasons))}"
+    return {
+        "admission_ref": f"jangar-routeability-admission:dependency-quorum:{ref_suffix}",
+        "decision": decision,
+        "state": state,
+        "reason_codes": reasons,
+        "source": "routeability_admission"
+        if admission.get("admission_ref") or admission.get("id")
+        else "dependency_quorum_proxy",
+        "action_classes": ["torghut_observe", "paper_canary"],
+        "generated_at": admission.get("generated_at")
+        or dependency_quorum.get("generated_at"),
+        "fresh_until": admission.get("fresh_until")
+        or dependency_quorum.get("fresh_until"),
+    }
 
 
 def _build_jangar_stage_clearance_packet_ref(

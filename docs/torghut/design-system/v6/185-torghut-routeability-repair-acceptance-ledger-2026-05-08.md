@@ -288,3 +288,12 @@ witness as distinct lots with zero paper/live notional.
 Deployer handoff: deploy observe-only. Acceptance is current `/db-check`, a fresh ledger id across status surfaces,
 Jangar admission consuming that id, `accepted_routeable_candidate_count=0` until receipts settle, and unchanged
 `capital_gate_safety` with `max_notional=0`.
+
+## Implementation Note
+
+The first engineer cut adds the observe-mode `torghut.routeability-repair-acceptance-ledger.v1` projection under
+`services/torghut/app/trading/`. Torghut surfaces the same ledger on `/readyz`, `/trading/status`, `/trading/health`,
+and `/trading/consumer-evidence`; `/trading/revenue-repair` references the ledger id. Jangar's Torghut consumer
+evidence parser carries the ledger id, lot ids, accepted candidate count, and blocking reasons into negative evidence
+so paper/live action stays held while the ledger is blocked, stale, or missing. This remains observe-only and keeps
+paper/live notional at zero.

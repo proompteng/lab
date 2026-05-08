@@ -899,6 +899,13 @@ class TestTradingApi(TestCase):
             receipt["receipt_id"],
         )
         self.assertEqual(profit_repair["summary"]["zero_notional_lot_count"], 7)
+        routeability = payload["routeability_repair_acceptance_ledger"]
+        self.assertEqual(
+            routeability["schema_version"],
+            "torghut.routeability-repair-acceptance-ledger.v1",
+        )
+        self.assertEqual(routeability["summary"]["zero_notional_lot_count"], 7)
+        self.assertEqual(routeability["accepted_routeable_candidate_count"], 0)
         dependency_fetch.assert_not_called()
         continuity_fetch.assert_not_called()
 
@@ -1267,6 +1274,22 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             health_profit_repair["schema_version"],
             status_profit_repair["schema_version"],
+        )
+        status_routeability = status_response.json()[
+            "routeability_repair_acceptance_ledger"
+        ]
+        health_routeability = health_response.json()[
+            "routeability_repair_acceptance_ledger"
+        ]
+        self.assertEqual(
+            status_routeability["schema_version"],
+            "torghut.routeability-repair-acceptance-ledger.v1",
+        )
+        self.assertEqual(status_routeability["accepted_routeable_candidate_count"], 0)
+        self.assertEqual(status_routeability["summary"]["zero_notional_lot_count"], 7)
+        self.assertEqual(
+            health_routeability["schema_version"],
+            status_routeability["schema_version"],
         )
 
     def test_trading_status_and_health_include_renewal_bond_profit_escrow(
@@ -3418,6 +3441,13 @@ class TestTradingApi(TestCase):
                 }
             },
             "quant_evidence": {"ok": True, "status": "healthy", "reason": "ready"},
+            "routeability_repair_acceptance_ledger": {
+                "ledger_id": "routeability-acceptance-ledger:test",
+                "aggregate_state": "blocked",
+                "accepted_routeable_candidate_count": 0,
+                "zero_notional_or_stale_evidence_rate": 1,
+                "aggregate_blocking_reason_codes": ["proof_floor_repair_only"],
+            },
         }
         with (
             patch(
@@ -3431,6 +3461,10 @@ class TestTradingApi(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["schema_version"], "torghut.revenue-repair-digest.v1")
+        self.assertEqual(
+            payload["routeability_repair_acceptance_ledger_id"],
+            "routeability-acceptance-ledger:test",
+        )
         self.assertFalse(payload["revenue_ready"])
         self.assertEqual(payload["business_state"], "repair_only")
         self.assertEqual(payload["capital"]["capital_state"], "zero_notional")
@@ -3442,6 +3476,10 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             payload["evidence"]["execution_tca"]["last_computed_at"],
             "2026-04-02T20:59:45.136640+00:00",
+        )
+        self.assertEqual(
+            payload["evidence"]["routeability_acceptance"]["ledger_id"],
+            "routeability-acceptance-ledger:test",
         )
 
     def test_trading_status_blocks_live_submission_when_lineage_tables_are_empty(
