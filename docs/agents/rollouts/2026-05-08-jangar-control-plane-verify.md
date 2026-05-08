@@ -14,8 +14,8 @@ rolled out on
 
 #5889 remains a no-go even though its mergeability and CI are clean. It is still a 1,639-line direct-control-plane
 diff, and the required Codex review has not posted because the connector is returning code-review usage-limit
-responses. Adjacent Torghut promotion #6005 is synced and healthy at the app level, but its hosted post-deploy and
-remaining CI jobs were still running at the audit checkpoint, so it stays a watch item outside the Jangar merge gate.
+responses. Adjacent Torghut promotion #6005 also completed green: hosted post-deploy and CI passed, and Torghut apps
+are synced and healthy.
 
 ## PRs touched
 
@@ -97,9 +97,9 @@ remaining CI jobs were still running at the audit checkpoint, so it stays a watc
   - `jangar`: `Synced`, `Healthy`, operation `Succeeded`, revision
     `227aaa46b75071da8f237f0f3f99ba75e9e27187`.
   - `agents`: `Synced`, `Healthy`, operation `Succeeded`, revision
-    `7d88cb2a34d47c2d857c8c0824bbaa5d8cdcdcf4`.
+    `227aaa46b75071da8f237f0f3f99ba75e9e27187`.
   - `symphony-jangar`: `Synced`, `Healthy`, operation `Succeeded`, revision
-    `7d88cb2a34d47c2d857c8c0824bbaa5d8cdcdcf4`.
+    `227aaa46b75071da8f237f0f3f99ba75e9e27187`.
 - Workload readiness:
   - `deployment/jangar`: rollout status succeeded.
   - Pod `jangar-95db5f698-625qt`: `Running`; `app` ready, `docker` ready; zero restarts.
@@ -109,13 +109,14 @@ remaining CI jobs were still running at the audit checkpoint, so it stays a watc
   - Recent warning events were transient readiness-probe failures during replacement pod startup.
   - Current Argo health, rollout status, and pod readiness cleared those rollout warnings.
   - Remaining `NoPods` events are for unrelated `elasticsearch-master-pdb`.
-- Adjacent rollout watch:
+- Adjacent rollout health:
   - #6005 `chore(torghut): promote image 7d88cb2a` merged as
     `227aaa46b75071da8f237f0f3f99ba75e9e27187`.
-  - `torghut`: `Synced`, `Healthy`, operation `Running`, revision
+  - `torghut`: `Synced`, `Healthy`, operation `Succeeded`, revision
     `227aaa46b75071da8f237f0f3f99ba75e9e27187`.
-  - Hosted `torghut-post-deploy-verify` run `25532144727` and `torghut-ci` run `25532144730` were still running at
-    the audit checkpoint.
+  - `torghut-options`: `Synced`, `Healthy`, operation `Succeeded`, revision
+    `227aaa46b75071da8f237f0f3f99ba75e9e27187`.
+  - Hosted `torghut-post-deploy-verify` run `25532144727` and `torghut-ci` run `25532144730` passed.
 
 ## Risks and rollback path
 
@@ -123,8 +124,7 @@ remaining CI jobs were still running at the audit checkpoint, so it stays a watc
   - #6001 changes on-demand market-context repair preflight behavior. Watch Jangar market-context logs and `agents`
     namespace AgentRuns for unexpected dispatch failures or run volume.
   - #5889 remains open and direct-control-plane relevant, but it is not live.
-  - #6005 is adjacent Torghut rollout activity; do not treat it as part of the Jangar merge gate, but keep watching
-    until hosted post-deploy and CI complete.
+  - #6005 was adjacent Torghut rollout activity, not part of the Jangar merge gate, and it completed green.
 - Rollback:
   - First rollback step for the latest Jangar slice is a normal GitOps revert PR for #6004 to restore image
     `7a737336@sha256:c76d5d0ad0c698317e9c5f308129eb3ad01f45b72693144251271255af90e320`.
@@ -140,4 +140,3 @@ remaining CI jobs were still running at the audit checkpoint, so it stays a watc
 - Merge #5993 only after its rebased hosted checks are green.
 - Keep #5889 held until Codex review quota/access is restored and a review posts, or a maintainer explicitly waives the
   large-diff gate.
-- Continue watch on adjacent #6005 until hosted post-deploy and CI complete.
