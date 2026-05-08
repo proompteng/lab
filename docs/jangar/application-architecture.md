@@ -82,17 +82,20 @@ until they are decomposed further.
 
 ## Current control-plane decision contract
 
-The current architecture priority is resource-pressure escrow on top of failure-debt clearance and source-heartbeat
-witness settlement. Final verdicts remain the consumer surface, but they must now carry explicit evidence before they
-are treated as durable admission: runner QoS and ephemeral-storage budgets, source or GitOps revision truth, rollout
-truth, controller heartbeat truth, AgentRun ingestion truth, terminal evidence carry, and Torghut consumer proof.
-Serving readiness, route health, rollout health, watch reliability, bounded summary reads, and database freshness can
-stay green while runner resource pressure is dirty, source truth is missing, AgentRun ingestion is unknown, or a
-material verdict still sees stale controller authority. That disagreement is witness variance, not a reason to widen
-dispatch or Torghut capital.
+The current architecture priority is evidence-quality admission on top of resource-pressure escrow, failure-debt
+clearance, and source-heartbeat witness settlement. Final verdicts remain the consumer surface, but they must now carry
+explicit evidence before they are treated as durable admission: metric quality, market-context risk flags, schedule
+runner route outcomes, runner QoS and ephemeral-storage budgets, source or GitOps revision truth, rollout truth,
+controller heartbeat truth, AgentRun ingestion truth, terminal evidence carry, and Torghut consumer proof. Serving
+readiness, route health, rollout health, watch reliability, bounded summary reads, and database freshness can stay
+green while evidence quality is dirty, runner resource pressure is dirty, source truth is missing, AgentRun ingestion
+is unknown, or a material verdict still sees stale controller authority. That disagreement is witness variance, not a
+reason to widen dispatch or Torghut capital.
 
 Current source-of-truth design:
 
+- `docs/agents/designs/177-jangar-evidence-quality-admission-ledger-and-degradation-backpressure-2026-05-08.md`
+- `docs/torghut/design-system/v6/181-torghut-quality-adjusted-profit-frontier-and-hypothesis-escrow-2026-05-08.md`
 - `docs/agents/designs/176-jangar-resource-pressure-escrow-and-runner-qos-gates-2026-05-08.md`
 - `docs/torghut/design-system/v6/180-torghut-resource-priced-evidence-frontier-and-context-spend-escrow-2026-05-08.md`
 - `docs/agents/designs/175-jangar-failure-debt-clearance-and-action-reentry-frontier-2026-05-08.md`
