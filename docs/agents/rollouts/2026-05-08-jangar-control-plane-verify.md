@@ -14,8 +14,8 @@ rolled out on
 
 #5889 remains a no-go even though its mergeability and CI are clean. It is still a 1,639-line direct-control-plane
 diff, and the required Codex review has not posted because the connector is returning code-review usage-limit
-responses. Adjacent Torghut promotion #6005 also completed green: hosted post-deploy and CI passed, and Torghut apps
-are synced and healthy.
+responses. Adjacent Torghut/Jangar-continuity PRs #6002 and #6005 also finished green; GitHub cancelled the
+superseded #6002 `torghut-ci` run in favor of #6005, and the Torghut apps are synced and healthy.
 
 ## PRs touched
 
@@ -40,6 +40,7 @@ are synced and healthy.
   - Merged at 2026-05-08T01:34:09Z after hosted checks passed or skipped, including `agents-ci / integration` and
     `jangar-ci / lint-and-typecheck`.
   - Diff stayed below the large-diff Codex review threshold.
+  - Progress comment: https://github.com/proompteng/lab/pull/6001#issuecomment-4402528017.
 - #6004 `chore(jangar): promote image 9e7b87d8`
   - Generated image promotion for #6001.
   - Head: `8475eb10ea0dde0ed4dcc6956bd66aba0d5f9b7c`.
@@ -47,6 +48,18 @@ are synced and healthy.
   - Merged at 2026-05-08T01:45:04Z after hosted PR checks passed or skipped.
   - Promoted Jangar image tag `9e7b87d8` with digest
     `sha256:758e880b2e9ec439d2dfceb41a170c2352ca63108c90be81be321f8d56cafda4`.
+  - Progress comment: https://github.com/proompteng/lab/pull/6004#issuecomment-4402632642.
+- #6002 `fix(torghut): gate route packets on jangar continuity`
+  - Concurrent Torghut/Jangar-adjacent PR that merged while the Jangar rollout was closing.
+  - Head: `e4b20f226ea97f3b8c76042c7bc42d2ed816b024`.
+  - Squash merge commit: `7d88cb2a34d47c2d857c8c0824bbaa5d8cdcdcf4`.
+  - PR checks were green before merge; its first main `torghut-ci` run was cancelled by GitHub concurrency after #6005
+    superseded it.
+- #6005 `chore(torghut): promote image 7d88cb2a`
+  - Generated Torghut promotion for #6002.
+  - Head: `b7ac4744b63c3e3c31b5c0475a0e9f134fe860b2`.
+  - Squash merge commit: `227aaa46b75071da8f237f0f3f99ba75e9e27187`.
+  - Main `torghut-ci`, `torghut-post-deploy-verify`, `argo-lint`, and `kubeconform` passed after merge.
 - #5889 `feat(jangar): add repair warrant exchange`
   - Rechecked as the remaining direct Jangar control-plane implementation PR.
   - Head: `bb5ad076224db16902463bc6f634fa01f785232c`.
@@ -74,8 +87,9 @@ are synced and healthy.
   - #5998 -> `478bde847f7341c93c21f8fd655282d9eba25a39`.
   - #6001 -> `9e7b87d813d9732d44586e213d9f47ec178f705a`.
   - #6004 -> `320ed472f4edef4ad86a5cf258b21096f12b3e60`.
-- Observed latest main after rollout:
-  - #6005 -> `227aaa46b75071da8f237f0f3f99ba75e9e27187` (adjacent Torghut promotion).
+- Observed adjacent main after rollout:
+  - #6002 -> `7d88cb2a34d47c2d857c8c0824bbaa5d8cdcdcf4`.
+  - #6005 -> `227aaa46b75071da8f237f0f3f99ba75e9e27187`.
 - Held:
   - #5889: no-go until Codex review capacity returns and a review posts, or a maintainer records an explicit waiver
     and all checks/review threads remain clean.
@@ -83,14 +97,14 @@ are synced and healthy.
 ## Deployment evidence
 
 - Build and promotion for #6001:
-  - Main `agents-ci` run `25531623817`: passed.
-  - `jangar-build-push` run `25531623818`: passed.
+  - Main `agents-ci` run `25531623817`: passed, including integration in 13m52s.
+  - `jangar-build-push` run `25531623818`: passed in 9m58s.
   - `jangar-release` run `25531919881`: passed and opened #6004.
 - #6004 promotion checks:
   - Hosted PR checks passed or skipped: semantic checks, `argo-lint`, `kubeconform`, and
     `jangar-ci / lint-and-typecheck`.
   - Main promotion push checks passed: `argo-lint` run `25531945115`, `kubeconform` run `25531945125`, and
-    `jangar-post-deploy-verify` run `25531945117`.
+    `jangar-post-deploy-verify` run `25531945117` in 3m13s.
 - Promoted image:
   - `registry.ide-newton.ts.net/lab/jangar:9e7b87d8@sha256:758e880b2e9ec439d2dfceb41a170c2352ca63108c90be81be321f8d56cafda4`.
 - GitOps status:
@@ -105,18 +119,25 @@ are synced and healthy.
   - Pod `jangar-95db5f698-625qt`: `Running`; `app` ready, `docker` ready; zero restarts.
   - Active app image:
     `registry.ide-newton.ts.net/lab/jangar:9e7b87d8@sha256:758e880b2e9ec439d2dfceb41a170c2352ca63108c90be81be321f8d56cafda4`.
+  - `deployment/agents`: `1/1` ready and available on
+    `registry.ide-newton.ts.net/lab/jangar-control-plane:9e7b87d8@sha256:7b6723da7e22d868b33d4b1db9b2b819e94d56c59cb6564e590b4ad2b216b536`.
+  - `deployment/agents-controllers`: `2/2` ready and available on
+    `registry.ide-newton.ts.net/lab/jangar:9e7b87d8@sha256:758e880b2e9ec439d2dfceb41a170c2352ca63108c90be81be321f8d56cafda4`.
 - Events:
   - Recent warning events were transient readiness-probe failures during replacement pod startup.
   - Current Argo health, rollout status, and pod readiness cleared those rollout warnings.
   - Remaining `NoPods` events are for unrelated `elasticsearch-master-pdb`.
 - Adjacent rollout health:
+  - #6002 `fix(torghut): gate route packets on jangar continuity` merged as
+    `7d88cb2a34d47c2d857c8c0824bbaa5d8cdcdcf4`; `torghut-build-push` run `25532045493` passed.
   - #6005 `chore(torghut): promote image 7d88cb2a` merged as
     `227aaa46b75071da8f237f0f3f99ba75e9e27187`.
   - `torghut`: `Synced`, `Healthy`, operation `Succeeded`, revision
     `227aaa46b75071da8f237f0f3f99ba75e9e27187`.
   - `torghut-options`: `Synced`, `Healthy`, operation `Succeeded`, revision
     `227aaa46b75071da8f237f0f3f99ba75e9e27187`.
-  - Hosted `torghut-post-deploy-verify` run `25532144727` and `torghut-ci` run `25532144730` passed.
+  - `torghut-release` run `25532123835`, #6005 `torghut-ci` run `25532144730`, `torghut-post-deploy-verify` run
+    `25532144727`, `argo-lint` run `25532144724`, and `kubeconform` run `25532144729` passed.
 
 ## Risks and rollback path
 
@@ -124,7 +145,8 @@ are synced and healthy.
   - #6001 changes on-demand market-context repair preflight behavior. Watch Jangar market-context logs and `agents`
     namespace AgentRuns for unexpected dispatch failures or run volume.
   - #5889 remains open and direct-control-plane relevant, but it is not live.
-  - #6005 was adjacent Torghut rollout activity, not part of the Jangar merge gate, and it completed green.
+  - #6002/#6005 are adjacent Torghut rollout activity, not part of the Jangar merge gate. Watch Torghut/Jangar
+    continuity route signals alongside the Jangar market-context checks.
 - Rollback:
   - First rollback step for the latest Jangar slice is a normal GitOps revert PR for #6004 to restore image
     `7a737336@sha256:c76d5d0ad0c698317e9c5f308129eb3ad01f45b72693144251271255af90e320`.
@@ -140,3 +162,5 @@ are synced and healthy.
 - Merge #5993 only after its rebased hosted checks are green.
 - Keep #5889 held until Codex review quota/access is restored and a review posts, or a maintainer explicitly waives the
   large-diff gate.
+- Continue normal post-release watch on market-context AgentRuns, Torghut/Jangar continuity route signals, Jangar logs,
+  and readiness signals for the promoted `9e7b87d8` image.
