@@ -108,6 +108,10 @@ jobs:
             git fetch --no-tags --depth=200 origin main
           fi
 
+          for app in torghut torghut-options; do
+            kubectl annotate application "${app}" -n argocd argocd.argoproj.io/refresh=hard --overwrite
+          done
+
           ensure_revision_known() {
             local revision="$1"
             if [ -z "${revision}" ]; then
