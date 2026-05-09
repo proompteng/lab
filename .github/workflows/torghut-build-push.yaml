@@ -10,6 +10,8 @@ on:
     paths:
       - 'services/torghut/**'
       - 'packages/scripts/src/torghut/**'
+      - '!packages/scripts/src/torghut/__tests__/**'
+      - '!packages/scripts/src/torghut/**/*.test.ts'
       - 'packages/scripts/src/shared/**'
       - 'package.json'
       - 'bun.lock'
