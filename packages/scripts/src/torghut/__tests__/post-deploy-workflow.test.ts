@@ -28,9 +28,20 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('[ "${TORGHUT_READYZ_HTTP_STATUS}" -ge 300 ]')
   })
 
+  it('requests Argo refresh before polling deployed revisions', () => {
+    expect(workflow).toContain('argocd.argoproj.io/refresh=hard --overwrite')
+    expect(workflow).toContain('for app in torghut torghut-options; do')
+  })
+
   it('grants the ARC runner read access to Torghut Knative Service readiness', () => {
     expect(agentsCiClusterRbac).toContain('agents-ci-runner-torghut-post-deploy-read')
     expect(agentsCiClusterRbac).toContain('serving.knative.dev')
     expect(agentsCiClusterRbac).toContain('arc-arm64-gha-rs-kube-mode')
+  })
+
+  it('grants the ARC runner patch access for explicit Argo refreshes', () => {
+    expect(agentsCiClusterRbac).toContain('agents-ci-runner-argocd-application-refresh')
+    expect(agentsCiClusterRbac).toContain('argoproj.io')
+    expect(agentsCiClusterRbac).toContain('patch')
   })
 })
