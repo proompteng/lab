@@ -1091,7 +1091,6 @@ export type ClearanceMarketAuthoritySplit = {
 export type ClearanceMarketFailureDebt = {
   debt_id: string
   window: '15m' | '6h' | '7d'
-  window_seconds: number
   state: 'clear' | 'active' | 'retained_audit' | 'projection_limited' | 'unknown'
   failed_count: number | null
   backoff_count: number | null
@@ -1188,7 +1187,6 @@ export type ClearanceMarketLedger = {
   stage_admission: ClearanceMarketStageAdmission[]
   handoff_contract: {
     value_gates: string[]
-    acceptance_criteria: string[]
     rollback_target: string
     status: ClearanceMarketDecision
   }

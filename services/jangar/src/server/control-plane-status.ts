@@ -686,8 +686,6 @@ export const buildControlPlaneStatus = async (
     namespace: options.namespace,
     service,
     kube: kubeGateway,
-    controllers: effectiveControllers,
-    runtimeAdapters: effectiveRuntimeAdapters,
     agentRunIngestion,
     admissionPassports: runtimeAdmission.admissionPassports,
     dependencyQuorum,

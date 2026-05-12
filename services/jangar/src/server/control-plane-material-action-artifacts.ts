@@ -26,9 +26,7 @@ import type {
   AgentRunIngestionStatus,
   ControlPlaneRolloutHealth,
   ControlPlaneWatchReliability,
-  ControllerStatus,
   DatabaseStatus,
-  RuntimeAdapterStatus,
 } from '~/server/control-plane-status-types'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
 import { resolveWorkflowNamespaces } from '~/server/control-plane-workflows'
@@ -45,8 +43,6 @@ export type ControlPlaneMaterialActionArtifactsInput = {
   namespace: string
   service: string
   kube: KubeGateway
-  controllers: ControllerStatus[]
-  runtimeAdapters: RuntimeAdapterStatus[]
   agentRunIngestion: AgentRunIngestionStatus
   admissionPassports: AdmissionPassportStatus[]
   dependencyQuorum: DependencyQuorumStatus
@@ -157,16 +153,11 @@ export const buildControlPlaneMaterialActionArtifacts = async (input: ControlPla
     ? buildClearanceMarketLedger({
         now: input.now,
         namespace: input.namespace,
-        controllers: input.controllers,
-        runtimeAdapters: input.runtimeAdapters,
         database: input.database,
         agentRunIngestion: input.agentRunIngestion,
         rolloutHealth: input.rolloutHealth,
         workflows: input.workflows,
-        empiricalServices: input.empiricalServices,
         executionTrust: input.executionTrust.executionTrust,
-        swarms: input.executionTrust.swarms,
-        stages: input.executionTrust.stages,
         admissionPassports: input.admissionPassports,
         controllerWitness: input.controllerWitness,
         sourceRolloutTruthExchange: input.sourceRolloutTruthExchange,

@@ -12,10 +12,7 @@ import type {
   ClearanceMarketRolloutTruthSettlement,
   ClearanceMarketStageAdmission,
   ControlPlaneControllerWitnessQuorum,
-  EmpiricalServicesStatus,
-  ExecutionTrustStage,
   ExecutionTrustStatus,
-  ExecutionTrustSwarm,
   MaterialActionVerdictDecision,
   MaterialActionVerdictEpoch,
   RepairWarrantRecord,
@@ -28,9 +25,7 @@ import type {
 import type {
   AgentRunIngestionStatus,
   ControlPlaneRolloutHealth,
-  ControllerStatus,
   DatabaseStatus,
-  RuntimeAdapterStatus,
 } from '~/server/control-plane-status-types'
 
 export const CLEARANCE_MARKET_DESIGN_ARTIFACT =
@@ -68,16 +63,11 @@ export const isClearanceMarketEnabled = (env: NodeJS.ProcessEnv = process.env) =
 export type ClearanceMarketInput = {
   now: Date
   namespace: string
-  controllers: ControllerStatus[]
-  runtimeAdapters: RuntimeAdapterStatus[]
   database: DatabaseStatus
   agentRunIngestion: AgentRunIngestionStatus
   rolloutHealth: ControlPlaneRolloutHealth
   workflows: WorkflowsReliabilityStatus
-  empiricalServices: EmpiricalServicesStatus
   executionTrust: ExecutionTrustStatus
-  swarms: ExecutionTrustSwarm[]
-  stages: ExecutionTrustStage[]
   admissionPassports: AdmissionPassportStatus[]
   controllerWitness: ControlPlaneControllerWitnessQuorum
   sourceRolloutTruthExchange: SourceRolloutTruthExchange
@@ -144,11 +134,6 @@ const numericNotional = (value: string | null | undefined) => {
 }
 
 const deploymentRef = (name: string, namespace: string) => `deployment:${namespace}/${name}`
-
-const controllerRef = (controller: ControllerStatus | undefined) => {
-  if (!controller) return 'controller:missing'
-  return `controller:${controller.authority.namespace}/${controller.name}:${controller.status}`
-}
 
 const runtimePassportRef = (passport: AdmissionPassportStatus) =>
   `admission-passport:${passport.consumer_class}:${passport.admission_passport_id}`
@@ -269,12 +254,11 @@ const buildAuthoritySplits = (
     })
   }
 
-  const agentsController = input.controllers.find((controller) => controller.name === 'agents-controller')
-  if (agentsController?.status === 'healthy' && input.agentRunIngestion.status !== 'healthy') {
+  if (input.controllerWitness.controller_self_report_current && input.agentRunIngestion.status !== 'healthy') {
     splits.push({
       split_id: `clearance-split:${hashJson(['agentrun-ingestion', input.agentRunIngestion], 12)}`,
       domain: 'controller',
-      primary_ref: controllerRef(agentsController),
+      primary_ref: input.controllerWitness.quorum_id,
       secondary_ref: `agentrun-ingestion:${input.namespace}:${input.agentRunIngestion.status}`,
       decision: 'hold',
       reason_codes: [`agentrun_ingestion_${input.agentRunIngestion.status}`],
@@ -363,7 +347,6 @@ const buildFailureDebt = (input: ClearanceMarketInput): ClearanceMarketFailureDe
     {
       debt_id: `clearance-failure-debt:15m:${hashJson(input.workflows, 8)}`,
       window: '15m',
-      window_seconds: Math.max(1, input.workflows.window_minutes) * 60,
       state: activeFailed > 0 || activeBackoff > 0 ? 'active' : 'clear',
       failed_count: activeFailed,
       backoff_count: activeBackoff,
@@ -379,7 +362,6 @@ const buildFailureDebt = (input: ClearanceMarketInput): ClearanceMarketFailureDe
     {
       debt_id: `clearance-failure-debt:6h:${hashJson(repairDebt, 8)}`,
       window: '6h',
-      window_seconds: 6 * 60 * 60,
       state: sixHourState,
       failed_count: sixHourFailures,
       backoff_count: repairDebt.open_error_count,
@@ -394,7 +376,6 @@ const buildFailureDebt = (input: ClearanceMarketInput): ClearanceMarketFailureDe
     {
       debt_id: `clearance-failure-debt:7d:${hashJson([input.namespace, CLEARANCE_MARKET_PRODUCER_REVISION], 8)}`,
       window: '7d',
-      window_seconds: 7 * 24 * 60 * 60,
       state: 'projection_limited',
       failed_count: null,
       backoff_count: null,
@@ -563,11 +544,6 @@ export const buildClearanceMarketLedger = (input: ClearanceMarketInput): Clearan
         'pr_to_rollout_latency',
         'manual_intervention_count',
         'handoff_evidence_quality',
-      ],
-      acceptance_criteria: [
-        'status projection includes authority splits and action clearance',
-        'retained failure debt includes 15-minute, 6-hour, and 7-day windows',
-        'no scheduler enforcement until shadow read model is validated',
       ],
       rollback_target: DEFAULT_ROLLBACK_TARGET,
       status: handoffStatus,

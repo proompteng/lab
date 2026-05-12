@@ -984,34 +984,24 @@ describe('control-plane status', () => {
         }),
       ]),
     )
-    const clearanceMarketLedger = status.clearance_market_ledger
-    expect(clearanceMarketLedger).not.toBeNull()
-    if (!clearanceMarketLedger) {
-      throw new Error('expected clearance market ledger')
-    }
+    const clearanceMarketLedger = status.clearance_market_ledger!
     expect(clearanceMarketLedger).toMatchObject({
       schema_version: 'jangar.clearance-market.v1',
       evidence_mode: 'shadow',
       governing_design_refs: expect.arrayContaining([CLEARANCE_MARKET_DESIGN_ARTIFACT]),
-      retained_failure_debt: expect.arrayContaining([
-        expect.objectContaining({ window: '15m' }),
-        expect.objectContaining({ window: '6h' }),
-        expect.objectContaining({ window: '7d' }),
-      ]),
-      rollout_truth_settlement: {
-        database_projection: expect.objectContaining({
-          mode: 'status_projection',
-          evidence_ref: status.source_rollout_truth_exchange.database_projection_ref,
-        }),
-      },
-      action_clearance: expect.arrayContaining([
-        expect.objectContaining({
-          action_class: 'serve_readonly',
-          governing_design_refs: expect.arrayContaining([CLEARANCE_MARKET_DESIGN_ARTIFACT]),
-          evidence_refs: expect.arrayContaining([status.source_rollout_truth_exchange.exchange_id]),
-        }),
-      ]),
     })
+    expect(clearanceMarketLedger.retained_failure_debt.map((debt) => debt.window)).toEqual(['15m', '6h', '7d'])
+    expect(clearanceMarketLedger.rollout_truth_settlement.database_projection).toMatchObject({
+      mode: 'status_projection',
+      evidence_ref: status.source_rollout_truth_exchange.database_projection_ref,
+    })
+    expect(clearanceMarketLedger.action_clearance).toContainEqual(
+      expect.objectContaining({
+        action_class: 'serve_readonly',
+        governing_design_refs: expect.arrayContaining([CLEARANCE_MARKET_DESIGN_ARTIFACT]),
+        evidence_refs: expect.arrayContaining([status.source_rollout_truth_exchange.exchange_id]),
+      }),
+    )
     expect(status.torghut_action_slo_budgets).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1048,15 +1038,15 @@ describe('control-plane status', () => {
     expect(status.torghut_consumer_evidence.status).toBe('disabled')
   })
 
-  it('projects clearance market authority splits and held normal dispatch when rollout truth disagrees', async () => {
+  it('projects clearance market authority splits while holding normal dispatch', async () => {
     setRolloutDeploymentList(
       [unavailableAgentsRolloutDeployment, healthyAgentsControllersRolloutDeployment],
       [healthyRuntimePod()],
     )
     const degradedTrust: ExecutionTrustStatus = {
+      ...healthyExecutionTrust,
       status: 'degraded',
       reason: 'execution trust degraded by stale implement stage',
-      last_evaluated_at: '2026-01-20T00:20:00Z',
       blocking_windows: [
         {
           type: 'stages',
@@ -1098,79 +1088,6 @@ describe('control-plane status', () => {
           swarms: [],
           stages: [],
         }),
-      },
-    )
-
-    const clearanceMarketLedger = status.clearance_market_ledger
-    expect(clearanceMarketLedger).not.toBeNull()
-    if (!clearanceMarketLedger) {
-      throw new Error('expected clearance market ledger')
-    }
-    expect(clearanceMarketLedger.authority_splits).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          domain: 'rollout',
-          decision: 'hold',
-          reason_codes: expect.arrayContaining(['agents_api_degraded', 'agents_controllers_available']),
-        }),
-        expect.objectContaining({
-          domain: 'runtime_admission',
-          decision: 'hold',
-          reason_codes: expect.arrayContaining(['execution_trust_degraded', 'runtime_passport_allow_split']),
-        }),
-      ]),
-    )
-    expect(clearanceMarketLedger.action_clearance).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          action_class: 'dispatch_normal',
-          decision: 'hold',
-          reason_codes: expect.arrayContaining(['execution_trust_degraded']),
-        }),
-        expect.objectContaining({
-          action_class: 'merge_ready',
-          decision: 'hold',
-        }),
-      ]),
-    )
-    expect(clearanceMarketLedger.retained_failure_debt).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          window: '15m',
-          state: 'active',
-          failed_count: 2,
-          backoff_count: 1,
-        }),
-      ]),
-    )
-  })
-
-  it('keeps stale Torghut proof in zero-notional repair while holding normal dispatch', async () => {
-    setRolloutDeploymentList(
-      [healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment],
-      [healthyRuntimePod()],
-    )
-
-    const status = await buildStatus(
-      {
-        namespace: 'agents',
-        grpc: {
-          enabled: true,
-          address: '127.0.0.1:50051',
-          status: 'healthy',
-          message: '',
-        },
-      },
-      {
-        now: () => new Date('2026-01-20T00:00:00Z'),
-        getHeartbeat: createHeartbeatResolver(),
-        getAgentsControllerHealth: () => healthyController,
-        getSupportingControllerHealth: () => healthyController,
-        getOrchestrationControllerHealth: () => healthyController,
-        resolveTemporalAdapter: async () => buildTemporalAdapter(),
-        checkDatabase: async () => buildDatabaseStatus(),
-        getWatchReliabilitySummary: () => watchReliabilityHealthy,
-        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
         resolveTorghutConsumerEvidence: async () => ({
           status: {
             status: 'current',
@@ -1191,38 +1108,34 @@ describe('control-plane status', () => {
       },
     )
 
-    const clearanceMarketLedger = status.clearance_market_ledger
-    expect(clearanceMarketLedger).not.toBeNull()
-    if (!clearanceMarketLedger) {
-      throw new Error('expected clearance market ledger')
-    }
-    expect(clearanceMarketLedger.authority_splits).toEqual(
+    const clearanceMarketLedger = status.clearance_market_ledger!
+    expect(clearanceMarketLedger.authority_splits.map((split) => `${split.domain}:${split.decision}`)).toEqual(
+      expect.arrayContaining(['torghut:repair_only', 'torghut:hold', 'rollout:hold', 'runtime_admission:hold']),
+    )
+    expect(clearanceMarketLedger.authority_splits.flatMap((split) => split.reason_codes)).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          domain: 'torghut',
-          decision: 'repair_only',
-          reason_codes: expect.arrayContaining(['torghut_zero_notional_repair_only', 'quant_ingestion_stale']),
-        }),
-        expect.objectContaining({
-          domain: 'torghut',
-          decision: 'hold',
-          reason_codes: expect.arrayContaining(['quant_ingestion_stale']),
-        }),
+        'torghut_zero_notional_repair_only',
+        'quant_ingestion_stale',
+        'agents_api_degraded',
+        'agents_controllers_available',
+        'execution_trust_degraded',
+        'runtime_passport_allow_split',
       ]),
     )
-    expect(clearanceMarketLedger.action_clearance).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          action_class: 'dispatch_repair',
-          decision: 'repair_only',
-        }),
-        expect.objectContaining({
-          action_class: 'dispatch_normal',
-          decision: 'hold',
-          reason_codes: expect.arrayContaining(['torghut_quant_evidence_stale']),
-        }),
-      ]),
+    const actionClearance = new Map(
+      clearanceMarketLedger.action_clearance.map((action) => [action.action_class, action]),
     )
+    expect(actionClearance.get('dispatch_repair')).toMatchObject({ decision: 'repair_only' })
+    expect(actionClearance.get('dispatch_normal')).toMatchObject({
+      decision: 'hold',
+      reason_codes: expect.arrayContaining(['execution_trust_degraded', 'torghut_quant_evidence_stale']),
+    })
+    expect(actionClearance.get('merge_ready')).toMatchObject({ decision: 'hold' })
+    expect(clearanceMarketLedger.retained_failure_debt.find((debt) => debt.window === '15m')).toMatchObject({
+      state: 'active',
+      failed_count: 2,
+      backoff_count: 1,
+    })
   })
 
   it('projects source rollout truth and keeps normal dispatch repair-only when GitOps lags source', async () => {
