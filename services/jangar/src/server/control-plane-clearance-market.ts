@@ -16,7 +16,6 @@ import type {
   ExecutionTrustStage,
   ExecutionTrustStatus,
   ExecutionTrustSwarm,
-  MaterialActionVerdict,
   MaterialActionVerdictDecision,
   MaterialActionVerdictEpoch,
   RepairWarrantRecord,
