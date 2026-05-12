@@ -72,6 +72,92 @@ def test_current_books_accept_route_claim_without_widening_notional() -> None:
     assert packet["selected_repair_bids"] == []
 
 
+def test_unrelated_catalog_provider_gap_does_not_hold_fresh_option_route() -> None:
+    options_catalog = {
+        **BASE_INPUTS["options_catalog_freshness"],
+        "missing_provider_updated_ts_count": 10,
+        "provider_updated_ts_present": False,
+        "route_symbol_freshness": {
+            "AAPL": {
+                "active_contracts": 4,
+                "missing_provider_updated_ts_count": 0,
+                "provider_updated_ts_present": True,
+                "newest_provider_updated_ts": NOW.isoformat(),
+                "newest_last_seen_ts": NOW.isoformat(),
+            },
+            "MSFT": {
+                "active_contracts": 1,
+                "missing_provider_updated_ts_count": 1,
+                "provider_updated_ts_present": False,
+                "newest_provider_updated_ts": None,
+                "newest_last_seen_ts": NOW.isoformat(),
+            },
+        },
+    }
+
+    packet = _build(
+        profit_signal_quorum=_option_quorum(),
+        options_catalog_freshness=options_catalog,
+    )
+    route_claim = packet["route_claims"][0]
+
+    assert packet["accepted_routeable_candidate_count"] == 1
+    assert route_claim["source_freshness_decision"] == "current"
+    assert "options_provider_updated_ts_missing" not in route_claim["reason_codes"]
+
+
+def test_route_symbol_provider_gap_holds_only_affected_option_route() -> None:
+    quorum = _option_quorum()
+    quorum["quorums"].append(
+        {
+            "quorum_id": "quorum:H-MICRO-02",
+            "hypothesis_id": "H-MICRO-02",
+            "candidate_id": "candidate-msft",
+            "strategy_id": "strategy-msft",
+            "asset_class": "options",
+            "route_tca_signal": {
+                "details": {
+                    "symbols": ["MSFT"],
+                    "post_cost_expectancy_bps_proxy": "8.5",
+                }
+            },
+        }
+    )
+    options_catalog = {
+        **BASE_INPUTS["options_catalog_freshness"],
+        "route_symbol_freshness": {
+            "AAPL": {
+                "active_contracts": 4,
+                "missing_provider_updated_ts_count": 0,
+                "provider_updated_ts_present": True,
+                "newest_provider_updated_ts": NOW.isoformat(),
+                "newest_last_seen_ts": NOW.isoformat(),
+            },
+            "MSFT": {
+                "active_contracts": 2,
+                "missing_provider_updated_ts_count": 2,
+                "provider_updated_ts_present": False,
+                "newest_provider_updated_ts": None,
+                "newest_last_seen_ts": NOW.isoformat(),
+            },
+        },
+    }
+
+    packet = _build(
+        profit_signal_quorum=quorum,
+        options_catalog_freshness=options_catalog,
+    )
+    claims = {claim["candidate_id"]: claim for claim in packet["route_claims"]}
+
+    assert packet["accepted_routeable_candidate_count"] == 1
+    assert claims["candidate-micro"]["source_freshness_decision"] == "current"
+    assert claims["candidate-msft"]["source_freshness_decision"] == "hold"
+    assert (
+        "options_provider_updated_ts_missing"
+        in claims["candidate-msft"]["reason_codes"]
+    )
+
+
 @pytest.mark.parametrize(("overrides", "reason", "value_gate"), BLOCKERS)
 def test_blocking_evidence_yields_zero_notional_repair_bid(
     overrides: dict[str, object],
