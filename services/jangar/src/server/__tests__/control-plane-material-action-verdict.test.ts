@@ -396,4 +396,35 @@ describe('material action verdict arbiter', () => {
       expect.arrayContaining(['schedule_debt_firebreak_observe_only', 'execution_tca_stale']),
     )
   })
+
+  it('applies admitted repair warrant caps when the repair budget is broader', () => {
+    const exchange = repairWarrantExchange({
+      active_warrants: [
+        {
+          ...repairWarrantExchange().active_warrants[0]!,
+          max_dispatches: 1,
+          max_runtime_seconds: 1200,
+        },
+      ],
+    })
+    const epoch = build({
+      budgets: [
+        budget('dispatch_repair', 'allow', {
+          max_dispatches: 5,
+          max_runtime_seconds: 3600,
+        }),
+      ],
+      clocks: [clock('dispatch_repair', 'allow')],
+      repairWarrantExchange: exchange,
+    })
+
+    const verdict = findVerdict(epoch, 'dispatch_repair')
+    expect(verdict).toMatchObject({
+      decision: 'allow',
+      max_dispatches: 1,
+      max_runtime_seconds: 1200,
+      max_notional: 0,
+    })
+    expect(verdict.evidence_refs).toEqual(expect.arrayContaining([exchange.exchange_id]))
+  })
 })

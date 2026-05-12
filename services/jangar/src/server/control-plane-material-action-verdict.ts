@@ -373,15 +373,16 @@ const repairWarrantExchangeSignal = (
         confidence: 'medium',
       }
     }
-    if (activeWarrants.some((warrant) => warrant.admission_state === 'admitted')) {
+    const admittedWarrants = activeWarrants.filter((warrant) => warrant.admission_state === 'admitted')
+    if (admittedWarrants.length > 0) {
       return {
         ...base,
         decision: 'allow',
         blockingReasons: [],
         downgradeReasons: [],
         requiredRepairs: closureRequirements,
-        maxDispatches: Math.max(1, ...activeWarrants.map((warrant) => warrant.max_dispatches)),
-        maxRuntimeSeconds: Math.max(...activeWarrants.map((warrant) => warrant.max_runtime_seconds)),
+        maxDispatches: Math.min(...admittedWarrants.map((warrant) => warrant.max_dispatches)),
+        maxRuntimeSeconds: Math.min(...admittedWarrants.map((warrant) => warrant.max_runtime_seconds)),
         confidence: 'high',
       }
     }
@@ -496,11 +497,12 @@ const buildVerdict = (input: {
   const sourceRolloutTruth = sourceRolloutTruthSignal(input.sourceRolloutTruthExchange, input.actionClass)
   const repairWarrant = repairWarrantExchangeSignal(input.repairWarrantExchange, input.actionClass)
   const signals = [
+    ...(repairWarrant && input.actionClass === 'dispatch_repair' ? [repairWarrant] : []),
     budget,
     clock,
     ...(dependency ? [dependency] : []),
     ...(sourceRolloutTruth ? [sourceRolloutTruth] : []),
-    ...(repairWarrant ? [repairWarrant] : []),
+    ...(repairWarrant && input.actionClass !== 'dispatch_repair' ? [repairWarrant] : []),
   ]
   const strictest = strictestSignal(signals)
   const contradictionRefs = contradictionRefsForSignals({
