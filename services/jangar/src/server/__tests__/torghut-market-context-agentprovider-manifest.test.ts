@@ -75,6 +75,49 @@ describe('torghut market-context AgentProvider manifest', () => {
     expect(manifest).toContain("headers['authorization'] = f'Bearer {token}'")
   })
 
+  it('mounts the market-context lifecycle helper scripts at the instructed skill path', async () => {
+    const manifest = await readFile(
+      resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
+      'utf8',
+    )
+    const runApi = extractInputFileContent(
+      manifest,
+      '/root/.codex/skills/market-context/scripts/market_context_run_api.py',
+    )
+    const validator = extractInputFileContent(
+      manifest,
+      '/root/.codex/skills/market-context/scripts/validate_market_context_payload.py',
+    )
+    const tempDir = await mkdtemp(resolve(tmpdir(), 'market-context-scripts-'))
+    const runApiPath = resolve(tempDir, 'market_context_run_api.py')
+    const validatorPath = resolve(tempDir, 'validate_market_context_payload.py')
+    const payloadPath = resolve(tempDir, 'market-context-news.json')
+    await writeFile(runApiPath, runApi)
+    await writeFile(validatorPath, validator)
+    await writeFile(
+      payloadPath,
+      JSON.stringify({
+        symbol: 'AMD',
+        domain: 'news',
+        asOfUtc: '2026-05-12T18:00:00.000Z',
+        sourceCount: 2,
+        qualityScore: 0.75,
+        payload: { headlines: [{ title: 'Market-context smoke payload' }] },
+        citations: [
+          { source: 'AMD', publishedAt: '2026-05-12T17:00:00.000Z', url: 'https://example.com/amd' },
+          { source: 'SEC', publishedAt: '2026-05-12T17:30:00.000Z', url: 'https://example.com/sec' },
+        ],
+        riskFlags: [],
+        provider: 'codex',
+        runStatus: 'succeeded',
+        requestId: 'market-context-news-amd-smoke',
+      }),
+    )
+
+    await execFileAsync('python3', ['-m', 'py_compile', runApiPath, validatorPath], { timeout: 10_000 })
+    await execFileAsync('python3', [validatorPath, '--domain', 'news', '--file', payloadPath], { timeout: 10_000 })
+  })
+
   it('decodes timeout output before writing process streams', async () => {
     const manifest = await readFile(
       resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
