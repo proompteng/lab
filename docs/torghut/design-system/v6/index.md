@@ -11,7 +11,9 @@
   `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-12T16:31Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-12T16:31Z`):
+- Evidence (current next-work priority, refreshed `2026-05-12T16:40Z`):
+  - `188-torghut-evidence-clock-arbiter-and-routeable-profit-candidate-exchange-2026-05-12.md`
+  - `docs/agents/designs/184-jangar-rollout-custody-and-evidence-clock-dispatch-2026-05-12.md`
   - `188-torghut-route-evidence-clearinghouse-and-execution-freshness-market-2026-05-12.md`
   - `docs/agents/designs/184-jangar-rollout-evidence-escrow-and-proof-repair-admission-2026-05-12.md`
   - `188-torghut-evidence-credit-capital-repair-market-2026-05-12.md`
