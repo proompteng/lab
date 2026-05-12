@@ -191,6 +191,42 @@ def test_aggregate_option_catalog_partial_provider_clocks_hold_route() -> None:
     assert "options_provider_updated_ts_missing" in route_claim["reason_codes"]
 
 
+def test_nested_route_tca_details_scope_option_catalog_freshness() -> None:
+    quorum = _option_quorum()
+    quorum["quorums"][0]["route_tca_signal"] = {
+        "details": {
+            "details": {
+                "symbols": ["MSFT"],
+                "post_cost_expectancy_bps_proxy": "7.5",
+            }
+        }
+    }
+
+    packet = _build(
+        profit_signal_quorum=quorum,
+        options_catalog_freshness={
+            **BASE_INPUTS["options_catalog_freshness"],
+            "route_symbols": ["MSFT"],
+            "route_symbol_freshness": {
+                "MSFT": {
+                    "active_contracts": 2,
+                    "missing_provider_updated_ts_count": 2,
+                    "provider_updated_ts_present": False,
+                    "newest_provider_updated_ts": None,
+                    "newest_last_seen_ts": NOW.isoformat(),
+                },
+            },
+        },
+    )
+    route_claim = packet["route_claims"][0]
+
+    assert packet["accepted_routeable_candidate_count"] == 0
+    assert route_claim["symbols"] == ["MSFT"]
+    assert route_claim["post_cost_edge_estimate"] == "7.5"
+    assert route_claim["source_freshness_decision"] == "hold"
+    assert "options_provider_updated_ts_missing" in route_claim["reason_codes"]
+
+
 @pytest.mark.parametrize(("overrides", "reason", "value_gate"), BLOCKERS)
 def test_blocking_evidence_yields_zero_notional_repair_bid(
     overrides: dict[str, object],
