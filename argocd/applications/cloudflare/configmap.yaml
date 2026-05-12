@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: cloudflare
+data:
+  config.yaml: |
+    ingress:
+      - hostname: "*.proompteng.ai"
+        service: http://traefik.traefik.svc.cluster.local:80
+      - service: http_status:404
