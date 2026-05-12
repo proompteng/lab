@@ -50,8 +50,6 @@ spec:
         value: '2'
       - name: realReplayShardTimeoutSeconds
         value: '900'
-      - name: realReplayShardWorkers
-        value: '2'
       - name: prefetchFullWindowRows
         value: 'true'
       - name: allowStaleTape
@@ -84,7 +82,6 @@ spec:
           - name: realReplayTimeoutSeconds
           - name: realReplayShardSize
           - name: realReplayShardTimeoutSeconds
-          - name: realReplayShardWorkers
           - name: prefetchFullWindowRows
           - name: allowStaleTape
           - name: persistResults
@@ -161,7 +158,6 @@ spec:
               --real-replay-timeout-seconds "{{inputs.parameters.realReplayTimeoutSeconds}}"
               --real-replay-shard-size "{{inputs.parameters.realReplayShardSize}}"
               --real-replay-shard-timeout-seconds "{{inputs.parameters.realReplayShardTimeoutSeconds}}"
-              --real-replay-shard-workers "{{inputs.parameters.realReplayShardWorkers}}"
               --train-days 6
               --holdout-days 3
               --full-window-start-date "{{inputs.parameters.fullWindowStartDate}}"
