@@ -393,6 +393,9 @@ describe('supporting primitives controller', () => {
     expect(command).toContain('current schedule recovery warrant')
     expect(command).toContain('runtime proof cell')
     expect(command).toContain('current schedule admission runtime kit')
+    expect(command).toContain('active same-swarm stage run')
+    expect(command).toContain('labelSelector')
+    expect(command).toContain("method: 'GET'")
     expect(command).toContain('const targetByKind = {')
     expect(command).toContain("method: 'POST'")
     expect(command).toContain(
