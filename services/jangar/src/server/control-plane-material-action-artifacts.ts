@@ -1,4 +1,5 @@
 import type {
+  AdmissionPassportStatus,
   ControlPlaneControllerWitnessQuorum,
   DependencyQuorumStatus,
   EmpiricalServicesStatus,
@@ -8,6 +9,7 @@ import type {
   WorkflowsReliabilityStatus,
 } from '~/data/agents-control-plane'
 import { buildActionCustodyProjection } from '~/server/control-plane-action-custody'
+import { buildClearanceMarketLedger, isClearanceMarketEnabled } from '~/server/control-plane-clearance-market'
 import { buildMaterialActionActivationReceipts } from '~/server/control-plane-controller-witness'
 import type { ExecutionTrustSnapshot } from '~/server/control-plane-execution-trust'
 import { type FailureDomainRouteProbe } from '~/server/control-plane-failure-domain-leases'
@@ -21,6 +23,7 @@ import {
 import { buildRouteStabilityEscrow } from '~/server/control-plane-route-stability-escrow'
 import { buildStageClearancePackets } from '~/server/control-plane-stage-clearance'
 import type {
+  AgentRunIngestionStatus,
   ControlPlaneRolloutHealth,
   ControlPlaneWatchReliability,
   DatabaseStatus,
@@ -40,6 +43,8 @@ export type ControlPlaneMaterialActionArtifactsInput = {
   namespace: string
   service: string
   kube: KubeGateway
+  agentRunIngestion: AgentRunIngestionStatus
+  admissionPassports: AdmissionPassportStatus[]
   dependencyQuorum: DependencyQuorumStatus
   workflows: WorkflowsReliabilityStatus
   negativeEvidenceRouter: NegativeEvidenceRouterResult
@@ -144,6 +149,25 @@ export const buildControlPlaneMaterialActionArtifacts = async (input: ControlPla
     failureDomainLeases: input.failureDomainLeases,
     torghutConsumerEvidence: input.torghutConsumerEvidence,
   })
+  const clearanceMarketLedger = isClearanceMarketEnabled()
+    ? buildClearanceMarketLedger({
+        now: input.now,
+        namespace: input.namespace,
+        database: input.database,
+        agentRunIngestion: input.agentRunIngestion,
+        rolloutHealth: input.rolloutHealth,
+        workflows: input.workflows,
+        executionTrust: input.executionTrust.executionTrust,
+        admissionPassports: input.admissionPassports,
+        controllerWitness: input.controllerWitness,
+        sourceRolloutTruthExchange: input.sourceRolloutTruthExchange,
+        materialActionVerdictEpoch,
+        stageClearancePackets,
+        repairWarrants: repairWarrantExchange.active_warrants,
+        repairScheduleDebt: repairWarrantExchange.schedule_debt_window,
+        torghutConsumerEvidence: input.torghutConsumerEvidence,
+      })
+    : null
 
   return {
     repairWarrantExchange,
@@ -151,6 +175,7 @@ export const buildControlPlaneMaterialActionArtifacts = async (input: ControlPla
     routeStabilityEscrow,
     materialActionActivationReceipts,
     stageClearancePackets,
+    clearanceMarketLedger,
     ...actionCustodyProjection,
   }
 }
