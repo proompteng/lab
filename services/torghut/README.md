@@ -223,9 +223,11 @@ Testing rules for the trading core:
 - `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/consumer-evidence` now surface the
   May 12 doc 188 `torghut.profit-freshness-frontier.v1` projection. It ranks zero-notional repairs across scoped quant
   signal freshness, market context, empirical proof, feature coverage, drift checks, route/TCA quality, routeability
-  acceptance, schema lineage, and Jangar reliability settlement. The frontier names one selected repair when proof is
-  stale, but `paper_notional_limit=0`, `live_notional_limit=0`, and existing proof-floor/submission gates remain the
-  only capital authority.
+  acceptance, schema lineage, and Jangar reliability settlement. When upstream quality-adjusted profit packets include
+  expected post-cost daily net PnL unlock, the frontier ranks lots on that value and cites the packet refs; otherwise it
+  falls back to the existing bps proxy. The frontier names one selected repair when proof is stale, but
+  `paper_notional_limit=0`, `live_notional_limit=0`, and existing proof-floor/submission gates remain the only capital
+  authority.
 - `GET /trading/status`, `GET /trading/health`, and `GET /readyz` also expose the May 8 doc 184
   `torghut.profit-signal-quorum.v1` shadow receipt. It evaluates each hypothesis against scoped quant latest metrics,
   quant pipeline stages, market-context route health, hypothesis lineage, promotion-decision evidence, route/TCA,

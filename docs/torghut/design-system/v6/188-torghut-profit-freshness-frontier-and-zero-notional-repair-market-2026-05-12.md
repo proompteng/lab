@@ -234,6 +234,11 @@ market context, empirical job, quant health, TCA, feature, drift, hypothesis, an
 lots. Add tests for stale market context, stale empirical jobs, large signal lag, missing feature rows, and degraded
 Jangar settlement.
 
+Implementation note: repair lots should prefer `expected_daily_net_pnl_unlock` or equivalent post-cost daily net PnL
+fields from upstream quality-adjusted profit packets when those estimates are available, and cite the source packet refs
+on the lot. If no daily net unlock is available, the frontier may fall back to its transparent expected-bps proxy, but it
+must keep every selected lot zero-notional until all freshness dimensions and Jangar settlement are current.
+
 Engineer milestone 2: project the frontier from `/trading/status` and `/trading/consumer-evidence` without changing
 capital behavior. Jangar should continue to see zero notional and repair-only posture until the frontier closes.
 
