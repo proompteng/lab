@@ -12,6 +12,122 @@
 - Value gates: `post_cost_daily_net_pnl`, `routeable_candidate_count`,
   `zero_notional_or_stale_evidence_rate`, `fill_tca_or_slippage_quality`, and `capital_gate_safety`.
 
+## 2026-05-12T20:15Z Release Gate Update
+
+Governing Torghut requirement:
+`docs/torghut/design-system/v6/188-torghut-profit-freshness-frontier-and-zero-notional-repair-market-2026-05-12.md`
+keeps profit-freshness repair candidates zero-notional until routeability, freshness, settlement, and capital gates
+close. `services/torghut/README.md` also requires the live submission gate to fail closed when proof or capital
+evidence is not ready.
+
+Selected PRs and outcomes:
+
+- `#6228` `feat(torghut): rank repairs by daily pnl unlock`
+  - Squash-merged at 2026-05-12T19:03:11Z as `7be1d778fd0b9212cf6b78dcf215636943a16ee3`.
+  - Value gate: improves `post_cost_daily_net_pnl` repair ranking evidence without widening notional authority.
+- `#6230` `chore(torghut): promote image 7be1d778`
+  - Squash-merged at 2026-05-12T19:09:26Z as `3872ae7678c5df28ff0e2ea47345c51d12c9245a`.
+  - Promoted digest `sha256:ef3bf5c4ddec89906139a16ff9c4119652307ea9d57e6dbf11d286ee10d34302`.
+  - Post-deploy run `25756326344` failed because the verifier required `torghut` Argo health `Healthy`; the live
+    runtime was in the intended repair-only zero-notional posture rather than crashing.
+- `#6234` `revert(torghut): rollback failed promotion 3872ae7678c5df28ff0e2ea47345c51d12c9245a`
+  - Squash-merged at 2026-05-12T19:29:12Z as `8dc6088a1e2c8effaab41ed75fb7ab23a63e38ec`.
+  - Rollback was a false rollback path. It restored digest `5f7e43b4...`, caused options catalog/enricher crash
+    restarts during PostgreSQL connection refusal, and left the `torghut` Argo operation stuck on the old
+    `torghut-db-migrations` hook.
+- `#6225` `revert(torghut): rollback failed promotion 29f7cf8cbd0872812f2dcdd5d0a5d8a12eccec7e`
+  - Closed unmerged at 2026-05-12T19:43Z. It was stale after `#6234` and would have restored an even older image.
+- `#6236` `fix(torghut): restore quant promotion gate`
+  - Squash-merged at 2026-05-12T19:53:04Z as `6f9a79a7604f49aa5fa16af88c2b2ce77251c59d`.
+  - Restored the `#6230` promoted digest and added a tested post-deploy validator that accepts only the documented
+    repair-only zero-notional 503 posture. Database outages and unexpected dependency failures still fail the gate.
+  - All non-skipped PR checks were green: semantic commits/title, `argo-lint`, `kubeconform`,
+    `packages-scripts`, `symphony`, torghut-ci `Pyright`, bytecode/lint/migration guard, all pytest shards,
+    quality signals, and bytecode/pytest/coverage aggregate.
+- `#6239` `chore(torghut): promote image 6f9a79a7`
+  - Squash-merged at 2026-05-12T19:59:33Z as `17aac423b975dfd1876f96ba579f58c6aef4020d`.
+  - Promoted digest `sha256:20aa3787c6157d79d1d37658c5e71d7f80cdbfdbf8749f1e53a0d73dc416ab9c`.
+  - Superseded by `#6242` before `torghut` could complete sync; `torghut` remained blocked by the stale `#6234` Argo
+    operation.
+- `#6237` `fix(torghut): stop options status table probes`
+  - Squash-merged at 2026-05-12T20:02:47Z as `767917346dbc3a76451b3b02fc83c9ca05127bc9`.
+  - Value gate: improves data freshness and execution quality by keeping options status heartbeats from issuing
+    expensive exact hot-table counts.
+  - All non-skipped PR checks were green, including torghut-ci Pyright, bytecode/lint/migration guard, all pytest
+    shards, quality signals, bytecode/pytest/coverage, agents-ci, and Jangar typecheck.
+- `#6242` `chore(torghut): promote image 76791734`
+  - Squash-merged at 2026-05-12T20:09:08Z as `5283faf6db212e738a695020114e1277de040059`.
+  - Promoted digest `sha256:1068d291e94e78f12b149533021eff27f9ebb7ff81b8e7e5f540350405bec161`.
+  - `torghut-options` synced to `5283faf6db212e738a695020114e1277de040059`; `torghut` did not complete sync
+    because the stale `#6234` Argo operation remained Running.
+  - Post-deploy run `25759337606` was canceled at 2026-05-12T20:14:33Z while the verify step was still waiting on the
+    stale Argo operation. Rollback steps were skipped, avoiding a second false rollback PR.
+
+Post-merge evidence at 2026-05-12T20:15Z:
+
+- GitOps:
+  - `torghut`: `OutOfSync` and `Degraded`, target revision
+    `5283faf6db212e738a695020114e1277de040059`.
+  - `torghut` stale operation: phase `Running`, message
+    `waiting for completion of hook batch/Job/torghut-db-migrations`, operation revision
+    `8dc6088a1e2c8effaab41ed75fb7ab23a63e38ec`, sync result revision
+    `8dc6088a1e2c8effaab41ed75fb7ab23a63e38ec`.
+  - The `torghut-db-migrations` job no longer exists in namespace `torghut`.
+  - `torghut-options`: `Synced` and `Degraded` at
+    `5283faf6db212e738a695020114e1277de040059`; deployment rollouts are complete.
+  - Local service account cannot hard-refresh the Argo app:
+    `applications.argoproj.io "torghut" is forbidden: User "system:serviceaccount:agents:agents-sa" cannot patch`.
+- Workloads:
+  - `torghut-00324-deployment-5748777694-2kzpc`: `2/2 Running`, zero restarts.
+  - `torghut-sim-00422-deployment-758579575d-hf9kw`: `2/2 Running`, zero restarts.
+  - `torghut-db-1`: `1/1 Running`.
+  - `torghut-options-catalog-7d8799f6b4-c6pzs`: `1/1 Running`, zero restarts, serving digest
+    `sha256:1068d291e94e78f12b149533021eff27f9ebb7ff81b8e7e5f540350405bec161`.
+  - `torghut-options-enricher-84bfb8ccf7-g5czm`: `1/1 Running`, zero restarts, serving digest
+    `sha256:1068d291e94e78f12b149533021eff27f9ebb7ff81b8e7e5f540350405bec161`.
+  - `torghut-ws-856cffd8d4-829dt`: `1/1 Running`, zero restarts.
+- Runtime endpoints:
+  - `GET /readyz`: HTTP 503 accepted by the new validator as `repair_only_zero_notional`.
+  - `GET /trading/status`: HTTP 200, version `v0.569.1-14-g7be1d778f`, commit
+    `7be1d778fd0b9212cf6b78dcf215636943a16ee3`, active revision `torghut-00324`. The main Torghut service has not
+    yet rolled to `#6242`.
+  - `GET /trading/revenue-repair`: HTTP 200, `business_state=repair_only`, `revenue_ready=false`,
+    `capital_state=zero_notional`, `max_notional=0`.
+  - `GET torghut-ws /readyz`: HTTP 200.
+  - `GET torghut-options-catalog /healthz`: HTTP 200 with `ready=true`.
+  - `GET torghut-options-enricher /readyz`: HTTP 200 with `ready=true`.
+- Value gates:
+  - `routeable_candidate_count` remains effectively zero; the route board has `row_count=8`,
+    `zero_notional_row_count=8`, `capital_eligible_symbol_count=0`, and `expected_unblock_value=14`.
+  - `zero_notional_or_stale_evidence_rate` remains blocking because capital is clamped to zero-notional repair.
+  - `capital_gate_safety` held: live submission is disabled by `simple_submit_disabled` and max notional is `0`.
+  - `fill_tca_or_slippage_quality` remains a repair gate: execution TCA excludes 7 symbols, with one probing symbol
+    (`AAPL`), 4 blocked symbols, and 3 missing symbols.
+  - `post_cost_daily_net_pnl` has better repair ranking evidence from `#6228`, but revenue remains unrealized while
+    capital and routeability stay blocked.
+
+Gate judgment:
+
+- Merge gate for `#6236`: complete and green.
+- Merge gate for `#6237`: complete and green.
+- Image promotion gate for `#6242`: partially applied. `torghut-options` is synced and serving the promoted digest;
+  `torghut` is blocked before completing sync.
+- Production rollout gate: no-go. The smallest blocker is stale Argo operation state on `torghut`, left over from the
+  false rollback `#6234`, not a current runtime database outage.
+- Revenue impact: no realized revenue impact can be claimed while `routeable_candidate_count=0` and capital remains
+  zero-notional.
+
+Rollback and unblock path:
+
+- Do not merge stale rollback PRs or manually mutate production manifests from a local shell.
+- Keep `#6236` in place; it prevents repair-only zero-notional from opening a false rollback while still failing real
+  database outages.
+- Smallest operational unblocker: an Argo operator with `argocd` application permissions should terminate or clear the
+  stale `torghut` operation for revision `8dc6088a1e2c8effaab41ed75fb7ab23a63e38ec`, then let Argo sync
+  `5283faf6db212e738a695020114e1277de040059` and rerun `torghut-post-deploy-verify`.
+- Rollback trigger after the stale operation is cleared: if the `#6242` image syncs and the new validator reports a
+  non-repair-only dependency failure, revert `#6242`, then the underlying runtime changes, through PR flow.
+
 ## PR Inventory
 
 Open PRs reviewed on May 12, 2026:
