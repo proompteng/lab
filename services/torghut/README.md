@@ -242,6 +242,10 @@ Testing rules for the trading core:
   candidates still carry `max_notional=0` until independent capital and Jangar custody receipts allow paper. The
   consumer-evidence copy is the Jangar action boundary: missing or stale stage-custody evidence can hold normal
   dispatch and deploy widening without blocking zero-notional repair dispatch.
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, `GET /trading/revenue-repair`, and
+  `GET /trading/consumer-evidence` also expose the May 12 doc 188 observe-mode
+  `torghut.route-evidence-clearinghouse-packet.v1` packet. It never widens notional and keeps stale TCA, missing image
+  proof, missing options provider clocks, and zero-notional capital holds out of accepted routeable counts.
 - The simple direct-submit lane is no longer an authority bypass in live mode. Before submitting to Alpaca it evaluates
   the same live-submission gate as the scheduler path and persists the gate payload in decision metadata when a
   submission is blocked. Paper-mode simple execution remains unchanged.

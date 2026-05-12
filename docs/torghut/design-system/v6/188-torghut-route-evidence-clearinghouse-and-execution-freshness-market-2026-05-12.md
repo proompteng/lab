@@ -403,6 +403,14 @@ Engineer:
   capital safety.
 - Do not change live submission defaults or notional caps while adding the packet.
 
+Implementation note (2026-05-12):
+
+- The first implementation cut adds `services/torghut/app/trading/route_evidence_clearinghouse.py` as a pure
+  observe-mode reducer and wires `route_evidence_clearinghouse_packet` into the four milestone response surfaces.
+- The reducer keeps `max_notional=0`, accepts only fully settled route claims, and emits zero-notional repair bids for
+  stale source, execution, image, routeability, and capital evidence.
+- Regression tests cover missing options provider clocks, historical TCA, unresolved image proof, and capital holds.
+
 Deployer:
 
 - Do not enable enforcement until image pull failures are resolved or rolled back and the clearinghouse packet is
