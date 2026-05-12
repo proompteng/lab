@@ -4,6 +4,10 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/188-torghut-evidence-clock-arbiter-and-routeable-profit-candidate-exchange-2026-05-12.md`
+  (current evidence-clock arbiter and routeable profit candidate exchange contract)
+- `docs/agents/designs/184-jangar-rollout-custody-and-evidence-clock-dispatch-2026-05-12.md`
+  (current Jangar rollout custody and evidence-clock dispatch contract)
 - `docs/torghut/design-system/v6/187-torghut-profit-window-custody-and-repair-value-market-2026-05-08.md`
   (current profit-window custody and repair-value market contract)
 - `docs/agents/designs/183-jangar-attested-action-custody-and-profit-window-admission-2026-05-08.md`
@@ -132,6 +136,9 @@ Start here:
 - Runtime profit-signal handoff surface: `GET /trading/status` and `GET /readyz` expose
   `profit_signal_quorum`, the doc 184 shadow receipt that keeps per-hypothesis scoped quant, context, route/TCA,
   lineage, promotion, rejection-drag, and Jangar stage-clearance evidence tied to zero-notional repair decisions.
+- Next implementation contract: doc 188 requires a shadow `evidence_clock_arbiter` and
+  `routeable_profit_candidate_exchange` so fresh ClickHouse rows cannot mint routeable candidates while Postgres proof,
+  Jangar scoped quant, route/TCA, empirical replay, promotion, or rollout clocks are stale.
 - TA replay procedure (concrete steps): `argocd/applications/torghut/README.md`
 - Historical simulation operations playbook: `docs/torghut/rollouts/historical-simulation-playbook.md`
 - Incident context (example): `docs/incidents/2025-12-20-longhorn-upgrade-kafka-failure.md`
