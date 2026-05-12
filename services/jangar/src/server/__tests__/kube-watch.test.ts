@@ -164,6 +164,45 @@ describe('kube-watch', () => {
     expect(watchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('records synchronous event handler failures without restarting the watch', async () => {
+    const onError = vi.fn()
+    const onEvent = vi.fn(() => {
+      throw new Error('sync store unavailable')
+    })
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      onEvent,
+      onError,
+      restartDelayMs: 2000,
+    })
+
+    await flush()
+    getWatchCall().callback('MODIFIED', { metadata: { resourceVersion: '12400' } })
+    await flush()
+
+    expect(onEvent).toHaveBeenCalledTimes(1)
+    expect(recordWatchErrorMock).toHaveBeenCalledWith({
+      resource: 'agentruns',
+      namespace: 'agents',
+      reason: 'event_handler_error',
+    })
+    expect(recordReliabilityErrorMock).toHaveBeenCalledWith({
+      resource: 'agentruns',
+      namespace: 'agents',
+    })
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('event handler failed: sync store unavailable'),
+      }),
+    )
+    expect(recordWatchRestartMock).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(2000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('restarts watch and records restart metrics when the native watch errors', async () => {
     watchHandle = startResourceWatch({
       resource: 'agentruns',
