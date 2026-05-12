@@ -48,6 +48,8 @@ python3 skills/market-context/scripts/validate_market_context_payload.py \
 python3 skills/market-context/scripts/market_context_run_api.py finalize \
   --callback-url "<callbackUrl>" \
   --request-id "<requestId>" \
+  --symbol "<symbol>" \
+  --domain "<fundamentals|news>" \
   --payload-file /tmp/market-context.json \
   --expect-status 200
 ```

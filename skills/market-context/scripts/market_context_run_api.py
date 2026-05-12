@@ -210,6 +210,10 @@ def _build_payload(args: argparse.Namespace) -> dict[str, Any] | None:
         payload = _read_json(Path(args.payload_file))
         if args.request_id and not payload.get('requestId'):
             payload['requestId'] = args.request_id
+        if args.symbol and not payload.get('symbol'):
+            payload['symbol'] = args.symbol
+        if args.domain and not payload.get('domain'):
+            payload['domain'] = args.domain
         if metadata:
             existing = payload.get('metadata')
             if isinstance(existing, dict):

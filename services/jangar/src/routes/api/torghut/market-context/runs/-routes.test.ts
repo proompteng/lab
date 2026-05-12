@@ -190,6 +190,69 @@ describe('market-context run lifecycle routes', () => {
     })
   })
 
+  it('finalize accepts legacy helper payload wrappers', async () => {
+    isMarketContextIngestAuthorized.mockResolvedValueOnce(true)
+    ingestMarketContextProviderResult.mockResolvedValueOnce({
+      ok: true,
+      symbol: 'AAPL',
+      domain: 'fundamentals',
+      runStatus: 'succeeded',
+      requestId: 'legacy-req-4',
+      context: {
+        asOfUtc: '2026-02-28T00:00:00.000Z',
+        sourceCount: 2,
+        qualityScore: 0.8,
+        payload: {},
+        citations: [],
+        riskFlags: [],
+      },
+    })
+
+    const { postMarketContextRunFinalizeHandler } = await import('./finalize')
+    const response = await postMarketContextRunFinalizeHandler(
+      new Request('http://localhost/api/torghut/market-context/runs/finalize', {
+        method: 'POST',
+        body: JSON.stringify({
+          requestId: 'legacy-req-4',
+          metadata: { lifecycleSource: 'legacy-helper' },
+          payload: {
+            symbol: 'AAPL',
+            domain: 'fundamentals',
+            asOfUtc: '2026-02-28T00:00:00.000Z',
+            sourceCount: 2,
+            qualityScore: 0.8,
+            payload: {},
+            citations: [],
+            riskFlags: [],
+            provider: 'codex-spark',
+            runStatus: 'succeeded',
+          },
+        }),
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(ingestMarketContextProviderResult).toHaveBeenCalledWith({
+      requestId: 'legacy-req-4',
+      symbol: 'AAPL',
+      domain: 'fundamentals',
+      asOfUtc: '2026-02-28T00:00:00.000Z',
+      sourceCount: 2,
+      qualityScore: 0.8,
+      payload: {},
+      citations: [],
+      riskFlags: [],
+      provider: 'codex-spark',
+      runStatus: 'succeeded',
+      metadata: { lifecycleSource: 'legacy-helper' },
+    })
+    expect(recordTorghutMarketContextRunEvent).toHaveBeenCalledWith({
+      endpoint: 'finalize',
+      outcome: 'accepted',
+      domain: 'fundamentals',
+    })
+  })
+
   it('finalize accepts batch payloads', async () => {
     isMarketContextIngestAuthorized.mockResolvedValueOnce(true)
     ingestMarketContextProviderResult.mockResolvedValueOnce({
