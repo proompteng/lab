@@ -447,7 +447,7 @@ const whitepaperS3ClientCache = (() => {
         secretAccessKey: config.secretKey,
       },
       forcePathStyle: true,
-    })
+    } as NonNullable<ConstructorParameters<typeof S3Client>[0]>)
 
     return cachedClient
   }

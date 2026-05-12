@@ -741,6 +741,49 @@ describe('supporting primitives controller', () => {
     expect(podSpec?.nodeSelector).toEqual({ 'kubernetes.io/arch': 'arm64' })
   })
 
+  it('labels cronjob job templates with the schedule selector used for repair debt collection', async () => {
+    const target = {
+      kind: 'AgentRun',
+      metadata: { name: 'agentrun-plan-template', namespace: 'agents' },
+      spec: {
+        agentRef: { name: 'codex-spark-agent' },
+        runtime: { type: 'job' },
+      },
+    }
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) return target
+      return null
+    })
+    const apply = vi.fn().mockResolvedValue({})
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const kube = { get, apply, applyStatus } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-plan-sched',
+        namespace: 'agents',
+        generation: 5,
+      },
+      spec: {
+        cron: '*/10 * * * *',
+        targetRef: { kind: 'AgentRun', name: 'agentrun-plan-template', namespace: 'agents' },
+      },
+    }
+
+    await __test__.reconcileSchedule(kube, schedule, 'agents')
+
+    const cronJob = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((payload) => payload.kind === 'CronJob') as { spec?: Record<string, unknown> } | undefined
+    const jobTemplateMetadata = ((cronJob?.spec?.jobTemplate as Record<string, unknown> | undefined)?.metadata ??
+      {}) as Record<string, unknown>
+
+    expect(jobTemplateMetadata.labels).toMatchObject({
+      'schedules.proompteng.ai/schedule': 'jangar-control-plane-plan-sched',
+    })
+  })
+
   it('passes fire-time admission check settings to schedule runner cronjobs', async () => {
     process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK = 'false'
     process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL =

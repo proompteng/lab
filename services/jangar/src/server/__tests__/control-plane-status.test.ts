@@ -856,6 +856,25 @@ describe('control-plane status', () => {
         }),
       ]),
     )
+    expect(status.repair_warrant_exchange).toMatchObject({
+      mode: 'observe',
+      design_artifact:
+        'docs/agents/designs/146-jangar-repair-warrant-exchange-and-schedule-debt-firebreak-2026-05-07.md',
+      status: 'healthy',
+      source_epoch_id: status.source_rollout_truth_exchange.exchange_id,
+      schedule_debt_window: {
+        firebreak_state: 'clear',
+      },
+    })
+    expect(status.repair_warrant_exchange.active_warrants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_repair',
+          admission_state: 'admitted',
+          max_notional: 0,
+        }),
+      ]),
+    )
     expect(status.material_action_verdicts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -866,6 +885,7 @@ describe('control-plane status', () => {
           action_class: 'live_micro_canary',
           decision: 'block',
           blocking_reason_codes: expect.arrayContaining(['torghut_consumer_evidence_missing']),
+          evidence_refs: expect.arrayContaining([status.repair_warrant_exchange.exchange_id]),
         }),
       ]),
     )
@@ -898,6 +918,35 @@ describe('control-plane status', () => {
           decision: 'allow',
           route_requirement: 'live_required',
           controller_requirement: 'heartbeat_required',
+        }),
+      ]),
+    )
+    expect(status.ready_action_exchange).toMatchObject({
+      mode: 'observe',
+      design_artifact:
+        'docs/agents/designs/183-jangar-attested-action-custody-and-profit-window-admission-2026-05-08.md',
+      status: 'block',
+      allowed_action_classes: expect.arrayContaining(['serve_readonly', 'torghut_observe']),
+      blocked_action_classes: expect.arrayContaining(['live_micro_canary', 'live_scale']),
+    })
+    expect(status.action_custody_receipts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'serve_readonly',
+          decision: 'allow',
+          material_action_verdict_ref: expect.stringContaining('material-action-verdict:serve_readonly'),
+        }),
+        expect.objectContaining({
+          action_class: 'paper_canary',
+          decision: 'hold',
+          torghut_consumer_evidence_ref: null,
+        }),
+        expect.objectContaining({
+          action_class: 'live_scale',
+          decision: 'block',
+          forbidden_shortcuts: expect.arrayContaining([
+            'current_consumer_evidence_cannot_upgrade_capital_when_max_notional_zero',
+          ]),
         }),
       ]),
     )

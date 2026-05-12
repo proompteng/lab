@@ -9,6 +9,7 @@ import type {
   FailureDomainActionClass,
   NegativeEvidenceRouterStatus,
   ReconciledActionClock,
+  RepairWarrantExchange,
 } from '~/data/agents-control-plane'
 import { buildMaterialActionVerdictEpoch } from '~/server/control-plane-material-action-verdict'
 import type {
@@ -174,6 +175,7 @@ const build = (input: {
   budgets: ActionSloBudget[]
   clocks: ReconciledActionClock[]
   dependency?: Partial<DependencyQuorumStatus>
+  repairWarrantExchange?: RepairWarrantExchange
 }) =>
   buildMaterialActionVerdictEpoch({
     now,
@@ -187,6 +189,7 @@ const build = (input: {
     database: database(),
     watchReliability: watch(),
     empiricalServices: empiricalServices(),
+    repairWarrantExchange: input.repairWarrantExchange,
   })
 
 const findVerdict = (epoch: ReturnType<typeof build>, actionClass: ActionSloBudgetActionClass) => {
@@ -194,6 +197,59 @@ const findVerdict = (epoch: ReturnType<typeof build>, actionClass: ActionSloBudg
   expect(verdict).toBeTruthy()
   return verdict!
 }
+
+const repairWarrantExchange = (overrides: Partial<RepairWarrantExchange> = {}): RepairWarrantExchange => ({
+  mode: 'observe',
+  design_artifact: 'docs/agents/designs/146-jangar-repair-warrant-exchange-and-schedule-debt-firebreak-2026-05-07.md',
+  exchange_id: 'repair-warrant-exchange:test',
+  generated_at: now.toISOString(),
+  fresh_until: '2026-05-06T14:01:00.000Z',
+  namespace: 'agents',
+  status: 'healthy',
+  source_epoch_id: 'source-rollout-truth:test',
+  schedule_debt_window: {
+    started_at: '2026-05-06T10:00:00.000Z',
+    expires_at: '2026-05-06T14:01:00.000Z',
+    window_minutes: 240,
+    open_error_count: 0,
+    superseded_error_count: 0,
+    success_count: 1,
+    running_count: 0,
+    firebreak_state: 'clear',
+    lanes: [],
+    collection_errors: [],
+  },
+  active_warrants: [
+    {
+      warrant_id: 'repair-warrant:torghut.execution_tca:test',
+      source_epoch_id: 'source-rollout-truth:test',
+      source_budget_id: 'slo:dispatch_repair:test',
+      repair_code: 'torghut.execution_tca',
+      repair_dimension: 'execution_tca',
+      account_label: 'torghut-live',
+      torghut_revision: 'torghut-00257',
+      action_class: 'dispatch_repair',
+      admission_state: 'admitted',
+      max_dispatches: 1,
+      max_runtime_seconds: 1200,
+      max_notional: 0,
+      expected_unblock_value: 0.9,
+      risk_tier: 'high',
+      fresh_until: '2026-05-06T14:01:00.000Z',
+      owner_lane: 'jangar-control-plane:repair',
+      validation_refs: ['GET /trading/status execution_tca'],
+      closure_requirements: ['fresh execution TCA receipt inside the active observation epoch'],
+      rollback_target: 'disable warrant enforcement and fall back to dependency quorum plus action SLO budgets',
+      reason_codes: ['execution_tca_stale'],
+      evidence_refs: ['torghut-proof-floor:repair_only:test'],
+    },
+  ],
+  closed_warrants: [],
+  expired_warrants: [],
+  suppressed_candidates: [],
+  rollback_target: 'set repair warrant enforcement to observe and keep dependency quorum/action SLO budgets',
+  ...overrides,
+})
 
 describe('material action verdict arbiter', () => {
   it('keeps merge-ready held when the SLO budget is stricter than the action clock', () => {
@@ -263,6 +319,81 @@ describe('material action verdict arbiter', () => {
     })
     expect(verdict.blocking_reason_codes).toEqual(
       expect.arrayContaining(['empirical_jobs_stale', 'quant_alerts_critical']),
+    )
+  })
+
+  it('keeps Torghut observe allowed while open repair warrants hold paper and block live capital', () => {
+    const exchange = repairWarrantExchange()
+    const epoch = build({
+      budgets: [
+        budget('torghut_observe', 'allow'),
+        budget('paper_canary', 'allow'),
+        budget('live_micro_canary', 'allow'),
+      ],
+      clocks: [clock('torghut_observe', 'allow'), clock('torghut_capital', 'allow')],
+      repairWarrantExchange: exchange,
+    })
+
+    const observe = findVerdict(epoch, 'torghut_observe')
+    expect(observe).toMatchObject({
+      decision: 'allow',
+      max_notional: 0,
+    })
+    expect(observe.evidence_refs).toEqual(expect.arrayContaining([exchange.exchange_id]))
+
+    const paper = findVerdict(epoch, 'paper_canary')
+    expect(paper).toMatchObject({
+      decision: 'hold',
+      max_dispatches: 0,
+      max_runtime_seconds: 0,
+      max_notional: 0,
+    })
+    expect(paper.blocking_reason_codes).toContain('repair_warrant_open')
+    expect(paper.required_repair_actions).toContain('fresh execution TCA receipt inside the active observation epoch')
+
+    const live = findVerdict(epoch, 'live_micro_canary')
+    expect(live).toMatchObject({
+      decision: 'block',
+      decision_rank: 5,
+      max_notional: 0,
+    })
+    expect(live.blocking_reason_codes).toContain('repair_warrant_open')
+  })
+
+  it('keeps dispatch repair in repair-only mode when the schedule debt firebreak is active', () => {
+    const exchange = repairWarrantExchange({
+      status: 'observe_only',
+      schedule_debt_window: {
+        ...repairWarrantExchange().schedule_debt_window,
+        open_error_count: 4,
+        success_count: 1,
+        firebreak_state: 'observe_only',
+      },
+      active_warrants: [
+        {
+          ...repairWarrantExchange().active_warrants[0]!,
+          admission_state: 'observe_only',
+          max_dispatches: 0,
+          max_runtime_seconds: 0,
+          reason_codes: ['schedule_debt_firebreak_observe_only', 'execution_tca_stale'],
+        },
+      ],
+    })
+    const epoch = build({
+      budgets: [budget('dispatch_repair', 'allow')],
+      clocks: [clock('dispatch_repair', 'allow')],
+      repairWarrantExchange: exchange,
+    })
+
+    const verdict = findVerdict(epoch, 'dispatch_repair')
+    expect(verdict).toMatchObject({
+      decision: 'repair_only',
+      max_dispatches: 0,
+      max_runtime_seconds: 0,
+      max_notional: 0,
+    })
+    expect(verdict.downgrade_reason_codes).toEqual(
+      expect.arrayContaining(['schedule_debt_firebreak_observe_only', 'execution_tca_stale']),
     )
   })
 })

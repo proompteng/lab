@@ -3,12 +3,11 @@ import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
 import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/agents-controller'
 import { buildReconciledActionClocks } from '~/server/control-plane-action-clock'
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
+import { buildControllerWitnessQuorum } from '~/server/control-plane-controller-witness'
 import {
-  buildControllerWitnessQuorum,
-  buildMaterialActionActivationReceipts,
-} from '~/server/control-plane-controller-witness'
-import { buildMaterialActionVerdictEpoch } from '~/server/control-plane-material-action-verdict'
-import { buildRouteStabilityEscrow } from '~/server/control-plane-route-stability-escrow'
+  buildControlPlaneMaterialActionArtifacts,
+  type RepairScheduleAttemptResolver,
+} from '~/server/control-plane-material-action-artifacts'
 import {
   createControlPlaneHeartbeatStore,
   isHeartbeatFresh,
@@ -101,6 +100,7 @@ export type ControlPlaneStatusDeps = {
   resolveTorghutConsumerEvidence?: typeof resolveTorghutConsumerEvidence
   resolveExecutionTrust?: (input: ExecutionTrustInput) => Promise<ExecutionTrustSnapshot>
   resolveRuntimeAdmission?: (input: { now: Date; executionTrust: ExecutionTrustStatus }) => RuntimeAdmissionSnapshot
+  resolveRepairScheduleAttempts?: RepairScheduleAttemptResolver
   resolveRouteProbe?: (input: { now: Date; namespace: string; service: string }) => Promise<FailureDomainRouteProbe>
   resolveFailureDomainKubernetesEvidence?: (input: {
     now: Date
@@ -672,12 +672,21 @@ export const buildControlPlaneStatus = async (
     actionSloBudgets: negativeEvidenceRouter.budgets,
     torghutActionSloBudgets: negativeEvidenceRouter.torghutBudgets,
   })
-  const materialActionVerdictEpoch = buildMaterialActionVerdictEpoch({
+  const {
+    repairWarrantExchange,
+    materialActionVerdictEpoch,
+    routeStabilityEscrow,
+    materialActionActivationReceipts,
+    actionCustodyReceipts,
+    readyActionExchange,
+  } = await buildControlPlaneMaterialActionArtifacts({
     now,
     namespace: options.namespace,
+    service,
+    kube: kubeGateway,
     dependencyQuorum,
-    negativeEvidenceRouter: negativeEvidenceRouter.router,
-    actionSloBudgets: negativeEvidenceRouter.budgets,
+    workflows,
+    negativeEvidenceRouter,
     reconciledActionClocks,
     rolloutHealth,
     controllerWitness,
@@ -685,26 +694,10 @@ export const buildControlPlaneStatus = async (
     watchReliability: watchReliabilityStatus,
     empiricalServices,
     sourceRolloutTruthExchange,
-  })
-  const routeStabilityEscrow = buildRouteStabilityEscrow({
-    now,
-    namespace: options.namespace,
-    service,
+    failureDomainLeases,
     routeProbe,
-    database,
-    rolloutHealth,
-    watchReliability: watchReliabilityStatus,
-    controllerWitness,
-    materialActionVerdictEpoch,
-  })
-  const materialActionActivationReceipts = buildMaterialActionActivationReceipts({
-    now,
-    scope: `${options.namespace}/${service}`,
-    controllerWitness,
-    router: negativeEvidenceRouter.router,
-    budgets: negativeEvidenceRouter.budgets,
-    materialActionVerdictEpoch,
-    routeStabilityEscrow,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+    resolveRepairScheduleAttempts: deps.resolveRepairScheduleAttempts,
   })
 
   const leaderElection = getLeaderElectionStatus()
@@ -778,6 +771,9 @@ export const buildControlPlaneStatus = async (
     material_action_verdict_epoch: materialActionVerdictEpoch,
     material_action_verdicts: materialActionVerdictEpoch.final_verdicts,
     material_action_activation_receipts: materialActionActivationReceipts,
+    action_custody_receipts: actionCustodyReceipts,
+    ready_action_exchange: readyActionExchange,
+    repair_warrant_exchange: repairWarrantExchange,
     source_rollout_truth_exchange: sourceRolloutTruthExchange,
     route_stability_escrow: routeStabilityEscrow,
     empirical_services: empiricalServices,

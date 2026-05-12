@@ -297,6 +297,22 @@ keeps paper/live capital actions held or blocked while observation can remain op
 section and remove it from material-action verdict input; no database schema or Kubernetes resource rollback is
 required.
 
+Control-plane status also exposes the observe-mode `repair_warrant_exchange` from
+`docs/agents/designs/146-jangar-repair-warrant-exchange-and-schedule-debt-firebreak-2026-05-07.md`. The reducer turns
+Torghut proof-floor blockers into bounded zero-notional repair warrants with `max_notional=0`, explicit validation
+refs, closure requirements, expiry, and rollback target. Open warrant ids are included in material-action verdict
+evidence refs, so a warrant can authorize repair evidence without widening paper or live capital by itself.
+
+The exchange includes a four-hour `schedule_debt_window`. A later successful schedule job only supersedes earlier
+errors when lane, source ref, image ref, and objective ref all match; unmatched or incomplete signatures remain open
+debt. If open errors outnumber successes by more than two, new repair warrants are downgraded to `observe_only`. If
+watch reliability degrades, active non-critical warrants expire and read-only serving remains governed by the existing
+route, database, dependency-quorum, and passport gates.
+
+Rollback: keep the exchange in observe mode or ignore `repair_warrant_exchange` in material-action verdict consumers.
+Existing dependency quorum, negative-evidence budgets, runtime admission passports, and action clocks remain the
+fallback authority; no database, Kubernetes, or broker mutation is required.
+
 ## Lease reconciliation action clocks
 
 Control-plane status projects shadow `reconciled_action_clocks` from the contract in
@@ -382,6 +398,31 @@ graduate normal dispatch without a live route and fresh controller-process witne
 deployer and Torghut consumers can compare shadow route-stability authority with the existing material-action receipts.
 Rollback: ignore `route_stability_escrow` consumers and continue relying on material-action receipts while keeping the
 shadow snapshot evidence for incident analysis.
+
+## Action custody receipts
+
+Control-plane status emits observe-mode action custody receipts from
+`docs/agents/designs/183-jangar-attested-action-custody-and-profit-window-admission-2026-05-08.md`. The
+`action_custody_receipts` list wraps the strongest current evidence for each action class: material-action verdict,
+controller witness, source-rollout truth, route-stability contract, retained workflow failure debt, and Torghut
+consumer/profit-window evidence. The companion `ready_action_exchange` is the compact operator/deployer index over
+those receipts.
+
+The projection is intentionally not a new enforcement switch yet. It makes the custody decision explicit so serving
+can stay open while unsafe material actions remain held. For example, `serve_readonly=allow` can coexist with
+`dispatch_normal=hold`, `deploy_widen=hold`, `merge_ready=hold`, `paper_canary=hold`, and `live_scale=block` when the
+controller self-report is missing or Torghut evidence is repair-only with `max_notional=0`.
+
+Validation:
+
+```bash
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.ready_action_exchange'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.action_custody_receipts[] | {action_class,decision,blocking_debt_classes,receipt_id}'
+```
+
+Rollback: ignore `ready_action_exchange` and `action_custody_receipts` consumers, or remove the projection. Existing
+material-action verdicts, route-stability escrow, repair-warrant exchange, runtime-admission passports, and Torghut
+proof-floor/notional gates remain the fallback safety boundary.
 
 ## Workspace storage proof
 

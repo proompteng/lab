@@ -7,6 +7,7 @@ import type {
   RuntimeProofCellStatus,
 } from '~/data/agents-control-plane'
 import { resolveSupportingControllerConfig } from '~/server/controller-runtime-config'
+import { buildScheduleDebtAnnotations } from '~/server/control-plane-repair-warrant-exchange'
 import {
   buildRuntimeAdmissionSnapshot,
   findAdmissionPassport,
@@ -1724,6 +1725,7 @@ const reconcileSchedule = async (
         ? scheduleServiceAccount
         : (supportingConfig.scheduleServiceAccount ?? undefined)
     const cronJobName = makeName(scheduleName, 'cron')
+    const scheduleDebtAnnotations = buildScheduleDebtAnnotations({ schedule, scheduleName, namespace, image })
     const cronJob = {
       apiVersion: 'batch/v1',
       kind: 'CronJob',
@@ -1740,9 +1742,13 @@ const reconcileSchedule = async (
         successfulJobsHistoryLimit: 3,
         failedJobsHistoryLimit: 1,
         jobTemplate: {
+          metadata: {
+            labels,
+            annotations: scheduleDebtAnnotations,
+          },
           spec: {
             template: {
-              metadata: { labels },
+              metadata: { labels, annotations: scheduleDebtAnnotations },
               spec: {
                 serviceAccountName,
                 restartPolicy: 'Never',
