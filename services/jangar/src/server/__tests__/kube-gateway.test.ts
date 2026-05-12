@@ -61,6 +61,7 @@ describe('kube gateway', () => {
           namespace: 'agents',
           generation: 3,
           labels: { app: 'agents' },
+          annotations: {},
           creationTimestamp: '2026-01-20T00:00:00Z',
         },
         spec: { replicas: 2 },

@@ -772,6 +772,111 @@ export type SourceRolloutTruthExchange = {
   rollback_target: string | null
 }
 
+export type RepairWarrantDimension =
+  | 'execution_tca'
+  | 'market_context'
+  | 'quant_ingestion'
+  | 'quant_materialization'
+  | 'quant_latest_store'
+  | 'alpha_readiness'
+  | 'forecast_registry'
+  | 'consumer_evidence'
+
+export type RepairWarrantAdmissionState = 'admitted' | 'observe_only' | 'closed' | 'expired' | 'suppressed'
+
+export type RepairWarrantRiskTier = 'low' | 'medium' | 'high' | 'critical'
+
+export type RepairWarrantRecord = {
+  warrant_id: string
+  source_epoch_id: string
+  source_budget_id: string | null
+  repair_code: string
+  repair_dimension: RepairWarrantDimension
+  account_label: string
+  torghut_revision: string | null
+  action_class: ActionSloBudgetActionClass
+  admission_state: RepairWarrantAdmissionState
+  max_dispatches: number
+  max_runtime_seconds: number
+  max_notional: number
+  expected_unblock_value: number
+  risk_tier: RepairWarrantRiskTier
+  fresh_until: string
+  owner_lane: string
+  validation_refs: string[]
+  closure_requirements: string[]
+  rollback_target: string
+  reason_codes: string[]
+  evidence_refs: string[]
+}
+
+export type RepairWarrantScheduleDebtAttemptResult = 'success' | 'error' | 'running' | 'unknown'
+
+export type RepairWarrantScheduleDebtAttempt = {
+  attempt_id: string
+  lane: string
+  source_ref: string | null
+  image_ref: string | null
+  objective_ref: string | null
+  signature_complete: boolean
+  result: RepairWarrantScheduleDebtAttemptResult
+  observed_at: string
+  job_ref: string
+  supersedes_attempt_ids: string[]
+  superseded_by_attempt_id: string | null
+  reason_codes: string[]
+}
+
+export type RepairWarrantScheduleDebtLane = {
+  lane: string
+  firebreak_state: 'clear' | 'observe_only'
+  open_error_count: number
+  superseded_error_count: number
+  success_count: number
+  running_count: number
+  attempts: RepairWarrantScheduleDebtAttempt[]
+  reason_codes: string[]
+}
+
+export type RepairWarrantScheduleDebtWindow = {
+  started_at: string
+  expires_at: string
+  window_minutes: number
+  open_error_count: number
+  superseded_error_count: number
+  success_count: number
+  running_count: number
+  firebreak_state: 'clear' | 'observe_only'
+  lanes: RepairWarrantScheduleDebtLane[]
+  collection_errors: string[]
+}
+
+export type RepairWarrantSuppressedCandidate = {
+  repair_code: string
+  repair_dimension: RepairWarrantDimension
+  account_label: string
+  admission_state: 'observe_only' | 'expired' | 'suppressed'
+  reason_codes: string[]
+  evidence_refs: string[]
+}
+
+export type RepairWarrantExchange = {
+  mode: 'observe' | 'admit-zero-notional' | 'gate-paper'
+  design_artifact: string
+  exchange_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  status: 'healthy' | 'observe_only' | 'degraded' | 'blocked'
+  source_epoch_id: string
+  schedule_debt_window: RepairWarrantScheduleDebtWindow
+  active_warrants: RepairWarrantRecord[]
+  closed_warrants: RepairWarrantRecord[]
+  expired_warrants: RepairWarrantRecord[]
+  suppressed_candidates: RepairWarrantSuppressedCandidate[]
+  rollback_target: string
+}
+
 export type RouteStabilityLiveRouteAttempt = {
   attempt_id: string
   attempted_at: string
@@ -829,6 +934,137 @@ export type RouteStabilityEscrow = {
   watch_reliability_ref: string
   material_action_contracts: RouteStabilityMaterialActionContract[]
   rollback_target: string | null
+}
+
+export type TorghutConsumerEvidenceStatus = {
+  status: 'disabled' | 'current' | 'stale' | 'missing' | 'unavailable' | 'route_missing' | 'schema_mismatch'
+  endpoint: string
+  receipt_id: string | null
+  generated_at: string | null
+  fresh_until: string | null
+  candidate_id: string | null
+  dataset_snapshot_ref: string | null
+  max_notional: string | null
+  route_canary_id?: string | null
+  jangar_parity_escrow_ref?: string | null
+  serving_revision?: string | null
+  image_digest?: string | null
+  route_repair_value?: number | null
+  decision?: string | null
+  capital_reentry_cohort_ledger_id?: string | null
+  capital_reentry_aggregate_state?: string | null
+  capital_reentry_cohort_ids?: string[]
+  profit_repair_settlement_ledger_id?: string | null
+  profit_repair_aggregate_state?: string | null
+  profit_repair_lot_ids?: string[]
+  reason_codes: string[]
+  message: string
+}
+
+export type ActionCustodyDecision = 'allow' | 'repair_only' | 'hold' | 'block'
+
+export type ActionCustodyAllowedScope =
+  | 'none'
+  | 'serve_readonly'
+  | 'bounded_repair'
+  | 'normal_dispatch'
+  | 'deploy_widen'
+  | 'merge_ready'
+  | 'torghut_observe'
+  | 'paper_canary'
+  | 'live_micro_canary'
+  | 'live_scale'
+
+export type ActionCustodyReceipt = {
+  schema_version: 'jangar.action-custody-receipt.v1'
+  receipt_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  swarm_name: string
+  stage: 'serve' | 'dispatch' | 'deploy' | 'verify' | 'torghut'
+  action_class: ActionSloBudgetActionClass
+  decision: ActionCustodyDecision
+  allowed_scope: ActionCustodyAllowedScope
+  max_dispatches: number | null
+  max_runtime_seconds: number | null
+  max_notional: number | null
+  controller_witness_ref: string
+  source_rollout_truth_ref: string
+  scheduler_route_ref: string | null
+  retained_failure_debt_ref: string
+  material_action_verdict_ref: string
+  route_stability_contract_ref: string
+  torghut_consumer_evidence_ref: string | null
+  torghut_profit_window_ref: string | null
+  blocking_debt_classes: string[]
+  forbidden_shortcuts: string[]
+  required_repair_actions: string[]
+  validation_commands: string[]
+  evidence_refs: string[]
+  rollout_gate: 'observe_only' | 'required'
+  rollback_gate: string
+}
+
+export type StageClearanceStage =
+  | 'serve'
+  | 'discover'
+  | 'plan'
+  | 'implement'
+  | 'verify'
+  | 'repair'
+  | 'deployer'
+  | 'torghut'
+
+export type StageClearanceDecision = 'allow' | 'repair_only' | 'hold' | 'block'
+
+export type StageClearancePacket = {
+  schema_version: 'jangar.stage-clearance-packet.v1'
+  packet_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  swarm_name: string
+  stage: StageClearanceStage
+  action_class: ActionSloBudgetActionClass
+  governing_requirement_refs: string[]
+  source_rollout_truth_ref: string
+  controller_witness_ref: string
+  agentrun_ingestion_ref: string
+  execution_trust_ref: string
+  material_action_verdict_ref: string
+  route_stability_ref: string
+  torghut_consumer_evidence_ref: string | null
+  failure_domain_leases: string[]
+  provider_capacity_ref: string | null
+  decision: StageClearanceDecision
+  max_launches: number | null
+  max_notional: number | null
+  ttl_seconds: number
+  reason_codes: string[]
+  required_repair_action: string | null
+  rollback_target: string
+}
+
+export type ReadyActionExchange = {
+  mode: 'observe' | 'enforce'
+  design_artifact: string
+  exchange_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  status: ActionCustodyDecision
+  serving_receipt_id: string | null
+  dispatch_receipt_ids: string[]
+  deploy_receipt_ids: string[]
+  torghut_receipt_ids: string[]
+  receipt_refs: string[]
+  allowed_action_classes: ActionSloBudgetActionClass[]
+  repair_only_action_classes: ActionSloBudgetActionClass[]
+  held_action_classes: ActionSloBudgetActionClass[]
+  blocked_action_classes: ActionSloBudgetActionClass[]
+  reason_codes: string[]
+  rollback_target: string
 }
 
 export type DeploymentRolloutStatus = {
@@ -942,6 +1178,10 @@ export type ControlPlaneStatus = {
   material_action_verdict_epoch: MaterialActionVerdictEpoch
   material_action_verdicts: MaterialActionVerdict[]
   material_action_activation_receipts: MaterialActionActivationReceipt[]
+  action_custody_receipts: ActionCustodyReceipt[]
+  stage_clearance_packets: StageClearancePacket[]
+  ready_action_exchange: ReadyActionExchange
+  repair_warrant_exchange: RepairWarrantExchange
   source_rollout_truth_exchange: SourceRolloutTruthExchange
   route_stability_escrow: RouteStabilityEscrow
   database: DatabaseStatus
@@ -956,6 +1196,7 @@ export type ControlPlaneStatus = {
   projection_watermarks: ProjectionWatermarkStatus[]
   rollout_health: ControlPlaneRolloutHealth
   empirical_services: EmpiricalServicesStatus
+  torghut_consumer_evidence: TorghutConsumerEvidenceStatus
   execution_trust: ExecutionTrustStatus
   swarms: ExecutionTrustSwarm[]
   stages: ExecutionTrustStage[]

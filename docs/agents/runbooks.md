@@ -135,6 +135,9 @@ curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.negative_evidence_router'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.action_slo_budgets'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.torghut_action_slo_budgets'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.ready_action_exchange'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.action_custody_receipts[] | {action_class,decision,blocking_debt_classes,receipt_id}'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.stage_clearance_packets[] | {stage,action_class,decision,packet_id,fresh_until}'
 curl -fsS http://localhost:8080/ready | jq '{status, serving_passport_id, runtime_kits, admission_passports}'
 kubectl api-resources --api-group=argoproj.io --no-headers || true
 kubectl -n agents get workflows.argoproj.io 2>/dev/null || true
@@ -165,6 +168,24 @@ Expected outcomes:
 - `torghut_action_slo_budgets` is the filtered consumer view for Torghut sizing decisions. Read-only
   `torghut_observe` can remain allowed while stale market context, open quant alerts, or readiness debt hold/block
   paper and live capital budgets.
+- `repair_warrant_exchange.mode` is `observe`; active warrants are zero-notional repair permissions only and include
+  `warrant_id`, `repair_code`, `admission_state`, `fresh_until`, validation refs, closure requirements, and rollback
+  target. Paper/live gates must remain held or blocked until the matching repair warrant closes inside a fresh evidence
+  epoch.
+- `repair_warrant_exchange.schedule_debt_window` nets a failed schedule attempt only when a later success has the same
+  lane, source ref, image ref, and objective ref. Unmatched failures stay open; if open errors outnumber successes by
+  more than two, new repair warrants move to `observe_only`.
+- `ready_action_exchange.mode` is `observe`; it points to the current `action_custody_receipts` and summarizes which
+  action classes are `allow`, `repair_only`, `hold`, or `block`.
+- `action_custody_receipts` cite design doc 183 and wrap material verdicts, controller witness, source rollout truth,
+  route-stability contracts, retained workflow failure debt, and Torghut consumer/profit-window evidence.
+  `serve_readonly` may remain `allow` while `dispatch_normal`, `deploy_widen`, `merge_ready`, and capital actions are
+  held or blocked.
+- `stage_clearance_packets` cite design doc 184 and include `packet_id`, `decision`, `fresh_until`, and reason codes
+  for scheduled `discover`, `plan`, `implement`, and `verify` launches. During the shadow rollout, schedule-runner pods
+  stamp the current packet ID and decision onto launched AgentRuns via
+  `swarm.proompteng.ai/stage-clearance-packet-id` and `swarmStageClearancePacketId`; a launch without those fields is
+  not acceptable green rollout evidence.
 - If collaboration is degraded or blocked because a runtime helper is missing, `/ready` stays `200` as
   long as the `serving` passport is still `allow` or `degrade`; the blocked `swarm_*` passport surfaces
   the missing component in `reason_codes`.
@@ -200,6 +221,18 @@ an admission switch. A retained historical failed AgentRun should not block `ser
 `torghut_observe`. Rollback is to keep enforcement disabled and fall back to failure-domain leases plus dependency
 quorum while preserving the emitted `router_epoch_id` and evidence refs.
 
+During repair-warrant exchange observe mode, treat `active_warrants[]` as Jangar-issued repair authority, not a capital
+approval. A warrant may admit one bounded zero-notional repair dispatch, but `paper_canary`, `live_micro_canary`, and
+`live_scale` still require closed warrant evidence plus the existing proof-floor, observation-epoch, and settlement
+gates. Rollback is to ignore the `repair_warrant_exchange` material-action evidence refs and continue using
+dependency quorum, negative-evidence budgets, action clocks, and admission passports.
+
+During action-custody observe mode, treat `ready_action_exchange` and `action_custody_receipts[]` as the operator index
+for the strongest currently applicable gate. A receipt can hold deploy or merge even when Argo and pods are healthy if
+controller witness, retained failure debt, route custody, or Torghut profit-window evidence is missing. Rollback is to
+ignore the custody projection and continue using material-action verdicts, route-stability escrow, repair-warrant
+exchange, runtime passports, and Torghut proof-floor/notional gates.
+
 If a cross-swarm stage refuses launch before NATS collaboration initialization, verify the passport debt first:
 
 ```bash
@@ -221,6 +254,9 @@ Expected outcomes:
   If this fire-time check itself is blocking emergency recovery, set
   `JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false` and keep `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=true` so the
   controller still deletes newly blocked schedules.
+- stage-clearance packet stamping is shadow by default through `JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow`. Use
+  `disabled` only to roll back packet lookup while keeping runtime-admission checks active; use `hold` only after
+  deployer evidence proves frozen normal launches carry current packet IDs and bounded repair launches remain available.
 - rollback is runtime-local: restore the missing helper/config/secret in the admitted image or revert the
   change that introduced the incompatible runtime contract, then redeploy and re-check the same passport ids.
 

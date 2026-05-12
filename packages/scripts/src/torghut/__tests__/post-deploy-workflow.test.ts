@@ -22,10 +22,17 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).not.toContain(`jsonpath='{.status.conditions[?(@.type==\\"Ready\\")].status}'`)
   })
 
-  it('fails the deploy verifier when Torghut readyz is not 2xx', () => {
-    expect(workflow).toContain('expected 2xx')
-    expect(workflow).toContain('[ "${TORGHUT_READYZ_HTTP_STATUS}" -lt 200 ]')
-    expect(workflow).toContain('[ "${TORGHUT_READYZ_HTTP_STATUS}" -ge 300 ]')
+  it('continues to runtime safety checks when Torghut Argo health is degraded after sync', () => {
+    expect(workflow).toContain('Torghut Argo health is Degraded after sync; continuing to runtime safety checks')
+    expect(workflow).toContain('[ "${app}" = \'torghut\' ]')
+    expect(workflow).toContain('[ "${OPERATION_PHASE}" = \'Succeeded\' ]')
+  })
+
+  it('delegates readyz acceptance to the revenue repair evidence validator', () => {
+    expect(workflow).toContain('TORGHUT_READYZ_HTTP_STATUS')
+    expect(workflow).toContain('TORGHUT_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-readyz.json"')
+    expect(workflow).toContain('bun run packages/scripts/src/torghut/post-deploy-evidence.ts')
+    expect(workflow).not.toContain('expected 2xx')
   })
 
   it('requests Argo refresh before polling deployed revisions', () => {

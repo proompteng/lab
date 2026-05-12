@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
+import sys
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from typing import Iterator
@@ -83,6 +85,46 @@ class _FakeCountRepository(OptionsRepository):
         yield self.fake_session
 
 
+class _NoCountRepository:
+    active_count_calls = 0
+    hot_count_calls = 0
+
+    def __init__(self, _: str) -> None:
+        pass
+
+    def ensure_rate_bucket_defaults(self, defaults: dict[str, tuple[float, int]]) -> None:
+        self.defaults = defaults
+
+    def count_active_contracts(self) -> int:
+        type(self).active_count_calls += 1
+        raise AssertionError("heartbeat status must not count active contracts")
+
+    def count_hot_contracts(self) -> int:
+        type(self).hot_count_calls += 1
+        raise AssertionError("heartbeat status must not count hot contracts")
+
+
+class _FakeProducer:
+    sent: list[tuple[str, str, dict[str, object]]] = []
+
+    def __init__(self, **_: object) -> None:
+        pass
+
+    def send(self, topic: str, key: str, payload: dict[str, object]) -> None:
+        type(self).sent.append((topic, key, payload))
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class _FakeAlpacaClient:
+    def __init__(self, **_: object) -> None:
+        pass
+
+
 class TestOptionsLaneSession(TestCase):
     def test_session_state_classifies_regular_hours(self) -> None:
         now = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
@@ -152,6 +194,71 @@ class TestOptionsRepositoryStatusCounts(TestCase):
                 for sql in session.statements
             )
         )
+
+
+class TestOptionsServiceStatusHeartbeat(TestCase):
+    def setUp(self) -> None:
+        _NoCountRepository.active_count_calls = 0
+        _NoCountRepository.hot_count_calls = 0
+        _FakeProducer.sent = []
+        for module_name in (
+            "app.options_lane.catalog_service",
+            "app.options_lane.enricher_service",
+        ):
+            sys.modules.pop(module_name, None)
+
+    def _import_service(self, module_name: str) -> object:
+        from app.options_lane.settings import get_options_lane_settings
+
+        get_options_lane_settings.cache_clear()
+        env = {
+            "DB_DSN": "postgresql://torghut:torghut@localhost:5432/torghut",
+            "ALPACA_OPTIONS_KEY_ID": "key-id",
+            "ALPACA_OPTIONS_SECRET_KEY": "secret-key",
+            "OPTIONS_MARKET_HOLIDAYS": "",
+            "OPTIONS_UNDERLYING_PRIORITY_SYMBOLS": "",
+        }
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("app.options_lane.repository.OptionsRepository", _NoCountRepository),
+            patch("app.options_lane.kafka.OptionsKafkaProducer", _FakeProducer),
+            patch("app.options_lane.alpaca.AlpacaOptionsClient", _FakeAlpacaClient),
+        ):
+            return importlib.import_module(module_name)
+
+    def test_catalog_status_heartbeat_skips_contract_table_counts(self) -> None:
+        service = self._import_service("app.options_lane.catalog_service")
+
+        service._publish_status(  # type: ignore[attr-defined]
+            status_value="ok",
+            observed_at=datetime(2026, 3, 9, 15, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(_NoCountRepository.active_count_calls, 0)
+        self.assertEqual(_NoCountRepository.hot_count_calls, 0)
+        self.assertEqual(len(_FakeProducer.sent), 1)
+        payload = _FakeProducer.sent[0][2]["payload"]
+        self.assertIsInstance(payload, dict)
+        self.assertIsNone(payload["active_contracts"])
+        self.assertIsNone(payload["hot_contracts"])
+
+    def test_enricher_status_heartbeat_skips_contract_table_counts(self) -> None:
+        service = self._import_service("app.options_lane.enricher_service")
+
+        service._publish_status(  # type: ignore[attr-defined]
+            status_value="ok",
+            observed_at=datetime(2026, 3, 9, 15, 0, tzinfo=timezone.utc),
+            backlog=11,
+        )
+
+        self.assertEqual(_NoCountRepository.active_count_calls, 0)
+        self.assertEqual(_NoCountRepository.hot_count_calls, 0)
+        self.assertEqual(len(_FakeProducer.sent), 1)
+        payload = _FakeProducer.sent[0][2]["payload"]
+        self.assertIsInstance(payload, dict)
+        self.assertIsNone(payload["active_contracts"])
+        self.assertIsNone(payload["hot_contracts"])
+        self.assertEqual(payload["rest_backlog"], 11)
 
 
 class TestOptionsLaneNormalization(TestCase):

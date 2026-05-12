@@ -256,6 +256,7 @@ describe('supporting primitives controller', () => {
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS
+    delete process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY
     delete process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT
@@ -273,6 +274,7 @@ describe('supporting primitives controller', () => {
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS
+    delete process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT
     delete process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT
     delete process.env.JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT
   })
@@ -369,7 +371,11 @@ describe('supporting primitives controller', () => {
     expect(command).toContain('JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK')
     expect(command).toContain('JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT')
     expect(command).toContain('JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL')
+    expect(command).toContain('JANGAR_STAGE_CLEARANCE_ENFORCEMENT')
     expect(command).toContain('missing schedule admission passport annotation for')
+    expect(command).toContain('stage_clearance_packets')
+    expect(command).toContain('current stage clearance packet')
+    expect(command).toContain('stage clearance shadow evidence unavailable')
     expect(command).not.toContain('stale schedule admission passport')
     expect(command).not.toContain('stale schedule runtime-kit digest')
     expect(command).not.toContain('stale schedule recovery-case digest')
@@ -381,6 +387,7 @@ describe('supporting primitives controller', () => {
       'writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.runtimeDigest',
     )
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmAdmissionPassportId"')
+    expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearancePacketId"')
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRecoveryWarrantId"')
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRuntimeKitSetDigest"')
     expect(command).toContain('current schedule recovery warrant')
@@ -732,13 +739,67 @@ describe('supporting primitives controller', () => {
 
     const cronJob = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
-      .find((payload) => payload.kind === 'CronJob') as { spec?: Record<string, unknown> } | undefined
+      .find((payload) => payload.kind === 'CronJob') as
+      | { spec?: Record<string, unknown>; metadata?: Record<string, unknown> }
+      | undefined
+    const jobTemplateMetadata = (cronJob?.spec?.jobTemplate as Record<string, unknown> | undefined)?.metadata as
+      | Record<string, unknown>
+      | undefined
     const podSpec = (
       ((cronJob?.spec?.jobTemplate as Record<string, unknown> | undefined)?.spec as Record<string, unknown> | undefined)
         ?.template as Record<string, unknown> | undefined
     )?.spec as Record<string, unknown> | undefined
 
+    expect(
+      (cronJob?.metadata?.labels as Record<string, unknown> | undefined)?.['schedules.proompteng.ai/schedule'],
+    ).toBe('jangar-control-plane-plan-sched')
+    expect(
+      (jobTemplateMetadata?.labels as Record<string, unknown> | undefined)?.['schedules.proompteng.ai/schedule'],
+    ).toBe('jangar-control-plane-plan-sched')
     expect(podSpec?.nodeSelector).toEqual({ 'kubernetes.io/arch': 'arm64' })
+  })
+
+  it('labels cronjob job templates with the schedule selector used for repair debt collection', async () => {
+    const target = {
+      kind: 'AgentRun',
+      metadata: { name: 'agentrun-plan-template', namespace: 'agents' },
+      spec: {
+        agentRef: { name: 'codex-spark-agent' },
+        runtime: { type: 'job' },
+      },
+    }
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) return target
+      return null
+    })
+    const apply = vi.fn().mockResolvedValue({})
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const kube = { get, apply, applyStatus } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-plan-sched',
+        namespace: 'agents',
+        generation: 5,
+      },
+      spec: {
+        cron: '*/10 * * * *',
+        targetRef: { kind: 'AgentRun', name: 'agentrun-plan-template', namespace: 'agents' },
+      },
+    }
+
+    await __test__.reconcileSchedule(kube, schedule, 'agents')
+
+    const cronJob = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((payload) => payload.kind === 'CronJob') as { spec?: Record<string, unknown> } | undefined
+    const jobTemplateMetadata = ((cronJob?.spec?.jobTemplate as Record<string, unknown> | undefined)?.metadata ??
+      {}) as Record<string, unknown>
+
+    expect(jobTemplateMetadata.labels).toMatchObject({
+      'schedules.proompteng.ai/schedule': 'jangar-control-plane-plan-sched',
+    })
   })
 
   it('passes fire-time admission check settings to schedule runner cronjobs', async () => {
@@ -746,6 +807,7 @@ describe('supporting primitives controller', () => {
     process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL =
       'http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status'
     process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS = '2500'
+    process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT = 'hold'
 
     const target = {
       kind: 'AgentRun',
@@ -798,6 +860,7 @@ describe('supporting primitives controller', () => {
           value: 'http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status',
         },
         { name: 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS', value: '2500' },
+        { name: 'JANGAR_STAGE_CLEARANCE_ENFORCEMENT', value: 'hold' },
       ]),
     )
   })

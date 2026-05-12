@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: a85e479b
-  digest: sha256:671c3097fac4539bb53abd9cd9b05692a693b73ac3b45f15dd9c933cfc806b1b
+  tag: 887ab0d4
+  digest: sha256:baa7ff7e4347f4162f2d8388a96cf3ddf45d007cce6c32d15eff36897a65f1e4
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,8 +11,8 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: a85e479b
-    digest: sha256:64c05f501c0f0a0d1bbedc388098f9d63ab6c2e66dda4128b41153bca9960f50
+    tag: 887ab0d4
+    digest: sha256:bd1ec07a841bd0511a75b84f66aea880d5794a304db9116ee40b82d975c53ef0
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
@@ -21,8 +21,8 @@ controlPlane:
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: a85e479b
-    digest: sha256:671c3097fac4539bb53abd9cd9b05692a693b73ac3b45f15dd9c933cfc806b1b
+    tag: 887ab0d4
+    digest: sha256:baa7ff7e4347f4162f2d8388a96cf3ddf45d007cce6c32d15eff36897a65f1e4
 argocdHooks:
   enabled: true
   image:
@@ -174,6 +174,8 @@ env:
     JANGAR_GRPC_HOST: 0.0.0.0
     JANGAR_GRPC_PORT: "50051"
     JANGAR_GITHUB_REPOS_ALLOWED: proompteng/lab
+    JANGAR_DB_POOL_MAX: "1"
+    JANGAR_MEMORY_DB_POOL_MAX: "1"
     JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES: "{}"
     OPENAI_API_BASE_URL: http://saigak.saigak.svc.cluster.local:11434/v1
     OPENAI_EMBEDDING_API_BASE_URL: http://saigak.saigak.svc.cluster.local:11434/v1

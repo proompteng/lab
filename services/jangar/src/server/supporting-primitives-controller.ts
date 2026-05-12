@@ -7,6 +7,7 @@ import type {
   RuntimeProofCellStatus,
 } from '~/data/agents-control-plane'
 import { resolveSupportingControllerConfig } from '~/server/controller-runtime-config'
+import { buildScheduleDebtAnnotations } from '~/server/control-plane-repair-warrant-exchange'
 import {
   buildRuntimeAdmissionSnapshot,
   findAdmissionPassport,
@@ -18,6 +19,15 @@ import { startResourceWatch } from '~/server/kube-watch'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
+import {
+  buildScheduleRunnerCommand,
+  SCHEDULE_RUNNER_ADMISSION_CHECK_ENV,
+  SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS_ENV,
+  SCHEDULE_RUNNER_ADMISSION_STATUS_URL_ENV,
+  SCHEDULE_RUNNER_RUNTIME_PROOF_CHECK_ENV,
+  SCHEDULE_RUNNER_SCHEDULE_NAMESPACE_ENV,
+  SCHEDULE_RUNNER_STAGE_CLEARANCE_ENFORCEMENT_ENV,
+} from '~/server/supporting-primitives-schedule-runner'
 import { makeName } from '~/server/supporting-primitives-naming'
 import {
   buildSwarmAgentIdentity,
@@ -159,14 +169,6 @@ const scheduleRunnerStatusReconcileThrottleByKey = new Map<string, number>()
 
 const SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS = 30_000
 const SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS = 30_000
-const SCHEDULE_RUNNER_NAMESPACE_ENV = 'JANGAR_POD_NAMESPACE'
-const SCHEDULE_RUNNER_SCHEDULE_NAMESPACE_ENV = 'JANGAR_SCHEDULE_NAMESPACE'
-const SCHEDULE_RUNNER_ADMISSION_CHECK_ENV = 'JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK'
-const SCHEDULE_RUNNER_RUNTIME_PROOF_CHECK_ENV = 'JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT'
-const SCHEDULE_RUNNER_ADMISSION_STATUS_URL_ENV = 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL'
-const SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS_ENV = 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS'
-const KUBERNETES_SERVICE_HOST_ENV = 'KUBERNETES_SERVICE_HOST'
-const KUBERNETES_SERVICE_PORT_ENV = 'KUBERNETES_SERVICE_PORT'
 const SWARM_STAGE_LABEL = 'swarm.proompteng.ai/stage'
 const SWARM_NAME_LABEL = 'swarm.proompteng.ai/name'
 const AGENTRUN_TEMPLATE_ANNOTATION = 'agents.proompteng.ai/template'
@@ -1382,212 +1384,6 @@ const resolveScheduleTarget = async (
   throw new Error(`unsupported schedule target kind: ${targetKind}`)
 }
 
-const buildScheduleRunnerCommand = (): string =>
-  [
-    'void (async () => {',
-    "  const { randomUUID } = await import('node:crypto');",
-    "  const { readFileSync } = await import('node:fs');",
-    "  const { request } = await import('node:https');",
-    `  const admissionAnnotations = ${JSON.stringify({
-      passportId: SWARM_ADMISSION_ANNOTATION_PASSPORT_ID,
-      decision: SWARM_ADMISSION_ANNOTATION_DECISION,
-      recoveryDigest: SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST,
-      runtimeDigest: SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST,
-      runtimeKits: SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS,
-      producerRevision: SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION,
-      warrantId: SWARM_ADMISSION_ANNOTATION_WARRANT_ID,
-      warrantStatus: SWARM_ADMISSION_ANNOTATION_WARRANT_STATUS,
-      proofCells: SWARM_ADMISSION_ANNOTATION_PROOF_CELLS,
-    })};`,
-    `  const swarmNameLabelName = ${JSON.stringify(SWARM_NAME_LABEL)};`,
-    `  const stageLabelName = ${JSON.stringify(SWARM_STAGE_LABEL)};`,
-    `  const scheduleNamespaceEnv = ${JSON.stringify(SCHEDULE_RUNNER_SCHEDULE_NAMESPACE_ENV)};`,
-    `  const admissionCheckEnv = ${JSON.stringify(SCHEDULE_RUNNER_ADMISSION_CHECK_ENV)};`,
-    `  const runtimeProofCheckEnv = ${JSON.stringify(SCHEDULE_RUNNER_RUNTIME_PROOF_CHECK_ENV)};`,
-    `  const admissionStatusUrlEnv = ${JSON.stringify(SCHEDULE_RUNNER_ADMISSION_STATUS_URL_ENV)};`,
-    `  const admissionStatusTimeoutEnv = ${JSON.stringify(SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS_ENV)};`,
-    "  const manifest = JSON.parse(readFileSync('/config/run.json', 'utf8').replaceAll('__JANGAR_DELIVERY_ID__', randomUUID()));",
-    "  const readEnv = (name) => process.env[name]?.trim() ?? '';",
-    "  const asRecord = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : null;",
-    '  const asArray = (value) => Array.isArray(value) ? value : [];',
-    "  const asString = (value) => typeof value === 'string' && value.trim().length > 0 ? value.trim() : '';",
-    '  const readNested = (value, path) => path.reduce((cursor, key) => asRecord(cursor)?.[key], value);',
-    '  const parseBoolean = (value, fallback) => {',
-    "    const normalized = String(value ?? '').trim().toLowerCase();",
-    '    if (!normalized) return fallback;',
-    "    if (['1', 'true', 'yes', 'y', 'on', 'enabled'].includes(normalized)) return true;",
-    "    if (['0', 'false', 'no', 'n', 'off', 'disabled'].includes(normalized)) return false;",
-    '    return fallback;',
-    '  };',
-    '  const parseTimeoutMs = (value) => {',
-    '    const parsed = Number.parseInt(String(value ?? "").trim(), 10);',
-    '    return Number.isFinite(parsed) && parsed > 0 ? parsed : 5000;',
-    '  };',
-    '  const normalizeRuntimeKits = (value) => {',
-    '    const values = Array.isArray(value) ? value : String(value ?? "").split(",");',
-    '    return values.map((entry) => String(entry).trim()).filter(Boolean).sort().join(",");',
-    '  };',
-    '  const writeNestedRecordValue = (value, path, key, nextValue) => {',
-    '    const parent = readNested(value, path);',
-    '    if (parent && typeof parent === "object" && !Array.isArray(parent)) parent[key] = nextValue;',
-    '  };',
-    '  const assertFreshUntil = (value, subject) => {',
-    '    const freshUntilMs = Date.parse(asString(value));',
-    '    if (!Number.isFinite(freshUntilMs) || freshUntilMs <= Date.now()) {',
-    '      throw new Error(`${subject} is stale`);',
-    '    }',
-    '  };',
-    "  const consumerByStage = { discover: 'swarm_plan', plan: 'swarm_plan', implement: 'swarm_implement', verify: 'swarm_verify' };",
-    "  const warrantClassByStage = { discover: 'discover', plan: 'plan', implement: 'implement', verify: 'verify' };",
-    '  const assertCurrentAdmission = async (namespace) => {',
-    '    const annotations = asRecord(readNested(manifest, ["metadata", "annotations"])) ?? {};',
-    '    const labels = asRecord(readNested(manifest, ["metadata", "labels"])) ?? {};',
-    '    const swarmName = asString(labels[swarmNameLabelName]);',
-    '    const stage = asString(labels[stageLabelName]).toLowerCase();',
-    '    const consumer = swarmName ? consumerByStage[stage] : undefined;',
-    '    const warrantExecutionClass = warrantClassByStage[stage];',
-    '    if (!consumer) return;',
-    '    const stampedPassportId = asString(annotations[admissionAnnotations.passportId]);',
-    '    if (!stampedPassportId) throw new Error(`missing schedule admission passport annotation for ${consumer}`);',
-    '    const statusUrlValue = readEnv(admissionStatusUrlEnv);',
-    '    if (!statusUrlValue) {',
-    '      throw new Error("schedule admission check enabled but status URL is empty");',
-    '    }',
-    '    const url = new URL(statusUrlValue);',
-    '    url.searchParams.set("namespace", namespace);',
-    '    const timeoutMs = parseTimeoutMs(readEnv(admissionStatusTimeoutEnv));',
-    '    const controller = new AbortController();',
-    '    const timeout = setTimeout(() => controller.abort(), timeoutMs);',
-    '    let response;',
-    '    try {',
-    '      response = await fetch(url, { headers: { accept: "application/json" }, signal: controller.signal });',
-    '    } finally {',
-    '      clearTimeout(timeout);',
-    '    }',
-    '    if (!response.ok) {',
-    '      const body = (await response.text()).slice(0, 500);',
-    '      throw new Error(`schedule admission status failed: ${response.status} ${body}`);',
-    '    }',
-    '    const status = asRecord(await response.json());',
-    '    if (!status) throw new Error("schedule admission status was not an object");',
-    '    const passport = asArray(status.admission_passports).map(asRecord).find((entry) => asString(entry?.consumer_class) === consumer);',
-    '    if (!passport) throw new Error(`missing current admission passport for ${consumer}`);',
-    '    const currentPassportId = asString(passport.admission_passport_id);',
-    '    const decision = asString(passport.decision);',
-    '    if (decision !== "allow") {',
-    '      throw new Error(`current schedule admission passport ${currentPassportId || stampedPassportId} is ${decision || "missing"}`);',
-    '    }',
-    '    assertFreshUntil(passport.fresh_until, `current schedule admission passport ${currentPassportId || stampedPassportId}`);',
-    '    const currentRuntimeDigest = asString(passport.runtime_kit_set_digest);',
-    '    const currentRecoveryDigest = asString(passport.recovery_case_set_digest);',
-    '    const currentRuntimeKits = normalizeRuntimeKits(passport.required_runtime_kits);',
-    '    let currentWarrantId = "";',
-    '    let currentWarrantStatus = "";',
-    '    let currentRequiredProofCells = "";',
-    '    const runtimeKitById = new Map(asArray(status.runtime_kits).map(asRecord).filter(Boolean).map((kit) => [asString(kit.runtime_kit_id), kit]).filter(([id]) => Boolean(id)));',
-    '    for (const runtimeKitId of currentRuntimeKits.split(",").filter(Boolean)) {',
-    '      const runtimeKit = runtimeKitById.get(runtimeKitId);',
-    '      if (!runtimeKit) throw new Error(`current schedule admission cites missing runtime kit ${runtimeKitId}`);',
-    '      const runtimeDecision = asString(runtimeKit.decision);',
-    '      if (runtimeDecision !== "healthy") {',
-    '        throw new Error(`current schedule admission runtime kit ${runtimeKitId} is ${runtimeDecision || "missing"}`);',
-    '      }',
-    '      assertFreshUntil(runtimeKit.fresh_until, `current schedule admission runtime kit ${runtimeKitId}`);',
-    '    }',
-    '    if (parseBoolean(readEnv(runtimeProofCheckEnv), true)) {',
-    '      if (!warrantExecutionClass) throw new Error(`missing recovery warrant execution class for stage ${stage || "unknown"}`);',
-    '      const warrant = asArray(status.recovery_warrants).map(asRecord).find((entry) => asString(entry?.execution_class) === warrantExecutionClass && asString(entry?.admission_passport_id) === (currentPassportId || stampedPassportId) && asString(entry?.status) !== "superseded");',
-    '      if (!warrant) throw new Error(`missing sealed recovery warrant for ${warrantExecutionClass} admission passport ${currentPassportId || stampedPassportId}`);',
-    '      currentWarrantId = asString(warrant.recovery_warrant_id);',
-    '      currentWarrantStatus = asString(warrant.status);',
-    '      if (currentWarrantStatus !== "sealed") {',
-    '        throw new Error(`current schedule recovery warrant ${currentWarrantId || "missing"} is ${currentWarrantStatus || "missing"}`);',
-    '      }',
-    '      const requiredProofCellIds = asArray(warrant.required_proof_cell_ids).map(asString).filter(Boolean);',
-    '      if (requiredProofCellIds.length === 0) throw new Error(`current schedule recovery warrant ${currentWarrantId} does not cite required proof cells`);',
-    '      const proofCellById = new Map(asArray(status.runtime_proof_cells).map(asRecord).filter(Boolean).map((cell) => [asString(cell.runtime_proof_cell_id), cell]).filter(([id]) => Boolean(id)));',
-    '      for (const proofCellId of requiredProofCellIds) {',
-    '        const proofCell = proofCellById.get(proofCellId);',
-    '        if (!proofCell) throw new Error(`current schedule recovery warrant ${currentWarrantId} cites missing runtime proof cell ${proofCellId}`);',
-    '        if (asString(proofCell.recovery_warrant_id) !== currentWarrantId) throw new Error(`runtime proof cell ${proofCellId} does not belong to recovery warrant ${currentWarrantId}`);',
-    '        if (proofCell.required !== true) throw new Error(`runtime proof cell ${proofCellId} is not marked required`);',
-    '        const proofStatus = asString(proofCell.status);',
-    '        if (proofStatus !== "healthy") throw new Error(`runtime proof cell ${proofCellId} for warrant ${currentWarrantId} is ${proofStatus || "missing"}`);',
-    '        assertFreshUntil(proofCell.expires_at, `runtime proof cell ${proofCellId}`);',
-    '      }',
-    '      currentRequiredProofCells = normalizeRuntimeKits(requiredProofCellIds);',
-    '    }',
-    '    writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.passportId, currentPassportId || stampedPassportId);',
-    '    writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.decision, decision);',
-    '    writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.runtimeDigest, currentRuntimeDigest);',
-    '    writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.recoveryDigest, currentRecoveryDigest);',
-    '    writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.runtimeKits, currentRuntimeKits);',
-    '    writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.producerRevision, asString(passport.producer_revision));',
-    '    if (currentWarrantId) writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.warrantId, currentWarrantId);',
-    '    if (currentWarrantStatus) writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.warrantStatus, currentWarrantStatus);',
-    '    if (currentRequiredProofCells) writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.proofCells, currentRequiredProofCells);',
-    '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmAdmissionPassportId", currentPassportId || stampedPassportId);',
-    '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmAdmissionDecision", decision);',
-    '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRuntimeKitSetDigest", currentRuntimeDigest);',
-    '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRecoveryCaseSetDigest", currentRecoveryDigest);',
-    '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRequiredRuntimeKits", currentRuntimeKits);',
-    '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmAdmissionProducerRevision", asString(passport.producer_revision));',
-    '    if (currentWarrantId) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRecoveryWarrantId", currentWarrantId);',
-    '    if (currentWarrantStatus) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRecoveryWarrantStatus", currentWarrantStatus);',
-    '    if (currentRequiredProofCells) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRequiredProofCells", currentRequiredProofCells);',
-    '  };',
-    '  const targetByKind = {',
-    "  AgentRun: { group: 'agents.proompteng.ai', version: 'v1alpha1', plural: 'agentruns' },",
-    "  OrchestrationRun: { group: 'orchestration.proompteng.ai', version: 'v1alpha1', plural: 'orchestrationruns' },",
-    '  };',
-    '  const target = targetByKind[String(manifest.kind)];',
-    "  if (!target) throw new Error(`unsupported schedule target kind: ${String(manifest.kind) || 'unknown'}`);",
-    `  const namespace = String((manifest?.metadata?.namespace ?? readEnv(${JSON.stringify(SCHEDULE_RUNNER_NAMESPACE_ENV)})) || 'agents');`,
-    '  const scheduleNamespace = readEnv(scheduleNamespaceEnv) || namespace;',
-    '  if (parseBoolean(readEnv(admissionCheckEnv), true)) {',
-    '    await assertCurrentAdmission(scheduleNamespace);',
-    '  }',
-    "  const token = readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8').trim();",
-    "  const ca = readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt', 'utf8');",
-    `  const serviceHost = readEnv(${JSON.stringify(KUBERNETES_SERVICE_HOST_ENV)});`,
-    `  const servicePort = readEnv(${JSON.stringify(KUBERNETES_SERVICE_PORT_ENV)});`,
-    "  if (!serviceHost || !servicePort) throw new Error('missing kubernetes service environment');",
-    '  const apiBase = `https://${serviceHost}:${servicePort}`;',
-    '  const url = new URL(`/apis/${target.group}/${target.version}/namespaces/${namespace}/${target.plural}`, apiBase);',
-    '  const body = JSON.stringify(manifest);',
-    '  await new Promise((resolve, reject) => {',
-    '    const req = request(',
-    '    url,',
-    '    {',
-    "      method: 'POST',",
-    '      ca,',
-    '      headers: {',
-    '        authorization: `Bearer ${token}`,',
-    "        accept: 'application/json',",
-    "        'content-type': 'application/json',",
-    "        'content-length': String(Buffer.byteLength(body)),",
-    '      },',
-    '    },',
-    '    (res) => {',
-    "      let responseBody = '';",
-    "      res.setEncoding('utf8');",
-    "      res.on('data', (chunk) => { responseBody += chunk; });",
-    "      res.on('end', () => {",
-    '        if ((res.statusCode ?? 500) >= 200 && (res.statusCode ?? 500) < 300) {',
-    '          resolve(undefined);',
-    '          return;',
-    '        }',
-    '        reject(new Error(`schedule runner create failed: ${res.statusCode ?? 500} ${responseBody}`));',
-    '      });',
-    '    },',
-    '    );',
-    "    req.on('error', reject);",
-    '    req.write(body);',
-    '    req.end();',
-    '  });',
-    '})();',
-  ].join('\n')
-
 const deleteScheduleRunnerResources = async (
   kube: ReturnType<typeof createKubernetesClient>,
   scheduleName: string,
@@ -1715,6 +1511,7 @@ const reconcileSchedule = async (
     const scheduleRunnerAdmissionCheck =
       shouldEnforceSwarmRuntimeAdmission() && supportingConfig.scheduleRunnerAdmissionCheck
     const scheduleRunnerRuntimeProofCheck = scheduleRunnerAdmissionCheck && shouldEnforceSwarmRuntimeProof()
+    const stageClearanceEnforcement = supportingConfig.stageClearanceEnforcement
     const image = supportingConfig.scheduleRunnerImage
     const nodeSelector = supportingConfig.scheduleRunnerNodeSelector
     const podNamespace = supportingConfig.podNamespace
@@ -1724,6 +1521,7 @@ const reconcileSchedule = async (
         ? scheduleServiceAccount
         : (supportingConfig.scheduleServiceAccount ?? undefined)
     const cronJobName = makeName(scheduleName, 'cron')
+    const scheduleDebtAnnotations = buildScheduleDebtAnnotations({ schedule, scheduleName, namespace, image })
     const cronJob = {
       apiVersion: 'batch/v1',
       kind: 'CronJob',
@@ -1740,9 +1538,13 @@ const reconcileSchedule = async (
         successfulJobsHistoryLimit: 3,
         failedJobsHistoryLimit: 1,
         jobTemplate: {
+          metadata: {
+            labels,
+            annotations: scheduleDebtAnnotations,
+          },
           spec: {
             template: {
-              metadata: { labels },
+              metadata: { labels, annotations: scheduleDebtAnnotations },
               spec: {
                 serviceAccountName,
                 restartPolicy: 'Never',
@@ -1769,6 +1571,10 @@ const reconcileSchedule = async (
                       {
                         name: SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS_ENV,
                         value: String(supportingConfig.scheduleRunnerAdmissionStatusTimeoutMs),
+                      },
+                      {
+                        name: SCHEDULE_RUNNER_STAGE_CLEARANCE_ENFORCEMENT_ENV,
+                        value: stageClearanceEnforcement,
                       },
                     ],
                     volumeMounts: [{ name: 'schedule-template', mountPath: '/config' }],
