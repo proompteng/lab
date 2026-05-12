@@ -284,10 +284,21 @@ readiness and Jangar material-action verdicts.
 
 ## Handoff
 
-Next engineer action: implement milestone 1 as a read-only frontier builder and tests. Use the observed blockers as
-fixtures: signal lag around `328k` seconds, market-context freshness around `330k` seconds, stale empirical jobs,
-zero promotion-eligible hypotheses, degraded quant ingestion stages, `ImagePullBackOff` support pods, and Jangar
-paper/live action holds.
+Implementation PR `codex/swarm-torghut-quant` covers engineer milestones 1 and 2 in observe mode:
+
+- `services/torghut/app/trading/profit_freshness_frontier.py` builds the read-only frontier from existing Torghut proof,
+  routeability, market-context, empirical, quant, hypothesis, and Jangar settlement refs.
+- `/readyz`, `/trading/health`, `/trading/status`, and `/trading/consumer-evidence` project
+  `torghut.profit-freshness-frontier.v1` without changing order submission, paper notional, live notional, or proof-floor
+  authority.
+- Jangar consumer evidence parses the frontier id, state, selected repair ids, and blocker refs into negative evidence
+  for paper/live action budgets.
+
+Next engineer action: after this observe payload is stable for one rollout, implement milestone 3 with an allowlisted
+zero-notional repair executor for empirical proof renewal, market-context refresh, or route/TCA recompute. Use the
+observed blockers as fixtures: signal lag around `328k` seconds, market-context freshness around `330k` seconds, stale
+empirical jobs, zero promotion-eligible hypotheses, degraded quant ingestion stages, `ImagePullBackOff` support pods,
+and Jangar paper/live action holds.
 
 Next deployer action: after the implementation PR merges, verify Argo, workload readiness, `/trading/status`,
 `/trading/consumer-evidence`, Jangar reliability settlement, and zero-notional capital posture. Do not call the rollout

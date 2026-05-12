@@ -906,6 +906,13 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(routeability["summary"]["zero_notional_lot_count"], 7)
         self.assertEqual(routeability["accepted_routeable_candidate_count"], 0)
+        frontier = payload["profit_freshness_frontier"]
+        self.assertEqual(
+            frontier["schema_version"],
+            "torghut.profit-freshness-frontier.v1",
+        )
+        self.assertEqual(frontier["capital_posture"]["paper_notional_limit"], "0")
+        self.assertEqual(frontier["capital_posture"]["live_notional_limit"], "0")
         dependency_fetch.assert_not_called()
         continuity_fetch.assert_not_called()
 
@@ -1290,6 +1297,24 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             health_routeability["schema_version"],
             status_routeability["schema_version"],
+        )
+        status_frontier = status_response.json()["profit_freshness_frontier"]
+        health_frontier = health_response.json()["profit_freshness_frontier"]
+        self.assertEqual(
+            status_frontier["schema_version"],
+            "torghut.profit-freshness-frontier.v1",
+        )
+        self.assertEqual(
+            status_frontier["capital_posture"]["paper_notional_limit"],
+            "0",
+        )
+        self.assertEqual(
+            status_frontier["capital_posture"]["live_notional_limit"],
+            "0",
+        )
+        self.assertEqual(
+            health_frontier["schema_version"],
+            status_frontier["schema_version"],
         )
 
     def test_trading_status_and_health_include_renewal_bond_profit_escrow(
