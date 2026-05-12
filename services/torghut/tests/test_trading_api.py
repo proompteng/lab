@@ -1072,6 +1072,17 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(exchange["summary"]["routeable_candidate_count"], 0)
         self.assertEqual(exchange["capital_safety_ref"]["max_notional"], "0")
+        settlement = payload["clock_settlement_receipt"]
+        self.assertEqual(
+            settlement["schema_version"],
+            "torghut.clock-settlement-receipt.v1",
+        )
+        self.assertEqual(settlement["routeable_candidate_count"], 0)
+        self.assertEqual(settlement["max_notional"], "0")
+        self.assertIn(
+            "selected_repair_packet_ids",
+            settlement["summary"],
+        )
         dependency_fetch.assert_not_called()
         continuity_fetch.assert_not_called()
 
@@ -1480,6 +1491,18 @@ class TestTradingApi(TestCase):
         self.assertEqual(status_exchange["summary"]["routeable_candidate_count"], 0)
         self.assertEqual(
             health_exchange["schema_version"], status_exchange["schema_version"]
+        )
+        status_settlement = status_response.json()["clock_settlement_receipt"]
+        health_settlement = health_response.json()["clock_settlement_receipt"]
+        self.assertEqual(
+            status_settlement["schema_version"],
+            "torghut.clock-settlement-receipt.v1",
+        )
+        self.assertEqual(status_settlement["routeable_candidate_count"], 0)
+        self.assertEqual(status_settlement["max_notional"], "0")
+        self.assertEqual(
+            health_settlement["schema_version"],
+            status_settlement["schema_version"],
         )
         status_clearinghouse = status_response.json()[
             "route_evidence_clearinghouse_packet"

@@ -208,6 +208,11 @@ Testing rules for the trading core:
   high-activity TCA repair, missing-TCA probes, forecast registry repair, and alpha-readiness repair into compact
   cohorts Jangar can cite in paper/live material-action evidence refs. Every cohort stays at `max_notional=0`; the
   ledger is an observe-mode settlement surface, not a submit authorization.
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/consumer-evidence` now include the
+  May 12 doc 189 `torghut.clock-settlement-receipt.v1` projection. It compares direct ClickHouse TA freshness, scoped
+  Jangar quant, TCA, empirical, promotion, and rollout witnesses against the published `evidence_clock_arbiter`; a fresh
+  direct ClickHouse witness with a missing or stale `clickhouse_ta` published clock emits a zero-notional
+  `clock_wiring_split` repair packet. The receipt is observe-mode only and keeps `max_notional=0`.
 - `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/consumer-evidence` now also surface
   the May 8 doc 184 `torghut.profit-repair-settlement-ledger.v1` projection. It joins the proof floor, consumer
   evidence receipt, capital reentry cohorts, quality frontier, route/TCA rows, scoped quant health, and Jangar

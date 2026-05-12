@@ -18,7 +18,11 @@ from ..config import settings
 from ..models import TradeCursor
 from .clickhouse import normalize_symbol, to_datetime64
 from .models import SignalEnvelope
-from .simulation import resolve_simulation_context, signal_ingest_runtime, simulation_context_enabled
+from .simulation import (
+    resolve_simulation_context,
+    signal_ingest_runtime,
+    simulation_context_enabled,
+)
 from .simulation_progress import active_simulation_runtime_context
 from .simulation_window import normalize_simulation_cursor, simulation_window_bounds
 from .time_source import trading_now
@@ -29,8 +33,11 @@ FLAT_CURSOR_OVERLAP = timedelta(seconds=2)
 LATEST_SIGNAL_TS_CACHE_TTL = timedelta(seconds=30)
 LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN = timedelta(minutes=5)
 SIMULATION_CURSOR_BASELINE = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
 def _simulation_fetch_window() -> timedelta:
     return timedelta(seconds=max(1, settings.trading_simulation_fetch_window_seconds))
+
 
 FLAT_SIGNAL_COLUMNS = [
     "ts",
@@ -106,7 +113,9 @@ class ClickHouseSignalIngestor:
         self.password = password or settings.trading_clickhouse_password
         self.table = _qualified_table_name(table or settings.trading_signal_table)
         self.batch_size = batch_size or settings.trading_signal_batch_size
-        self.initial_lookback_minutes = initial_lookback_minutes or settings.trading_signal_lookback_minutes
+        self.initial_lookback_minutes = (
+            initial_lookback_minutes or settings.trading_signal_lookback_minutes
+        )
         self.schema = schema or settings.trading_signal_schema
         self.account_label = account_label or settings.trading_account_label
         self.simulation_mode = simulation_context_enabled()
@@ -139,10 +148,12 @@ class ClickHouseSignalIngestor:
         poll_started_at = trading_now(account_label=self.account_label)
         time_column = self._resolve_time_column()
         latest_signal_at = self._latest_signal_timestamp(time_column)
-        cursor_at, cursor_seq, cursor_symbol, fast_forwarded = self._prepare_fetch_cursor(
-            session=session,
-            poll_started_at=poll_started_at,
-            latest_signal_at=latest_signal_at,
+        cursor_at, cursor_seq, cursor_symbol, fast_forwarded = (
+            self._prepare_fetch_cursor(
+                session=session,
+                poll_started_at=poll_started_at,
+                latest_signal_at=latest_signal_at,
+            )
         )
         if self.simulation_mode:
             return self._fetch_simulation_signals(
@@ -232,10 +243,12 @@ class ClickHouseSignalIngestor:
                 query_start=query_window_start,
                 query_end=query_window_end,
                 signal_lag_seconds=lag,
-                no_signal_reason="cursor_tail_stable" if effective_latest_signal_at is not None else "no_signals_in_window",
+                no_signal_reason="cursor_tail_stable"
+                if effective_latest_signal_at is not None
+                else "no_signals_in_window",
             )
 
-        time_column = _safe_identifier(self._resolve_time_column(), kind='column')
+        time_column = _safe_identifier(self._resolve_time_column(), kind="column")
         query = self._build_simulation_query(
             start=query_window_start,
             end=query_window_end,
@@ -290,7 +303,9 @@ class ClickHouseSignalIngestor:
             )
 
         if query_window_end >= effective_latest_signal_at:
-            lag = max(0.0, (poll_started_at - effective_latest_signal_at).total_seconds())
+            lag = max(
+                0.0, (poll_started_at - effective_latest_signal_at).total_seconds()
+            )
             return SignalBatch(
                 signals=[],
                 cursor_at=query_window_end,
@@ -349,7 +364,7 @@ class ClickHouseSignalIngestor:
                     no_signal_reason="invalid_symbol",
                 )
 
-        time_column = _safe_identifier(self._resolve_time_column(), kind='column')
+        time_column = _safe_identifier(self._resolve_time_column(), kind="column")
         query = self._build_replay_query(
             start=start,
             end=end,
@@ -406,7 +421,9 @@ class ClickHouseSignalIngestor:
         self._set_cursor(session, cursor_at, cursor_seq, cursor_symbol)
         return cursor_at, cursor_seq, cursor_symbol, True
 
-    def _overlap_cutoff(self, time_column: str, cursor_at: datetime) -> Optional[datetime]:
+    def _overlap_cutoff(
+        self, time_column: str, cursor_at: datetime
+    ) -> Optional[datetime]:
         if time_column == "ts" and not self._supports_seq_for_time_column(time_column):
             return cursor_at
         return None
@@ -453,23 +470,27 @@ class ClickHouseSignalIngestor:
         query_end: datetime,
         poll_started_at: datetime,
     ) -> SignalBatch:
-        no_signal_reason, signal_lag_seconds, cursor_at, cursor_seq, cursor_symbol = self._empty_fetch_reason(
-            cursor_at=cursor_at,
-            cursor_seq=cursor_seq,
-            cursor_symbol=cursor_symbol,
-            latest_signal_at=latest_signal_at,
-            time_column=time_column,
-            query_window_end=query_end,
+        no_signal_reason, signal_lag_seconds, cursor_at, cursor_seq, cursor_symbol = (
+            self._empty_fetch_reason(
+                cursor_at=cursor_at,
+                cursor_seq=cursor_seq,
+                cursor_symbol=cursor_symbol,
+                latest_signal_at=latest_signal_at,
+                time_column=time_column,
+                query_window_end=query_end,
+            )
         )
-        cursor_at, cursor_seq, cursor_symbol, no_signal_reason, signal_lag_seconds = self._maybe_advance_empty_cursor(
-            cursor_at=cursor_at,
-            cursor_seq=cursor_seq,
-            cursor_symbol=cursor_symbol,
-            latest_signal_at=latest_signal_at,
-            poll_started_at=poll_started_at,
-            query_window_end=query_end,
-            no_signal_reason=no_signal_reason,
-            signal_lag_seconds=signal_lag_seconds,
+        cursor_at, cursor_seq, cursor_symbol, no_signal_reason, signal_lag_seconds = (
+            self._maybe_advance_empty_cursor(
+                cursor_at=cursor_at,
+                cursor_seq=cursor_seq,
+                cursor_symbol=cursor_symbol,
+                latest_signal_at=latest_signal_at,
+                poll_started_at=poll_started_at,
+                query_window_end=query_end,
+                no_signal_reason=no_signal_reason,
+                signal_lag_seconds=signal_lag_seconds,
+            )
         )
         return SignalBatch(
             signals=[],
@@ -527,13 +548,33 @@ class ClickHouseSignalIngestor:
         signal_lag_seconds: float | None,
     ) -> tuple[datetime, Optional[int], Optional[str], str, float | None]:
         if self.empty_batch_advance_seconds <= 0:
-            return cursor_at, cursor_seq, cursor_symbol, no_signal_reason, signal_lag_seconds
+            return (
+                cursor_at,
+                cursor_seq,
+                cursor_symbol,
+                no_signal_reason,
+                signal_lag_seconds,
+            )
         if no_signal_reason in {"cursor_ahead_of_stream", "cursor_tail_stable"}:
-            return cursor_at, cursor_seq, cursor_symbol, no_signal_reason, signal_lag_seconds
+            return (
+                cursor_at,
+                cursor_seq,
+                cursor_symbol,
+                no_signal_reason,
+                signal_lag_seconds,
+            )
 
-        cursor_advance = poll_started_at - timedelta(seconds=self.empty_batch_advance_seconds)
+        cursor_advance = poll_started_at - timedelta(
+            seconds=self.empty_batch_advance_seconds
+        )
         if cursor_at >= cursor_advance:
-            return cursor_at, cursor_seq, cursor_symbol, no_signal_reason, signal_lag_seconds
+            return (
+                cursor_at,
+                cursor_seq,
+                cursor_symbol,
+                no_signal_reason,
+                signal_lag_seconds,
+            )
 
         logger.debug(
             "No signals fetched; advancing cursor forward from=%s to=%s (empty_batch_advance_seconds=%s)",
@@ -568,26 +609,26 @@ class ClickHouseSignalIngestor:
 
         selected_columns, select_expr = self._select_columns_and_expression(time_column)
         query_parts = [
-            'SELECT',
+            "SELECT",
             select_expr,
-            'FROM',
+            "FROM",
             self.table,
-            'WHERE',
-            ' AND '.join(where_parts),
+            "WHERE",
+            " AND ".join(where_parts),
         ]
         if ordered:
             order_clause = f"{time_column} ASC"
             if self._supports_seq_for_time_column(time_column):
                 order_clause = f"{time_column} ASC, symbol ASC, seq ASC"
-            query_parts.extend(['ORDER BY', order_clause])
+            query_parts.extend(["ORDER BY", order_clause])
         if limit:
-            query_parts.extend(['LIMIT', str(max(int(limit), 1))])
+            query_parts.extend(["LIMIT", str(max(int(limit), 1))])
         query = self._maybe_join_microbar_volume(
-            ' '.join(query_parts),
+            " ".join(query_parts),
             time_column=time_column,
             selected_columns=selected_columns,
         )
-        return f'{query} FORMAT JSONEachRow'
+        return f"{query} FORMAT JSONEachRow"
 
     def _build_simulation_query(
         self,
@@ -601,8 +642,8 @@ class ClickHouseSignalIngestor:
     ) -> str:
         cursor_expr = to_datetime64(cursor_at)
         where_parts = [
-            f'{time_column} >= {to_datetime64(start)}',
-            f'{time_column} <= {to_datetime64(end)}',
+            f"{time_column} >= {to_datetime64(start)}",
+            f"{time_column} <= {to_datetime64(end)}",
         ]
         source_clause = self._source_where_clause()
         if source_clause is not None:
@@ -610,51 +651,51 @@ class ClickHouseSignalIngestor:
         supports_seq = self._supports_seq_for_time_column(time_column)
         if supports_seq:
             if cursor_seq is not None or cursor_symbol is not None:
-                symbol_clause = ''
+                symbol_clause = ""
                 if cursor_symbol is not None:
                     symbol_literal = _quote_literal(cursor_symbol)
                     if cursor_seq is not None:
                         symbol_clause = (
-                            f'(symbol > {symbol_literal} OR '
-                            f'(symbol = {symbol_literal} AND seq > {cursor_seq}))'
+                            f"(symbol > {symbol_literal} OR "
+                            f"(symbol = {symbol_literal} AND seq > {cursor_seq}))"
                         )
                     else:
-                        symbol_clause = f'symbol > {symbol_literal}'
+                        symbol_clause = f"symbol > {symbol_literal}"
                 else:
-                    symbol_clause = f'seq > {cursor_seq}'
+                    symbol_clause = f"seq > {cursor_seq}"
                 where_parts.append(
-                    f'({time_column} > {cursor_expr} OR '
-                    f'({time_column} = {cursor_expr} AND {symbol_clause}))'
+                    f"({time_column} > {cursor_expr} OR "
+                    f"({time_column} = {cursor_expr} AND {symbol_clause}))"
                 )
             else:
-                where_parts.append(f'{time_column} >= {cursor_expr}')
+                where_parts.append(f"{time_column} >= {cursor_expr}")
         elif cursor_symbol is not None:
             symbol_literal = _quote_literal(cursor_symbol)
             where_parts.append(
-                f'({time_column} > {cursor_expr} OR '
-                f'({time_column} = {cursor_expr} AND symbol > {symbol_literal}))'
+                f"({time_column} > {cursor_expr} OR "
+                f"({time_column} = {cursor_expr} AND symbol > {symbol_literal}))"
             )
         else:
-            where_parts.append(f'{time_column} >= {cursor_expr}')
+            where_parts.append(f"{time_column} >= {cursor_expr}")
 
-        order_clause = f'{time_column} ASC'
+        order_clause = f"{time_column} ASC"
         if supports_seq:
-            order_clause = f'{time_column} ASC, symbol ASC, seq ASC'
-        elif time_column == 'ts':
-            order_clause = f'{time_column} ASC, symbol ASC'
+            order_clause = f"{time_column} ASC, symbol ASC, seq ASC"
+        elif time_column == "ts":
+            order_clause = f"{time_column} ASC, symbol ASC"
 
         selected_columns, select_expr = self._select_columns_and_expression(time_column)
-        query = ' '.join(
+        query = " ".join(
             [
-                'SELECT',
+                "SELECT",
                 select_expr,
-                'FROM',
+                "FROM",
                 self.table,
-                'WHERE',
-                ' AND '.join(where_parts),
-                'ORDER BY',
+                "WHERE",
+                " AND ".join(where_parts),
+                "ORDER BY",
                 order_clause,
-                'LIMIT',
+                "LIMIT",
                 str(max(int(self.batch_size), 1)),
             ]
         )
@@ -663,7 +704,7 @@ class ClickHouseSignalIngestor:
             time_column=time_column,
             selected_columns=selected_columns,
         )
-        return f'{query} FORMAT JSONEachRow'
+        return f"{query} FORMAT JSONEachRow"
 
     def _signals_from_rows(self, rows: list[dict[str, Any]]) -> list[SignalEnvelope]:
         signals: list[SignalEnvelope] = []
@@ -720,7 +761,8 @@ class ClickHouseSignalIngestor:
         else:
             if (
                 self._latest_signal_ts_last_error_at is None
-                or now - self._latest_signal_ts_last_error_at >= LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN
+                or now - self._latest_signal_ts_last_error_at
+                >= LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN
             ):
                 logger.warning(
                     "Failed to query latest signal timestamp from ClickHouse; using cached value. error=%s",
@@ -739,18 +781,50 @@ class ClickHouseSignalIngestor:
         self._latest_signal_ts_cache = _parse_ts(raw) if raw is not None else None
         return self._latest_signal_ts_cache
 
+    def latest_signal_status(self) -> dict[str, Any]:
+        if not self.url:
+            return {
+                "state": "missing",
+                "reason_codes": ["clickhouse_url_missing"],
+                "source_ref": self.table,
+            }
+        try:
+            time_column = self._resolve_time_column()
+            latest_signal_at = self._latest_signal_timestamp(time_column)
+        except Exception as exc:
+            logger.warning("Failed to load ClickHouse TA freshness status: %s", exc)
+            return {
+                "state": "missing",
+                "reason_codes": ["clickhouse_ta_status_query_failed"],
+                "source_ref": self.table,
+                "detail": str(exc)[:200],
+            }
+        if latest_signal_at is None:
+            return {
+                "state": "missing",
+                "reason_codes": ["clickhouse_ta_latest_signal_missing"],
+                "source_ref": self.table,
+                "time_column": time_column,
+            }
+        return {
+            "state": "current",
+            "latest_signal_at": latest_signal_at,
+            "source_ref": self.table,
+            "time_column": time_column,
+        }
+
     def _latest_signal_timestamp_queries(self, time_column: str) -> list[str]:
         queries: list[str] = []
-        safe_time_column = _safe_identifier(time_column, kind='column')
-        order_clause = f'{safe_time_column} DESC'
+        safe_time_column = _safe_identifier(time_column, kind="column")
+        order_clause = f"{safe_time_column} DESC"
         if self._supports_seq_for_time_column(time_column):
-            order_clause = f'{safe_time_column} DESC, symbol DESC, seq DESC'
-        elif time_column == 'ts':
-            order_clause = f'{safe_time_column} DESC, symbol DESC'
+            order_clause = f"{safe_time_column} DESC, symbol DESC, seq DESC"
+        elif time_column == "ts":
+            order_clause = f"{safe_time_column} DESC, symbol DESC"
         query_parts = [
-            'SELECT',
-            f'{safe_time_column} AS latest_signal_ts',
-            'FROM',
+            "SELECT",
+            f"{safe_time_column} AS latest_signal_ts",
+            "FROM",
             self.table,
         ]
         where_parts: list[str] = []
@@ -760,30 +834,38 @@ class ClickHouseSignalIngestor:
         if self.simulation_mode:
             window_start, window_end = simulation_window_bounds()
             if window_start is not None:
-                where_parts.append(f'{safe_time_column} >= {to_datetime64(window_start)}')
+                where_parts.append(
+                    f"{safe_time_column} >= {to_datetime64(window_start)}"
+                )
             if window_end is not None:
-                where_parts.append(f'{safe_time_column} <= {to_datetime64(window_end)}')
+                where_parts.append(f"{safe_time_column} <= {to_datetime64(window_end)}")
         if where_parts:
-            query_parts.extend(['WHERE', ' AND '.join(where_parts)])
+            query_parts.extend(["WHERE", " AND ".join(where_parts)])
         query_parts.extend(
             [
-                'ORDER BY',
+                "ORDER BY",
                 order_clause,
-                'LIMIT',
-                '1',
-                'FORMAT JSONEachRow',
+                "LIMIT",
+                "1",
+                "FORMAT JSONEachRow",
             ]
         )
-        queries.append(' '.join(query_parts))
+        queries.append(" ".join(query_parts))
         return queries
 
     def commit_cursor(self, session: Session, batch: "SignalBatch") -> None:
         if batch.cursor_at is None:
             return
-        self._set_cursor(session, batch.cursor_at, batch.cursor_seq, batch.cursor_symbol)
+        self._set_cursor(
+            session, batch.cursor_at, batch.cursor_seq, batch.cursor_symbol
+        )
 
     def parse_row(self, row: dict[str, Any]) -> Optional[SignalEnvelope]:
-        event_ts = _parse_ts(row.get("event_ts")) or _parse_ts(row.get("ts")) or _parse_ts(row.get("timestamp"))
+        event_ts = (
+            _parse_ts(row.get("event_ts"))
+            or _parse_ts(row.get("ts"))
+            or _parse_ts(row.get("timestamp"))
+        )
         symbol = row.get("symbol")
         if event_ts is None or not isinstance(symbol, str):
             return None
@@ -793,7 +875,9 @@ class ClickHouseSignalIngestor:
                 payload = _payload_from_flat_row(row)
             else:
                 _merge_flat_row_fallbacks(payload, row)
-            payload = _attach_simulation_context(payload=payload, row=row, event_ts=event_ts)
+            payload = _attach_simulation_context(
+                payload=payload, row=row, event_ts=event_ts
+            )
             return SignalEnvelope(
                 event_ts=event_ts,
                 ingest_ts=_parse_ts(row.get("ingest_ts")),
@@ -808,11 +892,14 @@ class ClickHouseSignalIngestor:
             return None
 
     def _build_query(
-        self, cursor_at: datetime, cursor_seq: Optional[int], cursor_symbol: Optional[str]
+        self,
+        cursor_at: datetime,
+        cursor_seq: Optional[int],
+        cursor_symbol: Optional[str],
     ) -> str:
         cursor_expr = to_datetime64(cursor_at)
         limit = self.batch_size
-        time_column = _safe_identifier(self._resolve_time_column(), kind='column')
+        time_column = _safe_identifier(self._resolve_time_column(), kind="column")
         supports_seq = self._supports_seq_for_time_column(time_column)
         selected_columns, select_expr = self._select_columns_and_expression(time_column)
         where_clause = f"{time_column} > {cursor_expr}"
@@ -843,17 +930,17 @@ class ClickHouseSignalIngestor:
         source_clause = self._source_where_clause()
         if source_clause is not None:
             where_clause = f"({where_clause}) AND {source_clause}"
-        query = ' '.join(
+        query = " ".join(
             [
-                'SELECT',
+                "SELECT",
                 select_expr,
-                'FROM',
+                "FROM",
                 self.table,
-                'WHERE',
+                "WHERE",
                 where_clause,
-                'ORDER BY',
+                "ORDER BY",
                 order_clause,
-                'LIMIT',
+                "LIMIT",
                 str(max(int(limit), 1)),
             ]
         )
@@ -862,7 +949,7 @@ class ClickHouseSignalIngestor:
             time_column=time_column,
             selected_columns=selected_columns,
         )
-        return f'{query} FORMAT JSONEachRow'
+        return f"{query} FORMAT JSONEachRow"
 
     def fetch_signals_between(
         self,
@@ -880,7 +967,7 @@ class ClickHouseSignalIngestor:
             if normalized_symbol is None:
                 logger.warning("Invalid symbol for signal replay: %s", symbol)
                 return []
-        time_column = _safe_identifier(self._resolve_time_column(), kind='column')
+        time_column = _safe_identifier(self._resolve_time_column(), kind="column")
         selected_columns, select_expr = self._select_columns_and_expression(time_column)
         where_parts = [
             f"{time_column} >= {to_datetime64(start)}",
@@ -895,23 +982,23 @@ class ClickHouseSignalIngestor:
         if self._supports_seq_for_time_column(time_column):
             order_clause = f"{time_column} ASC, seq ASC"
         query_parts = [
-            'SELECT',
+            "SELECT",
             select_expr,
-            'FROM',
+            "FROM",
             self.table,
-            'WHERE',
-            ' AND '.join(where_parts),
-            'ORDER BY',
+            "WHERE",
+            " AND ".join(where_parts),
+            "ORDER BY",
             order_clause,
         ]
         if limit:
-            query_parts.extend(['LIMIT', str(max(int(limit), 1))])
+            query_parts.extend(["LIMIT", str(max(int(limit), 1))])
         query = self._maybe_join_microbar_volume(
-            ' '.join(query_parts),
+            " ".join(query_parts),
             time_column=time_column,
             selected_columns=selected_columns,
         )
-        query = f'{query} FORMAT JSONEachRow'
+        query = f"{query} FORMAT JSONEachRow"
         rows = self._query_clickhouse(query)
         signals: list[SignalEnvelope] = []
         for row in rows:
@@ -925,11 +1012,15 @@ class ClickHouseSignalIngestor:
         if len(signals) < 2:
             return signals
 
-        deduped_by_key: dict[tuple[datetime, str, str | None, tuple[Any, ...], str], SignalEnvelope] = {}
+        deduped_by_key: dict[
+            tuple[datetime, str, str | None, tuple[Any, ...], str], SignalEnvelope
+        ] = {}
         for signal in signals:
             key = _signal_identity(signal)
             current = deduped_by_key.get(key)
-            if current is None or _prefer_preferred_signal(candidate=signal, current=current):
+            if current is None or _prefer_preferred_signal(
+                candidate=signal, current=current
+            ):
                 deduped_by_key[key] = signal
         if len(deduped_by_key) == len(signals):
             return signals
@@ -938,7 +1029,9 @@ class ClickHouseSignalIngestor:
         return deduped
 
     def _filter_signals(self, signals: list[SignalEnvelope]) -> list[SignalEnvelope]:
-        allowed_sources = _normalized_signal_sources(settings.trading_signal_allowed_sources_raw)
+        allowed_sources = _normalized_signal_sources(
+            settings.trading_signal_allowed_sources_raw
+        )
         if not allowed_sources or not signals:
             return signals
         return [
@@ -957,10 +1050,12 @@ class ClickHouseSignalIngestor:
         request_url = f"{self.url}/?{urlencode(params)}"
         parsed = urlsplit(request_url)
         scheme = parsed.scheme.lower()
-        if scheme not in {'http', 'https'}:
-            raise RuntimeError(f'unsupported_clickhouse_url_scheme:{scheme or "missing"}')
+        if scheme not in {"http", "https"}:
+            raise RuntimeError(
+                f"unsupported_clickhouse_url_scheme:{scheme or 'missing'}"
+            )
         if not parsed.hostname:
-            raise RuntimeError('invalid_clickhouse_url_host')
+            raise RuntimeError("invalid_clickhouse_url_host")
 
         headers = {"Content-Type": "text/plain"}
         if self.username:
@@ -968,10 +1063,10 @@ class ClickHouseSignalIngestor:
         if self.password:
             headers["X-ClickHouse-Key"] = self.password
 
-        path = parsed.path or '/'
+        path = parsed.path or "/"
         if parsed.query:
-            path = f'{path}?{parsed.query}'
-        connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+            path = f"{path}?{parsed.query}"
+        connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
         connection = connection_class(
             parsed.hostname,
             parsed.port,
@@ -980,11 +1075,11 @@ class ClickHouseSignalIngestor:
 
         rows: list[dict[str, Any]] = []
         try:
-            connection.request('GET', path, headers=headers)
+            connection.request("GET", path, headers=headers)
             response = connection.getresponse()
             if response.status < 200 or response.status >= 300:
-                detail = response.read().decode('utf-8', errors='replace')
-                raise RuntimeError(f'clickhouse_http_{response.status}:{detail[:200]}')
+                detail = response.read().decode("utf-8", errors="replace")
+                raise RuntimeError(f"clickhouse_http_{response.status}:{detail[:200]}")
             payload = response.read().decode("utf-8")
         finally:
             connection.close()
@@ -1033,7 +1128,9 @@ class ClickHouseSignalIngestor:
         select_columns = self._select_columns_for_schema(time_column)
         return (
             select_columns,
-            ', '.join(_safe_identifier(column, kind='column') for column in select_columns),
+            ", ".join(
+                _safe_identifier(column, kind="column") for column in select_columns
+            ),
         )
 
     def _select_expression(self, time_column: str) -> str:
@@ -1049,48 +1146,55 @@ class ClickHouseSignalIngestor:
         if not self._should_join_microbar_volume(selected_columns):
             return query
         join_conditions = [
-            's.symbol = m.symbol',
-            f's.{_safe_identifier(time_column, kind="column")} = m.event_ts',
+            "s.symbol = m.symbol",
+            f"s.{_safe_identifier(time_column, kind='column')} = m.event_ts",
         ]
-        if 'source' in selected_columns:
-            join_conditions.append('s.source = m.source')
-        if 'window_size' in selected_columns:
-            join_conditions.append('s.window_size = m.window_size')
-        return ' '.join(
+        if "source" in selected_columns:
+            join_conditions.append("s.source = m.source")
+        if "window_size" in selected_columns:
+            join_conditions.append("s.window_size = m.window_size")
+        return " ".join(
             [
-                'SELECT',
+                "SELECT",
                 "s.*, if(m.symbol = '', NULL, m.v) AS microbar_volume",
-                'FROM',
-                f'({query}) AS s',
-                'ANY LEFT JOIN',
-                f'{_qualified_table_name(settings.trading_price_table)} AS m',
-                'ON',
-                ' AND '.join(join_conditions),
+                "FROM",
+                f"({query}) AS s",
+                "ANY LEFT JOIN",
+                f"{_qualified_table_name(settings.trading_price_table)} AS m",
+                "ON",
+                " AND ".join(join_conditions),
             ]
         )
 
     def _should_join_microbar_volume(self, selected_columns: list[str]) -> bool:
-        if 'microbar_volume' in selected_columns:
+        if "microbar_volume" in selected_columns:
             return False
-        price_table = (settings.trading_price_table or '').strip()
+        price_table = (settings.trading_price_table or "").strip()
         if not price_table:
             return False
         try:
             qualified_price_table = _qualified_table_name(price_table)
         except ValueError:
-            logger.warning("Invalid ClickHouse price table for microbar volume join: %s", price_table)
+            logger.warning(
+                "Invalid ClickHouse price table for microbar volume join: %s",
+                price_table,
+            )
             return False
         return qualified_price_table != self.table
 
     def _source_where_clause(self) -> str | None:
-        allowed_sources = _normalized_signal_sources(settings.trading_signal_allowed_sources_raw)
+        allowed_sources = _normalized_signal_sources(
+            settings.trading_signal_allowed_sources_raw
+        )
         if not allowed_sources:
             return None
         columns = self._resolve_columns()
-        if columns is not None and 'source' not in columns:
+        if columns is not None and "source" not in columns:
             return None
-        rendered = ', '.join(_quote_literal(source) for source in sorted(allowed_sources))
-        return f'lower(source) IN ({rendered})'
+        rendered = ", ".join(
+            _quote_literal(source) for source in sorted(allowed_sources)
+        )
+        return f"lower(source) IN ({rendered})"
 
     def _select_columns_for_schema(self, time_column: str) -> list[str]:
         if self.schema == "flat":
@@ -1116,13 +1220,13 @@ class ClickHouseSignalIngestor:
         if self._columns is not None:
             return self._columns
         database, table = _split_table(self.table)
-        query = ' '.join(
+        query = " ".join(
             [
-                'SELECT name FROM system.columns WHERE',
+                "SELECT name FROM system.columns WHERE",
                 f"database = {_quote_literal(database)}",
-                'AND',
+                "AND",
                 f"table = {_quote_literal(table)}",
-                'FORMAT JSONEachRow',
+                "FORMAT JSONEachRow",
             ]
         )
         try:
@@ -1167,7 +1271,9 @@ class ClickHouseSignalIngestor:
             self._time_column = "event_ts"
         return self._time_column
 
-    def _get_cursor(self, session: Session) -> tuple[datetime, Optional[int], Optional[str]]:
+    def _get_cursor(
+        self, session: Session
+    ) -> tuple[datetime, Optional[int], Optional[str]]:
         stmt = select(TradeCursor).where(
             TradeCursor.source == "clickhouse",
             TradeCursor.account_label == self.account_label,
@@ -1391,7 +1497,9 @@ def _copy_row_values_if_missing(
         _copy_row_value_if_missing(payload, row, key)
 
 
-def _copy_row_value_if_missing(payload: dict[str, Any], row: dict[str, Any], key: str) -> None:
+def _copy_row_value_if_missing(
+    payload: dict[str, Any], row: dict[str, Any], key: str
+) -> None:
     value = row.get(key)
     if value is not None and payload.get(key) is None:
         payload[key] = value
@@ -1408,7 +1516,7 @@ def _ensure_price_value(payload: dict[str, Any], row: dict[str, Any]) -> None:
             return
         except (TypeError, ValueError):
             logger.debug(
-                'Unable to derive midpoint price from imbalance fields bid=%r ask=%r',
+                "Unable to derive midpoint price from imbalance fields bid=%r ask=%r",
                 bid_px,
                 ask_px,
             )
@@ -1426,9 +1534,8 @@ def _merge_imbalance_payload(payload: dict[str, Any], row: dict[str, Any]) -> No
 
     bid_px = row.get("imbalance_bid_px")
     ask_px = row.get("imbalance_ask_px")
-    if (
-        "imbalance" not in payload
-        and (spread_value is not None or bid_px is not None or ask_px is not None)
+    if "imbalance" not in payload and (
+        spread_value is not None or bid_px is not None or ask_px is not None
     ):
         payload["imbalance"] = {}
 
@@ -1445,7 +1552,9 @@ def _merge_imbalance_payload(payload: dict[str, Any], row: dict[str, Any]) -> No
         imbalance["spread"] = spread_value
 
 
-def _merge_microstructure_signal_payload(payload: dict[str, Any], row: dict[str, Any]) -> None:
+def _merge_microstructure_signal_payload(
+    payload: dict[str, Any], row: dict[str, Any]
+) -> None:
     signal_value = row.get("microstructure_signal_v1")
     if signal_value is None:
         return
@@ -1536,29 +1645,35 @@ def _signal_sort_key(signal: SignalEnvelope) -> tuple[datetime, str, str, int, s
     )
 
 
-def _prefer_preferred_signal(*, candidate: SignalEnvelope, current: SignalEnvelope) -> bool:
+def _prefer_preferred_signal(
+    *, candidate: SignalEnvelope, current: SignalEnvelope
+) -> bool:
     return _signal_preference_key(candidate) > _signal_preference_key(current)
 
 
-def _signal_preference_key(signal: SignalEnvelope) -> tuple[int, int, int, str, int, str]:
+def _signal_preference_key(
+    signal: SignalEnvelope,
+) -> tuple[int, int, int, str, int, str]:
     return (
         1 if _signal_matches_active_simulation_run(signal) else 0,
         _signal_provenance_completeness(signal),
         len(_signal_payload_fingerprint(signal)),
         _signal_payload_context_fingerprint(signal),
         _coerce_seq(signal.seq) or -1,
-        signal.source or '',
+        signal.source or "",
     )
 
 
 def _signal_matches_active_simulation_run(signal: SignalEnvelope) -> bool:
     context = _signal_simulation_context(signal)
-    signal_run_id = str(context.get('simulation_run_id') or '').strip()
+    signal_run_id = str(context.get("simulation_run_id") or "").strip()
     if not signal_run_id:
         return False
     runtime_context = active_simulation_runtime_context()
     active_run_id = str(
-        (runtime_context or {}).get('run_id') or settings.trading_simulation_run_id or ''
+        (runtime_context or {}).get("run_id")
+        or settings.trading_simulation_run_id
+        or ""
     ).strip()
     if not active_run_id:
         return False
@@ -1568,47 +1683,50 @@ def _signal_matches_active_simulation_run(signal: SignalEnvelope) -> bool:
 def _signal_provenance_completeness(signal: SignalEnvelope) -> int:
     context = _signal_simulation_context(signal)
     values: tuple[Any, ...] = (
-        context.get('dataset_event_id'),
-        context.get('source_topic'),
-        context.get('source_partition'),
-        context.get('source_offset'),
-        context.get('replay_topic'),
-        context.get('signal_seq'),
+        context.get("dataset_event_id"),
+        context.get("source_topic"),
+        context.get("source_partition"),
+        context.get("source_offset"),
+        context.get("replay_topic"),
+        context.get("signal_seq"),
         signal.seq,
         signal.source,
     )
-    return sum(1 for value in values if value not in (None, '', -1))
+    return sum(1 for value in values if value not in (None, "", -1))
 
 
 def _signal_provenance_key(signal: SignalEnvelope) -> tuple[Any, ...]:
     context = _signal_simulation_context(signal)
     return (
-        str(context.get('dataset_event_id') or ''),
-        str(context.get('source_topic') or ''),
-        _coerce_seq(context.get('source_partition')) or -1,
-        _coerce_seq(context.get('source_offset')) or -1,
-        str(context.get('replay_topic') or ''),
-        _coerce_seq(context.get('signal_seq')) or _coerce_seq(signal.seq) or -1,
-        signal.source or '',
+        str(context.get("dataset_event_id") or ""),
+        str(context.get("source_topic") or ""),
+        _coerce_seq(context.get("source_partition")) or -1,
+        _coerce_seq(context.get("source_offset")) or -1,
+        str(context.get("replay_topic") or ""),
+        _coerce_seq(context.get("signal_seq")) or _coerce_seq(signal.seq) or -1,
+        signal.source or "",
     )
 
 
 def _signal_payload_fingerprint(signal: SignalEnvelope) -> str:
     payload = dict(signal.payload)
-    payload.pop('simulation_context', None)
-    return json.dumps(payload, sort_keys=True, separators=(',', ':'), default=str)
+    payload.pop("simulation_context", None)
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def _signal_payload_context_fingerprint(signal: SignalEnvelope) -> str:
     context = dict(_signal_simulation_context(signal))
-    context.pop('simulation_run_id', None)
-    return json.dumps(context, sort_keys=True, separators=(',', ':'), default=str)
+    context.pop("simulation_run_id", None)
+    return json.dumps(context, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def _signal_simulation_context(signal: SignalEnvelope) -> dict[str, Any]:
-    raw_context = signal.payload.get('simulation_context')
+    raw_context = signal.payload.get("simulation_context")
     if isinstance(raw_context, Mapping):
-        return {str(key): value for key, value in cast(Mapping[object, Any], raw_context).items()}
+        return {
+            str(key): value
+            for key, value in cast(Mapping[object, Any], raw_context).items()
+        }
     return {}
 
 
@@ -1632,11 +1750,7 @@ def _coerce_seq(value: Any) -> Optional[int]:
 def _normalized_signal_sources(raw: str | None) -> set[str]:
     if not raw:
         return set()
-    return {
-        item.strip().lower()
-        for item in raw.split(",")
-        if item.strip()
-    }
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
 
 
 def _quote_literal(value: str) -> str:
@@ -1761,21 +1875,21 @@ def _split_table(table: str) -> tuple[str, str]:
     return "default", table
 
 
-_IDENTIFIER_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _safe_identifier(value: str, *, kind: str) -> str:
     cleaned = value.strip()
     if not cleaned or not _IDENTIFIER_RE.fullmatch(cleaned):
-        raise ValueError(f'invalid_{kind}_identifier:{value}')
+        raise ValueError(f"invalid_{kind}_identifier:{value}")
     return cleaned
 
 
 def _qualified_table_name(table: str) -> str:
     database, raw_table = _split_table(table)
-    safe_database = _safe_identifier(database, kind='database')
-    safe_table = _safe_identifier(raw_table, kind='table')
-    return f'{safe_database}.{safe_table}'
+    safe_database = _safe_identifier(database, kind="database")
+    safe_table = _safe_identifier(raw_table, kind="table")
+    return f"{safe_database}.{safe_table}"
 
 
 __all__ = ["ClickHouseSignalIngestor", "SignalBatch"]

@@ -144,6 +144,11 @@ Start here:
   available.
 - Current implementation contract: doc 188 also exposes an observe-mode `route_evidence_clearinghouse_packet` across
   trading readiness surfaces before route claims can become accepted.
+- Current implementation contract: doc 189 adds `clock_settlement_receipt` beside the evidence-clock arbiter on
+  status, health, readyz, and `/trading/consumer-evidence`. The receipt compares direct ClickHouse TA freshness, Jangar
+  scoped quant, TCA, empirical, promotion, and rollout witnesses against the published clocks, emits zero-notional
+  repair packets such as `clock_wiring_split`, and keeps `max_notional=0` while any clock is stale, missing, split, or
+  blocked.
 - TA replay procedure (concrete steps): `argocd/applications/torghut/README.md`
 - Historical simulation operations playbook: `docs/torghut/rollouts/historical-simulation-playbook.md`
 - Incident context (example): `docs/incidents/2025-12-20-longhorn-upgrade-kafka-failure.md`
