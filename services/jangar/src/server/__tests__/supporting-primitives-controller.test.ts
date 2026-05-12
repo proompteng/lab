@@ -203,6 +203,44 @@ const buildAdmissionSnapshot = (
   }
 }
 
+const buildStageClearancePacket = (stage: 'discover' | 'plan' | 'implement' | 'verify', decision = 'allow') => ({
+  schema_version: 'jangar.stage-clearance-packet.v1',
+  packet_id: `stage-clearance:${stage}:dispatch_normal:test`,
+  generated_at: '2026-01-20T00:00:00.000Z',
+  fresh_until: '2026-01-20T00:05:00.000Z',
+  namespace: 'agents',
+  swarm_name: 'jangar-control-plane',
+  stage,
+  action_class: 'dispatch_normal',
+  governing_requirement_refs: [
+    'docs/agents/designs/184-jangar-stage-clearance-packets-and-freeze-aware-launch-governor-2026-05-12.md',
+  ],
+  source_rollout_truth_ref: 'source-rollout:test',
+  controller_witness_ref: 'controller-witness:test',
+  agentrun_ingestion_ref: 'agentrun-ingestion:test',
+  execution_trust_ref: 'execution-trust:test',
+  material_action_verdict_ref: 'material-action-verdict:test',
+  route_stability_ref: 'route-stability:test',
+  torghut_consumer_evidence_ref: null,
+  failure_domain_leases: [],
+  provider_capacity_ref: null,
+  decision,
+  max_launches: decision === 'allow' ? 1 : 0,
+  max_notional: 0,
+  ttl_seconds: 120,
+  reason_codes: decision === 'allow' ? [] : ['swarm_freeze_active', 'stage_implement_stale'],
+  required_repair_action: decision === 'allow' ? null : 'clear stage freshness debt',
+  rollback_target: 'set JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow',
+})
+
+const mockStageClearanceStatus = (packets: Array<Record<string, unknown>>) =>
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    new Response(JSON.stringify({ stage_clearance_packets: packets }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+  )
+
 describe('supporting primitives controller', () => {
   let resolveSwarmAvailability: (resource: string, call: number) => { code: number; stderr?: string } = () => ({
     code: 0,
@@ -257,6 +295,7 @@ describe('supporting primitives controller', () => {
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS
     delete process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT
+    delete process.env.JANGAR_STAGE_CLEARANCE_HOLD_STAGES
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY
     delete process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT
@@ -275,6 +314,7 @@ describe('supporting primitives controller', () => {
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS
     delete process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT
+    delete process.env.JANGAR_STAGE_CLEARANCE_HOLD_STAGES
     delete process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT
     delete process.env.JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT
   })
@@ -811,6 +851,7 @@ describe('supporting primitives controller', () => {
       'http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status'
     process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS = '2500'
     process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT = 'hold'
+    process.env.JANGAR_STAGE_CLEARANCE_HOLD_STAGES = 'implement,verify'
 
     const target = {
       kind: 'AgentRun',
@@ -864,8 +905,56 @@ describe('supporting primitives controller', () => {
         },
         { name: 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS', value: '2500' },
         { name: 'JANGAR_STAGE_CLEARANCE_ENFORCEMENT', value: 'hold' },
+        { name: 'JANGAR_STAGE_CLEARANCE_HOLD_STAGES', value: 'implement,verify' },
       ]),
     )
+  })
+
+  it('blocks schedule runners before CronJob fire when stage clearance is held', async () => {
+    process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT = 'hold'
+    process.env.JANGAR_STAGE_CLEARANCE_HOLD_STAGES = 'implement,verify'
+    mockStageClearanceStatus([buildStageClearancePacket('implement', 'hold')])
+
+    const apply = vi.fn().mockResolvedValue({})
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue(null)
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { apply, applyStatus, get, delete: deleteFn } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-implement-sched',
+        namespace: 'agents',
+        generation: 7,
+        labels: {
+          'swarm.proompteng.ai/name': 'jangar-control-plane',
+          'swarm.proompteng.ai/stage': 'implement',
+        },
+      },
+      spec: {
+        cron: '*/10 * * * *',
+        targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template', namespace: 'agents' },
+      },
+    }
+
+    await __test__.reconcileSchedule(kube, schedule, 'agents')
+
+    expect(apply).not.toHaveBeenCalled()
+    expect(deleteFn).toHaveBeenCalledWith('configmap', 'jangar-control-plane-implement-sched-template', 'agents', {
+      wait: false,
+    })
+    expect(deleteFn).toHaveBeenCalledWith('cronjob', 'jangar-control-plane-implement-sched-cron', 'agents', {
+      wait: false,
+    })
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(status.phase).toBe('StageClearanceBlocked')
+    const ready = (Array.isArray(status.conditions) ? status.conditions : []).find(
+      (condition) => condition.type === 'Ready',
+    )
+    expect(ready?.reason).toBe('StageClearanceHeld')
+    expect(String(ready?.message)).toContain('clear stage freshness debt')
   })
 
   it('disables schedule runner fire-time admission during runtime admission rollback', async () => {
@@ -2106,6 +2195,131 @@ describe('supporting primitives controller', () => {
     expect(planAdmission?.admitted).toBe(true)
     expect(planAdmission?.proofEnforced).toBe(false)
     expect(planAdmission?.recoveryWarrantStatus).toBe('broken')
+  })
+
+  it('holds implement and verify schedules plus requirement dispatch on stage clearance packets', async () => {
+    process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT = 'hold'
+    process.env.JANGAR_STAGE_CLEARANCE_HOLD_STAGES = 'implement,verify'
+    mockStageClearanceStatus([
+      buildStageClearancePacket('implement', 'hold'),
+      buildStageClearancePacket('verify', 'hold'),
+    ])
+
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Schedule) {
+        return { status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' } }
+      }
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-sample', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+          },
+        }
+      }
+      return null
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              apiVersion: 'signals.proompteng.ai/v1alpha1',
+              kind: 'Signal',
+              metadata: {
+                name: 'torghut-risk-handoff-stage-clearance-held',
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'workflow.general.requirement',
+                payload: { priority: 'critical' },
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const schedulePayloads = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((payload) => payload.kind === 'Schedule')
+    const scheduleStages = schedulePayloads.map((payload) =>
+      String(
+        ((payload.metadata as Record<string, unknown>).labels as Record<string, unknown>)['swarm.proompteng.ai/stage'],
+      ),
+    )
+    expect(scheduleStages).toEqual(expect.arrayContaining(['discover', 'plan']))
+    expect(scheduleStages).not.toContain('implement')
+    expect(scheduleStages).not.toContain('verify')
+
+    const requirementRunPayloads = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
+      .filter((payload) => {
+        const metadata = payload.metadata as Record<string, unknown>
+        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
+      })
+    expect(requirementRunPayloads).toHaveLength(0)
+
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    const stageStates = (status.stageStates ?? {}) as Record<string, Record<string, unknown>>
+    expect(stageStates.implement?.phase).toBe('StageClearanceBlocked')
+    expect(stageStates.verify?.phase).toBe('StageClearanceBlocked')
+    expect((stageStates.implement?.stageClearance as Record<string, unknown> | undefined)?.packetId).toBe(
+      'stage-clearance:implement:dispatch_normal:test',
+    )
+
+    const requirements = (status.requirements ?? {}) as Record<string, unknown>
+    expect(requirements.pending).toBe(1)
+    expect(requirements.dispatched).toBe(0)
+    expect(requirements.blocked).toBe(1)
+    expect(requirements.stageClearanceBlocked).toBe(1)
+    expect((requirements.stageClearance as Record<string, unknown> | undefined)?.reason).toBe('StageClearanceHeld')
+
+    const conditions = Array.isArray(status.conditions) ? status.conditions : []
+    const bridge = conditions.find((condition) => condition.type === 'RequirementsBridge') as
+      | Record<string, unknown>
+      | undefined
+    expect(bridge?.reason).toBe('StageClearanceHeld')
+    expect(String(bridge?.message)).toContain('clear stage freshness debt')
   })
 
   it('blocks requirement dispatch when the implement admission passport is not allowed', async () => {

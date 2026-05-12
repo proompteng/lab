@@ -5,6 +5,7 @@ import type {
   RecoveryWarrantExecutionClass,
   RecoveryWarrantStatus,
   RuntimeProofCellStatus,
+  StageClearancePacket,
 } from '~/data/agents-control-plane'
 import { resolveSupportingControllerConfig } from '~/server/controller-runtime-config'
 import { buildScheduleDebtAnnotations } from '~/server/control-plane-repair-warrant-exchange'
@@ -27,7 +28,20 @@ import {
   SCHEDULE_RUNNER_RUNTIME_PROOF_CHECK_ENV,
   SCHEDULE_RUNNER_SCHEDULE_NAMESPACE_ENV,
   SCHEDULE_RUNNER_STAGE_CLEARANCE_ENFORCEMENT_ENV,
+  SCHEDULE_RUNNER_STAGE_CLEARANCE_HOLD_STAGES_ENV,
 } from '~/server/supporting-primitives-schedule-runner'
+import {
+  effectiveStageClearanceMode,
+  fetchStageClearancePackets,
+  normalizeStageClearanceHoldStages,
+  resolveStageClearanceAdmissionFromPackets,
+  resolveStageClearanceForStage,
+  resolveStageClearanceUnavailable,
+  stageClearanceActionClassForStage,
+  stageClearanceStatusForStage,
+  type StageClearanceLaunchAdmission,
+  type StageClearanceMode,
+} from '~/server/supporting-primitives-stage-clearance'
 import { makeName } from '~/server/supporting-primitives-naming'
 import {
   buildSwarmAgentIdentity,
@@ -550,9 +564,55 @@ const resolveScheduleLaunchAdmission = (schedule: Record<string, unknown>): Swar
   return resolveLaunchAdmission({ stage, snapshot, enforced, proofEnforced })
 }
 
+const resolveScheduleStageClearance = async (
+  schedule: Record<string, unknown>,
+  namespace: string,
+): Promise<StageClearanceLaunchAdmission | null> => {
+  const stage = resolveSwarmScheduleStage(schedule)
+  if (!stage) return null
+  const labels = asRecord(readNested(schedule, ['metadata', 'labels'])) ?? {}
+  const swarmName = asString(labels[SWARM_NAME_LABEL])
+  if (!swarmName) return null
+  const config = resolveSupportingPrimitivesConfig(process.env)
+  const holdStages = normalizeStageClearanceHoldStages(config.stageClearanceHoldStages)
+  const mode = effectiveStageClearanceMode(config.stageClearanceEnforcement, holdStages, stage)
+  if (mode !== 'hold') return null
+  return resolveStageClearanceForStage({
+    namespace,
+    swarmName,
+    stage,
+    config,
+    onUnavailable: (message) =>
+      console.warn('[jangar] stage clearance snapshot unavailable for schedule launcher', {
+        schedule: asString(readNested(schedule, ['metadata', 'name'])) ?? 'schedule',
+        stage,
+        error: message,
+      }),
+  })
+}
+
 const withScheduleAdmissionTrace = (
   schedule: Record<string, unknown>,
   admission: SwarmLaunchAdmission | null,
+): Record<string, unknown> => {
+  if (!admission?.admitted || Object.keys(admission.annotations).length === 0) return schedule
+  const metadata = asRecord(schedule.metadata) ?? {}
+  const annotations = asRecord(metadata.annotations) ?? {}
+  return {
+    ...schedule,
+    metadata: {
+      ...metadata,
+      annotations: {
+        ...annotations,
+        ...admission.annotations,
+      },
+    },
+  }
+}
+
+const withScheduleStageClearanceTrace = (
+  schedule: Record<string, unknown>,
+  admission: StageClearanceLaunchAdmission | null,
 ): Record<string, unknown> => {
   if (!admission?.admitted || Object.keys(admission.annotations).length === 0) return schedule
   const metadata = asRecord(schedule.metadata) ?? {}
@@ -1406,23 +1466,35 @@ const deleteStageScheduleAndRunnerResources = async (
   ])
 }
 
-const setScheduleAdmissionBlockedStatus = async (
+const setScheduleBlockedStatus = async (
   kube: ReturnType<typeof createKubernetesClient>,
   schedule: Record<string, unknown>,
-  admission: SwarmLaunchAdmission,
+  block: { reason: string; message: string; phase?: string },
 ) => {
   const status = asRecord(schedule.status) ?? {}
   const conditions = upsertCondition(
     normalizeConditions(status.conditions),
-    buildReadyCondition(false, admission.reason, admission.message),
+    buildReadyCondition(false, block.reason, block.message),
   )
   await setStatus(kube, schedule, {
     observedGeneration: asRecord(schedule.metadata)?.generation ?? 0,
-    phase: 'AdmissionBlocked',
+    phase: block.phase ?? 'AdmissionBlocked',
     lastRunTime: asString(status.lastRunTime) ?? undefined,
     conditions,
   })
 }
+
+const setScheduleAdmissionBlockedStatus = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  schedule: Record<string, unknown>,
+  admission: SwarmLaunchAdmission,
+) => setScheduleBlockedStatus(kube, schedule, admission)
+
+const setScheduleStageClearanceBlockedStatus = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  schedule: Record<string, unknown>,
+  admission: StageClearanceLaunchAdmission,
+) => setScheduleBlockedStatus(kube, schedule, { ...admission, phase: 'StageClearanceBlocked' })
 
 const reconcileScheduleRunnerStatus = async (
   kube: ReturnType<typeof createKubernetesClient>,
@@ -1435,6 +1507,12 @@ const reconcileScheduleRunnerStatus = async (
   if (admission && !admission.admitted) {
     await deleteScheduleRunnerResources(kube, scheduleName, namespace)
     await setScheduleAdmissionBlockedStatus(kube, schedule, admission)
+    return
+  }
+  const stageClearance = await resolveScheduleStageClearance(schedule, namespace)
+  if (stageClearance && !stageClearance.admitted) {
+    await deleteScheduleRunnerResources(kube, scheduleName, namespace)
+    await setScheduleStageClearanceBlockedStatus(kube, schedule, stageClearance)
     return
   }
   const cronJobName = makeName(scheduleName, 'cron')
@@ -1482,10 +1560,16 @@ const reconcileSchedule = async (
       await setScheduleAdmissionBlockedStatus(kube, schedule, admission)
       return
     }
+    const stageClearance = await resolveScheduleStageClearance(schedule, namespace)
+    if (stageClearance && !stageClearance.admitted) {
+      await deleteScheduleRunnerResources(kube, scheduleName, namespace)
+      await setScheduleStageClearanceBlockedStatus(kube, schedule, stageClearance)
+      return
+    }
     const target = await resolveScheduleTarget(kube, schedule)
     const deliveryPlaceholder = '__JANGAR_DELIVERY_ID__'
     const template = buildScheduleRunTemplate(
-      withScheduleAdmissionTrace(schedule, admission),
+      withScheduleStageClearanceTrace(withScheduleAdmissionTrace(schedule, admission), stageClearance),
       target,
       deliveryPlaceholder,
     )
@@ -1575,6 +1659,10 @@ const reconcileSchedule = async (
                       {
                         name: SCHEDULE_RUNNER_STAGE_CLEARANCE_ENFORCEMENT_ENV,
                         value: stageClearanceEnforcement,
+                      },
+                      {
+                        name: SCHEDULE_RUNNER_STAGE_CLEARANCE_HOLD_STAGES_ENV,
+                        value: supportingConfig.stageClearanceHoldStages.join(','),
                       },
                     ],
                     volumeMounts: [{ name: 'schedule-template', mountPath: '/config' }],
@@ -1874,6 +1962,56 @@ const reconcileSwarm = async (
       ]
     }),
   ) as Record<StageName, SwarmLaunchAdmission>
+  const supportingConfig = resolveSupportingPrimitivesConfig(process.env)
+  const stageClearanceHoldStages = normalizeStageClearanceHoldStages(supportingConfig.stageClearanceHoldStages)
+  const stageClearanceModes = Object.fromEntries(
+    STAGE_NAMES.map((stage) => [
+      stage,
+      effectiveStageClearanceMode(supportingConfig.stageClearanceEnforcement, stageClearanceHoldStages, stage),
+    ]),
+  ) as Record<StageName, StageClearanceMode>
+  let stageClearancePackets: StageClearancePacket[] = []
+  let stageClearanceUnavailableMessage: string | null = null
+  if (STAGE_NAMES.some((stage) => stageClearanceModes[stage] === 'hold')) {
+    try {
+      stageClearancePackets = await fetchStageClearancePackets(swarmNamespace, supportingConfig)
+    } catch (error) {
+      stageClearanceUnavailableMessage = summarizeRuntimeAdmissionError(error)
+      console.warn('[jangar] stage clearance snapshot unavailable for swarm launchers', {
+        swarm: swarmName,
+        namespace: swarmNamespace,
+        error: stageClearanceUnavailableMessage,
+      })
+    }
+  }
+  const stageClearanceAdmissions = Object.fromEntries(
+    STAGE_NAMES.map((stage) => {
+      const mode = stageClearanceModes[stage]
+      if (mode !== 'hold') return [stage, null]
+      if (stageClearanceUnavailableMessage) {
+        return [
+          stage,
+          resolveStageClearanceUnavailable(
+            stage,
+            stageClearanceActionClassForStage(stage),
+            mode,
+            stageClearanceUnavailableMessage,
+          ),
+        ]
+      }
+      return [
+        stage,
+        resolveStageClearanceAdmissionFromPackets({
+          namespace: swarmNamespace,
+          swarmName,
+          stage,
+          mode,
+          packets: stageClearancePackets,
+          nowMs,
+        }),
+      ]
+    }),
+  ) as Record<StageName, StageClearanceLaunchAdmission | null>
   const existingFreezeUntil = asString(readNested(status, ['freeze', 'until']))
   const existingFreezeReason = asString(readNested(status, ['freeze', 'reason']))
   const frozenAtReleaseReason = existingFreezeReason ?? 'Healthy'
@@ -2038,6 +2176,7 @@ const reconcileSwarm = async (
     dispatched: 0,
     blocked: 0,
     admissionBlocked: 0,
+    stageClearanceBlocked: 0,
     completed: 0,
     invalidChannel: 0,
     rejected: 0,
@@ -2047,6 +2186,7 @@ const reconcileSwarm = async (
     pauseMessage: requirementDispatchPauseAssessment?.message ?? null,
   }
   const requirementAdmission = launchAdmissions.implement
+  const requirementStageClearance = stageClearanceAdmissions.implement
 
   for (const signal of requirementSignals) {
     const signalName = asString(readNested(signal, ['metadata', 'name']))
@@ -2094,6 +2234,11 @@ const reconcileSwarm = async (
         requirementStats.rejected += 1
         await rejectRequirementSignal(kube, signal, requirementAdmission.reason, requirementAdmission.message)
       }
+      continue
+    }
+    if (requirementStageClearance && !requirementStageClearance.admitted) {
+      requirementStats.blocked += 1
+      requirementStats.stageClearanceBlocked += 1
       continue
     }
     if (requirementDispatchPauseAssessment) {
@@ -2154,6 +2299,7 @@ const reconcileSwarm = async (
       [SWARM_SCHEDULE_ANNOTATION_IDENTITY]: requirementIdentity.identity,
       ...requirementAdmission.annotations,
     }
+    if (requirementStageClearance) Object.assign(runAnnotations, requirementStageClearance.annotations)
     const rawPayloadValue = stringifyUnknown(signalSpec.payload)
     const payloadValue = clampUtf8(rawPayloadValue, SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT)
     const description = asString(signalSpec.description)
@@ -2167,6 +2313,7 @@ const reconcileSwarm = async (
       swarmRequirementTarget: swarmName,
       swarmRequirementChannel: signalChannel ?? nats.channel,
     }
+    if (requirementStageClearance) Object.assign(requirementParameters, requirementStageClearance.parameters)
     if (description) {
       requirementParameters.swarmRequirementDescription = description
     }
@@ -2252,12 +2399,14 @@ const reconcileSwarm = async (
 
   for (const stageConfig of stageConfigs) {
     const stageAdmission = launchAdmissions[stageConfig.stage]
+    const stageClearance = stageClearanceAdmissions[stageConfig.stage]
     const baseState: Record<string, unknown> = {
       enabled: stageConfig.enabled,
       scheduleName: stageConfig.scheduleName,
       cadence: stageConfig.every ?? null,
       targetRef: stageConfig.targetRef ?? null,
       admission: admissionStatusForStage(stageAdmission),
+      ...(stageClearance ? { stageClearance: stageClearanceStatusForStage(stageClearance) } : {}),
     }
 
     if (!stageConfig.enabled || freezeBlocksWork) {
@@ -2277,6 +2426,18 @@ const reconcileSwarm = async (
         healthy: false,
         reason: stageAdmission.reason,
         message: stageAdmission.message,
+      }
+      continue
+    }
+
+    if (stageClearance && !stageClearance.admitted) {
+      await deleteStageScheduleAndRunnerResources(kube, stageConfig.scheduleName, swarmNamespace)
+      stageStates[stageConfig.stage] = {
+        ...baseState,
+        phase: 'StageClearanceBlocked',
+        healthy: false,
+        reason: stageClearance.reason,
+        message: stageClearance.message,
       }
       continue
     }
@@ -2305,6 +2466,7 @@ const reconcileSwarm = async (
       mission,
     })
     Object.assign(stageAnnotations, stageAdmission.annotations)
+    if (stageClearance) Object.assign(stageAnnotations, stageClearance.annotations)
     const schedule = {
       apiVersion: 'schedules.proompteng.ai/v1alpha1',
       kind: 'Schedule',
@@ -2366,6 +2528,7 @@ const reconcileSwarm = async (
       agentRole: stageIdentity.role,
       humanName: stageIdentity.humanName,
       admission: admissionStatusForStage(stageAdmission),
+      ...(stageClearance ? { stageClearance: stageClearanceStatusForStage(stageClearance) } : {}),
       recentSuccessAt: latestSuccessMs === null ? null : new Date(latestSuccessMs).toISOString(),
       consecutiveFailures: consecutiveStageFailures,
       fresh,
@@ -2426,12 +2589,14 @@ const reconcileSwarm = async (
       dispatched: requirementStats.dispatched,
       blocked: requirementStats.blocked,
       admissionBlocked: requirementStats.admissionBlocked,
+      stageClearanceBlocked: requirementStats.stageClearanceBlocked,
       completed: requirementStats.completed,
       invalidChannel: requirementStats.invalidChannel,
       rejected: requirementStats.rejected,
       duplicates: requirementStats.duplicates,
       paused: requirementStats.paused,
       admission: admissionStatusForStage(requirementAdmission),
+      ...(requirementStageClearance ? { stageClearance: stageClearanceStatusForStage(requirementStageClearance) } : {}),
       ...(requirementStats.pauseReason ? { pauseReason: requirementStats.pauseReason } : {}),
       ...(requirementStats.pauseMessage ? { pauseMessage: requirementStats.pauseMessage } : {}),
       ...(requirementTemplateError ? { error: requirementTemplateError } : {}),
@@ -2543,11 +2708,13 @@ const reconcileSwarm = async (
           ? 'AgentRunIngestionDegraded'
           : requirementStats.admissionBlocked > 0
             ? requirementAdmission.reason
-            : !requirementsHealthy
-              ? 'RequirementsBridgeDegraded'
-              : unhealthyStages.length > 0
-                ? 'StageHealthDegraded'
-                : 'Healthy',
+            : requirementStats.stageClearanceBlocked > 0 && requirementStageClearance
+              ? requirementStageClearance.reason
+              : !requirementsHealthy
+                ? 'RequirementsBridgeDegraded'
+                : unhealthyStages.length > 0
+                  ? 'StageHealthDegraded'
+                  : 'Healthy',
     message:
       verifyFailures >= 2
         ? `verify stage has ${verifyFailures} consecutive failures`
@@ -2555,11 +2722,13 @@ const reconcileSwarm = async (
           ? (requirementStats.pauseMessage ?? 'requirement bridge paused because AgentRun ingestion is degraded')
           : requirementStats.admissionBlocked > 0
             ? requirementAdmission.message
-            : !requirementsHealthy
-              ? 'requirement bridge is degraded'
-              : unhealthyStages.length > 0
-                ? `unhealthy stages: ${unhealthyStages.join(', ')}`
-                : 'all stage and requirement health checks passing',
+            : requirementStats.stageClearanceBlocked > 0 && requirementStageClearance
+              ? requirementStageClearance.message
+              : !requirementsHealthy
+                ? 'requirement bridge is degraded'
+                : unhealthyStages.length > 0
+                  ? `unhealthy stages: ${unhealthyStages.join(', ')}`
+                  : 'all stage and requirement health checks passing',
   })
 
   if (requirementStats.invalidChannel > 0) {
@@ -2589,6 +2758,13 @@ const reconcileSwarm = async (
       status: 'False',
       reason: requirementAdmission.reason,
       message: requirementAdmission.message,
+    })
+  } else if (requirementStats.stageClearanceBlocked > 0 && requirementStageClearance) {
+    conditions = upsertCondition(conditions, {
+      type: 'RequirementsBridge',
+      status: 'False',
+      reason: requirementStageClearance.reason,
+      message: requirementStageClearance.message,
     })
   } else if (requirementStats.duplicates > 0) {
     conditions = upsertCondition(conditions, {
