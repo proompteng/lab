@@ -306,11 +306,21 @@ class TestTradingApi(TestCase):
                         "details": {"symbols": [" aapl ", "", "MSFT", "aapl"]}
                     }
                 },
+                {
+                    "symbols": ["tsla"],
+                    "route_tca_signal": {
+                        "details": {
+                            "details": {"symbols": [" nvda ", "AAPL"]},
+                        },
+                    },
+                },
             ]
         }
 
         self.assertEqual(_route_claim_symbols({}), ())
-        self.assertEqual(_route_claim_symbols(payload), ("AAPL", "MSFT"))
+        self.assertEqual(
+            _route_claim_symbols(payload), ("AAPL", "MSFT", "NVDA", "TSLA")
+        )
 
     def test_options_catalog_freshness_summary_includes_route_symbol_scope(
         self,
