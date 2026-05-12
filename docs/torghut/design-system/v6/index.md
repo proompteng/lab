@@ -1089,3 +1089,8 @@ This pack is positioned as the next architecture layer above:
   scoped quant evidence can still lag or disappear by sample, and TCA is historical with no samples for several
   symbols. The contract makes the acceptance ledger a production payload requirement, ties every accepted lot to
   current fill-quality proof, and keeps paper/live capital closed until the cutover packet passes all value gates.
+- `188-torghut-profit-repair-clearance-packets-and-market-context-slos-2026-05-12.md` follows the Jangar
+  stage-clearance launch governor because the current system can emit current observe receipts while Jangar is frozen
+  and Torghut remains zero-notional. It makes each market-context, empirical, route/TCA, promotion-table, and quant
+  pipeline repair cite an expected unblock value, freshness SLO, Jangar packet ref, and zero-notional guardrail before
+  the repair can spend launch capacity.

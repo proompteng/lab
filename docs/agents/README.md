@@ -23,6 +23,8 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
   - `../torghut/design-system/v6/188-torghut-evidence-credit-capital-repair-market-2026-05-12.md`
   - `designs/184-jangar-stage-clearance-packets-and-repair-run-lot-ledger-2026-05-12.md`
   - `../torghut/design-system/v6/188-torghut-stage-clearance-consumer-and-repair-lot-broker-2026-05-12.md`
+  - `designs/184-jangar-stage-clearance-packets-and-freeze-aware-launch-governor-2026-05-12.md`
+  - `../torghut/design-system/v6/188-torghut-profit-repair-clearance-packets-and-market-context-slos-2026-05-12.md`
   - `designs/183-jangar-attested-action-custody-and-profit-window-admission-2026-05-08.md`
   - `../torghut/design-system/v6/187-torghut-profit-window-custody-and-repair-value-market-2026-05-08.md`
   - `designs/182-jangar-routeability-cutover-backpressure-and-proof-run-admission-2026-05-08.md`
