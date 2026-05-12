@@ -28,7 +28,7 @@ spec:
           scaleSetLabels:
             - arc-arm64
           minRunners: 3
-          maxRunners: 5
+          maxRunners: 7
           containerMode:
             type: "kubernetes"
             kubernetesModeWorkVolumeClaim:
