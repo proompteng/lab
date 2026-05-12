@@ -295,6 +295,9 @@ def test_closed_frontier_still_does_not_widen_capital_limits() -> None:
     )
 
     assert frontier["frontier_state"] == "ready"
+    tca_dimension = _dimension(frontier, "tca_fill_quality")
+    assert tca_dimension["state"] == "current"
+    assert "route_tca_passed" not in tca_dimension["reason_codes"]
     assert frontier["repair_lots"] == []
     assert frontier["selected_zero_notional_repairs"] == []
     assert frontier["capital_posture"]["paper_replay_candidate_count"] == 1

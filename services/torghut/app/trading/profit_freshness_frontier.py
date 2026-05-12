@@ -14,6 +14,7 @@ PROFIT_FRESHNESS_FRONTIER_SCHEMA_VERSION = "torghut.profit-freshness-frontier.v1
 
 _FRESHNESS_SECONDS = 60
 _CURRENT_STATES = {"accepted", "allow", "current", "healthy", "ok", "pass", "ready"}
+_ROUTE_SETTLED_ROW_STATES = _CURRENT_STATES | {"routeable"}
 _BAD_STATES = {"blocked", "degraded", "fail", "missing", "repair", "stale", "unknown"}
 _DIMENSION_EXPECTED_BPS: Mapping[str, Decimal] = {
     "empirical_proof": Decimal("24"),
@@ -544,9 +545,9 @@ def _tca_dimension(
     ):
         reasons.append(proof_reason)
     for row in _route_rows(route_reacquisition_board):
-        blocker = _text(row.get("current_blocker"))
         row_state = _text(row.get("state")).lower()
-        if blocker and row_state not in {*_CURRENT_STATES, "routeable"}:
+        blocker = _text(row.get("current_blocker"))
+        if blocker and row_state not in _ROUTE_SETTLED_ROW_STATES:
             reasons.append(blocker)
     freshness_seconds = _int(execution_tca.get("freshness_seconds"), default=-1)
     return _dimension(
