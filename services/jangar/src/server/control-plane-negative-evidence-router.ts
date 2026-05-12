@@ -60,6 +60,11 @@ export type TorghutNegativeEvidenceInput = {
   routeability_lot_ids?: string[]
   routeability_blocking_reason_codes?: string[]
   accepted_routeable_candidate_count?: number | null
+  profit_freshness_frontier_id?: string | null
+  profit_freshness_state?: string | null
+  profit_freshness_repair_lot_ids?: string[]
+  profit_freshness_selected_repair_ids?: string[]
+  profit_freshness_blocking_reason_codes?: string[]
 }
 
 export type NegativeEvidenceRouterInput = {
@@ -401,6 +406,28 @@ const buildNegativeEvidenceRefs = (input: NegativeEvidenceRouterInput) => {
         'data_freshness_negative',
         reason,
         routeabilityRefs.length > 0 ? routeabilityRefs : [consumerEvidenceRef],
+      )
+    }
+
+    const profitFreshnessRefs = uniqueStrings([
+      torghut.profit_freshness_frontier_id ?? '',
+      ...(torghut.profit_freshness_selected_repair_ids ?? []),
+      ...(torghut.profit_freshness_repair_lot_ids ?? []),
+    ])
+    if (torghut.profit_freshness_state && !['ready', 'current'].includes(torghut.profit_freshness_state)) {
+      addEvidence(
+        evidence,
+        'data_freshness_negative',
+        `profit_freshness_${torghut.profit_freshness_state}`,
+        profitFreshnessRefs.length > 0 ? profitFreshnessRefs : [consumerEvidenceRef],
+      )
+    }
+    for (const reason of torghut.profit_freshness_blocking_reason_codes ?? []) {
+      addEvidence(
+        evidence,
+        'data_freshness_negative',
+        reason,
+        profitFreshnessRefs.length > 0 ? profitFreshnessRefs : [consumerEvidenceRef],
       )
     }
 

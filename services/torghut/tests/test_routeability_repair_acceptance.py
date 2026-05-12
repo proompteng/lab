@@ -221,6 +221,77 @@ def test_missing_or_degraded_jangar_admission_blocks_routeability_claims() -> No
     assert ledger["accepted_routeable_candidate_count"] == 0
 
 
+def test_probing_route_rows_keep_routeability_unsettled_until_tca_acceptance() -> None:
+    ledger = _ledger(
+        consumer_evidence_receipt={
+            "receipt_id": "torghut-consumer-evidence:ready",
+            "fresh_until": "2026-05-08T12:33:00+00:00",
+            "forecast_registry_state": "ready",
+            "reason_codes": [],
+        },
+        proof_floor_receipt={
+            "schema_version": "torghut.profitability-proof-floor.v1",
+            "account_label": "PA3SX7FYNUTF",
+            "route_state": "paper_candidate",
+            "capital_state": "paper_allowed",
+            "max_notional": "25",
+            "blocking_reasons": [],
+            "proof_dimensions": [
+                {
+                    "dimension": "alpha_readiness",
+                    "state": "pass",
+                    "source_ref": {"promotion_eligible_total": 1},
+                }
+            ],
+        },
+        quality_adjusted_profit_frontier={
+            "frontier_id": "quality-frontier:ready",
+            "blocked_capital_surfaces": [],
+        },
+        route_reacquisition_board={
+            "summary": {"capital_eligible_symbol_count": 1},
+            "rows": [
+                {
+                    "symbol": "AAPL",
+                    "state": "probing",
+                    "current_blocker": "route_tca_probing_pending_acceptance",
+                    "hypothesis_ids": ["H-AAPL"],
+                    "avg_abs_slippage_bps": "4",
+                    "slippage_guardrail_bps": "8",
+                }
+            ],
+        },
+        live_submission_gate={
+            "allowed": True,
+            "reason": "ready",
+            "blocked_reasons": [],
+        },
+        quant_evidence={
+            "ok": True,
+            "status": "healthy",
+            "latest_metrics_count": 144,
+            "stage_count": 3,
+        },
+        market_context_status={"status": "healthy", "last_domain_states": {}},
+        jangar_routeability_admission_ref={
+            "admission_ref": "jangar-routeability:ready",
+            "decision": "allow",
+            "state": "current",
+            "reason_codes": [],
+        },
+    )
+
+    route_lot = _lot(ledger, "route_universe_tca_repair")
+
+    assert ledger["aggregate_state"] == "repairing"
+    assert ledger["accepted_routeable_candidate_count"] == 0
+    assert route_lot["current_state"] == "repairing"
+    assert route_lot["symbols"] == ["AAPL"]
+    assert route_lot["blocking_reason_codes"] == [
+        "route_tca_probing_pending_acceptance"
+    ]
+
+
 def test_all_receipts_must_settle_before_accepting_routeable_candidates() -> None:
     ledger = _ledger(
         consumer_evidence_receipt={

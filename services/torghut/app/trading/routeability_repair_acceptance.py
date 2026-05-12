@@ -293,13 +293,17 @@ def _route_tca_blockers(
         blockers.append("route_universe_empty")
     for row in rows:
         state = _row_state(row)
-        if state in {"blocked", "missing"}:
+        if state in {"blocked", "missing", "probing"}:
             blockers.append(
                 _text(
                     row.get("current_blocker"),
                     "execution_tca_symbol_missing"
                     if state == "missing"
-                    else "execution_tca_route_blocked",
+                    else (
+                        "execution_tca_route_probing"
+                        if state == "probing"
+                        else "execution_tca_route_blocked"
+                    ),
                 )
             )
         observed = _float(row.get("avg_abs_slippage_bps"))
