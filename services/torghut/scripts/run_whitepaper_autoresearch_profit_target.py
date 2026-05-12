@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import signal
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -184,6 +185,15 @@ def _parse_args() -> argparse.Namespace:
             "--real-replay-timeout-seconds when omitted."
         ),
     )
+    parser.add_argument(
+        "--real-replay-shard-workers",
+        type=int,
+        default=1,
+        help=(
+            "Maximum number of bounded real-replay shards to run concurrently. "
+            "Defaults to 1 for the legacy sequential behavior."
+        ),
+    )
     parser.add_argument("--train-days", type=int, default=6)
     parser.add_argument("--holdout-days", type=int, default=3)
     parser.add_argument("--full-window-start-date", default="")
@@ -222,6 +232,23 @@ class EpochReplayResult:
     replay_results: tuple[Mapping[str, Any], ...]
     incomplete: bool = False
     failure_reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _ReplayShardPlan:
+    shard_index: int
+    args: argparse.Namespace
+    output_dir: Path
+    specs: tuple[CandidateSpec, ...]
+    timeout_seconds: int
+
+
+@dataclass(frozen=True)
+class _ReplayShardOutcome:
+    shard_index: int
+    candidate_spec_ids: tuple[str, ...]
+    result: EpochReplayResult
+    failure: Mapping[str, Any] | None = None
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> Path:
@@ -1940,17 +1967,14 @@ def _run_real_replay_once_with_optional_timeout(
         signal.signal(signal.SIGALRM, previous_handler)
 
 
-def _run_real_replay_shards(
+def _build_real_replay_shards(
     *,
     args: argparse.Namespace,
     output_dir: Path,
     specs: Sequence[CandidateSpec],
     shard_size: int,
     shard_timeout_seconds: int,
-) -> EpochReplayResult:
-    evidence_bundles: list[CandidateEvidenceBundle] = []
-    replay_results: list[Mapping[str, Any]] = []
-    shard_failures: list[dict[str, Any]] = []
+) -> tuple[_ReplayShardPlan, ...]:
     ordered_specs = list(specs)
     bounded_shard_size = max(1, int(shard_size))
     max_frontier_candidates_per_spec = max(
@@ -1971,11 +1995,11 @@ def _run_real_replay_shards(
             or getattr(args, "max_candidates", 1)
         ),
     )
-
+    plans: list[_ReplayShardPlan] = []
     for shard_index, start in enumerate(
         range(0, len(ordered_specs), bounded_shard_size), start=1
     ):
-        shard_specs = ordered_specs[start : start + bounded_shard_size]
+        shard_specs = tuple(ordered_specs[start : start + bounded_shard_size])
         shard_frontier_budget = min(
             configured_total_frontier_budget,
             max(1, len(shard_specs) * max_frontier_candidates_per_spec),
@@ -1990,45 +2014,105 @@ def _run_real_replay_shards(
                 "max_total_frontier_candidates": shard_frontier_budget,
             }
         )
-        try:
-            shard_result = _run_real_replay_once_with_optional_timeout(
+        plans.append(
+            _ReplayShardPlan(
+                shard_index=shard_index,
                 args=shard_args,
-                output_dir=output_dir,
+                output_dir=output_dir
+                / "strategy-factory-shards"
+                / f"shard-{shard_index:03d}",
                 specs=shard_specs,
                 timeout_seconds=shard_timeout_seconds,
             )
-            evidence_bundles.extend(shard_result.evidence_bundles)
-            replay_results.extend(shard_result.replay_results)
-            if shard_result.incomplete:
-                shard_failures.append(
-                    {
-                        "shard_index": shard_index,
-                        "candidate_spec_ids": [
-                            spec.candidate_spec_id for spec in shard_specs
-                        ],
-                        "reason": ";".join(shard_result.failure_reasons)
-                        or "nested_shard_incomplete",
-                    }
-                )
-        except TimeoutError as exc:
-            partial_result = _collect_partial_real_replay(
-                output_dir=output_dir, specs=shard_specs
-            )
-            evidence_bundles.extend(partial_result.evidence_bundles)
-            replay_results.extend(partial_result.replay_results)
-            shard_failures.append(
-                {
-                    "shard_index": shard_index,
-                    "candidate_spec_ids": [
-                        spec.candidate_spec_id for spec in shard_specs
-                    ],
-                    "reason": f"{type(exc).__name__}:{exc}",
-                    "partial_evidence_bundle_count": len(
-                        partial_result.evidence_bundles
-                    ),
-                    "shard_timeout_seconds": shard_timeout_seconds,
-                }
-            )
+        )
+    return tuple(plans)
+
+
+def _execute_real_replay_shard(plan: _ReplayShardPlan) -> _ReplayShardOutcome:
+    candidate_spec_ids = tuple(spec.candidate_spec_id for spec in plan.specs)
+    try:
+        result = _run_real_replay_once_with_optional_timeout(
+            args=plan.args,
+            output_dir=plan.output_dir,
+            specs=plan.specs,
+            timeout_seconds=plan.timeout_seconds,
+        )
+    except TimeoutError as exc:
+        partial_result = _collect_partial_real_replay(
+            output_dir=plan.output_dir,
+            specs=plan.specs,
+        )
+        return _ReplayShardOutcome(
+            shard_index=plan.shard_index,
+            candidate_spec_ids=candidate_spec_ids,
+            result=partial_result,
+            failure={
+                "shard_index": plan.shard_index,
+                "candidate_spec_ids": list(candidate_spec_ids),
+                "reason": f"{type(exc).__name__}:{exc}",
+                "partial_evidence_bundle_count": len(partial_result.evidence_bundles),
+                "shard_timeout_seconds": plan.timeout_seconds,
+            },
+        )
+
+    failure: dict[str, Any] | None = None
+    if result.incomplete:
+        failure = {
+            "shard_index": plan.shard_index,
+            "candidate_spec_ids": list(candidate_spec_ids),
+            "reason": ";".join(result.failure_reasons) or "nested_shard_incomplete",
+        }
+    return _ReplayShardOutcome(
+        shard_index=plan.shard_index,
+        candidate_spec_ids=candidate_spec_ids,
+        result=result,
+        failure=failure,
+    )
+
+
+def _run_real_replay_shards(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+    specs: Sequence[CandidateSpec],
+    shard_size: int,
+    shard_timeout_seconds: int,
+) -> EpochReplayResult:
+    evidence_bundles: list[CandidateEvidenceBundle] = []
+    replay_results: list[Mapping[str, Any]] = []
+    shard_failures: list[dict[str, Any]] = []
+    plans = _build_real_replay_shards(
+        args=args,
+        output_dir=output_dir,
+        specs=specs,
+        shard_size=shard_size,
+        shard_timeout_seconds=shard_timeout_seconds,
+    )
+    bounded_shard_size = max(1, int(shard_size))
+    shard_workers = max(
+        1,
+        min(
+            len(plans) or 1,
+            int(getattr(args, "real_replay_shard_workers", 1) or 1),
+        ),
+    )
+    if shard_workers <= 1:
+        outcomes = [_execute_real_replay_shard(plan) for plan in plans]
+    else:
+        outcomes = []
+        with ProcessPoolExecutor(max_workers=shard_workers) as executor:
+            future_by_plan = {
+                executor.submit(_execute_real_replay_shard, plan): plan
+                for plan in plans
+            }
+            for future in as_completed(future_by_plan):
+                outcomes.append(future.result())
+
+    for outcome in sorted(outcomes, key=lambda item: item.shard_index):
+        evidence_bundles.extend(outcome.result.evidence_bundles)
+        replay_results.extend(outcome.result.replay_results)
+        if outcome.failure is not None:
+            shard_failures.append(dict(outcome.failure))
 
     deduped_evidence = _dedupe_replay_evidence(evidence_bundles)
     if shard_failures and not deduped_evidence:
@@ -2039,8 +2123,9 @@ def _run_real_replay_shards(
                 "status": "partial_replay_shards_interrupted",
                 "schema_version": "torghut.whitepaper-autoresearch-shards.v1",
                 "shard_size": bounded_shard_size,
+                "shard_workers": shard_workers,
                 "shard_timeout_seconds": shard_timeout_seconds,
-                "selected_candidate_spec_count": len(ordered_specs),
+                "selected_candidate_spec_count": len(specs),
                 "evidence_bundle_count": len(deduped_evidence),
                 "failures": shard_failures,
             }
@@ -2691,6 +2776,9 @@ def run_whitepaper_autoresearch_profit_target(
             ),
             "real_replay_shard_timeout_seconds": int(
                 getattr(args, "real_replay_shard_timeout_seconds", 0) or 0
+            ),
+            "real_replay_shard_workers": int(
+                getattr(args, "real_replay_shard_workers", 1) or 1
             ),
             "source_jsonl": [str(path) for path in getattr(args, "source_jsonl", [])],
         }

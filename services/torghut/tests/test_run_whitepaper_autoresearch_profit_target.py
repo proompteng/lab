@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Sequence, cast
+from typing import Any, Sequence, cast
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -114,6 +114,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             real_replay_timeout_seconds=0,
             real_replay_shard_size=0,
             real_replay_shard_timeout_seconds=0,
+            real_replay_shard_workers=1,
             train_days=6,
             holdout_days=3,
             full_window_start_date="2026-02-23",
@@ -751,7 +752,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             [spec.epoch_id for spec in specs],
             ["epoch-repeat-1", "epoch-repeat-2"],
         )
-        self.assertEqual({spec.candidate_spec_id for spec in specs}, {"spec-repeatable"})
+        self.assertEqual(
+            {spec.candidate_spec_id for spec in specs}, {"spec-repeatable"}
+        )
 
     def test_persistence_failure_preserves_artifacts_and_returns_infra_failure(
         self,
@@ -1298,6 +1301,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(parsed.max_total_frontier_candidates, 7)
         self.assertEqual(parsed.real_replay_shard_size, 0)
         self.assertEqual(parsed.real_replay_shard_timeout_seconds, 0)
+        self.assertEqual(parsed.real_replay_shard_workers, 1)
         self.assertFalse(parsed.persist_results)
 
     def test_clickhouse_password_env_resolution_keeps_secret_out_of_argv(
@@ -1713,8 +1717,142 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 for item in result.replay_results
             )
         )
+        shard_summary = next(
+            item
+            for item in result.replay_results
+            if item.get("status") == "partial_replay_shards_interrupted"
+        )
+        self.assertEqual(shard_summary["shard_workers"], 1)
         self.assertIn(
             "TimeoutError:real_replay_timeout_seconds:7", result.failure_reasons
+        )
+
+    def test_real_replay_shards_use_isolated_output_dirs_and_bounded_budget(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
+                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+            )
+            compilation = runner.compile_whitepaper_candidate_specs(
+                hypothesis_cards=cards,
+                family_template_dir=Path("config/trading/families"),
+                seed_sweep_dir=Path("config/trading"),
+            )
+            specs = compilation.executable_specs[:3]
+            args = self._args(output_dir)
+            args.max_candidates = 24
+            args.top_k = 12
+            args.max_frontier_candidates_per_spec = 2
+            args.max_total_frontier_candidates = 5
+
+            plans = runner._build_real_replay_shards(
+                args=args,
+                output_dir=output_dir,
+                specs=specs,
+                shard_size=1,
+                shard_timeout_seconds=7,
+            )
+
+        self.assertEqual(len(plans), 3)
+        self.assertEqual(
+            [plan.output_dir.name for plan in plans],
+            ["shard-001", "shard-002", "shard-003"],
+        )
+        self.assertTrue(
+            all(
+                plan.output_dir.parent == output_dir / "strategy-factory-shards"
+                for plan in plans
+            )
+        )
+        self.assertEqual(
+            [plan.args.max_total_frontier_candidates for plan in plans],
+            [2, 2, 2],
+        )
+        self.assertEqual([plan.args.top_k for plan in plans], [1, 1, 1])
+
+    def test_real_replay_shards_runs_bounded_worker_pool(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
+                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+            )
+            compilation = runner.compile_whitepaper_candidate_specs(
+                hypothesis_cards=cards,
+                family_template_dir=Path("config/trading/families"),
+                seed_sweep_dir=Path("config/trading"),
+            )
+            specs = compilation.executable_specs[:3]
+            args = self._args(output_dir)
+            args.real_replay_shard_workers = 8
+            workers_seen: list[int] = []
+            submitted: list[tuple[Any, runner._ReplayShardPlan]] = []
+
+            class _FakeFuture:
+                def __init__(self, outcome: runner._ReplayShardOutcome) -> None:
+                    self._outcome = outcome
+
+                def result(self) -> runner._ReplayShardOutcome:
+                    return self._outcome
+
+            class _FakeExecutor:
+                def __init__(self, max_workers: int) -> None:
+                    workers_seen.append(max_workers)
+
+                def __enter__(self) -> _FakeExecutor:
+                    return self
+
+                def __exit__(self, *_args: object) -> None:
+                    return None
+
+                def submit(
+                    self,
+                    fn: Any,
+                    plan: runner._ReplayShardPlan,
+                ) -> _FakeFuture:
+                    submitted.append((fn, plan))
+                    return _FakeFuture(
+                        runner._ReplayShardOutcome(
+                            shard_index=plan.shard_index,
+                            candidate_spec_ids=tuple(
+                                spec.candidate_spec_id for spec in plan.specs
+                            ),
+                            result=runner.EpochReplayResult(
+                                evidence_bundles=(),
+                                replay_results=(
+                                    {
+                                        "status": "ok",
+                                        "shard_index": plan.shard_index,
+                                    },
+                                ),
+                            ),
+                        )
+                    )
+
+            def fake_as_completed(futures: object) -> list[_FakeFuture]:
+                return list(cast(Sequence[_FakeFuture], list(futures)))[::-1]
+
+            with (
+                patch.object(runner, "ProcessPoolExecutor", _FakeExecutor),
+                patch.object(runner, "as_completed", side_effect=fake_as_completed),
+            ):
+                result = runner._run_real_replay_shards(
+                    args=args,
+                    output_dir=output_dir,
+                    specs=specs,
+                    shard_size=1,
+                    shard_timeout_seconds=7,
+                )
+
+        self.assertEqual(workers_seen, [3])
+        self.assertEqual(len(submitted), 3)
+        self.assertTrue(
+            all(fn is runner._execute_real_replay_shard for fn, _plan in submitted)
+        )
+        self.assertEqual(
+            [item["shard_index"] for item in result.replay_results],
+            [1, 2, 3],
         )
 
     def test_incomplete_sharded_replay_cannot_report_oracle_candidate_found(
