@@ -7,5 +7,7 @@ data:
   config.yaml: |
     ingress:
       - hostname: "*.proompteng.ai"
-        service: http://traefik.traefik.svc.cluster.local:80
+        service: https://traefik.traefik.svc.cluster.local:443
+        originRequest:
+          noTLSVerify: true
       - service: http_status:404
