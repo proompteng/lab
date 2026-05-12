@@ -2449,9 +2449,7 @@ class AutoresearchCandidateSpec(Base, TimestampMixin):
     __tablename__ = "autoresearch_candidate_specs"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
-    candidate_spec_id: Mapped[str] = mapped_column(
-        String(length=128), nullable=False, unique=True
-    )
+    candidate_spec_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     epoch_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     hypothesis_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     candidate_kind: Mapped[str] = mapped_column(String(length=32), nullable=False)
@@ -2462,6 +2460,12 @@ class AutoresearchCandidateSpec(Base, TimestampMixin):
     blockers_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
     __table_args__ = (
+        Index(
+            "uq_autoresearch_candidate_specs_epoch_candidate_spec",
+            "epoch_id",
+            "candidate_spec_id",
+            unique=True,
+        ),
         Index("ix_autoresearch_candidate_specs_epoch_id", "epoch_id"),
         Index("ix_autoresearch_candidate_specs_hypothesis_id", "hypothesis_id"),
         Index("ix_autoresearch_candidate_specs_family", "family_template_id"),

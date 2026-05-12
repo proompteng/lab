@@ -6,10 +6,10 @@ import type { createPrimitivesStore } from '~/server/primitives-store'
 import { type Condition, upsertCondition } from './conditions'
 import { parseStringList } from './env-config'
 import { hashAgentRunImmutableSpec } from './immutable-spec'
-import { extractJobFailureDetail } from './job-status'
 import { resolveMemory } from './namespace-state'
 import { isAgentRunTemplate, reconcileAgentRunDeletion, reconcileAgentRunTemplate } from './agent-run-template'
 import { normalizeLabelMap, validateAuthSecretPolicy, validateImagePolicy, validateLabelPolicy } from './policy'
+import { extractProviderAwareJobFailure } from './provider-capacity'
 import {
   buildQueueCounts,
   type ControllerState,
@@ -1138,7 +1138,9 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         })
         await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
       } else if (failed > 0 && isJobFailed(job)) {
-        const failureDetail = extractJobFailureDetail(job, {
+        const jobName = asString(runtimeRef.name) ?? ''
+        const jobNamespace = asString(runtimeRef.namespace) ?? namespace
+        const failureDetail = await extractProviderAwareJobFailure(kube, jobNamespace, jobName, job, {
           reason: 'JobFailed',
           message: `job ${asString(runtimeRef.name) ?? 'unknown'} failed`,
         })

@@ -4370,6 +4370,115 @@ describe('agents controller reconcileAgentRun', () => {
     expect(failedStep.message).toBe('container exited with code 17')
   })
 
+  it('classifies workflow job pod usage-limit logs as provider capacity exhaustion', async () => {
+    const jobStatuses = new Map<string, Record<string, unknown>>()
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      const applied = { ...resource, metadata: { ...metadata, uid } }
+      if (resource.kind === 'Job') {
+        const name = (resource.metadata as Record<string, unknown> | undefined)?.name as string | undefined
+        if (name) {
+          jobStatuses.set(name, applied)
+        }
+      }
+      return applied
+    })
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === 'job') {
+          return jobStatuses.get(name) ?? null
+        }
+        return null
+      }),
+      list: vi.fn(async (resource: string, _namespace: string, labelSelector?: string) => {
+        if (resource === 'pods' && labelSelector?.startsWith('job-name=')) {
+          return {
+            items: [
+              {
+                metadata: { name: 'run-1-step-1-attempt-1-pod' },
+                spec: { containers: [{ name: 'main' }] },
+              },
+            ],
+          }
+        }
+        return { items: [] }
+      }),
+      logs: vi.fn(async () =>
+        [
+          'Turn started',
+          "Stream error -> You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at May 11th, 2026 11:15 PM.",
+        ].join('\n'),
+      ),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'workflow', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workflow: {
+          steps: [{ name: 'deploy-step', retries: 0 }],
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const firstStatus = getLastStatus(kube)
+    const firstWorkflow = firstStatus.workflow as Record<string, unknown>
+    const firstStep = ((firstWorkflow.steps as Record<string, unknown>[]) ?? [])[0] ?? {}
+    const firstJobName = (firstStep.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
+    jobStatuses.set(firstJobName ?? '', {
+      ...jobStatuses.get(firstJobName ?? ''),
+      status: {
+        failed: 1,
+        conditions: [
+          {
+            type: 'Failed',
+            status: 'True',
+            reason: 'BackoffLimitExceeded',
+            message: 'Job has reached the specified backoff limit',
+          },
+        ],
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      { ...agentRun, status: firstStatus },
+      'agents',
+      [],
+      [],
+      defaultConcurrency,
+      buildInFlight(),
+      0,
+    )
+
+    const failedStatus = getLastStatus(kube)
+    expect(failedStatus.phase).toBe('Failed')
+    expect(failedStatus.reason).toBe('ProviderCapacityExhausted')
+    expect(failedStatus.message).toContain('workflow step deploy-step: provider capacity exhausted')
+    const failedWorkflow = failedStatus.workflow as Record<string, unknown>
+    const failedStep = ((failedWorkflow.steps as Record<string, unknown>[]) ?? [])[0] ?? {}
+    expect(failedStep.phase).toBe('Failed')
+    expect(failedStep.message).toContain('provider capacity exhausted')
+  })
+
   it('propagates failed job reason and message onto AgentRun status', async () => {
     const kube = buildKube({
       get: vi.fn(async (resource: string, name: string) => {
@@ -4406,6 +4515,65 @@ describe('agents controller reconcileAgentRun', () => {
     expect(status.phase).toBe('Failed')
     expect(status.reason).toBe('DeadlineExceeded')
     expect(status.message).toBe('job exceeded active deadline')
+  })
+
+  it('classifies direct job pod usage-limit logs as provider capacity exhaustion', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === 'job' && name === 'job-1') {
+          return {
+            metadata: { name: 'job-1', namespace: 'agents' },
+            status: {
+              failed: 1,
+              conditions: [
+                {
+                  type: 'Failed',
+                  status: 'True',
+                  reason: 'BackoffLimitExceeded',
+                  message: 'Job has reached the specified backoff limit',
+                },
+              ],
+            },
+          }
+        }
+        return null
+      }),
+      list: vi.fn(async (resource: string, _namespace: string, labelSelector?: string) => {
+        if (resource === 'pods' && labelSelector?.startsWith('job-name=')) {
+          return {
+            items: [
+              {
+                metadata: { name: 'job-1-pod' },
+                spec: { containers: [{ name: 'main' }] },
+              },
+            ],
+          }
+        }
+        return { items: [] }
+      }),
+      logs: vi.fn(async () =>
+        [
+          'Turn started',
+          "Turn failed -> You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at May 11th, 2026 11:15 PM.",
+        ].join('\n'),
+      ),
+    })
+
+    const agentRun = buildAgentRun({
+      status: {
+        phase: 'Running',
+        runtimeRef: { type: 'job', name: 'job-1', namespace: 'agents' },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    expect(status.phase).toBe('Failed')
+    expect(status.reason).toBe('ProviderCapacityExhausted')
+    expect(status.message).toContain('provider capacity exhausted')
+    const failedCondition = findCondition(status, 'Failed')
+    expect(failedCondition?.reason).toBe('ProviderCapacityExhausted')
   })
 
   it('fails workflow steps when timeout is exceeded', async () => {

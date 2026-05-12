@@ -148,11 +148,13 @@ class FakeIngestor:
         cursor_at: datetime | None = None,
         cursor_seq: int | None = None,
         cursor_symbol: str | None = None,
+        signal_lag_seconds: float | None = None,
     ) -> None:
         self.signals = [_with_default_executable_quote(signal) for signal in signals]
         self.cursor_at = cursor_at
         self.cursor_seq = cursor_seq
         self.cursor_symbol = cursor_symbol
+        self.signal_lag_seconds = signal_lag_seconds
         self.committed_batches = 0
 
     def fetch_signals(self, session: Session) -> SignalBatch:
@@ -161,6 +163,7 @@ class FakeIngestor:
             cursor_at=self.cursor_at,
             cursor_seq=self.cursor_seq,
             cursor_symbol=self.cursor_symbol,
+            signal_lag_seconds=self.signal_lag_seconds,
         )
 
     def commit_cursor(self, session: Session, batch: SignalBatch) -> None:
@@ -1139,7 +1142,9 @@ class TestTradingPipeline(TestCase):
             account_label="paper",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = (  # type: ignore[method-assign]
+            lambda _now=None: True
+        )
 
         with patch(
             "app.trading.scheduler.pipeline.trading_now",
@@ -2923,6 +2928,57 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_feature_max_staleness_ms = original[
                 "trading_feature_max_staleness_ms"
             ]
+
+    def test_signal_batch_preserves_lag_metric_for_alpha_readiness(self) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 13, 30, 5, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Min",
+            seq=1,
+            payload={
+                "feature_schema_version": "3.0.0",
+                "macd": {"macd": 1.2, "signal": 0.5},
+                "rsi14": 25,
+                "price": 100,
+            },
+        )
+        batch = SignalBatch(
+            signals=[_with_default_executable_quote(signal)],
+            cursor_at=signal.event_ts,
+            cursor_seq=signal.seq,
+            cursor_symbol=signal.symbol,
+            query_start=signal.event_ts - timedelta(seconds=10),
+            query_end=signal.event_ts,
+            signal_lag_seconds=4.9,
+        )
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        with self.session_local() as session:
+            prepared = pipeline._prepare_batch_for_decisions(
+                session,
+                batch,
+                quality_signals=batch.signals,
+            )
+
+        self.assertTrue(prepared)
+        self.assertEqual(pipeline.state.metrics.signal_lag_seconds, 4)
+        self.assertEqual(pipeline.state.last_signal_continuity_state, "signals_present")
+        self.assertFalse(bool(pipeline.state.last_signal_continuity_actionable))
 
     def test_pipeline_blocks_cursor_on_non_staleness_feature_quality_failure(
         self,

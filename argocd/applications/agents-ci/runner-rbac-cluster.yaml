@@ -67,6 +67,31 @@ roleRef:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
+  name: agents-ci-runner-argocd-application-refresh
+rules:
+  - apiGroups:
+      - argoproj.io
+    resources:
+      - applications
+    verbs:
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agents-ci-runner-argocd-application-refresh
+subjects:
+  - kind: ServiceAccount
+    name: arc-arm64-gha-rs-kube-mode
+    namespace: arc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agents-ci-runner-argocd-application-refresh
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
   name: agents-ci-runner-jangar-rollout-read
 rules:
   - apiGroups:
@@ -91,3 +116,30 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: agents-ci-runner-jangar-rollout-read
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agents-ci-runner-torghut-post-deploy-read
+rules:
+  - apiGroups:
+      - serving.knative.dev
+    resources:
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agents-ci-runner-torghut-post-deploy-read
+subjects:
+  - kind: ServiceAccount
+    name: arc-arm64-gha-rs-kube-mode
+    namespace: arc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agents-ci-runner-torghut-post-deploy-read

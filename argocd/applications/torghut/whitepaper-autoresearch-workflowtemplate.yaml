@@ -50,6 +50,8 @@ spec:
         value: '2'
       - name: realReplayShardTimeoutSeconds
         value: '900'
+      - name: realReplayShardWorkers
+        value: '2'
       - name: prefetchFullWindowRows
         value: 'true'
       - name: allowStaleTape
@@ -82,11 +84,12 @@ spec:
           - name: realReplayTimeoutSeconds
           - name: realReplayShardSize
           - name: realReplayShardTimeoutSeconds
+          - name: realReplayShardWorkers
           - name: prefetchFullWindowRows
           - name: allowStaleTape
           - name: persistResults
       container:
-        image: registry.ide-newton.ts.net/lab/torghut@sha256:ad3da6c3cfe82b6002f193a0a2fa1d2fa86aae6500d7dc8b5ccf679fbb9189e8
+        image: registry.ide-newton.ts.net/lab/torghut@sha256:b1cfa68fc63054f030781d861833c669bc1ba00e80a2406730166b6a8e63138c
         imagePullPolicy: IfNotPresent
         command:
           - /bin/bash
@@ -158,6 +161,7 @@ spec:
               --real-replay-timeout-seconds "{{inputs.parameters.realReplayTimeoutSeconds}}"
               --real-replay-shard-size "{{inputs.parameters.realReplayShardSize}}"
               --real-replay-shard-timeout-seconds "{{inputs.parameters.realReplayShardTimeoutSeconds}}"
+              --real-replay-shard-workers "{{inputs.parameters.realReplayShardWorkers}}"
               --train-days 6
               --holdout-days 3
               --full-window-start-date "{{inputs.parameters.fullWindowStartDate}}"

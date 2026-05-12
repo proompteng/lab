@@ -6,9 +6,9 @@ metadata:
   labels:
     app: torghut-options-ta
 spec:
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:c1c7b8556683d05f4f3847d82e95e7fc93de31a32624adf4300a04a435c7683d
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:e22e7fb47921db61f749006c5ebde0eb8c12c1b9f9fe24db3f8f739745f9bad2
   imagePullPolicy: IfNotPresent
-  restartNonce: 3
+  restartNonce: 4
   flinkVersion: v2_0
   serviceAccount: torghut-runtime
   flinkConfiguration:
@@ -114,5 +114,5 @@ spec:
     entryClass: ai.proompteng.dorvud.ta.flink.OptionsTechnicalAnalysisJobKt
     jarURI: local:///opt/flink/usrlib/app.jar
     parallelism: 4
-    upgradeMode: last-state
+    upgradeMode: stateless
     state: running

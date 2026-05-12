@@ -8,10 +8,18 @@
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM
   reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-08T16:10Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-12T16:31Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-08T16:40Z`):
+- Evidence (current next-work priority, refreshed `2026-05-12T16:40Z`):
+  - `188-torghut-evidence-clock-arbiter-and-routeable-profit-candidate-exchange-2026-05-12.md`
+  - `docs/agents/designs/184-jangar-rollout-custody-and-evidence-clock-dispatch-2026-05-12.md`
+  - `188-torghut-route-evidence-clearinghouse-and-execution-freshness-market-2026-05-12.md`
+  - `docs/agents/designs/184-jangar-rollout-evidence-escrow-and-proof-repair-admission-2026-05-12.md`
+  - `188-torghut-evidence-credit-capital-repair-market-2026-05-12.md`
+  - `docs/agents/designs/184-jangar-stage-evidence-credit-authority-and-freeze-reclock-2026-05-12.md`
+  - `188-torghut-stage-clearance-consumer-and-repair-lot-broker-2026-05-12.md`
+  - `docs/agents/designs/184-jangar-stage-clearance-packets-and-repair-run-lot-ledger-2026-05-12.md`
   - `187-torghut-profit-window-custody-and-repair-value-market-2026-05-08.md`
   - `docs/agents/designs/183-jangar-attested-action-custody-and-profit-window-admission-2026-05-08.md`
   - `186-torghut-routeability-acceptance-cutover-and-fill-quality-loop-2026-05-08.md`
@@ -1083,3 +1091,8 @@ This pack is positioned as the next architecture layer above:
   scoped quant evidence can still lag or disappear by sample, and TCA is historical with no samples for several
   symbols. The contract makes the acceptance ledger a production payload requirement, ties every accepted lot to
   current fill-quality proof, and keeps paper/live capital closed until the cutover packet passes all value gates.
+- `188-torghut-profit-repair-clearance-packets-and-market-context-slos-2026-05-12.md` follows the Jangar
+  stage-clearance launch governor because the current system can emit current observe receipts while Jangar is frozen
+  and Torghut remains zero-notional. It makes each market-context, empirical, route/TCA, promotion-table, and quant
+  pipeline repair cite an expected unblock value, freshness SLO, Jangar packet ref, and zero-notional guardrail before
+  the repair can spend launch capacity.

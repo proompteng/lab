@@ -6,9 +6,9 @@ import { type createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-k
 import { type Condition, upsertCondition } from './conditions'
 import { parseStringList } from './env-config'
 import { hashAgentRunImmutableSpec } from './immutable-spec'
-import { extractJobFailureDetail } from './job-status'
 import { resolveMemory } from './namespace-state'
 import { type ImagePolicyCandidate, validateAuthSecretPolicy, validateImagePolicy } from './policy'
+import { extractProviderAwareJobFailure } from './provider-capacity'
 import { resolveImplementation, resolveParameters } from './run-utils'
 import { buildRuntimeRef, parseRuntimeRef, type RuntimeRef } from './runtime-resources'
 import { resolveSystemPrompt } from './system-prompt'
@@ -1016,11 +1016,11 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
           continue
         }
         if (failed > 0 && deps.isJobFailed(job)) {
-          const failureDetail = extractJobFailureDetail(job, {
+          const failureDetail = await extractProviderAwareJobFailure(kube, jobNamespace, jobName, job, {
             reason: 'WorkflowStepFailed',
             message: `workflow step ${stepSpec.name} failed`,
           })
-          if (stepStatus.attempt < maxAttempts) {
+          if (failureDetail.reason !== 'ProviderCapacityExhausted' && stepStatus.attempt < maxAttempts) {
             const retryMessage =
               failureDetail.message === `workflow step ${stepSpec.name} failed`
                 ? 'Step failed; retrying'

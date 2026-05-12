@@ -35,6 +35,14 @@ The v1 documents are written to stay consistent with:
 If you are trying to decide which docs are current contract truth versus historical milestone records, start with:
 
 - `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md`
+- `docs/torghut/design-system/v6/188-torghut-evidence-clock-arbiter-and-routeable-profit-candidate-exchange-2026-05-12.md`
+- `docs/agents/designs/184-jangar-rollout-custody-and-evidence-clock-dispatch-2026-05-12.md`
+- `docs/torghut/design-system/v6/188-torghut-route-evidence-clearinghouse-and-execution-freshness-market-2026-05-12.md`
+- `docs/agents/designs/184-jangar-rollout-evidence-escrow-and-proof-repair-admission-2026-05-12.md`
+- `docs/torghut/design-system/v6/188-torghut-evidence-credit-capital-repair-market-2026-05-12.md`
+- `docs/agents/designs/184-jangar-stage-evidence-credit-authority-and-freeze-reclock-2026-05-12.md`
+- `docs/torghut/design-system/v6/188-torghut-profit-freshness-frontier-and-zero-notional-repair-market-2026-05-12.md`
+- `docs/agents/designs/184-jangar-reliability-settlement-ledger-and-rollout-slo-escrow-2026-05-12.md`
 - `docs/torghut/design-system/v6/168-torghut-executable-alpha-receipts-and-capital-replay-board-2026-05-07.md`
 - `docs/agents/designs/164-jangar-contract-graduation-brake-and-runtime-receipt-gates-2026-05-07.md`
 - `docs/torghut/design-system/v6/159-torghut-capital-cohort-frontier-and-routeability-repair-board-2026-05-07.md`
