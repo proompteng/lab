@@ -5,7 +5,309 @@ Repository: `proompteng/lab`
 Branch: `codex/swarm-torghut-quant-verify`
 Base: `main`
 Owner channel: `swarm://owner/trading`
-Last refreshed: 2026-05-08T16:00:41Z
+Last refreshed: 2026-05-12T17:10:02Z
+
+## Release gate refresh - 2026-05-12T17:10Z
+
+This section supersedes the 2026-05-08 snapshot for the current open Torghut quant release queue.
+
+Governing design and runtime requirement:
+
+- `docs/torghut/design-system/v6/184-torghut-execution-trusted-profit-repair-settlement-2026-05-08.md` keeps
+  routeability and profit evidence observe-only until route, TCA, forecast, alpha-readiness, and external admission
+  receipts settle.
+- `docs/torghut/design-system/v6/185-torghut-routeability-repair-acceptance-ledger-2026-05-08.md` requires unsettled
+  routeability lots to keep `paper_notional_limit=0` and `live_notional_limit=0`.
+- `docs/torghut/design-system/v6/188-torghut-evidence-clock-arbiter-and-routeable-profit-candidate-exchange-2026-05-12.md`
+  is the new architecture handoff for aligning evidence clocks before routeable profit candidates can carry capital.
+- Runtime objective remains: increase routeable post-cost profit evidence and live trading readiness without weakening
+  capital safety.
+
+Open PR enumeration and merge decisions:
+
+- #6196, `docs(torghut): define evidence clock dispatch architecture`, is merged at
+  `69cab1cd5273074e00a0ead978a14013d712b0b7`. It was the selected low-risk docs/architecture item because it advances
+  evidence-clock alignment for `routeable_candidate_count`, `zero_notional_or_stale_evidence_rate`, and
+  `capital_gate_safety` without changing runtime capital.
+- #6127, `feat(torghut): add routeability acceptance ledger`, remains no-go. It is clean but stale against current
+  main, changes 1,609 lines, and the mandatory Codex review gate still has only usage-limit responses from the Codex
+  connector. Its last current-head review blocker is
+  https://github.com/proompteng/lab/pull/6127#issuecomment-4408477842.
+- #6182, `revert(torghut): rollback failed promotion 2d5e1bed...`, is not selected for merge. Current workload
+  rollout evidence is mechanically stable on the promoted image, so the rollback remains a contingency PR rather than
+  a release action. Do not merge it unless the live rollout crosses rollback criteria or the owner explicitly requests
+  rollback.
+- #6135, this audit PR, is the current release-gate evidence PR for the verify branch.
+
+Merge and CI evidence:
+
+- #6196 was merged on 2026-05-12T17:06:04Z at `69cab1cd5273074e00a0ead978a14013d712b0b7` after semantic commit and
+  semantic PR title checks passed; deploy enable checks were skipped.
+- #6127 visible checks from 2026-05-08 were green, including Torghut Pyright, bytecode/lint/migration guard, pytest
+  shards, bytecode+pytest+coverage, quality signals, Jangar typecheck, and agents integration. Those checks are no
+  longer sufficient for merge because main advanced to `69cab1cd` and Codex review is missing.
+- #6182 checks are green for rollback-manifest validation, including argo-lint and kubeconform, but rollback is not the
+  selected action while the current rollout remains workload-stable and capital-safe.
+
+GitOps and rollout evidence after #6196:
+
+- Current `main`: `69cab1cd5273074e00a0ead978a14013d712b0b7`.
+- Argo `torghut`, `torghut-options`, and `jangar` are all `Synced` to `69cab1cd`.
+- `torghut-options` and `jangar` are `Healthy`; `torghut` remains `Degraded`, so the final release gate is
+  rollout-stable but not fully healthy.
+- The latest Torghut sync operation succeeded at 2026-05-12T17:06:20Z. The manifest-bearing operation revision was
+  `051fc392da8215c36ef01bfc44c6e6dbf1dc72a6`; #6196 advanced main with docs only.
+- PreSync `torghut-db-migrations` and PostSync `torghut-empirical-jobs-backfill`,
+  `torghut-whitepaper-semantic-backfill`, and `torghut-whitepapers-bootstrap` all completed.
+- Live `torghut-00321-deployment` and sim `torghut-sim-00419-deployment` successfully rolled out on
+  `registry.ide-newton.ts.net/lab/torghut@sha256:b1cfa68fc63054f030781d861833c669bc1ba00e80a2406730166b6a8e63138c`.
+- `torghut-options-catalog`, `torghut-options-enricher`, `torghut-options-ta`, `torghut-ta`, `torghut-ta-sim`,
+  `torghut-ws`, and `torghut-ws-options` are rolled out.
+- All current Torghut namespace pods are `Running` with zero restarts. There are no non-running pods.
+- Recent warning events are limited to startup/readiness probes and stale Knative status updates during revision churn;
+  final pods are ready.
+
+Runtime and value-gate evidence:
+
+- `/healthz` returns HTTP 200.
+- `/readyz` and `/trading/health` return HTTP 503 degraded by capital and evidence gates:
+  `simple_submit_disabled`, proof floor `repair_only`, empirical jobs not ready/stale, and `quant_pipeline_degraded`.
+- `/trading/status` reports build `v0.568.5-660-g2d5e1bed5`, commit
+  `2d5e1bed5362cce967642852701ec9497fd00025`, and active revision `torghut-00321`.
+- Live submission remains `allowed=false`; configured live promotion and autonomy live promotion are false.
+- Profit signal quorum is `observe_only` with 3 quorums, 3 zero-notional quorums, `paper_candidate_count=0`,
+  `routeable_candidate_count=0`, `blocked_or_stale_evidence_count=15`, `max_notional=0`,
+  `paper_notional_limit=0`, and `live_notional_limit=0`.
+- Quant metrics are current enough to report 180 latest metrics with single-digit pipeline lag at the last check, but
+  the quant pipeline is still degraded because ingestion/materialization stages are stale.
+- `/trading/revenue-repair` reports `business_state=repair_only`, `revenue_ready=false`, and blockers
+  `alpha_readiness_not_promotion_eligible`, `degraded`, `market_context_stale`, `simple_submit_disabled`,
+  `empirical_jobs_not_ready`, and `quant_pipeline_degraded`.
+
+Business metric and revenue impact:
+
+- #6196 improves operator clarity for the evidence-clock path to `routeable_candidate_count` and
+  `zero_notional_or_stale_evidence_rate`; it does not claim live PnL.
+- `post_cost_daily_net_pnl`: no live revenue is claimed.
+- `routeable_candidate_count`: remains 0.
+- `zero_notional_or_stale_evidence_rate`: remains intentionally visible through zero-notional quorums and degraded
+  evidence blockers.
+- `fill_tca_or_slippage_quality`: still blocked from capital by stale/missing route and TCA evidence.
+- `capital_gate_safety`: preserved. Live submit is disabled and max notional is 0.
+
+Rollback path and residual risk:
+
+- For runtime regression on the current image, merge an explicit GitOps rollback PR that restores the last known
+  healthy Torghut image digest, then let release automation and Argo CD reconcile. Do not mutate production directly
+  from a local shell.
+- #6182 is available as a rollback candidate but is not selected while workloads are ready and capital is locked at
+  zero notional.
+- If #6127 later merges and regresses runtime health, revert its squash merge through a PR and let the normal build,
+  release, and post-deploy verification workflows promote the reverted image.
+- Residual blockers are: Torghut Argo health remains `Degraded`; #6127 needs Codex review capacity plus current-base
+  checks; live revenue remains blocked by stale empirical jobs, quant pipeline degradation, market-context staleness,
+  and `simple_submit_disabled`.
+
+Owner update message - 2026-05-12T17:10Z:
+
+#6196 is merged and synced through GitOps, and the Torghut workload rollout is mechanically stable on live
+`torghut-00321` and sim `torghut-sim-00419` with zero restarts. The release is not a revenue go: Argo still marks
+`torghut` Degraded, `/readyz` and `/trading/health` are 503, `revenue_ready=false`, routeable candidates remain 0, and
+capital stays zero-notional with live submit disabled.
+
+#6127 remains the smallest direct runtime PR for richer routeability acceptance evidence, but it cannot be merged until
+Codex review capacity returns, a current-head review posts, all threads resolve, and checks are rerun against current
+main. #6182 remains rollback-only contingency, not a selected merge.
+
+## Release gate refresh - 2026-05-08T17:36Z
+
+This section supersedes the 17:25 snapshot because #6127 finished its latest current-base hosted checks after main
+advanced to the #6136 Torghut promotion.
+
+Merge gate remains no-go for #6127, `feat(torghut): add routeability acceptance ledger`. The PR is still the only
+direct open Torghut quant PR, but its 1,609-line diff requires Codex review before merge. The review request still has
+only usage-limit responses from the Codex connector, so the release policy blocks squash-merge.
+
+Current merge gate:
+
+- #6127 head: `de979dc1a3caf48dad69ee00a87e1b68242b05d1`, after a teammate merged current main into the PR branch and
+  re-requested Codex review.
+- Current `main`: `06b3163ace826f9dd7f2f0c13720fd2b0782917c`, `chore(torghut): promote image 3080ec28 (#6136)`.
+- GitHub reports #6127 `mergeable=MERGEABLE` and `mergeStateStatus=CLEAN`, with zero review threads.
+- Current visible non-skipped checks on #6127 are green, including `agents-ci / integration` at 10m24s, `jangar-ci`,
+  and all `torghut-ci` jobs.
+- #6127 checks are current against base `06b3163ace826f9dd7f2f0c13720fd2b0782917c`; after Codex review capacity is
+  restored, rerun checks if main advances again before merge.
+- Codex review blocker remains
+  https://github.com/proompteng/lab/pull/6127#issuecomment-4408477842: `You have reached your Codex usage limits for
+code reviews.`
+
+Current GitOps and rollout evidence:
+
+- No #6127 rollout exists because #6127 is unmerged.
+- `torghut`, `torghut-options`, and `jangar` are `Synced` and `Healthy` at
+  `06b3163ace826f9dd7f2f0c13720fd2b0782917c`. `torghut` completed sync at `2026-05-08T17:22:07Z`;
+  `torghut-options` completed at `2026-05-08T17:18:25Z`.
+- The live Torghut image is
+  `registry.ide-newton.ts.net/lab/torghut@sha256:ad3da6c3cfe82b6002f193a0a2fa1d2fa86aae6500d7dc8b5ccf679fbb9189e8`.
+- Runtime build reports `v0.568.5-617-g3080ec285`, commit
+  `3080ec285b255fae66b4ba56efd059e8ebff79f5`, active revision `torghut-00313`, so #6136 promoted the #6133 Torghut
+  source fix into the live image.
+- `torghut-00313-deployment`, `torghut-sim-00411-deployment`, options catalog/enricher, websocket, and TA workloads
+  are ready. New live/sim/options pods are running with zero restarts.
+- Events show the #6136 image pull, database migration hook, empirical jobs backfill, semantic backfill, and whitepaper
+  bootstrap completed. Warning events were transient startup/readiness probes during rollout plus prior scaled-down
+  revision noise; the final application state is healthy.
+
+Current runtime and value-gate evidence:
+
+- `/healthz` returns HTTP 200.
+- `/readyz` and `/trading/health` return HTTP 503 degraded by expected capital gates.
+- `/trading/status` reports build `v0.568.5-617-g3080ec285`, active revision `torghut-00313`, mode `live`,
+  `enabled=true`, `running=true`, autonomy disabled, and kill switch false.
+- Live submission remains `allowed=false` with reason `simple_submit_disabled`.
+- Proof floor remains `repair_only`; route state `repair_only`; capital state `zero_notional`; `max_notional=0`.
+- Profit quorum has 3 zero-notional quorums and `routeable_candidate_count=0`.
+- Consumer evidence has empirical jobs healthy, quant evidence degraded with reason `quant_metrics_update_missing`, and
+  no routeability acceptance ledger because #6127 is unmerged.
+- Revenue repair reports `business_state=repair_only`, `revenue_ready=false`, and blockers
+  `alpha_readiness_not_promotion_eligible`, `simple_submit_disabled`, and `quant_metrics_update_missing`.
+
+Owner update message - 2026-05-08T17:36Z:
+
+Merge gate is no-go for #6127. Current-base checks are green at head `de979dc1a3caf48dad69ee00a87e1b68242b05d1`,
+but mandatory Codex review is still missing because the connector returned the usage-limit blocker; no selected Torghut
+code PR was merged.
+
+Production is healthy at the GitOps layer: `torghut`, `torghut-options`, and `jangar` are Synced/Healthy at
+`06b3163a`, with live `torghut-00313` and sim `torghut-sim-00411` ready on digest
+`sha256:ad3da6c3cfe82b6002f193a0a2fa1d2fa86aae6500d7dc8b5ccf679fbb9189e8`.
+
+Runtime remains capital-safe and revenue-inactive: `/healthz` is 200, expected capital gates keep `/readyz` and
+`/trading/health` degraded, `revenue_ready=false`, proof floor is `repair_only`, capital is `zero_notional`, and
+`max_notional=0`.
+
+Next action is restore Codex review capacity, get a current-head #6127 review posted, resolve any threads, rerun checks
+if main advances, then repeat the merge and rollout gate.
+
+## Release gate refresh - 2026-05-08T17:05Z
+
+This section supersedes the 16:00 snapshot for current production state.
+
+Merge gate remains no-go for #6127, `feat(torghut): add routeability acceptance ledger`. The governing runtime
+requirement is
+`docs/torghut/design-system/v6/184-torghut-execution-trusted-profit-repair-settlement-2026-05-08.md`, extended by
+`docs/torghut/design-system/v6/185-torghut-routeability-repair-acceptance-ledger-2026-05-08.md`. That contract keeps
+routeability acceptance observe-only and zero-notional until route, TCA, forecast, alpha-readiness, and Jangar
+admission receipts settle.
+
+Open PR enumeration:
+
+- Selected #6127 as the only direct open Torghut quant PR. It advances routeability repair acceptance evidence for
+  `routeable_candidate_count`, `zero_notional_or_stale_evidence_rate`, `fill_tca_or_slippage_quality`, and
+  `capital_gate_safety`.
+- Not selected #5889 because it is the Jangar control-plane lane, even though it references Torghut evidence.
+- Not selected #5767 and #5316 because they are older automated release PRs and do not change Torghut quant runtime
+  value gates.
+
+Merge gate evidence for #6127:
+
+- PR URL: https://github.com/proompteng/lab/pull/6127.
+- Head: `955adea61cc2fc24dd73d1796696a52cae5a4112`; PR base snapshot reported by GitHub:
+  `65d307c562ce19501451b0bd43628dcbe295f3ad`.
+- Current `main`: `2662201aa48fec171666ecaf37fb0f982b48e619`, `chore(torghut): promote image c9967845 (#6132)`.
+- GitHub reports `mergeable=true`, `mergeable_state=clean`, and non-draft state for #6127, with zero review threads.
+- Visible hosted checks for #6127 are passing or skipped: semantic commit lint, semantic PR title,
+  `CI / check_changed_files`, `agents-ci / validate`, `agents-ci / integration`, `jangar-ci / lint-and-typecheck / run`,
+  `torghut-ci / Changed-file plan`, Pyright, bytecode/lint/migration guard, pytest shards 0-3,
+  bytecode+pytest+coverage, and quality signals.
+- `gh pr checks 6127 -R proompteng/lab --required` reports no configured required checks on the head branch; this
+  release gate still treats all visible non-skipped checks and the review policy as mandatory.
+- #6127 changes 1,475 additions and 134 deletions, 1,609 changed lines total, so the >1,000-line Codex review gate is
+  mandatory.
+- Codex review requests were posted at
+  https://github.com/proompteng/lab/pull/6127#issuecomment-4407629789 and
+  https://github.com/proompteng/lab/pull/6127#issuecomment-4407847355.
+- The exact blocker response remains
+  https://github.com/proompteng/lab/pull/6127#issuecomment-4407848367: `You have reached your Codex usage limits for
+code reviews.`
+- Merge decision: do not merge #6127 until Codex review capacity is restored, a current-head Codex review posts, any
+  review threads are resolved, and checks are rerun against the then-current main.
+
+Current rollout evidence:
+
+- No #6127 rollout exists because #6127 is unmerged.
+- `torghut`, `torghut-options`, and `jangar` are `Synced` and `Healthy` at
+  `2662201aa48fec171666ecaf37fb0f982b48e619`. `torghut` finished at `2026-05-08T17:01:34Z`;
+  `torghut-options` finished at `2026-05-08T16:58:46Z`; `jangar` reports the same sync revision.
+- The current Torghut image digest is
+  `registry.ide-newton.ts.net/lab/torghut@sha256:3f41ac1794398003b8af42e5a293c85bbc921b9db1717dcd426718b2b706d23f`.
+- `torghut-00312-deployment`, `torghut-sim-00410-deployment`, `torghut-options-catalog`,
+  `torghut-options-enricher`, `torghut-ws`, `torghut-ws-options`, `torghut-ta`, and `torghut-ta-sim` all reported
+  successful rollout.
+- New live/sim pods `torghut-00312-deployment-56985748c4-9pfjt` and
+  `torghut-sim-00410-deployment-8f945fd5-2hl7f` are `2/2 Running` with zero restarts. Options catalog/enricher pods
+  are `1/1 Running` with zero restarts.
+- Events show the database migration job completed, revisions `torghut-00312` and `torghut-sim-00410` became ready,
+  old sim revision scaled down, empirical and semantic backfill jobs completed, and whitepaper bootstrap completed.
+  Warning events were transient startup/readiness probe failures during rollout plus existing websocket readiness
+  noise; the final rollout state is healthy.
+
+Runtime and value-gate evidence:
+
+- `/healthz` returns HTTP 200.
+- `/readyz` and `/trading/health` return HTTP 503 degraded because live submission is still blocked by
+  `simple_submit_disabled`; proof floor remains `repair_only`, route state `repair_only`, capital state
+  `zero_notional`, and `max_notional=0`.
+- `/trading/status` reports build `v0.568.5-613-gc99678457`, commit
+  `c99678457a3b1ee195cddf41525ca6970d24293c`, active revision `torghut-00312`, mode `live`, `enabled=true`,
+  `running=true`, autonomy disabled, and kill switch false.
+- `profit_signal_quorum` reports schema `torghut.profit-signal-quorum.v1`, 3 quorums, 3 zero-notional quorums, and
+  `routeable_candidate_count=0`.
+- `/trading/consumer-evidence` reports schema `torghut.consumer-evidence-status.v1`, empirical jobs healthy for
+  `chip-paper-microbar-composite@execution-proof`, dataset `torghut-chip-full-day-20260505-4c330ce9-r1`,
+  quant evidence degraded with 180 latest metrics, and `routeability_acceptance_ledger_present=false`.
+- `/trading/revenue-repair` reports `business_state=repair_only`, `revenue_ready=false`, and blockers
+  `alpha_readiness_not_promotion_eligible`, `market_context_stale`, `simple_submit_disabled`, and
+  `quant_pipeline_degraded`.
+- Route reacquisition evidence shows 0 routeable symbols, 1 probing symbol (`AAPL`), 4 blocked symbols, 3 missing
+  symbols, and 7 repair candidates. Paper probe notional remains 0 for repair candidates.
+- `post_cost_daily_net_pnl`: no live revenue is claimed.
+- `routeable_candidate_count`: remains 0; #6127 is the smallest direct blocker to richer routeability acceptance
+  evidence.
+- `zero_notional_or_stale_evidence_rate`: remains intentionally visible and capital-safe through zero-notional quorums
+  and degraded/stale evidence blockers.
+- `fill_tca_or_slippage_quality`: current TCA evidence covers 7,334 orders and keeps high-slippage/missing symbols in
+  repair before capital.
+- `capital_gate_safety`: preserved. Live submission is disabled and max notional is 0.
+
+Rollback path and residual risk:
+
+- Since #6127 is unmerged, no #6127 rollback is required.
+- If the current `c99678457` / `sha256:3f41ac1794398003b8af42e5a293c85bbc921b9db1717dcd426718b2b706d23f` rollout
+  regresses, open a GitOps rollback PR that restores the previous healthy Torghut digest, then let release automation
+  and Argo CD reconcile. Do not mutate production from a local shell.
+- If #6127 later merges and regresses runtime health, revert its squash merge through a PR and let the normal build,
+  release, and post-deploy verification workflows promote the reverted image.
+- Residual release risk is review capacity plus stale-base validation: #6127 cannot be merged until a Codex review
+  posts and checks rerun against the then-current main.
+
+Owner update message - 2026-05-08T17:05Z:
+
+Merge gate is no-go for #6127. The PR is clean and its visible checks are green, but it changes 1,609 lines and the
+required Codex review still has not posted; the connector returned the Codex usage-limit blocker. Current main also
+advanced to `2662201a`, so after review capacity is restored, #6127 needs current-base checks before any squash merge.
+
+Production rollout is healthy at the GitOps layer. `torghut`, `torghut-options`, and `jangar` are Synced/Healthy at
+`2662201a`; live `torghut-00312`, sim `torghut-sim-00410`, options catalog/enricher, websocket, and TA deployments are
+rolled out.
+
+Runtime remains capital-safe and revenue-inactive. `/healthz` is 200, `/readyz` and `/trading/health` are degraded by
+the expected capital gates, `/trading/revenue-repair` reports `business_state=repair_only` and `revenue_ready=false`,
+profit quorum routeable candidates remain 0, and max notional remains 0.
+
+Next action is restore Codex review capacity for #6127, get the current-head review posted, resolve any threads, rerun
+checks against current main, then repeat the merge and rollout gate.
 
 ## Latest release gate refresh - 2026-05-08T16:00Z
 
