@@ -327,6 +327,22 @@ Rollback: keep the exchange in observe mode or ignore `repair_warrant_exchange` 
 Existing dependency quorum, negative-evidence budgets, runtime admission passports, and action clocks remain the
 fallback authority; no database, Kubernetes, or broker mutation is required.
 
+Control-plane status also exposes the shadow `clearance_market_ledger` from
+`docs/agents/designs/185-jangar-clearance-market-and-rollout-truth-settlement-2026-05-12.md`. The ledger is a compact
+operator and deployer read model over existing status inputs. It names authority splits, retained failure debt windows
+(`15m`, `6h`, and `7d`), rollout truth settlement, action-class clearance, zero-notional repair lots, and stage
+admission posture without changing scheduler behavior.
+
+The first rollout is projection-only. `dispatch_normal`, `deploy_widen`, and `merge_ready` stay held when execution
+trust, rollout truth, AgentRun ingestion, Torghut proof, or controller authority disagree. `dispatch_repair` can remain
+repair-only when the selected repair lot is zero-notional and cites a live warrant. The ledger gives implement, verify,
+and deployer handoffs one `ledger_id` plus evidence refs instead of requiring operators to reconcile status sections by
+hand.
+
+Rollback: set `JANGAR_CLEARANCE_MARKET_ENABLED=false` to remove the ledger from the status payload. Existing
+stage-clearance packets, material-action verdicts, runtime-admission passports, repair warrants, and source-rollout
+truth remain the fallback authority.
+
 ## Lease reconciliation action clocks
 
 Control-plane status projects shadow `reconciled_action_clocks` from the contract in

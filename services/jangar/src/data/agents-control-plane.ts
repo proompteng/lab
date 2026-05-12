@@ -957,6 +957,14 @@ export type TorghutConsumerEvidenceStatus = {
   profit_repair_settlement_ledger_id?: string | null
   profit_repair_aggregate_state?: string | null
   profit_repair_lot_ids?: string[]
+  routeability_repair_acceptance_ledger_id?: string | null
+  routeability_aggregate_state?: string | null
+  routeability_lot_ids?: string[]
+  accepted_routeable_candidate_count?: number | null
+  profit_freshness_frontier_id?: string | null
+  profit_freshness_state?: string | null
+  profit_freshness_repair_lot_ids?: string[]
+  profit_freshness_selected_repair_ids?: string[]
   reason_codes: string[]
   message: string
 }
@@ -1065,6 +1073,125 @@ export type ReadyActionExchange = {
   blocked_action_classes: ActionSloBudgetActionClass[]
   reason_codes: string[]
   rollback_target: string
+}
+
+export type ClearanceMarketDecision = 'allow' | 'repair_only' | 'hold' | 'block'
+
+export type ClearanceMarketAuthoritySplit = {
+  split_id: string
+  domain: 'rollout' | 'controller' | 'runtime_admission' | 'torghut' | 'database' | 'workflow'
+  primary_ref: string
+  secondary_ref: string | null
+  decision: ClearanceMarketDecision
+  reason_codes: string[]
+  message: string
+  evidence_refs: string[]
+}
+
+export type ClearanceMarketFailureDebt = {
+  debt_id: string
+  window: '15m' | '6h' | '7d'
+  window_seconds: number
+  state: 'clear' | 'active' | 'retained_audit' | 'projection_limited' | 'unknown'
+  failed_count: number | null
+  backoff_count: number | null
+  running_count: number | null
+  data_confidence: 'high' | 'medium' | 'low' | 'degraded' | 'unknown'
+  reason_codes: string[]
+  evidence_refs: string[]
+}
+
+export type ClearanceMarketRolloutTruthSettlement = {
+  settlement_id: string
+  source_head_sha: string | null
+  gitops_revision: string | null
+  desired_image_refs: string[]
+  live_image_refs: string[]
+  deployment_availability: Array<{
+    name: string
+    namespace: string
+    status: DeploymentRolloutStatus['status']
+    desired_replicas: number
+    available_replicas: number
+  }>
+  route_health: SourceRolloutTruthRouteStatus[]
+  database_projection: {
+    mode: 'status_projection' | 'route_database_projection' | 'unavailable'
+    status: DatabaseStatus['status']
+    evidence_ref: string
+  }
+  downstream_evidence_refs: string[]
+  pr_to_rollout_latency_seconds: number | null
+  decision: ClearanceMarketDecision
+  blockers: string[]
+}
+
+export type ClearanceMarketActionClearance = {
+  clearance_id: string
+  action_class: ActionSloBudgetActionClass
+  decision: ClearanceMarketDecision
+  max_dispatches: number | null
+  max_runtime_seconds: number | null
+  max_notional: number | null
+  reason_codes: string[]
+  required_repair_actions: string[]
+  governing_design_refs: string[]
+  evidence_refs: string[]
+  rollback_target: string | null
+}
+
+export type ClearanceMarketRepairLot = {
+  lot_id: string
+  warrant_id: string | null
+  value_gate: 'failed_agentrun_rate' | 'pr_to_rollout_latency' | 'ready_status_truth' | 'manual_intervention_count'
+  failure_mode: string
+  action_class: ActionSloBudgetActionClass
+  decision: ClearanceMarketDecision
+  score: number
+  expected_unblock_value: number
+  max_dispatches: number
+  max_runtime_seconds: number
+  max_notional: number
+  reason_codes: string[]
+  evidence_refs: string[]
+  rollback_target: string
+}
+
+export type ClearanceMarketStageAdmission = {
+  admission_id: string
+  stage: StageClearanceStage
+  action_class: ActionSloBudgetActionClass
+  decision: ClearanceMarketDecision
+  packet_ref: string | null
+  selected_repair_lot_ref: string | null
+  reason_codes: string[]
+  evidence_refs: string[]
+}
+
+export type ClearanceMarketLedger = {
+  schema_version: 'jangar.clearance-market.v1'
+  ledger_id: string
+  namespace: string
+  generated_at: string
+  fresh_until: string
+  governing_design_refs: string[]
+  observed_revision: {
+    source_head_sha: string | null
+    gitops_revision: string | null
+  }
+  evidence_mode: 'shadow'
+  authority_splits: ClearanceMarketAuthoritySplit[]
+  retained_failure_debt: ClearanceMarketFailureDebt[]
+  rollout_truth_settlement: ClearanceMarketRolloutTruthSettlement
+  action_clearance: ClearanceMarketActionClearance[]
+  repair_lots: ClearanceMarketRepairLot[]
+  stage_admission: ClearanceMarketStageAdmission[]
+  handoff_contract: {
+    value_gates: string[]
+    acceptance_criteria: string[]
+    rollback_target: string
+    status: ClearanceMarketDecision
+  }
 }
 
 export type DeploymentRolloutStatus = {
@@ -1182,6 +1309,7 @@ export type ControlPlaneStatus = {
   stage_clearance_packets: StageClearancePacket[]
   ready_action_exchange: ReadyActionExchange
   repair_warrant_exchange: RepairWarrantExchange
+  clearance_market_ledger: ClearanceMarketLedger | null
   source_rollout_truth_exchange: SourceRolloutTruthExchange
   route_stability_escrow: RouteStabilityEscrow
   database: DatabaseStatus

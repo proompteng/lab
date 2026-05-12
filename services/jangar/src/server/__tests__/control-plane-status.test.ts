@@ -5,6 +5,7 @@ import {
   buildExecutionTrust,
   type DatabaseStatus as ControlPlaneDatabaseStatus,
 } from '~/server/control-plane-status'
+import { CLEARANCE_MARKET_DESIGN_ARTIFACT } from '~/server/control-plane-clearance-market'
 import * as kubeGatewayModule from '~/server/kube-gateway'
 import type {
   ControlPlaneHeartbeatRow,
@@ -100,6 +101,20 @@ const healthyRolloutDeployment: KubeGatewayDeployment = {
     unavailableReplicas: 0,
     conditions: [
       { type: 'Available', status: 'True', reason: null, lastTransitionTime: null },
+      { type: 'Progressing', status: 'True', reason: null, lastTransitionTime: null },
+    ],
+  },
+}
+
+const unavailableAgentsRolloutDeployment: KubeGatewayDeployment = {
+  ...healthyRolloutDeployment,
+  status: {
+    readyReplicas: 0,
+    availableReplicas: 0,
+    updatedReplicas: 1,
+    unavailableReplicas: 1,
+    conditions: [
+      { type: 'Available', status: 'False', reason: 'MinimumReplicasUnavailable', lastTransitionTime: null },
       { type: 'Progressing', status: 'True', reason: null, lastTransitionTime: null },
     ],
   },
@@ -359,6 +374,7 @@ describe('control-plane status', () => {
     delete process.env.JANGAR_CONTROL_PLANE_ROUTE_PROBE_ENABLED
     delete process.env.JANGAR_CONTROL_PLANE_ROUTE_NAMESPACE
     delete process.env.JANGAR_FAILURE_DOMAIN_EVIDENCE_NAMESPACES
+    delete process.env.JANGAR_CLEARANCE_MARKET_ENABLED
     delete process.env.JANGAR_SOURCE_HEAD_SHA
     delete process.env.JANGAR_GITOPS_REVISION
   })
@@ -968,6 +984,34 @@ describe('control-plane status', () => {
         }),
       ]),
     )
+    const clearanceMarketLedger = status.clearance_market_ledger
+    expect(clearanceMarketLedger).not.toBeNull()
+    if (!clearanceMarketLedger) {
+      throw new Error('expected clearance market ledger')
+    }
+    expect(clearanceMarketLedger).toMatchObject({
+      schema_version: 'jangar.clearance-market.v1',
+      evidence_mode: 'shadow',
+      governing_design_refs: expect.arrayContaining([CLEARANCE_MARKET_DESIGN_ARTIFACT]),
+      retained_failure_debt: expect.arrayContaining([
+        expect.objectContaining({ window: '15m' }),
+        expect.objectContaining({ window: '6h' }),
+        expect.objectContaining({ window: '7d' }),
+      ]),
+      rollout_truth_settlement: {
+        database_projection: expect.objectContaining({
+          mode: 'status_projection',
+          evidence_ref: status.source_rollout_truth_exchange.database_projection_ref,
+        }),
+      },
+      action_clearance: expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'serve_readonly',
+          governing_design_refs: expect.arrayContaining([CLEARANCE_MARKET_DESIGN_ARTIFACT]),
+          evidence_refs: expect.arrayContaining([status.source_rollout_truth_exchange.exchange_id]),
+        }),
+      ]),
+    })
     expect(status.torghut_action_slo_budgets).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1002,6 +1046,183 @@ describe('control-plane status', () => {
     expect(status.empirical_services.lean.authoritative).toBe(true)
     expect(status.empirical_services.jobs.authoritative).toBe(true)
     expect(status.torghut_consumer_evidence.status).toBe('disabled')
+  })
+
+  it('projects clearance market authority splits and held normal dispatch when rollout truth disagrees', async () => {
+    setRolloutDeploymentList(
+      [unavailableAgentsRolloutDeployment, healthyAgentsControllersRolloutDeployment],
+      [healthyRuntimePod()],
+    )
+    const degradedTrust: ExecutionTrustStatus = {
+      status: 'degraded',
+      reason: 'execution trust degraded by stale implement stage',
+      last_evaluated_at: '2026-01-20T00:20:00Z',
+      blocking_windows: [
+        {
+          type: 'stages',
+          scope: 'agents/jangar-control-plane',
+          name: 'implement',
+          reason: 'implement stage stale',
+          class: 'degraded',
+        },
+      ],
+      evidence_summary: ['stages:agents/jangar-control-plane:implement stage stale'],
+    }
+
+    const status = await buildStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () =>
+          buildWorkflowsReliabilityStatus({
+            recent_failed_jobs: 2,
+            backoff_limit_exceeded_jobs: 1,
+          }),
+        resolveExecutionTrust: async () => ({
+          executionTrust: degradedTrust,
+          swarms: [],
+          stages: [],
+        }),
+      },
+    )
+
+    const clearanceMarketLedger = status.clearance_market_ledger
+    expect(clearanceMarketLedger).not.toBeNull()
+    if (!clearanceMarketLedger) {
+      throw new Error('expected clearance market ledger')
+    }
+    expect(clearanceMarketLedger.authority_splits).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          domain: 'rollout',
+          decision: 'hold',
+          reason_codes: expect.arrayContaining(['agents_api_degraded', 'agents_controllers_available']),
+        }),
+        expect.objectContaining({
+          domain: 'runtime_admission',
+          decision: 'hold',
+          reason_codes: expect.arrayContaining(['execution_trust_degraded', 'runtime_passport_allow_split']),
+        }),
+      ]),
+    )
+    expect(clearanceMarketLedger.action_clearance).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_normal',
+          decision: 'hold',
+          reason_codes: expect.arrayContaining(['execution_trust_degraded']),
+        }),
+        expect.objectContaining({
+          action_class: 'merge_ready',
+          decision: 'hold',
+        }),
+      ]),
+    )
+    expect(clearanceMarketLedger.retained_failure_debt).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          window: '15m',
+          state: 'active',
+          failed_count: 2,
+          backoff_count: 1,
+        }),
+      ]),
+    )
+  })
+
+  it('keeps stale Torghut proof in zero-notional repair while holding normal dispatch', async () => {
+    setRolloutDeploymentList(
+      [healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment],
+      [healthyRuntimePod()],
+    )
+
+    const status = await buildStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+        resolveTorghutConsumerEvidence: async () => ({
+          status: {
+            status: 'current',
+            endpoint: 'http://torghut/trading/consumer-evidence',
+            receipt_id: 'torghut-consumer-evidence:1',
+            generated_at: '2026-01-20T00:00:00Z',
+            fresh_until: '2026-01-20T00:05:00Z',
+            candidate_id: null,
+            dataset_snapshot_ref: 'dataset:stale-quant',
+            max_notional: '0',
+            route_repair_value: 14,
+            decision: 'repair',
+            profit_freshness_frontier_id: 'profit-freshness:1',
+            reason_codes: ['quant_ingestion_stale', 'market_context_stale'],
+            message: 'zero-notional repair required before normal dispatch',
+          },
+        }),
+      },
+    )
+
+    const clearanceMarketLedger = status.clearance_market_ledger
+    expect(clearanceMarketLedger).not.toBeNull()
+    if (!clearanceMarketLedger) {
+      throw new Error('expected clearance market ledger')
+    }
+    expect(clearanceMarketLedger.authority_splits).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          domain: 'torghut',
+          decision: 'repair_only',
+          reason_codes: expect.arrayContaining(['torghut_zero_notional_repair_only', 'quant_ingestion_stale']),
+        }),
+        expect.objectContaining({
+          domain: 'torghut',
+          decision: 'hold',
+          reason_codes: expect.arrayContaining(['quant_ingestion_stale']),
+        }),
+      ]),
+    )
+    expect(clearanceMarketLedger.action_clearance).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_repair',
+          decision: 'repair_only',
+        }),
+        expect.objectContaining({
+          action_class: 'dispatch_normal',
+          decision: 'hold',
+          reason_codes: expect.arrayContaining(['torghut_quant_evidence_stale']),
+        }),
+      ]),
+    )
   })
 
   it('projects source rollout truth and keeps normal dispatch repair-only when GitOps lags source', async () => {
