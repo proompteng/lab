@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import inspect
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -23,11 +24,14 @@ from app.main import (
     _TRADING_DEPENDENCY_HEALTH_CACHE,
     _assert_dspy_cutover_migration_guard,
     _build_live_submission_gate_payload,
+    _build_route_image_proof_summary,
     _check_alpaca,
     healthz,
+    _load_options_catalog_freshness_summary,
     _readiness_dependency_cache_key,
     _readiness_dependency_checks,
     _route_continuity_packet_for_proof_floor,
+    _route_claim_symbols,
     app,
 )
 from app.trading.scheduler import TradingScheduler
@@ -92,6 +96,81 @@ def _mark_static_universe_loaded(scheduler: TradingScheduler) -> None:
     scheduler.state.universe_cache_age_seconds = 0
 
 
+class _MappingRows:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self._rows = rows
+
+    def one(self) -> dict[str, object]:
+        return self._rows[0]
+
+    def __iter__(self) -> Iterator[dict[str, object]]:
+        return iter(self._rows)
+
+
+class _ExecuteResult:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self._rows = rows
+
+    def mappings(self) -> _MappingRows:
+        return _MappingRows(self._rows)
+
+
+class _OptionsFreshnessSession:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object | None]] = []
+
+    def execute(
+        self, statement: object, params: object | None = None
+    ) -> _ExecuteResult:
+        statement_text = str(statement)
+        self.calls.append((statement_text, params))
+        if statement_text.startswith("SET LOCAL"):
+            return _ExecuteResult([])
+        if "GROUP BY underlying_symbol" in statement_text:
+            return _ExecuteResult(
+                [
+                    {
+                        "underlying_symbol": "AAPL",
+                        "active_contracts": 4,
+                        "newest_last_seen_ts": datetime(
+                            2026, 5, 12, tzinfo=timezone.utc
+                        ),
+                        "missing_provider_updated_ts_count": 0,
+                        "newest_provider_updated_ts": datetime(
+                            2026, 5, 12, tzinfo=timezone.utc
+                        ),
+                        "missing_close_price_count": 0,
+                        "zero_open_interest_count": 0,
+                    },
+                    {
+                        "underlying_symbol": "MSFT",
+                        "active_contracts": 2,
+                        "newest_last_seen_ts": datetime(
+                            2026, 5, 12, tzinfo=timezone.utc
+                        ),
+                        "missing_provider_updated_ts_count": 2,
+                        "newest_provider_updated_ts": None,
+                        "missing_close_price_count": 1,
+                        "zero_open_interest_count": 1,
+                    },
+                ]
+            )
+        return _ExecuteResult(
+            [
+                {
+                    "active_contracts": 6,
+                    "newest_last_seen_ts": datetime(2026, 5, 12, tzinfo=timezone.utc),
+                    "missing_provider_updated_ts_count": 2,
+                    "newest_provider_updated_ts": datetime(
+                        2026, 5, 12, tzinfo=timezone.utc
+                    ),
+                    "missing_close_price_count": 1,
+                    "zero_open_interest_count": 1,
+                }
+            ]
+        )
+
+
 class TestTradingApi(TestCase):
     def setUp(self) -> None:
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
@@ -142,6 +221,7 @@ class TestTradingApi(TestCase):
             )
             session.add(decision)
             session.commit()
+
             session.refresh(decision)
 
             execution = Execution(
@@ -213,6 +293,64 @@ class TestTradingApi(TestCase):
         app.dependency_overrides.clear()
         if hasattr(app.state, "trading_scheduler"):
             delattr(app.state, "trading_scheduler")
+
+    def test_route_claim_symbols_extracts_valid_quorum_symbols(self) -> None:
+        payload = {
+            "quorums": [
+                "not-a-mapping",
+                {"route_tca_signal": "not-a-mapping"},
+                {"route_tca_signal": {"details": "not-a-mapping"}},
+                {"route_tca_signal": {"details": {"symbols": "AAPL"}}},
+                {
+                    "route_tca_signal": {
+                        "details": {"symbols": [" aapl ", "", "MSFT", "aapl"]}
+                    }
+                },
+            ]
+        }
+
+        self.assertEqual(_route_claim_symbols({}), ())
+        self.assertEqual(_route_claim_symbols(payload), ("AAPL", "MSFT"))
+
+    def test_options_catalog_freshness_summary_includes_route_symbol_scope(
+        self,
+    ) -> None:
+        fake_session = _OptionsFreshnessSession()
+
+        payload = _load_options_catalog_freshness_summary(
+            fake_session,  # type: ignore[arg-type]
+            route_symbols=[" aapl ", "MSFT", "AAPL", ""],
+        )
+
+        self.assertEqual(payload["route_symbols"], ["AAPL", "MSFT"])
+        self.assertEqual(payload["active_contracts"], 6)
+        route_scope = payload["route_symbol_freshness"]
+        self.assertIsInstance(route_scope, dict)
+        route_scope = dict(route_scope)
+        self.assertTrue(route_scope["AAPL"]["provider_updated_ts_present"])
+        self.assertFalse(route_scope["MSFT"]["provider_updated_ts_present"])
+        self.assertEqual(route_scope["MSFT"]["missing_close_price_count"], 1)
+        self.assertEqual(
+            fake_session.calls[2][1],
+            {"route_symbols": ("AAPL", "MSFT")},
+        )
+
+    def test_route_image_proof_summary_preserves_route_workload_status(self) -> None:
+        payload = _build_route_image_proof_summary(
+            build={"image_digest": "sha256:fallback", "active_revision": "build-rev"},
+            dependency_quorum={
+                "rollout_image_book": {
+                    "image_digest": "sha256:ready",
+                    "active_revision": "runtime-rev",
+                    "state": "current",
+                    "route_workloads_ok": False,
+                    "reason_codes": ["route_adjacent_workloads_degraded"],
+                }
+            },
+        )
+
+        self.assertEqual(payload["image_digest"], "sha256:ready")
+        self.assertEqual(payload["route_workloads_ok"], False)
 
     def test_healthz_handler_stays_async_for_liveness_probe(self) -> None:
         self.assertTrue(inspect.iscoroutinefunction(healthz))

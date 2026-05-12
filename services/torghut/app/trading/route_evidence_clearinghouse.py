@@ -218,13 +218,13 @@ def _source_reasons_for_claim(
     provider_updated_at = _timestamp(options.get("newest_provider_updated_ts"))
     if _int(options.get("active_contracts"), -1) <= 0:
         reasons.append("options_catalog_active_contracts_missing")
+    if (
+        _int(options.get("missing_provider_updated_ts_count")) > 0
+        or options.get("provider_updated_ts_present") is False
+    ):
+        reasons.append("options_provider_updated_ts_missing")
     if provider_updated_at is None:
         reasons.append("options_provider_clock_missing")
-        if (
-            _int(options.get("missing_provider_updated_ts_count")) > 0
-            or options.get("provider_updated_ts_present") is False
-        ):
-            reasons.append("options_provider_updated_ts_missing")
     if not route_symbols:
         if _int(options.get("missing_close_price_count")) > 0:
             reasons.append("options_close_price_coverage_incomplete")
