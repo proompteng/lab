@@ -137,6 +137,7 @@ curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.torghut_action_slo_budgets'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.ready_action_exchange'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.action_custody_receipts[] | {action_class,decision,blocking_debt_classes,receipt_id}'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.stage_clearance_packets[] | {stage,action_class,decision,packet_id,fresh_until}'
 curl -fsS http://localhost:8080/ready | jq '{status, serving_passport_id, runtime_kits, admission_passports}'
 kubectl api-resources --api-group=argoproj.io --no-headers || true
 kubectl -n agents get workflows.argoproj.io 2>/dev/null || true
@@ -180,6 +181,11 @@ Expected outcomes:
   route-stability contracts, retained workflow failure debt, and Torghut consumer/profit-window evidence.
   `serve_readonly` may remain `allow` while `dispatch_normal`, `deploy_widen`, `merge_ready`, and capital actions are
   held or blocked.
+- `stage_clearance_packets` cite design doc 184 and include `packet_id`, `decision`, `fresh_until`, and reason codes
+  for scheduled `discover`, `plan`, `implement`, and `verify` launches. During the shadow rollout, schedule-runner pods
+  stamp the current packet ID and decision onto launched AgentRuns via
+  `swarm.proompteng.ai/stage-clearance-packet-id` and `swarmStageClearancePacketId`; a launch without those fields is
+  not acceptable green rollout evidence.
 - If collaboration is degraded or blocked because a runtime helper is missing, `/ready` stays `200` as
   long as the `serving` passport is still `allow` or `degrade`; the blocked `swarm_*` passport surfaces
   the missing component in `reason_codes`.
@@ -248,6 +254,9 @@ Expected outcomes:
   If this fire-time check itself is blocking emergency recovery, set
   `JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false` and keep `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=true` so the
   controller still deletes newly blocked schedules.
+- stage-clearance packet stamping is shadow by default through `JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow`. Use
+  `disabled` only to roll back packet lookup while keeping runtime-admission checks active; use `hold` only after
+  deployer evidence proves frozen normal launches carry current packet IDs and bounded repair launches remain available.
 - rollback is runtime-local: restore the missing helper/config/secret in the admitted image or revert the
   change that introduced the incompatible runtime contract, then redeploy and re-check the same passport ids.
 

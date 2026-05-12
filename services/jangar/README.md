@@ -197,6 +197,13 @@ source-rollout-truth, material-action, route-stability, failure-domain, workflow
 initial shadow phase this projection does not change scheduler behavior; it gives engineer, verify, and deployer
 handoffs packet IDs and reason codes before the scheduler starts enforcing held normal launches.
 
+Schedule-runner pods read the same status payload before launch and, in the default
+`JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow` mode, stamp scheduled `discover`, `plan`, `implement`, and `verify` runs
+with `swarm.proompteng.ai/stage-clearance-packet-id`, the packet decision, action class, freshness timestamp, and the
+matching `swarmStageClearance*` parameters. Missing or stale packets are logged in shadow mode but do not block the run.
+Rollback for packet lookup is `JANGAR_STAGE_CLEARANCE_ENFORCEMENT=disabled`; later hold-mode rollout uses
+`JANGAR_STAGE_CLEARANCE_ENFORCEMENT=hold` to stop non-`allow` normal stage launches at fire time.
+
 The supporting-primitives controller enforces stage admission passports before it creates launch-capable swarm work.
 With `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=true` (the production default), discover/plan schedules use the
 `swarm_plan` passport, implement schedules and cross-swarm requirements use `swarm_implement`, and verify schedules use
