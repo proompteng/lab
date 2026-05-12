@@ -82,11 +82,12 @@ until they are decomposed further.
 
 ## Current control-plane decision contract
 
-The current architecture priority is freeze-aware stage-clearance launch governance on top of attested action custody,
-controller-witness carry, failure-debt maturity, evidence settlement, evidence-quality admission, resource-pressure
-escrow, and source-heartbeat witness settlement. Final verdicts remain an input, but stage-clearance packets are the
-consumer surface for scheduler launches, deployer proof, validator evidence, and Torghut zero-notional repair
-admission. A packet must carry explicit evidence before it is treated as durable launch authority: governing requirement
+The current architecture priority is a shadow clearance market and rollout truth settlement on top of freeze-aware
+stage-clearance launch governance, attested action custody, controller-witness carry, failure-debt maturity, evidence
+settlement, evidence-quality admission, resource-pressure escrow, and source-heartbeat witness settlement. Final
+verdicts remain an input, but the clearance market is the operator and deployer read model for authority splits,
+retained failure debt windows, action-class clearance, zero-notional repair lots, and stage admission posture. A packet
+or ledger entry must carry explicit evidence before it is treated as durable launch authority: governing requirement
 refs, metric quality, market-context risk flags, schedule runner route outcomes, runner QoS and ephemeral-storage
 budgets, source or GitOps revision truth, rollout truth, controller heartbeat truth, AgentRun ingestion truth, terminal
 evidence carry, failure-debt maturity, Torghut consumer proof, profit-repair clearance, and action-custody receipts.
@@ -98,6 +99,7 @@ stages, widen dispatch, claim merge readiness, or spend Torghut capital.
 
 Current source-of-truth design:
 
+- `docs/agents/designs/185-jangar-clearance-market-and-rollout-truth-settlement-2026-05-12.md`
 - `docs/agents/designs/184-jangar-stage-clearance-packets-and-freeze-aware-launch-governor-2026-05-12.md`
 - `docs/torghut/design-system/v6/188-torghut-profit-repair-clearance-packets-and-market-context-slos-2026-05-12.md`
 - `docs/agents/designs/183-jangar-attested-action-custody-and-profit-window-admission-2026-05-08.md`

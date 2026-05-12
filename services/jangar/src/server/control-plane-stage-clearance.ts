@@ -6,6 +6,7 @@ import type {
   ExecutionTrustStage,
   ExecutionTrustStatus,
   ExecutionTrustSwarm,
+  FailureDomainActionClass,
   FailureDomainLeaseSet,
   MaterialActionVerdict,
   MaterialActionVerdictEpoch,
@@ -111,6 +112,9 @@ const runtimeStageName = (stage: StageClearanceStage): RuntimeStageName | null =
 
 const isCapitalAction = (actionClass: ActionSloBudgetActionClass) =>
   actionClass === 'paper_canary' || actionClass === 'live_micro_canary' || actionClass === 'live_scale'
+
+const failureDomainActionClassForPacket = (actionClass: ActionSloBudgetActionClass): FailureDomainActionClass =>
+  isCapitalAction(actionClass) ? 'torghut_capital' : (actionClass as FailureDomainActionClass)
 
 const numericNotional = (value: string | null | undefined) => {
   if (!value) return 0
@@ -312,24 +316,46 @@ const failureDomainLeaseRefs = (
   actionClass: ActionSloBudgetActionClass,
   failureDomainLeases: FailureDomainLeaseSet,
 ) => {
-  const normalizedAction = isCapitalAction(actionClass) ? 'torghut_capital' : actionClass
-  return failureDomainLeases.leases
+  const normalizedAction = failureDomainActionClassForPacket(actionClass)
+  const blockingLeaseIds = failureDomainLeases.leases
     .filter((lease) => lease.status !== 'valid' && lease.action_classes.includes(normalizedAction))
     .map((lease) => lease.lease_id)
+  const holdback = failureDomainLeases.holdbacks.find(
+    (entry) => entry.action_class === normalizedAction && entry.decision !== 'allow',
+  )
+  let holdbackLeaseIds: string[] = []
+  if (holdback && holdback.lease_ids.length > 0) {
+    holdbackLeaseIds = holdback.lease_ids
+  } else if (holdback) {
+    holdbackLeaseIds = [failureDomainLeases.lease_set_digest]
+  }
+
+  return uniqueStrings([...blockingLeaseIds, ...holdbackLeaseIds])
 }
 
 const failureDomainDebtForPacket = (
   actionClass: ActionSloBudgetActionClass,
   failureDomainLeases: FailureDomainLeaseSet,
 ): PacketDebt => {
+  const normalizedAction = failureDomainActionClassForPacket(actionClass)
   const refs = failureDomainLeaseRefs(actionClass, failureDomainLeases)
-  const reasonCodes = failureDomainLeases.leases
-    .filter((lease) => refs.includes(lease.lease_id))
-    .flatMap((lease) => lease.reason_codes)
-    .map(normalizeReason)
+  const blockingLeases = failureDomainLeases.leases.filter((lease) => refs.includes(lease.lease_id))
+  const holdback = failureDomainLeases.holdbacks.find(
+    (entry) => entry.action_class === normalizedAction && entry.decision !== 'allow',
+  )
+  let holdbackReasonCodes: string[] = []
+  if (holdback && holdback.reason_codes.length > 0) {
+    holdbackReasonCodes = holdback.reason_codes
+  } else if (holdback) {
+    holdbackReasonCodes = [`failure_domain_${holdback.decision}:${normalizedAction}`]
+  }
+  const reasonCodes = uniqueStrings([
+    ...blockingLeases.flatMap((lease) => lease.reason_codes),
+    ...holdbackReasonCodes,
+  ]).map(normalizeReason)
 
   return {
-    reasonCodes: uniqueStrings(reasonCodes),
+    reasonCodes,
     requiredRepairActions: uniqueStrings(reasonCodes.map(requiredRepairForReason)),
     providerCapacityActive: false,
   }
