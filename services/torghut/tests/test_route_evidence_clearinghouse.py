@@ -174,6 +174,23 @@ def test_requested_route_symbol_without_catalog_row_holds_option_route() -> None
     assert "options_route_symbol_catalog_missing" in route_claim["reason_codes"]
 
 
+def test_aggregate_option_catalog_partial_provider_clocks_hold_route() -> None:
+    packet = _build(
+        profit_signal_quorum=_option_quorum(),
+        options_catalog_freshness={
+            **BASE_INPUTS["options_catalog_freshness"],
+            "missing_provider_updated_ts_count": 2,
+            "provider_updated_ts_present": False,
+            "newest_provider_updated_ts": NOW.isoformat(),
+        },
+    )
+    route_claim = packet["route_claims"][0]
+
+    assert packet["accepted_routeable_candidate_count"] == 0
+    assert route_claim["source_freshness_decision"] == "hold"
+    assert "options_provider_updated_ts_missing" in route_claim["reason_codes"]
+
+
 @pytest.mark.parametrize(("overrides", "reason", "value_gate"), BLOCKERS)
 def test_blocking_evidence_yields_zero_notional_repair_bid(
     overrides: dict[str, object],
