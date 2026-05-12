@@ -248,7 +248,13 @@ def test_closed_frontier_still_does_not_widen_capital_limits() -> None:
         },
         route_reacquisition_board={
             "summary": {"capital_eligible_symbol_count": 1},
-            "rows": [{"symbol": "NVDA", "state": "routeable", "current_blocker": ""}],
+            "rows": [
+                {
+                    "symbol": "NVDA",
+                    "state": "routeable",
+                    "current_blocker": "route_tca_passed",
+                }
+            ],
         },
         live_submission_gate={
             "allowed": True,

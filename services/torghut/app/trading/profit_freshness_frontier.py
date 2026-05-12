@@ -545,7 +545,8 @@ def _tca_dimension(
         reasons.append(proof_reason)
     for row in _route_rows(route_reacquisition_board):
         blocker = _text(row.get("current_blocker"))
-        if blocker:
+        row_state = _text(row.get("state")).lower()
+        if blocker and row_state not in {*_CURRENT_STATES, "routeable"}:
             reasons.append(blocker)
     freshness_seconds = _int(execution_tca.get("freshness_seconds"), default=-1)
     return _dimension(
