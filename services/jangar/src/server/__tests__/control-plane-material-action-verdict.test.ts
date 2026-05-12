@@ -10,6 +10,7 @@ import type {
   NegativeEvidenceRouterStatus,
   ReconciledActionClock,
   RepairWarrantExchange,
+  SourceRolloutTruthExchange,
 } from '~/data/agents-control-plane'
 import { buildMaterialActionVerdictEpoch } from '~/server/control-plane-material-action-verdict'
 import type {
@@ -176,6 +177,7 @@ const build = (input: {
   clocks: ReconciledActionClock[]
   dependency?: Partial<DependencyQuorumStatus>
   repairWarrantExchange?: RepairWarrantExchange
+  sourceRolloutTruthExchange?: SourceRolloutTruthExchange
 }) =>
   buildMaterialActionVerdictEpoch({
     now,
@@ -189,6 +191,7 @@ const build = (input: {
     database: database(),
     watchReliability: watch(),
     empiricalServices: empiricalServices(),
+    sourceRolloutTruthExchange: input.sourceRolloutTruthExchange,
     repairWarrantExchange: input.repairWarrantExchange,
   })
 
@@ -248,6 +251,66 @@ const repairWarrantExchange = (overrides: Partial<RepairWarrantExchange> = {}): 
   expired_warrants: [],
   suppressed_candidates: [],
   rollback_target: 'set repair warrant enforcement to observe and keep dependency quorum/action SLO budgets',
+  ...overrides,
+})
+
+const sourceRolloutTruthExchange = (
+  actionClass: ActionSloBudgetActionClass,
+  overrides: Partial<SourceRolloutTruthExchange> = {},
+): SourceRolloutTruthExchange => ({
+  mode: 'shadow',
+  design_artifact:
+    'docs/agents/designs/148-jangar-source-rollout-truth-exchange-and-proof-floor-settlement-2026-05-07.md',
+  exchange_id: 'source-rollout-truth:test',
+  generated_at: now.toISOString(),
+  fresh_until: '2026-05-06T14:01:00.000Z',
+  namespace: 'agents',
+  source_head_sha: 'source-head:test',
+  gitops_revision: 'gitops:test',
+  desired_images: [],
+  live_images: [],
+  controller_heartbeats: [],
+  route_statuses: [],
+  database_projection_ref: 'database:projection:status',
+  watch_cache_ref: 'watch:cache:test',
+  torghut_proof_floor: {
+    proof_floor_ref: 'torghut-proof-floor:test',
+    state: 'closed',
+    capital_state: 'paper',
+    fresh_until: '2026-05-06T14:01:00.000Z',
+    blockers: [],
+    evidence_refs: ['torghut-proof-floor:test'],
+  },
+  receipts: [
+    {
+      receipt_id: `source-rollout-truth-receipt:${actionClass}:test`,
+      action_class: actionClass,
+      settlement_state: 'converged',
+      source_head_sha: 'source-head:test',
+      gitops_revision: 'gitops:test',
+      desired_image_ref: 'registry.example/jangar:test',
+      desired_image_digest: 'sha256:'.padEnd(71, '1'),
+      live_image_ref: 'registry.example/jangar:test',
+      live_image_digest: 'sha256:'.padEnd(71, '1'),
+      controller_heartbeat_ref: 'controller-witness:test',
+      database_projection_ref: 'database:projection:status',
+      watch_cache_ref: 'watch:cache:test',
+      route_status_ref: 'route:healthy:test',
+      torghut_proof_floor_ref: 'torghut-proof-floor:test',
+      fresh_until: '2026-05-06T14:01:00.000Z',
+      action_decision: 'allow',
+      blocking_reasons: [],
+      rollback_target: null,
+    },
+  ],
+  deployer_summary: {
+    settlement_state: 'converged',
+    freshest_blocking_reason: null,
+    rollback_target: null,
+    held_action_classes: [],
+    receipt_refs: [`source-rollout-truth-receipt:${actionClass}:test`],
+  },
+  rollback_target: null,
   ...overrides,
 })
 
@@ -426,5 +489,26 @@ describe('material action verdict arbiter', () => {
       max_notional: 0,
     })
     expect(verdict.evidence_refs).toEqual(expect.arrayContaining([exchange.exchange_id]))
+  })
+
+  it('preserves allowed notional when source rollout truth is converged', () => {
+    const epoch = build({
+      budgets: [
+        budget('paper_canary', 'allow', {
+          max_notional: 25,
+        }),
+      ],
+      clocks: [clock('torghut_capital', 'allow')],
+      sourceRolloutTruthExchange: sourceRolloutTruthExchange('paper_canary'),
+    })
+
+    const verdict = findVerdict(epoch, 'paper_canary')
+    expect(verdict).toMatchObject({
+      decision: 'allow',
+      max_notional: 25,
+    })
+    expect(verdict.evidence_refs).toEqual(
+      expect.arrayContaining(['source-rollout-truth:test', 'source-rollout-truth-receipt:paper_canary:test']),
+    )
   })
 })

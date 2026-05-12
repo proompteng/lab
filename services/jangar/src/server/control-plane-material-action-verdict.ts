@@ -202,7 +202,7 @@ const dependencySignal = (input: {
     allowedUntil: defaultAllowedUntil(input.now),
     maxDispatches: decision === 'repair_only' ? 1 : 0,
     maxRuntimeSeconds: decision === 'repair_only' ? 20 * 60 : 0,
-    maxNotional: 0,
+    maxNotional: decision === 'allow' ? null : 0,
     confidence: input.dependencyQuorum.decision === 'unknown' ? 'unknown' : 'high',
   }
 }
@@ -314,7 +314,7 @@ const sourceRolloutTruthSignal = (
     allowedUntil: receipt.fresh_until,
     maxDispatches: decision === 'allow' ? null : decision === 'repair_only' ? 1 : 0,
     maxRuntimeSeconds: decision === 'allow' ? null : decision === 'repair_only' ? 20 * 60 : 0,
-    maxNotional: 0,
+    maxNotional: decision === 'allow' ? null : 0,
     confidence: decision === 'allow' ? 'high' : receipt.settlement_state === 'unknown' ? 'unknown' : 'medium',
   }
 }
