@@ -206,6 +206,7 @@ const jobReasonCodes = (job: KubeGatewayJob, result: RepairWarrantScheduleDebtAt
   if (reasons.length > 0) return uniqueStrings(reasons)
   if (result === 'error') return ['job_failed']
   if (result === 'success') return ['job_succeeded']
+  if (result === 'running' && (job.status.failed ?? 0) > 0 && (job.status.active ?? 0) === 0) return ['job_retrying']
   if (result === 'running') return ['job_running']
   return ['job_status_unknown']
 }

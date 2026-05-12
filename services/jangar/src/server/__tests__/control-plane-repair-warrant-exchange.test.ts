@@ -330,7 +330,8 @@ describe('repair warrant exchange', () => {
     expect(collection.collectionErrors).toEqual([])
     expect(collection.attempts[0]).toMatchObject({
       result: 'running',
-      reasonCodes: ['job_running'],
+      observedAt: '2026-05-07T14:00:00.000Z',
+      reasonCodes: ['job_retrying'],
     })
     expect(debt).toMatchObject({
       open_error_count: 0,
