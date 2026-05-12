@@ -164,7 +164,12 @@ spec:
                   --format csv \
                   --noquotes \
                   | tr -d '\r' \
-                  | awk -F, '$2=="kubernetes-audience"{print $1; exit}'
+                  | while IFS=, read -r mapper_id mapper_name; do
+                      if [ "$mapper_name" = "kubernetes-audience" ]; then
+                        printf '%s\n' "$mapper_id"
+                        break
+                      fi
+                    done
               )"
 
               if [ -n "$mapper_resource_id" ]; then
