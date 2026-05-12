@@ -22,6 +22,7 @@ import type {
   ControlPlaneWatchReliability,
   DatabaseStatus,
 } from '~/server/control-plane-status-types'
+import type { TorghutNegativeEvidenceInput } from '~/server/control-plane-torghut-negative-evidence'
 
 export const NEGATIVE_EVIDENCE_ROUTER_DESIGN_ARTIFACT =
   'docs/agents/designs/111-jangar-negative-evidence-router-and-action-slo-budgets-2026-05-06.md'
@@ -33,39 +34,6 @@ const DEFAULT_DEPLOY_MAX_RUNTIME_SECONDS = 30 * 60
 const DEFAULT_OBSERVE_MAX_RUNTIME_SECONDS = 10 * 60
 
 type BudgetConsumer = ActionSloBudget['consumer']
-
-export type TorghutNegativeEvidenceInput = {
-  readiness_status?: 'healthy' | 'degraded' | 'unknown'
-  readyz_status_code?: number | null
-  market_context_status?: 'healthy' | 'degraded' | 'stale' | 'unknown'
-  market_context_stale_domains?: string[]
-  open_quant_alerts?: number
-  critical_quant_alerts?: number
-  rollout_ambiguity_refs?: string[]
-  paper_settlement_clean?: boolean
-  consumer_evidence_receipt_id?: string | null
-  consumer_evidence_status?: 'current' | 'stale' | 'missing' | 'unavailable' | 'route_missing' | 'schema_mismatch'
-  consumer_evidence_fresh_until?: string | null
-  consumer_evidence_reason_codes?: string[]
-  capital_reentry_cohort_ledger_id?: string | null
-  capital_reentry_aggregate_state?: string | null
-  capital_reentry_cohort_ids?: string[]
-  capital_reentry_blocking_reason_codes?: string[]
-  profit_repair_settlement_ledger_id?: string | null
-  profit_repair_aggregate_state?: string | null
-  profit_repair_lot_ids?: string[]
-  profit_repair_blocking_reason_codes?: string[]
-  routeability_repair_acceptance_ledger_id?: string | null
-  routeability_aggregate_state?: string | null
-  routeability_lot_ids?: string[]
-  routeability_blocking_reason_codes?: string[]
-  accepted_routeable_candidate_count?: number | null
-  profit_freshness_frontier_id?: string | null
-  profit_freshness_state?: string | null
-  profit_freshness_repair_lot_ids?: string[]
-  profit_freshness_selected_repair_ids?: string[]
-  profit_freshness_blocking_reason_codes?: string[]
-}
 
 export type NegativeEvidenceRouterInput = {
   now: Date
@@ -232,6 +200,12 @@ const buildPositiveRefs = (input: NegativeEvidenceRouterInput) => {
   }
   if (input.torghut?.profit_repair_settlement_ledger_id) {
     refs.push(input.torghut.profit_repair_settlement_ledger_id)
+  }
+  if (input.torghut?.evidence_clock_status === 'current' && input.torghut.evidence_clock_arbiter_id) {
+    refs.push(input.torghut.evidence_clock_arbiter_id)
+  }
+  if (input.torghut?.evidence_clock_status === 'current' && input.torghut.routeable_profit_candidate_exchange_id) {
+    refs.push(input.torghut.routeable_profit_candidate_exchange_id)
   }
   if (
     input.controllerWitness &&
@@ -431,6 +405,68 @@ const buildNegativeEvidenceRefs = (input: NegativeEvidenceRouterInput) => {
       )
     }
 
+    const evidenceClockRefs = uniqueStrings([
+      torghut.evidence_clock_arbiter_id ?? '',
+      torghut.routeable_profit_candidate_exchange_id ?? '',
+      torghut.evidence_clock_custody_ref ?? '',
+      ...(torghut.routeable_exchange_zero_notional_repair_lot_ids ?? []),
+    ])
+    if (torghut.evidence_clock_status && torghut.evidence_clock_status !== 'current') {
+      addEvidence(
+        evidence,
+        'data_freshness_negative',
+        `evidence_clock_${torghut.evidence_clock_status}`,
+        evidenceClockRefs.length > 0 ? evidenceClockRefs : [consumerEvidenceRef],
+      )
+    }
+    for (const reason of torghut.evidence_clock_blocking_reason_codes ?? []) {
+      addEvidence(
+        evidence,
+        'data_freshness_negative',
+        reason,
+        evidenceClockRefs.length > 0 ? evidenceClockRefs : [consumerEvidenceRef],
+      )
+    }
+    if (torghut.evidence_clock_custody_status && torghut.evidence_clock_custody_status !== 'current') {
+      const custodyReason = `evidence_clock_custody_${torghut.evidence_clock_custody_status}`
+      addEvidence(
+        evidence,
+        'data_freshness_negative',
+        custodyReason,
+        evidenceClockRefs.length > 0 ? evidenceClockRefs : [consumerEvidenceRef],
+      )
+      addEvidence(
+        evidence,
+        'current_runtime_negative',
+        custodyReason,
+        evidenceClockRefs.length > 0 ? evidenceClockRefs : [consumerEvidenceRef],
+      )
+      addEvidence(
+        evidence,
+        'rollout_ambiguity_negative',
+        custodyReason,
+        evidenceClockRefs.length > 0 ? evidenceClockRefs : [consumerEvidenceRef],
+      )
+    }
+    for (const reason of torghut.evidence_clock_custody_reason_codes ?? []) {
+      addEvidence(
+        evidence,
+        'rollout_ambiguity_negative',
+        reason,
+        evidenceClockRefs.length > 0 ? evidenceClockRefs : [consumerEvidenceRef],
+      )
+    }
+    for (const clockName of torghut.evidence_clock_split_clock_names ?? []) {
+      if (clockName === 'rollout' || clockName === 'capital_gate') {
+        addEvidence(
+          evidence,
+          'rollout_ambiguity_negative',
+          `evidence_clock_${clockName}_split`,
+          evidenceClockRefs.length > 0 ? evidenceClockRefs : [consumerEvidenceRef],
+        )
+      }
+    }
+
     if (torghut.readiness_status && torghut.readiness_status !== 'healthy') {
       addEvidence(evidence, 'data_freshness_negative', `torghut_readiness_${torghut.readiness_status}`, [
         evidenceRef('torghut:readyz', torghut.readyz_status_code),
@@ -480,6 +516,8 @@ const buildRequiredRepairs = (reasons: string[]) =>
     reasons.map((reason) => {
       if (reason.includes('market_context')) return 'refresh Torghut market-context snapshots'
       if (reason.includes('quant_alert')) return 'resolve or supersede open quant alerts'
+      if (reason.includes('evidence_clock_custody')) return 'attach fresh Torghut stage-custody evidence'
+      if (reason.includes('evidence_clock')) return 'repair Torghut evidence-clock split before widening'
       if (reason.includes('torghut_readiness')) return 'restore Torghut readiness before capital action'
       if (reason.includes('watch_reliability')) return 'stabilize controller watch streams'
       if (reason.includes('controller_witness_split')) return 'publish a fresh controller-process ingestion witness'

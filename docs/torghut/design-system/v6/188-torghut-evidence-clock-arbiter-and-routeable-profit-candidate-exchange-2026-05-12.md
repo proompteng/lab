@@ -396,3 +396,10 @@ Validation for this cut covers stale Postgres proof, fresh ClickHouse split, deg
 capital gates, missing lineage, API payload presence, and unchanged `max_notional=0`. Rollback is field-level: remove
 the two shadow fields from response assembly or disable downstream consumption; do not widen notional or relax TCA,
 freshness, rollout, or custody gates.
+
+The second implementation cut carries the same `evidence_clock_arbiter` and
+`routeable_profit_candidate_exchange` through `/trading/consumer-evidence`, which is the Jangar action boundary.
+Jangar now records the arbiter id, split clocks, custody state, routeable exchange id, zero-notional repair lot ids, and
+an operator summary. If the companion stage-custody receipt is absent or stale, Jangar converts that into
+data-freshness, runtime, and rollout-ambiguity evidence: normal dispatch is downgraded, deploy widening is held, and
+paper/live Torghut capital stays blocked while zero-notional repair dispatch remains available.

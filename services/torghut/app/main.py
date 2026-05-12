@@ -2427,6 +2427,22 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
             dependency_quorum.as_payload()
         ),
     )
+    build_payload = {
+        "version": BUILD_VERSION,
+        "commit": BUILD_COMMIT,
+        "image_digest": BUILD_IMAGE_DIGEST,
+        "active_revision": shadow_first_runtime["active_revision"],
+    }
+    profit_signal_quorum = _build_profit_signal_quorum_payload(
+        torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        dependency_quorum=dependency_quorum.as_payload(),
+        hypothesis_payload=hypothesis_payload,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        proof_floor=proof_floor,
+        route_reacquisition_board=route_reacquisition_board,
+        live_submission_gate=live_submission_gate,
+    )
     capital_reentry_cohort_ledger = _build_capital_reentry_cohort_ledger_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
         dependency_quorum=dependency_quorum.as_payload(),
@@ -2483,18 +2499,29 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         empirical_jobs_status=empirical_jobs,
         hypothesis_payload=hypothesis_payload,
     )
+    evidence_clock_arbiter, routeable_profit_candidate_exchange = (
+        _build_evidence_clock_payloads(
+            torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+            dependency_quorum=dependency_quorum.as_payload(),
+            hypothesis_payload=hypothesis_payload,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+            tca_summary=tca_summary,
+            empirical_jobs_status=empirical_jobs,
+            proof_floor=proof_floor,
+            routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+            profit_signal_quorum=profit_signal_quorum,
+            live_submission_gate=live_submission_gate,
+            build=build_payload,
+        )
+    )
     return {
         "schema_version": "torghut.consumer-evidence-status.v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "enabled": settings.trading_enabled,
         "mode": settings.trading_mode,
         "running": state.running,
-        "build": {
-            "version": BUILD_VERSION,
-            "commit": BUILD_COMMIT,
-            "image_digest": BUILD_IMAGE_DIGEST,
-            "active_revision": shadow_first_runtime["active_revision"],
-        },
+        "build": build_payload,
         "control_plane_dependency_mode": "caller_evaluated",
         "dependency_quorum": dependency_quorum.as_payload(),
         "forecast_service": forecast_service_status,
@@ -2512,6 +2539,8 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         "profit_repair_settlement_ledger": profit_repair_settlement_ledger,
         "routeability_repair_acceptance_ledger": routeability_repair_acceptance_ledger,
         "profit_freshness_frontier": profit_freshness_frontier,
+        "evidence_clock_arbiter": evidence_clock_arbiter,
+        "routeable_profit_candidate_exchange": routeable_profit_candidate_exchange,
     }
 
 
