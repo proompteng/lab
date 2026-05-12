@@ -95,6 +95,7 @@ controller:
   namespaces:
     - agents
   concurrency:
+    perNamespace: 14
     perAgent: 10
   queue:
     perRepo: 200
