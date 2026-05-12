@@ -323,12 +323,12 @@ const failureDomainLeaseRefs = (
   const holdback = failureDomainLeases.holdbacks.find(
     (entry) => entry.action_class === normalizedAction && entry.decision !== 'allow',
   )
-  const holdbackLeaseIds =
-    holdback && holdback.lease_ids.length > 0
-      ? holdback.lease_ids
-      : holdback
-        ? [failureDomainLeases.lease_set_digest]
-        : []
+  let holdbackLeaseIds: string[] = []
+  if (holdback && holdback.lease_ids.length > 0) {
+    holdbackLeaseIds = holdback.lease_ids
+  } else if (holdback) {
+    holdbackLeaseIds = [failureDomainLeases.lease_set_digest]
+  }
 
   return uniqueStrings([...blockingLeaseIds, ...holdbackLeaseIds])
 }
@@ -343,12 +343,12 @@ const failureDomainDebtForPacket = (
   const holdback = failureDomainLeases.holdbacks.find(
     (entry) => entry.action_class === normalizedAction && entry.decision !== 'allow',
   )
-  const holdbackReasonCodes =
-    holdback && holdback.reason_codes.length > 0
-      ? holdback.reason_codes
-      : holdback
-        ? [`failure_domain_${holdback.decision}:${normalizedAction}`]
-        : []
+  let holdbackReasonCodes: string[] = []
+  if (holdback && holdback.reason_codes.length > 0) {
+    holdbackReasonCodes = holdback.reason_codes
+  } else if (holdback) {
+    holdbackReasonCodes = [`failure_domain_${holdback.decision}:${normalizedAction}`]
+  }
   const reasonCodes = uniqueStrings([
     ...blockingLeases.flatMap((lease) => lease.reason_codes),
     ...holdbackReasonCodes,
