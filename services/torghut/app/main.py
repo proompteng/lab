@@ -3954,10 +3954,22 @@ def _route_claim_symbols(profit_signal_quorum: Mapping[str, Any]) -> tuple[str, 
     ):
         return ()
     symbols: set[str] = set()
+
+    def add_symbols(raw_symbols: object) -> None:
+        if not isinstance(raw_symbols, Sequence) or isinstance(
+            raw_symbols, (str, bytes, bytearray)
+        ):
+            return
+        for raw_symbol in cast(Sequence[object], raw_symbols):
+            symbol = str(raw_symbol or "").strip().upper()
+            if symbol:
+                symbols.add(symbol)
+
     for raw_quorum_item in cast(Sequence[object], raw_quorums):
         if not isinstance(raw_quorum_item, Mapping):
             continue
         raw_quorum = cast(Mapping[str, Any], raw_quorum_item)
+        add_symbols(raw_quorum.get("symbols"))
         raw_signal = raw_quorum.get("route_tca_signal")
         if not isinstance(raw_signal, Mapping):
             continue
@@ -3966,15 +3978,10 @@ def _route_claim_symbols(profit_signal_quorum: Mapping[str, Any]) -> tuple[str, 
         if not isinstance(raw_details, Mapping):
             continue
         details = cast(Mapping[str, Any], raw_details)
-        raw_symbols = details.get("symbols")
-        if not isinstance(raw_symbols, Sequence) or isinstance(
-            raw_symbols, (str, bytes, bytearray)
-        ):
-            continue
-        for raw_symbol in cast(Sequence[object], raw_symbols):
-            symbol = str(raw_symbol or "").strip().upper()
-            if symbol:
-                symbols.add(symbol)
+        add_symbols(details.get("symbols"))
+        raw_nested_details = details.get("details")
+        if isinstance(raw_nested_details, Mapping):
+            add_symbols(cast(Mapping[str, Any], raw_nested_details).get("symbols"))
     return tuple(sorted(symbols))
 
 

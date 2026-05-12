@@ -154,6 +154,7 @@ def _asset_class(claim: Mapping[str, Any]) -> str:
 
 def _claim_symbols(claim: Mapping[str, Any]) -> list[str]:
     route_tca_details = _mapping(_mapping(claim.get("route_tca_signal")).get("details"))
+    nested_route_tca_details = _mapping(route_tca_details.get("details"))
     return _unique(
         [
             *[_text(symbol).upper() for symbol in _sequence(claim.get("symbols"))],
@@ -161,8 +162,20 @@ def _claim_symbols(claim: Mapping[str, Any]) -> list[str]:
                 _text(symbol).upper()
                 for symbol in _sequence(route_tca_details.get("symbols"))
             ],
+            *[
+                _text(symbol).upper()
+                for symbol in _sequence(nested_route_tca_details.get("symbols"))
+            ],
         ]
     )
+
+
+def _claim_route_tca_detail(route_tca_details: Mapping[str, Any], key: str) -> object:
+    value = route_tca_details.get(key)
+    if value is not None and value != "":
+        return value
+    nested_route_tca_details = _mapping(route_tca_details.get("details"))
+    return nested_route_tca_details.get(key)
 
 
 def _route_symbol_freshness(options: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
@@ -491,6 +504,7 @@ def _route_claims(
         route_tca_details = _mapping(
             _mapping(claim.get("route_tca_signal")).get("details")
         )
+        route_symbols = _claim_symbols(claim)
         asset_class = _asset_class(claim)
         claim_source_reasons = (
             list(source_reasons_by_claim[index])
@@ -528,7 +542,7 @@ def _route_claims(
                 "hypothesis_id": claim.get("hypothesis_id"),
                 "candidate_id": claim.get("candidate_id"),
                 "strategy_id": claim.get("strategy_id"),
-                "symbols": _strings(route_tca_details.get("symbols")),
+                "symbols": route_symbols,
                 "asset_class": asset_class,
                 "source_freshness_decision": "hold"
                 if asset_class == "options" and claim_source_reasons
@@ -539,8 +553,8 @@ def _route_claims(
                 "rollout_image_decision": "hold" if has_rollout_hold else "current",
                 "profit_window_decision": "hold" if has_profit_hold else "current",
                 "capital_decision": "hold" if has_capital_hold else "observe_only",
-                "post_cost_edge_estimate": route_tca_details.get(
-                    "post_cost_expectancy_bps_proxy"
+                "post_cost_edge_estimate": _claim_route_tca_detail(
+                    route_tca_details, "post_cost_expectancy_bps_proxy"
                 ),
                 "expected_repair_value": 0 if decision == "accepted" else 1,
                 "routeability_decision": decision,
