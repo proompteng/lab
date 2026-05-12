@@ -204,6 +204,7 @@ describe('repair warrant exchange', () => {
     expect(lane?.success_count).toBe(1)
     expect(lane?.superseded_error_count).toBe(0)
     expect(lane?.firebreak_state).toBe('observe_only')
+    expect(lane?.reason_codes).toContain('schedule_debt_error_margin_exceeded')
     expect(debt.firebreak_state).toBe('observe_only')
   })
 

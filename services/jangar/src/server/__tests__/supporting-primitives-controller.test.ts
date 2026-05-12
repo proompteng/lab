@@ -732,12 +732,23 @@ describe('supporting primitives controller', () => {
 
     const cronJob = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
-      .find((payload) => payload.kind === 'CronJob') as { spec?: Record<string, unknown> } | undefined
+      .find((payload) => payload.kind === 'CronJob') as
+      | { spec?: Record<string, unknown>; metadata?: Record<string, unknown> }
+      | undefined
+    const jobTemplateMetadata = (cronJob?.spec?.jobTemplate as Record<string, unknown> | undefined)?.metadata as
+      | Record<string, unknown>
+      | undefined
     const podSpec = (
       ((cronJob?.spec?.jobTemplate as Record<string, unknown> | undefined)?.spec as Record<string, unknown> | undefined)
         ?.template as Record<string, unknown> | undefined
     )?.spec as Record<string, unknown> | undefined
 
+    expect(
+      (cronJob?.metadata?.labels as Record<string, unknown> | undefined)?.['schedules.proompteng.ai/schedule'],
+    ).toBe('jangar-control-plane-plan-sched')
+    expect(
+      (jobTemplateMetadata?.labels as Record<string, unknown> | undefined)?.['schedules.proompteng.ai/schedule'],
+    ).toBe('jangar-control-plane-plan-sched')
     expect(podSpec?.nodeSelector).toEqual({ 'kubernetes.io/arch': 'arm64' })
   })
 
