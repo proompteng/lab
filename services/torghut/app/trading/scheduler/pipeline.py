@@ -476,7 +476,11 @@ class TradingPipeline:
 
         self.state.metrics.no_signal_reason_streak = {}
         self.state.metrics.no_signal_streak = 0
-        self.state.metrics.signal_lag_seconds = None
+        self.state.metrics.signal_lag_seconds = (
+            int(batch.signal_lag_seconds)
+            if batch.signal_lag_seconds is not None
+            else None
+        )
         self.state.metrics.signal_continuity_actionable = 0
         self.state.last_signal_continuity_state = "signals_present"
         self.state.last_signal_continuity_reason = None

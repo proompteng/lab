@@ -254,7 +254,7 @@ class TestVerifyTradingReadiness(TestCase):
         self.assertIn('route_board_capital_eligible_symbols', result['failed_checks'])
         self.assertIn('route_board_zero_notional_rows', result['failed_checks'])
 
-    def test_quant_empty_fails_unless_informational_quant_is_allowed(self) -> None:
+    def test_optional_quant_empty_fails_unless_informational_quant_is_allowed(self) -> None:
         status = _ready_status()
         proof_floor = status['proof_floor']
         assert isinstance(proof_floor, dict)
@@ -264,6 +264,7 @@ class TestVerifyTradingReadiness(TestCase):
             if isinstance(dimension, dict) and dimension.get('dimension') == 'quant_ingestion':
                 dimension['state'] = 'informational'
                 dimension['reason'] = 'quant_latest_metrics_empty'
+                dimension['source_ref'] = {'required': False}
 
         strict = evaluate_trading_readiness(status, require_quant_fresh=True)
         permissive = evaluate_trading_readiness(status, require_quant_fresh=False)
@@ -271,6 +272,40 @@ class TestVerifyTradingReadiness(TestCase):
         self.assertFalse(strict['ok'])
         self.assertIn('quant_ingestion_ready', strict['failed_checks'])
         self.assertTrue(permissive['ok'])
+
+    def test_required_quant_empty_fails_even_when_informational_quant_is_allowed(self) -> None:
+        status = _ready_status()
+        proof_floor = status['proof_floor']
+        assert isinstance(proof_floor, dict)
+        dimensions = proof_floor['proof_dimensions']
+        assert isinstance(dimensions, list)
+        for dimension in dimensions:
+            if isinstance(dimension, dict) and dimension.get('dimension') == 'quant_ingestion':
+                dimension['state'] = 'informational'
+                dimension['reason'] = 'quant_latest_metrics_empty'
+                dimension['source_ref'] = {'required': True}
+
+        result = evaluate_trading_readiness(status, require_quant_fresh=False)
+
+        self.assertFalse(result['ok'])
+        self.assertIn('quant_ingestion_ready', result['failed_checks'])
+
+    def test_legacy_evidence_required_quant_empty_fails_when_informational_quant_is_allowed(self) -> None:
+        status = _ready_status()
+        proof_floor = status['proof_floor']
+        assert isinstance(proof_floor, dict)
+        dimensions = proof_floor['proof_dimensions']
+        assert isinstance(dimensions, list)
+        for dimension in dimensions:
+            if isinstance(dimension, dict) and dimension.get('dimension') == 'quant_ingestion':
+                dimension['state'] = 'informational'
+                dimension['reason'] = 'quant_latest_metrics_empty'
+                dimension['source_ref'] = {'evidence_required': True}
+
+        result = evaluate_trading_readiness(status, require_quant_fresh=False)
+
+        self.assertFalse(result['ok'])
+        self.assertIn('quant_ingestion_ready', result['failed_checks'])
 
     def test_payload_helpers_handle_runtime_payload_shapes(self) -> None:
         self.assertTrue(verifier._bool('open'))

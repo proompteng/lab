@@ -102,6 +102,15 @@ def _dimension_by_name(proof_floor: Mapping[str, Any]) -> dict[str, Mapping[str,
     return dimensions
 
 
+def _dimension_is_required(dimension: Mapping[str, Any]) -> bool:
+    source_ref = _mapping(dimension.get('source_ref'))
+    if 'required' in source_ref:
+        return _bool(source_ref.get('required'))
+    if 'evidence_required' in source_ref:
+        return _bool(source_ref.get('evidence_required'))
+    return True
+
+
 def _market_session_open(status: Mapping[str, Any], proof_floor: Mapping[str, Any]) -> bool:
     metrics = _mapping(status.get('metrics'))
     if 'market_session_open' in metrics:
@@ -265,8 +274,9 @@ def evaluate_trading_readiness(
     quant_dimension = dimensions.get('quant_ingestion', {})
     quant_state = _text(quant_dimension.get('state'))
     quant_reason = _text(quant_dimension.get('reason'))
+    quant_required = _dimension_is_required(quant_dimension)
     quant_passed = quant_state == 'pass' or (
-        not require_quant_fresh and quant_state == 'informational'
+        not require_quant_fresh and not quant_required and quant_state == 'informational'
     )
     if require_quant_fresh and quant_reason in _MISSING_QUANT_REASONS:
         quant_passed = False
@@ -274,8 +284,10 @@ def evaluate_trading_readiness(
         checks,
         'quant_ingestion_ready',
         passed=quant_passed,
-        observed={'state': quant_state, 'reason': quant_reason},
-        expected={'state': 'pass'} if require_quant_fresh else {'state': 'pass|informational'},
+        observed={'state': quant_state, 'reason': quant_reason, 'required': quant_required},
+        expected={'state': 'pass'}
+        if require_quant_fresh or quant_required
+        else {'state': 'pass|optional_informational'},
     )
 
     tca_source_ref = _mapping(dimensions.get('execution_tca', {}).get('source_ref'))

@@ -24,6 +24,8 @@ spec:
           command:
             - cloudflared
             - tunnel
+            - --config
+            - /etc/cloudflared/config.yaml
             - --no-autoupdate
             - --metrics
             - 0.0.0.0:2000
@@ -36,6 +38,10 @@ spec:
                 secretKeyRef:
                   name: cloudflared-token
                   key: data
+          volumeMounts:
+            - name: cloudflared-config
+              mountPath: /etc/cloudflared
+              readOnly: true
 
           livenessProbe:
             httpGet:
@@ -62,3 +68,7 @@ spec:
             requests:
               cpu: "500m"
               memory: "512Mi"
+      volumes:
+        - name: cloudflared-config
+          configMap:
+            name: cloudflared-config
