@@ -54,6 +54,28 @@ _DIMENSION_ACTION: Mapping[str, str] = {
     "schema_migration_state": "refresh_schema_and_migration_lineage_receipts",
     "jangar_settlement": "refresh_jangar_reliability_settlement",
 }
+_DIMENSION_REPAIR_CLASSES: Mapping[str, tuple[str, ...]] = {
+    "signal_ingestion": ("quant", "scoped_quant", "signal", "signal_ingestion"),
+    "market_context": ("market_context",),
+    "empirical_proof": ("empirical", "empirical_proof", "replay", "simulation"),
+    "feature_coverage": ("feature", "feature_coverage"),
+    "drift_checks": ("drift", "drift_checks"),
+    "tca_fill_quality": ("fill_quality", "route_tca", "tca"),
+    "route_readiness": ("route", "routeability", "route_readiness"),
+    "schema_migration_state": ("migration", "schema", "schema_migration"),
+    "jangar_settlement": ("jangar", "jangar_settlement", "reliability_settlement"),
+}
+_DAILY_NET_PNL_UNLOCK_KEYS = (
+    "expected_daily_net_pnl_unlock",
+    "post_cost_daily_net_pnl_unlock",
+    "expected_post_cost_daily_net_pnl_unlock",
+    "quality_adjusted_daily_net_pnl_unlock",
+    "expected_daily_net_pnl",
+    "post_cost_daily_net_pnl",
+    "quality_adjusted_daily_net_pnl",
+    "net_pnl_per_day",
+    "daily_net_pnl",
+)
 _DIMENSION_SUCCESS: Mapping[str, str] = {
     "signal_ingestion": "scoped quant metrics and stage receipts are current",
     "market_context": "required market-context domains are fresh for the active symbol set",
@@ -91,6 +113,17 @@ def _decimal(value: object) -> Decimal | None:
         return Decimal(str(value))
     except (InvalidOperation, ValueError):
         return None
+
+
+def _decimal_text(value: Decimal | None) -> str | None:
+    if value is None:
+        return None
+    text = format(value, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    if text in {"", "-0"}:
+        return "0"
+    return text
 
 
 def _int(value: object, default: int = 0) -> int:
@@ -138,6 +171,12 @@ def _unique(values: Sequence[str]) -> list[str]:
 
 def _strings(value: object) -> list[str]:
     return _unique([_text(item) for item in _sequence(value)])
+
+
+def _symbols(value: object) -> list[str]:
+    if isinstance(value, str):
+        return _unique([value.upper()])
+    return _unique([_text(item).upper() for item in _sequence(value)])
 
 
 def _stable_ref(prefix: str, payload: Mapping[str, object]) -> str:
@@ -705,10 +744,118 @@ def _jangar_confidence(jangar_reliability_settlement_ref: Mapping[str, Any]) -> 
     return Decimal("0.30")
 
 
+def _packet_dimension(packet: Mapping[str, Any]) -> str:
+    explicit = _text(
+        packet.get("blocked_dimension")
+        or packet.get("dimension")
+        or packet.get("repair_dimension")
+    ).lower()
+    if explicit in _DIMENSION_EXPECTED_BPS:
+        return explicit
+    repair_class = _text(
+        packet.get("repair_class")
+        or packet.get("lot_type")
+        or packet.get("repair_type")
+    ).lower()
+    for dimension_name, repair_classes in _DIMENSION_REPAIR_CLASSES.items():
+        if repair_class in repair_classes:
+            return dimension_name
+    return ""
+
+
+def _packet_hypothesis_refs(packet: Mapping[str, Any]) -> list[str]:
+    refs = [
+        _text(packet.get(key))
+        for key in (
+            "hypothesis_ref",
+            "hypothesis_id",
+            "candidate_id",
+            "strategy_id",
+        )
+    ]
+    refs.extend(_strings(packet.get("hypothesis_ids")))
+    refs.extend(_strings(packet.get("candidate_ids")))
+    return _unique(refs)
+
+
+def _packet_symbols(packet: Mapping[str, Any]) -> list[str]:
+    symbols = [_text(packet.get("symbol")).upper()]
+    symbols.extend(_symbols(packet.get("symbol_set")))
+    symbols.extend(_symbols(packet.get("symbols")))
+    return _unique(symbols)
+
+
+def _daily_net_pnl_unlock(source: Mapping[str, Any]) -> Decimal | None:
+    for key in _DAILY_NET_PNL_UNLOCK_KEYS:
+        parsed = _decimal(source.get(key))
+        if parsed is not None:
+            return parsed
+    for nested_key in (
+        "profit_metrics",
+        "metrics",
+        "objective_scorecard",
+        "scorecard",
+        "selection_objectives",
+    ):
+        nested = _mapping(source.get(nested_key))
+        for key in _DAILY_NET_PNL_UNLOCK_KEYS:
+            parsed = _decimal(nested.get(key))
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def _expected_daily_net_pnl_unlock(
+    *,
+    dimension_name: str,
+    quality_adjusted_profit_frontier: Mapping[str, Any],
+    blocking_hypotheses: Sequence[str],
+    candidate_ids: Sequence[str],
+    symbol_set: Sequence[str],
+) -> tuple[Decimal | None, list[str]]:
+    targets = set(blocking_hypotheses) | set(candidate_ids)
+    symbols = {symbol.upper() for symbol in symbol_set if symbol}
+    best_value: Decimal | None = None
+    best_refs: list[str] = []
+
+    for raw_packet in _sequence(quality_adjusted_profit_frontier.get("packets")):
+        packet = _mapping(raw_packet)
+        if _packet_dimension(packet) != dimension_name:
+            continue
+        value = _daily_net_pnl_unlock(packet)
+        if value is None:
+            continue
+        packet_refs = _packet_hypothesis_refs(packet)
+        if (
+            targets
+            and packet_refs
+            and "global" not in packet_refs
+            and targets.isdisjoint(packet_refs)
+        ):
+            continue
+        packet_symbols = _packet_symbols(packet)
+        if symbols and packet_symbols and symbols.isdisjoint(packet_symbols):
+            continue
+        packet_ref = _text(
+            packet.get("packet_id")
+            or packet.get("receipt_id")
+            or packet.get("evidence_ref"),
+            "quality_adjusted_profit_frontier",
+        )
+        if best_value is None or value > best_value:
+            best_value = value
+            best_refs = [packet_ref]
+        elif value == best_value:
+            best_refs.append(packet_ref)
+
+    return best_value, _unique(best_refs)
+
+
 def _repair_lot(
     *,
     dimension: Mapping[str, Any],
     routeability_ledger: Mapping[str, Any],
+    quality_adjusted_profit_frontier: Mapping[str, Any],
     jangar_reliability_settlement_ref: Mapping[str, Any],
     route_reacquisition_board: Mapping[str, Any],
     empirical_jobs_status: Mapping[str, Any],
@@ -717,14 +864,22 @@ def _repair_lot(
     state = _text(dimension.get("state"), "unknown")
     repair_cost_class = _DIMENSION_REPAIR_COST.get(dimension_name, "medium")
     expected_bps = _DIMENSION_EXPECTED_BPS.get(dimension_name, Decimal("5"))
-    repair_priority = expected_bps * _confidence_for_state(
+    blocking_hypotheses = _strings(dimension.get("blocking_hypotheses"))
+    candidate_ids = _strings(empirical_jobs_status.get("candidate_ids"))
+    symbol_set = _route_symbols(route_reacquisition_board)
+    expected_daily_net_pnl_unlock, profit_unlock_refs = _expected_daily_net_pnl_unlock(
+        dimension_name=dimension_name,
+        quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
+        blocking_hypotheses=blocking_hypotheses,
+        candidate_ids=candidate_ids if dimension_name == "empirical_proof" else (),
+        symbol_set=symbol_set,
+    )
+    expected_profit = expected_daily_net_pnl_unlock or expected_bps
+    repair_priority = expected_profit * _confidence_for_state(
         state
     ) * _routeability_confidence(routeability_ledger) * _jangar_confidence(
         jangar_reliability_settlement_ref
     ) - _REPAIR_COST_PENALTY.get(repair_cost_class, Decimal("5"))
-    blocking_hypotheses = _strings(dimension.get("blocking_hypotheses"))
-    candidate_ids = _strings(empirical_jobs_status.get("candidate_ids"))
-    symbol_set = _route_symbols(route_reacquisition_board)
     reason_codes = _strings(dimension.get("reason_codes"))
     lot_id = _stable_ref(
         "profit-freshness-repair-lot",
@@ -747,8 +902,14 @@ def _repair_lot(
             dimension_name, "observe_profit_freshness_frontier"
         ),
         "expected_profit_unlock_bps": float(expected_bps),
-        "expected_daily_net_pnl_unlock": None,
+        "expected_daily_net_pnl_unlock": _decimal_text(expected_daily_net_pnl_unlock),
+        "profit_unlock_refs": profit_unlock_refs,
         "repair_priority": round(float(repair_priority), 4),
+        "repair_priority_basis": (
+            "expected_daily_net_pnl_unlock"
+            if expected_daily_net_pnl_unlock is not None
+            else "expected_profit_unlock_bps_proxy"
+        ),
         "repair_cost_class": repair_cost_class,
         "validation_window": "next_market_session",
         "success_criteria": _DIMENSION_SUCCESS.get(
@@ -848,6 +1009,7 @@ def build_profit_freshness_frontier(
         _repair_lot(
             dimension=dimension,
             routeability_ledger=routeability_repair_acceptance_ledger,
+            quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
             jangar_reliability_settlement_ref=jangar_reliability_settlement_ref,
             route_reacquisition_board=route_reacquisition_board,
             empirical_jobs_status=empirical_jobs_status,
@@ -867,6 +1029,13 @@ def build_profit_freshness_frontier(
             "state": "selected_zero_notional_repair",
         }
     selected_repairs = active_lots[:1]
+    selected_daily_net_pnl_unlock: Decimal | None = None
+    for repair in selected_repairs:
+        value = _decimal(repair.get("expected_daily_net_pnl_unlock"))
+        if value is not None:
+            selected_daily_net_pnl_unlock = (
+                selected_daily_net_pnl_unlock or Decimal("0")
+            ) + value
     accepted_routeable_count = _int(
         routeability_repair_acceptance_ledger.get("accepted_routeable_candidate_count")
     )
@@ -953,6 +1122,14 @@ def build_profit_freshness_frontier(
             "active_repair_lot_count": len(active_lots),
             "selected_repair_count": len(selected_repairs),
             "accepted_routeable_candidate_count": accepted_routeable_count,
+            "ranked_daily_net_pnl_repair_count": sum(
+                1
+                for repair in active_lots
+                if repair.get("expected_daily_net_pnl_unlock") is not None
+            ),
+            "selected_expected_daily_net_pnl_unlock": _decimal_text(
+                selected_daily_net_pnl_unlock
+            ),
             "quality_frontier_packet_count": len(
                 _sequence(quality_adjusted_profit_frontier.get("packets"))
             ),
