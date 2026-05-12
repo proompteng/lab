@@ -37,6 +37,10 @@ RUN addgroup --system --gid 1001 nodejs && \
 
 COPY --from=builder --chown=nextjs:nodejs /app/apps/app/.output /app/apps/app/.output
 COPY --from=builder --chown=nextjs:nodejs /app/apps/app/public /app/apps/app/public
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules /app/node_modules
+COPY --from=builder --chown=nextjs:nodejs /app/apps/app/node_modules /app/apps/app/node_modules
+
+RUN test -f /app/apps/app/node_modules/react/package.json
 
 USER nextjs
 

@@ -8,5 +8,5 @@ resources:
   - secret.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/app
-    newTag: 0.568.5
+    newTag: "restore-app-runtime-20260512161010"
     newName: registry.ide-newton.ts.net/lab/app
