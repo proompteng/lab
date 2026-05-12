@@ -102,7 +102,7 @@ The previous known-good Jangar image was:
 `registry.ide-newton.ts.net/lab/jangar:8805a612@sha256:2fbd49000ef5e9cfdb05ed5d7832a843b021038f94be8f1bd935d47b7e45c4e7`.
 
 The previous known-good agents control-plane image was:
-`registry.ide-newton.ts.net/lab/jangar-control-plane:8805a612@sha256:45f8e75e189d8e02896458f005626c6a625378806d6851f1ceabbe4f81d459ba`.
+`registry.ide-newton.ts.net/lab/jangar-control-plane:8805a612@sha256:d14ceee45a013c21c18b22a845ca0c6de055f20c517b36bcbb892402a4bbbb41`.
 
 After rollback PR merge, require Argo `jangar` and `agents` `Synced/Healthy`, deployment rollout status, promoted image
 digest evidence, and `/health` before closing the incident. No direct production mutation was made from this workspace.
