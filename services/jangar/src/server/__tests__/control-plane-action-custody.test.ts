@@ -393,12 +393,61 @@ describe('control-plane action custody', () => {
       max_notional: 1000,
       torghut_profit_window_ref: 'profit-window:current',
     })
+    expect(receipt(projection, 'serve_readonly')).toMatchObject({
+      max_dispatches: null,
+      max_runtime_seconds: null,
+      max_notional: 0,
+    })
+    expect(receipt(projection, 'torghut_observe')).toMatchObject({
+      max_dispatches: null,
+      max_runtime_seconds: null,
+      max_notional: 0,
+    })
     expect(projection.readyActionExchange).toMatchObject({
       mode: 'observe',
       status: 'allow',
       held_action_classes: [],
       blocked_action_classes: [],
     })
+  })
+
+  it('does not advertise runnable authority for repair-only non-repair actions', () => {
+    const projection = build({
+      materialActionVerdictEpoch: materialEpoch({
+        dispatch_normal: {
+          decision: 'repair_only',
+          downgrade_reason_codes: ['controller_witness_split'],
+          required_repair_actions: ['restore controller witness before normal dispatch'],
+          max_dispatches: 1,
+          max_runtime_seconds: 1200,
+          max_notional: 0,
+        },
+        deploy_widen: {
+          decision: 'repair_only',
+          downgrade_reason_codes: ['deploy_requires_current_custody'],
+          required_repair_actions: ['restore deploy custody before widening'],
+          max_dispatches: 1,
+          max_runtime_seconds: 900,
+          max_notional: 0,
+        },
+      }),
+    })
+
+    expect(receipt(projection, 'dispatch_normal')).toMatchObject({
+      decision: 'repair_only',
+      allowed_scope: 'none',
+      max_dispatches: 0,
+      max_runtime_seconds: 0,
+      max_notional: 0,
+    })
+    expect(receipt(projection, 'deploy_widen')).toMatchObject({
+      decision: 'repair_only',
+      allowed_scope: 'none',
+      max_dispatches: 0,
+      max_runtime_seconds: 0,
+      max_notional: 0,
+    })
+    expect(projection.readyActionExchange.repair_only_action_classes).toEqual(['dispatch_normal', 'deploy_widen'])
   })
 
   it('uses the tightest allow caps across material, route, and Torghut custody inputs', () => {

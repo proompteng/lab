@@ -126,6 +126,7 @@ const allowedScope = (
   decision: ActionCustodyDecision,
 ): ActionCustodyAllowedScope => {
   if (decision === 'hold' || decision === 'block') return 'none'
+  if (decision === 'repair_only') return actionClass === 'dispatch_repair' ? 'bounded_repair' : 'none'
   if (actionClass === 'dispatch_repair') return 'bounded_repair'
   if (actionClass === 'dispatch_normal') return 'normal_dispatch'
   return actionClass
@@ -159,9 +160,9 @@ const materialSignal = (verdict: MaterialActionVerdict | undefined, actionClass:
   ]),
   requiredRepairActions: verdict?.required_repair_actions ?? ['restore material action verdict projection'],
   evidenceRefs: uniqueStrings([verdict?.verdict_id, ...(verdict?.evidence_refs ?? [])]),
-  maxDispatches: verdict?.max_dispatches ?? 0,
-  maxRuntimeSeconds: verdict?.max_runtime_seconds ?? 0,
-  maxNotional: verdict?.max_notional ?? 0,
+  maxDispatches: verdict ? verdict.max_dispatches : 0,
+  maxRuntimeSeconds: verdict ? verdict.max_runtime_seconds : 0,
+  maxNotional: verdict ? verdict.max_notional : 0,
 })
 
 const routeSignal = (
@@ -182,9 +183,9 @@ const routeSignal = (
     contract?.live_route_ref,
     escrow.controller_witness_ref,
   ]),
-  maxDispatches: contract?.max_dispatches ?? 0,
-  maxRuntimeSeconds: contract?.max_runtime_seconds ?? 0,
-  maxNotional: contract?.max_notional ?? 0,
+  maxDispatches: contract ? contract.max_dispatches : 0,
+  maxRuntimeSeconds: contract ? contract.max_runtime_seconds : 0,
+  maxNotional: contract ? contract.max_notional : 0,
 })
 
 const controllerDecision = (
@@ -210,6 +211,7 @@ const controllerSignal = (
     ...(!witness.controller_self_report_current ? ['controller_self_report_not_current'] : []),
     ...(witness.decision !== 'allow' ? [`controller_witness_${witness.decision}`] : []),
   ])
+
   return {
     source: 'controller_witness',
     decision,
@@ -459,6 +461,8 @@ const buildReceipt = (input: {
     blocking_debt_classes: blockingDebtClasses,
     evidence_refs: evidenceRefs,
   })}`
+  const scope = allowedScope(input.actionClass, decision)
+  const carriesRunnableAuthority = decision !== 'hold' && decision !== 'block' && scope !== 'none'
 
   return {
     schema_version: RECEIPT_SCHEMA_VERSION,
@@ -470,9 +474,9 @@ const buildReceipt = (input: {
     stage: actionStage(input.actionClass),
     action_class: input.actionClass,
     decision,
-    allowed_scope: allowedScope(input.actionClass, decision),
-    max_dispatches: decision === 'hold' || decision === 'block' ? 0 : caps.maxDispatches,
-    max_runtime_seconds: decision === 'hold' || decision === 'block' ? 0 : caps.maxRuntimeSeconds,
+    allowed_scope: scope,
+    max_dispatches: carriesRunnableAuthority ? caps.maxDispatches : 0,
+    max_runtime_seconds: carriesRunnableAuthority ? caps.maxRuntimeSeconds : 0,
     max_notional: decision === 'allow' ? caps.maxNotional : 0,
     controller_witness_ref: input.controllerWitness.quorum_id,
     source_rollout_truth_ref: input.sourceRolloutTruthExchange.exchange_id,
