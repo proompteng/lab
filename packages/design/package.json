@@ -14,6 +14,18 @@
       "types": "./src/ui.ts",
       "default": "./src/ui.ts"
     },
+    "./ui/avatar": {
+      "types": "./src/components/ui/avatar.tsx",
+      "default": "./src/components/ui/avatar.tsx"
+    },
+    "./ui/button": {
+      "types": "./src/components/ui/button.tsx",
+      "default": "./src/components/ui/button.tsx"
+    },
+    "./ui/card": {
+      "types": "./src/components/ui/card.tsx",
+      "default": "./src/components/ui/card.tsx"
+    },
     "./utils": {
       "types": "./src/utils.ts",
       "default": "./src/utils.ts"

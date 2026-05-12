@@ -1,17 +1,9 @@
 import { Link } from '@tanstack/react-router'
 
-import { Home, Menu } from 'lucide-react'
+import { Home } from 'lucide-react'
 
-import {
-  Avatar,
-  AvatarFallback,
-  Button,
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from '@proompteng/design/ui'
+import { Avatar, AvatarFallback } from '@proompteng/design/ui/avatar'
+import { Button } from '@proompteng/design/ui/button'
 
 import type { SessionUser } from '../server/auth/types'
 
@@ -24,29 +16,11 @@ export default function Header({ user }: HeaderProps) {
     <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur supports-backdrop-filter:bg-background/75">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
         <div className="flex items-center gap-2">
-          <Sheet>
-            <SheetTrigger render={<Button variant="ghost" size="icon" aria-label="Open navigation" />}>
-              <Menu className="size-4" />
-            </SheetTrigger>
-            <SheetContent side="left" className="p-0">
-              <SheetHeader className="border-b px-6 py-5">
-                <SheetTitle>Navigation</SheetTitle>
-              </SheetHeader>
-              <nav className="flex flex-col gap-1 px-3 py-3">
-                <Link
-                  to="/"
-                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                  activeProps={{
-                    className:
-                      'flex items-center gap-2 rounded-md px-3 py-2 text-sm bg-muted text-foreground transition',
-                  }}
-                >
-                  <Home className="size-4" />
-                  Home
-                </Link>
-              </nav>
-            </SheetContent>
-          </Sheet>
+          <Button variant="ghost" size="icon" asChild>
+            <Link to="/" aria-label="Home">
+              <Home className="size-4" />
+            </Link>
+          </Button>
 
           <Link to="/" className="flex items-center gap-2 text-sm font-semibold tracking-tight">
             <span className="rounded-md border bg-muted px-2 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.28em] text-muted-foreground">
