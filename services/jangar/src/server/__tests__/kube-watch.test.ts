@@ -128,6 +128,42 @@ describe('kube-watch', () => {
     })
   })
 
+  it('records rejected event handlers without restarting the watch', async () => {
+    const onError = vi.fn()
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      onEvent: vi.fn(async () => {
+        throw new Error('database connection timeout')
+      }),
+      onError,
+      restartDelayMs: 2000,
+    })
+
+    await flush()
+    getWatchCall().callback('MODIFIED', { metadata: { resourceVersion: '12399' } })
+    await flush()
+
+    expect(recordWatchErrorMock).toHaveBeenCalledWith({
+      resource: 'agentruns',
+      namespace: 'agents',
+      reason: 'event_handler_error',
+    })
+    expect(recordReliabilityErrorMock).toHaveBeenCalledWith({
+      resource: 'agentruns',
+      namespace: 'agents',
+    })
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('event handler failed: database connection timeout'),
+      }),
+    )
+
+    vi.advanceTimersByTime(2000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('restarts watch and records restart metrics when the native watch errors', async () => {
     watchHandle = startResourceWatch({
       resource: 'agentruns',
