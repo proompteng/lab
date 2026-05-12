@@ -182,9 +182,10 @@ const latestConditionTime = (conditions: KubeGatewayCondition[]) => {
 const jobResult = (job: KubeGatewayJob): RepairWarrantScheduleDebtAttemptResult => {
   if (job.status.conditions.some((condition) => conditionIsTrue(condition, 'Complete'))) return 'success'
   if (job.status.conditions.some((condition) => conditionIsTrue(condition, 'Failed'))) return 'error'
-  if ((job.status.failed ?? 0) > 0) return 'error'
-  if ((job.status.active ?? 0) > 0) return 'running'
+  if (job.status.conditions.some((condition) => conditionIsTrue(condition, 'FailureTarget'))) return 'error'
   if (job.status.completionTime) return 'success'
+  if ((job.status.active ?? 0) > 0) return 'running'
+  if ((job.status.failed ?? 0) > 0) return 'running'
   return 'unknown'
 }
 
