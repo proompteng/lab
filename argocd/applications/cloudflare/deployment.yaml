@@ -24,6 +24,8 @@ spec:
           command:
             - cloudflared
             - tunnel
+            - --protocol
+            - http2
             - --config
             - /etc/cloudflared/config.yaml
             - --no-autoupdate
