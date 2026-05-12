@@ -34,7 +34,8 @@ const parseFailureCategory = (value: unknown): MarketContextFailureCategory | nu
   return null
 }
 
-const PROVIDER_CAPACITY_ERROR_TOKENS = [
+export const PROVIDER_CAPACITY_ERROR_TOKENS = [
+  'provider_capacity_exhausted',
   'usage limit',
   'quota',
   'insufficient_quota',
@@ -43,13 +44,18 @@ const PROVIDER_CAPACITY_ERROR_TOKENS = [
   'not supported when using codex',
 ]
 
+export const isProviderCapacityMessage = (value: unknown): boolean => {
+  if (typeof value !== 'string') return false
+  const normalized = value.toLowerCase()
+  return PROVIDER_CAPACITY_ERROR_TOKENS.some((token) => normalized.includes(token))
+}
+
 const isProviderCapacityAttempt = (attempt: unknown): boolean => {
   if (!attempt || typeof attempt !== 'object' || Array.isArray(attempt)) return false
   const row = attempt as Record<string, unknown>
   const failureCategory = typeof row.failureCategory === 'string' ? row.failureCategory.trim() : ''
   if (failureCategory === 'provider_fallback_eligible') return true
-  const error = typeof row.error === 'string' ? row.error.toLowerCase() : ''
-  return PROVIDER_CAPACITY_ERROR_TOKENS.some((token) => error.includes(token))
+  return isProviderCapacityMessage(row.error)
 }
 
 export const resolveFailureCategoryFromMetadata = (
