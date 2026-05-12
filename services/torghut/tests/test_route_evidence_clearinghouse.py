@@ -158,6 +158,22 @@ def test_route_symbol_provider_gap_holds_only_affected_option_route() -> None:
     )
 
 
+def test_requested_route_symbol_without_catalog_row_holds_option_route() -> None:
+    packet = _build(
+        profit_signal_quorum=_option_quorum(),
+        options_catalog_freshness={
+            **BASE_INPUTS["options_catalog_freshness"],
+            "route_symbols": ["AAPL"],
+            "route_symbol_freshness": {},
+        },
+    )
+    route_claim = packet["route_claims"][0]
+
+    assert packet["accepted_routeable_candidate_count"] == 0
+    assert route_claim["source_freshness_decision"] == "hold"
+    assert "options_route_symbol_catalog_missing" in route_claim["reason_codes"]
+
+
 @pytest.mark.parametrize(("overrides", "reason", "value_gate"), BLOCKERS)
 def test_blocking_evidence_yields_zero_notional_repair_bid(
     overrides: dict[str, object],

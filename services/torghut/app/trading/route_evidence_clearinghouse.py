@@ -193,8 +193,11 @@ def _source_reasons_for_claim(
         return []
     route_symbols = _claim_symbols(claim)
     symbol_freshness = _route_symbol_freshness(options)
+    scoped_symbols = {
+        _text(symbol).upper() for symbol in _sequence(options.get("route_symbols"))
+    }
     reasons: list[str] = []
-    if route_symbols and symbol_freshness:
+    if route_symbols and (symbol_freshness or scoped_symbols):
         for symbol in route_symbols:
             symbol_row = symbol_freshness.get(symbol)
             if not symbol_row:
