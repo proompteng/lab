@@ -1,6 +1,7 @@
 import type { ControlPlaneWatchReliabilitySummary } from '~/server/control-plane-watch-reliability'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
 import type {
+  ActionCustodyReceipt,
   ActionSloBudget,
   AdmissionPassportStatus,
   ControlPlaneControllerWitnessQuorum,
@@ -15,12 +16,15 @@ import type {
   MaterialActionActivationReceipt,
   NegativeEvidenceRouterStatus,
   ProjectionWatermarkStatus,
+  ReadyActionExchange,
   ReconciledActionClock,
   RecoveryWarrantStatus,
+  RepairWarrantExchange,
   RouteStabilityEscrow,
   RuntimeProofCellStatus,
   RuntimeKitStatus,
   SourceRolloutTruthExchange,
+  StageClearancePacket,
   WorkflowsReliabilityStatus,
 } from '~/data/agents-control-plane'
 
@@ -174,6 +178,10 @@ export type ControlPlaneStatus = {
   material_action_verdict_epoch: MaterialActionVerdictEpoch
   material_action_verdicts: MaterialActionVerdict[]
   material_action_activation_receipts: MaterialActionActivationReceipt[]
+  action_custody_receipts: ActionCustodyReceipt[]
+  stage_clearance_packets: StageClearancePacket[]
+  ready_action_exchange: ReadyActionExchange
+  repair_warrant_exchange: RepairWarrantExchange
   source_rollout_truth_exchange: SourceRolloutTruthExchange
   route_stability_escrow: RouteStabilityEscrow
   execution_trust: ExecutionTrustStatus

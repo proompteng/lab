@@ -15,8 +15,10 @@ import type {
   NegativeEvidenceRouterStatus,
   ReconciledActionClock,
   ReconciledActionClockDecision,
+  RepairWarrantExchange,
   SourceRolloutTruthExchange,
 } from '~/data/agents-control-plane'
+import { REPAIR_WARRANT_EXCHANGE_DESIGN_ARTIFACT } from '~/server/control-plane-repair-warrant-exchange'
 import {
   SOURCE_ROLLOUT_TRUTH_EXCHANGE_DESIGN_ARTIFACT,
   sourceRolloutTruthVerdictDecision,
@@ -43,7 +45,12 @@ const DECISION_RANK: Record<MaterialActionVerdictDecision, number> = {
 }
 
 type DecisionSignal = {
-  source: 'dependency_quorum' | 'action_slo_budget' | 'action_clock' | 'source_rollout_truth_exchange'
+  source:
+    | 'dependency_quorum'
+    | 'action_slo_budget'
+    | 'action_clock'
+    | 'source_rollout_truth_exchange'
+    | 'repair_warrant_exchange'
   decision: MaterialActionVerdictDecision
   evidenceRefs: string[]
   blockingReasons: string[]
@@ -70,6 +77,7 @@ export type MaterialActionVerdictInput = {
   watchReliability: ControlPlaneWatchReliability
   empiricalServices: EmpiricalServicesStatus
   sourceRolloutTruthExchange?: SourceRolloutTruthExchange
+  repairWarrantExchange?: RepairWarrantExchange
 }
 
 const uniqueStrings = (values: string[]) => [...new Set(values.filter((value) => value.trim().length > 0))]
@@ -194,7 +202,7 @@ const dependencySignal = (input: {
     allowedUntil: defaultAllowedUntil(input.now),
     maxDispatches: decision === 'repair_only' ? 1 : 0,
     maxRuntimeSeconds: decision === 'repair_only' ? 20 * 60 : 0,
-    maxNotional: 0,
+    maxNotional: decision === 'allow' ? null : 0,
     confidence: input.dependencyQuorum.decision === 'unknown' ? 'unknown' : 'high',
   }
 }
@@ -306,9 +314,136 @@ const sourceRolloutTruthSignal = (
     allowedUntil: receipt.fresh_until,
     maxDispatches: decision === 'allow' ? null : decision === 'repair_only' ? 1 : 0,
     maxRuntimeSeconds: decision === 'allow' ? null : decision === 'repair_only' ? 20 * 60 : 0,
-    maxNotional: 0,
+    maxNotional: decision === 'allow' ? null : 0,
     confidence: decision === 'allow' ? 'high' : receipt.settlement_state === 'unknown' ? 'unknown' : 'medium',
   }
+}
+
+const repairWarrantExchangeSignal = (
+  exchange: RepairWarrantExchange | undefined,
+  actionClass: ActionSloBudgetActionClass,
+): DecisionSignal | null => {
+  if (!exchange) return null
+
+  const activeWarrants = exchange.active_warrants
+  const expiredWarrants = exchange.expired_warrants
+  const activeReasons = uniqueStrings(activeWarrants.flatMap((warrant) => warrant.reason_codes))
+  const expiredReasons = uniqueStrings(expiredWarrants.flatMap((warrant) => warrant.reason_codes))
+  const closureRequirements = uniqueStrings(activeWarrants.flatMap((warrant) => warrant.closure_requirements))
+  const firebreak = exchange.schedule_debt_window.firebreak_state === 'observe_only'
+  const warrantRefs = uniqueStrings([
+    REPAIR_WARRANT_EXCHANGE_DESIGN_ARTIFACT,
+    exchange.exchange_id,
+    ...activeWarrants.map((warrant) => warrant.warrant_id),
+    ...expiredWarrants.map((warrant) => warrant.warrant_id),
+  ])
+  const base = {
+    source: 'repair_warrant_exchange' as const,
+    evidenceRefs: warrantRefs,
+    rollbackTarget: exchange.rollback_target,
+    allowedUntil: exchange.fresh_until,
+    maxNotional: 0,
+  }
+
+  if (actionClass === 'dispatch_repair') {
+    if (expiredWarrants.length > 0 && activeWarrants.length === 0) {
+      return {
+        ...base,
+        decision: 'hold',
+        blockingReasons: uniqueStrings(['repair_warrant_expired', ...expiredReasons]),
+        downgradeReasons: [],
+        requiredRepairs: ['restore watch reliability before admitting bounded repair warrants'],
+        maxDispatches: 0,
+        maxRuntimeSeconds: 0,
+        confidence: 'medium',
+      }
+    }
+    if (activeWarrants.some((warrant) => warrant.admission_state === 'observe_only') || firebreak) {
+      return {
+        ...base,
+        decision: 'repair_only',
+        blockingReasons: [],
+        downgradeReasons: uniqueStrings([
+          ...(firebreak ? ['schedule_debt_firebreak_observe_only'] : []),
+          ...activeReasons,
+        ]),
+        requiredRepairs: closureRequirements,
+        maxDispatches: 0,
+        maxRuntimeSeconds: 0,
+        confidence: 'medium',
+      }
+    }
+    const admittedWarrants = activeWarrants.filter((warrant) => warrant.admission_state === 'admitted')
+    if (admittedWarrants.length > 0) {
+      return {
+        ...base,
+        decision: 'allow',
+        blockingReasons: [],
+        downgradeReasons: [],
+        requiredRepairs: closureRequirements,
+        maxDispatches: Math.min(...admittedWarrants.map((warrant) => warrant.max_dispatches)),
+        maxRuntimeSeconds: Math.min(...admittedWarrants.map((warrant) => warrant.max_runtime_seconds)),
+        confidence: 'high',
+      }
+    }
+    return null
+  }
+
+  if (actionClass === 'dispatch_normal' && firebreak) {
+    return {
+      ...base,
+      decision: 'repair_only',
+      blockingReasons: [],
+      downgradeReasons: ['schedule_debt_firebreak_observe_only'],
+      requiredRepairs: ['let the schedule debt window clear before normal dispatch'],
+      maxDispatches: 0,
+      maxRuntimeSeconds: 0,
+      confidence: 'medium',
+    }
+  }
+
+  if (actionClass === 'torghut_observe' && (activeWarrants.length > 0 || expiredWarrants.length > 0)) {
+    return {
+      ...base,
+      decision: 'allow',
+      blockingReasons: [],
+      downgradeReasons: [],
+      requiredRepairs: closureRequirements,
+      maxDispatches: null,
+      maxRuntimeSeconds: null,
+      confidence: 'high',
+    }
+  }
+
+  if (actionClass === 'paper_canary' && activeWarrants.length > 0) {
+    return {
+      ...base,
+      decision: 'hold',
+      blockingReasons: ['repair_warrant_open'],
+      downgradeReasons: [],
+      requiredRepairs: closureRequirements,
+      rollbackTarget: 'keep paper canary shadow-only until the matching repair warrant closes in a fresh epoch',
+      maxDispatches: 0,
+      maxRuntimeSeconds: 0,
+      confidence: 'medium',
+    }
+  }
+
+  if ((actionClass === 'live_micro_canary' || actionClass === 'live_scale') && activeWarrants.length > 0) {
+    return {
+      ...base,
+      decision: 'block',
+      blockingReasons: ['repair_warrant_open'],
+      downgradeReasons: [],
+      requiredRepairs: closureRequirements,
+      rollbackTarget: 'keep live capital closed until paper settlement consumes closed repair warrant evidence',
+      maxDispatches: 0,
+      maxRuntimeSeconds: 0,
+      confidence: 'high',
+    }
+  }
+
+  return null
 }
 
 const contradictionRefsForSignals = (input: {
@@ -335,6 +470,17 @@ const strictestSignal = (signals: DecisionSignal[]) =>
     decisionRank(signal.decision) > decisionRank(current.decision) ? signal : current,
   )
 
+const tightestCap = (values: Array<number | null>) => {
+  const numericValues = values.filter((value): value is number => value !== null)
+  return numericValues.length > 0 ? Math.min(...numericValues) : null
+}
+
+const tightestCaps = (signals: DecisionSignal[]) => ({
+  maxDispatches: tightestCap(signals.map((signal) => signal.maxDispatches)),
+  maxRuntimeSeconds: tightestCap(signals.map((signal) => signal.maxRuntimeSeconds)),
+  maxNotional: tightestCap(signals.map((signal) => signal.maxNotional)),
+})
+
 const valueForDecision = <T>(decision: MaterialActionVerdictDecision, value: T | null, blockedValue: T | null) =>
   decision === 'hold' || decision === 'block' || decision === 'contradicted' || decision === 'unknown'
     ? blockedValue
@@ -350,6 +496,7 @@ const buildVerdict = (input: {
   negativeEvidenceRouter: NegativeEvidenceRouterStatus
   controllerWitness: ControlPlaneControllerWitnessQuorum
   sourceRolloutTruthExchange?: SourceRolloutTruthExchange
+  repairWarrantExchange?: RepairWarrantExchange
 }): MaterialActionVerdict => {
   const budget = budgetSignal(input.budget, input.actionClass)
   const clock = clockSignal(input.clock, input.actionClass)
@@ -359,13 +506,17 @@ const buildVerdict = (input: {
     dependencyQuorum: input.dependencyQuorum,
   })
   const sourceRolloutTruth = sourceRolloutTruthSignal(input.sourceRolloutTruthExchange, input.actionClass)
+  const repairWarrant = repairWarrantExchangeSignal(input.repairWarrantExchange, input.actionClass)
   const signals = [
+    ...(repairWarrant && input.actionClass === 'dispatch_repair' ? [repairWarrant] : []),
     budget,
     clock,
     ...(dependency ? [dependency] : []),
     ...(sourceRolloutTruth ? [sourceRolloutTruth] : []),
+    ...(repairWarrant && input.actionClass !== 'dispatch_repair' ? [repairWarrant] : []),
   ]
   const strictest = strictestSignal(signals)
+  const caps = tightestCaps(signals)
   const contradictionRefs = contradictionRefsForSignals({
     actionClass: input.actionClass,
     budget: input.budget,
@@ -403,13 +554,9 @@ const buildVerdict = (input: {
     decision_rank: decisionRank(decision),
     confidence: worstConfidence(signals.map((signal) => signal.confidence)),
     allowed_until: allowedUntil,
-    max_dispatches: valueForDecision(decision, strictest.maxDispatches ?? input.budget?.max_dispatches ?? null, 0),
-    max_runtime_seconds: valueForDecision(
-      decision,
-      strictest.maxRuntimeSeconds ?? input.budget?.max_runtime_seconds ?? null,
-      0,
-    ),
-    max_notional: decision === 'allow' ? (strictest.maxNotional ?? input.budget?.max_notional ?? 0) : 0,
+    max_dispatches: valueForDecision(decision, caps.maxDispatches ?? strictest.maxDispatches ?? null, 0),
+    max_runtime_seconds: valueForDecision(decision, caps.maxRuntimeSeconds ?? strictest.maxRuntimeSeconds ?? null, 0),
+    max_notional: decision === 'allow' ? (caps.maxNotional ?? strictest.maxNotional ?? 0) : 0,
     blocking_reason_codes:
       decision === 'repair_only'
         ? []
@@ -444,6 +591,7 @@ const buildEpochId = (input: {
   clocks: ReconciledActionClock[]
   controllerWitness: ControlPlaneControllerWitnessQuorum
   sourceRolloutTruthExchange?: SourceRolloutTruthExchange
+  repairWarrantExchange?: RepairWarrantExchange
 }) =>
   `material-action-verdict:${hashJson({
     namespace: input.namespace,
@@ -459,6 +607,8 @@ const buildEpochId = (input: {
     source_rollout_truth_exchange_id: input.sourceRolloutTruthExchange?.exchange_id ?? null,
     source_rollout_truth_receipt_ids:
       input.sourceRolloutTruthExchange?.receipts.map((receipt) => receipt.receipt_id).sort() ?? [],
+    repair_warrant_exchange_id: input.repairWarrantExchange?.exchange_id ?? null,
+    repair_warrant_ids: input.repairWarrantExchange?.active_warrants.map((warrant) => warrant.warrant_id).sort() ?? [],
   })}`
 
 export const buildMaterialActionVerdictEpoch = (input: MaterialActionVerdictInput): MaterialActionVerdictEpoch => {
@@ -475,6 +625,7 @@ export const buildMaterialActionVerdictEpoch = (input: MaterialActionVerdictInpu
     clocks: input.reconciledActionClocks,
     controllerWitness: input.controllerWitness,
     sourceRolloutTruthExchange: input.sourceRolloutTruthExchange,
+    repairWarrantExchange: input.repairWarrantExchange,
   })
   const finalVerdicts = actionClasses.map((actionClass) =>
     buildVerdict({
@@ -487,6 +638,7 @@ export const buildMaterialActionVerdictEpoch = (input: MaterialActionVerdictInpu
       negativeEvidenceRouter: input.negativeEvidenceRouter,
       controllerWitness: input.controllerWitness,
       sourceRolloutTruthExchange: input.sourceRolloutTruthExchange,
+      repairWarrantExchange: input.repairWarrantExchange,
     }),
   )
   const contradictionRefs = uniqueStrings(finalVerdicts.flatMap((verdict) => verdict.contradiction_refs)).sort()

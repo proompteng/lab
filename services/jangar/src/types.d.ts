@@ -7,6 +7,125 @@ declare module '@xterm/addon-ligatures/lib/addon-ligatures.mjs' {
   export { LigaturesAddon } from '@xterm/addon-ligatures'
 }
 
+declare module '@aws-sdk/client-s3' {
+  import { Client, Command } from '@smithy/smithy-client'
+  import type {
+    InvokeFunction,
+    MetadataBearer,
+    MiddlewareStack,
+    OperationSchema,
+    StaticOperationSchema,
+  } from '@smithy/types'
+
+  type S3CommandInput = Record<string, unknown>
+  type S3CommandOutput = MetadataBearer
+
+  export type S3ClientConfig = {
+    credentials?: {
+      accessKeyId: string
+      secretAccessKey: string
+    }
+    endpoint?: string
+    forcePathStyle?: boolean
+    region?: string
+  }
+
+  export class S3Client extends Client<any, S3CommandInput, S3CommandOutput, any> {
+    readonly config: any
+    middlewareStack: MiddlewareStack<S3CommandInput, S3CommandOutput>
+    send: InvokeFunction<S3CommandInput, S3CommandOutput, any>
+    destroy: () => void
+
+    constructor(config?: S3ClientConfig)
+  }
+
+  export type GetObjectCommandInput = {
+    Bucket?: string
+    Key?: string
+  }
+
+  export class GetObjectCommand extends Command<
+    GetObjectCommandInput,
+    S3CommandOutput,
+    any,
+    S3CommandInput,
+    S3CommandOutput
+  > {
+    input: GetObjectCommandInput
+    readonly middlewareStack: MiddlewareStack<GetObjectCommandInput, S3CommandOutput>
+    readonly schema?: OperationSchema | StaticOperationSchema
+    resolveMiddleware: (...args: any[]) => any
+    resolveMiddlewareWithContext: (...args: any[]) => any
+
+    constructor(input: GetObjectCommandInput)
+  }
+
+  export type ListObjectsV2CommandInput = {
+    Bucket?: string
+    MaxKeys?: number
+  }
+
+  export class ListObjectsV2Command extends Command<
+    ListObjectsV2CommandInput,
+    S3CommandOutput,
+    any,
+    S3CommandInput,
+    S3CommandOutput
+  > {
+    input: ListObjectsV2CommandInput
+    readonly middlewareStack: MiddlewareStack<ListObjectsV2CommandInput, S3CommandOutput>
+    readonly schema?: OperationSchema | StaticOperationSchema
+    resolveMiddleware: (...args: any[]) => any
+    resolveMiddlewareWithContext: (...args: any[]) => any
+
+    constructor(input: ListObjectsV2CommandInput)
+  }
+}
+
+declare module '@xterm/xterm' {
+  export type ITerminalAddon = {
+    activate?: (terminal: Terminal) => void
+    dispose?: () => void
+  }
+
+  export type IDisposable = {
+    dispose: () => void
+  }
+
+  export type ITerminalOptions = {
+    allowProposedApi?: boolean
+    allowTransparency?: boolean
+    cursorBlink?: boolean
+    fontFamily?: string
+    fontSize?: number
+    scrollback?: number
+    theme?: Record<string, string>
+  }
+
+  export class Terminal {
+    constructor(options?: ITerminalOptions)
+
+    readonly cols: number
+    readonly rows: number
+    readonly unicode: { activeVersion: string }
+    options: ITerminalOptions
+
+    attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean): void
+    clear(): void
+    dispose(): void
+    focus(): void
+    getSelection(): string
+    loadAddon(addon: ITerminalAddon): void
+    onData(callback: (data: string) => void): IDisposable
+    onSelectionChange(callback: () => void): IDisposable
+    open(parent: HTMLElement): void
+    paste(data: string): void
+    refresh(start: number, end: number): void
+    reset(): void
+    write(data: string): void
+  }
+}
+
 declare module 'echarts' {
   export type EChartsSetOptionOptions = {
     notMerge?: boolean

@@ -31,6 +31,7 @@ export type KubeGatewayMetadata = {
   namespace: string | null
   generation: number | null
   labels: Record<string, string>
+  annotations?: Record<string, string>
   creationTimestamp: string | null
   deletionTimestamp?: string | null
 }
@@ -150,6 +151,8 @@ const parseLabels = (value: unknown) => {
   )
 }
 
+const parseAnnotations = parseLabels
+
 const parseMetadata = (value: unknown): KubeGatewayMetadata | null => {
   const record = asRecord(value)
   const name = asString(record?.name)
@@ -161,6 +164,7 @@ const parseMetadata = (value: unknown): KubeGatewayMetadata | null => {
     namespace: asString(record.namespace),
     generation: asNonNegativeInteger(record.generation),
     labels: parseLabels(record.labels),
+    annotations: parseAnnotations(record.annotations),
     creationTimestamp: asString(record.creationTimestamp),
   }
 
