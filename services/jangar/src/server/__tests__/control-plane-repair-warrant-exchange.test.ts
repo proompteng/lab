@@ -8,8 +8,10 @@ import type {
 import {
   buildRepairWarrantExchange,
   buildScheduleDebtWindow,
+  collectRepairScheduleAttempts,
   type RepairScheduleAttemptEvidence,
 } from '~/server/control-plane-repair-warrant-exchange'
+import type { KubeGateway, KubeGatewayJob } from '~/server/kube-gateway'
 import type { ControlPlaneRolloutHealth, ControlPlaneWatchReliability } from '~/server/control-plane-status-types'
 
 const now = new Date('2026-05-07T14:30:00.000Z')
@@ -135,6 +137,36 @@ const attempt = (
   ...overrides,
 })
 
+const kubeWithJobs = (jobs: KubeGatewayJob[]): KubeGateway =>
+  ({
+    listJobs: async () => jobs,
+  }) as unknown as KubeGateway
+
+const scheduledJob = (overrides: Partial<KubeGatewayJob> = {}): KubeGatewayJob => ({
+  metadata: {
+    name: 'hourly-jangar-plan-retry',
+    namespace: 'agents',
+    generation: null,
+    labels: {
+      'schedules.proompteng.ai/schedule': 'hourly-jangar-plan',
+    },
+    annotations: {
+      'jangar.proompteng.ai/schedule-debt-source-ref': 'main@99470fc',
+      'jangar.proompteng.ai/schedule-debt-image-ref': 'runtime-digest:plan',
+      'jangar.proompteng.ai/schedule-debt-objective-ref': 'AgentRun:agents:plan-template',
+    },
+    creationTimestamp: '2026-05-07T14:00:00.000Z',
+  },
+  status: {
+    active: 1,
+    failed: 1,
+    startTime: '2026-05-07T14:00:00.000Z',
+    completionTime: null,
+    conditions: [],
+  },
+  ...overrides,
+})
+
 describe('repair warrant exchange', () => {
   it('admits bounded zero-notional warrants from Torghut proof-floor blockers', () => {
     const exchange = buildExchange({
@@ -208,6 +240,104 @@ describe('repair warrant exchange', () => {
     expect(lane?.firebreak_state).toBe('observe_only')
     expect(lane?.reason_codes).toContain('schedule_debt_error_margin_exceeded')
     expect(debt.firebreak_state).toBe('observe_only')
+  })
+
+  it('keeps retrying jobs running instead of failed schedule debt', async () => {
+    const collection = await collectRepairScheduleAttempts({
+      now,
+      namespaces: ['agents'],
+      kube: kubeWithJobs([scheduledJob()]),
+    })
+    const debt = buildScheduleDebtWindow({
+      now,
+      attempts: collection.attempts,
+    })
+
+    expect(collection.collectionErrors).toEqual([])
+    expect(collection.attempts[0]).toMatchObject({
+      result: 'running',
+      reasonCodes: ['job_running'],
+    })
+    expect(debt).toMatchObject({
+      open_error_count: 0,
+      running_count: 1,
+      firebreak_state: 'clear',
+    })
+  })
+
+  it('counts failure-target jobs as failed schedule debt before terminal failed condition', async () => {
+    const collection = await collectRepairScheduleAttempts({
+      now,
+      namespaces: ['agents'],
+      kube: kubeWithJobs([
+        scheduledJob({
+          status: {
+            active: 1,
+            failed: 1,
+            startTime: '2026-05-07T14:00:00.000Z',
+            completionTime: null,
+            conditions: [
+              {
+                type: 'FailureTarget',
+                status: 'True',
+                reason: 'BackoffLimitExceeded',
+                lastTransitionTime: '2026-05-07T14:05:00.000Z',
+              },
+            ],
+          },
+        }),
+      ]),
+    })
+    const debt = buildScheduleDebtWindow({
+      now,
+      attempts: collection.attempts,
+    })
+
+    expect(collection.collectionErrors).toEqual([])
+    expect(collection.attempts[0]).toMatchObject({
+      result: 'error',
+      reasonCodes: ['BackoffLimitExceeded'],
+      observedAt: '2026-05-07T14:05:00.000Z',
+    })
+    expect(debt).toMatchObject({
+      open_error_count: 1,
+      running_count: 0,
+      firebreak_state: 'clear',
+    })
+  })
+
+  it('keeps backing-off retry jobs out of failed schedule debt', async () => {
+    const collection = await collectRepairScheduleAttempts({
+      now,
+      namespaces: ['agents'],
+      kube: kubeWithJobs([
+        scheduledJob({
+          status: {
+            active: 0,
+            failed: 1,
+            startTime: '2026-05-07T14:00:00.000Z',
+            completionTime: null,
+            conditions: [],
+          },
+        }),
+      ]),
+    })
+    const debt = buildScheduleDebtWindow({
+      now,
+      attempts: collection.attempts,
+    })
+
+    expect(collection.collectionErrors).toEqual([])
+    expect(collection.attempts[0]).toMatchObject({
+      result: 'running',
+      observedAt: '2026-05-07T14:00:00.000Z',
+      reasonCodes: ['job_retrying'],
+    })
+    expect(debt).toMatchObject({
+      open_error_count: 0,
+      running_count: 1,
+      firebreak_state: 'clear',
+    })
   })
 
   it('downgrades new warrants to observe-only when schedule debt exceeds the firebreak margin', () => {
