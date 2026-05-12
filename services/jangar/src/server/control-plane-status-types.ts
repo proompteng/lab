@@ -24,6 +24,7 @@ import type {
   RuntimeProofCellStatus,
   RuntimeKitStatus,
   SourceRolloutTruthExchange,
+  StageClearancePacket,
   WorkflowsReliabilityStatus,
 } from '~/data/agents-control-plane'
 
@@ -178,6 +179,7 @@ export type ControlPlaneStatus = {
   material_action_verdicts: MaterialActionVerdict[]
   material_action_activation_receipts: MaterialActionActivationReceipt[]
   action_custody_receipts: ActionCustodyReceipt[]
+  stage_clearance_packets: StageClearancePacket[]
   ready_action_exchange: ReadyActionExchange
   repair_warrant_exchange: RepairWarrantExchange
   source_rollout_truth_exchange: SourceRolloutTruthExchange

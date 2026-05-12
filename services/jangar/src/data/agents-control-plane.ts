@@ -1006,6 +1006,46 @@ export type ActionCustodyReceipt = {
   rollback_gate: string
 }
 
+export type StageClearanceStage =
+  | 'serve'
+  | 'discover'
+  | 'plan'
+  | 'implement'
+  | 'verify'
+  | 'repair'
+  | 'deployer'
+  | 'torghut'
+
+export type StageClearanceDecision = 'allow' | 'repair_only' | 'hold' | 'block'
+
+export type StageClearancePacket = {
+  schema_version: 'jangar.stage-clearance-packet.v1'
+  packet_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  swarm_name: string
+  stage: StageClearanceStage
+  action_class: ActionSloBudgetActionClass
+  governing_requirement_refs: string[]
+  source_rollout_truth_ref: string
+  controller_witness_ref: string
+  agentrun_ingestion_ref: string
+  execution_trust_ref: string
+  material_action_verdict_ref: string
+  route_stability_ref: string
+  torghut_consumer_evidence_ref: string | null
+  failure_domain_leases: string[]
+  provider_capacity_ref: string | null
+  decision: StageClearanceDecision
+  max_launches: number | null
+  max_notional: number | null
+  ttl_seconds: number
+  reason_codes: string[]
+  required_repair_action: string | null
+  rollback_target: string
+}
+
 export type ReadyActionExchange = {
   mode: 'observe' | 'enforce'
   design_artifact: string
@@ -1139,6 +1179,7 @@ export type ControlPlaneStatus = {
   material_action_verdicts: MaterialActionVerdict[]
   material_action_activation_receipts: MaterialActionActivationReceipt[]
   action_custody_receipts: ActionCustodyReceipt[]
+  stage_clearance_packets: StageClearancePacket[]
   ready_action_exchange: ReadyActionExchange
   repair_warrant_exchange: RepairWarrantExchange
   source_rollout_truth_exchange: SourceRolloutTruthExchange

@@ -9,6 +9,7 @@ import type {
 } from '~/data/agents-control-plane'
 import { buildActionCustodyProjection } from '~/server/control-plane-action-custody'
 import { buildMaterialActionActivationReceipts } from '~/server/control-plane-controller-witness'
+import type { ExecutionTrustSnapshot } from '~/server/control-plane-execution-trust'
 import { type FailureDomainRouteProbe } from '~/server/control-plane-failure-domain-leases'
 import { buildMaterialActionVerdictEpoch } from '~/server/control-plane-material-action-verdict'
 import { type NegativeEvidenceRouterResult } from '~/server/control-plane-negative-evidence-router'
@@ -18,6 +19,7 @@ import {
   type RepairScheduleAttemptCollection,
 } from '~/server/control-plane-repair-warrant-exchange'
 import { buildRouteStabilityEscrow } from '~/server/control-plane-route-stability-escrow'
+import { buildStageClearancePackets } from '~/server/control-plane-stage-clearance'
 import type {
   ControlPlaneRolloutHealth,
   ControlPlaneWatchReliability,
@@ -49,6 +51,7 @@ export type ControlPlaneMaterialActionArtifactsInput = {
   empiricalServices: EmpiricalServicesStatus
   sourceRolloutTruthExchange: SourceRolloutTruthExchange
   failureDomainLeases: FailureDomainLeaseSet
+  executionTrust: ExecutionTrustSnapshot
   routeProbe: FailureDomainRouteProbe
   torghutConsumerEvidence: TorghutConsumerEvidenceStatus
   resolveRepairScheduleAttempts?: RepairScheduleAttemptResolver
@@ -127,12 +130,27 @@ export const buildControlPlaneMaterialActionArtifacts = async (input: ControlPla
     materialActionVerdictEpoch,
     torghutConsumerEvidence: input.torghutConsumerEvidence,
   })
+  const stageClearancePackets = buildStageClearancePackets({
+    now: input.now,
+    namespace: input.namespace,
+    workflows: input.workflows,
+    executionTrust: input.executionTrust.executionTrust,
+    swarms: input.executionTrust.swarms,
+    stages: input.executionTrust.stages,
+    controllerWitness: input.controllerWitness,
+    sourceRolloutTruthExchange: input.sourceRolloutTruthExchange,
+    routeStabilityEscrow,
+    materialActionVerdictEpoch,
+    failureDomainLeases: input.failureDomainLeases,
+    torghutConsumerEvidence: input.torghutConsumerEvidence,
+  })
 
   return {
     repairWarrantExchange,
     materialActionVerdictEpoch,
     routeStabilityEscrow,
     materialActionActivationReceipts,
+    stageClearancePackets,
     ...actionCustodyProjection,
   }
 }

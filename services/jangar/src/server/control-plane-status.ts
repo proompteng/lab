@@ -678,6 +678,7 @@ export const buildControlPlaneStatus = async (
     routeStabilityEscrow,
     materialActionActivationReceipts,
     actionCustodyReceipts,
+    stageClearancePackets,
     readyActionExchange,
   } = await buildControlPlaneMaterialActionArtifacts({
     now,
@@ -695,6 +696,7 @@ export const buildControlPlaneStatus = async (
     empiricalServices,
     sourceRolloutTruthExchange,
     failureDomainLeases,
+    executionTrust,
     routeProbe,
     torghutConsumerEvidence: torghutConsumerEvidence.status,
     resolveRepairScheduleAttempts: deps.resolveRepairScheduleAttempts,
@@ -772,6 +774,7 @@ export const buildControlPlaneStatus = async (
     material_action_verdicts: materialActionVerdictEpoch.final_verdicts,
     material_action_activation_receipts: materialActionActivationReceipts,
     action_custody_receipts: actionCustodyReceipts,
+    stage_clearance_packets: stageClearancePackets,
     ready_action_exchange: readyActionExchange,
     repair_warrant_exchange: repairWarrantExchange,
     source_rollout_truth_exchange: sourceRolloutTruthExchange,

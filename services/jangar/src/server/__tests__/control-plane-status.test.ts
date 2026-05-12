@@ -950,6 +950,24 @@ describe('control-plane status', () => {
         }),
       ]),
     )
+    expect(status.stage_clearance_packets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: 'plan',
+          action_class: 'dispatch_normal',
+          decision: 'allow',
+          governing_requirement_refs: expect.arrayContaining([
+            'docs/agents/designs/184-jangar-stage-clearance-packets-and-freeze-aware-launch-governor-2026-05-12.md',
+          ]),
+        }),
+        expect.objectContaining({
+          stage: 'torghut',
+          action_class: 'live_scale',
+          decision: 'block',
+          max_notional: 0,
+        }),
+      ]),
+    )
     expect(status.torghut_action_slo_budgets).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -2760,6 +2778,17 @@ describe('control-plane status', () => {
           scope: 'global',
           confidence: 'low',
           reasons: ['execution_trust_blocked'],
+        }),
+      ]),
+    )
+    expect(status.stage_clearance_packets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: 'discover',
+          action_class: 'dispatch_normal',
+          decision: 'hold',
+          max_launches: 0,
+          reason_codes: expect.arrayContaining(['swarm_freeze_active', 'stage_discover_stale']),
         }),
       ]),
     )

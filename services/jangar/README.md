@@ -190,6 +190,13 @@ bun --cwd services/jangar run start:worker
 
 ## Swarm runtime admission
 
+The control-plane status payload exposes shadow `stage_clearance_packets` for the freeze-aware launch-governor
+contract in `docs/agents/designs/184-jangar-stage-clearance-packets-and-freeze-aware-launch-governor-2026-05-12.md`.
+Each packet binds a swarm stage and action class to the current execution-trust, controller-witness,
+source-rollout-truth, material-action, route-stability, failure-domain, workflow, and Torghut evidence refs. In the
+initial shadow phase this projection does not change scheduler behavior; it gives engineer, verify, and deployer
+handoffs packet IDs and reason codes before the scheduler starts enforcing held normal launches.
+
 The supporting-primitives controller enforces stage admission passports before it creates launch-capable swarm work.
 With `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=true` (the production default), discover/plan schedules use the
 `swarm_plan` passport, implement schedules and cross-swarm requirements use `swarm_implement`, and verify schedules use
