@@ -121,15 +121,13 @@ def _publish_contract_row(contract: dict[str, Any], *, observed_at: datetime) ->
 
 
 def _publish_status(*, status_value: str, observed_at: datetime, error_code: str | None = None, error_detail: str | None = None) -> None:
-    active_contracts = _repository.count_active_contracts()
-    hot_contracts = _repository.count_hot_contracts()
     payload = build_status_payload(
         component="catalog",
         status=status_value,
         session_value=session_state(observed_at, settings.holiday_set),
         last_success_ts=_state.snapshot()["last_success_ts"],
-        active_contracts=active_contracts,
-        hot_contracts=hot_contracts,
+        active_contracts=None,
+        hot_contracts=None,
         rest_backlog=0,
         error_code=error_code,
         error_detail=error_detail,
