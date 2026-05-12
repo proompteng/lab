@@ -14,6 +14,8 @@
 - Evidence (current next-work priority, refreshed `2026-05-12T16:40Z`):
   - `189-torghut-clock-settled-repair-execution-and-routeability-reentry-2026-05-12.md`
   - `docs/agents/designs/185-jangar-clock-settled-repair-dispatch-and-rollout-custody-2026-05-12.md`
+  - `189-torghut-repair-yield-market-and-profit-hypothesis-guardrails-2026-05-12.md`
+  - `docs/agents/designs/185-jangar-clearance-market-and-rollout-truth-settlement-2026-05-12.md`
   - `188-torghut-evidence-clock-arbiter-and-routeable-profit-candidate-exchange-2026-05-12.md`
   - `docs/agents/designs/184-jangar-rollout-custody-and-evidence-clock-dispatch-2026-05-12.md`
   - `188-torghut-route-evidence-clearinghouse-and-execution-freshness-market-2026-05-12.md`
