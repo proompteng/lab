@@ -8,5 +8,5 @@ resources:
   - secret.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/app
-    newTag: "restore-app-runtime-20260512161010"
+    newTag: "fix-app-ssr-20260512102122"
     newName: registry.ide-newton.ts.net/lab/app

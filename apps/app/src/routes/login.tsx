@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@proompteng/design/ui'
+import { Button } from '@proompteng/design/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@proompteng/design/ui/card'
 
 export const Route = createFileRoute('/login')({
   validateSearch: (search: Record<string, unknown>) => ({

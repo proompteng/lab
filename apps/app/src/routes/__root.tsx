@@ -57,7 +57,8 @@ export const Route = createRootRoute({
 })
 
 function RootDocument({ children }: { children: React.ReactNode }) {
-  const { user } = Route.useLoaderData()
+  const loaderData = Route.useLoaderData() as { user?: Awaited<ReturnType<typeof getCurrentUserServerFn>> } | undefined
+  const user = loaderData?.user ?? null
 
   return (
     <html lang="en" className="dark">

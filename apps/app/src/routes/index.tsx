@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { Activity, ShieldCheck, Boxes, Eye, Network, Sparkles } from 'lucide-react'
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@proompteng/design/ui'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@proompteng/design/ui/card'
 
 export const Route = createFileRoute('/')({ component: App })
 
