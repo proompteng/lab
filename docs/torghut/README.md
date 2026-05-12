@@ -139,6 +139,8 @@ Start here:
 - Next implementation contract: doc 188 requires a shadow `evidence_clock_arbiter` and
   `routeable_profit_candidate_exchange` so fresh ClickHouse rows cannot mint routeable candidates while Postgres proof,
   Jangar scoped quant, route/TCA, empirical replay, promotion, or rollout clocks are stale.
+- Current implementation contract: doc 188 also exposes an observe-mode `route_evidence_clearinghouse_packet` across
+  trading readiness surfaces before route claims can become accepted.
 - TA replay procedure (concrete steps): `argocd/applications/torghut/README.md`
 - Historical simulation operations playbook: `docs/torghut/rollouts/historical-simulation-playbook.md`
 - Incident context (example): `docs/incidents/2025-12-20-longhorn-upgrade-kafka-failure.md`

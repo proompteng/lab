@@ -239,6 +239,10 @@ Testing rules for the trading core:
   lineage, rollout, routeability acceptance, profit-signal quorum, and capital-gate clocks before any routeable
   candidate can be counted. Split or stale clocks become zero-notional repair lots with target value gates; emitted
   candidates still carry `max_notional=0` until independent capital and Jangar custody receipts allow paper.
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/revenue-repair` also expose the May
+  12 doc 188 observe-mode `torghut.route-evidence-clearinghouse-packet.v1` packet. It never widens notional and keeps
+  stale TCA, missing image proof, missing options provider clocks, and zero-notional capital holds out of accepted
+  routeable counts.
 - The simple direct-submit lane is no longer an authority bypass in live mode. Before submitting to Alpaca it evaluates
   the same live-submission gate as the scheduler path and persists the gate payload in decision metadata when a
   submission is blocked. Paper-mode simple execution remains unchanged.
