@@ -318,6 +318,24 @@ const failureDomainLeases = (): FailureDomainLeaseSet => ({
   holdbacks: [],
 })
 
+const failureDomainHoldbackLeases = (): FailureDomainLeaseSet => ({
+  mode: 'shadow',
+  design_artifact:
+    'docs/agents/designs/75-jangar-failure-domain-leases-and-database-routability-holdbacks-2026-05-05.md',
+  lease_set_digest: 'lease-set:missing-database',
+  generated_at: now.toISOString(),
+  leases: [],
+  holdbacks: [
+    {
+      action_class: 'dispatch_normal',
+      decision: 'unknown',
+      lease_ids: [],
+      reason_codes: ['database.lease_missing'],
+      message: 'dispatch_normal is held by database.lease_missing.',
+    },
+  ],
+})
+
 const torghutConsumerEvidence = (
   overrides: Partial<TorghutConsumerEvidenceStatus> = {},
 ): TorghutConsumerEvidenceStatus => ({
@@ -454,6 +472,23 @@ describe('control-plane stage clearance', () => {
     expect(packet(packets, 'torghut', 'live_scale')).toMatchObject({
       decision: 'allow',
       max_notional: 1000,
+    })
+  })
+
+  it('holds normal stage launch when failure-domain holdbacks report missing lease authority', () => {
+    const packets = build({
+      failureDomainLeases: failureDomainHoldbackLeases(),
+    })
+
+    expect(packet(packets, 'plan', 'dispatch_normal')).toMatchObject({
+      decision: 'hold',
+      failure_domain_leases: ['lease-set:missing-database'],
+      max_launches: 0,
+      reason_codes: expect.arrayContaining(['database.lease_missing']),
+    })
+    expect(packet(packets, 'repair', 'dispatch_repair')).toMatchObject({
+      decision: 'allow',
+      reason_codes: [],
     })
   })
 })

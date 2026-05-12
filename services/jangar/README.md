@@ -201,6 +201,8 @@ Schedule-runner pods read the same status payload before launch and, in the defa
 `JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow` mode, stamp scheduled `discover`, `plan`, `implement`, and `verify` runs
 with `swarm.proompteng.ai/stage-clearance-packet-id`, the packet decision, action class, freshness timestamp, and the
 matching `swarmStageClearance*` parameters. Missing or stale packets are logged in shadow mode but do not block the run.
+The packet reducer consumes failure-domain holdback decisions as launch debt, so missing lease authority such as
+`database.lease_missing` holds normal dispatch even when no concrete expired lease row is available to cite.
 Rollback for packet lookup is `JANGAR_STAGE_CLEARANCE_ENFORCEMENT=disabled`; later hold-mode rollout uses
 `JANGAR_STAGE_CLEARANCE_ENFORCEMENT=hold` to stop non-`allow` normal stage launches at fire time.
 
