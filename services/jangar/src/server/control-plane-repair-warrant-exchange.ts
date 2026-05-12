@@ -397,7 +397,10 @@ export const buildScheduleDebtWindow = ({
   const supersededErrorCount = lanes.reduce((total, lane) => total + lane.superseded_error_count, 0)
   const successCount = lanes.reduce((total, lane) => total + lane.success_count, 0)
   const runningCount = lanes.reduce((total, lane) => total + lane.running_count, 0)
-  const firebreakState = lanes.some((lane) => lane.firebreak_state === 'observe_only') ? 'observe_only' : 'clear'
+  const firebreakState =
+    collectionErrors.length > 0 || lanes.some((lane) => lane.firebreak_state === 'observe_only')
+      ? 'observe_only'
+      : 'clear'
 
   return {
     started_at: new Date(windowStartMs).toISOString(),
@@ -627,6 +630,7 @@ export const buildRepairWarrantExchange = (input: RepairWarrantExchangeInput): R
   const candidates = buildRepairCandidates(input)
   const rollbackTarget = 'set repair warrant enforcement to observe and keep dependency quorum/action SLO budgets'
   const maxActive = input.rolloutHealth.status === 'healthy' ? Number.POSITIVE_INFINITY : 1
+  const collectionFailed = scheduleDebtWindow.collection_errors.length > 0
   const firebreakActive = scheduleDebtWindow.firebreak_state === 'observe_only'
   const watchDegraded = input.watchReliability.status === 'degraded'
 
@@ -655,7 +659,10 @@ export const buildRepairWarrantExchange = (input: RepairWarrantExchangeInput): R
           exchangeInput: input,
           scheduleDebtWindow,
           admissionState: 'observe_only',
-          extraReasonCodes: ['schedule_debt_firebreak_observe_only'],
+          extraReasonCodes: uniqueStrings([
+            'schedule_debt_firebreak_observe_only',
+            ...(collectionFailed ? ['schedule_debt_collection_error'] : []),
+          ]),
         }),
       )
       continue

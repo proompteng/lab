@@ -96,6 +96,7 @@ const buildExchange = (input: {
   watchStatus?: ControlPlaneWatchReliability['status']
   rolloutStatus?: ControlPlaneRolloutHealth['status']
   attempts?: RepairScheduleAttemptEvidence[]
+  collectionErrors?: string[]
 }) =>
   buildRepairWarrantExchange({
     now,
@@ -115,6 +116,7 @@ const buildExchange = (input: {
     watchReliability: watch(input.watchStatus),
     rolloutHealth: rollout(input.rolloutStatus),
     scheduleAttempts: input.attempts ?? [],
+    scheduleCollectionErrors: input.collectionErrors ?? [],
   })
 
 const attempt = (
@@ -224,6 +226,25 @@ describe('repair warrant exchange', () => {
       admission_state: 'observe_only',
       max_dispatches: 0,
       reason_codes: expect.arrayContaining(['schedule_debt_firebreak_observe_only']),
+    })
+  })
+
+  it('downgrades new warrants to observe-only when schedule debt collection fails', () => {
+    const exchange = buildExchange({
+      blockers: ['execution_tca_stale'],
+      collectionErrors: ['agents: jobs: list failed'],
+    })
+
+    expect(exchange.status).toBe('degraded')
+    expect(exchange.schedule_debt_window).toMatchObject({
+      firebreak_state: 'observe_only',
+      collection_errors: ['agents: jobs: list failed'],
+    })
+    expect(exchange.active_warrants[0]).toMatchObject({
+      repair_dimension: 'execution_tca',
+      admission_state: 'observe_only',
+      max_dispatches: 0,
+      reason_codes: expect.arrayContaining(['schedule_debt_firebreak_observe_only', 'schedule_debt_collection_error']),
     })
   })
 

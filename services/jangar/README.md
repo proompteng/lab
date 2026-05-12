@@ -319,9 +319,9 @@ evidence refs, so a warrant can authorize repair evidence without widening paper
 
 The exchange includes a four-hour `schedule_debt_window`. A later successful schedule job only supersedes earlier
 errors when lane, source ref, image ref, and objective ref all match; unmatched or incomplete signatures remain open
-debt. If open errors outnumber successes by more than two, new repair warrants are downgraded to `observe_only`. If
-watch reliability degrades, active non-critical warrants expire and read-only serving remains governed by the existing
-route, database, dependency-quorum, and passport gates.
+debt. If open errors outnumber successes by more than two, or if schedule job collection fails, new repair warrants are
+downgraded to `observe_only`. If watch reliability degrades, active non-critical warrants expire and read-only serving
+remains governed by the existing route, database, dependency-quorum, and passport gates.
 
 Rollback: keep the exchange in observe mode or ignore `repair_warrant_exchange` in material-action verdict consumers.
 Existing dependency quorum, negative-evidence budgets, runtime admission passports, and action clocks remain the
