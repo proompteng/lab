@@ -242,7 +242,7 @@ spec:
        - Submit evidence:
          `python3 "${SCRIPT_ROOT}/market_context_run_api.py" evidence --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain fundamentals --seq 2 --evidence-file /tmp/market-context-fundamentals-evidence.json --expect-status 200`
     7) Finalize and persist via lifecycle finalize endpoint:
-       - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" finalize --callback-url "${callbackUrl}" --request-id "${requestId}" --payload-file /tmp/market-context-fundamentals.json --expect-status 200 --retries 1`
+       - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" finalize --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain fundamentals --payload-file /tmp/market-context-fundamentals.json --expect-status 200 --retries 1`
        - Require response JSON to include `"ok": true`.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
@@ -320,7 +320,7 @@ spec:
        - Submit evidence:
          `python3 "${SCRIPT_ROOT}/market_context_run_api.py" evidence --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain news --seq 2 --evidence-file /tmp/market-context-news-evidence.json --expect-status 200`
     7) Finalize and persist via lifecycle finalize endpoint:
-       - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" finalize --callback-url "${callbackUrl}" --request-id "${requestId}" --payload-file /tmp/market-context-news.json --expect-status 200 --retries 1`
+       - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" finalize --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain news --payload-file /tmp/market-context-news.json --expect-status 200 --retries 1`
        - Require response JSON to include `"ok": true`.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
