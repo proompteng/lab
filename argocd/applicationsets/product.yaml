@@ -316,7 +316,6 @@ spec:
                     jsonPointers:
                       - /spec/job/state
                       - /spec/job/upgradeMode
-                      - /spec/restartNonce
                 automation: auto
                 enabled: "true"
               - name: torghut-options
