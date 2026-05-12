@@ -503,6 +503,31 @@ def _summarize_routeability_acceptance(
     }
 
 
+def _summarize_route_evidence_clearinghouse(
+    clearinghouse_packet: Mapping[str, Any],
+) -> dict[str, object]:
+    selected_repair_bids = _sequence(clearinghouse_packet.get("selected_repair_bids"))
+    return {
+        "packet_id": clearinghouse_packet.get("packet_id"),
+        "schema_version": clearinghouse_packet.get("schema_version"),
+        "capital_decision": _text(
+            clearinghouse_packet.get("capital_decision"), "missing"
+        ),
+        "accepted_routeable_candidate_count": _int(
+            clearinghouse_packet.get("accepted_routeable_candidate_count")
+        ),
+        "zero_notional_or_stale_evidence_rate": clearinghouse_packet.get(
+            "zero_notional_or_stale_evidence_rate", 1
+        ),
+        "selected_repair_bid_count": len(selected_repair_bids),
+        "held_action_classes": _string_items(
+            clearinghouse_packet.get("held_action_classes")
+        )
+        or ["paper_canary", "live_micro_canary", "live_scale"],
+        "summary": _mapping(clearinghouse_packet.get("summary")),
+    }
+
+
 def _business_state(
     *,
     revenue_ready: bool,
@@ -546,6 +571,10 @@ def build_revenue_repair_digest(
         status_payload.get("routeability_repair_acceptance_ledger"),
         readyz_payload.get("routeability_repair_acceptance_ledger"),
     )
+    route_evidence_clearinghouse = _choose_mapping(
+        status_payload.get("route_evidence_clearinghouse_packet"),
+        readyz_payload.get("route_evidence_clearinghouse_packet"),
+    )
     dependencies = _mapping(readyz_payload.get("dependencies"))
     blocking_reasons = _collect_blocking_reasons(readyz_payload, status_payload)
     repair_queue = _build_repair_queue(proof_floor, status_payload, blocking_reasons)
@@ -574,6 +603,7 @@ def build_revenue_repair_digest(
         "routeability_repair_acceptance_ledger_id": routeability_ledger.get(
             "ledger_id"
         ),
+        "route_evidence_clearinghouse_packet": dict(route_evidence_clearinghouse),
         "business_state": _business_state(
             revenue_ready=revenue_ready,
             proof_floor=proof_floor,
@@ -631,6 +661,9 @@ def build_revenue_repair_digest(
             ),
             "routeability_acceptance": _summarize_routeability_acceptance(
                 routeability_ledger
+            ),
+            "route_evidence_clearinghouse": _summarize_route_evidence_clearinghouse(
+                route_evidence_clearinghouse
             ),
             "simple_lane_reject_reason_totals": _collect_reason_counts(status_payload),
         },

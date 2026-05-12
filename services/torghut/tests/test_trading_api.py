@@ -906,6 +906,13 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(routeability["summary"]["zero_notional_lot_count"], 7)
         self.assertEqual(routeability["accepted_routeable_candidate_count"], 0)
+        clearinghouse = payload["route_evidence_clearinghouse_packet"]
+        self.assertEqual(
+            clearinghouse["schema_version"],
+            "torghut.route-evidence-clearinghouse-packet.v1",
+        )
+        self.assertEqual(clearinghouse["accepted_routeable_candidate_count"], 0)
+        self.assertEqual(clearinghouse["max_notional"], "0")
         frontier = payload["profit_freshness_frontier"]
         self.assertEqual(
             frontier["schema_version"],
@@ -1335,6 +1342,22 @@ class TestTradingApi(TestCase):
         self.assertEqual(status_exchange["summary"]["routeable_candidate_count"], 0)
         self.assertEqual(
             health_exchange["schema_version"], status_exchange["schema_version"]
+        )
+        status_clearinghouse = status_response.json()[
+            "route_evidence_clearinghouse_packet"
+        ]
+        health_clearinghouse = health_response.json()[
+            "route_evidence_clearinghouse_packet"
+        ]
+        self.assertEqual(
+            status_clearinghouse["schema_version"],
+            "torghut.route-evidence-clearinghouse-packet.v1",
+        )
+        self.assertEqual(status_clearinghouse["accepted_routeable_candidate_count"], 0)
+        self.assertEqual(status_clearinghouse["max_notional"], "0")
+        self.assertEqual(
+            health_clearinghouse["schema_version"],
+            status_clearinghouse["schema_version"],
         )
         status_frontier = status_response.json()["profit_freshness_frontier"]
         health_frontier = health_response.json()["profit_freshness_frontier"]
@@ -3511,6 +3534,18 @@ class TestTradingApi(TestCase):
                 "zero_notional_or_stale_evidence_rate": 1,
                 "aggregate_blocking_reason_codes": ["proof_floor_repair_only"],
             },
+            "route_evidence_clearinghouse_packet": {
+                "schema_version": "torghut.route-evidence-clearinghouse-packet.v1",
+                "packet_id": "route-evidence-clearinghouse:test",
+                "capital_decision": "repair_only",
+                "accepted_routeable_candidate_count": 0,
+                "zero_notional_or_stale_evidence_rate": 1,
+                "selected_repair_bids": [
+                    {"value_gate": "fill_tca_or_slippage_quality"}
+                ],
+                "held_action_classes": ["paper_canary", "live_micro_canary"],
+                "summary": {"route_claim_count": 1},
+            },
         }
         with (
             patch(
@@ -3543,6 +3578,16 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             payload["evidence"]["routeability_acceptance"]["ledger_id"],
             "routeability-acceptance-ledger:test",
+        )
+        self.assertEqual(
+            payload["route_evidence_clearinghouse_packet"]["packet_id"],
+            "route-evidence-clearinghouse:test",
+        )
+        self.assertEqual(
+            payload["evidence"]["route_evidence_clearinghouse"][
+                "selected_repair_bid_count"
+            ],
+            1,
         )
 
     def test_trading_status_blocks_live_submission_when_lineage_tables_are_empty(

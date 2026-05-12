@@ -142,6 +142,8 @@ Start here:
   Jangar scoped quant, route/TCA, empirical replay, promotion, rollout, or stage-custody clocks are stale. Jangar
   treats missing or stale custody evidence as a dispatch/deploy widening hold while zero-notional repair dispatch stays
   available.
+- Current implementation contract: doc 188 also exposes an observe-mode `route_evidence_clearinghouse_packet` across
+  trading readiness surfaces before route claims can become accepted.
 - TA replay procedure (concrete steps): `argocd/applications/torghut/README.md`
 - Historical simulation operations playbook: `docs/torghut/rollouts/historical-simulation-playbook.md`
 - Incident context (example): `docs/incidents/2025-12-20-longhorn-upgrade-kafka-failure.md`
