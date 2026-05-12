@@ -1291,6 +1291,30 @@ class TestTradingApi(TestCase):
             health_routeability["schema_version"],
             status_routeability["schema_version"],
         )
+        status_arbiter = status_response.json()["evidence_clock_arbiter"]
+        health_arbiter = health_response.json()["evidence_clock_arbiter"]
+        self.assertEqual(
+            status_arbiter["schema_version"],
+            "torghut.evidence-clock-arbiter.v1",
+        )
+        self.assertEqual(status_arbiter["routeable_candidate_count"], 0)
+        self.assertIn(
+            "capital_gate",
+            {clock["name"] for clock in status_arbiter["clocks"]},
+        )
+        self.assertEqual(
+            health_arbiter["schema_version"], status_arbiter["schema_version"]
+        )
+        status_exchange = status_response.json()["routeable_profit_candidate_exchange"]
+        health_exchange = health_response.json()["routeable_profit_candidate_exchange"]
+        self.assertEqual(
+            status_exchange["schema_version"],
+            "torghut.routeable-profit-candidate-exchange.v1",
+        )
+        self.assertEqual(status_exchange["summary"]["routeable_candidate_count"], 0)
+        self.assertEqual(
+            health_exchange["schema_version"], status_exchange["schema_version"]
+        )
 
     def test_trading_status_and_health_include_renewal_bond_profit_escrow(
         self,

@@ -61,6 +61,9 @@ from .trading.consumer_evidence import (
     build_torghut_consumer_evidence_receipt,
 )
 from .trading.empirical_jobs import build_empirical_jobs_status
+from .trading.evidence_clock_arbiter import (
+    build_evidence_clock_arbiter_and_exchange,
+)
 from .trading.evidence_epochs import (
     EvidenceEpoch,
     compile_evidence_epoch,
@@ -820,6 +823,27 @@ def _evaluate_trading_health_payload(
             market_context_status=market_context_status,
         )
     )
+    evidence_clock_arbiter, routeable_profit_candidate_exchange = (
+        _build_evidence_clock_payloads(
+            torghut_revision=BUILD_COMMIT,
+            dependency_quorum=_dependency_quorum.as_payload(),
+            hypothesis_payload=_hypothesis_payload,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+            tca_summary=tca_summary,
+            empirical_jobs_status=empirical_jobs,
+            proof_floor=proof_floor,
+            routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+            profit_signal_quorum=profit_signal_quorum,
+            live_submission_gate=live_submission_gate,
+            build={
+                "version": BUILD_VERSION,
+                "commit": BUILD_COMMIT,
+                "image_digest": BUILD_IMAGE_DIGEST,
+                "active_revision": _active_runtime_revision() or BUILD_COMMIT,
+            },
+        )
+    )
     live_mode = settings.trading_mode == "live"
     empirical_jobs_required = (
         live_mode and settings.trading_empirical_jobs_health_required
@@ -914,6 +938,8 @@ def _evaluate_trading_health_payload(
             "profit_repair_settlement_ledger": profit_repair_settlement_ledger,
             "routeability_repair_acceptance_ledger": routeability_repair_acceptance_ledger,
             "profit_signal_quorum": profit_signal_quorum,
+            "evidence_clock_arbiter": evidence_clock_arbiter,
+            "routeable_profit_candidate_exchange": routeable_profit_candidate_exchange,
             "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
             "route_reacquisition_board": route_reacquisition_board,
             "quant_evidence": quant_evidence,
@@ -2079,6 +2105,28 @@ def trading_status() -> dict[str, object]:
             market_context_status=market_context_status,
         )
     )
+    build_payload = {
+        "version": BUILD_VERSION,
+        "commit": BUILD_COMMIT,
+        "image_digest": BUILD_IMAGE_DIGEST,
+        "active_revision": shadow_first_runtime["active_revision"],
+    }
+    evidence_clock_arbiter, routeable_profit_candidate_exchange = (
+        _build_evidence_clock_payloads(
+            torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+            dependency_quorum=hypothesis_dependency_quorum.as_payload(),
+            hypothesis_payload=hypothesis_payload,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+            tca_summary=tca_summary,
+            empirical_jobs_status=empirical_jobs,
+            proof_floor=proof_floor,
+            routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+            profit_signal_quorum=profit_signal_quorum,
+            live_submission_gate=live_submission_gate,
+            build=build_payload,
+        )
+    )
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -2086,12 +2134,7 @@ def trading_status() -> dict[str, object]:
         "pipeline_mode": settings.trading_pipeline_mode,
         "execution_lane": settings.trading_pipeline_mode,
         "kill_switch_enabled": settings.trading_kill_switch_enabled,
-        "build": {
-            "version": BUILD_VERSION,
-            "commit": BUILD_COMMIT,
-            "image_digest": BUILD_IMAGE_DIGEST,
-            "active_revision": shadow_first_runtime["active_revision"],
-        },
+        "build": build_payload,
         "shadow_first": shadow_first_runtime,
         "execution_advisor": {
             "enabled": settings.trading_execution_advisor_enabled,
@@ -2116,6 +2159,8 @@ def trading_status() -> dict[str, object]:
         "profit_repair_settlement_ledger": profit_repair_settlement_ledger,
         "routeability_repair_acceptance_ledger": routeability_repair_acceptance_ledger,
         "profit_signal_quorum": profit_signal_quorum,
+        "evidence_clock_arbiter": evidence_clock_arbiter,
+        "routeable_profit_candidate_exchange": routeable_profit_candidate_exchange,
         "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
         "route_reacquisition_board": route_reacquisition_board,
         "quant_evidence": quant_evidence,
@@ -4264,6 +4309,40 @@ def _build_routeability_repair_acceptance_ledger_payload(
         jangar_routeability_admission_ref=_build_jangar_routeability_admission_ref(
             dependency_quorum
         ),
+    )
+
+
+def _build_evidence_clock_payloads(
+    *,
+    torghut_revision: str | None,
+    dependency_quorum: Mapping[str, Any],
+    hypothesis_payload: Mapping[str, Any],
+    quant_evidence: Mapping[str, Any],
+    market_context_status: Mapping[str, Any],
+    tca_summary: Mapping[str, Any],
+    empirical_jobs_status: Mapping[str, Any],
+    proof_floor: Mapping[str, Any],
+    routeability_repair_acceptance_ledger: Mapping[str, Any],
+    profit_signal_quorum: Mapping[str, Any],
+    live_submission_gate: Mapping[str, Any],
+    build: Mapping[str, Any],
+) -> tuple[dict[str, object], dict[str, object]]:
+    return build_evidence_clock_arbiter_and_exchange(
+        account_label=settings.trading_account_label,
+        window=settings.trading_jangar_quant_window,
+        trading_mode=settings.trading_mode,
+        torghut_revision=torghut_revision,
+        build=build,
+        hypothesis_payload=hypothesis_payload,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        tca_summary=tca_summary,
+        empirical_jobs_status=empirical_jobs_status,
+        proof_floor_receipt=proof_floor,
+        routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+        profit_signal_quorum=profit_signal_quorum,
+        live_submission_gate=live_submission_gate,
+        jangar_custody_ref=_build_jangar_stage_clearance_packet_ref(dependency_quorum),
     )
 
 

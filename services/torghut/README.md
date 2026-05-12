@@ -225,6 +225,12 @@ Testing rules for the trading core:
   quant pipeline stages, market-context route health, hypothesis lineage, promotion-decision evidence, route/TCA,
   rejection-drag evidence, and Jangar stage-clearance admission. The quorum names the required repair action per lane
   and keeps every candidate at `max_notional=0` until the scoped quorum and an independent capital gate both pass.
+- `GET /trading/status`, `GET /trading/health`, and `GET /readyz` also expose the May 12 doc 188
+  `torghut.evidence-clock-arbiter.v1` and `torghut.routeable-profit-candidate-exchange.v1` shadow payloads. The
+  reducer compares ClickHouse TA, scoped Jangar quant, market context, Postgres TCA, empirical replay, hypothesis
+  lineage, rollout, routeability acceptance, profit-signal quorum, and capital-gate clocks before any routeable
+  candidate can be counted. Split or stale clocks become zero-notional repair lots with target value gates; emitted
+  candidates still carry `max_notional=0` until independent capital and Jangar custody receipts allow paper.
 - The simple direct-submit lane is no longer an authority bypass in live mode. Before submitting to Alpaca it evaluates
   the same live-submission gate as the scheduler path and persists the gate payload in decision metadata when a
   submission is blocked. Paper-mode simple execution remains unchanged.
