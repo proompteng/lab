@@ -477,6 +477,32 @@ def _summarize_route_reacquisition(
     }
 
 
+def _summarize_routeability_acceptance(
+    routeability_ledger: Mapping[str, Any],
+) -> dict[str, object]:
+    if not routeability_ledger:
+        return {
+            "ledger_id": None,
+            "aggregate_state": "missing",
+            "accepted_routeable_candidate_count": 0,
+            "zero_notional_or_stale_evidence_rate": 1,
+            "blocking_reason_codes": ["routeability_acceptance_ledger_missing"],
+        }
+    return {
+        "ledger_id": routeability_ledger.get("ledger_id"),
+        "aggregate_state": _text(routeability_ledger.get("aggregate_state"), "unknown"),
+        "accepted_routeable_candidate_count": _int(
+            routeability_ledger.get("accepted_routeable_candidate_count")
+        ),
+        "zero_notional_or_stale_evidence_rate": routeability_ledger.get(
+            "zero_notional_or_stale_evidence_rate"
+        ),
+        "blocking_reason_codes": _string_items(
+            routeability_ledger.get("aggregate_blocking_reason_codes")
+        ),
+    }
+
+
 def _business_state(
     *,
     revenue_ready: bool,
@@ -516,6 +542,10 @@ def build_revenue_repair_digest(
     quant_evidence = _choose_mapping(
         status_payload.get("quant_evidence"), readyz_payload.get("quant_evidence")
     )
+    routeability_ledger = _choose_mapping(
+        status_payload.get("routeability_repair_acceptance_ledger"),
+        readyz_payload.get("routeability_repair_acceptance_ledger"),
+    )
     dependencies = _mapping(readyz_payload.get("dependencies"))
     blocking_reasons = _collect_blocking_reasons(readyz_payload, status_payload)
     repair_queue = _build_repair_queue(proof_floor, status_payload, blocking_reasons)
@@ -541,6 +571,9 @@ def build_revenue_repair_digest(
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated.isoformat(),
+        "routeability_repair_acceptance_ledger_id": routeability_ledger.get(
+            "ledger_id"
+        ),
         "business_state": _business_state(
             revenue_ready=revenue_ready,
             proof_floor=proof_floor,
@@ -595,6 +628,9 @@ def build_revenue_repair_digest(
             "execution_tca": _summarize_tca(proof_floor),
             "route_reacquisition": _summarize_route_reacquisition(
                 status_payload, proof_floor
+            ),
+            "routeability_acceptance": _summarize_routeability_acceptance(
+                routeability_ledger
             ),
             "simple_lane_reject_reason_totals": _collect_reason_counts(status_payload),
         },

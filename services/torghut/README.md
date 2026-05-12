@@ -214,11 +214,29 @@ Testing rules for the trading core:
   execution-trust admission into zero-notional repair lots. Jangar can carry the ledger id and lot ids as evidence refs,
   but every lot keeps `paper_notional_limit=0` and `live_notional_limit=0` until forecast, alpha, quant, route/TCA, and
   execution-trust settlement clear.
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/consumer-evidence` also surface the
+  May 8 doc 185 `torghut.routeability-repair-acceptance-ledger.v1` projection, and `/trading/revenue-repair`
+  references the same ledger id. The reducer separates quant scoped-stage repair, stale market-context domains, alpha
+  readiness, route/TCA, forecast/promotion evidence, submit gate holds, and Jangar routeability admission into compact
+  acceptance lots. The ledger is observe-only: unsettled lots keep `paper_notional_limit=0`,
+  `live_notional_limit=0`, and `accepted_routeable_candidate_count=0` until every required receipt settles.
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/consumer-evidence` now surface the
+  May 12 doc 188 `torghut.profit-freshness-frontier.v1` projection. It ranks zero-notional repairs across scoped quant
+  signal freshness, market context, empirical proof, feature coverage, drift checks, route/TCA quality, routeability
+  acceptance, schema lineage, and Jangar reliability settlement. The frontier names one selected repair when proof is
+  stale, but `paper_notional_limit=0`, `live_notional_limit=0`, and existing proof-floor/submission gates remain the
+  only capital authority.
 - `GET /trading/status`, `GET /trading/health`, and `GET /readyz` also expose the May 8 doc 184
   `torghut.profit-signal-quorum.v1` shadow receipt. It evaluates each hypothesis against scoped quant latest metrics,
   quant pipeline stages, market-context route health, hypothesis lineage, promotion-decision evidence, route/TCA,
   rejection-drag evidence, and Jangar stage-clearance admission. The quorum names the required repair action per lane
   and keeps every candidate at `max_notional=0` until the scoped quorum and an independent capital gate both pass.
+- `GET /trading/status`, `GET /trading/health`, and `GET /readyz` also expose the May 12 doc 188
+  `torghut.evidence-clock-arbiter.v1` and `torghut.routeable-profit-candidate-exchange.v1` shadow payloads. The
+  reducer compares ClickHouse TA, scoped Jangar quant, market context, Postgres TCA, empirical replay, hypothesis
+  lineage, rollout, routeability acceptance, profit-signal quorum, and capital-gate clocks before any routeable
+  candidate can be counted. Split or stale clocks become zero-notional repair lots with target value gates; emitted
+  candidates still carry `max_notional=0` until independent capital and Jangar custody receipts allow paper.
 - The simple direct-submit lane is no longer an authority bypass in live mode. Before submitting to Alpaca it evaluates
   the same live-submission gate as the scheduler path and persists the gate payload in decision metadata when a
   submission is blocked. Paper-mode simple execution remains unchanged.

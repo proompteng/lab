@@ -228,6 +228,16 @@ describe('negative evidence router', () => {
           profit_repair_aggregate_state: 'repair',
           profit_repair_lot_ids: ['profit-repair-lot:quant'],
           profit_repair_blocking_reason_codes: ['quant_pipeline_degraded'],
+          routeability_repair_acceptance_ledger_id: 'routeability-acceptance-ledger:test',
+          routeability_aggregate_state: 'blocked',
+          routeability_lot_ids: ['routeability-repair-lot:submit'],
+          routeability_blocking_reason_codes: ['proof_floor_repair_only', 'simple_submit_disabled'],
+          accepted_routeable_candidate_count: 0,
+          profit_freshness_frontier_id: 'profit-freshness-frontier:test',
+          profit_freshness_state: 'repair_only',
+          profit_freshness_repair_lot_ids: ['profit-freshness-repair-lot:market'],
+          profit_freshness_selected_repair_ids: ['profit-freshness-repair-lot:market'],
+          profit_freshness_blocking_reason_codes: ['market_context_news_stale'],
         },
       }),
     )
@@ -242,7 +252,12 @@ describe('negative evidence router', () => {
         'execution_tca_route_universe_incomplete',
         'capital_reentry_repair',
         'profit_repair_repair',
+        'routeability_acceptance_blocked',
+        'profit_freshness_repair_only',
         'quant_pipeline_degraded',
+        'market_context_news_stale',
+        'proof_floor_repair_only',
+        'simple_submit_disabled',
       ]),
     )
     expect(paperCanary.evidence_refs).toEqual(
@@ -252,6 +267,10 @@ describe('negative evidence router', () => {
         'capital-reentry-cohort:aapl',
         'profit-repair-settlement-ledger:test',
         'profit-repair-lot:quant',
+        'routeability-acceptance-ledger:test',
+        'routeability-repair-lot:submit',
+        'profit-freshness-frontier:test',
+        'profit-freshness-repair-lot:market',
       ]),
     )
     expect(paperCanary.blocked_reasons).not.toContain('torghut_consumer_evidence_missing')
@@ -262,7 +281,12 @@ describe('negative evidence router', () => {
         'execution_tca_route_universe_incomplete',
         'capital_reentry_repair',
         'profit_repair_repair',
+        'routeability_acceptance_blocked',
+        'profit_freshness_repair_only',
         'quant_pipeline_degraded',
+        'market_context_news_stale',
+        'proof_floor_repair_only',
+        'simple_submit_disabled',
       ]),
     )
   })

@@ -25,6 +25,14 @@ export type TorghutConsumerEvidenceStatus = {
   profit_repair_settlement_ledger_id?: string | null
   profit_repair_aggregate_state?: string | null
   profit_repair_lot_ids?: string[]
+  routeability_repair_acceptance_ledger_id?: string | null
+  routeability_aggregate_state?: string | null
+  routeability_lot_ids?: string[]
+  accepted_routeable_candidate_count?: number | null
+  profit_freshness_frontier_id?: string | null
+  profit_freshness_state?: string | null
+  profit_freshness_repair_lot_ids?: string[]
+  profit_freshness_selected_repair_ids?: string[]
   reason_codes: string[]
   message: string
 }
@@ -303,6 +311,43 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   ])
   const profitRepairAggregateState = normalizeNonEmpty(profitRepairLedger?.aggregate_state)
   const profitRepairLedgerId = normalizeNonEmpty(profitRepairLedger?.ledger_id)
+  const routeabilityLedger = asRecord(payload.routeability_repair_acceptance_ledger)
+  const routeabilityLots = Array.isArray(routeabilityLedger?.lots)
+    ? routeabilityLedger.lots.map((lot) => asRecord(lot)).filter((lot): lot is Record<string, unknown> => Boolean(lot))
+    : []
+  const routeabilityLotIds = uniqueStrings(routeabilityLots.map((lot) => normalizeNonEmpty(lot.lot_id)))
+  const routeabilityReasonCodes = uniqueStrings([
+    ...stringList(routeabilityLedger?.aggregate_blocking_reason_codes),
+    ...routeabilityLots.flatMap((lot) => stringList(lot.blocking_reason_codes)),
+  ])
+  const routeabilityAggregateState = normalizeNonEmpty(routeabilityLedger?.aggregate_state)
+  const routeabilityLedgerId = normalizeNonEmpty(routeabilityLedger?.ledger_id)
+  const acceptedRouteableCandidateCount = parseNumber(
+    normalizeNonEmpty(routeabilityLedger?.accepted_routeable_candidate_count),
+  )
+  const profitFreshnessFrontier = asRecord(payload.profit_freshness_frontier)
+  const profitFreshnessLots = Array.isArray(profitFreshnessFrontier?.repair_lots)
+    ? profitFreshnessFrontier.repair_lots
+        .map((lot) => asRecord(lot))
+        .filter((lot): lot is Record<string, unknown> => Boolean(lot))
+    : []
+  const profitFreshnessSelectedRepairs = Array.isArray(profitFreshnessFrontier?.selected_zero_notional_repairs)
+    ? profitFreshnessFrontier.selected_zero_notional_repairs
+        .map((lot) => asRecord(lot))
+        .filter((lot): lot is Record<string, unknown> => Boolean(lot))
+    : []
+  const profitFreshnessRepairLotIds = uniqueStrings(profitFreshnessLots.map((lot) => normalizeNonEmpty(lot.lot_id)))
+  const profitFreshnessSelectedRepairIds = uniqueStrings(
+    profitFreshnessSelectedRepairs.map((lot) => normalizeNonEmpty(lot.lot_id)),
+  )
+  const profitFreshnessReasonCodes = uniqueStrings([
+    ...stringList(profitFreshnessFrontier?.aggregate_blocking_reason_codes),
+    ...profitFreshnessLots.flatMap((lot) => stringList(lot.guardrail_failures)),
+  ])
+  const profitFreshnessState = normalizeNonEmpty(
+    profitFreshnessFrontier?.frontier_state ?? profitFreshnessFrontier?.aggregate_state,
+  )
+  const profitFreshnessFrontierId = normalizeNonEmpty(profitFreshnessFrontier?.frontier_id)
 
   return {
     status: {
@@ -326,6 +371,14 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       profit_repair_settlement_ledger_id: profitRepairLedgerId,
       profit_repair_aggregate_state: profitRepairAggregateState,
       profit_repair_lot_ids: profitRepairLotIds,
+      routeability_repair_acceptance_ledger_id: routeabilityLedgerId,
+      routeability_aggregate_state: routeabilityAggregateState,
+      routeability_lot_ids: routeabilityLotIds,
+      accepted_routeable_candidate_count: acceptedRouteableCandidateCount,
+      profit_freshness_frontier_id: profitFreshnessFrontierId,
+      profit_freshness_state: profitFreshnessState,
+      profit_freshness_repair_lot_ids: profitFreshnessRepairLotIds,
+      profit_freshness_selected_repair_ids: profitFreshnessSelectedRepairIds,
       reason_codes: reasonCodes,
       message:
         status === 'current'
@@ -352,6 +405,16 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       profit_repair_aggregate_state: profitRepairAggregateState,
       profit_repair_lot_ids: profitRepairLotIds,
       profit_repair_blocking_reason_codes: profitRepairReasonCodes,
+      routeability_repair_acceptance_ledger_id: routeabilityLedgerId,
+      routeability_aggregate_state: routeabilityAggregateState,
+      routeability_lot_ids: routeabilityLotIds,
+      routeability_blocking_reason_codes: routeabilityReasonCodes,
+      accepted_routeable_candidate_count: acceptedRouteableCandidateCount,
+      profit_freshness_frontier_id: profitFreshnessFrontierId,
+      profit_freshness_state: profitFreshnessState,
+      profit_freshness_repair_lot_ids: profitFreshnessRepairLotIds,
+      profit_freshness_selected_repair_ids: profitFreshnessSelectedRepairIds,
+      profit_freshness_blocking_reason_codes: profitFreshnessReasonCodes,
     },
   }
 }

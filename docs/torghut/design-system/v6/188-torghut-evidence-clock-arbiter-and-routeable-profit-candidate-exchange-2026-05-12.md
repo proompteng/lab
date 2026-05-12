@@ -382,3 +382,17 @@ custody receipt agrees.
 Revenue metric improved: this design targets `routeable_candidate_count` and
 `zero_notional_or_stale_evidence_rate` first, then `post_cost_daily_net_pnl` only after current routeable candidates
 exist.
+
+## Implementation Note
+
+The first implementation cut adds `services/torghut/app/trading/evidence_clock_arbiter.py` as a pure reducer and
+surfaces `torghut.evidence-clock-arbiter.v1` plus `torghut.routeable-profit-candidate-exchange.v1` on `/readyz`,
+`/trading/health`, and `/trading/status`. The reducer consumes already-assembled status inputs; it does not add hot
+path database reads or change live submission defaults. Fresh ClickHouse or global quant evidence cannot mint a
+routeable candidate while scoped quant stages, Postgres TCA, empirical replay, rollout, routeability acceptance,
+profit-signal quorum, or capital clocks are stale, split, missing, or blocked.
+
+Validation for this cut covers stale Postgres proof, fresh ClickHouse split, degraded scoped quant stages, repair-only
+capital gates, missing lineage, API payload presence, and unchanged `max_notional=0`. Rollback is field-level: remove
+the two shadow fields from response assembly or disable downstream consumption; do not widen notional or relax TCA,
+freshness, rollout, or custody gates.
