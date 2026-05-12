@@ -17,3 +17,5 @@ resources:
   - github-codex-post-deploy-workflow-template.yaml
   - coder-workspace-access.yaml
   - knative-service.yaml
+  - knative-host-middleware.yaml
+  - ingressroute.yaml
