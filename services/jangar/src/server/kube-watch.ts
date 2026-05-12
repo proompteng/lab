@@ -47,6 +47,8 @@ const errorStatusCode = (error: Error) => {
   return typeof statusCode === 'number' && Number.isFinite(statusCode) ? statusCode : null
 }
 
+const normalizeError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
+
 const isRateLimitError = (error: Error) => errorStatusCode(error) === 429 || error.message.includes('Too Many Requests')
 
 const boundedDelay = (value: number, fallback: number) => {
@@ -145,6 +147,29 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
     void onRestart?.(reason)
   }
 
+  const handleEventHandlerError = (error: unknown) => {
+    if (stopped) return
+    const normalizedError = normalizeError(error)
+    recordKubeWatchError({
+      resource: normalizedResource,
+      namespace: normalizedNamespace,
+      reason: 'event_handler_error',
+    })
+    recordWatchReliabilityError({
+      resource: normalizedResource,
+      namespace: normalizedNamespace,
+    })
+    onError?.(new Error(`${logPrefix} ${resource} (${namespace}) event handler failed: ${normalizedError.message}`))
+  }
+
+  const handleEvent = (event: WatchEvent) => {
+    try {
+      void Promise.resolve(onEvent(event)).catch(handleEventHandlerError)
+    } catch (error) {
+      handleEventHandlerError(error)
+    }
+  }
+
   const start = () => {
     if (stopped) return
     watchStartResourceVersion = currentResourceVersion
@@ -186,7 +211,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
               resource: normalizedResource,
               namespace: normalizedNamespace,
             })
-            void onEvent({ type, object: payload })
+            handleEvent({ type, object: payload })
           },
           (error) => {
             if (stopped) return
@@ -212,7 +237,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
         abortController = controller
       })
       .catch((error) => {
-        const normalizedError = error instanceof Error ? error : new Error(String(error))
+        const normalizedError = normalizeError(error)
         const reason = isRateLimitError(normalizedError) ? 'watch_start_rate_limited' : 'watch_start_error'
         recordKubeWatchError({
           resource: normalizedResource,
