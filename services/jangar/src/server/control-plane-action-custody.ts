@@ -160,9 +160,9 @@ const materialSignal = (verdict: MaterialActionVerdict | undefined, actionClass:
   ]),
   requiredRepairActions: verdict?.required_repair_actions ?? ['restore material action verdict projection'],
   evidenceRefs: uniqueStrings([verdict?.verdict_id, ...(verdict?.evidence_refs ?? [])]),
-  maxDispatches: verdict ? verdict.max_dispatches : 0,
-  maxRuntimeSeconds: verdict ? verdict.max_runtime_seconds : 0,
-  maxNotional: verdict ? verdict.max_notional : 0,
+  maxDispatches: verdict ? (verdict.max_dispatches ?? null) : 0,
+  maxRuntimeSeconds: verdict ? (verdict.max_runtime_seconds ?? null) : 0,
+  maxNotional: verdict ? (verdict.max_notional ?? null) : 0,
 })
 
 const routeSignal = (
@@ -183,9 +183,9 @@ const routeSignal = (
     contract?.live_route_ref,
     escrow.controller_witness_ref,
   ]),
-  maxDispatches: contract ? contract.max_dispatches : 0,
-  maxRuntimeSeconds: contract ? contract.max_runtime_seconds : 0,
-  maxNotional: contract ? contract.max_notional : 0,
+  maxDispatches: contract ? (contract.max_dispatches ?? null) : 0,
+  maxRuntimeSeconds: contract ? (contract.max_runtime_seconds ?? null) : 0,
+  maxNotional: contract ? (contract.max_notional ?? null) : 0,
 })
 
 const controllerDecision = (

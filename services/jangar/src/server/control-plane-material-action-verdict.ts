@@ -470,6 +470,17 @@ const strictestSignal = (signals: DecisionSignal[]) =>
     decisionRank(signal.decision) > decisionRank(current.decision) ? signal : current,
   )
 
+const tightestCap = (values: Array<number | null>) => {
+  const numericValues = values.filter((value): value is number => value !== null)
+  return numericValues.length > 0 ? Math.min(...numericValues) : null
+}
+
+const tightestCaps = (signals: DecisionSignal[]) => ({
+  maxDispatches: tightestCap(signals.map((signal) => signal.maxDispatches)),
+  maxRuntimeSeconds: tightestCap(signals.map((signal) => signal.maxRuntimeSeconds)),
+  maxNotional: tightestCap(signals.map((signal) => signal.maxNotional)),
+})
+
 const valueForDecision = <T>(decision: MaterialActionVerdictDecision, value: T | null, blockedValue: T | null) =>
   decision === 'hold' || decision === 'block' || decision === 'contradicted' || decision === 'unknown'
     ? blockedValue
@@ -505,6 +516,7 @@ const buildVerdict = (input: {
     ...(repairWarrant && input.actionClass !== 'dispatch_repair' ? [repairWarrant] : []),
   ]
   const strictest = strictestSignal(signals)
+  const caps = tightestCaps(signals)
   const contradictionRefs = contradictionRefsForSignals({
     actionClass: input.actionClass,
     budget: input.budget,
@@ -542,13 +554,9 @@ const buildVerdict = (input: {
     decision_rank: decisionRank(decision),
     confidence: worstConfidence(signals.map((signal) => signal.confidence)),
     allowed_until: allowedUntil,
-    max_dispatches: valueForDecision(decision, strictest.maxDispatches ?? input.budget?.max_dispatches ?? null, 0),
-    max_runtime_seconds: valueForDecision(
-      decision,
-      strictest.maxRuntimeSeconds ?? input.budget?.max_runtime_seconds ?? null,
-      0,
-    ),
-    max_notional: decision === 'allow' ? (strictest.maxNotional ?? input.budget?.max_notional ?? 0) : 0,
+    max_dispatches: valueForDecision(decision, caps.maxDispatches ?? strictest.maxDispatches ?? null, 0),
+    max_runtime_seconds: valueForDecision(decision, caps.maxRuntimeSeconds ?? strictest.maxRuntimeSeconds ?? null, 0),
+    max_notional: decision === 'allow' ? (caps.maxNotional ?? strictest.maxNotional ?? 0) : 0,
     blocking_reason_codes:
       decision === 'repair_only'
         ? []

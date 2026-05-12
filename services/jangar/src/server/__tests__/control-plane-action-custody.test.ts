@@ -476,4 +476,44 @@ describe('control-plane action custody', () => {
       max_notional: 100,
     })
   })
+
+  it('preserves uncapped allow receipts instead of turning null caps into zero budgets', () => {
+    const projection = build()
+
+    expect(receipt(projection, 'serve_readonly')).toMatchObject({
+      decision: 'allow',
+      allowed_scope: 'serve_readonly',
+      max_dispatches: null,
+      max_runtime_seconds: null,
+    })
+    expect(receipt(projection, 'torghut_observe')).toMatchObject({
+      decision: 'allow',
+      allowed_scope: 'torghut_observe',
+      max_dispatches: null,
+      max_runtime_seconds: null,
+    })
+  })
+
+  it('does not expose non-repair scopes or caps for repair-only downgraded actions', () => {
+    const projection = build({
+      materialActionVerdictEpoch: materialEpoch({
+        dispatch_normal: {
+          decision: 'repair_only',
+          decision_rank: 2,
+          max_dispatches: 1,
+          max_runtime_seconds: 1200,
+          downgrade_reason_codes: ['schedule_debt_firebreak_observe_only'],
+          required_repair_actions: ['clear schedule debt firebreak before normal dispatch'],
+        },
+      }),
+    })
+
+    expect(receipt(projection, 'dispatch_normal')).toMatchObject({
+      decision: 'repair_only',
+      allowed_scope: 'none',
+      max_dispatches: 0,
+      max_runtime_seconds: 0,
+      max_notional: 0,
+    })
+  })
 })
