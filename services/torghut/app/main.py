@@ -18,7 +18,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 import inngest
 from inngest.fast_api import serve as inngest_fastapi_serve
-from sqlalchemy import func, select, text
+from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from urllib.parse import urlencode, urlsplit
@@ -673,7 +673,6 @@ def _evaluate_trading_health_payload(
     try:
         with SessionLocal() as session:
             tca_summary = _load_tca_summary(session, scheduler=scheduler)
-            options_catalog_freshness = _load_options_catalog_freshness_summary(session)
         _hypothesis_payload, hypothesis_summary, _dependency_quorum = (
             _build_hypothesis_runtime_payload(
                 scheduler,
@@ -710,10 +709,6 @@ def _evaluate_trading_health_payload(
             message=str(exc),
         )
         hypothesis_summary = {}
-        options_catalog_freshness = {
-            "status": "unavailable",
-            "reason_codes": ["options_catalog_freshness_summary_unavailable"],
-        }
 
     llm_status = scheduler.llm_status()
     dspy_runtime = (
@@ -770,6 +765,11 @@ def _evaluate_trading_health_payload(
         route_reacquisition_board=route_reacquisition_board,
         live_submission_gate=live_submission_gate,
     )
+    with SessionLocal() as session:
+        options_catalog_freshness = _load_options_catalog_freshness_summary(
+            session,
+            route_symbols=_route_claim_symbols(profit_signal_quorum),
+        )
     capital_replay_projection = _build_capital_replay_projection_payload(
         torghut_revision=BUILD_COMMIT,
         dependency_quorum=_dependency_quorum.as_payload(),
@@ -2010,7 +2010,6 @@ def trading_status() -> dict[str, object]:
     with SessionLocal() as session:
         llm_evaluation = _load_llm_evaluation(session)
         tca_summary = _load_tca_summary(session, scheduler=scheduler)
-        options_catalog_freshness = _load_options_catalog_freshness_summary(session)
     market_context_status = scheduler.market_context_status()
     hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
         _build_hypothesis_runtime_payload(
@@ -2083,6 +2082,11 @@ def trading_status() -> dict[str, object]:
         route_reacquisition_board=route_reacquisition_board,
         live_submission_gate=live_submission_gate,
     )
+    with SessionLocal() as session:
+        options_catalog_freshness = _load_options_catalog_freshness_summary(
+            session,
+            route_symbols=_route_claim_symbols(profit_signal_quorum),
+        )
     capital_replay_projection = _build_capital_replay_projection_payload(
         torghut_revision=str(shadow_first_runtime["active_revision"]),
         dependency_quorum=hypothesis_dependency_quorum.as_payload(),
@@ -2410,7 +2414,6 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
     lean_authority_status = _lean_authority_status()
     with SessionLocal() as session:
         tca_summary = _load_tca_summary(session, scheduler=scheduler)
-        options_catalog_freshness = _load_options_catalog_freshness_summary(session)
     market_context_status = scheduler.market_context_status()
     hypothesis_payload, hypothesis_summary, _dependency_quorum = (
         _build_hypothesis_runtime_payload(
@@ -2484,6 +2487,11 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         route_reacquisition_board=route_reacquisition_board,
         live_submission_gate=live_submission_gate,
     )
+    with SessionLocal() as session:
+        options_catalog_freshness = _load_options_catalog_freshness_summary(
+            session,
+            route_symbols=_route_claim_symbols(profit_signal_quorum),
+        )
     capital_reentry_cohort_ledger = _build_capital_reentry_cohort_ledger_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
         dependency_quorum=dependency_quorum.as_payload(),
@@ -3939,7 +3947,49 @@ def _load_tca_summary(
     )
 
 
-def _load_options_catalog_freshness_summary(session: Session) -> dict[str, object]:
+def _route_claim_symbols(profit_signal_quorum: Mapping[str, Any]) -> tuple[str, ...]:
+    raw_quorums = profit_signal_quorum.get("quorums")
+    if not isinstance(raw_quorums, Sequence) or isinstance(
+        raw_quorums, (str, bytes, bytearray)
+    ):
+        return ()
+    symbols: set[str] = set()
+    for raw_quorum_item in cast(Sequence[object], raw_quorums):
+        if not isinstance(raw_quorum_item, Mapping):
+            continue
+        raw_quorum = cast(Mapping[str, Any], raw_quorum_item)
+        raw_signal = raw_quorum.get("route_tca_signal")
+        if not isinstance(raw_signal, Mapping):
+            continue
+        route_tca_signal = cast(Mapping[str, Any], raw_signal)
+        raw_details = route_tca_signal.get("details")
+        if not isinstance(raw_details, Mapping):
+            continue
+        details = cast(Mapping[str, Any], raw_details)
+        raw_symbols = details.get("symbols")
+        if not isinstance(raw_symbols, Sequence) or isinstance(
+            raw_symbols, (str, bytes, bytearray)
+        ):
+            continue
+        for raw_symbol in cast(Sequence[object], raw_symbols):
+            symbol = str(raw_symbol or "").strip().upper()
+            if symbol:
+                symbols.add(symbol)
+    return tuple(sorted(symbols))
+
+
+def _load_options_catalog_freshness_summary(
+    session: Session, *, route_symbols: Sequence[str] | None = None
+) -> dict[str, object]:
+    scoped_symbols = tuple(
+        sorted(
+            {
+                str(symbol).strip().upper()
+                for symbol in route_symbols or ()
+                if str(symbol).strip()
+            }
+        )
+    )
     try:
         session.execute(text("SET LOCAL statement_timeout = 500"))
         row = (
@@ -3960,6 +4010,29 @@ FROM torghut_options_contract_catalog
             .mappings()
             .one()
         )
+        scoped_rows = []
+        if scoped_symbols:
+            scoped_query = text(
+                """
+SELECT
+  underlying_symbol,
+  COUNT(*) FILTER (WHERE status = 'active') AS active_contracts,
+  MAX(last_seen_ts) FILTER (WHERE status = 'active') AS newest_last_seen_ts,
+  COUNT(*) FILTER (WHERE status = 'active' AND provider_updated_ts IS NULL) AS missing_provider_updated_ts_count,
+  MAX(provider_updated_ts) FILTER (WHERE status = 'active') AS newest_provider_updated_ts,
+  COUNT(*) FILTER (WHERE status = 'active' AND close_price IS NULL) AS missing_close_price_count,
+  COUNT(*) FILTER (WHERE status = 'active' AND COALESCE(open_interest, 0) <= 0) AS zero_open_interest_count
+FROM torghut_options_contract_catalog
+WHERE underlying_symbol IN :route_symbols
+GROUP BY underlying_symbol
+"""
+            ).bindparams(bindparam("route_symbols", expanding=True))
+            scoped_rows = list(
+                session.execute(
+                    scoped_query,
+                    {"route_symbols": scoped_symbols},
+                ).mappings()
+            )
     except SQLAlchemyError as exc:
         logger.warning("Options catalog freshness summary unavailable: %s", exc)
         return {
@@ -3971,6 +4044,35 @@ FROM torghut_options_contract_catalog
     missing_provider_updated_ts_count = int(
         row["missing_provider_updated_ts_count"] or 0
     )
+    route_symbol_freshness = {
+        str(scoped_row["underlying_symbol"]).strip().upper(): {
+            "status": "current"
+            if int(scoped_row["active_contracts"] or 0) > 0
+            else "missing",
+            "active_contracts": int(scoped_row["active_contracts"] or 0),
+            "newest_last_seen_ts": _ensure_utc_datetime(
+                cast(datetime | None, scoped_row["newest_last_seen_ts"])
+            ),
+            "missing_provider_updated_ts_count": int(
+                scoped_row["missing_provider_updated_ts_count"] or 0
+            ),
+            "provider_updated_ts_present": int(
+                scoped_row["missing_provider_updated_ts_count"] or 0
+            )
+            == 0
+            and scoped_row["newest_provider_updated_ts"] is not None,
+            "newest_provider_updated_ts": _ensure_utc_datetime(
+                cast(datetime | None, scoped_row["newest_provider_updated_ts"])
+            ),
+            "missing_close_price_count": int(
+                scoped_row["missing_close_price_count"] or 0
+            ),
+            "zero_open_interest_count": int(
+                scoped_row["zero_open_interest_count"] or 0
+            ),
+        }
+        for scoped_row in scoped_rows
+    }
     return {
         "status": "current" if active_contracts > 0 else "missing",
         "active_contracts": active_contracts,
@@ -3985,6 +4087,8 @@ FROM torghut_options_contract_catalog
         ),
         "missing_close_price_count": int(row["missing_close_price_count"] or 0),
         "zero_open_interest_count": int(row["zero_open_interest_count"] or 0),
+        "route_symbols": list(scoped_symbols),
+        "route_symbol_freshness": route_symbol_freshness,
     }
 
 

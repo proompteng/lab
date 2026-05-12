@@ -152,27 +152,100 @@ def _asset_class(claim: Mapping[str, Any]) -> str:
     # fmt: on
 
 
-def _source_book(
-    options: Mapping[str, Any], claims: Sequence[Mapping[str, Any]], now: datetime
-) -> dict[str, object]:
-    option_claim_count = sum(1 for claim in claims if _asset_class(claim) == "options")
+def _claim_symbols(claim: Mapping[str, Any]) -> list[str]:
+    route_tca_details = _mapping(_mapping(claim.get("route_tca_signal")).get("details"))
+    return _unique(
+        [
+            *[_text(symbol).upper() for symbol in _sequence(claim.get("symbols"))],
+            *[
+                _text(symbol).upper()
+                for symbol in _sequence(route_tca_details.get("symbols"))
+            ],
+        ]
+    )
+
+
+def _route_symbol_freshness(options: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    raw = options.get("route_symbol_freshness") or options.get("symbol_freshness")
+    if isinstance(raw, Mapping):
+        result: dict[str, Mapping[str, Any]] = {}
+        for symbol, payload in cast(Mapping[object, object], raw).items():
+            symbol_key = _text(symbol).upper()
+            if symbol_key:
+                result[symbol_key] = _mapping(payload)
+        return result
+    return {}
+
+
+def _provider_updated_ts_missing(row: Mapping[str, Any]) -> bool:
+    if _int(row.get("active_contracts"), -1) <= 0:
+        return False
+    return (
+        _int(row.get("missing_provider_updated_ts_count")) > 0
+        or row.get("provider_updated_ts_present") is False
+    )
+
+
+def _source_reasons_for_claim(
+    options: Mapping[str, Any], claim: Mapping[str, Any]
+) -> list[str]:
+    if _asset_class(claim) != "options":
+        return []
+    route_symbols = _claim_symbols(claim)
+    symbol_freshness = _route_symbol_freshness(options)
     reasons: list[str] = []
+    if route_symbols and symbol_freshness:
+        for symbol in route_symbols:
+            symbol_row = symbol_freshness.get(symbol)
+            if not symbol_row:
+                reasons.append("options_route_symbol_catalog_missing")
+                continue
+            if _int(symbol_row.get("active_contracts"), -1) <= 0:
+                reasons.append("options_catalog_active_contracts_missing")
+            if _provider_updated_ts_missing(symbol_row):
+                reasons.append("options_provider_updated_ts_missing")
+            if _timestamp(symbol_row.get("newest_provider_updated_ts")) is None:
+                reasons.append("options_provider_clock_missing")
+            if _int(symbol_row.get("missing_close_price_count")) > 0:
+                reasons.append("options_close_price_coverage_incomplete")
+            if _int(symbol_row.get("zero_open_interest_count")) > 0:
+                reasons.append("options_open_interest_coverage_incomplete")
+        return _unique(reasons)
+
     provider_updated_at = _timestamp(options.get("newest_provider_updated_ts"))
-    last_seen_at = _timestamp(options.get("newest_last_seen_ts"))
-    if option_claim_count:
-        if _int(options.get("active_contracts"), -1) <= 0:
-            reasons.append("options_catalog_active_contracts_missing")
+    if _int(options.get("active_contracts"), -1) <= 0:
+        reasons.append("options_catalog_active_contracts_missing")
+    if provider_updated_at is None:
+        reasons.append("options_provider_clock_missing")
         if (
             _int(options.get("missing_provider_updated_ts_count")) > 0
             or options.get("provider_updated_ts_present") is False
         ):
             reasons.append("options_provider_updated_ts_missing")
-        if provider_updated_at is None:
-            reasons.append("options_provider_clock_missing")
+    if not route_symbols:
         if _int(options.get("missing_close_price_count")) > 0:
             reasons.append("options_close_price_coverage_incomplete")
         if _int(options.get("zero_open_interest_count")) > 0:
             reasons.append("options_open_interest_coverage_incomplete")
+    return _unique(reasons)
+
+
+def _source_book(
+    options: Mapping[str, Any],
+    claims: Sequence[Mapping[str, Any]],
+    now: datetime,
+    source_reasons_by_claim: Sequence[Sequence[str]],
+) -> dict[str, object]:
+    option_claim_count = sum(1 for claim in claims if _asset_class(claim) == "options")
+    provider_updated_at = _timestamp(options.get("newest_provider_updated_ts"))
+    last_seen_at = _timestamp(options.get("newest_last_seen_ts"))
+    reasons = _unique(
+        [
+            reason
+            for claim_reasons in source_reasons_by_claim
+            for reason in claim_reasons
+        ]
+    )
     return _book(
         "source-freshness-book",
         reasons,
@@ -180,6 +253,7 @@ def _source_book(
         {
             "options_route_claim_count": option_claim_count,
             "options_catalog": dict(options),
+            "route_symbol_freshness": dict(_route_symbol_freshness(options)),
             "options_last_seen_age_seconds": _age_seconds(last_seen_at, now),
             "options_provider_age_seconds": _age_seconds(provider_updated_at, now),
         },
@@ -407,7 +481,7 @@ def _route_claims(
     claims: Sequence[Mapping[str, Any]],
     *,
     common_reasons: Sequence[str],
-    source_reasons: Sequence[str],
+    source_reasons_by_claim: Sequence[Sequence[str]],
 ) -> list[dict[str, object]]:
     route_claims: list[dict[str, object]] = []
     for index, claim in enumerate(claims):
@@ -415,9 +489,14 @@ def _route_claims(
             _mapping(claim.get("route_tca_signal")).get("details")
         )
         asset_class = _asset_class(claim)
+        claim_source_reasons = (
+            list(source_reasons_by_claim[index])
+            if index < len(source_reasons_by_claim)
+            else []
+        )
         reasons = [*_strings(claim.get("reason_codes")), *common_reasons]
         if asset_class == "options":
-            reasons.extend(source_reasons)
+            reasons.extend(claim_source_reasons)
         reason_codes = _unique(reasons)
         has_execution_hold = _has_any(reason_codes, ("tca", "execution"))
         has_rollout_hold = _has_any(reason_codes, ("image", "workload"))
@@ -449,7 +528,7 @@ def _route_claims(
                 "symbols": _strings(route_tca_details.get("symbols")),
                 "asset_class": asset_class,
                 "source_freshness_decision": "hold"
-                if asset_class == "options" and source_reasons
+                if asset_class == "options" and claim_source_reasons
                 else "current",
                 "execution_freshness_decision": "hold"
                 if has_execution_hold
@@ -494,8 +573,15 @@ def build_route_evidence_clearinghouse_packet(
 
     observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     claim_inputs = _claim_inputs(profit_signal_quorum)
+    options_freshness = _mapping(options_catalog_freshness)
+    source_reasons_by_claim = [
+        _source_reasons_for_claim(options_freshness, claim) for claim in claim_inputs
+    ]
     source_book = _source_book(
-        _mapping(options_catalog_freshness), claim_inputs, observed_at
+        options_freshness,
+        claim_inputs,
+        observed_at,
+        source_reasons_by_claim,
     )
     execution_book = _execution_book(tca_summary, observed_at, tca_max_age_seconds)
     rollout_book = _rollout_book(_mapping(image_proof_summary), build)
@@ -518,7 +604,7 @@ def build_route_evidence_clearinghouse_packet(
     claims = _route_claims(
         claim_inputs,
         common_reasons=common_reasons,
-        source_reasons=cast(Sequence[str], source_book["reason_codes"]),
+        source_reasons_by_claim=source_reasons_by_claim,
     )
     all_reasons = _unique(
         [
