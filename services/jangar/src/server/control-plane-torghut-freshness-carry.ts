@@ -1,3 +1,11 @@
+import {
+  normalizeBoolean,
+  normalizeNonEmpty,
+  normalizeReason,
+  stringList,
+  stringValues,
+  uniqueStrings,
+} from '~/server/control-plane-torghut-evidence-normalizers'
 import { asRecord } from '~/server/primitives-http'
 
 const FRESHNESS_CARRY_LEDGER_SCHEMA_VERSION = 'torghut.freshness-carry-ledger.v1'
@@ -12,32 +20,6 @@ export type TorghutFreshnessCarryEvidence = {
   targetValueGates: string[]
   reasonCodes: string[]
   contractSchemaMismatch: string | null
-}
-
-const normalizeNonEmpty = (value: unknown) => {
-  const normalized = typeof value === 'string' ? value.trim() : value == null ? '' : String(value).trim()
-  return normalized.length > 0 ? normalized : null
-}
-
-const normalizeReason = (value: unknown) =>
-  normalizeNonEmpty(value)
-    ?.toLowerCase()
-    .replace(/[^a-z0-9_.:-]+/g, '_') ?? null
-
-const uniqueStrings = (values: Array<string | null | undefined>) => [...new Set(values.filter(Boolean) as string[])]
-
-const stringList = (value: unknown) =>
-  Array.isArray(value) ? uniqueStrings(value.map((item) => normalizeReason(item))) : []
-
-const stringValues = (value: unknown) =>
-  Array.isArray(value) ? uniqueStrings(value.map((item) => normalizeNonEmpty(item))) : []
-
-const normalizeBoolean = (value: unknown) => {
-  if (typeof value === 'boolean') return value
-  const normalized = normalizeReason(value)
-  if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true
-  if (normalized === 'false' || normalized === '0' || normalized === 'no') return false
-  return false
 }
 
 const pressureRefId = (pressureRef: Record<string, unknown>) =>

@@ -4,6 +4,17 @@ import type { TorghutRepairBidSettlementLot, TorghutRepairBidSettlementStatus } 
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
 import { readTorghutFreshnessCarryEvidence } from '~/server/control-plane-torghut-freshness-carry'
 import type { TorghutNegativeEvidenceInput } from '~/server/control-plane-negative-evidence-router-torghut'
+import {
+  normalizeNonEmpty,
+  normalizeNumber,
+  normalizeReason,
+  parseNumber,
+  parseTimestampMs,
+  stringList,
+  stringValues,
+  uniqueStrings,
+} from '~/server/control-plane-torghut-evidence-normalizers'
+import { normalizeRepairBidSettlementLot } from '~/server/control-plane-torghut-repair-bid-settlement'
 import { asRecord } from '~/server/primitives-http'
 
 export type TorghutConsumerEvidenceStatus = {
@@ -99,46 +110,6 @@ export type TorghutConsumerEvidenceResolution = {
 const hashJson = (value: unknown, length = 16) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, length)
 
-const normalizeNonEmpty = (value: unknown) => {
-  const normalized = typeof value === 'string' ? value.trim() : value == null ? '' : String(value).trim()
-  return normalized.length > 0 ? normalized : null
-}
-
-const normalizeReason = (value: unknown) =>
-  normalizeNonEmpty(value)
-    ?.toLowerCase()
-    .replace(/[^a-z0-9_.:-]+/g, '_') ?? null
-
-const uniqueStrings = (values: Array<string | null | undefined>) => [...new Set(values.filter(Boolean) as string[])]
-
-const stringList = (value: unknown) =>
-  Array.isArray(value) ? uniqueStrings(value.map((item) => normalizeReason(item))) : []
-
-const stringValues = (value: unknown) =>
-  Array.isArray(value) ? uniqueStrings(value.map((item) => normalizeNonEmpty(item))) : []
-
-const parseTimestampMs = (value: string | null | undefined) => {
-  if (!value) return null
-  const parsed = Date.parse(value)
-  return Number.isNaN(parsed) ? null : parsed
-}
-
-const parseNumber = (value: string | null) => {
-  if (!value) return null
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-const normalizeNumber = (value: unknown) => parseNumber(normalizeNonEmpty(value))
-
-const normalizeBoolean = (value: unknown) => {
-  if (typeof value === 'boolean') return value
-  const normalized = normalizeReason(value)
-  if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true
-  if (normalized === 'false' || normalized === '0' || normalized === 'no') return false
-  return false
-}
-
 const paperActionStates = new Set(['allow', 'allowed', 'current', 'paper_canary', 'paper_candidate', 'ready'])
 
 const CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION = 'torghut.consumer-evidence-status.v1'
@@ -151,34 +122,6 @@ type JsonRouteResult = {
   ok: boolean
   statusCode: number | null
   payload: Record<string, unknown> | null
-}
-
-const normalizeRepairBidSettlementLot = (value: unknown): TorghutRepairBidSettlementLot | null => {
-  const lot = asRecord(value)
-  const lotId = normalizeNonEmpty(lot?.lot_id)
-  if (!lot || !lotId) return null
-  return {
-    lot_id: lotId,
-    lot_class: normalizeReason(lot.lot_class) ?? 'unknown',
-    target_value_gate: normalizeReason(lot.target_value_gate) ?? '',
-    priority: normalizeNumber(lot.priority),
-    expected_gate_delta: normalizeReason(lot.expected_gate_delta),
-    raw_reason_codes: stringList(lot.raw_reason_codes),
-    root_cause_hypothesis: normalizeNonEmpty(lot.root_cause_hypothesis),
-    required_input_refs: stringValues(lot.required_input_refs),
-    required_output_receipt: normalizeNonEmpty(lot.required_output_receipt),
-    required_output_receipt_count: normalizeNumber(lot.required_output_receipt_count),
-    validation_commands: stringValues(lot.validation_commands),
-    dedupe_key: normalizeNonEmpty(lot.dedupe_key),
-    ttl_seconds: normalizeNumber(lot.ttl_seconds),
-    max_runtime_seconds: normalizeNumber(lot.max_runtime_seconds),
-    max_parallelism: normalizeNumber(lot.max_parallelism),
-    max_notional: normalizeNonEmpty(lot.max_notional),
-    state: normalizeReason(lot.state),
-    dispatchable: normalizeBoolean(lot.dispatchable),
-    hold_reason_codes: stringList(lot.hold_reason_codes),
-    source_bid_ids: stringValues(lot.source_bid_ids),
-  }
 }
 
 const requestJson = async (url: string, timeoutMs: number): Promise<JsonRouteResult> => {
