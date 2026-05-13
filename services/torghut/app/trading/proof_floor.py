@@ -108,6 +108,82 @@ def _hypothesis_items(hypothesis_payload: Mapping[str, Any]) -> list[Mapping[str
     ]
 
 
+def _strings(value: object) -> list[str]:
+    return sorted({_text(item) for item in _sequence(value) if _text(item)})
+
+
+def _truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on", "pass", "ready"}
+    return bool(value)
+
+
+def _hypothesis_repair_target_summary(
+    hypothesis_payload: Mapping[str, Any],
+) -> dict[str, object]:
+    hypothesis_ids: set[str] = set()
+    promotion_eligible_ids: set[str] = set()
+    blocked_ids: set[str] = set()
+    repair_targets: list[dict[str, object]] = []
+
+    for item in _hypothesis_items(hypothesis_payload):
+        lineage_ref = _mapping(item.get("lineage_ref"))
+        hypothesis_id = _text(
+            item.get("hypothesis_id"), _text(lineage_ref.get("hypothesis_id"))
+        )
+        if not hypothesis_id:
+            continue
+        if hypothesis_id in hypothesis_ids:
+            continue
+
+        hypothesis_ids.add(hypothesis_id)
+        promotion_eligible = _truthy(item.get("promotion_eligible"))
+        if promotion_eligible:
+            promotion_eligible_ids.add(hypothesis_id)
+        else:
+            blocked_ids.add(hypothesis_id)
+
+        candidate_id = _text(
+            item.get("candidate_id"), _text(lineage_ref.get("candidate_id"))
+        )
+        strategy_id = _text(
+            item.get("strategy_id"), _text(lineage_ref.get("strategy_id"))
+        )
+        lane_id = _text(item.get("lane_id"), _text(lineage_ref.get("lane_id")))
+        strategy_family = _text(
+            item.get("strategy_family"), _text(lineage_ref.get("strategy_family"))
+        )
+        target: dict[str, object] = {
+            "hypothesis_id": hypothesis_id,
+            "state": _text(item.get("state"), "unknown"),
+            "promotion_eligible": promotion_eligible,
+            "reasons": _strings(item.get("reasons")),
+            "informational_reasons": _strings(item.get("informational_reasons")),
+        }
+        if candidate_id:
+            target["candidate_id"] = candidate_id
+        if strategy_id:
+            target["strategy_id"] = strategy_id
+        if lane_id:
+            target["lane_id"] = lane_id
+        if strategy_family:
+            target["strategy_family"] = strategy_family
+        if len(repair_targets) < 5:
+            repair_targets.append(target)
+
+    return {
+        "hypothesis_ids": sorted(hypothesis_ids),
+        "blocked_hypothesis_ids": sorted(blocked_ids),
+        "promotion_eligible_hypothesis_ids": sorted(promotion_eligible_ids),
+        "repair_target_count": len(hypothesis_ids),
+        "blocked_repair_target_count": len(blocked_ids),
+        "promotion_eligible_repair_target_count": len(promotion_eligible_ids),
+        "repair_targets": repair_targets,
+    }
+
+
 def _reason_counts(hypothesis_payload: Mapping[str, Any]) -> Counter[str]:
     counts: Counter[str] = Counter()
     for item in _hypothesis_items(hypothesis_payload):
@@ -311,6 +387,7 @@ def build_profitability_proof_floor_receipt(
 
     promotion_eligible_total = _int(summary.get("promotion_eligible_total"))
     rollback_required_total = _int(summary.get("rollback_required_total"))
+    alpha_repair_target_summary = _hypothesis_repair_target_summary(hypothesis_payload)
     if promotion_eligible_total <= 0:
         add_dimension(
             dimension="alpha_readiness",
@@ -326,6 +403,7 @@ def build_profitability_proof_floor_receipt(
                     "informational_reason_totals"
                 )
                 or {},
+                **alpha_repair_target_summary,
             },
         )
         _add_repair(
@@ -343,7 +421,10 @@ def build_profitability_proof_floor_receipt(
             state="pass",
             reason="promotion_eligible",
             capital_effect="none",
-            source_ref={"promotion_eligible_total": promotion_eligible_total},
+            source_ref={
+                "promotion_eligible_total": promotion_eligible_total,
+                **alpha_repair_target_summary,
+            },
         )
 
     empirical_ready = _bool(empirical_jobs_status.get("ready"))

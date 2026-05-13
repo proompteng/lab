@@ -541,6 +541,29 @@ def _summarize_executable_alpha_receipts(
     return receipts
 
 
+def _summarize_alpha_repair_targets(
+    alpha_source: Mapping[str, Any],
+) -> list[dict[str, object]]:
+    targets: list[dict[str, object]] = []
+    for raw_target in _sequence(alpha_source.get("repair_targets"))[:5]:
+        target = _mapping(raw_target)
+        if not target:
+            continue
+        payload: dict[str, object] = {
+            "hypothesis_id": _text(target.get("hypothesis_id")),
+            "state": _text(target.get("state"), "unknown"),
+            "promotion_eligible": _bool(target.get("promotion_eligible")),
+            "reasons": _string_items(target.get("reasons")),
+            "informational_reasons": _string_items(target.get("informational_reasons")),
+        }
+        for key in ("candidate_id", "strategy_id", "lane_id", "strategy_family"):
+            value = _text(target.get(key))
+            if value:
+                payload[key] = value
+        targets.append(payload)
+    return targets
+
+
 def _summarize_alpha(
     status_payload: Mapping[str, Any], proof_floor: Mapping[str, Any]
 ) -> dict[str, object]:
@@ -552,16 +575,23 @@ def _summarize_alpha(
             if _text(dimension.get("dimension")) != "alpha_readiness":
                 continue
             source_ref = _mapping(dimension.get("source_ref"))
-            summary = {
-                "promotion_eligible_total": source_ref.get("promotion_eligible_total"),
-                "rollback_required_total": source_ref.get("rollback_required_total"),
-                "state_totals": source_ref.get("state_totals"),
-            }
+            summary = dict(source_ref)
             break
     alpha_summary: dict[str, object] = {
         "promotion_eligible_total": _int(summary.get("promotion_eligible_total")),
         "rollback_required_total": _int(summary.get("rollback_required_total")),
         "state_totals": _mapping(summary.get("state_totals")),
+        "hypothesis_ids": _string_items(summary.get("hypothesis_ids")),
+        "blocked_hypothesis_ids": _string_items(summary.get("blocked_hypothesis_ids")),
+        "promotion_eligible_hypothesis_ids": _string_items(
+            summary.get("promotion_eligible_hypothesis_ids")
+        ),
+        "repair_target_count": _int(summary.get("repair_target_count")),
+        "blocked_repair_target_count": _int(summary.get("blocked_repair_target_count")),
+        "promotion_eligible_repair_target_count": _int(
+            summary.get("promotion_eligible_repair_target_count")
+        ),
+        "repair_targets": _summarize_alpha_repair_targets(summary),
     }
     capital_replay_board = _mapping(status_payload.get("capital_replay_board"))
     if capital_replay_board:
