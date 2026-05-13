@@ -60,6 +60,52 @@ const baseConsumerEvidence = (
   ...overrides,
 })
 
+const alphaStrikeLedger = (
+  overrides: NonNullable<TorghutConsumerEvidenceStatus['alpha_readiness_strike_ledger']>['strike_slots'][number] = {
+    slot_id: 'alpha-readiness-strike-slot:test',
+    lot_id: 'compacted-repair-lot:promotion',
+    source_repair_bid_ids: ['route-evidence-repair-bid:promotion'],
+    lot_class: 'promotion_custody',
+    target_value_gate: 'routeable_candidate_count',
+    admission_reason: 'revenue_queue_top_gate',
+    preempted_lot_class: 'lower_revenue_priority_repair',
+    dedupe_key: 'PA3SX7FYNUTF:15m:promotion_custody',
+    ttl_seconds: 900,
+    max_runtime_seconds: 1200,
+    state: 'dispatchable',
+    required_output_receipt: 'torghut.promotion-custody-decision-receipt.v1',
+    capital_rule: 'zero_notional_repair_only',
+    max_notional: '0',
+    hold_reason_codes: [],
+  },
+): NonNullable<TorghutConsumerEvidenceStatus['alpha_readiness_strike_ledger']> => ({
+  schema_version: 'torghut.alpha-readiness-strike-ledger.v1',
+  ledger_id: 'alpha-readiness-strike-ledger:test',
+  generated_at: now.toISOString(),
+  fresh_until: '2026-05-13T05:21:00.000Z',
+  account_id: 'PA3SX7FYNUTF',
+  window: '15m',
+  trading_mode: 'live',
+  capital_stage: 'shadow',
+  max_notional: '0',
+  status: 'dispatchable',
+  revenue_repair_digest_ref: 'torghut-revenue-repair-digest:test',
+  selected_business_blocker: {
+    code: 'repair_alpha_readiness',
+    reason: 'alpha_readiness_not_promotion_eligible',
+    value_gate: 'routeable_candidate_count',
+    required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+  },
+  routeable_candidate_count_before: 0,
+  zero_notional_or_stale_evidence_rate_before: 1,
+  promotion_custody_lot_ref: 'compacted-repair-lot:promotion',
+  strike_slots: [overrides],
+  required_after_receipts: ['torghut.promotion-custody-decision-receipt.v1', 'alpha_readiness_receipt'],
+  guarded_action_classes: ['paper_canary', 'live_micro_canary', 'live_scale'],
+  reason_codes: [],
+  rollback_target: 'disable alpha-readiness strike ledger and keep Torghut max_notional=0',
+})
+
 const buildAdmission = (overrides: Partial<TorghutConsumerEvidenceStatus> = {}) =>
   buildRepairBidAdmissionState({
     now,
@@ -152,6 +198,104 @@ describe('control-plane repair bid admission', () => {
         'repair_lot_output_receipt_count_invalid',
       ]),
       max_notional: 0,
+    })
+  })
+
+  it('reserves one revenue-ranked alpha-readiness strike ahead of static repair lots', () => {
+    const admission = buildAdmission({
+      alpha_readiness_strike_ledger: alphaStrikeLedger(),
+      repair_bid_settlement_compacted_lots: [
+        baseConsumerEvidence().repair_bid_settlement_compacted_lots![0]!,
+        {
+          ...baseConsumerEvidence().repair_bid_settlement_compacted_lots![0]!,
+          lot_id: 'compacted-repair-lot:promotion',
+          lot_class: 'promotion_custody',
+          target_value_gate: 'routeable_candidate_count',
+          priority: 60,
+          expected_gate_delta: 'retire_alpha_readiness_not_promotion_eligible',
+          required_output_receipt: 'torghut.promotion-custody-decision-receipt.v1',
+          dedupe_key: 'PA3SX7FYNUTF:15m:promotion_custody',
+          state: 'held',
+          dispatchable: false,
+          hold_reason_codes: ['selection_limit_exceeded'],
+        },
+      ],
+    })
+
+    const repairReceipt = admission.receipts.find((receipt) => receipt.action_class === 'dispatch_repair')
+
+    expect(repairReceipt).toMatchObject({
+      decision: 'allow',
+      admitted_lot_ids: ['compacted-repair-lot:promotion'],
+      max_parallelism: 1,
+      max_notional: 0,
+    })
+    expect(admission.dispatch_tickets).toEqual([
+      expect.objectContaining({
+        torghut_lot_id: 'compacted-repair-lot:promotion',
+        lot_class: 'promotion_custody',
+        target_value_gate: 'routeable_candidate_count',
+        dedupe_key: 'PA3SX7FYNUTF:15m:promotion_custody',
+        required_output_receipt: 'torghut.promotion-custody-decision-receipt.v1',
+        launch_allowed: true,
+        max_notional: 0,
+      }),
+    ])
+  })
+
+  it('holds alpha-readiness strike admission when the revenue ledger is stale', () => {
+    const admission = buildAdmission({
+      alpha_readiness_strike_ledger: {
+        ...alphaStrikeLedger(),
+        fresh_until: '2026-05-13T05:19:00.000Z',
+      },
+    })
+    const repairReceipt = admission.receipts.find((receipt) => receipt.action_class === 'dispatch_repair')
+
+    expect(repairReceipt).toMatchObject({
+      decision: 'hold',
+      admitted_lot_ids: [],
+      denied_reason_codes: expect.arrayContaining(['alpha_readiness_strike_unavailable']),
+      max_notional: 0,
+    })
+    expect(admission.dispatch_tickets).toEqual([])
+  })
+
+  it('holds alpha-readiness strike admission when guarded action holds are missing', () => {
+    const admission = buildAdmission({
+      alpha_readiness_strike_ledger: {
+        ...alphaStrikeLedger(),
+        guarded_action_classes: ['paper_canary', 'live_micro_canary'],
+      },
+    })
+    const repairReceipt = admission.receipts.find((receipt) => receipt.action_class === 'dispatch_repair')
+
+    expect(repairReceipt).toMatchObject({
+      decision: 'hold',
+      admitted_lot_ids: [],
+      denied_reason_codes: expect.arrayContaining(['alpha_readiness_strike_unavailable']),
+      max_notional: 0,
+    })
+    expect(admission.dispatch_tickets).toEqual([])
+  })
+
+  it('does not preempt static repair lots when the revenue top gate changes', () => {
+    const admission = buildAdmission({
+      alpha_readiness_strike_ledger: {
+        ...alphaStrikeLedger(),
+        selected_business_blocker: {
+          code: 'repair_execution_tca',
+          reason: 'execution_tca_stale',
+          value_gate: 'fill_tca_or_slippage_quality',
+          required_output_receipt: 'torghut.execution-tca-current-receipt.v1',
+        },
+      },
+    })
+
+    expect(admission.admitted_lot_ids).toEqual(['compacted-repair-lot:quant'])
+    expect(admission.dispatch_tickets[0]).toMatchObject({
+      torghut_lot_id: 'compacted-repair-lot:quant',
+      lot_class: 'quant_pipeline',
     })
   })
 })

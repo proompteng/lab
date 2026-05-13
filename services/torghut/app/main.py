@@ -3094,6 +3094,32 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
         quant_evidence=quant_evidence,
     )
+    revenue_repair_digest = build_revenue_repair_digest(
+        readyz_payload={
+            "status": "degraded"
+            if live_submission_gate.get("allowed") is not True
+            else "ok",
+            "proof_floor": proof_floor,
+            "live_submission_gate": live_submission_gate,
+            "quant_evidence": quant_evidence,
+            "dependencies": {},
+        },
+        status_payload={
+            "mode": settings.trading_mode,
+            "pipeline_mode": "simple",
+            "build": build_payload,
+            "live_submission_gate": live_submission_gate,
+            "proof_floor": proof_floor,
+            "quant_evidence": quant_evidence,
+            "routeability_repair_acceptance_ledger": routeability_repair_acceptance_ledger,
+            "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
+            "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
+            "capital_replay_board": capital_replay_projection.get(
+                "capital_replay_board"
+            ),
+        },
+        generated_at=datetime.now(timezone.utc),
+    )
     profit_freshness_frontier = _build_profit_freshness_frontier_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
         dependency_quorum=dependency_quorum.as_payload(),
@@ -3233,6 +3259,9 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         "clock_settlement_receipt": clock_settlement_receipt,
         "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
         "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
+        "alpha_readiness_strike_ledger": revenue_repair_digest.get(
+            "alpha_readiness_strike_ledger"
+        ),
         "route_warrant_exchange": route_warrant_exchange,
         "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
         "freshness_carry_ledger": freshness_carry_ledger,

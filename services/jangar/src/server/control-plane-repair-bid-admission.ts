@@ -6,6 +6,8 @@ import type {
   RepairBidAdmissionReceipt,
   RepairBidAdmissionState,
   RepairLotDispatchTicket,
+  TorghutAlphaReadinessStrikeLedger,
+  TorghutAlphaReadinessStrikeSlot,
   TorghutRepairBidSettlementLot,
 } from '~/data/agents-control-plane'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
@@ -20,6 +22,12 @@ const DEFAULT_STAGE = 'implement'
 const DEFAULT_FRESHNESS_SECONDS = 60
 const DEFAULT_MAX_RUNTIME_SECONDS = 20 * 60
 const ZERO_NOTIONAL_TEXT = new Set(['0', '0.0', '0.00', '0.0000'])
+const ALPHA_STRIKE_RECEIPT = 'torghut.promotion-custody-decision-receipt.v1'
+const REQUIRED_ALPHA_STRIKE_GUARDED_ACTION_CLASSES = new Set<ActionSloBudgetActionClass>([
+  'paper_canary',
+  'live_micro_canary',
+  'live_scale',
+])
 
 const ACTION_CLASSES: ActionSloBudgetActionClass[] = [
   'serve_readonly',
@@ -103,6 +111,72 @@ const isLotSelected = (lot: TorghutRepairBidSettlementLot, selectedLotIds: Set<s
 
 const isLotDispatchable = (lot: TorghutRepairBidSettlementLot, dispatchableLotIds: Set<string>) =>
   dispatchableLotIds.has(lot.lot_id) || lot.dispatchable === true
+
+const alphaStrikeFresh = (ledger: TorghutAlphaReadinessStrikeLedger, now: Date) => {
+  const parsed = parseTimestampMs(ledger.fresh_until)
+  return Boolean(parsed && parsed > now.getTime())
+}
+
+const alphaStrikeSlot = (
+  ledger: TorghutAlphaReadinessStrikeLedger | null | undefined,
+  now: Date,
+): TorghutAlphaReadinessStrikeSlot | null => {
+  if (!ledger) return null
+  const topGate = ledger.selected_business_blocker?.value_gate
+  if (topGate !== 'routeable_candidate_count') return null
+  if (ledger.status !== 'dispatchable') return null
+  if (!alphaStrikeFresh(ledger, now)) return null
+  if (!isZeroNotional(ledger.max_notional)) return null
+  if (!ledger.rollback_target) return null
+  const guardedActions = new Set(ledger.guarded_action_classes)
+  if (![...REQUIRED_ALPHA_STRIKE_GUARDED_ACTION_CLASSES].every((actionClass) => guardedActions.has(actionClass))) {
+    return null
+  }
+  return (
+    ledger.strike_slots.find(
+      (slot) =>
+        slot.lot_class === 'promotion_custody' &&
+        slot.target_value_gate === 'routeable_candidate_count' &&
+        slot.state === 'dispatchable' &&
+        slot.required_output_receipt === ALPHA_STRIKE_RECEIPT &&
+        isZeroNotional(slot.max_notional),
+    ) ?? null
+  )
+}
+
+const lotForAlphaStrike = (
+  ledger: TorghutAlphaReadinessStrikeLedger,
+  slot: TorghutAlphaReadinessStrikeSlot,
+): TorghutRepairBidSettlementLot => ({
+  lot_id: slot.lot_id ?? slot.slot_id,
+  lot_class: 'promotion_custody',
+  target_value_gate: 'routeable_candidate_count',
+  priority: 98,
+  expected_gate_delta: 'retire_alpha_readiness_not_promotion_eligible',
+  raw_reason_codes: uniqueStrings([
+    ledger.selected_business_blocker?.reason,
+    ...ledger.reason_codes,
+    ...slot.hold_reason_codes,
+  ]),
+  root_cause_hypothesis: 'revenue repair ranked alpha readiness as the top routeable-candidate blocker',
+  required_input_refs: uniqueStrings([
+    ledger.ledger_id,
+    ledger.revenue_repair_digest_ref,
+    ledger.promotion_custody_lot_ref,
+  ]),
+  required_output_receipt: ALPHA_STRIKE_RECEIPT,
+  required_output_receipt_count: 1,
+  validation_commands: ['pytest services/torghut/tests/test_repair_bid_settlement.py -k promotion_custody'],
+  dedupe_key: slot.dedupe_key,
+  ttl_seconds: slot.ttl_seconds,
+  max_runtime_seconds: slot.max_runtime_seconds,
+  max_parallelism: 1,
+  max_notional: '0',
+  state: 'selected',
+  dispatchable: true,
+  hold_reason_codes: [],
+  source_bid_ids: slot.source_repair_bid_ids,
+})
 
 const lotDeniedReasons = (input: {
   lot: TorghutRepairBidSettlementLot
@@ -231,7 +305,18 @@ export const buildRepairBidAdmissionState = (input: RepairBidAdmissionInput): Re
   const dispatchableLotIds = new Set(torghut.repair_bid_settlement_dispatchable_lot_ids ?? [])
   const compactedLots = torghut.repair_bid_settlement_compacted_lots ?? []
   const selectedLots = compactedLots.filter((lot) => isLotSelected(lot, selectedLotIds))
-  const ticketLots = selectedLots.filter((lot) => isLotDispatchable(lot, dispatchableLotIds))
+  const strikeSlot = alphaStrikeSlot(torghut.alpha_readiness_strike_ledger, input.now)
+  const strikeLot =
+    strikeSlot && torghut.alpha_readiness_strike_ledger
+      ? lotForAlphaStrike(torghut.alpha_readiness_strike_ledger, strikeSlot)
+      : null
+  const alphaStrikeRequired =
+    torghut.alpha_readiness_strike_ledger?.selected_business_blocker?.value_gate === 'routeable_candidate_count'
+  const ticketLots = strikeLot
+    ? [strikeLot]
+    : alphaStrikeRequired
+      ? []
+      : selectedLots.filter((lot) => isLotDispatchable(lot, dispatchableLotIds))
   const ledgerMaxNotional = torghut.repair_bid_settlement_max_notional
   const baseReasons = uniqueStrings([
     ...(ledgerCurrent ? [] : [`torghut_repair_bid_settlement_${ledgerStatus}`]),
@@ -239,6 +324,9 @@ export const buildRepairBidAdmissionState = (input: RepairBidAdmissionInput): Re
       ? ['torghut_repair_bid_settlement_notional_nonzero']
       : []),
     ...(torghut.repair_bid_settlement_reason_codes ?? []),
+    ...(alphaStrikeRequired && !strikeLot
+      ? ['alpha_readiness_strike_unavailable', ...(torghut.alpha_readiness_strike_ledger?.reason_codes ?? [])]
+      : []),
   ])
   const repository = normalizeNonEmpty(input.repository) ?? DEFAULT_REPOSITORY
   const branch = normalizeNonEmpty(input.branch) ?? DEFAULT_BRANCH
@@ -310,7 +398,7 @@ export const buildRepairBidAdmissionState = (input: RepairBidAdmissionInput): Re
       action_class: actionClass,
       decision: actionDecision.decision,
       torghut_settlement_ledger_ref: torghut.repair_bid_settlement_ledger_id ?? null,
-      torghut_compacted_lot_refs: selectedLots.map((lot) => lot.lot_id),
+      torghut_compacted_lot_refs: strikeLot ? [strikeLot.lot_id] : selectedLots.map((lot) => lot.lot_id),
       active_dedupe_keys: [...activeDedupeKeys].sort(),
       admitted_lot_ids: actionClass === 'dispatch_repair' ? admittedLotIds : [],
       held_lot_ids: heldLotIds,

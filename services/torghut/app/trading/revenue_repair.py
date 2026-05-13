@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
 
+from .alpha_readiness_strike_ledger import build_alpha_readiness_strike_ledger
+
 
 SCHEMA_VERSION = "torghut.revenue-repair-digest.v1"
 
@@ -870,6 +872,56 @@ def build_revenue_repair_digest(
     )
 
     build = _mapping(status_payload.get("build"))
+    capital = {
+        "live_submission_allowed": live_gate_allowed,
+        "live_submission_reason": _text(live_submission_gate.get("reason"), "unknown"),
+        "configured_live_promotion": _bool(
+            live_submission_gate.get("configured_live_promotion")
+        ),
+        "capital_stage": _text(live_submission_gate.get("capital_stage"), "unknown"),
+        "proof_floor_state": _text(proof_floor.get("floor_state"), "unknown"),
+        "route_state": proof_floor_route_state,
+        "capital_state": capital_state,
+        "max_notional": max_notional,
+    }
+    evidence = {
+        "alpha_readiness": alpha,
+        "quant_evidence": {
+            "ok": _bool(quant_evidence.get("ok"), default=True),
+            "status": _text(quant_evidence.get("status"), "unknown"),
+            "reason": _text(quant_evidence.get("reason"), "unknown"),
+            "max_stage_lag_seconds": quant_evidence.get("max_stage_lag_seconds"),
+            "blocking_reasons": _string_items(quant_evidence.get("blocking_reasons")),
+        },
+        "execution_tca": _summarize_tca(proof_floor),
+        "route_reacquisition": _summarize_route_reacquisition(
+            status_payload, proof_floor
+        ),
+        "routeability_acceptance": _summarize_routeability_acceptance(
+            routeability_ledger
+        ),
+        "route_evidence_clearinghouse": _summarize_route_evidence_clearinghouse(
+            route_evidence_clearinghouse
+        ),
+        "repair_bid_settlement": _summarize_repair_bid_settlement(
+            repair_bid_settlement
+        ),
+        "simple_lane_reject_reason_totals": _collect_reason_counts(status_payload),
+    }
+    business_state = _business_state(
+        revenue_ready=revenue_ready,
+        proof_floor=proof_floor,
+        live_submission_gate=live_submission_gate,
+    )
+    alpha_readiness_strike_ledger = build_alpha_readiness_strike_ledger(
+        generated_at=generated,
+        business_state=business_state,
+        revenue_ready=revenue_ready,
+        repair_queue=cast(Sequence[Mapping[str, Any]], repair_queue),
+        repair_bid_settlement_ledger=repair_bid_settlement,
+        capital=capital,
+        evidence=evidence,
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated.isoformat(),
@@ -878,11 +930,8 @@ def build_revenue_repair_digest(
         ),
         "route_evidence_clearinghouse_packet": dict(route_evidence_clearinghouse),
         "repair_bid_settlement_ledger": dict(repair_bid_settlement),
-        "business_state": _business_state(
-            revenue_ready=revenue_ready,
-            proof_floor=proof_floor,
-            live_submission_gate=live_submission_gate,
-        ),
+        "alpha_readiness_strike_ledger": alpha_readiness_strike_ledger,
+        "business_state": business_state,
         "revenue_ready": revenue_ready,
         "health": {
             "readyz_status": readyz_status,
@@ -902,48 +951,8 @@ def build_revenue_repair_digest(
                 and not _bool(_mapping(raw_dependency).get("ok"), default=True)
             ],
         },
-        "capital": {
-            "live_submission_allowed": live_gate_allowed,
-            "live_submission_reason": _text(
-                live_submission_gate.get("reason"), "unknown"
-            ),
-            "configured_live_promotion": _bool(
-                live_submission_gate.get("configured_live_promotion")
-            ),
-            "capital_stage": _text(
-                live_submission_gate.get("capital_stage"), "unknown"
-            ),
-            "proof_floor_state": _text(proof_floor.get("floor_state"), "unknown"),
-            "route_state": proof_floor_route_state,
-            "capital_state": capital_state,
-            "max_notional": max_notional,
-        },
-        "evidence": {
-            "alpha_readiness": alpha,
-            "quant_evidence": {
-                "ok": _bool(quant_evidence.get("ok"), default=True),
-                "status": _text(quant_evidence.get("status"), "unknown"),
-                "reason": _text(quant_evidence.get("reason"), "unknown"),
-                "max_stage_lag_seconds": quant_evidence.get("max_stage_lag_seconds"),
-                "blocking_reasons": _string_items(
-                    quant_evidence.get("blocking_reasons")
-                ),
-            },
-            "execution_tca": _summarize_tca(proof_floor),
-            "route_reacquisition": _summarize_route_reacquisition(
-                status_payload, proof_floor
-            ),
-            "routeability_acceptance": _summarize_routeability_acceptance(
-                routeability_ledger
-            ),
-            "route_evidence_clearinghouse": _summarize_route_evidence_clearinghouse(
-                route_evidence_clearinghouse
-            ),
-            "repair_bid_settlement": _summarize_repair_bid_settlement(
-                repair_bid_settlement
-            ),
-            "simple_lane_reject_reason_totals": _collect_reason_counts(status_payload),
-        },
+        "capital": capital,
+        "evidence": evidence,
         "blockers": [{"reason": reason} for reason in blocking_reasons],
         "repair_queue": repair_queue,
         "operating_rule": (

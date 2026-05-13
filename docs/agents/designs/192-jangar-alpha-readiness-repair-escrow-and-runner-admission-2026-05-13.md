@@ -354,6 +354,16 @@ Engineer handoff:
 - Make nonzero notional a hard block.
 - Do not launch more than one active promotion-custody strike per account/window/dedupe key.
 
+Implementation note, 2026-05-13:
+
+- The first production implementation adds the read-only Torghut `alpha_readiness_strike_ledger` to
+  `/trading/revenue-repair`, mirrors the compact ledger into `/trading/consumer-evidence`, and teaches Jangar repair
+  admission to reserve exactly one zero-notional `promotion_custody` dispatch ticket when revenue repair ranks
+  `routeable_candidate_count` first.
+- This lands in observe/admission accounting only. It does not enable paper or live trading, does not alter GitOps
+  promotion behavior, and keeps `paper_canary`, `live_micro_canary`, and `live_scale` guarded by the existing material
+  readiness gates.
+
 Deployer handoff:
 
 - Verify Jangar and agents controller readiness before enabling launch.

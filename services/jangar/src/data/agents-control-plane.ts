@@ -721,6 +721,52 @@ export type TorghutRepairBidSettlementLot = {
   source_bid_ids: string[]
 }
 
+export type TorghutAlphaReadinessStrikeSlot = {
+  slot_id: string
+  lot_id: string | null
+  source_repair_bid_ids: string[]
+  lot_class: string
+  target_value_gate: string
+  admission_reason: string | null
+  preempted_lot_class: string | null
+  dedupe_key: string | null
+  ttl_seconds: number | null
+  max_runtime_seconds: number | null
+  state: string | null
+  required_output_receipt: string | null
+  capital_rule: string | null
+  max_notional: string | null
+  hold_reason_codes: string[]
+}
+
+export type TorghutAlphaReadinessStrikeLedger = {
+  schema_version: 'torghut.alpha-readiness-strike-ledger.v1'
+  ledger_id: string
+  generated_at: string | null
+  fresh_until: string | null
+  account_id: string | null
+  window: string | null
+  trading_mode: string | null
+  capital_stage: string | null
+  max_notional: string | null
+  status: string | null
+  revenue_repair_digest_ref: string | null
+  selected_business_blocker: {
+    code: string | null
+    reason: string | null
+    value_gate: string | null
+    required_output_receipt: string | null
+  } | null
+  routeable_candidate_count_before: number | null
+  zero_notional_or_stale_evidence_rate_before: number | null
+  promotion_custody_lot_ref: string | null
+  strike_slots: TorghutAlphaReadinessStrikeSlot[]
+  required_after_receipts: string[]
+  guarded_action_classes: string[]
+  reason_codes: string[]
+  rollback_target: string | null
+}
+
 export type TorghutRepairOutcomeEscrow = {
   escrow_id: string
   dispatch_ticket_id: string | null
@@ -1252,6 +1298,7 @@ export type TorghutConsumerEvidenceStatus = {
   repair_bid_settlement_active_dedupe_keys?: string[]
   repair_bid_settlement_compacted_lots?: TorghutRepairBidSettlementLot[]
   repair_bid_settlement_reason_codes?: string[]
+  alpha_readiness_strike_ledger?: TorghutAlphaReadinessStrikeLedger | null
   repair_outcome_dividend_ledger_id?: string | null
   repair_outcome_receipt_ids?: string[]
   repair_outcome_open_escrow_ids?: string[]

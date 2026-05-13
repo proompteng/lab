@@ -4086,11 +4086,35 @@ class TestTradingApi(TestCase):
             "repair_bid_settlement_ledger": {
                 "schema_version": "torghut.repair-bid-settlement-ledger.v1",
                 "ledger_id": "repair-bid-settlement-ledger:test",
+                "account_id": "PA3SX7FYNUTF",
+                "session_id": "15m",
+                "trading_mode": "live",
                 "capital_decision": "repair_only",
+                "max_notional": "0",
                 "raw_repair_bid_count": 1,
                 "routeable_candidate_count": 0,
                 "selected_lot_ids": ["compacted-repair-lot:test"],
                 "dispatchable_lot_ids": ["compacted-repair-lot:test"],
+                "active_dedupe_keys": [],
+                "compacted_lots": [
+                    {
+                        "lot_id": "compacted-repair-lot:promotion",
+                        "lot_class": "promotion_custody",
+                        "target_value_gate": "routeable_candidate_count",
+                        "priority": 60,
+                        "expected_gate_delta": "retire_alpha_readiness_not_promotion_eligible",
+                        "raw_reason_codes": ["alpha_readiness_not_promotion_eligible"],
+                        "required_output_receipt": "torghut.promotion-custody-decision-receipt.v1",
+                        "dedupe_key": "PA3SX7FYNUTF:15m:promotion_custody",
+                        "ttl_seconds": 900,
+                        "max_runtime_seconds": 1200,
+                        "max_notional": "0",
+                        "state": "held",
+                        "dispatchable": False,
+                        "hold_reason_codes": ["selection_limit_exceeded"],
+                        "source_bid_ids": ["route-evidence-repair-bid:promotion"],
+                    }
+                ],
                 "summary": {
                     "compacted_lot_count": 1,
                     "selected_lot_count": 1,
@@ -4143,6 +4167,14 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             payload["repair_bid_settlement_ledger"]["ledger_id"],
             "repair-bid-settlement-ledger:test",
+        )
+        self.assertEqual(
+            payload["alpha_readiness_strike_ledger"]["schema_version"],
+            "torghut.alpha-readiness-strike-ledger.v1",
+        )
+        self.assertEqual(
+            payload["alpha_readiness_strike_ledger"]["strike_slots"][0]["lot_class"],
+            "promotion_custody",
         )
         self.assertEqual(
             payload["evidence"]["repair_bid_settlement"]["dispatchable_lot_count"],
