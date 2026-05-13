@@ -1,8 +1,13 @@
 import { createHash } from 'node:crypto'
 
-import type { TorghutRepairBidSettlementLot, TorghutRepairBidSettlementStatus } from '~/data/agents-control-plane'
+import type {
+  TorghutRepairBidSettlementLot,
+  TorghutRepairBidSettlementStatus,
+  TorghutRepairOutcomeEscrow,
+} from '~/data/agents-control-plane'
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
 import { readTorghutFreshnessCarryEvidence } from '~/server/control-plane-torghut-freshness-carry'
+import { readTorghutRepairOutcomeEvidence } from '~/server/control-plane-torghut-repair-outcome'
 import type { TorghutNegativeEvidenceInput } from '~/server/control-plane-negative-evidence-router-torghut'
 import {
   normalizeNonEmpty,
@@ -85,6 +90,13 @@ export type TorghutConsumerEvidenceStatus = {
   repair_bid_settlement_active_dedupe_keys?: string[]
   repair_bid_settlement_compacted_lots?: TorghutRepairBidSettlementLot[]
   repair_bid_settlement_reason_codes?: string[]
+  repair_outcome_dividend_ledger_id?: string | null
+  repair_outcome_receipt_ids?: string[]
+  repair_outcome_open_escrow_ids?: string[]
+  repair_outcome_no_delta_lot_ids?: string[]
+  repair_outcome_retired_reason_codes?: string[]
+  repair_outcome_preserved_reason_codes?: string[]
+  repair_outcome_escrows?: TorghutRepairOutcomeEscrow[]
   freshness_carry_ledger_id?: string | null
   freshness_carry_state?: string | null
   freshness_carry_pressure_ref_ids?: string[]
@@ -467,12 +479,14 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     payload.route_warrant_exchange ?? payload.route_warrant_exchange_v1 ?? payload.route_warrant,
   )
   const repairBidSettlement = asRecord(payload.repair_bid_settlement_ledger)
+  const repairOutcome = readTorghutRepairOutcomeEvidence(payload)
   const sourceServingRepairReceiptLedger = asRecord(payload.source_serving_repair_receipt_ledger)
   const freshnessCarry = readTorghutFreshnessCarryEvidence(payload)
   const reasonCodes = uniqueStrings([...receiptReasonCodes, ...freshnessCarry.reasonCodes])
   const observedContracts = uniqueStrings([
     routeWarrant ? 'route_warrant_exchange' : null,
     repairBidSettlement ? 'repair_bid_settlement_ledger' : null,
+    repairOutcome.present ? 'repair_outcome_dividend_ledger' : null,
     sourceServingRepairReceiptLedger ? 'source_serving_repair_receipt_ledger' : null,
     freshnessCarry.present ? 'freshness_carry_ledger' : null,
     routeabilityLedger ? 'routeability_repair_acceptance_ledger' : null,
@@ -490,6 +504,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     normalizeNonEmpty(repairBidSettlement.schema_version) !== REPAIR_BID_SETTLEMENT_LEDGER_SCHEMA_VERSION
       ? `repair_bid_settlement_ledger:${normalizeNonEmpty(repairBidSettlement.schema_version)}`
       : null,
+    repairOutcome.contractSchemaMismatch,
     freshnessCarry.contractSchemaMismatch,
   ])
   const routeWarrantId = normalizeNonEmpty(routeWarrant?.warrant_id ?? routeWarrant?.exchange_id)
@@ -647,6 +662,13 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       repair_bid_settlement_active_dedupe_keys: stringValues(repairBidSettlement?.active_dedupe_keys),
       repair_bid_settlement_compacted_lots: repairBidSettlementLots,
       repair_bid_settlement_reason_codes: repairBidSettlementReasonCodes,
+      repair_outcome_dividend_ledger_id: repairOutcome.ledgerId,
+      repair_outcome_receipt_ids: repairOutcome.receiptIds,
+      repair_outcome_open_escrow_ids: repairOutcome.openEscrowIds,
+      repair_outcome_no_delta_lot_ids: repairOutcome.noDeltaLotIds,
+      repair_outcome_retired_reason_codes: repairOutcome.retiredReasonCodes,
+      repair_outcome_preserved_reason_codes: repairOutcome.preservedReasonCodes,
+      repair_outcome_escrows: repairOutcome.escrows,
       freshness_carry_ledger_id: freshnessCarry.ledgerId,
       freshness_carry_state: freshnessCarry.state,
       freshness_carry_pressure_ref_ids: freshnessCarry.pressureRefIds,

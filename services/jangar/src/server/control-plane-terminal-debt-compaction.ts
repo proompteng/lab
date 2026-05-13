@@ -554,6 +554,7 @@ export const buildTerminalDebtCompactionLedger = (input: TerminalDebtCompactionI
   const retainedAuditSummary = buildSummary(retainedAuditCohorts)
   const decision = strictestTerminalDebtDecision(activeCohorts)
   const activeReasonCodes = activeDebtSummary.reason_codes
+  const repairOutcomeEscrows = input.torghutConsumerEvidence.repair_outcome_escrows ?? []
   const heldActionClasses: ActionSloBudgetActionClass[] =
     activeDebtSummary.count > 0 ? ['dispatch_normal', 'deploy_widen', 'merge_ready'] : []
   const ledgerHash = hashJson({
@@ -599,7 +600,7 @@ export const buildTerminalDebtCompactionLedger = (input: TerminalDebtCompactionI
     active_debt_summary: activeDebtSummary,
     retained_audit_summary: retainedAuditSummary,
     cohorts,
-    repair_outcome_escrows: [],
+    repair_outcome_escrows: repairOutcomeEscrows,
     scheduler_contract: {
       status: decision,
       mode,
@@ -623,6 +624,8 @@ export const buildTerminalDebtCompactionLedger = (input: TerminalDebtCompactionI
         input.controllerWitness.quorum_id,
         input.torghutConsumerEvidence.receipt_id,
         input.repairBidAdmission.torghut_settlement_ledger_ref,
+        input.torghutConsumerEvidence.repair_outcome_dividend_ledger_id,
+        ...repairOutcomeEscrows.map((escrow) => escrow.escrow_id),
         ...activeDebtSummary.representative_refs,
       ]),
     },

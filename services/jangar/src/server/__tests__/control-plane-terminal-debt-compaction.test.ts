@@ -313,4 +313,40 @@ describe('control-plane terminal debt compaction ledger', () => {
     )
     expect(ledger.scheduler_contract.status).toBe('hold')
   })
+
+  it('carries Torghut repair outcome escrows into terminal debt handoff evidence', () => {
+    const ledger = buildLedger({
+      torghutConsumerEvidence: {
+        ...torghutConsumerEvidence,
+        repair_outcome_dividend_ledger_id: 'repair-outcome-dividend-ledger:test',
+        repair_outcome_escrows: [
+          {
+            escrow_id: 'repair-outcome-escrow:quant',
+            dispatch_ticket_id: 'repair-outcome-dispatch-ticket:quant',
+            repair_lot_id: 'compacted-repair-lot:quant',
+            expected_output_receipt: 'torghut.quant-pipeline-current-receipt.v1',
+            expected_reason_code_delta: ['jangar_quant_ingestion_degraded'],
+            launched_agentrun_ref: null,
+            terminal_state: 'pending',
+            outcome: 'pending',
+            retired_reason_codes: [],
+            preserved_reason_codes: ['jangar_quant_ingestion_degraded'],
+            next_action: 'hold',
+          },
+        ],
+      },
+    })
+
+    expect(ledger.repair_outcome_escrows).toEqual([
+      expect.objectContaining({
+        escrow_id: 'repair-outcome-escrow:quant',
+        repair_lot_id: 'compacted-repair-lot:quant',
+        terminal_state: 'pending',
+        outcome: 'pending',
+      }),
+    ])
+    expect(ledger.deployer_contract.evidence_refs).toEqual(
+      expect.arrayContaining(['repair-outcome-dividend-ledger:test', 'repair-outcome-escrow:quant']),
+    )
+  })
 })

@@ -721,6 +721,20 @@ export type TorghutRepairBidSettlementLot = {
   source_bid_ids: string[]
 }
 
+export type TorghutRepairOutcomeEscrow = {
+  escrow_id: string
+  dispatch_ticket_id: string | null
+  repair_lot_id: string | null
+  expected_output_receipt: string | null
+  expected_reason_code_delta: string[]
+  launched_agentrun_ref: string | null
+  terminal_state: 'pending' | 'succeeded' | 'failed' | 'timed_out' | 'superseded'
+  outcome: 'pending' | 'retired_reason_codes' | 'no_delta' | 'degraded' | 'invalid_receipt'
+  retired_reason_codes: string[]
+  preserved_reason_codes: string[]
+  next_action: 'release_credit' | 'burn_credit' | 'roll_forward' | 'hold'
+}
+
 export type RepairBidAdmissionDecision = 'allow' | 'repair_only' | 'hold' | 'block'
 
 export type RepairBidAdmissionReceipt = {
@@ -1238,6 +1252,13 @@ export type TorghutConsumerEvidenceStatus = {
   repair_bid_settlement_active_dedupe_keys?: string[]
   repair_bid_settlement_compacted_lots?: TorghutRepairBidSettlementLot[]
   repair_bid_settlement_reason_codes?: string[]
+  repair_outcome_dividend_ledger_id?: string | null
+  repair_outcome_receipt_ids?: string[]
+  repair_outcome_open_escrow_ids?: string[]
+  repair_outcome_no_delta_lot_ids?: string[]
+  repair_outcome_retired_reason_codes?: string[]
+  repair_outcome_preserved_reason_codes?: string[]
+  repair_outcome_escrows?: TorghutRepairOutcomeEscrow[]
   freshness_carry_ledger_id?: string | null
   freshness_carry_state?: string | null
   freshness_carry_pressure_ref_ids?: string[]
