@@ -11,6 +11,7 @@ from unittest.mock import patch
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+import app.trading.discovery.candidate_specs as candidate_specs_module
 from app.models import (
     Base,
     VNextExperimentSpec,
@@ -40,6 +41,15 @@ from app.whitepapers.workflow import (
     normalize_github_issue_event,
     parse_marker_block,
 )
+
+
+def _profile_ids_for_family(family_template_id: str) -> list[str]:
+    return [
+        f"{family_template_id}:profile-{index + 1}"
+        for index in range(
+            len(candidate_specs_module._FAMILY_EXECUTION_PROFILES[family_template_id])
+        )
+    ]
 
 
 class _FakeCephClient:
@@ -769,7 +779,19 @@ https://example.com/paper.pdf
             templates=[],
         )
 
-        self.assertEqual(len(compiled), 9)
+        expected_family_profiles = {
+            "microstructure_continuation_matched_filter_v1": _profile_ids_for_family(
+                "microstructure_continuation_matched_filter_v1"
+            ),
+            "microbar_cross_sectional_pairs_v1": _profile_ids_for_family(
+                "microbar_cross_sectional_pairs_v1"
+            ),
+            "intraday_tsmom_v2": _profile_ids_for_family("intraday_tsmom_v2"),
+        }
+        self.assertEqual(
+            len(compiled),
+            sum(len(profiles) for profiles in expected_family_profiles.values()),
+        )
         family_profiles: dict[str, list[str]] = {}
         for item in compiled:
             candidate_spec = item["candidate_spec"]
@@ -778,26 +800,7 @@ https://example.com/paper.pdf
             family_profiles.setdefault(str(item["family_template_id"]), []).append(
                 str(execution_profile["profile_id"])
             )
-        self.assertEqual(
-            family_profiles,
-            {
-                "microstructure_continuation_matched_filter_v1": [
-                    "microstructure_continuation_matched_filter_v1:profile-1",
-                    "microstructure_continuation_matched_filter_v1:profile-2",
-                    "microstructure_continuation_matched_filter_v1:profile-3",
-                ],
-                "microbar_cross_sectional_pairs_v1": [
-                    "microbar_cross_sectional_pairs_v1:profile-1",
-                    "microbar_cross_sectional_pairs_v1:profile-2",
-                    "microbar_cross_sectional_pairs_v1:profile-3",
-                ],
-                "intraday_tsmom_v2": [
-                    "intraday_tsmom_v2:profile-1",
-                    "intraday_tsmom_v2:profile-2",
-                    "intraday_tsmom_v2:profile-3",
-                ],
-            },
-        )
+        self.assertEqual(family_profiles, expected_family_profiles)
         self.assertEqual(
             {
                 item["selection_objectives"]["target_net_pnl_per_day"]

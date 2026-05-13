@@ -5,9 +5,10 @@ from typing import Any
 from unittest import TestCase
 from unittest.mock import patch
 
+import app.trading.discovery.candidate_specs as candidate_specs_module
 from app.trading.discovery.candidate_specs import (
-    compile_candidate_specs,
     candidate_spec_from_payload,
+    compile_candidate_specs,
 )
 from app.trading.discovery.evidence_bundles import (
     evidence_bundle_from_frontier_candidate,
@@ -26,6 +27,15 @@ from app.trading.discovery.mlx_training_data import (
     train_mlx_ranker,
 )
 from app.trading.discovery.portfolio_optimizer import optimize_portfolio_candidate
+
+
+def _profile_ids_for_family(family_template_id: str) -> list[str]:
+    return [
+        f"{family_template_id}:profile-{index + 1}"
+        for index in range(
+            len(candidate_specs_module._FAMILY_EXECUTION_PROFILES[family_template_id])
+        )
+    ]
 
 
 class TestWhitepaperAutoresearchArtifacts(TestCase):
@@ -53,32 +63,25 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         specs = compile_candidate_specs(
             hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
         )
-        self.assertEqual(len(specs), 9)
+        expected_family_profiles = {
+            "microstructure_continuation_matched_filter_v1": _profile_ids_for_family(
+                "microstructure_continuation_matched_filter_v1"
+            ),
+            "microbar_cross_sectional_pairs_v1": _profile_ids_for_family(
+                "microbar_cross_sectional_pairs_v1"
+            ),
+            "intraday_tsmom_v2": _profile_ids_for_family("intraday_tsmom_v2"),
+        }
+        self.assertEqual(
+            len(specs),
+            sum(len(profiles) for profiles in expected_family_profiles.values()),
+        )
         family_profiles: dict[str, list[str]] = {}
         for spec in specs:
             family_profiles.setdefault(spec.family_template_id, []).append(
                 str(spec.feature_contract["execution_profile"]["profile_id"])
             )
-        self.assertEqual(
-            family_profiles,
-            {
-                "microstructure_continuation_matched_filter_v1": [
-                    "microstructure_continuation_matched_filter_v1:profile-1",
-                    "microstructure_continuation_matched_filter_v1:profile-2",
-                    "microstructure_continuation_matched_filter_v1:profile-3",
-                ],
-                "microbar_cross_sectional_pairs_v1": [
-                    "microbar_cross_sectional_pairs_v1:profile-1",
-                    "microbar_cross_sectional_pairs_v1:profile-2",
-                    "microbar_cross_sectional_pairs_v1:profile-3",
-                ],
-                "intraday_tsmom_v2": [
-                    "intraday_tsmom_v2:profile-1",
-                    "intraday_tsmom_v2:profile-2",
-                    "intraday_tsmom_v2:profile-3",
-                ],
-            },
-        )
+        self.assertEqual(family_profiles, expected_family_profiles)
         self.assertIn(
             "microbar_cross_sectional_pairs_v1",
             {spec.family_template_id for spec in specs},

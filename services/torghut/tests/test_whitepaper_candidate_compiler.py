@@ -5,11 +5,29 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 
+import app.trading.discovery.candidate_specs as candidate_specs_module
+from app.trading.discovery.hypothesis_cards import build_hypothesis_cards
 from app.trading.discovery.whitepaper_candidate_compiler import (
     compile_claim_payloads_to_whitepaper_experiments,
     compile_whitepaper_candidate_specs,
 )
-from app.trading.discovery.hypothesis_cards import build_hypothesis_cards
+
+
+_FLOW_CLAIM_FAMILIES = {
+    "intraday_tsmom_v2",
+    "microbar_cross_sectional_pairs_v1",
+    "microstructure_continuation_matched_filter_v1",
+}
+
+
+def _profile_count_for_family(family_template_id: str) -> int:
+    return len(candidate_specs_module._FAMILY_EXECUTION_PROFILES[family_template_id])
+
+
+def _expected_flow_candidate_count() -> int:
+    return sum(
+        _profile_count_for_family(family_id) for family_id in _FLOW_CLAIM_FAMILIES
+    )
 
 
 class TestWhitepaperCandidateCompiler(TestCase):
@@ -29,19 +47,17 @@ class TestWhitepaperCandidateCompiler(TestCase):
             seed_sweep_dir=Path("config/trading"),
         )
 
-        self.assertEqual(len(compilation.candidate_specs), 9)
-        self.assertEqual(len(compilation.executable_specs), 9)
-        self.assertEqual(len(compilation.whitepaper_experiment_payloads), 9)
-        self.assertEqual(len(compilation.vnext_experiment_payloads), 9)
-        family_ids = {spec.family_template_id for spec in compilation.executable_specs}
+        expected_spec_count = _expected_flow_candidate_count()
+        self.assertEqual(len(compilation.candidate_specs), expected_spec_count)
+        self.assertEqual(len(compilation.executable_specs), expected_spec_count)
         self.assertEqual(
-            family_ids,
-            {
-                "intraday_tsmom_v2",
-                "microbar_cross_sectional_pairs_v1",
-                "microstructure_continuation_matched_filter_v1",
-            },
+            len(compilation.whitepaper_experiment_payloads), expected_spec_count
         )
+        self.assertEqual(
+            len(compilation.vnext_experiment_payloads), expected_spec_count
+        )
+        family_ids = {spec.family_template_id for spec in compilation.executable_specs}
+        self.assertEqual(family_ids, _FLOW_CLAIM_FAMILIES)
         self.assertEqual(
             {
                 family_id: sum(
@@ -52,9 +68,8 @@ class TestWhitepaperCandidateCompiler(TestCase):
                 for family_id in family_ids
             },
             {
-                "intraday_tsmom_v2": 3,
-                "microbar_cross_sectional_pairs_v1": 3,
-                "microstructure_continuation_matched_filter_v1": 3,
+                family_id: _profile_count_for_family(family_id)
+                for family_id in _FLOW_CLAIM_FAMILIES
             },
         )
         self.assertTrue(
@@ -94,7 +109,9 @@ class TestWhitepaperCandidateCompiler(TestCase):
         )
 
         self.assertEqual(len(compilation.executable_specs), 0)
-        self.assertEqual(len(compilation.blocked_specs), 9)
+        self.assertEqual(
+            len(compilation.blocked_specs), _expected_flow_candidate_count()
+        )
         self.assertEqual(compilation.blockers[0].reason, "family_template_missing")
 
     def test_late_day_continuation_family_is_executable_from_fresh_momentum_claim(
@@ -314,7 +331,9 @@ class TestWhitepaperCandidateCompiler(TestCase):
             )
 
         self.assertEqual(compilation.executable_specs, ())
-        self.assertEqual(len(compilation.blocked_specs), 9)
+        self.assertEqual(
+            len(compilation.blocked_specs), _expected_flow_candidate_count()
+        )
         self.assertEqual(compilation.blockers[0].reason, "seed_sweep_missing")
 
     def test_contradictory_claim_relation_blocks_dependent_candidate_specs(
@@ -350,9 +369,13 @@ class TestWhitepaperCandidateCompiler(TestCase):
             seed_sweep_dir=Path("config/trading"),
         )
 
-        self.assertEqual(len(compilation.candidate_specs), 9)
+        self.assertEqual(
+            len(compilation.candidate_specs), _expected_flow_candidate_count()
+        )
         self.assertEqual(compilation.executable_specs, ())
-        self.assertEqual(len(compilation.blocked_specs), 9)
+        self.assertEqual(
+            len(compilation.blocked_specs), _expected_flow_candidate_count()
+        )
         self.assertTrue(
             all(
                 blocker.reason == "contradictory_claim_relation"

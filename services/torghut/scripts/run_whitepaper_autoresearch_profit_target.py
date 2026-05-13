@@ -1129,6 +1129,40 @@ def _candidate_search_remediation(
         for row in _list_of_mappings(list(false_positive_table))
         if row.get("evidence_status") == "missing"
     ]
+    selection_budget = _mapping(candidate_selection.get("budget"))
+
+    def budget_int(name: str, default: int = 0) -> int:
+        try:
+            return int(selection_budget.get(name, default) or default)
+        except (TypeError, ValueError):
+            return default
+
+    observed_selection_budget = {
+        "compiled_candidate_count": budget_int("compiled_candidate_count"),
+        "unique_execution_signature_count": budget_int(
+            "unique_execution_signature_count"
+        ),
+        "selected_count": budget_int("selected_count", len(selected_rows)),
+        "max_candidates": budget_int("max_candidates", current_max_candidates),
+        "top_k": budget_int("top_k", current_top_k),
+        "exploration_slots": budget_int(
+            "exploration_slots_effective",
+            budget_int("exploration_slots", current_exploration_slots),
+        ),
+    }
+    unique_execution_signature_count = observed_selection_budget[
+        "unique_execution_signature_count"
+    ]
+    candidate_surface_exhausted = (
+        unique_execution_signature_count > 0
+        and observed_selection_budget["selected_count"]
+        >= unique_execution_signature_count
+        and observed_selection_budget["max_candidates"]
+        >= unique_execution_signature_count
+        and observed_selection_budget["top_k"]
+        + observed_selection_budget["exploration_slots"]
+        >= unique_execution_signature_count
+    )
     next_actions: list[dict[str, Any]] = []
     if "TimeoutError:real_replay_timeout_seconds" in failure_reason:
         current_per_spec = max(1, int(max_frontier_candidates_per_spec))
@@ -1216,40 +1250,65 @@ def _candidate_search_remediation(
             "positive_day_ratio_below_oracle",
         )
     ):
-        next_top_k = min(
-            max(1, current_max_candidates),
-            max(16, current_top_k + max(4, current_exploration_slots)),
-        )
-        next_exploration_slots = min(
-            max(1, current_max_candidates),
-            max(8, current_exploration_slots + max(4, current_exploration_slots)),
-        )
-        next_max_candidates = max(
-            current_max_candidates,
-            next_top_k + next_exploration_slots,
-            min(128, current_max_candidates + 32),
-        )
-        recommended_flags = {
-            "--max-candidates": str(next_max_candidates),
-            "--top-k": str(next_top_k),
-            "--exploration-slots": str(next_exploration_slots),
-            "--portfolio-size-min": str(max(3, current_portfolio_size_min)),
-        }
-        if current_max_total_frontier_candidates > 0:
-            recommended_flags["--max-total-frontier-candidates"] = str(
-                max(
-                    current_max_total_frontier_candidates,
-                    min(128, current_max_total_frontier_candidates * 2),
-                )
+        if candidate_surface_exhausted:
+            selected_families = sorted(
+                {
+                    _string(row.get("family_template_id"))
+                    for row in selected_rows
+                    if _string(row.get("family_template_id"))
+                }
             )
-        next_actions.append(
-            {
-                "priority": 4,
-                "action": "increase_breadth_and_portfolio_diversity",
-                "reason": "replayed candidates had flat or non-positive days",
-                "recommended_flags": recommended_flags,
+            next_actions.append(
+                {
+                    "priority": 4,
+                    "action": "expand_execution_profile_surface",
+                    "reason": (
+                        "candidate selection replayed every unique execution signature; "
+                        "max-candidates, top-k, and exploration-slots are no longer binding"
+                    ),
+                    "observed_selection_budget": observed_selection_budget,
+                    "target_family_template_ids": selected_families,
+                    "recommended_code_change": (
+                        "add risk-diversified execution profiles, sleeves, or family mappings "
+                        "before spending another epoch on wider selection flags"
+                    ),
+                }
+            )
+        else:
+            next_top_k = min(
+                max(1, current_max_candidates),
+                max(16, current_top_k + max(4, current_exploration_slots)),
+            )
+            next_exploration_slots = min(
+                max(1, current_max_candidates),
+                max(8, current_exploration_slots + max(4, current_exploration_slots)),
+            )
+            next_max_candidates = max(
+                current_max_candidates,
+                next_top_k + next_exploration_slots,
+                min(128, current_max_candidates + 32),
+            )
+            recommended_flags = {
+                "--max-candidates": str(next_max_candidates),
+                "--top-k": str(next_top_k),
+                "--exploration-slots": str(next_exploration_slots),
+                "--portfolio-size-min": str(max(3, current_portfolio_size_min)),
             }
-        )
+            if current_max_total_frontier_candidates > 0:
+                recommended_flags["--max-total-frontier-candidates"] = str(
+                    max(
+                        current_max_total_frontier_candidates,
+                        min(128, current_max_total_frontier_candidates * 2),
+                    )
+                )
+            next_actions.append(
+                {
+                    "priority": 4,
+                    "action": "increase_breadth_and_portfolio_diversity",
+                    "reason": "replayed candidates had flat or non-positive days",
+                    "recommended_flags": recommended_flags,
+                }
+            )
     if any(
         reason in failure_counts
         for reason in (
@@ -1302,6 +1361,8 @@ def _candidate_search_remediation(
         "selected_missing_evidence_count": len(selected_but_missing),
         "failure_reason_counts": dict(sorted(failure_counts.items())),
         "partial_scorecards": partial_scorecards,
+        "candidate_surface_exhausted": candidate_surface_exhausted,
+        "observed_selection_budget": observed_selection_budget,
         "next_actions": next_actions,
     }
 

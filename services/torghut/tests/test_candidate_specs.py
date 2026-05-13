@@ -113,13 +113,19 @@ class TestCandidateSpecs(TestCase):
             if spec.family_template_id
             == "microstructure_continuation_matched_filter_v1"
         )
+        expected_continuation_profiles = [
+            f"microstructure_continuation_matched_filter_v1:profile-{index + 1}"
+            for index in range(
+                len(
+                    candidate_specs_module._FAMILY_EXECUTION_PROFILES[
+                        "microstructure_continuation_matched_filter_v1"
+                    ]
+                )
+            )
+        ]
         self.assertEqual(
             continuation_profiles,
-            [
-                "microstructure_continuation_matched_filter_v1:profile-1",
-                "microstructure_continuation_matched_filter_v1:profile-2",
-                "microstructure_continuation_matched_filter_v1:profile-3",
-            ],
+            expected_continuation_profiles,
         )
         self.assertEqual(
             len({spec.candidate_spec_id for spec in specs}),
