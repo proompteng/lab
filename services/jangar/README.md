@@ -282,6 +282,16 @@ passport, runtime-kit digest, proof content, or decision changes. Rollback for l
 `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=false` while keeping `runtime_kits`, `admission_passports`, and proof-surface
 projection intact.
 
+`/api/agents/control-plane/status` also emits observe-mode rollout proof from
+`docs/agents/designs/191-jangar-rollout-proof-passports-and-runner-capacity-futures-2026-05-13.md`. The
+`rollout_proof_passport` joins source rollout truth, source-serving verdicts, database status, controller witness,
+rollout health, and ready truth into one source-to-serving status. Missing source CI, manifest digest, or registry
+digest proof marks the passport `collecting` and holds material launch evidence while serving readiness can remain
+`ok`; stale or contradictory proof blocks material launch evidence. `runner_capacity_futures` classify each normal
+swarm dispatch lane from recent scheduling events, workflow timeouts, runtime adapter health, stage credit, and the
+passport image-digest state. `stage_launch_tickets` bind the passport and capacity future for handoff. This slice does
+not change scheduler behavior; rollback is to ignore these status fields or keep downstream consumers in observe mode.
+
 Deploy verification also consumes the runtime-admission projection. After Argo, rollout, and image digest checks pass,
 `packages/scripts/src/jangar/verify-deployment.ts` reads
 `/api/agents/control-plane/status?namespace=agents` through the Kubernetes service proxy and requires the configured

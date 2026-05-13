@@ -61,6 +61,11 @@ import {
 import { buildReadyTruthArbiter } from '~/server/control-plane-ready-truth-arbiter'
 import { buildDefaultRepairBidAdmissionState } from '~/server/control-plane-repair-bid-admission'
 import {
+  buildRolloutProofPassport,
+  buildRunnerCapacityFutures,
+  buildStageLaunchTickets,
+} from '~/server/control-plane-rollout-proof-passport'
+import {
   buildRolloutHealth,
   maybeUseSplitTopologyControllerRollout,
   maybeUseSplitTopologyRuntimeRollout,
@@ -647,6 +652,31 @@ export const buildControlPlaneStatus = async (
     torghutConsumerEvidence: torghutConsumerEvidence.status,
     projectionForeclosureNotary,
   })
+  const rolloutProofPassport = buildRolloutProofPassport({
+    now,
+    namespace: options.namespace,
+    sourceRolloutTruthExchange,
+    sourceServingContractVerdictExchange,
+    database,
+    rolloutHealth,
+    controllerWitness,
+    readyTruthArbiter,
+  })
+  const runnerCapacityFutures = buildRunnerCapacityFutures({
+    now,
+    namespace: options.namespace,
+    rolloutProofPassport,
+    workflows,
+    runtimeAdapters: effectiveRuntimeAdapters,
+    kubernetesEvidence: failureDomainKubernetesEvidence,
+    stageCreditLedger,
+  })
+  const stageLaunchTickets = buildStageLaunchTickets({
+    now,
+    namespace: options.namespace,
+    rolloutProofPassport,
+    runnerCapacityFutures,
+  })
   const authorityProvenanceSettlement = buildAuthorityProvenanceSettlement({
     now,
     namespace: options.namespace,
@@ -767,6 +797,9 @@ export const buildControlPlaneStatus = async (
     projection_foreclosure_notary: projectionForeclosureNotary,
     stage_credit_ledger: stageCreditLedger,
     ready_truth_arbiter: readyTruthArbiter,
+    rollout_proof_passport: rolloutProofPassport,
+    runner_capacity_futures: runnerCapacityFutures,
+    stage_launch_tickets: stageLaunchTickets,
     authority_provenance_settlement: authorityProvenanceSettlement,
     evidence_pressure_ledger: evidencePressureLedger,
     terminal_debt_compaction_ledger: terminalDebtCompactionLedger,
