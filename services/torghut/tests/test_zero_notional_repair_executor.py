@@ -138,3 +138,137 @@ def test_nonzero_frontier_notional_blocks_repair_execution() -> None:
     assert receipt["command_exit_code"] == 78
     assert "frontier_paper_notional_nonzero" in receipt["blocked_reasons"]
     assert receipt["after_refs"] == []
+
+
+def test_fallback_repair_lot_selection_keeps_route_tca_repair_dry_run_ready() -> None:
+    frontier = _frontier("recompute_route_tca_and_fill_quality")
+    frontier.pop("selected_zero_notional_repairs")
+    frontier["repair_lots"] = [
+        {
+            "lot_id": "ignored",
+            "state": "blocked",
+            "zero_notional_action": "renew_empirical_proof_jobs",
+        },
+        {
+            "lot_id": "profit-freshness-repair-lot:tca",
+            "candidate_id": "candidate-b",
+            "hypothesis_id": "H-MSFT",
+            "blocked_dimension": "execution_tca",
+            "zero_notional_action": "recompute_route_tca_and_fill_quality",
+            "before_refs": ["execution_tca:MSFT"],
+            "paper_notional_limit": "0",
+            "live_notional_limit": "0",
+            "state": "selected_zero_notional_repair",
+        },
+    ]
+
+    receipt = run_zero_notional_repair(
+        account_label="paper",
+        trading_mode="live",
+        torghut_revision="torghut-00320",
+        source_commit="abc123",
+        profit_freshness_frontier=frontier,
+        execute=False,
+        runners={},
+        now=NOW,
+    )
+
+    assert receipt["execution_state"] == "dry_run_ready"
+    assert receipt["repair_lot_ref"] == "profit-freshness-repair-lot:tca"
+    assert receipt["before_refs"] == ["execution_tca:MSFT"]
+    assert receipt["executor"] == "route_tca_recompute"
+
+
+def test_missing_or_unsupported_repair_is_fail_closed() -> None:
+    frontier_without_repair = _frontier()
+    frontier_without_repair["selected_zero_notional_repairs"] = []
+
+    missing_receipt = build_zero_notional_repair_execution_receipt(
+        account_label="paper",
+        trading_mode="live",
+        torghut_revision="torghut-00320",
+        source_commit="abc123",
+        profit_freshness_frontier=frontier_without_repair,
+        execute=True,
+        now=NOW,
+    )
+
+    assert missing_receipt["execution_state"] == "no_selected_repair"
+    assert missing_receipt["command_exit_code"] == 78
+    assert (
+        "profit_freshness_frontier_selected_repair_missing"
+        in missing_receipt["blocked_reasons"]
+    )
+    assert missing_receipt["zero_notional_action"] is None
+
+    unsupported_frontier = _frontier("")
+    unsupported_receipt = build_zero_notional_repair_execution_receipt(
+        account_label="paper",
+        trading_mode="live",
+        torghut_revision="torghut-00320",
+        source_commit="abc123",
+        profit_freshness_frontier=unsupported_frontier,
+        execute=True,
+        now=NOW,
+    )
+
+    assert unsupported_receipt["execution_state"] == "unsupported_action"
+    assert unsupported_receipt["command_exit_code"] == 78
+    assert (
+        "zero_notional_action_not_allowlisted:"
+        in unsupported_receipt["blocked_reasons"]
+    )
+
+
+def test_execute_without_local_runner_is_fail_closed() -> None:
+    receipt = run_zero_notional_repair(
+        account_label="paper",
+        trading_mode="live",
+        torghut_revision="torghut-00320",
+        source_commit="abc123",
+        profit_freshness_frontier=_frontier("recompute_route_tca_and_fill_quality"),
+        execute=True,
+        runners={},
+        now=NOW,
+    )
+
+    assert receipt["execution_state"] == "runner_not_configured"
+    assert receipt["command_exit_code"] == 78
+    assert "zero_notional_runner_not_configured" in receipt["blocked_reasons"]
+    assert receipt["order_submission_enabled"] is False
+
+
+def test_all_nonzero_notional_and_capital_change_markers_block_execution() -> None:
+    frontier = _frontier("recompute_route_tca_and_fill_quality")
+    frontier["capital_posture"]["paper_notional_limit"] = "1"
+    frontier["capital_posture"]["live_notional_limit"] = "2"
+    frontier["capital_posture"]["capital_behavior_changed"] = "true"
+    selected_repair = frontier["selected_zero_notional_repairs"][0]
+    selected_repair["paper_notional_limit"] = "3"
+    selected_repair["live_notional_limit"] = "4"
+
+    receipt = run_zero_notional_repair(
+        account_label="paper",
+        trading_mode="live",
+        torghut_revision="torghut-00320",
+        source_commit="abc123",
+        profit_freshness_frontier=frontier,
+        execute=True,
+        runners={
+            "recompute_route_tca_and_fill_quality": lambda _repair: {
+                "execution_state": "executed",
+                "command_exit_code": 0,
+            }
+        },
+        now=NOW,
+    )
+
+    assert receipt["execution_state"] == "capital_safety_blocked"
+    assert receipt["command_exit_code"] == 78
+    assert receipt["blocked_reasons"] == [
+        "frontier_paper_notional_nonzero",
+        "frontier_live_notional_nonzero",
+        "repair_paper_notional_nonzero",
+        "repair_live_notional_nonzero",
+        "frontier_capital_behavior_changed",
+    ]
