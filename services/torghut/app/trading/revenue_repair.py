@@ -101,6 +101,103 @@ _REPAIR_CATALOG: dict[str, tuple[str, str, str, int, int]] = {
     ),
 }
 
+_REPAIR_METADATA: dict[str, dict[str, object]] = {
+    "alpha_readiness_not_promotion_eligible": {
+        "value_gate": "routeable_candidate_count",
+        "required_output_receipt": "torghut.executable-alpha-receipts.v1",
+        "required_receipts": [
+            "alpha_readiness_receipt",
+            "hypothesis_promotion_receipt",
+            "capital_replay_board",
+        ],
+    },
+    "execution_tca_stale": {
+        "value_gate": "fill_tca_or_slippage_quality",
+        "required_output_receipt": "torghut.execution-tca-current-receipt.v1",
+        "required_receipts": [
+            "execution_tca_receipt",
+            "slippage_guardrail_receipt",
+        ],
+    },
+    "execution_tca_missing": {
+        "value_gate": "fill_tca_or_slippage_quality",
+        "required_output_receipt": "torghut.execution-tca-current-receipt.v1",
+        "required_receipts": [
+            "execution_tca_receipt",
+            "route_universe_receipt",
+        ],
+    },
+    "execution_tca_slippage_guardrail_exceeded": {
+        "value_gate": "fill_tca_or_slippage_quality",
+        "required_output_receipt": "torghut.execution-tca-current-receipt.v1",
+        "required_receipts": [
+            "execution_tca_receipt",
+            "slippage_guardrail_receipt",
+        ],
+    },
+    "execution_tca_route_universe_empty": {
+        "value_gate": "routeable_candidate_count",
+        "required_output_receipt": "torghut.route-universe-repair-receipt.v1",
+        "required_receipts": [
+            "route_universe_receipt",
+            "execution_tca_receipt",
+        ],
+    },
+    "execution_tca_route_universe_incomplete": {
+        "value_gate": "routeable_candidate_count",
+        "required_output_receipt": "torghut.route-universe-repair-receipt.v1",
+        "required_receipts": [
+            "route_universe_receipt",
+            "execution_tca_receipt",
+        ],
+    },
+    "quant_pipeline_degraded": {
+        "value_gate": "zero_notional_or_stale_evidence_rate",
+        "required_output_receipt": "torghut.quant-pipeline-current-receipt.v1",
+        "required_receipts": [
+            "scoped_quant_health_receipt",
+            "quant_pipeline_stage_receipt",
+        ],
+    },
+    "quant_health_degraded": {
+        "value_gate": "zero_notional_or_stale_evidence_rate",
+        "required_output_receipt": "torghut.quant-pipeline-current-receipt.v1",
+        "required_receipts": [
+            "scoped_quant_health_receipt",
+            "quant_pipeline_stage_receipt",
+        ],
+    },
+    "quant_health_fetch_failed": {
+        "value_gate": "zero_notional_or_stale_evidence_rate",
+        "required_output_receipt": "torghut.quant-pipeline-current-receipt.v1",
+        "required_receipts": [
+            "scoped_quant_health_receipt",
+            "quant_pipeline_stage_receipt",
+        ],
+    },
+    "quant_latest_metrics_empty": {
+        "value_gate": "zero_notional_or_stale_evidence_rate",
+        "required_output_receipt": "torghut.quant-pipeline-current-receipt.v1",
+        "required_receipts": [
+            "scoped_quant_health_receipt",
+            "quant_pipeline_stage_receipt",
+        ],
+    },
+    "simple_submit_disabled": {
+        "value_gate": "capital_gate_safety",
+        "required_output_receipt": "torghut.capital-hold-repair-receipt.v1",
+        "required_receipts": [
+            "profitability_proof_floor_receipt",
+            "routeability_acceptance_receipt",
+        ],
+    },
+    "insufficient_buying_power": {
+        "value_gate": "capital_gate_safety",
+        "required_output_receipt": "torghut.capital-account-repair-receipt.v1",
+        "required_receipts": ["capital_account_receipt"],
+    },
+}
+
 _NON_ACTIONABLE_DEPENDENCY_DETAILS = {
     "candidate",
     "healthy",
@@ -123,6 +220,13 @@ def _catalog(reason: str) -> dict[str, object]:
         "priority": priority,
         "expected_unblock_value": expected_unblock_value,
     }
+
+
+def _repair_metadata(reason: str) -> dict[str, object]:
+    metadata = dict(_REPAIR_METADATA.get(reason, {}))
+    metadata.setdefault("max_notional", "0")
+    metadata.setdefault("capital_rule", "zero_notional_repair_only")
+    return metadata
 
 
 def _text(value: object, default: str = "") -> str:
@@ -308,6 +412,7 @@ def _repair_from_ladder_item(
         "priority": priority,
         "expected_unblock_value": max(1, expected_unblock_value),
         "source": "proof_floor.repair_ladder",
+        **_repair_metadata(reason),
     }
 
 
@@ -335,6 +440,7 @@ def _repair_from_reason(
         ),
         "source": "derived.blocking_reason",
         "observed_count": max(1, count),
+        **_repair_metadata(reason),
     }
 
 
@@ -387,6 +493,54 @@ def _build_repair_queue(
     )
 
 
+def _summarize_alpha_replay_items(
+    capital_replay_board: Mapping[str, Any],
+) -> list[dict[str, object]]:
+    replays: list[dict[str, object]] = []
+    for raw_replay in _sequence(capital_replay_board.get("replay_items"))[:3]:
+        replay = _mapping(raw_replay)
+        if not replay:
+            continue
+        replays.append(
+            {
+                "replay_id": replay.get("replay_id"),
+                "hypothesis_id": replay.get("hypothesis_id"),
+                "replay_class": replay.get("replay_class"),
+                "target_symbols": _string_items(replay.get("target_symbols")),
+                "remaining_blockers": _string_items(replay.get("remaining_blockers")),
+                "required_after_refs": _string_items(replay.get("required_after_refs")),
+                "max_notional": _text(replay.get("max_notional"), "0"),
+            }
+        )
+    return replays
+
+
+def _summarize_executable_alpha_receipts(
+    executable_alpha_receipts: Mapping[str, Any],
+) -> list[dict[str, object]]:
+    receipts: list[dict[str, object]] = []
+    for raw_receipt in _sequence(executable_alpha_receipts.get("receipts"))[:3]:
+        receipt = _mapping(raw_receipt)
+        if not receipt:
+            continue
+        guardrail = _mapping(receipt.get("guardrail_result"))
+        capital_effect = _mapping(receipt.get("capital_effect"))
+        receipts.append(
+            {
+                "receipt_id": receipt.get("receipt_id"),
+                "replay_id": receipt.get("replay_id"),
+                "hypothesis_id": receipt.get("hypothesis_id"),
+                "graduation_state": _text(receipt.get("graduation_state")),
+                "remaining_blockers": _string_items(receipt.get("remaining_blockers")),
+                "guardrail_state": _text(guardrail.get("state")),
+                "guardrail_passed": _bool(guardrail.get("passed")),
+                "capital_state": _text(capital_effect.get("capital_state")),
+                "max_notional": _text(capital_effect.get("max_notional"), "0"),
+            }
+        )
+    return receipts
+
+
 def _summarize_alpha(
     status_payload: Mapping[str, Any], proof_floor: Mapping[str, Any]
 ) -> dict[str, object]:
@@ -404,11 +558,59 @@ def _summarize_alpha(
                 "state_totals": source_ref.get("state_totals"),
             }
             break
-    return {
+    alpha_summary: dict[str, object] = {
         "promotion_eligible_total": _int(summary.get("promotion_eligible_total")),
         "rollback_required_total": _int(summary.get("rollback_required_total")),
         "state_totals": _mapping(summary.get("state_totals")),
     }
+    capital_replay_board = _mapping(status_payload.get("capital_replay_board"))
+    if capital_replay_board:
+        board_summary = _mapping(capital_replay_board.get("summary"))
+        alpha_summary["capital_replay_board"] = {
+            "schema_version": capital_replay_board.get("schema_version"),
+            "board_id": capital_replay_board.get("board_id"),
+            "selected_replay_count": _int(
+                board_summary.get("selected_replay_count"),
+                len(_sequence(capital_replay_board.get("selected_replays"))),
+            ),
+            "zero_notional_replay_count": _int(
+                board_summary.get("zero_notional_replay_count")
+            ),
+            "paper_replay_candidate_count": _int(
+                board_summary.get("paper_replay_candidate_count")
+            ),
+            "capital_ready": _bool(board_summary.get("capital_ready")),
+            "selected_replays": _string_items(
+                capital_replay_board.get("selected_replays")
+            ),
+            "top_zero_notional_replays": _summarize_alpha_replay_items(
+                capital_replay_board
+            ),
+        }
+    executable_alpha_receipts = _mapping(
+        status_payload.get("executable_alpha_receipts")
+    )
+    if executable_alpha_receipts:
+        receipt_summary = _mapping(executable_alpha_receipts.get("summary"))
+        alpha_summary["executable_alpha_receipts"] = {
+            "schema_version": executable_alpha_receipts.get("schema_version"),
+            "generated_at": executable_alpha_receipts.get("generated_at"),
+            "receipts_total": _int(receipt_summary.get("receipts_total")),
+            "zero_notional_receipt_count": _int(
+                receipt_summary.get("zero_notional_receipt_count")
+            ),
+            "paper_replay_candidate_count": _int(
+                receipt_summary.get("paper_replay_candidate_count")
+            ),
+            "capital_ready": _bool(receipt_summary.get("capital_ready")),
+            "graduation_state_totals": _mapping(
+                receipt_summary.get("graduation_state_totals")
+            ),
+            "candidate_receipts": _summarize_executable_alpha_receipts(
+                executable_alpha_receipts
+            ),
+        }
+    return alpha_summary
 
 
 def _summarize_tca(proof_floor: Mapping[str, Any]) -> dict[str, object]:
