@@ -26,6 +26,7 @@ import type {
   RouteStabilityEscrow,
   RuntimeProofCellStatus,
   RuntimeKitStatus,
+  SourceServingContractVerdictExchange,
   SourceRolloutTruthExchange,
   StageClearancePacket,
   StageCreditLedger,
@@ -179,6 +180,7 @@ export type ControlPlaneStatus = {
   action_slo_budgets: ActionSloBudget[]
   torghut_action_slo_budgets: ActionSloBudget[]
   dependency_verdict_exchange: DependencyVerdictExchange
+  source_serving_contract_verdict_exchange: SourceServingContractVerdictExchange
   control_plane_controller_witness: ControlPlaneControllerWitnessQuorum
   material_action_verdict_epoch: MaterialActionVerdictEpoch
   material_action_verdicts: MaterialActionVerdict[]

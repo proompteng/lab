@@ -578,6 +578,83 @@ export type DependencyVerdictExchange = {
   rollback_target: string
 }
 
+export type SourceServingContractActionClass =
+  | 'serve_readonly'
+  | 'dispatch_repair'
+  | 'dispatch_normal'
+  | 'deploy_widen'
+  | 'merge_ready'
+  | 'paper_support'
+  | 'live_support'
+
+export type SourceServingContractDecision = 'allow' | 'repair_only' | 'hold' | 'block'
+
+export type SourceServingContractState =
+  | 'converged'
+  | 'source_ahead'
+  | 'serving_ahead'
+  | 'digest_unknown'
+  | 'contract_missing'
+  | 'unknown'
+
+export type SourceServingContractVerdict = {
+  schema_version: 'jangar.source-serving-contract-verdict.v1'
+  verdict_id: string
+  generated_at: string
+  fresh_until: string
+  repository: string
+  source_sha: string | null
+  source_ci_run_id: string | null
+  source_ci_conclusion: string | null
+  manifest_sha: string | null
+  manifest_image_digest: string | null
+  argo_sync_revision: string | null
+  argo_health: ControlPlaneRolloutHealth['status']
+  serving_revision: string | null
+  serving_build_commit: string | null
+  serving_image_digest: string | null
+  required_contracts: string[]
+  observed_contracts: string[]
+  missing_contracts: string[]
+  contract_schema_mismatches: string[]
+  torghut_route_warrant_ref: string | null
+  torghut_repair_bid_settlement_ref: string | null
+  action_class: SourceServingContractActionClass
+  decision: SourceServingContractDecision
+  source_serving_state: SourceServingContractState
+  max_notional: number | null
+  value_gate_impacts: string[]
+  required_repair_receipts: string[]
+  blocking_reason_codes: string[]
+  evidence_refs: string[]
+  rollback_gate: string
+}
+
+export type SourceServingContractVerdictExchange = {
+  mode: 'observe' | 'enforce'
+  design_artifact: string
+  exchange_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  status: SourceServingContractDecision
+  source_sha: string | null
+  serving_build_commit: string | null
+  manifest_image_digest: string | null
+  serving_image_digest: string | null
+  required_contracts: string[]
+  observed_contracts: string[]
+  missing_contracts: string[]
+  verdict_refs: string[]
+  allowed_action_classes: SourceServingContractActionClass[]
+  repair_only_action_classes: SourceServingContractActionClass[]
+  held_action_classes: SourceServingContractActionClass[]
+  blocked_action_classes: SourceServingContractActionClass[]
+  reason_codes: string[]
+  verdicts: SourceServingContractVerdict[]
+  rollback_target: string
+}
+
 export type NegativeEvidenceRef = {
   kind: NegativeEvidenceKind
   reason: string
@@ -1020,6 +1097,11 @@ export type TorghutConsumerEvidenceStatus = {
   jangar_parity_escrow_ref?: string | null
   serving_revision?: string | null
   image_digest?: string | null
+  build_commit?: string | null
+  build_version?: string | null
+  serving_image_digest?: string | null
+  observed_contracts?: string[]
+  contract_schema_mismatches?: string[]
   route_repair_value?: number | null
   decision?: string | null
   capital_reentry_cohort_ledger_id?: string | null
@@ -1057,6 +1139,7 @@ export type TorghutConsumerEvidenceStatus = {
   route_warrant_fill_tca_or_slippage_quality?: string | null
   route_warrant_capital_gate_safety?: string | null
   route_warrant_post_cost_daily_net_pnl_state?: string | null
+  repair_bid_settlement_ledger_id?: string | null
   reason_codes: string[]
   message: string
 }
@@ -1520,12 +1603,14 @@ export type ControlPlaneStatus = {
   action_slo_budgets: ActionSloBudget[]
   torghut_action_slo_budgets: ActionSloBudget[]
   dependency_verdict_exchange: DependencyVerdictExchange
+  source_serving_contract_verdict_exchange: SourceServingContractVerdictExchange
   control_plane_controller_witness: ControlPlaneControllerWitnessQuorum
   material_action_verdict_epoch: MaterialActionVerdictEpoch
   material_action_verdicts: MaterialActionVerdict[]
   material_action_activation_receipts: MaterialActionActivationReceipt[]
   action_custody_receipts: ActionCustodyReceipt[]
   stage_clearance_packets: StageClearancePacket[]
+  stage_credit_ledger: StageCreditLedger | null
   ready_action_exchange: ReadyActionExchange
   repair_warrant_exchange: RepairWarrantExchange
   consumer_evidence_leases: ConsumerEvidenceLeaseSet

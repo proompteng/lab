@@ -17,6 +17,11 @@ export type TorghutConsumerEvidenceStatus = {
   jangar_parity_escrow_ref?: string | null
   serving_revision?: string | null
   image_digest?: string | null
+  build_commit?: string | null
+  build_version?: string | null
+  serving_image_digest?: string | null
+  observed_contracts?: string[]
+  contract_schema_mismatches?: string[]
   route_repair_value?: number | null
   decision?: string | null
   capital_reentry_cohort_ledger_id?: string | null
@@ -54,6 +59,7 @@ export type TorghutConsumerEvidenceStatus = {
   route_warrant_fill_tca_or_slippage_quality?: string | null
   route_warrant_capital_gate_safety?: string | null
   route_warrant_post_cost_daily_net_pnl_state?: string | null
+  repair_bid_settlement_ledger_id?: string | null
   operator_summary?: {
     top_clock_split: string | null
     selected_repair_lot_id: string | null
@@ -106,6 +112,8 @@ const paperActionStates = new Set(['allow', 'allowed', 'current', 'paper_canary'
 const CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION = 'torghut.consumer-evidence-status.v1'
 const CONSUMER_EVIDENCE_RECEIPT_SCHEMA_VERSION = 'torghut.consumer-evidence-receipt.v1'
 const ROUTE_PROVEN_PROFIT_RECEIPT_SCHEMA_VERSION = 'torghut.route-proven-profit-receipt.v1'
+const ROUTE_WARRANT_EXCHANGE_SCHEMA_VERSION = 'torghut.route-warrant-exchange.v1'
+const REPAIR_BID_SETTLEMENT_LEDGER_SCHEMA_VERSION = 'torghut.repair-bid-settlement-ledger.v1'
 
 type JsonRouteResult = {
   ok: boolean
@@ -312,6 +320,17 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     ...stringList(receipt.reason_codes),
   ])
   const maxNotional = normalizeNonEmpty(receipt.max_notional)
+  const build = asRecord(payload.build)
+  const buildCommit = normalizeNonEmpty(
+    build?.commit ?? payload.build_commit ?? receipt.build_commit ?? receipt.source_commit,
+  )
+  const buildVersion = normalizeNonEmpty(build?.version ?? build?.build_version ?? payload.build_version)
+  const servingRevision =
+    normalizeNonEmpty(receipt.serving_revision) ??
+    normalizeNonEmpty(build?.active_revision ?? build?.serving_revision ?? payload.serving_revision)
+  const servingImageDigest = normalizeNonEmpty(
+    build?.image_digest ?? build?.serving_image_digest ?? payload.image_digest ?? receipt.image_digest,
+  )
   const paperReadinessState = normalizeNonEmpty(receipt.paper_readiness_state)
   const liveReadinessState = normalizeNonEmpty(receipt.live_readiness_state)
   const readyzStatusCode = normalizeNonEmpty(asRecord(payload.readiness)?.status_code)
@@ -444,6 +463,29 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   const routeWarrant = asRecord(
     payload.route_warrant_exchange ?? payload.route_warrant_exchange_v1 ?? payload.route_warrant,
   )
+  const repairBidSettlementLedger = asRecord(payload.repair_bid_settlement_ledger)
+  const sourceServingRepairReceiptLedger = asRecord(payload.source_serving_repair_receipt_ledger)
+  const repairBidSettlementLedgerId = normalizeNonEmpty(repairBidSettlementLedger?.ledger_id)
+  const observedContracts = uniqueStrings([
+    routeWarrant ? 'route_warrant_exchange' : null,
+    repairBidSettlementLedger ? 'repair_bid_settlement_ledger' : null,
+    sourceServingRepairReceiptLedger ? 'source_serving_repair_receipt_ledger' : null,
+    routeabilityLedger ? 'routeability_repair_acceptance_ledger' : null,
+    profitRepairLedger ? 'profit_repair_settlement_ledger' : null,
+    routeableExchange ? 'routeable_profit_candidate_exchange' : null,
+  ])
+  const contractSchemaMismatches = uniqueStrings([
+    routeWarrant &&
+    normalizeNonEmpty(routeWarrant.schema_version) &&
+    normalizeNonEmpty(routeWarrant.schema_version) !== ROUTE_WARRANT_EXCHANGE_SCHEMA_VERSION
+      ? `route_warrant_exchange:${normalizeNonEmpty(routeWarrant.schema_version)}`
+      : null,
+    repairBidSettlementLedger &&
+    normalizeNonEmpty(repairBidSettlementLedger.schema_version) &&
+    normalizeNonEmpty(repairBidSettlementLedger.schema_version) !== REPAIR_BID_SETTLEMENT_LEDGER_SCHEMA_VERSION
+      ? `repair_bid_settlement_ledger:${normalizeNonEmpty(repairBidSettlementLedger.schema_version)}`
+      : null,
+  ])
   const routeWarrantId = normalizeNonEmpty(routeWarrant?.warrant_id ?? routeWarrant?.exchange_id)
   const routeWarrantRepairPackets = Array.isArray(routeWarrant?.repair_packets)
     ? routeWarrant.repair_packets
@@ -515,8 +557,13 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       max_notional: maxNotional,
       route_canary_id: normalizeNonEmpty(receipt.route_canary_id),
       jangar_parity_escrow_ref: normalizeNonEmpty(receipt.jangar_parity_escrow_ref),
-      serving_revision: normalizeNonEmpty(receipt.serving_revision),
+      serving_revision: servingRevision,
       image_digest: normalizeNonEmpty(receipt.image_digest),
+      build_commit: buildCommit,
+      build_version: buildVersion,
+      serving_image_digest: servingImageDigest,
+      observed_contracts: observedContracts,
+      contract_schema_mismatches: contractSchemaMismatches,
       route_repair_value: parseNumber(normalizeNonEmpty(receipt.route_repair_value)),
       decision: normalizeNonEmpty(receipt.decision),
       capital_reentry_cohort_ledger_id: capitalReentryLedgerId,
@@ -558,6 +605,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       route_warrant_fill_tca_or_slippage_quality: normalizeReason(routeWarrant?.fill_tca_or_slippage_quality),
       route_warrant_capital_gate_safety: normalizeReason(routeWarrant?.capital_gate_safety),
       route_warrant_post_cost_daily_net_pnl_state: normalizeReason(routeWarrant?.post_cost_daily_net_pnl_state),
+      repair_bid_settlement_ledger_id: repairBidSettlementLedgerId,
       operator_summary: operatorSummary,
       reason_codes: reasonCodes,
       message:
