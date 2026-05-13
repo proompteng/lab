@@ -385,6 +385,53 @@ class TestBuildRevenueRepairDigest(TestCase):
             "produce_executable_route_universe_before_capital",
         )
 
+    def test_digest_does_not_prioritize_pass_state_route_exclusions(self) -> None:
+        status = _repair_only_status()
+        proof_floor = status["proof_floor"]
+        self.assertIsInstance(proof_floor, dict)
+        proof_floor["blocking_reasons"] = [
+            "alpha_readiness_not_promotion_eligible",
+            "simple_submit_disabled",
+        ]
+        proof_floor["repair_ladder"] = [
+            {
+                "code": "repair_route_universe",
+                "reason": "execution_tca_route_universe_exclusions_applied",
+                "action": "exclude_missing_or_high_slippage_symbols_before_promotion",
+                "priority": 78,
+                "expected_unblock_value": 7,
+            },
+            {
+                "code": "repair_alpha_readiness",
+                "reason": "alpha_readiness_not_promotion_eligible",
+                "priority": 70,
+                "expected_unblock_value": 3,
+            },
+        ]
+        execution_tca_dimension = [
+            item
+            for item in proof_floor["proof_dimensions"]
+            if isinstance(item, dict) and item.get("dimension") == "execution_tca"
+        ][0]
+        execution_tca_dimension["state"] = "pass"
+        execution_tca_dimension["reason"] = (
+            "execution_tca_route_universe_exclusions_applied"
+        )
+
+        digest = build_revenue_repair_digest(
+            readyz_payload=_repair_only_readyz(),
+            status_payload=status,
+            generated_at=NOW,
+        )
+
+        repair_queue = digest["repair_queue"]
+        self.assertIsInstance(repair_queue, list)
+        self.assertEqual(repair_queue[0]["code"], "repair_alpha_readiness")
+        self.assertNotIn(
+            "execution_tca_route_universe_exclusions_applied",
+            {str(item["reason"]) for item in repair_queue if isinstance(item, dict)},
+        )
+
     def test_status_degraded_quant_reason_becomes_blocker_when_ok_flag_is_true(
         self,
     ) -> None:
