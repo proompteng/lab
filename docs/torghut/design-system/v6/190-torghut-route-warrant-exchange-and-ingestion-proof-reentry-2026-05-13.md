@@ -318,3 +318,11 @@ freshness. Do not treat HTTP 200 health or fresh compute as paper/live readiness
 The next milestone improves `capital_gate_safety` and `zero_notional_or_stale_evidence_rate` immediately. It creates
 the proof path needed to move `routeable_candidate_count`, `fill_tca_or_slippage_quality`, and eventually
 `post_cost_daily_net_pnl`.
+
+## Implementation Note
+
+The slippage-quality cut makes the `postgres_tca` evidence clock fail closed when `avg_abs_slippage_bps` is missing or
+above the route guardrail. The reducer uses the TCA summary's explicit slippage guardrail when present and the doc 188
+`8` bps average absolute slippage limit as the conservative fallback. High-slippage but fresh TCA now emits a
+`fill_tca_or_slippage_quality` zero-notional repair packet, keeps route warrants in `repair_only`, and preserves
+`max_notional=0`.

@@ -166,6 +166,27 @@ def test_fresh_clickhouse_cannot_mint_candidate_when_postgres_tca_is_stale() -> 
     )
 
 
+def test_fresh_tca_above_slippage_guardrail_blocks_routeable_candidate() -> None:
+    high_slippage_tca = {
+        **_base_inputs()["tca_summary"],
+        "avg_abs_slippage_bps": "9.25",
+        "slippage_guardrail_bps": "8",
+    }
+
+    arbiter, exchange = _build(tca_summary=high_slippage_tca)
+
+    assert arbiter["routeable_candidate_count"] == 0
+    tca_clock = _clock(arbiter, "postgres_tca")
+    assert tca_clock["state"] == "stale"
+    assert "execution_tca_slippage_guardrail_exceeded" in tca_clock["reason_codes"]
+    assert tca_clock["details"]["slippage_guardrail_bps"] == "8"
+    assert exchange["routeable_candidates"] == []
+    assert any(
+        lot["target_value_gate"] == "fill_tca_or_slippage_quality"
+        for lot in exchange["zero_notional_repair_lots"]
+    )
+
+
 def test_global_quant_latest_does_not_override_missing_scoped_stages() -> None:
     quant = {
         **_base_inputs()["quant_evidence"],

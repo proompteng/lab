@@ -17,6 +17,7 @@ ROUTEABLE_PROFIT_CANDIDATE_EXCHANGE_SCHEMA_VERSION = (
 
 _FRESHNESS_SECONDS = 60
 _DEFAULT_MAX_CLOCK_AGE_SECONDS = 6 * 60 * 60
+_DEFAULT_TCA_AVG_ABS_SLIPPAGE_GUARDRAIL_BPS = Decimal("8")
 _CURRENT_STATES = {
     "allow",
     "allowed",
@@ -77,6 +78,13 @@ def _decimal(value: object) -> Decimal | None:
 def _int(value: object, default: int = 0) -> int:
     parsed = _decimal(value)
     return default if parsed is None else int(parsed)
+
+
+def _positive_decimal(value: object) -> Decimal | None:
+    parsed = _decimal(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return parsed
 
 
 def _bool(value: object, default: bool = False) -> bool:
@@ -404,6 +412,23 @@ def _tca_clock(
     )
     if expected_shortfall_count <= 0:
         reasons.append("execution_tca_expected_shortfall_samples_missing_non_promoting")
+    avg_abs_slippage_bps = _decimal(tca_summary.get("avg_abs_slippage_bps"))
+    slippage_guardrail_bps = (
+        _positive_decimal(
+            _first_value(
+                tca_summary,
+                "slippage_guardrail_bps",
+                "route_slippage_guardrail_bps",
+                "max_avg_abs_slippage_bps",
+                "avg_abs_slippage_guardrail_bps",
+            )
+        )
+        or _DEFAULT_TCA_AVG_ABS_SLIPPAGE_GUARDRAIL_BPS
+    )
+    if avg_abs_slippage_bps is None:
+        reasons.append("execution_tca_slippage_quality_missing")
+    elif avg_abs_slippage_bps > slippage_guardrail_bps:
+        reasons.append("execution_tca_slippage_guardrail_exceeded")
     missing_symbols = _strings(tca_summary.get("missing_symbols"))
     if missing_symbols:
         reasons.append("execution_tca_symbol_coverage_missing")
@@ -424,7 +449,10 @@ def _tca_clock(
             "latest_execution_created_at": _iso(latest_execution_at),
             "computed_age_seconds": computed_age,
             "execution_age_seconds": execution_age,
-            "avg_abs_slippage_bps": tca_summary.get("avg_abs_slippage_bps"),
+            "avg_abs_slippage_bps": str(avg_abs_slippage_bps)
+            if avg_abs_slippage_bps is not None
+            else None,
+            "slippage_guardrail_bps": str(slippage_guardrail_bps),
             "expected_shortfall_sample_count": expected_shortfall_count,
             "missing_symbols": missing_symbols,
         },

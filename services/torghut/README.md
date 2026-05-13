@@ -267,7 +267,8 @@ Testing rules for the trading core:
   clocks, routeability acceptance, profit freshness, ingestion/materialization proof, active-session TCA, empirical
   replay, market context, rollout image proof, and the live-submission gate before routeability can increase. The
   warrant keeps `max_notional=0`; stale or split dependencies produce zero-notional repair packets mapped to one value
-  gate and one expected output receipt.
+  gate and one expected output receipt. Active-session TCA must also publish a slippage-quality verdict inside the
+  route guardrail, with the doc 188 `8` bps average absolute slippage limit as the conservative fallback.
 - The simple direct-submit lane is no longer an authority bypass in live mode. Before submitting to Alpaca it evaluates
   the same live-submission gate as the scheduler path and persists the gate payload in decision metadata when a
   submission is blocked. Paper-mode simple execution remains unchanged.

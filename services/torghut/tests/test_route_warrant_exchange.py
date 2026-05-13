@@ -146,6 +146,28 @@ def test_stale_active_tca_blocks_routeable_candidates() -> None:
     assert "execution_tca_stale" in packet["reason_codes"]
 
 
+def test_high_slippage_active_tca_keeps_warrant_repair_only() -> None:
+    high_slippage_tca = {
+        **_base_inputs()["tca_summary"],
+        "avg_abs_slippage_bps": "9.25",
+        "slippage_guardrail_bps": "8",
+    }
+
+    warrant = _build(tca_summary=high_slippage_tca)
+
+    assert warrant["warrant_state"] == "repair_only"
+    assert warrant["accepted_routeable_candidate_count"] == 0
+    assert warrant["max_notional"] == "0"
+    assert warrant["fill_tca_or_slippage_quality"]["state"] == "stale"
+    packet = _packet_for(warrant, "active_tca")
+    assert packet["target_value_gate"] == "fill_tca_or_slippage_quality"
+    assert "execution_tca_slippage_guardrail_exceeded" in packet["reason_codes"]
+    assert (
+        packet["expected_output_receipt"]
+        == "torghut.active-session-tca-current-receipt.v1"
+    )
+
+
 def test_stale_empirical_jobs_block_routeable_candidates() -> None:
     empirical_jobs = {
         **_base_inputs()["empirical_jobs_status"],
