@@ -245,6 +245,13 @@ export const resolveLatestSuccessfulRunTime = (resources: Record<string, unknown
   return latestSuccessful ? parseTimeOrNull(getRunTimestamp(latestSuccessful)) : null
 }
 
+export const resolveLatestActiveRunTime = (resources: Record<string, unknown>[]) => {
+  const latestActive = sortByMostRecentRun(resources).find((resource) =>
+    ACTIVE_PHASES.has((asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()),
+  )
+  return latestActive ? parseTimeOrNull(getRunTimestamp(latestActive)) : null
+}
+
 export const collectRecentFailureRuns = (resources: Record<string, unknown>[], limit = 5) => {
   const sorted = sortByMostRecentRun(resources)
   const failures = sorted

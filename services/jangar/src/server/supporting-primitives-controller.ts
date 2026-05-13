@@ -105,6 +105,7 @@ import {
   parseTimeOrNull,
   requirementIdForSignal,
   resolveConsecutiveFailureFreezeReason,
+  resolveLatestActiveRunTime,
   resolveLatestSuccessfulRunTime,
   resolveStageApiVersion,
   resolveStageEvery,
@@ -2504,8 +2505,9 @@ const reconcileSwarm = async (
     )
     const cadenceMs = stageConfig.every ? parseDurationToMs(stageConfig.every) : null
     const latestRunMs = parseTimeOrNull(lastRunTime)
+    const latestActiveMs = resolveLatestActiveRunTime(stageRuns)
     const latestSuccessMs = resolveLatestSuccessfulRunTime(stageRuns)
-    const latestActivityMs = [latestRunMs, latestSuccessMs]
+    const latestActivityMs = [latestRunMs, latestActiveMs, latestSuccessMs]
       .filter((value): value is number => value !== null)
       .reduce((latest, value) => Math.max(latest, value), Number.NEGATIVE_INFINITY)
     const consecutiveStageFailures = countConsecutiveFailures(stageRuns)
@@ -2518,7 +2520,12 @@ const reconcileSwarm = async (
       freshnessWindowMs === null
         ? latestSuccessMs !== null
         : latestSuccessMs !== null && nowMs - latestSuccessMs <= freshnessWindowMs
-    const healthy = schedulePhase === 'Active' && fresh && recentSuccess && consecutiveStageFailures === 0
+    const recentActive =
+      freshnessWindowMs === null
+        ? latestActiveMs !== null
+        : latestActiveMs !== null && nowMs - latestActiveMs <= freshnessWindowMs
+    const healthy =
+      schedulePhase === 'Active' && fresh && (recentSuccess || recentActive) && consecutiveStageFailures === 0
     stageStates[stageConfig.stage] = {
       ...baseState,
       phase: schedulePhase,
@@ -2529,6 +2536,7 @@ const reconcileSwarm = async (
       humanName: stageIdentity.humanName,
       admission: admissionStatusForStage(stageAdmission),
       ...(stageClearance ? { stageClearance: stageClearanceStatusForStage(stageClearance) } : {}),
+      recentActiveAt: latestActiveMs === null ? null : new Date(latestActiveMs).toISOString(),
       recentSuccessAt: latestSuccessMs === null ? null : new Date(latestSuccessMs).toISOString(),
       consecutiveFailures: consecutiveStageFailures,
       fresh,
@@ -2606,8 +2614,13 @@ const reconcileSwarm = async (
   for (const stage of STAGE_NAMES) {
     const stageState = asRecord(stageStates[stage])
     const stageLastRun = asString(stageState?.lastRunTime)
+    const stageRecentActive = asString(stageState?.recentActiveAt)
     const stageRecentSuccess = asString(stageState?.recentSuccessAt)
-    const stageActivityMs = [parseTimeOrNull(stageLastRun), parseTimeOrNull(stageRecentSuccess)]
+    const stageActivityMs = [
+      parseTimeOrNull(stageLastRun),
+      parseTimeOrNull(stageRecentActive),
+      parseTimeOrNull(stageRecentSuccess),
+    ]
       .filter((value): value is number => value !== null)
       .reduce((latest, value) => Math.max(latest, value), Number.NEGATIVE_INFINITY)
     if (Number.isFinite(stageActivityMs)) {
