@@ -303,6 +303,21 @@ Rollback: set `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=false` to return launch be
 set `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` on the control-plane runtime to return launch behavior to the
 previous advisory-only passport mode while keeping status and `/ready` passport/proof projection visible for forensics.
 
+## Account-scoped quant witness
+
+Jangar exposes `/api/torghut/trading/control-plane/quant/account-witness` from
+`docs/agents/designs/189-jangar-account-scoped-quant-witness-custody-and-route-reentry-2026-05-13.md`. The route
+returns `jangar.quant-account-witness.v1` for a required `account` and `window`, with optional `strategy_id` and
+account aliases. It separates aggregate latest-store health from the account/window latest store, classifies required
+pipeline stages, and emits explicit `current`, `empty`, `stale`, or `timeout` route-warrant usability.
+
+The route uses cached latest-store and pipeline-health rows only; it does not trigger on-demand materialization or start
+the quant runtime. A slow account/window read returns a timeout witness inside the service budget so repair dispatch can
+act on `quant_account_witness_timeout` without mistaking aggregate freshness for routeable account proof. The witness is
+zero-notional evidence only: `capital_safety.max_notional` remains `0`, and Torghut must still clear proof floor, TCA,
+source-serving, routeability, and live submission gates before capital can widen. Rollback is to stop consuming the
+witness route and retain existing `/quant/health` diagnostics.
+
 ## Source rollout truth exchange
 
 Control-plane status includes a `source_rollout_truth_exchange` projection from
