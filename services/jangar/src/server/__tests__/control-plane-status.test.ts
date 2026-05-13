@@ -7,6 +7,7 @@ import {
 } from '~/server/control-plane-status'
 import { CLEARANCE_MARKET_DESIGN_ARTIFACT } from '~/server/control-plane-clearance-market'
 import { CONSUMER_EVIDENCE_LEASES_DESIGN_ARTIFACT } from '~/server/control-plane-consumer-evidence-leases'
+import { SOURCE_SERVING_CONTRACT_VERDICT_DESIGN_ARTIFACT } from '~/server/control-plane-source-serving-contract-verdict'
 import { STAGE_CREDIT_LEDGER_DESIGN_ARTIFACT } from '~/server/control-plane-stage-credit-ledger'
 import * as kubeGatewayModule from '~/server/kube-gateway'
 import type {
@@ -955,6 +956,29 @@ describe('control-plane status', () => {
       held_action_classes: expect.arrayContaining(['observe', 'repair', 'implement', 'paper']),
       blocked_action_classes: ['live'],
     })
+    expect(status.source_serving_contract_verdict_exchange).toMatchObject({
+      mode: 'observe',
+      design_artifact: SOURCE_SERVING_CONTRACT_VERDICT_DESIGN_ARTIFACT,
+      observed_contracts: [],
+      missing_contracts: expect.arrayContaining(['route_warrant_exchange', 'repair_bid_settlement_ledger']),
+      held_action_classes: expect.arrayContaining(['dispatch_repair', 'dispatch_normal', 'deploy_widen']),
+      blocked_action_classes: ['live_support'],
+    })
+    expect(status.source_serving_contract_verdict_exchange.verdicts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'serve_readonly',
+          decision: 'allow',
+        }),
+        expect.objectContaining({
+          action_class: 'dispatch_repair',
+          decision: 'hold',
+          blocking_reason_codes: expect.arrayContaining([
+            'source_serving_contract_missing:repair_bid_settlement_ledger',
+          ]),
+        }),
+      ]),
+    )
     expect(status.consumer_evidence_leases).toMatchObject({
       schema_version: 'jangar.consumer-evidence-lease-set.v1',
       mode: 'shadow',

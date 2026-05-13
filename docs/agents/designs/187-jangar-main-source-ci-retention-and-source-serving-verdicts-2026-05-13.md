@@ -266,6 +266,12 @@ Engineer milestone 1:
   build metadata, and Torghut contract canaries.
 - Expose the verdict in the control-plane status beside route-warrant dispatch custody.
 
+Implementation note: the first Jangar reducer ships in observe mode as
+`source_serving_contract_verdict_exchange`. It compares retained source CI hints, source/GitOps revision, optional
+manifest digest, Torghut serving build metadata, and required contract canaries. Missing
+`repair_bid_settlement_ledger`, missing serving image digest, or source/build disagreement keeps deploy widen,
+merge-ready operational claims, paper support, and live support held or blocked while read-only status stays allowed.
+
 Engineer milestone 2:
 
 - Add a Torghut runtime source-serving proof payload to `/trading/status` and `/trading/consumer-evidence`.

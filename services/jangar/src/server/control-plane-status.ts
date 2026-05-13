@@ -45,6 +45,7 @@ import {
   buildSourceRolloutTruthExchange,
   resolveSourceRolloutTruthEnvironment,
 } from '~/server/control-plane-source-rollout-truth-exchange'
+import { buildSourceServingContractVerdictExchange } from '~/server/control-plane-source-serving-contract-verdict'
 import { resolveTorghutConsumerEvidence } from '~/server/control-plane-torghut-consumer-evidence'
 import type {
   AgentRunIngestionStatus,
@@ -708,6 +709,13 @@ export const buildControlPlaneStatus = async (
     torghutConsumerEvidence: torghutConsumerEvidence.status,
     resolveRepairScheduleAttempts: deps.resolveRepairScheduleAttempts,
   })
+  const sourceServingContractVerdictExchange = buildSourceServingContractVerdictExchange({
+    now,
+    namespace: options.namespace,
+    sourceRolloutTruthExchange,
+    rolloutHealth,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+  })
   const consumerEvidenceLeases = buildConsumerEvidenceLeaseSet({
     now,
     namespace: options.namespace,
@@ -762,6 +770,7 @@ export const buildControlPlaneStatus = async (
     action_slo_budgets: negativeEvidenceRouter.budgets,
     torghut_action_slo_budgets: negativeEvidenceRouter.torghutBudgets,
     dependency_verdict_exchange: dependencyVerdictExchange,
+    source_serving_contract_verdict_exchange: sourceServingContractVerdictExchange,
     control_plane_controller_witness: controllerWitness,
     material_action_verdict_epoch: materialActionVerdictEpoch,
     material_action_verdicts: materialActionVerdictEpoch.final_verdicts,

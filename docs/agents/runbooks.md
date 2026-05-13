@@ -138,6 +138,7 @@ curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.ready_action_exchange'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.action_custody_receipts[] | {action_class,decision,blocking_debt_classes,receipt_id}'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.dependency_verdict_exchange | {status,torghut_route_warrant_ref,repair_only_action_classes,held_action_classes,blocked_action_classes}'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.source_serving_contract_verdict_exchange | {status,source_sha,serving_build_commit,missing_contracts,held_action_classes,blocked_action_classes}'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.stage_clearance_packets[] | {stage,action_class,decision,packet_id,fresh_until}'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.consumer_evidence_leases.action_leases[] | {action_class,decision,fresh_until,grace_until,reason_codes}'
 curl -fsS http://localhost:8080/ready | jq '{status, serving_passport_id, runtime_kits, admission_passports}'
@@ -187,6 +188,11 @@ Expected outcomes:
   Read-only service may stay `allow`; bounded repair is only `repair_only` when a fresh Torghut warrant names
   zero-notional repair packets and target value gates. `implement`, `deploy_widen`, `merge_ready`, paper, and live
   support remain held or blocked while the warrant is missing, stale, repair-only, zero-candidate, or capital-unsafe.
+- `source_serving_contract_verdict_exchange` cites design doc 187 and exposes source-serving proof in observe mode.
+  Read-only service may stay `allow`; `dispatch_repair` is only `repair_only` when retained source CI, source/GitOps
+  revision, serving build commit, and required contract canaries are current. `deploy_widen`, `merge_ready`, paper,
+  and live support remain held or blocked while the serving build commit, image digest, or contract set is missing or
+  contradicts the promoted source.
 - `stage_clearance_packets` cite design doc 184 and include `packet_id`, `decision`, `fresh_until`, and reason codes
   for scheduled `discover`, `plan`, `implement`, and `verify` launches. During the shadow rollout, schedule-runner pods
   stamp the current packet ID and decision onto launched AgentRuns via
