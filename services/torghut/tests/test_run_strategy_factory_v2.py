@@ -482,6 +482,104 @@ class TestRunStrategyFactoryV2(TestCase):
                     "blocked_pending_runtime_parity",
                 )
 
+    def test_persist_result_updates_existing_candidate_experiment_pair(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            family_template_dir = self._write_family_template(root)
+            seed_sweep_dir = self._write_seed_sweep(root)
+            output_dir = root / "artifacts"
+            output_dir.mkdir()
+
+            experiment_row = VNextExperimentSpec(
+                run_id="paper-run-1",
+                candidate_id=None,
+                experiment_id="exp-breakout-1",
+                payload_json={"family_template_id": "breakout_reclaim_v2"},
+            )
+            compiled = runner._compile_sweep_config(
+                experiment_row=experiment_row,
+                family_dir=family_template_dir,
+                seed_dir=seed_sweep_dir,
+                train_days=6,
+                holdout_days=3,
+            )
+            duplicate_run_experiment = runner._compile_sweep_config(
+                experiment_row=VNextExperimentSpec(
+                    run_id="paper-run-1",
+                    candidate_id=None,
+                    experiment_id="exp-breakout-2",
+                    payload_json={"family_template_id": "breakout_reclaim_v2"},
+                ),
+                family_dir=family_template_dir,
+                seed_dir=seed_sweep_dir,
+                train_days=6,
+                holdout_days=3,
+            )
+            experiment_root = output_dir / compiled.experiment_id
+            experiment_root.mkdir()
+            compiled_sweep_path = experiment_root / "compiled-sweep.yaml"
+            result_path = experiment_root / "result.json"
+            result_payload = {
+                "dataset_snapshot_receipt": {"snapshot_id": "snap-1"},
+                "top": [
+                    {
+                        "candidate_id": "cand-duplicate",
+                        "full_window": {"net_per_day": "501"},
+                    }
+                ],
+            }
+
+            with patch(
+                "scripts.run_strategy_factory_v2.SessionLocal",
+                side_effect=lambda: Session(self.engine),
+            ):
+                runner._persist_result(
+                    runner_run_id="strategy-factory-v2-old",
+                    experiment=compiled,
+                    result_payload=result_payload,
+                    compiled_sweep_path=compiled_sweep_path,
+                    result_path=result_path,
+                )
+                runner._persist_result(
+                    runner_run_id="strategy-factory-v2-new",
+                    experiment=compiled,
+                    result_payload=result_payload,
+                    compiled_sweep_path=compiled_sweep_path,
+                    result_path=result_path,
+                )
+                runner._persist_result(
+                    runner_run_id="strategy-factory-v2-new",
+                    experiment=duplicate_run_experiment,
+                    result_payload=result_payload,
+                    compiled_sweep_path=compiled_sweep_path,
+                    result_path=result_path,
+                )
+
+            with Session(self.engine) as session:
+                persisted_specs = (
+                    session.execute(
+                        select(VNextExperimentSpec).where(
+                            VNextExperimentSpec.candidate_id == "cand-duplicate",
+                            VNextExperimentSpec.experiment_id == "exp-breakout-1",
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                self.assertEqual(len(persisted_specs), 1)
+                self.assertEqual(persisted_specs[0].run_id, "strategy-factory-v2-new")
+                self.assertEqual(
+                    persisted_specs[0].payload_json["runner_run_id"],
+                    "strategy-factory-v2-new",
+                )
+                run_row = session.execute(
+                    select(VNextExperimentRun).where(
+                        VNextExperimentRun.candidate_id == "cand-duplicate",
+                        VNextExperimentRun.run_id == "strategy-factory-v2-new",
+                    )
+                ).scalar_one()
+                self.assertEqual(run_row.experiment_id, "exp-breakout-2")
+
     def test_run_strategy_factory_v2_respects_global_candidate_budget(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

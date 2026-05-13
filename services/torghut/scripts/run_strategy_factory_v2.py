@@ -473,6 +473,13 @@ def _persist_result(
         "promotion_readiness": promotion_readiness,
         "result": result_payload,
     }
+    run_payload = {
+        "compiled_sweep_path": str(compiled_sweep_path),
+        "result_path": str(result_path),
+        "dataset_snapshot_receipt": result_payload.get("dataset_snapshot_receipt"),
+        "top_candidate": top_candidates[0] if top_candidates else None,
+        "promotion_readiness": promotion_readiness,
+    }
     with SessionLocal() as session:
         session.execute(
             delete(VNextExperimentRun).where(
@@ -480,37 +487,55 @@ def _persist_result(
                 VNextExperimentRun.experiment_id == experiment.experiment_id,
             )
         )
-        session.execute(
-            delete(VNextExperimentSpec).where(
-                VNextExperimentSpec.run_id == runner_run_id,
-                VNextExperimentSpec.experiment_id == experiment.experiment_id,
+        existing_spec = None
+        if best_candidate_id is not None:
+            existing_spec = session.execute(
+                select(VNextExperimentSpec).where(
+                    VNextExperimentSpec.candidate_id == best_candidate_id,
+                    VNextExperimentSpec.experiment_id == experiment.experiment_id,
+                )
+            ).scalar_one_or_none()
+        if existing_spec is not None:
+            existing_spec.run_id = runner_run_id
+            existing_spec.payload_json = experiment_payload
+        else:
+            session.execute(
+                delete(VNextExperimentSpec).where(
+                    VNextExperimentSpec.run_id == runner_run_id,
+                    VNextExperimentSpec.experiment_id == experiment.experiment_id,
+                )
             )
-        )
-        session.add(
-            VNextExperimentSpec(
-                run_id=runner_run_id,
-                candidate_id=best_candidate_id,
-                experiment_id=experiment.experiment_id,
-                payload_json=experiment_payload,
+            session.add(
+                VNextExperimentSpec(
+                    run_id=runner_run_id,
+                    candidate_id=best_candidate_id,
+                    experiment_id=experiment.experiment_id,
+                    payload_json=experiment_payload,
+                )
             )
-        )
-        session.add(
-            VNextExperimentRun(
-                run_id=runner_run_id,
-                candidate_id=best_candidate_id,
-                experiment_id=experiment.experiment_id,
-                stage_lineage_root=None,
-                payload_json={
-                    "compiled_sweep_path": str(compiled_sweep_path),
-                    "result_path": str(result_path),
-                    "dataset_snapshot_receipt": result_payload.get(
-                        "dataset_snapshot_receipt"
-                    ),
-                    "top_candidate": top_candidates[0] if top_candidates else None,
-                    "promotion_readiness": promotion_readiness,
-                },
+
+        existing_run = None
+        if best_candidate_id is not None:
+            existing_run = session.execute(
+                select(VNextExperimentRun).where(
+                    VNextExperimentRun.candidate_id == best_candidate_id,
+                    VNextExperimentRun.run_id == runner_run_id,
+                )
+            ).scalar_one_or_none()
+        if existing_run is not None:
+            existing_run.experiment_id = experiment.experiment_id
+            existing_run.stage_lineage_root = None
+            existing_run.payload_json = run_payload
+        else:
+            session.add(
+                VNextExperimentRun(
+                    run_id=runner_run_id,
+                    candidate_id=best_candidate_id,
+                    experiment_id=experiment.experiment_id,
+                    stage_lineage_root=None,
+                    payload_json=run_payload,
+                )
             )
-        )
         session.commit()
 
 
