@@ -159,6 +159,7 @@ const stageAccount = (
   controller_witness_tax: 0,
   source_rollout_tax: 0,
   capital_safety_tax: 0,
+  runner_capacity_tax: 0,
   available_credit: decision === 'allow' || decision === 'repair_only' ? 100 : 0,
   minimum_spend: 50,
   max_concurrent_runs: decision === 'allow' || decision === 'repair_only' ? 1 : 0,

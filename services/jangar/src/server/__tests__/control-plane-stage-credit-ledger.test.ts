@@ -361,6 +361,49 @@ describe('control-plane stage credit ledger', () => {
     })
   })
 
+  it('holds normal runner credit when recent workflow failures prove capacity debt', () => {
+    const ledger = buildStageCreditLedger({
+      now,
+      namespace: 'agents',
+      database,
+      workflows: workflows({
+        top_failure_reasons: [
+          { reason: 'FailedScheduling', count: 1 },
+          { reason: 'WorkflowStepTimedOut', count: 1 },
+        ],
+      }),
+      agentRunIngestion: agentRunIngestion(),
+      controllerWitness: controllerWitness(),
+      stageClearancePackets: [packet('verify', 'dispatch_normal', 'allow')],
+      clearanceMarketLedger: clearanceLedger([stageAdmission('verify', 'dispatch_normal', 'allow')]),
+      torghutConsumerEvidence: torghutEvidence({
+        status: 'current',
+        decision: 'allow',
+        reason_codes: [],
+      }),
+    })
+
+    const verify = account(ledger, 'verify', 'dispatch_normal')
+    expect(verify).toMatchObject({
+      decision: 'hold',
+      runner_capacity_tax: 45,
+      failure_debt_tax: 10,
+      available_credit: 15,
+      max_concurrent_runs: 0,
+      reason_codes: expect.arrayContaining([
+        'runner_capacity_scheduling_unavailable',
+        'runner_capacity_runtime_timeout',
+        'stage_credit_insufficient',
+      ]),
+      required_repair_actions: expect.arrayContaining([
+        'clear runner capacity scheduling unavailable for dispatch_normal',
+        'clear runner capacity runtime timeout for dispatch_normal',
+      ]),
+      evidence_refs: expect.arrayContaining(['workflows:top_failure_reasons']),
+    })
+    expect(ledger.runner_slot_futures).toEqual([])
+  })
+
   it('keeps live capital blocked when Torghut has zero notional or stale proof debt', () => {
     const packets = [packet('torghut', 'live_micro_canary', 'allow', [])]
     const ledger = buildStageCreditLedger({

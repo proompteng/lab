@@ -1661,6 +1661,7 @@ export type StageCreditAccount = {
   controller_witness_tax: number
   source_rollout_tax: number
   capital_safety_tax: number
+  runner_capacity_tax: number
   available_credit: number
   minimum_spend: number
   max_concurrent_runs: number

@@ -22,6 +22,8 @@ import type { AgentRunIngestionStatus } from '~/server/control-plane-status-type
 
 export const STAGE_CREDIT_LEDGER_DESIGN_ARTIFACT =
   'docs/agents/designs/187-jangar-stage-credit-ledger-and-runner-slot-futures-2026-05-13.md'
+const RUNNER_CAPACITY_FUTURES_DESIGN_ARTIFACT =
+  'docs/agents/designs/191-jangar-rollout-proof-passports-and-runner-capacity-futures-2026-05-13.md'
 
 const STAGE_CREDIT_SCHEMA_VERSION = 'jangar.stage-credit-ledger.v1' as const
 const LEDGER_TTL_SECONDS = 120
@@ -29,6 +31,7 @@ const DEFAULT_ROLLBACK_TARGET = 'JANGAR_STAGE_CREDIT_LEDGER_ENABLED=false'
 
 const GOVERNING_DESIGN_REFS = [
   STAGE_CREDIT_LEDGER_DESIGN_ARTIFACT,
+  RUNNER_CAPACITY_FUTURES_DESIGN_ARTIFACT,
   'docs/agents/designs/185-jangar-clearance-market-and-rollout-truth-settlement-2026-05-12.md',
   'docs/agents/designs/184-jangar-stage-clearance-packets-and-freeze-aware-launch-governor-2026-05-12.md',
   'swarm-validation-contract:every-run-cites-governing-requirement',
@@ -296,6 +299,61 @@ const projectionAuthorityReasons = (
   ]
 }
 
+const runnerCapacityReason = (reason: string) => {
+  const normalized = normalizeReason(reason)
+  if (
+    normalized.includes('failedscheduling') ||
+    normalized.includes('unschedulable') ||
+    normalized.includes('providercapacityexhausted')
+  ) {
+    return 'runner_capacity_scheduling_unavailable'
+  }
+  if (
+    normalized.includes('failedmount') ||
+    normalized.includes('mount') ||
+    normalized.includes('pvc') ||
+    normalized.includes('configmap')
+  ) {
+    return 'runner_capacity_mount_unavailable'
+  }
+  if (
+    normalized.includes('imagepull') ||
+    normalized.includes('errimagepull') ||
+    normalized.includes('invalidimagename')
+  ) {
+    return 'runner_capacity_image_unavailable'
+  }
+  if (
+    normalized.includes('workflowsteptimedout') ||
+    normalized.includes('timedout') ||
+    normalized.includes('timeout')
+  ) {
+    return 'runner_capacity_runtime_timeout'
+  }
+  return null
+}
+
+const runnerCapacityDebt = (input: StageCreditLedgerInput, actionClass: ActionSloBudgetActionClass) => {
+  if (actionClass === 'serve_readonly' || actionClass === 'torghut_observe') {
+    return { tax: 0, reasonCodes: [], requiredRepairActions: [], evidenceRefs: [] }
+  }
+
+  const reasonCodes = normalizeReasons(
+    input.workflows.top_failure_reasons.map((entry) => runnerCapacityReason(entry.reason)),
+  )
+  if (reasonCodes.length === 0) {
+    return { tax: 0, reasonCodes, requiredRepairActions: [], evidenceRefs: [] }
+  }
+
+  const tax = actionClass === 'dispatch_repair' ? 20 : 45
+  return {
+    tax,
+    reasonCodes,
+    requiredRepairActions: reasonCodes.map((reason) => `clear ${reason.replaceAll('_', ' ')} for ${actionClass}`),
+    evidenceRefs: ['workflows:top_failure_reasons'],
+  }
+}
+
 const evidenceFreshnessBonus = (
   input: StageCreditLedgerInput,
   packet: StageClearancePacket,
@@ -366,11 +424,14 @@ const buildAccount = (
   const sourceTax = sourceRolloutTax(clearanceDecision, stageAdmission, packet.action_class, packet.reason_codes)
   const capitalTax = capitalSafetyTax(input, packet.action_class)
   const projectionTax = projectionAuthorityTax(input, packet.action_class, consumeProjectionForeclosure)
+  const runnerDebt = runnerCapacityDebt(input, packet.action_class)
   const freshnessBonus = evidenceFreshnessBonus(input, packet, packet.action_class)
   const repairCredit = repairValueCredit(input, packet.action_class, selectedRepairLot)
   const rolloutDeposit = rolloutTruthDeposit(input, packet.action_class)
   const totalCredit = policy.baseCredit + freshnessBonus + repairCredit + rolloutDeposit
-  const availableCredit = capped(totalCredit - failureTax - controllerTax - sourceTax - capitalTax - projectionTax)
+  const availableCredit = capped(
+    totalCredit - failureTax - controllerTax - sourceTax - capitalTax - projectionTax - runnerDebt.tax,
+  )
   const nonWaivableBlock =
     isLiveCapitalAction(packet.action_class) ||
     packet.reason_codes.some((reason) => normalizeReason(reason).includes('source_rollout_truth_block'))
@@ -386,6 +447,7 @@ const buildAccount = (
     ...packet.reason_codes,
     ...(stageAdmission?.reason_codes ?? []),
     ...projectionAuthorityReasons(input, packet.action_class, consumeProjectionForeclosure),
+    ...runnerDebt.reasonCodes,
     ...(availableCredit < policy.minimumSpend ? ['stage_credit_insufficient'] : []),
     ...(selectedRepairLot && decision === 'repair_only' ? ['stage_credit_repair_future_open'] : []),
   ])
@@ -406,6 +468,7 @@ const buildAccount = (
     controller_witness_tax: controllerTax,
     source_rollout_tax: sourceTax,
     capital_safety_tax: capitalTax,
+    runner_capacity_tax: runnerDebt.tax,
     available_credit: availableCredit,
     minimum_spend: policy.minimumSpend,
     max_concurrent_runs: decision === 'allow' || decision === 'repair_only' ? policy.maxConcurrentRuns : 0,
@@ -415,6 +478,7 @@ const buildAccount = (
     reason_codes: reasonCodes,
     required_repair_actions: uniqueStrings([
       ...(packet.required_repair_action ? [packet.required_repair_action] : []),
+      ...runnerDebt.requiredRepairActions,
       ...(selectedRepairLot && decision === 'repair_only' ? [`execute repair lot ${selectedRepairLot.lot_id}`] : []),
     ]),
     evidence_refs: uniqueStrings([
@@ -424,6 +488,7 @@ const buildAccount = (
       input.controllerWitness.quorum_id,
       input.torghutConsumerEvidence.receipt_id,
       input.projectionForeclosureNotary?.notary_id,
+      ...runnerDebt.evidenceRefs,
       selectedRepairLot?.lot_id,
     ]),
     selected_repair_lot_ref: selectedRepairLot?.lot_id ?? null,
