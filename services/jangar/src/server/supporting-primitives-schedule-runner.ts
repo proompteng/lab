@@ -18,6 +18,7 @@ export const SCHEDULE_RUNNER_ADMISSION_STATUS_URL_ENV = 'JANGAR_SCHEDULE_RUNNER_
 export const SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS_ENV = 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS'
 export const SCHEDULE_RUNNER_STAGE_CLEARANCE_ENFORCEMENT_ENV = 'JANGAR_STAGE_CLEARANCE_ENFORCEMENT'
 export const SCHEDULE_RUNNER_STAGE_CLEARANCE_HOLD_STAGES_ENV = 'JANGAR_STAGE_CLEARANCE_HOLD_STAGES'
+export const SCHEDULE_RUNNER_EVIDENCE_PRESSURE_MODE_ENV = 'JANGAR_EVIDENCE_PRESSURE_LEDGER_MODE'
 
 const KUBERNETES_SERVICE_HOST_ENV = 'KUBERNETES_SERVICE_HOST'
 const KUBERNETES_SERVICE_PORT_ENV = 'KUBERNETES_SERVICE_PORT'
@@ -52,6 +53,15 @@ export const SWARM_STAGE_CREDIT_ANNOTATION_RUNNER_SLOT_FUTURE_ID = 'swarm.proomp
 export const SWARM_STAGE_CREDIT_ANNOTATION_RUNNER_SLOT_FUTURE_EXPIRES_AT =
   'swarm.proompteng.ai/runner-slot-future-expires-at'
 export const SWARM_STAGE_CREDIT_ANNOTATION_SELECTED_REPAIR_LOT = 'swarm.proompteng.ai/stage-credit-selected-repair-lot'
+export const SWARM_EVIDENCE_PRESSURE_ANNOTATION_LEDGER_ID = 'swarm.proompteng.ai/evidence-pressure-ledger-id'
+export const SWARM_EVIDENCE_PRESSURE_ANNOTATION_DECISION = 'swarm.proompteng.ai/evidence-pressure-decision'
+export const SWARM_EVIDENCE_PRESSURE_ANNOTATION_MODE = 'swarm.proompteng.ai/evidence-pressure-mode'
+export const SWARM_EVIDENCE_PRESSURE_ANNOTATION_FRESH_UNTIL = 'swarm.proompteng.ai/evidence-pressure-fresh-until'
+export const SWARM_EVIDENCE_PRESSURE_ANNOTATION_REASON_CODES = 'swarm.proompteng.ai/evidence-pressure-reason-codes'
+export const SWARM_EVIDENCE_PRESSURE_ANNOTATION_WATCH_BACKOFF_STATE =
+  'swarm.proompteng.ai/evidence-pressure-watch-backoff-state'
+export const SWARM_EVIDENCE_PRESSURE_ANNOTATION_REQUIRED_REPAIR_RECEIPTS =
+  'swarm.proompteng.ai/evidence-pressure-required-repair-receipts'
 
 export const buildScheduleRunnerCommand = (): string =>
   [
@@ -96,6 +106,15 @@ export const buildScheduleRunnerCommand = (): string =>
       runnerSlotFutureExpiresAt: SWARM_STAGE_CREDIT_ANNOTATION_RUNNER_SLOT_FUTURE_EXPIRES_AT,
       selectedRepairLot: SWARM_STAGE_CREDIT_ANNOTATION_SELECTED_REPAIR_LOT,
     })};`,
+    `  const evidencePressureAnnotations = ${JSON.stringify({
+      ledgerId: SWARM_EVIDENCE_PRESSURE_ANNOTATION_LEDGER_ID,
+      decision: SWARM_EVIDENCE_PRESSURE_ANNOTATION_DECISION,
+      mode: SWARM_EVIDENCE_PRESSURE_ANNOTATION_MODE,
+      freshUntil: SWARM_EVIDENCE_PRESSURE_ANNOTATION_FRESH_UNTIL,
+      reasonCodes: SWARM_EVIDENCE_PRESSURE_ANNOTATION_REASON_CODES,
+      watchBackoffState: SWARM_EVIDENCE_PRESSURE_ANNOTATION_WATCH_BACKOFF_STATE,
+      requiredRepairReceipts: SWARM_EVIDENCE_PRESSURE_ANNOTATION_REQUIRED_REPAIR_RECEIPTS,
+    })};`,
     `  const swarmNameLabelName = ${JSON.stringify(SWARM_NAME_LABEL)};`,
     `  const stageLabelName = ${JSON.stringify(SWARM_STAGE_LABEL)};`,
     `  const scheduleNamespaceEnv = ${JSON.stringify(SCHEDULE_RUNNER_SCHEDULE_NAMESPACE_ENV)};`,
@@ -105,6 +124,7 @@ export const buildScheduleRunnerCommand = (): string =>
     `  const admissionStatusTimeoutEnv = ${JSON.stringify(SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS_ENV)};`,
     `  const stageClearanceEnforcementEnv = ${JSON.stringify(SCHEDULE_RUNNER_STAGE_CLEARANCE_ENFORCEMENT_ENV)};`,
     `  const stageClearanceHoldStagesEnv = ${JSON.stringify(SCHEDULE_RUNNER_STAGE_CLEARANCE_HOLD_STAGES_ENV)};`,
+    `  const evidencePressureModeEnv = ${JSON.stringify(SCHEDULE_RUNNER_EVIDENCE_PRESSURE_MODE_ENV)};`,
     "  const manifest = JSON.parse(readFileSync('/config/run.json', 'utf8').replaceAll('__JANGAR_DELIVERY_ID__', randomUUID()));",
     '  const terminalRunPhases = new Set(["succeeded", "failed", "error", "errored", "cancelled", "canceled", "completed"]);',
     "  const readEnv = (name) => process.env[name]?.trim() ?? '';",
@@ -160,6 +180,12 @@ export const buildScheduleRunnerCommand = (): string =>
     '    return "shadow";',
     '  };',
     '  const isStageCreditEnforced = (mode) => mode === "hold" || mode === "enforce";',
+    '  const normalizeEvidencePressureMode = (value) => {',
+    '    const normalized = String(value ?? "").trim().toLowerCase();',
+    '    if (["observe", "shadow", "hold", "enforce"].includes(normalized)) return normalized;',
+    '    return "observe";',
+    '  };',
+    '  const isEvidencePressureEnforced = (mode) => mode === "hold" || mode === "enforce";',
     '  const fetchControlPlaneStatus = async (namespace) => {',
     '    const statusUrlValue = readEnv(admissionStatusUrlEnv);',
     '    if (!statusUrlValue) {',
@@ -311,6 +337,20 @@ export const buildScheduleRunnerCommand = (): string =>
     '    const runnerSlotFutureExpiresAtMs = Date.parse(runnerSlotFutureExpiresAt);',
     '    const runnerSlotFutureCurrent = Boolean(stageCreditLedgerCurrent && runnerSlotFutureId && Number.isFinite(runnerSlotFutureExpiresAtMs) && runnerSlotFutureExpiresAtMs > Date.now());',
     '    const stageCreditEnforced = isStageCreditEnforced(stageCreditMode);',
+    '    const configuredEvidencePressureMode = normalizeEvidencePressureMode(readEnv(evidencePressureModeEnv));',
+    '    const evidencePressureLedger = asRecord(status.evidence_pressure_ledger);',
+    '    const evidencePressureLedgerId = asString(evidencePressureLedger?.ledger_id);',
+    '    const evidencePressureMode = normalizeEvidencePressureMode(asString(evidencePressureLedger?.evidence_mode) || configuredEvidencePressureMode);',
+    '    const evidencePressureFreshUntil = asString(evidencePressureLedger?.fresh_until);',
+    '    const evidencePressureFreshUntilMs = Date.parse(evidencePressureFreshUntil);',
+    '    const evidencePressureLedgerCurrent = Boolean(evidencePressureLedgerId && Number.isFinite(evidencePressureFreshUntilMs) && evidencePressureFreshUntilMs > Date.now());',
+    '    const evidencePressureBudget = asArray(evidencePressureLedger?.action_pressure_budget).map(asRecord).filter(Boolean).find((entry) => asString(entry?.action_class) === actionClass);',
+    '    const evidencePressureDecision = asString(evidencePressureBudget?.decision);',
+    '    const evidencePressureReasonCodes = normalizeRuntimeKits(asArray(evidencePressureBudget?.reason_codes).map(asString).filter(Boolean));',
+    '    const evidencePressureRequiredRepairReceipts = normalizeRuntimeKits(asArray(evidencePressureBudget?.required_repair_receipts).map(asString).filter(Boolean));',
+    '    const evidencePressureWatchBackoff = asRecord(evidencePressureLedger?.watch_backoff_policy);',
+    '    const evidencePressureWatchBackoffState = asString(evidencePressureWatchBackoff?.state);',
+    '    const evidencePressureEnforced = isEvidencePressureEnforced(evidencePressureMode) || isEvidencePressureEnforced(configuredEvidencePressureMode);',
     '    if (stageCreditLedgerId) {',
     '      if (!stageCreditLedgerCurrent) {',
     '        const message = `current stage credit ledger ${stageCreditLedgerId} is stale`;',
@@ -338,6 +378,27 @@ export const buildScheduleRunnerCommand = (): string =>
     '          if (stageCreditEnforced) throw new Error(message);',
     '          console.warn(`[jangar] ${message}`);',
     '        }',
+    '      }',
+    '    }',
+    '    if (!evidencePressureLedgerId) {',
+    '      const message = `missing current evidence pressure ledger for ${swarmName}/${stage}/${actionClass}`;',
+    '      if (evidencePressureEnforced) throw new Error(message);',
+    '      if (isEvidencePressureEnforced(configuredEvidencePressureMode)) console.warn(`[jangar] ${message}`);',
+    '    } else {',
+    '      if (!evidencePressureLedgerCurrent) {',
+    '        const message = `current evidence pressure ledger ${evidencePressureLedgerId} is stale`;',
+    '        if (evidencePressureEnforced) throw new Error(message);',
+    '        console.warn(`[jangar] ${message}`);',
+    '      }',
+    '      if (!evidencePressureBudget) {',
+    '        const message = `missing current evidence pressure budget for ${swarmName}/${stage}/${actionClass}`;',
+    '        if (evidencePressureEnforced) throw new Error(message);',
+    '        console.warn(`[jangar] ${message}`);',
+    '      } else if (evidencePressureDecision !== "allow") {',
+    '        const suffix = evidencePressureReasonCodes ? `: ${evidencePressureReasonCodes}` : "";',
+    '        const message = `current evidence pressure budget ${evidencePressureLedgerId}/${actionClass} is ${evidencePressureDecision || "missing"}${suffix}`;',
+    '        if (evidencePressureEnforced) throw new Error(message);',
+    '        console.warn(`[jangar] ${message}`);',
     '      }',
     '    }',
     '    const freshUntilMs = Date.parse(freshUntil);',
@@ -376,6 +437,13 @@ export const buildScheduleRunnerCommand = (): string =>
     '    if (runnerSlotFutureCurrent) writeNestedRecordValue(manifest, ["metadata", "annotations"], stageCreditAnnotations.runnerSlotFutureId, runnerSlotFutureId);',
     '    if (runnerSlotFutureCurrent) writeNestedRecordValue(manifest, ["metadata", "annotations"], stageCreditAnnotations.runnerSlotFutureExpiresAt, runnerSlotFutureExpiresAt);',
     '    if (stageCreditSelectedRepairLot) writeNestedRecordValue(manifest, ["metadata", "annotations"], stageCreditAnnotations.selectedRepairLot, stageCreditSelectedRepairLot);',
+    '    if (evidencePressureLedgerId) writeNestedRecordValue(manifest, ["metadata", "annotations"], evidencePressureAnnotations.ledgerId, evidencePressureLedgerId);',
+    '    if (evidencePressureDecision) writeNestedRecordValue(manifest, ["metadata", "annotations"], evidencePressureAnnotations.decision, evidencePressureDecision);',
+    '    if (evidencePressureMode) writeNestedRecordValue(manifest, ["metadata", "annotations"], evidencePressureAnnotations.mode, evidencePressureMode);',
+    '    if (evidencePressureFreshUntil) writeNestedRecordValue(manifest, ["metadata", "annotations"], evidencePressureAnnotations.freshUntil, evidencePressureFreshUntil);',
+    '    if (evidencePressureReasonCodes) writeNestedRecordValue(manifest, ["metadata", "annotations"], evidencePressureAnnotations.reasonCodes, evidencePressureReasonCodes);',
+    '    if (evidencePressureWatchBackoffState) writeNestedRecordValue(manifest, ["metadata", "annotations"], evidencePressureAnnotations.watchBackoffState, evidencePressureWatchBackoffState);',
+    '    if (evidencePressureRequiredRepairReceipts) writeNestedRecordValue(manifest, ["metadata", "annotations"], evidencePressureAnnotations.requiredRepairReceipts, evidencePressureRequiredRepairReceipts);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearancePacketId", packetId);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceDecision", decision);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceActionClass", actionClass);',
@@ -398,6 +466,13 @@ export const buildScheduleRunnerCommand = (): string =>
     '    if (runnerSlotFutureCurrent) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRunnerSlotFutureId", runnerSlotFutureId);',
     '    if (runnerSlotFutureCurrent) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRunnerSlotFutureExpiresAt", runnerSlotFutureExpiresAt);',
     '    if (stageCreditSelectedRepairLot) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmCreditSelectedRepairLotRef", stageCreditSelectedRepairLot);',
+    '    if (evidencePressureLedgerId) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmEvidencePressureLedgerId", evidencePressureLedgerId);',
+    '    if (evidencePressureDecision) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmEvidencePressureDecision", evidencePressureDecision);',
+    '    if (evidencePressureMode) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmEvidencePressureMode", evidencePressureMode);',
+    '    if (evidencePressureFreshUntil) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmEvidencePressureFreshUntil", evidencePressureFreshUntil);',
+    '    if (evidencePressureReasonCodes) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmEvidencePressureReasonCodes", evidencePressureReasonCodes);',
+    '    if (evidencePressureWatchBackoffState) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmEvidencePressureWatchBackoffState", evidencePressureWatchBackoffState);',
+    '    if (evidencePressureRequiredRepairReceipts) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmEvidencePressureRequiredRepairReceipts", evidencePressureRequiredRepairReceipts);',
     '  };',
     '  const targetByKind = {',
     "  AgentRun: { group: 'agents.proompteng.ai', version: 'v1alpha1', plural: 'agentruns' },",

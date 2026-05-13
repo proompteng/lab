@@ -30,6 +30,16 @@ const parseStageClearanceEnforcement = (
   return 'shadow'
 }
 
+const parseEvidencePressureLedgerMode = (
+  value: string | undefined,
+): SupportingPrimitivesConfig['evidencePressureLedgerMode'] => {
+  const normalized = normalizeNonEmpty(value)?.toLowerCase()
+  if (normalized === 'observe' || normalized === 'shadow' || normalized === 'hold' || normalized === 'enforce') {
+    return normalized
+  }
+  return 'observe'
+}
+
 const parseStringList = (value: string | undefined) =>
   (normalizeNonEmpty(value) ?? '')
     .split(',')
@@ -56,6 +66,7 @@ export type SupportingPrimitivesConfig = {
   swarmRuntimeProofEnforcement: boolean
   stageClearanceEnforcement: 'disabled' | 'shadow' | 'hold'
   stageClearanceHoldStages: string[]
+  evidencePressureLedgerMode: 'observe' | 'shadow' | 'hold' | 'enforce'
   scheduleRunnerAdmissionCheck: boolean
   scheduleRunnerAdmissionStatusUrl: string
   scheduleRunnerAdmissionStatusTimeoutMs: number
@@ -78,6 +89,7 @@ export const resolveSupportingPrimitivesConfig = (env: EnvSource = process.env):
   swarmRuntimeProofEnforcement: parseBoolean(env.JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT, true),
   stageClearanceEnforcement: parseStageClearanceEnforcement(env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT),
   stageClearanceHoldStages: parseStringList(env.JANGAR_STAGE_CLEARANCE_HOLD_STAGES),
+  evidencePressureLedgerMode: parseEvidencePressureLedgerMode(env.JANGAR_EVIDENCE_PRESSURE_LEDGER_MODE),
   scheduleRunnerAdmissionCheck: parseBoolean(env.JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK, true),
   scheduleRunnerAdmissionStatusUrl:
     normalizeNonEmpty(env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL) ??

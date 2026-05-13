@@ -1672,6 +1672,10 @@ const reconcileSchedule = async (
                         name: SCHEDULE_RUNNER_STAGE_CLEARANCE_HOLD_STAGES_ENV,
                         value: supportingConfig.stageClearanceHoldStages.join(','),
                       },
+                      {
+                        name: 'JANGAR_EVIDENCE_PRESSURE_LEDGER_MODE',
+                        value: supportingConfig.evidencePressureLedgerMode,
+                      },
                     ],
                     volumeMounts: [{ name: 'schedule-template', mountPath: '/config' }],
                   },
@@ -1979,17 +1983,13 @@ const reconcileSwarm = async (
     ]),
   ) as Record<StageName, StageClearanceMode>
   let stageClearancePackets: StageClearancePacket[] = []
-  let stageClearanceMarket: Pick<StageClearanceStatusSnapshot, 'clearanceMarketLedgerId' | 'stageAdmissions'> | null =
-    null
+  let stageClearanceMarket: StageClearanceStatusSnapshot | null = null
   let stageClearanceUnavailableMessage: string | null = null
   if (STAGE_NAMES.some((stage) => stageClearanceModes[stage] === 'hold')) {
     try {
       const stageClearanceSnapshot = await fetchStageClearanceStatusSnapshot(swarmNamespace, supportingConfig)
       stageClearancePackets = stageClearanceSnapshot.packets
-      stageClearanceMarket = {
-        clearanceMarketLedgerId: stageClearanceSnapshot.clearanceMarketLedgerId,
-        stageAdmissions: stageClearanceSnapshot.stageAdmissions,
-      }
+      stageClearanceMarket = stageClearanceSnapshot
     } catch (error) {
       stageClearanceUnavailableMessage = summarizeRuntimeAdmissionError(error)
       console.warn('[jangar] stage clearance snapshot unavailable for swarm launchers', {
