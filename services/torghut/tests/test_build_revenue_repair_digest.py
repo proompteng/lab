@@ -158,6 +158,61 @@ def _repair_only_status() -> dict[str, object]:
             "max_stage_lag_seconds": 56287,
             "blocking_reasons": ["quant_pipeline_degraded"],
         },
+        "capital_replay_board": {
+            "schema_version": "torghut.capital-replay-board.v1",
+            "board_id": "capital-replay:test",
+            "selected_replays": ["replay:aapl-route-rehab"],
+            "summary": {
+                "selected_replay_count": 1,
+                "zero_notional_replay_count": 1,
+                "paper_replay_candidate_count": 0,
+                "capital_ready": False,
+            },
+            "replay_items": [
+                {
+                    "replay_id": "replay:aapl-route-rehab",
+                    "hypothesis_id": "H-AAPL-ROUTE-REHAB",
+                    "replay_class": "route_rehab",
+                    "target_symbols": ["AAPL"],
+                    "remaining_blockers": [
+                        "alpha_readiness_not_promotion_eligible",
+                        "market_context_stale",
+                    ],
+                    "required_after_refs": [
+                        "alpha_readiness_receipt",
+                        "hypothesis_promotion_receipt",
+                    ],
+                    "max_notional": "0",
+                }
+            ],
+        },
+        "executable_alpha_receipts": {
+            "schema_version": "torghut.executable-alpha-receipts.v1",
+            "generated_at": "2026-05-07T16:00:00+00:00",
+            "summary": {
+                "receipts_total": 1,
+                "zero_notional_receipt_count": 1,
+                "paper_replay_candidate_count": 0,
+                "capital_ready": False,
+                "graduation_state_totals": {"candidate": 1},
+            },
+            "receipts": [
+                {
+                    "receipt_id": "receipt:aapl-route-rehab",
+                    "replay_id": "replay:aapl-route-rehab",
+                    "hypothesis_id": "H-AAPL-ROUTE-REHAB",
+                    "graduation_state": "candidate",
+                    "remaining_blockers": [
+                        "alpha_readiness_not_promotion_eligible",
+                    ],
+                    "guardrail_result": {"state": "blocked", "passed": False},
+                    "capital_effect": {
+                        "capital_state": "zero_notional",
+                        "max_notional": "0",
+                    },
+                }
+            ],
+        },
         "simple_lane_reject_reason_totals": {
             "insufficient_buying_power": 8,
         },
@@ -246,6 +301,16 @@ class TestBuildRevenueRepairDigest(TestCase):
         repair_queue = digest["repair_queue"]
         self.assertIsInstance(repair_queue, list)
         self.assertEqual(repair_queue[0]["code"], "repair_alpha_readiness")
+        self.assertEqual(repair_queue[0]["value_gate"], "routeable_candidate_count")
+        self.assertEqual(
+            repair_queue[0]["required_output_receipt"],
+            "torghut.executable-alpha-receipts.v1",
+        )
+        self.assertEqual(repair_queue[0]["max_notional"], "0")
+        self.assertEqual(
+            repair_queue[0]["capital_rule"],
+            "zero_notional_repair_only",
+        )
         self.assertEqual(repair_queue[1]["code"], "repair_execution_tca")
         self.assertNotIn("repair_repair_only", [item["code"] for item in repair_queue])
         self.assertIn(
@@ -260,6 +325,29 @@ class TestBuildRevenueRepairDigest(TestCase):
         )
         evidence = cast(dict[str, object], digest["evidence"])
         self.assertIsInstance(evidence, dict)
+        alpha_readiness = evidence["alpha_readiness"]
+        self.assertIsInstance(alpha_readiness, dict)
+        capital_replay_board = alpha_readiness["capital_replay_board"]
+        self.assertIsInstance(capital_replay_board, dict)
+        self.assertEqual(
+            capital_replay_board["board_id"],
+            "capital-replay:test",
+        )
+        self.assertEqual(capital_replay_board["zero_notional_replay_count"], 1)
+        self.assertFalse(capital_replay_board["capital_ready"])
+        top_replays = capital_replay_board["top_zero_notional_replays"]
+        self.assertIsInstance(top_replays, list)
+        self.assertEqual(top_replays[0]["hypothesis_id"], "H-AAPL-ROUTE-REHAB")
+        self.assertEqual(top_replays[0]["max_notional"], "0")
+        executable_receipts = alpha_readiness["executable_alpha_receipts"]
+        self.assertIsInstance(executable_receipts, dict)
+        self.assertEqual(executable_receipts["zero_notional_receipt_count"], 1)
+        self.assertFalse(executable_receipts["capital_ready"])
+        candidate_receipts = executable_receipts["candidate_receipts"]
+        self.assertIsInstance(candidate_receipts, list)
+        self.assertEqual(candidate_receipts[0]["guardrail_state"], "blocked")
+        self.assertFalse(candidate_receipts[0]["guardrail_passed"])
+        self.assertEqual(candidate_receipts[0]["max_notional"], "0")
         route_reacquisition = evidence["route_reacquisition"]
         self.assertIsInstance(route_reacquisition, dict)
         self.assertEqual(route_reacquisition["state"], "repair_only")

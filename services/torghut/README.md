@@ -194,6 +194,11 @@ Testing rules for the trading core:
   `torghut.executable-alpha-receipts.v1` candidate receipts. The initial board is observation-only, seeds AAPL route
   rehab, NVDA scoped proof refill, and missing megacap breadth probes from proof-floor/route evidence, and keeps every
   replay and receipt at `max_notional=0` until Jangar contract graduation and fresh scoped proof close.
+- `GET /trading/revenue-repair` uses that executable-alpha projection when `repair_alpha_readiness` is the top queue
+  item. The digest binds the queue row to `value_gate=routeable_candidate_count`,
+  `required_output_receipt=torghut.executable-alpha-receipts.v1`, `max_notional=0`, the current capital replay board,
+  and candidate executable-alpha receipts so the alpha-readiness repair is dispatchable as zero-notional evidence
+  instead of a generic capital-unblock instruction.
 - `GET /trading/status` and `GET /readyz` now include the May 8 doc 181
   `quality_adjusted_profit_frontier` shadow projection. The reducer ranks zero-notional repair packets from quant
   quality, market-context risk flags, route/TCA state, simulation-cache freshness, and Jangar evidence-quality refs
