@@ -38,7 +38,7 @@ _BAD_STATES = {
 }
 _VALUE_GATE_BY_CLOCK = {
     "clickhouse_ta": "zero_notional_or_stale_evidence_rate",
-    "jangar_quant": "zero_notional_or_stale_evidence_rate",
+    "torghut_quant": "zero_notional_or_stale_evidence_rate",
     "postgres_tca": "fill_tca_or_slippage_quality",
     "empirical_replay": "zero_notional_or_stale_evidence_rate",
     "promotion": "routeable_candidate_count",
@@ -46,7 +46,7 @@ _VALUE_GATE_BY_CLOCK = {
 }
 _REPAIR_CLASS_BY_CLOCK = {
     "clickhouse_ta": "clock_wiring_split",
-    "jangar_quant": "jangar_quant_scoped_health",
+    "torghut_quant": "torghut_quant_scoped_health",
     "postgres_tca": "active_session_tca_refresh",
     "empirical_replay": "empirical_replay_reclock",
     "promotion": "promotion_custody_recheck",
@@ -54,7 +54,7 @@ _REPAIR_CLASS_BY_CLOCK = {
 }
 _VALIDATION_BY_CLOCK = {
     "clickhouse_ta": "pytest services/torghut/tests/test_clock_settlement.py -k clickhouse",
-    "jangar_quant": "pytest services/torghut/tests/test_clock_settlement.py -k jangar_quant",
+    "torghut_quant": "pytest services/torghut/tests/test_clock_settlement.py -k torghut_quant",
     "postgres_tca": "pytest services/torghut/tests/test_clock_settlement.py -k tca",
     "empirical_replay": "pytest services/torghut/tests/test_clock_settlement.py -k empirical",
     "promotion": "pytest services/torghut/tests/test_clock_settlement.py -k promotion",
@@ -388,16 +388,16 @@ def _quant_witness(
     source = dict(quant_evidence)
     reasons = _strings(source.get("reason_codes"))
     if source.get("ok") is False:
-        reasons.append("jangar_quant_degraded")
+        reasons.append("torghut_quant_degraded")
     latest_count = _int(source.get("latest_metrics_count"), -1)
     stage_count = _int(source.get("stage_count"), -1)
     if latest_count == 0:
-        reasons.append("jangar_quant_latest_metrics_empty")
+        reasons.append("torghut_quant_latest_metrics_empty")
     if stage_count == 0:
-        reasons.append("jangar_quant_scoped_stages_missing")
+        reasons.append("torghut_quant_scoped_stages_missing")
     source["reason_codes"] = _unique(reasons)
     return _simple_status_witness(
-        witness_class="jangar_quant",
+        witness_class="torghut_quant",
         source=source,
         published_clock=published_clock,
         source_ref=source.get("receipt_id") or source.get("source_url"),
@@ -405,8 +405,8 @@ def _quant_witness(
             source, "latest_metrics_updated_at", "updated_at", "latestMetricsUpdatedAt"
         ),
         row_count=None if latest_count < 0 else latest_count,
-        missing_reason="jangar_quant_evidence_missing",
-        stale_reason="jangar_quant_degraded",
+        missing_reason="torghut_quant_evidence_missing",
+        stale_reason="torghut_quant_degraded",
         now=now,
     )
 
@@ -618,7 +618,7 @@ def build_clock_settlement_receipt(
         ),
         _quant_witness(
             _mapping(quant_evidence),
-            published_clock=published_clocks.get("jangar_quant", {}),
+            published_clock=published_clocks.get("torghut_quant", {}),
             now=observed_at,
         ),
         _tca_witness(
@@ -747,8 +747,8 @@ def build_clock_settlement_receipt(
         "selected_repair_packet_ids": [
             packet["packet_id"] for packet in repair_packets
         ],
-        "required_jangar_dispatch_ref": evidence_clock_arbiter.get(
-            "required_jangar_custody_ref"
+        "required_torghut_dispatch_ref": evidence_clock_arbiter.get(
+            "required_torghut_custody_ref"
         ),
         "rollback_target": {
             "capital_state": "zero_notional",

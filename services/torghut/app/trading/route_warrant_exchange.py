@@ -39,12 +39,12 @@ _WARRANT_DEPENDENCIES = {
         "output_receipt": "torghut.direct-data-current-receipt.v1",
         "source_ref": "clickhouse_ta",
     },
-    "jangar_quant": {
+    "torghut_quant": {
         "target_dependency": "ingestion_materialization",
         "target_value_gate": "zero_notional_or_stale_evidence_rate",
         "repair_class": "quant_ingestion_materialization_repair",
         "output_receipt": "torghut.quant-ingestion-materialization-current-receipt.v1",
-        "source_ref": "jangar_quant_health",
+        "source_ref": "torghut_quant_health",
     },
     "postgres_tca": {
         "target_dependency": "active_tca",
@@ -260,18 +260,18 @@ def _source_reason_codes(source: Mapping[str, Any]) -> list[str]:
 def _quant_reasons(quant_evidence: Mapping[str, Any]) -> list[str]:
     reasons = _source_reason_codes(quant_evidence)
     if quant_evidence.get("ok") is False:
-        reasons.append(_text(quant_evidence.get("reason"), "jangar_quant_degraded"))
+        reasons.append(_text(quant_evidence.get("reason"), "torghut_quant_degraded"))
     for key, reason in (
-        ("ingestion_ok", "jangar_quant_ingestion_degraded"),
-        ("materialization_ok", "jangar_quant_materialization_degraded"),
-        ("compute_ok", "jangar_quant_compute_degraded"),
+        ("ingestion_ok", "torghut_quant_ingestion_degraded"),
+        ("materialization_ok", "torghut_quant_materialization_degraded"),
+        ("compute_ok", "torghut_quant_compute_degraded"),
     ):
         if quant_evidence.get(key) is False:
             reasons.append(reason)
     if _int(quant_evidence.get("latest_metrics_count"), -1) == 0:
-        reasons.append("jangar_quant_latest_metrics_empty")
+        reasons.append("torghut_quant_latest_metrics_empty")
     if _int(quant_evidence.get("stage_count"), -1) == 0:
-        reasons.append("jangar_quant_scoped_stages_missing")
+        reasons.append("torghut_quant_scoped_stages_missing")
     return _unique(reasons)
 
 
@@ -288,7 +288,7 @@ def _source_for_clock(
     profit_freshness_frontier: Mapping[str, Any],
 ) -> Mapping[str, Any]:
     sources = {
-        "jangar_quant": quant_evidence,
+        "torghut_quant": quant_evidence,
         "postgres_tca": tca_summary,
         "empirical_replay": empirical_jobs_status,
         "market_context": market_context_status,
@@ -307,7 +307,7 @@ def _source_observed_at(
     if clock_observed_at is not None:
         return clock_observed_at
     source_keys = {
-        "jangar_quant": (
+        "torghut_quant": (
             "latest_metrics_updated_at",
             "latestMetricsUpdatedAt",
             "updated_at",
@@ -354,7 +354,7 @@ def _witness(
 ) -> dict[str, object]:
     dependency = _WARRANT_DEPENDENCIES[clock_name]
     clock_reasons = _strings(clock.get("reason_codes"))
-    if clock_name == "jangar_quant":
+    if clock_name == "torghut_quant":
         source_reasons = _quant_reasons(source)
     else:
         source_reasons = _source_reason_codes(source)
@@ -532,7 +532,7 @@ def build_route_warrant_exchange(
     clocks = _clock_by_name(evidence_clock_arbiter)
     required_clock_names = [
         "clickhouse_ta",
-        "jangar_quant",
+        "torghut_quant",
         "postgres_tca",
         "empirical_replay",
         "market_context",

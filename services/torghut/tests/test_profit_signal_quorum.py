@@ -54,7 +54,7 @@ def _build(
             ],
         },
         live_submission_gate=gate or {"allowed": False},
-        jangar_stage_clearance_packet=stage
+        torghut_stage_clearance_packet=stage
         if stage is not None
         else {"packet_id": "stage-clearance:repair", "decision": "dispatch_repair"},
         now=NOW,
@@ -163,5 +163,5 @@ def test_missing_stage_clearance_packet_keeps_quorum_observe_only():
     assert "stage_clearance_packet_missing" in missing["reason_codes"]
     assert (
         missing["required_repair_action"]
-        == "publish_current_jangar_stage_clearance_packet"
+        == "publish_current_torghut_stage_clearance_packet"
     )

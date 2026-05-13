@@ -361,7 +361,7 @@ def _submit_blockers(
     return _unique(blockers)
 
 
-def _jangar_blockers(ref: Mapping[str, Any]) -> list[str]:
+def _torghut_admission_blockers(ref: Mapping[str, Any]) -> list[str]:
     decision = _text(
         ref.get("decision") or ref.get("state") or ref.get("status"), "missing"
     ).lower()
@@ -370,9 +370,9 @@ def _jangar_blockers(ref: Mapping[str, Any]) -> list[str]:
         ref.get("reason_codes") or ref.get("blocking_reasons") or ref.get("reasons")
     )
     if decision not in _ACCEPTED_STATES:
-        blockers.append(f"jangar_routeability_admission_{decision}")
+        blockers.append(f"torghut_routeability_admission_{decision}")
     if state in {"degraded", "missing", "stale"} and state != decision:
-        blockers.append(f"jangar_routeability_admission_{state}")
+        blockers.append(f"torghut_routeability_admission_{state}")
     return _unique(blockers)
 
 
@@ -492,7 +492,7 @@ def build_routeability_repair_acceptance_ledger(
     live_submission_gate: Mapping[str, Any],
     quant_evidence: Mapping[str, Any],
     market_context_status: Mapping[str, Any],
-    jangar_routeability_admission_ref: Mapping[str, Any],
+    torghut_routeability_admission_ref: Mapping[str, Any],
     now: datetime | None = None,
 ) -> dict[str, object]:
     """Build an observe-only acceptance ledger for routeability repair lots."""
@@ -527,7 +527,7 @@ def build_routeability_repair_acceptance_ledger(
         live_submission_gate=live_submission_gate,
         proof_floor_receipt=proof_floor_receipt,
     )
-    jangar_blockers = _jangar_blockers(jangar_routeability_admission_ref)
+    torghut_blockers = _torghut_admission_blockers(torghut_routeability_admission_ref)
 
     lots = [
         _lot(
@@ -627,14 +627,14 @@ def build_routeability_repair_acceptance_ledger(
             account=account,
             window=window,
             trading_mode=trading_mode,
-            lot_type="jangar_admission_witness",
+            lot_type="torghut_admission_witness",
             value_gate="capital_gate_safety",
-            expected_gate_delta="require_current_jangar_routeability_admission_before_paper_candidate_claim",
-            required_receipts=["jangar_routeability_admission"],
-            blockers=jangar_blockers,
-            acceptance_condition="Jangar routeability admission is current and allows the paper action class",
-            next_repair_action="refresh_jangar_routeability_admission_witness",
-            rollback_trigger="routeability ledger accepts a candidate without current Jangar admission",
+            expected_gate_delta="require_current_torghut_routeability_admission_before_paper_candidate_claim",
+            required_receipts=["torghut_routeability_admission"],
+            blockers=torghut_blockers,
+            acceptance_condition="Torghut routeability admission is current and allows the paper action class",
+            next_repair_action="refresh_torghut_routeability_admission_witness",
+            rollback_trigger="routeability ledger accepts a candidate without current Torghut admission",
         ),
     ]
 
@@ -696,7 +696,7 @@ def build_routeability_repair_acceptance_ledger(
         "profit_repair_settlement_ref": profit_repair_settlement_ledger.get(
             "ledger_id"
         ),
-        "jangar_routeability_admission_ref": dict(jangar_routeability_admission_ref),
+        "torghut_routeability_admission_ref": dict(torghut_routeability_admission_ref),
         "lots": lots,
         "aggregate_state": aggregate_state,
         "aggregate_blocking_reason_codes": aggregate_blockers,

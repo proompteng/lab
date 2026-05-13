@@ -96,6 +96,23 @@ def _mark_static_universe_loaded(scheduler: TradingScheduler) -> None:
     scheduler.state.universe_cache_age_seconds = 0
 
 
+def _json_paths_containing(value: object, needle: str, path: str = "") -> list[str]:
+    needle = needle.lower()
+    paths: list[str] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            key_path = f"{path}.{key}" if path else str(key)
+            if needle in str(key).lower():
+                paths.append(key_path)
+            paths.extend(_json_paths_containing(child, needle, key_path))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            paths.extend(_json_paths_containing(child, needle, f"{path}[{index}]"))
+    elif needle in str(value).lower():
+        paths.append(path)
+    return paths
+
+
 class _MappingRows:
     def __init__(self, rows: list[dict[str, object]]) -> None:
         self._rows = rows
@@ -2140,7 +2157,7 @@ class TestTradingApi(TestCase):
                 "blocking_reasons": ["quant_health_fetch_failed"],
                 "account": "paper",
                 "window": "15m",
-                "source_url": "https://jangar.example/custom/proxy/quant/health?account=paper&window=15m",
+                "source_url": "https://torghut.example/custom/proxy/quant/health?account=paper&window=15m",
             }
             scheduler = TradingScheduler()
             scheduler.state.running = True
@@ -3231,9 +3248,23 @@ class TestTradingApi(TestCase):
             "torghut.renewal-bond-profit-escrow.v1",
         )
         self.assertEqual(
-            payload["profit_lease_projection"]["jangar_consumer"]["action_class"],
+            payload["profit_lease_projection"]["torghut_capital"]["action_class"],
             "torghut_capital",
         )
+        for retired_label in (
+            "jangar_consumer",
+            "jangar_action_lease",
+            "jangar_quant",
+            "jangar_custody",
+            "jangar_routeability",
+            "jangar_stage_clearance",
+            "required_jangar",
+        ):
+            self.assertEqual(
+                _json_paths_containing(payload, retired_label),
+                [],
+                f"retired label {retired_label} leaked into /trading/status",
+            )
         evaluation = payload["llm_evaluation"]
         self.assertTrue(evaluation["ok"])
         self.assertGreaterEqual(evaluation["metrics"]["total_reviews"], 1)
@@ -3243,7 +3274,7 @@ class TestTradingApi(TestCase):
         self.assertEqual(hypotheses["dependency_quorum"]["decision"], "allow")
         self.assertEqual(
             hypotheses["dependency_quorum"]["reasons"],
-            ["jangar_dependency_quorum_not_required"],
+            ["torghut_dependency_quorum_not_required"],
         )
         control_plane_contract = payload["control_plane_contract"]
         self.assertEqual(
@@ -3448,7 +3479,7 @@ class TestTradingApi(TestCase):
                         ],
                         "account": "paper",
                         "window": "15m",
-                        "source_url": "http://jangar.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
+                        "source_url": "http://torghut.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
                         "latest_metrics_count": 0,
                         "latest_metrics_updated_at": None,
                         "empty_latest_store_alarm": True,
@@ -3526,7 +3557,7 @@ class TestTradingApi(TestCase):
                     "account": "paper",
                     "window": "15m",
                     "status": "healthy",
-                    "source_url": "http://jangar.test/quant/health",
+                    "source_url": "http://torghut.test/quant/health",
                     "latest_metrics_updated_at": "2026-03-20T10:00:00Z",
                 },
                 "market_context_ref": {"last_freshness_seconds": 30},
@@ -3611,7 +3642,7 @@ class TestTradingApi(TestCase):
                         "blocking_reasons": [],
                         "account": "paper",
                         "window": "15m",
-                        "source_url": "http://jangar.test/quant/health",
+                        "source_url": "http://torghut.test/quant/health",
                         "latest_metrics_updated_at": "2026-03-20T10:00:00Z",
                     },
                 ),
@@ -4012,7 +4043,7 @@ class TestTradingApi(TestCase):
                         "blocking_reasons": [],
                         "account": "paper",
                         "window": "15m",
-                        "source_url": "http://jangar.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
+                        "source_url": "http://torghut.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
                     },
                 ),
             ):

@@ -455,7 +455,7 @@ def _required_repair_action(
     blockers: Sequence[str],
 ) -> str:
     if "stage_clearance_packet_missing" in blockers:
-        return "publish_current_jangar_stage_clearance_packet"
+        return "publish_current_torghut_stage_clearance_packet"
     if _strings(signals["route_tca_signal"].get("reason_codes")):
         return "repair_route_tca_or_route_routability"
     if _strings(signals["pipeline_signal"].get("reason_codes")):
@@ -503,7 +503,7 @@ def _build_quorum(
     proof_floor_receipt: Mapping[str, Any],
     route_reacquisition_board: Mapping[str, Any],
     live_submission_gate: Mapping[str, Any],
-    jangar_stage_clearance_packet: Mapping[str, Any],
+    torghut_stage_clearance_packet: Mapping[str, Any],
 ) -> dict[str, object]:
     hypothesis_id = _hypothesis_id(item)
     signals: dict[str, Mapping[str, Any]] = {
@@ -520,8 +520,8 @@ def _build_quorum(
             proof_floor_receipt=proof_floor_receipt,
             live_submission_gate=live_submission_gate,
         ),
-        "jangar_stage_clearance_signal": _stage_clearance_signal(
-            jangar_stage_clearance_packet
+        "torghut_stage_clearance_signal": _stage_clearance_signal(
+            torghut_stage_clearance_packet
         ),
     }
     blockers = _unique(
@@ -534,7 +534,7 @@ def _build_quorum(
     decision = _quorum_decision(
         blockers=blockers,
         route_signal=signals["route_tca_signal"],
-        stage_signal=signals["jangar_stage_clearance_signal"],
+        stage_signal=signals["torghut_stage_clearance_signal"],
         live_submission_gate=live_submission_gate,
     )
     observed = _mapping(item.get("observed"))
@@ -566,8 +566,8 @@ def _build_quorum(
         "lane_id": item.get("lane_id"),
         "strategy_family": item.get("strategy_family"),
         "window": window,
-        "jangar_stage_clearance_packet_id": signals[
-            "jangar_stage_clearance_signal"
+        "torghut_stage_clearance_packet_id": signals[
+            "torghut_stage_clearance_signal"
         ].get("evidence_ref"),
         **signals,
         "decision": decision,
@@ -603,7 +603,7 @@ def build_profit_signal_quorum(
     proof_floor_receipt: Mapping[str, Any],
     route_reacquisition_board: Mapping[str, Any],
     live_submission_gate: Mapping[str, Any],
-    jangar_stage_clearance_packet: Mapping[str, Any],
+    torghut_stage_clearance_packet: Mapping[str, Any],
     now: datetime | None = None,
 ) -> dict[str, object]:
     """Build a shadow profit-signal quorum without widening notional authority."""
@@ -623,7 +623,7 @@ def build_profit_signal_quorum(
             proof_floor_receipt=proof_floor_receipt,
             route_reacquisition_board=route_reacquisition_board,
             live_submission_gate=live_submission_gate,
-            jangar_stage_clearance_packet=jangar_stage_clearance_packet,
+            torghut_stage_clearance_packet=torghut_stage_clearance_packet,
         )
         for item in items
     ]
@@ -659,7 +659,7 @@ def build_profit_signal_quorum(
         "account_label": account_label,
         "trading_mode": trading_mode,
         "torghut_revision": torghut_revision,
-        "jangar_stage_clearance_packet": dict(jangar_stage_clearance_packet),
+        "torghut_stage_clearance_packet": dict(torghut_stage_clearance_packet),
         "aggregate_decision": aggregate_decision,
         "aggregate_reason_codes": aggregate_reasons,
         "quorums": quorums,

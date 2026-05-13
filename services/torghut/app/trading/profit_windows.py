@@ -134,7 +134,7 @@ def _quant_escrow(
         account=account,
         window=window,
         hypothesis_id=hypothesis_id,
-        escrow_type="jangar_quant",
+        escrow_type="torghut_quant",
         status=status,
         required=required,
         reason_codes=reason_codes,

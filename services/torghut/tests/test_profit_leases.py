@@ -31,7 +31,7 @@ def _healthy_quant() -> dict[str, object]:
         "account": "paper",
         "window": "15m",
         "status": "healthy",
-        "source_url": "http://jangar.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
+        "source_url": "http://torghut.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
         "latest_metrics_count": 6,
         "latest_metrics_updated_at": "2026-05-06T12:00:00+00:00",
     }
@@ -89,7 +89,7 @@ class TestProfitLeaseProjection(TestCase):
         self.assertEqual(lease["capital_decision"], "repair_only")
         self.assertEqual(lease["proof_state"], "stale")
         self.assertEqual(lease["rehydration_lane"], "empirical_replay")
-        self.assertFalse(projection["jangar_consumer"]["allowed"])
+        self.assertFalse(projection["torghut_capital"]["allowed"])
         empirical_source = next(
             source
             for source in projection["source_provenance"]
@@ -271,9 +271,9 @@ class TestProfitLeaseProjection(TestCase):
         )
         self.assertEqual(quant_source["decision"], "observe_only")
         self.assertEqual(quant_source["freshness_state"], "current")
-        self.assertTrue(projection["jangar_consumer"]["allowed"])
+        self.assertTrue(projection["torghut_capital"]["allowed"])
 
-    def test_jangar_capital_holdback_blocks_consumer_allowed(self) -> None:
+    def test_torghut_capital_holdback_blocks_consumer_allowed(self) -> None:
         projection = build_profit_lease_projection(
             runtime_items=[_runtime_item()],
             quant_evidence=_healthy_quant(),
@@ -296,8 +296,8 @@ class TestProfitLeaseProjection(TestCase):
         lease = projection["leases"][0]
         self.assertEqual(lease["capital_decision"], "repair_only")
         self.assertEqual(lease["proof_state"], "blocked")
-        self.assertFalse(projection["jangar_consumer"]["allowed"])
+        self.assertFalse(projection["torghut_capital"]["allowed"])
         self.assertIn(
             "torghut_capital.source_schema.database_unroutable",
-            projection["jangar_consumer"]["blocking_reason_codes"],
+            projection["torghut_capital"]["blocking_reason_codes"],
         )

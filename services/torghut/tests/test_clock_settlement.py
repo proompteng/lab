@@ -96,7 +96,7 @@ def _base_inputs() -> dict[str, Any]:
             "reason": "ready",
             "blocked_reasons": [],
         },
-        "jangar_custody_ref": {
+        "torghut_custody_ref": {
             "packet_id": "jangar-custody:paper",
             "decision": "paper_candidate",
             "fresh_until": (NOW + timedelta(minutes=5)).isoformat(),
@@ -141,7 +141,7 @@ def _arbiter(
         ],
         profit_signal_quorum=payload["profit_signal_quorum"],
         live_submission_gate=payload["live_submission_gate"],
-        jangar_custody_ref=payload["jangar_custody_ref"],
+        torghut_custody_ref=payload["torghut_custody_ref"],
         clickhouse_ta_status=clickhouse_ta_status,
         rollout_status=payload["rollout_status"],
         now=NOW,

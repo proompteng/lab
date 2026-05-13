@@ -32,7 +32,7 @@ def _base_inputs() -> dict[str, Any]:
         "profit_signal_quorum": {"quorum_set_id": "profit-quorum:ready", "aggregate_decision": "paper_candidate", "aggregate_reason_codes": [], "generated_at": NOW.isoformat(), "quorums": [{"quorum_id": "quorum:H-MICRO-01", "hypothesis_id": "H-MICRO-01", "candidate_id": "candidate-micro", "strategy_id": "strategy-micro", "decision": "paper_candidate"}]},
         "profit_freshness_frontier": {"frontier_id": "profit-freshness-frontier:ready", "frontier_state": "ready", "summary": {"ranked_daily_net_pnl_repair_count": 0, "selected_expected_daily_net_pnl_unlock": None}},
         "live_submission_gate": {"allowed": True, "reason": "ready", "blocked_reasons": []},
-        "jangar_custody_ref": {"packet_id": "jangar-custody:paper", "decision": "paper_candidate", "fresh_until": (NOW + timedelta(minutes=5)).isoformat()},
+        "torghut_custody_ref": {"packet_id": "jangar-custody:paper", "decision": "paper_candidate", "fresh_until": (NOW + timedelta(minutes=5)).isoformat()},
         "clickhouse_ta_status": {"state": "current", "latest_signal_at": NOW.isoformat(), "symbol_count": 8},
         "rollout_status": {"state": "current", "route_workloads_ok": True, "verified_at": NOW.isoformat()},
         "consumer_evidence_receipt": {"schema_version": "torghut.consumer-evidence-receipt.v1", "receipt_id": "torghut-consumer-evidence:ready"},
@@ -60,7 +60,7 @@ def _build(**overrides: object) -> dict[str, object]:
         ],
         profit_signal_quorum=payload["profit_signal_quorum"],
         live_submission_gate=payload["live_submission_gate"],
-        jangar_custody_ref=payload["jangar_custody_ref"],
+        torghut_custody_ref=payload["torghut_custody_ref"],
         clickhouse_ta_status=payload["clickhouse_ta_status"],
         rollout_status=payload["rollout_status"],
         now=NOW,
@@ -123,7 +123,7 @@ def test_fresh_compute_with_stale_ingestion_materialization_stays_repair_only() 
     assert warrant["max_notional"] == "0"
     packet = _packet_for(warrant, "ingestion_materialization")
     assert packet["target_value_gate"] == "zero_notional_or_stale_evidence_rate"
-    assert "jangar_quant_ingestion_degraded" in packet["reason_codes"]
+    assert "torghut_quant_ingestion_degraded" in packet["reason_codes"]
     assert packet["expected_output_receipt"] == (
         "torghut.quant-ingestion-materialization-current-receipt.v1"
     )

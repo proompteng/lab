@@ -47,7 +47,7 @@ class TestProfitWindowContracts(TestCase):
             quant_evidence={
                 "ok": False,
                 "blocking_reasons": ["quant_latest_metrics_empty"],
-                "source_url": "http://jangar.test/quant/health",
+                "source_url": "http://torghut.test/quant/health",
             },
             empirical_jobs_status={
                 "ready": True,
@@ -86,7 +86,7 @@ class TestProfitWindowContracts(TestCase):
                     "quant_latest_metrics_empty",
                     "quant_latest_store_alarm",
                 ],
-                "source_url": "http://jangar.test/quant/health",
+                "source_url": "http://torghut.test/quant/health",
             },
             empirical_jobs_status={
                 "ready": True,
@@ -99,7 +99,7 @@ class TestProfitWindowContracts(TestCase):
         )
 
         window = self._window_by_hypothesis(contract, "hyp-informational-quant")
-        quant_escrow = self._escrow_by_type(contract, "jangar_quant")
+        quant_escrow = self._escrow_by_type(contract, "torghut_quant")
         clickhouse_escrow = self._escrow_by_type(contract, "clickhouse_freshness")
 
         self.assertEqual(window["decision"], "expired")
@@ -123,7 +123,7 @@ class TestProfitWindowContracts(TestCase):
                 "ok": True,
                 "blocking_reasons": [],
                 "informational_reasons": ["quant_pipeline_stages_missing"],
-                "source_url": "http://jangar.test/quant/health",
+                "source_url": "http://torghut.test/quant/health",
             },
             empirical_jobs_status={
                 "ready": True,
@@ -136,7 +136,7 @@ class TestProfitWindowContracts(TestCase):
         )
 
         window = self._window_by_hypothesis(contract, "hyp-optional-quant")
-        quant_escrow = self._escrow_by_type(contract, "jangar_quant")
+        quant_escrow = self._escrow_by_type(contract, "torghut_quant")
         clickhouse_escrow = self._escrow_by_type(contract, "clickhouse_freshness")
 
         self.assertEqual(window["decision"], "funded")
