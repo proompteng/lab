@@ -34,6 +34,8 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v1/historical-dataset-simulation.md`
    - `docs/torghut/design-system/v1/trading-day-simulation-automation.md`
 3. current autonomy/promotion contract source of truth:
+   - `docs/torghut/design-system/v6/190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
+   - `docs/agents/designs/186-jangar-repair-bid-admission-and-settlement-custody-2026-05-13.md`
    - `docs/agents/designs/184-jangar-reliability-settlement-ledger-and-rollout-slo-escrow-2026-05-12.md`
    - `docs/torghut/design-system/v6/188-torghut-profit-freshness-frontier-and-zero-notional-repair-market-2026-05-12.md`
    - `docs/agents/designs/164-jangar-contract-graduation-brake-and-runtime-receipt-gates-2026-05-07.md`
@@ -129,7 +131,16 @@ If the question is "what should I trust right now?", start here:
 
 The current highest-priority work is:
 
-The May 12 reliability-settlement handoff is the current top priority:
+The May 13 repair-bid settlement handoff is the current top priority:
+
+- make Torghut preserve the raw route evidence clearinghouse packet while compacting broad negative evidence into
+  bounded, deduped, zero-notional repair lots in
+  `docs/torghut/design-system/v6/190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`;
+- make Jangar dispatch only current compacted Torghut repair lots with a value gate, output receipt, TTL, dedupe key,
+  and `max_notional=0` in
+  `docs/agents/designs/186-jangar-repair-bid-admission-and-settlement-custody-2026-05-13.md`.
+
+The May 12 reliability-settlement handoff remains the next supporting priority:
 
 - make Jangar preserve 15-minute, 6-hour, and 7-day failure debt, provider-capacity holds, rollout SLO receipts,
   least-privilege database projections, and stage-specific admission in
