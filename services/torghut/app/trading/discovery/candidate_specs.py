@@ -67,6 +67,19 @@ _FAMILY_TIEBREAK = {
     )
 }
 _MAX_FAMILIES_PER_HYPOTHESIS = 3
+_PORTFOLIO_TARGET_NET_PNL_PER_DAY = Decimal("500")
+_PORTFOLIO_SLEEVE_FAMILY_TARGET = len(_FAMILY_RUNTIME)
+_PORTFOLIO_SLEEVE_FAMILY_ORDER = (
+    "microstructure_continuation_matched_filter_v1",
+    "microbar_cross_sectional_pairs_v1",
+    "intraday_tsmom_v2",
+    "momentum_pullback_v1",
+    "late_day_continuation_v1",
+    "end_of_day_reversal_v1",
+    "breakout_reclaim_v2",
+    "washout_rebound_v2",
+    "mean_reversion_rebound_v1",
+)
 _DEFAULT_PROFILE_COUNT = 3
 
 _RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE = RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE
@@ -1150,9 +1163,33 @@ def _family_scores_for_hypothesis(
 
 
 def _families_for_hypothesis(
-    card: HypothesisCard,
+    card: HypothesisCard, *, target_net_pnl_per_day: Decimal = Decimal("300")
 ) -> tuple[tuple[str, int, tuple[str, ...]], ...]:
-    return tuple(_family_scores_for_hypothesis(card)[:_MAX_FAMILIES_PER_HYPOTHESIS])
+    scored = _family_scores_for_hypothesis(card)
+    family_limit = (
+        _PORTFOLIO_SLEEVE_FAMILY_TARGET
+        if target_net_pnl_per_day >= _PORTFOLIO_TARGET_NET_PNL_PER_DAY
+        else _MAX_FAMILIES_PER_HYPOTHESIS
+    )
+    selected = list(scored[:family_limit])
+    if family_limit <= _MAX_FAMILIES_PER_HYPOTHESIS:
+        return tuple(selected)
+
+    selected_family_ids = {family_template_id for family_template_id, _, _ in selected}
+    for family_template_id in _PORTFOLIO_SLEEVE_FAMILY_ORDER:
+        if len(selected) >= family_limit:
+            break
+        if family_template_id in selected_family_ids:
+            continue
+        selected.append(
+            (
+                family_template_id,
+                0,
+                ("portfolio_sleeve_diversification",),
+            )
+        )
+        selected_family_ids.add(family_template_id)
+    return tuple(selected)
 
 
 def _execution_profile_index(
@@ -1300,7 +1337,12 @@ def compile_candidate_specs(
             family_template_id,
             family_score,
             family_reasons,
-        ) in enumerate(_families_for_hypothesis(card), start=1):
+        ) in enumerate(
+            _families_for_hypothesis(
+                card, target_net_pnl_per_day=target_net_pnl_per_day
+            ),
+            start=1,
+        ):
             runtime_family, runtime_strategy_name = _FAMILY_RUNTIME[family_template_id]
             for execution_profile_index in _execution_profile_indexes(
                 card=card,

@@ -780,13 +780,8 @@ https://example.com/paper.pdf
         )
 
         expected_family_profiles = {
-            "microstructure_continuation_matched_filter_v1": _profile_ids_for_family(
-                "microstructure_continuation_matched_filter_v1"
-            ),
-            "microbar_cross_sectional_pairs_v1": _profile_ids_for_family(
-                "microbar_cross_sectional_pairs_v1"
-            ),
-            "intraday_tsmom_v2": _profile_ids_for_family("intraday_tsmom_v2"),
+            family_template_id: _profile_ids_for_family(family_template_id)
+            for family_template_id in candidate_specs_module._FAMILY_EXECUTION_PROFILES
         }
         self.assertEqual(
             len(compiled),

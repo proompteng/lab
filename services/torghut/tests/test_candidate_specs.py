@@ -132,6 +132,49 @@ class TestCandidateSpecs(TestCase):
             len(specs),
         )
 
+    def test_portfolio_profit_target_adds_diversified_sleeve_families(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-portfolio-sleeves",
+            claims=[
+                {
+                    "claim_id": "claim-flow-sleeves",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": "Clustered order flow imbalance improves intraday LOB continuation signals.",
+                    "confidence": "0.82",
+                }
+            ],
+        )
+
+        baseline_specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
+        )
+        portfolio_specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        self.assertEqual(
+            {spec.family_template_id for spec in baseline_specs},
+            {
+                "intraday_tsmom_v2",
+                "microbar_cross_sectional_pairs_v1",
+                "microstructure_continuation_matched_filter_v1",
+            },
+        )
+        self.assertEqual(
+            {spec.family_template_id for spec in portfolio_specs},
+            set(candidate_specs_module._FAMILY_EXECUTION_PROFILES),
+        )
+        self.assertGreater(len(portfolio_specs), len(baseline_specs))
+        complementary_spec = next(
+            spec
+            for spec in portfolio_specs
+            if spec.family_template_id == "end_of_day_reversal_v1"
+        )
+        self.assertEqual(
+            complementary_spec.feature_contract["family_selection"]["reasons"],
+            ["portfolio_sleeve_diversification"],
+        )
+
     def test_same_family_whitepaper_hypotheses_get_distinct_execution_profiles(
         self,
     ) -> None:

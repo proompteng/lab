@@ -13,21 +13,19 @@ from app.trading.discovery.whitepaper_candidate_compiler import (
 )
 
 
-_FLOW_CLAIM_FAMILIES = {
-    "intraday_tsmom_v2",
-    "microbar_cross_sectional_pairs_v1",
-    "microstructure_continuation_matched_filter_v1",
-}
+_PORTFOLIO_TARGET_FAMILIES = set(candidate_specs_module._FAMILY_EXECUTION_PROFILES)
 
 
 def _profile_count_for_family(family_template_id: str) -> int:
     return len(candidate_specs_module._FAMILY_EXECUTION_PROFILES[family_template_id])
 
 
-def _expected_flow_candidate_count() -> int:
-    return sum(
-        _profile_count_for_family(family_id) for family_id in _FLOW_CLAIM_FAMILIES
-    )
+def _expected_candidate_count(family_ids: set[str]) -> int:
+    return sum(_profile_count_for_family(family_id) for family_id in family_ids)
+
+
+def _expected_portfolio_target_candidate_count() -> int:
+    return _expected_candidate_count(_PORTFOLIO_TARGET_FAMILIES)
 
 
 class TestWhitepaperCandidateCompiler(TestCase):
@@ -47,7 +45,7 @@ class TestWhitepaperCandidateCompiler(TestCase):
             seed_sweep_dir=Path("config/trading"),
         )
 
-        expected_spec_count = _expected_flow_candidate_count()
+        expected_spec_count = _expected_portfolio_target_candidate_count()
         self.assertEqual(len(compilation.candidate_specs), expected_spec_count)
         self.assertEqual(len(compilation.executable_specs), expected_spec_count)
         self.assertEqual(
@@ -57,7 +55,7 @@ class TestWhitepaperCandidateCompiler(TestCase):
             len(compilation.vnext_experiment_payloads), expected_spec_count
         )
         family_ids = {spec.family_template_id for spec in compilation.executable_specs}
-        self.assertEqual(family_ids, _FLOW_CLAIM_FAMILIES)
+        self.assertEqual(family_ids, _PORTFOLIO_TARGET_FAMILIES)
         self.assertEqual(
             {
                 family_id: sum(
@@ -69,7 +67,7 @@ class TestWhitepaperCandidateCompiler(TestCase):
             },
             {
                 family_id: _profile_count_for_family(family_id)
-                for family_id in _FLOW_CLAIM_FAMILIES
+                for family_id in _PORTFOLIO_TARGET_FAMILIES
             },
         )
         self.assertTrue(
@@ -110,7 +108,7 @@ class TestWhitepaperCandidateCompiler(TestCase):
 
         self.assertEqual(len(compilation.executable_specs), 0)
         self.assertEqual(
-            len(compilation.blocked_specs), _expected_flow_candidate_count()
+            len(compilation.blocked_specs), _expected_portfolio_target_candidate_count()
         )
         self.assertEqual(compilation.blockers[0].reason, "family_template_missing")
 
@@ -332,7 +330,7 @@ class TestWhitepaperCandidateCompiler(TestCase):
 
         self.assertEqual(compilation.executable_specs, ())
         self.assertEqual(
-            len(compilation.blocked_specs), _expected_flow_candidate_count()
+            len(compilation.blocked_specs), _expected_portfolio_target_candidate_count()
         )
         self.assertEqual(compilation.blockers[0].reason, "seed_sweep_missing")
 
@@ -370,11 +368,12 @@ class TestWhitepaperCandidateCompiler(TestCase):
         )
 
         self.assertEqual(
-            len(compilation.candidate_specs), _expected_flow_candidate_count()
+            len(compilation.candidate_specs),
+            _expected_portfolio_target_candidate_count(),
         )
         self.assertEqual(compilation.executable_specs, ())
         self.assertEqual(
-            len(compilation.blocked_specs), _expected_flow_candidate_count()
+            len(compilation.blocked_specs), _expected_portfolio_target_candidate_count()
         )
         self.assertTrue(
             all(
