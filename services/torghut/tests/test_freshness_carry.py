@@ -5,6 +5,7 @@ from typing import Any, cast
 
 from app.trading.freshness_carry import (
     FRESHNESS_CARRY_LEDGER_SCHEMA_VERSION,
+    _jangar_pressure_refs,
     build_freshness_carry_ledger,
 )
 
@@ -194,6 +195,34 @@ def test_source_serving_gap_holds_non_source_freshness_repairs() -> None:
         "expected_shortfall_coverage_low",
         "source_serving_not_current",
     ]
+
+
+def test_pressure_refs_backfill_external_ids_and_skip_malformed_slos() -> None:
+    refs = _jangar_pressure_refs(
+        account_label="PA3SX7FYNUTF",
+        window="15m",
+        ledger_id="freshness-carry-ledger:test",
+        fresh_until=(NOW + timedelta(seconds=60)).isoformat(),
+        dimensions=[
+            {
+                "dimension_id": "ta_signals",
+                "state": "stale",
+                "stale_reason_codes": ["ta_signal_lag_exceeded"],
+            }
+        ],
+        repair_proof_slos=[{"repair_id": "repair-proof-slo:malformed"}],
+        external_refs=[
+            {
+                "schema_version": "torghut.jangar-pressure-ref.v1",
+                "source_class": "manual_freshness",
+                "target_dimension_id": "manual",
+            }
+        ],
+    )
+
+    assert len(refs) == 1
+    assert str(refs[0]["pressure_ref_id"]).startswith("freshness-pressure-ref:")
+    assert refs[0]["source_class"] == "manual_freshness"
 
 
 def test_malformed_freshness_inputs_are_repair_only_with_typed_reasons() -> None:
