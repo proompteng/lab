@@ -35,6 +35,8 @@ The v1 documents are written to stay consistent with:
 If you are trying to decide which docs are current contract truth versus historical milestone records, start with:
 
 - `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md`
+- `docs/torghut/design-system/v6/190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
+- `docs/agents/designs/186-jangar-repair-bid-admission-and-settlement-custody-2026-05-13.md`
 - `docs/torghut/design-system/v6/188-torghut-evidence-clock-arbiter-and-routeable-profit-candidate-exchange-2026-05-12.md`
 - `docs/agents/designs/184-jangar-rollout-custody-and-evidence-clock-dispatch-2026-05-12.md`
 - `docs/torghut/design-system/v6/188-torghut-route-evidence-clearinghouse-and-execution-freshness-market-2026-05-12.md`
