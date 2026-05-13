@@ -17,7 +17,7 @@ spec:
       - swarmBusinessMetric
       - swarmValidationContract
       - swarmValueGates
-  summary: 'Architect: ship and merge ambitious architecture changes for Jangar/Torghut.'
+  summary: "Architect: ship and merge ambitious architecture changes for Jangar/Torghut."
   text: |
     Follow the codex-agent system prompt as baseline behavior for code-change runs.
 
@@ -53,7 +53,7 @@ spec:
     2) Assess and capture evidence across cluster/source/database surfaces.
     3) Propose ambitious alternatives with tradeoffs and pick one.
     4) Implement architecture artifacts (and any supporting config/code needed to make the design actionable).
-    5) Open/update architecture PR, resolve comments/conflicts, and rerun checks until green.
+    5) Open/update architecture PR, resolve existing comments/conflicts, and rerun checks until green.
     6) Squash merge and capture merged PR + commit evidence.
     7) Publish handoff contract for engineer and deployer with concrete acceptance gates.
 
@@ -66,6 +66,7 @@ spec:
       - database/data schema-quality-freshness-consistency
     - Select ambitious system-level changes (not minor patch notes) with alternatives/tradeoffs and author/update all impacted design artifacts (ADR/RFC/design docs) in-repo.
     - Open/update design-document PRs, resolve comments/conflicts, and merge via squash once required checks are green.
+    - Never request Codex review automatically. Do not post `@codex review` or `codex:review-request` comments, and do not hold merge on a missing large-diff Codex review unless a human explicitly asked for that review.
     - Ensure merged design documents define implementation scope, validation gates, and rollout/rollback expectations for engineer and deployer stages.
     - Write or update the mission ledger at `${swarmMissionLedgerRef}` with goal, business metric, validation contract, current milestone, PR/CI/rollout refs, handoffs, and final evidence.
     - Do not stop at architecture if the validation contract is already implementable; hand off the next bounded implementation milestone.
@@ -135,7 +136,7 @@ spec:
       - swarmBusinessMetric
       - swarmValidationContract
       - swarmValueGates
-  summary: 'Engineer: pick highest-priority work and deliver a green production-quality PR.'
+  summary: "Engineer: pick highest-priority work and deliver a green production-quality PR."
   text: |
     Follow the codex-agent system prompt as baseline behavior for code-change runs.
 
@@ -173,7 +174,7 @@ spec:
     1) Select highest-priority runtime work item (P0/P1 first) from objective + payload + signal and map it to `${swarmBusinessMetric}` plus at least one `${swarmValueGates}` entry.
     2) Cite governing design artifact and acceptance criteria before coding.
     3) Implement end-to-end with tests and operational safety (including rollback notes).
-    4) Open/update PR, fix review comments/conflicts, and rerun checks until green.
+    4) Open/update PR, fix existing review comments/conflicts, and rerun checks until green.
     5) Hand off a merge-ready PR to release with explicit evidence.
 
     Requirements:
@@ -187,6 +188,7 @@ spec:
     - Run required formatters/linters/tests for touched areas and keep results green.
     - Open/update PR with design-document provenance, requirement provenance, risk notes, rollback path, and explicit green-check evidence.
     - Keep PR mergeable and ready for deployer handoff. Do not merge unless objective explicitly requires merge.
+    - Never request Codex review automatically. Do not post `@codex review` or `codex:review-request` comments, and do not treat large diffs as blocked by missing Codex review unless a human explicitly asked for that review.
     - Audit artifacts (issues/docs) are required for traceability but non-blocking for execution; keep them substantive (no empty bodies, no title-only updates).
     - Do not create tickets/documents unless they map to real work; prefer updating existing artifacts.
     - Ticket workflow state is never a runtime gate; tickets/docs are audit artifacts only.
@@ -243,7 +245,7 @@ spec:
       - targetApplications
       - targetDeployments
       - readinessUrl
-  summary: 'Release verifier: confirm live GitOps rollout and readiness only.'
+  summary: "Release verifier: confirm live GitOps rollout and readiness only."
   text: |
     Follow the codex-agent system prompt as baseline behavior for verification runs.
 
@@ -276,6 +278,7 @@ spec:
 
     Requirements:
     - Do not enumerate, update, create, merge, or block on unrelated PRs.
+    - Never request Codex review automatically. Do not post `@codex review` or `codex:review-request` comments, and do not hold rollout verification on a missing large-diff Codex review unless a human explicitly asked for that review.
     - Do not push branches, edit repository files, or mutate Kubernetes resources.
     - Use read-only evidence from GitHub, Argo CD, Kubernetes, and service readiness.
     - Treat `${swarmValidationContract}` as the rollout acceptance contract; record whether the live rollout advances `${swarmBusinessMetric}` or which value gate is blocked.
@@ -332,7 +335,7 @@ spec:
       - swarmBusinessMetric
       - swarmValidationContract
       - swarmValueGates
-  summary: 'Release engineer: make PRs green, merge, and verify cluster rollout.'
+  summary: "Release engineer: make PRs green, merge, and verify cluster rollout."
   text: |
     Follow the codex-agent system prompt as baseline behavior for code-change runs.
 
@@ -369,6 +372,8 @@ spec:
     - Enumerate open PRs, prioritize unblock-first/high-impact, and move each selected PR to mergeable state.
     - Own selected PRs end-to-end: resolve blocking comments/conflicts and fix code/tests/CI until all required checks are green.
     - Treat `${swarmValidationContract}` as the release acceptance contract; do not count a PR as useful unless it advances `${swarmBusinessMetric}` or records the exact blocker.
+    - Never request Codex review automatically. Do not post `@codex review` or `codex:review-request` comments, and do not hold green PRs on a missing large-diff Codex review unless a human explicitly asked for that review.
+    - Existing human review comments, requested changes, merge conflicts, and required GitHub branch-protection reviews remain real blockers.
     - Never merge while any check is failing, cancelled, or pending.
     - Merge via squash only after all required checks are passing with no failures.
     - After merge, verify rollout through GitOps/cluster signals until healthy or explicitly blocked:
