@@ -349,7 +349,9 @@ def _portfolio_scorecard(
         _string(_scorecard(bundle).get("shadow_parity_status")) for bundle in selected
     }
     executable_artifact_refs = [
-        ref for ref in (_executable_replay_artifact_ref(bundle) for bundle in selected) if ref
+        ref
+        for ref in (_executable_replay_artifact_ref(bundle) for bundle in selected)
+        if ref
     ]
     executable_order_count = sum(
         _executable_replay_order_count(bundle) for bundle in selected
@@ -443,6 +445,8 @@ def optimize_portfolio_candidate(
     portfolio_size_max: int = 8,
 ) -> PortfolioCandidateSpec | None:
     oracle_policy = oracle_policy or ProfitTargetOraclePolicy()
+    requested_portfolio_size_min = max(1, int(portfolio_size_min))
+    requested_portfolio_size_max = max(1, int(portfolio_size_max))
     invalid_evidence_rejections = [
         {
             "candidate_id": bundle.candidate_id,
@@ -466,7 +470,10 @@ def optimize_portfolio_candidate(
     max_allowed_correlation = MAX_ALLOWED_PAIRWISE_CORRELATION
     for bundle in ordered:
         cluster = _cluster_id(bundle)
-        if cluster in selected_clusters and len(selected) >= portfolio_size_min:
+        if (
+            cluster in selected_clusters
+            and len(selected) >= requested_portfolio_size_min
+        ):
             rejected.append(
                 {
                     "candidate_id": bundle.candidate_id,
@@ -478,7 +485,7 @@ def optimize_portfolio_candidate(
         max_correlation = _max_pairwise_correlation(bundle, selected)
         if (
             max_correlation > max_allowed_correlation
-            and len(selected) >= portfolio_size_min
+            and len(selected) >= requested_portfolio_size_min
         ):
             rejected.append(
                 {
@@ -490,9 +497,9 @@ def optimize_portfolio_candidate(
             continue
         selected.append(bundle)
         selected_clusters.add(cluster)
-        if len(selected) >= max(1, portfolio_size_max):
+        if len(selected) >= requested_portfolio_size_max:
             break
-        if len(selected) >= portfolio_size_min:
+        if len(selected) >= requested_portfolio_size_min:
             candidate_scorecard = _portfolio_scorecard(
                 selected=selected,
                 target_net_pnl_per_day=target_net_pnl_per_day,
@@ -500,7 +507,7 @@ def optimize_portfolio_candidate(
             )
             if bool(candidate_scorecard.get("oracle_passed")):
                 break
-    if not selected:
+    if not selected or len(selected) < requested_portfolio_size_min:
         return None
 
     source_candidate_ids = tuple(item.candidate_id for item in selected)
