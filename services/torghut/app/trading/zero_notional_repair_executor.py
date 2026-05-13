@@ -36,6 +36,13 @@ _ALLOWLIST: Mapping[str, Mapping[str, object]] = {
         "value_gate": "fill_tca_or_slippage_quality",
         "rollback_path": "ignore recomputed TCA receipt and leave routeability lot unsettled",
     },
+    "rerun_drift_checks_for_blocked_hypotheses": {
+        "executor": "hypothesis_drift_check_replay",
+        "runner_required": False,
+        "requires_torghut_admission": False,
+        "value_gate": "zero_notional_or_stale_evidence_rate",
+        "rollback_path": "discard replayed drift receipt and keep the hypothesis repair lot queued",
+    },
 }
 
 

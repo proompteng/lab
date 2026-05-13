@@ -3970,6 +3970,228 @@ class TestTradingApi(TestCase):
         self.assertEqual(payload["before_refs"], ["execution_tca:NVDA"])
         self.assertFalse(payload["order_submission_enabled"])
 
+    def test_zero_notional_repair_endpoint_blocks_unavailable_drift_runner(
+        self,
+    ) -> None:
+        status_payload = {
+            "active_revision": "torghut-00320",
+            "profit_freshness_frontier": {
+                "frontier_id": "profit-freshness-frontier:test",
+                "capital_posture": {
+                    "capital_state": "zero_notional",
+                    "paper_notional_limit": "0",
+                    "live_notional_limit": "0",
+                    "capital_behavior_changed": False,
+                },
+                "selected_zero_notional_repairs": [
+                    {
+                        "lot_id": "profit-freshness-repair-lot:drift",
+                        "candidate_id": "candidate-drift",
+                        "hypothesis_id": "H-AAPL",
+                        "blocked_dimension": "hypothesis_drift",
+                        "zero_notional_action": "rerun_drift_checks_for_blocked_hypotheses",
+                        "before_refs": ["drift_detection_checks"],
+                        "paper_notional_limit": "0",
+                        "live_notional_limit": "0",
+                        "state": "selected_zero_notional_repair",
+                    }
+                ],
+            },
+        }
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        try:
+            app.state.trading_scheduler = SimpleNamespace()
+            with patch("app.main.trading_status", return_value=status_payload):
+                response = self.client.post(
+                    "/trading/profit-freshness/zero-notional-repair"
+                    "?execute=true&action=rerun_drift_checks_for_blocked_hypotheses"
+                )
+        finally:
+            app.state.trading_scheduler = original_scheduler
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["execution_state"], "runner_failed")
+        self.assertEqual(payload["command_exit_code"], 78)
+        self.assertEqual(payload["executor"], "hypothesis_drift_check_replay")
+        self.assertEqual(payload["blocked_reasons"], ["drift_check_runner_unavailable"])
+        self.assertFalse(payload["order_submission_enabled"])
+        self.assertEqual(payload["paper_notional_limit"], "0")
+        self.assertEqual(payload["live_notional_limit"], "0")
+
+    def test_zero_notional_repair_endpoint_blocks_drift_runner_without_signals(
+        self,
+    ) -> None:
+        query_start = datetime(2026, 5, 13, 4, 0, tzinfo=timezone.utc)
+        query_end = datetime(2026, 5, 13, 4, 15, tzinfo=timezone.utc)
+        calls: list[dict[str, object]] = []
+
+        def fetch_signals_with_reason(**kwargs: object) -> SimpleNamespace:
+            calls.append(dict(kwargs))
+            return SimpleNamespace(
+                signals=[],
+                no_signal_reason="empty_window",
+                query_start=query_start,
+                query_end=query_end,
+            )
+
+        pipeline = SimpleNamespace(
+            ingestor=SimpleNamespace(
+                fetch_signals_with_reason=fetch_signals_with_reason
+            ),
+            _run_simple_drift_check=lambda signals: None,
+        )
+        scheduler = SimpleNamespace(
+            _pipeline=pipeline,
+            state=SimpleNamespace(
+                drift_last_detection_path="",
+                drift_status=None,
+                drift_active_reason_codes=[],
+            ),
+        )
+        status_payload = {
+            "active_revision": "torghut-00320",
+            "profit_freshness_frontier": {
+                "frontier_id": "profit-freshness-frontier:test",
+                "capital_posture": {
+                    "capital_state": "zero_notional",
+                    "paper_notional_limit": "0",
+                    "live_notional_limit": "0",
+                    "capital_behavior_changed": False,
+                },
+                "selected_zero_notional_repairs": [
+                    {
+                        "lot_id": "profit-freshness-repair-lot:drift",
+                        "candidate_id": "candidate-drift",
+                        "hypothesis_id": "H-AAPL",
+                        "blocked_dimension": "hypothesis_drift",
+                        "zero_notional_action": "rerun_drift_checks_for_blocked_hypotheses",
+                        "before_refs": ["drift_detection_checks"],
+                        "symbol_set": ["AAPL"],
+                        "paper_notional_limit": "0",
+                        "live_notional_limit": "0",
+                        "state": "selected_zero_notional_repair",
+                    }
+                ],
+            },
+        }
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        try:
+            app.state.trading_scheduler = scheduler
+            with patch("app.main.trading_status", return_value=status_payload):
+                response = self.client.post(
+                    "/trading/profit-freshness/zero-notional-repair"
+                    "?execute=true&action=rerun_drift_checks_for_blocked_hypotheses"
+                    "&drift_limit=13"
+                )
+        finally:
+            app.state.trading_scheduler = original_scheduler
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["execution_state"], "runner_blocked")
+        self.assertEqual(payload["command_exit_code"], 78)
+        self.assertEqual(
+            payload["blocked_reasons"], ["drift_check_no_signals:empty_window"]
+        )
+        self.assertEqual(payload["runner_result"]["result"]["symbol_set"], ["AAPL"])
+        self.assertEqual(
+            payload["runner_result"]["result"]["query_start"], query_start.isoformat()
+        )
+        self.assertEqual(
+            payload["runner_result"]["result"]["query_end"], query_end.isoformat()
+        )
+        self.assertEqual(calls[0]["limit"], 13)
+        self.assertFalse(payload["order_submission_enabled"])
+
+    def test_zero_notional_repair_endpoint_runs_drift_runner_zero_notional(
+        self,
+    ) -> None:
+        signals = [
+            SimpleNamespace(symbol="aapl"),
+            SimpleNamespace(symbol="MSFT"),
+            SimpleNamespace(symbol="AAPL"),
+        ]
+        replayed: list[list[SimpleNamespace]] = []
+
+        def fetch_signals_with_reason(**_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(signals=signals, no_signal_reason=None)
+
+        def run_simple_drift_check(filtered_signals: list[SimpleNamespace]) -> None:
+            replayed.append(filtered_signals)
+
+        pipeline = SimpleNamespace(
+            ingestor=SimpleNamespace(
+                fetch_signals_with_reason=fetch_signals_with_reason
+            ),
+            _run_simple_drift_check=run_simple_drift_check,
+        )
+        scheduler = SimpleNamespace(
+            _pipeline=pipeline,
+            state=SimpleNamespace(
+                drift_last_detection_path="s3://torghut/drift/latest.json",
+                drift_status="clear",
+                drift_active_reason_codes=["drift_check_replayed"],
+            ),
+        )
+        status_payload = {
+            "active_revision": "torghut-00320",
+            "profit_freshness_frontier": {
+                "frontier_id": "profit-freshness-frontier:test",
+                "capital_posture": {
+                    "capital_state": "zero_notional",
+                    "paper_notional_limit": "0",
+                    "live_notional_limit": "0",
+                    "capital_behavior_changed": False,
+                },
+                "selected_zero_notional_repairs": [
+                    {
+                        "lot_id": "profit-freshness-repair-lot:drift",
+                        "candidate_id": "candidate-drift",
+                        "hypothesis_id": "H-AAPL",
+                        "blocked_dimension": "hypothesis_drift",
+                        "zero_notional_action": "rerun_drift_checks_for_blocked_hypotheses",
+                        "before_refs": ["drift_detection_checks"],
+                        "symbol_set": ["AAPL"],
+                        "paper_notional_limit": "0",
+                        "live_notional_limit": "0",
+                        "state": "selected_zero_notional_repair",
+                    }
+                ],
+            },
+        }
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        try:
+            app.state.trading_scheduler = scheduler
+            with patch("app.main.trading_status", return_value=status_payload):
+                response = self.client.post(
+                    "/trading/profit-freshness/zero-notional-repair"
+                    "?execute=true&action=rerun_drift_checks_for_blocked_hypotheses"
+                )
+        finally:
+            app.state.trading_scheduler = original_scheduler
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["execution_state"], "executed")
+        self.assertEqual(payload["command_exit_code"], 0)
+        self.assertEqual(
+            payload["after_refs"],
+            ["drift_detection_checks", "s3://torghut/drift/latest.json"],
+        )
+        self.assertEqual(payload["runner_result"]["result"]["signals_evaluated"], 2)
+        self.assertEqual(payload["runner_result"]["result"]["symbol_set"], ["AAPL"])
+        self.assertEqual(payload["runner_result"]["result"]["drift_status"], "clear")
+        self.assertEqual(
+            payload["runner_result"]["result"]["drift_active_reason_codes"],
+            ["drift_check_replayed"],
+        )
+        self.assertEqual([signal.symbol for signal in replayed[0]], ["aapl", "AAPL"])
+        self.assertFalse(payload["capital_behavior_changed"])
+        self.assertFalse(payload["order_submission_enabled"])
+        self.assertEqual(payload["paper_notional_limit"], "0")
+        self.assertEqual(payload["live_notional_limit"], "0")
+
     def test_trading_status_blocks_live_submission_when_lineage_tables_are_empty(
         self,
     ) -> None:
