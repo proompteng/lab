@@ -152,6 +152,13 @@ def _lots_by_class(frontier: Mapping[str, object]) -> dict[str, Mapping[str, Any
     }
 
 
+def _lot_by_id(frontier: Mapping[str, object], lot_id: object) -> Mapping[str, Any]:
+    for lot in cast(list[Mapping[str, Any]], frontier["lots"]):
+        if lot["lot_id"] == lot_id:
+            return lot
+    raise AssertionError(f"missing lot {lot_id}")
+
+
 def test_source_serving_gap_preempts_non_source_repair_dispatch() -> None:
     frontier = _build()
 
@@ -185,6 +192,63 @@ def test_converged_source_allows_compacted_lot_dispatch_without_notional() -> No
     assert feature_lot["target_value_gate"] == "zero_notional_or_stale_evidence_rate"
     assert feature_lot["lot_id"] in frontier["dispatchable_lot_ids"]
     assert frontier["selected_lot_id"] in frontier["dispatchable_lot_ids"]
+
+
+def test_paper_cutover_blocking_lots_rank_ahead_of_generic_stale_evidence() -> None:
+    frontier = _build(
+        source_ledger=_source_ledger(state="converged", reasons=[]),
+        repair_bid_ledger=_repair_bid_ledger(
+            compacted_lots=[
+                _compacted_lot(
+                    lot_id="compacted-repair-lot:feature",
+                    lot_class="feature_lineage",
+                    target_value_gate="zero_notional_or_stale_evidence_rate",
+                    expected_gate_delta="retire_feature_rows_missing",
+                    priority=95,
+                ),
+                _compacted_lot(
+                    lot_id="compacted-repair-lot:tca",
+                    lot_class="execution_tca",
+                    target_value_gate="fill_tca_or_slippage_quality",
+                    expected_gate_delta="retire_execution_tca_not_current",
+                    priority=90,
+                ),
+            ]
+        ),
+        profit_frontier=_profit_frontier(selected_repairs=[]),
+    )
+    lots_by_class = _lots_by_class(frontier)
+    tca_lot = lots_by_class["execution_tca"]
+
+    assert tca_lot["dispatchable"] is True
+    assert tca_lot["target_value_gate"] == "fill_tca_or_slippage_quality"
+    assert frontier["selected_lot_id"] == tca_lot["lot_id"]
+
+
+def test_converged_source_does_not_select_route_warrant_as_source_repair() -> None:
+    frontier = _build(
+        source_ledger=_source_ledger(
+            state="converged",
+            reasons=["route_warrant_repair_only"],
+        ),
+    )
+    lots_by_class = _lots_by_class(frontier)
+    feature_lot = lots_by_class["feature_rows"]
+    selected_lot = _lot_by_id(frontier, frontier["selected_lot_id"])
+
+    assert "source_serving" not in lots_by_class
+    assert feature_lot["dispatchable"] is True
+    assert feature_lot["target_value_gate"] == "zero_notional_or_stale_evidence_rate"
+    assert selected_lot["dispatchable"] is True
+    assert selected_lot["lot_class"] != "source_serving"
+    assert frontier["summary"]["source_serving_state"] == "converged"
+    assert any(
+        requirement["requirement"] == "routeable_candidate_available"
+        and requirement["state"] == "block"
+        for requirement in cast(
+            list[Mapping[str, Any]], frontier["paper_cutover_requirements"]
+        )
+    )
 
 
 def test_nonzero_input_lot_is_rejected_but_frontier_stays_zero_notional() -> None:

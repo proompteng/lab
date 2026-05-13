@@ -27,6 +27,13 @@ _VALUE_GATES = [
     "fill_tca_or_slippage_quality",
     "capital_gate_safety",
 ]
+_VALUE_GATE_SORT_RANK = {
+    "post_cost_daily_net_pnl": 0,
+    "routeable_candidate_count": 1,
+    "fill_tca_or_slippage_quality": 2,
+    "zero_notional_or_stale_evidence_rate": 3,
+    "capital_gate_safety": 4,
+}
 _LOT_CLASS_MAP = {
     "quant_pipeline": "signal_ingestion",
     "execution_tca": "execution_tca",
@@ -77,6 +84,7 @@ _SOURCE_REASON_VALUE_GATE = {
     "required_contract_missing": "zero_notional_or_stale_evidence_rate",
     "contract_schema_mismatch": "zero_notional_or_stale_evidence_rate",
 }
+_SOURCE_SERVING_REASON_CODES = frozenset(_SOURCE_REASON_VALUE_GATE)
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -170,6 +178,14 @@ def _reason_value_gate(reason: str) -> str:
         reason.split(":", 1)[0],
         "zero_notional_or_stale_evidence_rate",
     )
+
+
+def _source_serving_reasons(reason_codes: Sequence[str]) -> list[str]:
+    return [
+        reason
+        for reason in reason_codes
+        if reason.split(":", 1)[0] in _SOURCE_SERVING_REASON_CODES
+    ]
 
 
 def _required_input_refs(*values: object) -> list[str]:
@@ -352,10 +368,12 @@ def _source_serving_lot(
     source_serving_ledger: Mapping[str, Any],
 ) -> dict[str, object] | None:
     reason_codes = _strings(source_serving_ledger.get("reason_codes"))
-    if _source_is_current(source_serving_ledger) and not reason_codes:
+    source_reasons = _source_serving_reasons(reason_codes)
+    if _source_is_current(source_serving_ledger) and not source_reasons:
         return None
     state = _source_state(source_serving_ledger)
-    primary_reason = reason_codes[0] if reason_codes else f"source_serving_{state}"
+    lot_reasons = source_reasons or [f"source_serving_{state}"]
+    primary_reason = lot_reasons[0]
     ledger_id = _text(source_serving_ledger.get("ledger_id"))
     return {
         "lot_id": _stable_ref(
@@ -373,7 +391,7 @@ def _source_serving_lot(
         "target_hypothesis_ids": [],
         "target_value_gate": _reason_value_gate(primary_reason),
         "expected_gate_delta": f"retire_{primary_reason}",
-        "expected_unblock_value": len(reason_codes) or 1,
+        "expected_unblock_value": len(lot_reasons) or 1,
         "cost_class": "low",
         "source_serving_epoch_ref": ledger_id or None,
         "required_input_refs": _required_input_refs(
@@ -410,10 +428,21 @@ def _dedupe_lots(lots: Sequence[dict[str, object]]) -> list[dict[str, object]]:
     return deduped
 
 
-def _lot_sort_key(lot: Mapping[str, object]) -> tuple[int, int, str]:
-    dispatch_rank = 1 if lot.get("dispatchable") is True else 0
-    source_rank = 1 if _text(lot.get("lot_class")) == "source_serving" else 0
-    return (-dispatch_rank, -source_rank, _text(lot.get("lot_id")))
+def _lot_sort_key(lot: Mapping[str, object]) -> tuple[int, int, int, Decimal, str]:
+    dispatch_rank = 0 if lot.get("dispatchable") is True else 1
+    source_rank = 0 if _text(lot.get("lot_class")) == "source_serving" else 1
+    value_gate_rank = _VALUE_GATE_SORT_RANK.get(
+        _text(lot.get("target_value_gate")),
+        len(_VALUE_GATE_SORT_RANK),
+    )
+    expected_unblock = _decimal(lot.get("expected_unblock_value")) or Decimal("0")
+    return (
+        dispatch_rank,
+        source_rank,
+        value_gate_rank,
+        -expected_unblock,
+        _text(lot.get("lot_id")),
+    )
 
 
 def _dimension_state(
