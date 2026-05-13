@@ -1266,6 +1266,29 @@ class TestTradingApi(TestCase):
             repair_outcome["summary"]["routeable_candidate_count"],
             0,
         )
+        profit_carry = payload["profit_carry_passport_ledger"]
+        self.assertEqual(
+            profit_carry["schema_version"],
+            "torghut.profit-carry-passport-ledger.v1",
+        )
+        self.assertEqual(profit_carry["max_notional"], "0")
+        self.assertFalse(profit_carry["live_submit_enabled"])
+        self.assertEqual(
+            profit_carry["source_refs"]["repair_outcome_dividend_ledger_ref"],
+            repair_outcome["ledger_id"],
+        )
+        self.assertEqual(
+            profit_carry["action_class_decisions"]["paper_canary"], "blocked"
+        )
+        self.assertEqual(
+            profit_carry["action_class_decisions"]["live_micro_canary"], "blocked"
+        )
+        self.assertTrue(
+            all(
+                passport["max_notional"] == "0"
+                for passport in profit_carry["profit_carry_passports"]
+            )
+        )
         frontier = payload["profit_freshness_frontier"]
         self.assertEqual(
             frontier["schema_version"],
