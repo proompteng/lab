@@ -1,139 +1,122 @@
 # Secure Action Gateway TDD
 
-Date: 2026-05-13
-Status: Submission-ready TDD
-Owner: Greg Konush
+## Architecture
 
-## Technical Position
+Secure Action Gateway runs as a standalone service in the `sag` namespace.
 
-The prototype proves one idea: an agent may suggest internal work, but only the application can execute known actions.
+Components:
 
-The design is intentionally small:
+- **Web/API service:** TanStack Start application in `services/sag`.
+- **State store:** CNPG Postgres cluster `sag-db`, storing a single structured SAG state document.
+- **Kubernetes reader:** service account `sag` with read access to `AgentRun` resources in the `agents` namespace.
+- **Policy engine:** deterministic server-side evaluator for AgentRun secrets, connectors, tools, and natural-language rules.
+- **Audit export:** JSONL endpoint at `/api/events/export`.
+- **GitOps package:** manifests under `argocd/sag`, exposed at `sag.proompteng.ai`.
 
-- one Web/API service,
-- one worker process,
-- local fixture systems for SQL, REST, GraphQL, and a legacy adapter,
-- Postgres for product state and the audit log.
+The service is intentionally one deployable unit for the submission. There is no hidden worker and no static product fixture behind the UI.
 
-Do not build a platform, Kubernetes controller, CRD model, policy microservice, or workflow engine for the challenge. Those would distract from the actual proof.
+## Firewall-Constrained Environment
 
-## Core Primitives
+SAG is deployed inside the cluster where the protected agents run. It does not require inbound access to internal systems from the public internet. The external route exposes only the product UI/API; internal access is performed from the in-cluster service account and CNPG connection.
 
-Use ordinary product primitives:
+Current internal integrations:
 
-- `Request`: the user's natural-language task.
-- `Action`: a named operation the system allows, with schema, effect type, role rule, approval rule, and connector.
-- `Connector`: code that talks to one internal system. It owns credentials and target URLs.
-- `Rule`: server-side decision logic that allows, blocks, or asks for approval.
-- `Approval`: human approval for one exact action call and input digest.
-- `Run`: one execution of a request.
-- `Event`: append-only audit record.
+- Kubernetes API for live AgentRun inspection.
+- CNPG for persisted rules, approvals, AgentRun decisions, and event history.
+- Policy engine in-process for deterministic evaluation.
+- JSONL audit export for review.
 
-The agent sees action names and input schemas. It never sees credentials, raw connection strings, arbitrary URLs, SQL consoles, or shell access.
+Production extension:
 
-## Runtime Shape
+- Move write-time enforcement into a validating admission webhook.
+- Add NetworkPolicy so the service can only reach Kubernetes, CNPG, and approved connectors.
+- Add signed connector definitions for internal databases and APIs.
 
-Processes:
+## Auth And Security Model
 
-- **Web/API service:** sign-in stub, task submission, agent event explorer, selected-event detail, action catalog, approval action, JSONL export.
-- **Worker:** executes allowed action calls outside the web request path.
-- **Fixtures:** seeded Postgres invoice data, local REST account/ticketing service, local GraphQL entitlement service, local legacy retry adapter.
+Current submission model:
 
-Storage:
+- `greg`: security operator with `audit:read`, `rule:create`, `agentrun:evaluate`, and `approval:approve`.
+- `ops`: operator with `audit:read` and `agentrun:evaluate`.
+- `audit`: read-only audit role.
 
-- Postgres tables: `users`, `actions`, `runs`, `action_calls`, `approvals`, `events`.
-- Connector config lives in server/worker configuration for the prototype.
+The approval API checks permissions before changing approval state. A non-approver denial is recorded as an audit event.
 
-Deployment:
+Production model:
 
-- Local Docker Compose or one-command local runner for review.
-- Production can run the same API and worker inside the customer's network with NetworkPolicy and optional gVisor for the worker.
-- No CRDs or reconcilers are required.
+- Map OIDC/SAML/LDAP groups into SAG roles.
+- Enforce role checks on every route.
+- Store approval identity from the authenticated session rather than request body.
+- Require short-lived connector credentials from the customer's secret manager.
 
-## Action Catalog
+## Policy Model
 
-Initial actions:
+Rules have:
 
-| Action | Effect | Connector | Rule |
-| --- | --- | --- | --- |
-| `find_invoice_failures` | read | Postgres | `ops_user` allowed |
-| `lookup_account_status` | read | REST | `ops_user` allowed |
-| `lookup_entitlement` | read | GraphQL | `ops_user` allowed |
-| `create_remediation_ticket` | write | REST | allowed only for invalid records |
-| `retry_invoice_sync` | write | legacy adapter | requires `ops_approver` approval |
+- `mode`: `block`, `approval`, or `audit`.
+- `target`: AgentRun secret, AgentRun connector, connector action, or prompt.
+- `pattern`: deterministic regex compiled server-side.
+- `source`: system or natural-language.
 
-The API rejects any plan step whose action name or input shape is not in this catalog.
+Default rules:
 
-## Execution Flow
+- Block sensitive secret requests matching production/auth/token/password-style names.
+- Require approval for mutating operations such as apply, update, delete, execute, mutate, or merge.
 
-1. `ops_user` submits the invoice-sync request.
-2. API creates a run and records `request.submitted`.
-3. Planner proposes a deterministic list of catalog actions for the demo.
-4. API validates action names and input schemas.
-5. API creates `action_calls` and records `plan.accepted`.
-6. Rule checks allow read actions.
-7. Worker runs SQL, REST, and GraphQL connectors.
-8. Rule allows ticket creation only for records classified invalid.
-9. Rule blocks `retry_invoice_sync` until approval.
-10. `ops_approver` approves that exact action call and input digest.
-11. Worker runs the legacy retry adapter.
-12. UI shows the agent event log, selected event detail, final run status, and JSONL export.
-
-## Security Model
-
-The security boundary is the action catalog plus rule checks:
-
-- Planner cannot call databases, APIs, URLs, shell commands, or legacy systems directly.
-- Every executable step must be a known action.
-- Credentials stay inside connector config.
-- Every action call is checked against the actor's role and the action rule.
-- Risky writes require approval for the exact input digest.
-- Worker receives only the action call it must execute.
-- Connector outputs are summarized/redacted before display and audit storage.
-- Blocked attempts are audit events.
-
-Production hardening can add OIDC/SAML group mapping, customer secret manager integration, NetworkPolicy, signed action catalogs, and stronger worker sandboxing. These are hardening layers, not extra prototype primitives.
+Natural-language rule creation converts operator intent into one of these deterministic rule shapes. The model is not trusted as the enforcement engine; it only helps create inspectable rules.
 
 ## Connector Strategy
 
-Use real local calls:
+Current connectors are the minimum product spine:
 
-- SQL connector queries seeded Postgres invoice rows.
-- REST connector calls local account and ticketing endpoints.
-- GraphQL connector calls local entitlement schema.
-- Legacy connector exposes only `retryInvoiceSync`.
+- `kubernetes`: reads live AgentRuns.
+- `postgres`: persists SAG state in CNPG.
+- `policy`: translates and evaluates rules.
+- `audit`: exports redacted events.
 
-Do not use static JSON as a fake integration. The demo should show the worker crossing four connector types through the same action/rule/event path.
+Future internal-system connectors should follow the same contract:
 
-## Audit Events
+- explicit operation names,
+- least-privilege credentials,
+- typed request/response schema,
+- redaction before persistence,
+- rule evaluation before write access,
+- and event emission for every call.
 
-Required event names:
+## Audit Trail
 
-- `request.submitted`
-- `plan.accepted`
-- `action.requested`
-- `rule.allowed`
-- `rule.blocked`
-- `approval.requested`
-- `approval.granted`
-- `worker.started`
-- `connector.completed`
-- `connector.failed`
-- `run.completed`
+Each event stores:
 
-Each event stores timestamp, actor, run ID, action call ID, action name, decision, input digest, redacted output summary, and error if present.
+- timestamp,
+- actor id/email/role,
+- connector,
+- operation,
+- target,
+- status,
+- matched policy,
+- request hash,
+- correlation id,
+- duration,
+- and redacted evidence.
 
-The event explorer and JSONL export are the audit artifact. They should let a reviewer reconstruct the run without reading server logs.
+Sensitive secret names are hashed as `secret:<hash>`. Raw secret names are not stored in manifests, API responses, or JSONL export.
 
 ## Validation
 
-The prototype is technically complete when a reviewer can verify:
+Local:
 
-- the request becomes a visible action plan,
-- unknown actions are rejected,
-- SQL, REST, GraphQL, and legacy connectors all run,
-- retry is blocked before approval,
-- approval is tied to one action call and input digest,
-- wrong-role approval fails,
-- worker executes the approved retry outside the web request,
-- event export contains the full chain and no raw secrets.
+- `bun run --filter @proompteng/sag tsc`
+- `bun run --filter @proompteng/sag test`
+- `bun run --filter @proompteng/sag lint`
+- `bun run --filter @proompteng/sag lint:oxlint`
+- `bun run --filter @proompteng/sag build`
+- `bun run lint:argocd`
+
+Live:
+
+- Deployment image: `registry.ide-newton.ts.net/lab/sag:sag-20260513010817`.
+- Deployment is ready in namespace `sag`.
+- Health endpoint reports Postgres persistence.
+- Live AgentRun evaluation blocks sensitive secret requests.
+- Mutating action approval flow denies `ops` and allows `greg`.
+- Root page and JSONL export contain no raw sensitive secret names.

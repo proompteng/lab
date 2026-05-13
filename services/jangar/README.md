@@ -378,6 +378,14 @@ is set to `hold` or `enforce`, stale ledgers, held accounts, or missing open fut
 creation. Rollback: set `JANGAR_STAGE_CREDIT_LEDGER_MODE=observe`; if status generation itself regresses, set
 `JANGAR_STAGE_CREDIT_LEDGER_ENABLED=false`.
 
+The next architecture contract is the evidence-pressure ledger in
+`docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`. It adds a
+proof-transport budget below stage credit: Kubernetes watch 429s, controller replica splits, metrics-sink failures,
+GitHub review-ingest missing refs, database evidence authority, and Torghut freshness debt become typed pressure
+sources with TTLs and action-class decisions. The first implementation must be observe-only. Scheduler hold mode comes
+later, after tests prove `dispatch_normal`, `deploy_widen`, and `merge_ready` are held during evidence pressure while
+`serve_readonly`, `torghut_observe`, and bounded zero-notional repairs remain open.
+
 ## Lease reconciliation action clocks
 
 Control-plane status projects shadow `reconciled_action_clocks` from the contract in

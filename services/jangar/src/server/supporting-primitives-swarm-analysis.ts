@@ -127,9 +127,20 @@ export const resolveStageApiVersion = (kind: string) => {
 export const stageScheduleName = (swarmName: string, stage: StageName) => makeHashedName(swarmName, `${stage}-sched`)
 
 export const getRunTimestamp = (resource: Record<string, unknown>) => {
+  const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
+  if (TERMINAL_SUCCESS_PHASES.has(phase) || TERMINAL_FAILURE_PHASES.has(phase)) {
+    return (
+      asString(readNested(resource, ['status', 'finishedAt'])) ??
+      asString(readNested(resource, ['status', 'updatedAt'])) ??
+      asString(readNested(resource, ['status', 'startedAt'])) ??
+      asString(readNested(resource, ['metadata', 'creationTimestamp']))
+    )
+  }
+
   return (
     asString(readNested(resource, ['status', 'startedAt'])) ??
     asString(readNested(resource, ['status', 'finishedAt'])) ??
+    asString(readNested(resource, ['status', 'updatedAt'])) ??
     asString(readNested(resource, ['metadata', 'creationTimestamp']))
   )
 }

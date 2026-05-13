@@ -56,7 +56,10 @@ from app.trading.discovery.portfolio_optimizer import (
     PortfolioCandidateSpec,
     optimize_portfolio_candidate,
 )
-from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
+from app.trading.discovery.profit_target_oracle import (
+    ProfitTargetOraclePolicy,
+    evaluate_profit_target_oracle,
+)
 from app.trading.discovery.runtime_closure import (
     RuntimeClosureExecutionContext,
     write_runtime_closure_bundle,
@@ -85,6 +88,17 @@ _DEFAULT_STRICT_DAILY_PROFIT_PROGRAM = Path(
 )
 _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC = 8
 _PROGRAM_SOURCE_DEFAULT_CONFIDENCE = "0.70"
+_RUNTIME_CLOSURE_PROOF_ORACLE_BLOCKERS = frozenset(
+    {
+        "shadow_parity_status_failed",
+        "executable_replay_passed_failed",
+        "executable_replay_artifact_present_failed",
+        "executable_replay_order_count_failed",
+        "executable_replay_account_buying_power_failed",
+        "executable_replay_max_notional_per_trade_failed",
+        "executable_replay_notional_within_buying_power_failed",
+    }
+)
 
 
 def _default_strategy_config_path() -> Path:
@@ -152,6 +166,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk-minutes", type=int, default=10)
     parser.add_argument("--symbols", default=_DEFAULT_CHIP_UNIVERSE_CSV)
     parser.add_argument("--progress-log-seconds", type=int, default=30)
+    parser.add_argument(
+        "--shadow-validation-artifact",
+        type=Path,
+        default=None,
+        help=(
+            "Optional real shadow/live deviation artifact to attach to runtime "
+            "closure. Missing or invalid artifacts stay fail-closed."
+        ),
+    )
     parser.add_argument(
         "--max-frontier-candidates-per-spec",
         type=int,
@@ -1585,6 +1608,9 @@ def _profitability_next_epoch_plan(
     real_replay_shard_workers = _int_arg(args, "real_replay_shard_workers", 1)
     if real_replay_shard_workers > 1:
         flags["--real-replay-shard-workers"] = str(real_replay_shard_workers)
+    shadow_validation_artifact = getattr(args, "shadow_validation_artifact", None)
+    if shadow_validation_artifact is not None:
+        flags["--shadow-validation-artifact"] = str(shadow_validation_artifact)
 
     applied_recommended_flags: list[dict[str, str]] = []
     rejected_recommended_flags: list[dict[str, str]] = []
@@ -2794,6 +2820,11 @@ def _runtime_closure_payload(
             symbol.strip() for symbol in str(args.symbols).split(",") if symbol.strip()
         ),
         progress_log_interval_seconds=int(args.progress_log_seconds),
+        shadow_validation_artifact_path=_resolve_existing_path(
+            cast(Path, getattr(args, "shadow_validation_artifact"))
+        )
+        if getattr(args, "shadow_validation_artifact", None) is not None
+        else None,
     )
     return write_runtime_closure_bundle(
         run_root=output_dir,
@@ -2805,6 +2836,210 @@ def _runtime_closure_payload(
     ).to_payload()
 
 
+def _boolish(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return _string(value).lower() in {"1", "true", "yes", "y", "passed"}
+
+
+def _oracle_blockers(scorecard: Mapping[str, Any]) -> frozenset[str]:
+    raw_blockers = _mapping(scorecard.get("profit_target_oracle")).get("blockers")
+    if not isinstance(raw_blockers, Sequence) or isinstance(raw_blockers, str):
+        return frozenset()
+    return frozenset(
+        blocker
+        for blocker in (_string(item) for item in cast(Sequence[Any], raw_blockers))
+        if blocker
+    )
+
+
+def _portfolio_needs_runtime_closure_proof(portfolio: PortfolioCandidateSpec) -> bool:
+    scorecard = _mapping(portfolio.objective_scorecard)
+    if _boolish(scorecard.get("oracle_passed")):
+        return False
+    if not _boolish(scorecard.get("target_met")):
+        return False
+    blockers = _oracle_blockers(scorecard)
+    return bool(blockers) and blockers <= _RUNTIME_CLOSURE_PROOF_ORACLE_BLOCKERS
+
+
+def _load_json_mapping_artifact(path_value: Any) -> dict[str, Any]:
+    path_text = _string(path_value)
+    if not path_text:
+        return {}
+    try:
+        payload = json.loads(Path(path_text).read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return _mapping(payload)
+
+
+def _runtime_closure_artifact_refs(
+    runtime_closure: Mapping[str, Any],
+) -> tuple[str, ...]:
+    refs: list[str] = []
+    root = _string(runtime_closure.get("root"))
+    if root:
+        summary_path = Path(root) / "summary.json"
+        if summary_path.exists():
+            refs.append(str(summary_path))
+    for key in (
+        "candidate_configmap_path",
+        "gate_report_path",
+        "parity_replay_path",
+        "parity_report_path",
+        "approval_replay_path",
+        "approval_report_path",
+        "shadow_validation_path",
+        "portfolio_proof_receipt_path",
+        "profitability_stage_manifest_path",
+        "promotion_prerequisites_path",
+        "replay_plan_path",
+    ):
+        ref = _string(runtime_closure.get(key))
+        if ref and Path(ref).exists() and ref not in refs:
+            refs.append(ref)
+    return tuple(refs)
+
+
+def _runtime_report_summary_int(
+    report: Mapping[str, Any], key: str, *, default: int = 0
+) -> int:
+    value = _mapping(report.get("summary")).get(key)
+    try:
+        return max(0, int(Decimal(str(value if value is not None else default))))
+    except Exception:
+        return default
+
+
+def _runtime_closure_start_equity(runtime_closure: Mapping[str, Any]) -> Decimal:
+    replay_plan = _load_json_mapping_artifact(runtime_closure.get("replay_plan_path"))
+    execution_context = _mapping(replay_plan.get("execution_context"))
+    return _decimal(execution_context.get("start_equity"))
+
+
+def _portfolio_executable_max_notional(portfolio: PortfolioCandidateSpec) -> Decimal:
+    max_notional = Decimal("0")
+    base_per_leg_notional = Decimal("50000")
+    for sleeve in portfolio.sleeves:
+        explicit_max = _decimal(sleeve.get("max_notional_per_trade"))
+        if explicit_max > 0:
+            max_notional = max(max_notional, explicit_max)
+            continue
+        weight = _decimal(sleeve.get("weight"), default="1")
+        if weight <= 0:
+            weight = Decimal("1")
+        max_notional = max(max_notional, base_per_leg_notional * weight)
+    return max_notional
+
+
+def _runtime_closure_scorecard_update(
+    *,
+    portfolio: PortfolioCandidateSpec,
+    runtime_closure: Mapping[str, Any],
+) -> dict[str, Any]:
+    parity_report = _load_json_mapping_artifact(
+        runtime_closure.get("parity_report_path")
+    )
+    approval_report = _load_json_mapping_artifact(
+        runtime_closure.get("approval_report_path")
+    )
+    shadow_validation = _load_json_mapping_artifact(
+        runtime_closure.get("shadow_validation_path")
+    )
+    parity_pass = _boolish(parity_report.get("objective_met"))
+    approval_pass = _boolish(approval_report.get("objective_met"))
+    artifact_refs = _runtime_closure_artifact_refs(runtime_closure)
+    executable_artifact_refs = tuple(
+        ref
+        for ref in (
+            _string(runtime_closure.get("parity_replay_path")),
+            _string(runtime_closure.get("approval_replay_path")),
+        )
+        if ref and Path(ref).exists()
+    )
+    executable_report = approval_report if approval_report else parity_report
+    filled_order_count = _runtime_report_summary_int(executable_report, "filled_count")
+    submitted_order_count = _runtime_report_summary_int(
+        executable_report, "decision_count"
+    )
+    shadow_status = _string(shadow_validation.get("status")) or "missing"
+    return {
+        "runtime_closure_proof": {
+            "status": _string(runtime_closure.get("status")) or "missing",
+            "parity_objective_met": parity_pass,
+            "approval_objective_met": approval_pass,
+            "shadow_status": shadow_status,
+            "artifact_refs": list(artifact_refs),
+            "executable_replay_artifact_refs": list(executable_artifact_refs),
+        },
+        "runtime_closure_artifact_refs": list(artifact_refs),
+        "shadow_parity_status": "within_budget"
+        if shadow_status == "within_budget"
+        else shadow_status,
+        "executable_replay_passed": (
+            parity_pass and approval_pass and bool(executable_artifact_refs)
+        ),
+        "executable_replay_artifact_refs": list(executable_artifact_refs),
+        "executable_replay_artifact_ref": executable_artifact_refs[-1]
+        if executable_artifact_refs
+        else "",
+        "executable_replay_order_count": filled_order_count,
+        "executable_replay_submitted_order_count": submitted_order_count,
+        "executable_replay_account_buying_power": str(
+            _runtime_closure_start_equity(runtime_closure)
+        ),
+        "executable_replay_max_notional_per_trade": str(
+            _portfolio_executable_max_notional(portfolio)
+        ),
+    }
+
+
+def _portfolio_with_runtime_closure_proof(
+    *,
+    portfolio: PortfolioCandidateSpec,
+    runtime_closure: Mapping[str, Any],
+    target: Decimal,
+    oracle_policy: ProfitTargetOraclePolicy,
+) -> PortfolioCandidateSpec:
+    proof_update = _runtime_closure_scorecard_update(
+        portfolio=portfolio, runtime_closure=runtime_closure
+    )
+    proof_payload = _mapping(proof_update.get("runtime_closure_proof"))
+    if not proof_payload.get("executable_replay_artifact_refs") and proof_payload.get(
+        "shadow_status"
+    ) not in {"within_budget", "invalid_artifact"}:
+        return portfolio
+
+    scorecard = {**dict(portfolio.objective_scorecard), **proof_update}
+    scorecard["profit_target_oracle"] = evaluate_profit_target_oracle(
+        scorecard,
+        target_net_pnl_per_day=target,
+        policy=oracle_policy,
+    )
+    scorecard["oracle_passed"] = bool(scorecard["profit_target_oracle"]["passed"])
+    runtime_refs = tuple(
+        ref
+        for ref in cast(
+            Sequence[Any], scorecard.get("runtime_closure_artifact_refs") or ()
+        )
+        if _string(ref)
+    )
+    evidence_refs = tuple(dict.fromkeys((*portfolio.evidence_refs, *runtime_refs)))
+    optimizer_report = {
+        **dict(portfolio.optimizer_report),
+        "runtime_closure_proof_status": proof_payload.get("status"),
+        "runtime_closure_artifact_count": len(runtime_refs),
+        "oracle_passed_after_runtime_closure": scorecard["oracle_passed"],
+    }
+    return replace(
+        portfolio,
+        objective_scorecard=scorecard,
+        evidence_refs=evidence_refs,
+        optimizer_report=optimizer_report,
+    )
+
+
 def _runtime_closure_program_for_candidate(
     *,
     program: StrategyAutoresearchProgram,
@@ -2812,10 +3047,13 @@ def _runtime_closure_program_for_candidate(
     portfolio: PortfolioCandidateSpec | None,
     oracle_candidate_found: bool,
 ) -> StrategyAutoresearchProgram:
-    if portfolio is None or (
-        oracle_candidate_found
-        and bool(manifest.source_window_start)
-        and bool(manifest.source_window_end)
+    runtime_window_available = bool(manifest.source_window_start) and bool(
+        manifest.source_window_end
+    )
+    if portfolio is None:
+        return program
+    if runtime_window_available and (
+        oracle_candidate_found or _portfolio_needs_runtime_closure_proof(portfolio)
     ):
         return program
     return replace(
@@ -3200,6 +3438,38 @@ def run_whitepaper_autoresearch_profit_target(
     write_mlx_snapshot_manifest(
         output_dir / "mlx-snapshot-manifest.json", mlx_snapshot_manifest
     )
+    initial_oracle_candidate_found = bool(
+        portfolio is not None
+        and portfolio.objective_scorecard.get("oracle_passed") is True
+        and not replay_result.incomplete
+    )
+    runtime_closure_program = _runtime_closure_program_for_candidate(
+        program=program,
+        manifest=mlx_snapshot_manifest,
+        portfolio=portfolio,
+        oracle_candidate_found=initial_oracle_candidate_found,
+    )
+    runtime_closure = _runtime_closure_payload(
+        args=args,
+        output_dir=output_dir,
+        epoch_id=epoch_id,
+        program=runtime_closure_program,
+        manifest=mlx_snapshot_manifest,
+        portfolio=portfolio,
+    )
+    if portfolio is not None:
+        portfolio = _portfolio_with_runtime_closure_proof(
+            portfolio=portfolio,
+            runtime_closure=runtime_closure,
+            target=target,
+            oracle_policy=oracle_policy,
+        )
+        portfolio_rows = [portfolio.to_payload()]
+        _write_jsonl(output_dir / "portfolio-candidates.jsonl", portfolio_rows)
+        _write_json(
+            output_dir / "portfolio-optimizer-report.json", portfolio.optimizer_report
+        )
+
     oracle_candidate_found = bool(
         portfolio is not None
         and portfolio.objective_scorecard.get("oracle_passed") is True
@@ -3217,26 +3487,36 @@ def run_whitepaper_autoresearch_profit_target(
     elif replay_result.incomplete:
         promotion_status = "blocked_pending_complete_replay"
         promotion_blockers = ["selected_replay_incomplete", *replay_failure_reasons]
-    else:
-        promotion_status = "blocked_pending_runtime_parity"
+    elif oracle_candidate_found:
+        runtime_status = _string(runtime_closure.get("status"))
+        promotion_status = runtime_status or "ready_for_promotion_review"
         promotion_blockers = [
+            _string(item)
+            for item in cast(
+                Sequence[Any], runtime_closure.get("next_required_steps") or ()
+            )
+            if _string(item) and _string(item) != "promotion_review"
+        ]
+    else:
+        runtime_next_steps = [
+            _string(item)
+            for item in cast(
+                Sequence[Any], runtime_closure.get("next_required_steps") or ()
+            )
+            if _string(item)
+        ]
+        promotion_status = "blocked_pending_runtime_closure_or_oracle"
+        promotion_blockers = list(
+            dict.fromkeys(
+                (
+                    *sorted(_oracle_blockers(_mapping(portfolio.objective_scorecard))),
+                    *runtime_next_steps,
+                )
+            )
+        ) or [
             "scheduler_v3_parity_missing",
             "shadow_validation_missing",
         ]
-    runtime_closure_program = _runtime_closure_program_for_candidate(
-        program=program,
-        manifest=mlx_snapshot_manifest,
-        portfolio=portfolio,
-        oracle_candidate_found=oracle_candidate_found,
-    )
-    runtime_closure = _runtime_closure_payload(
-        args=args,
-        output_dir=output_dir,
-        epoch_id=epoch_id,
-        program=runtime_closure_program,
-        manifest=mlx_snapshot_manifest,
-        portfolio=portfolio,
-    )
     status = "ok" if oracle_candidate_found else "no_profit_target_candidate"
     status_reason = None
     if not oracle_candidate_found:

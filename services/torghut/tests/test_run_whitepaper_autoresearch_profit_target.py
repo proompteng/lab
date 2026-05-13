@@ -469,6 +469,286 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertFalse(runtime_program.runtime_closure_policy.execute_parity_replay)
         self.assertFalse(runtime_program.runtime_closure_policy.execute_approval_replay)
 
+    def test_runtime_closure_replay_stays_enabled_for_proof_only_oracle_failure(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            args = self._args(Path(tmpdir) / "epoch")
+            args.program = Path(
+                "config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml"
+            )
+            args.replay_mode = "real"
+            program = runner._load_epoch_program(args)
+
+        manifest = runner.MlxSnapshotManifest(
+            snapshot_id="mlx-snap-test",
+            created_at="2026-05-06T00:00:00+00:00",
+            source_window_start="2026-03-20",
+            source_window_end="2026-04-09",
+            train_days=6,
+            holdout_days=3,
+            full_window_days=9,
+            symbols=tuple(_CHIP_UNIVERSE),
+            bar_interval="PT1S",
+            quote_quality_policy_id="scheduler_v3_default",
+            feature_set_id="torghut.mlx-autoresearch.v1",
+            cross_sectional_feature_flags={},
+            prior_day_feature_flags={},
+            tape_freshness_receipts=(),
+            row_counts={},
+            tensor_bundle_paths={},
+            manifest_hash="hash",
+        )
+        portfolio = runner.PortfolioCandidateSpec(
+            schema_version="torghut.portfolio-candidate-spec.v1",
+            portfolio_candidate_id="portfolio-test",
+            source_candidate_ids=("candidate-test",),
+            target_net_pnl_per_day=Decimal("500"),
+            sleeves=(),
+            capital_budget={},
+            correlation_budget={},
+            drawdown_budget={},
+            evidence_refs=(),
+            objective_scorecard={
+                "target_met": True,
+                "oracle_passed": False,
+                "profit_target_oracle": {
+                    "passed": False,
+                    "blockers": [
+                        "shadow_parity_status_failed",
+                        "executable_replay_passed_failed",
+                        "executable_replay_artifact_present_failed",
+                    ],
+                },
+            },
+            optimizer_report={},
+        )
+
+        runtime_program = runner._runtime_closure_program_for_candidate(
+            program=program,
+            manifest=manifest,
+            portfolio=portfolio,
+            oracle_candidate_found=False,
+        )
+
+        self.assertTrue(runtime_program.runtime_closure_policy.execute_parity_replay)
+        self.assertTrue(runtime_program.runtime_closure_policy.execute_approval_replay)
+
+    def test_runtime_closure_proof_updates_portfolio_oracle_from_real_artifacts(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            run_root = Path(tmpdir)
+            runtime_root = run_root / "runtime-closure"
+            replay_dir = runtime_root / "replay"
+            gates_dir = runtime_root / "gates"
+            promotion_dir = runtime_root / "promotion"
+            replay_dir.mkdir(parents=True)
+            gates_dir.mkdir(parents=True)
+            promotion_dir.mkdir(parents=True)
+            parity_replay_path = replay_dir / "scheduler-v3-parity-replay.json"
+            approval_replay_path = replay_dir / "scheduler-v3-approval-replay.json"
+            parity_report_path = replay_dir / "scheduler-v3-parity-report.json"
+            approval_report_path = replay_dir / "scheduler-v3-approval-report.json"
+            shadow_path = replay_dir / "shadow-validation-plan.json"
+            replay_plan_path = replay_dir / "runtime-replay-plan.json"
+            gate_path = gates_dir / "gate-evaluation.json"
+            proof_path = promotion_dir / "portfolio-proof-receipt.json"
+            summary_path = runtime_root / "summary.json"
+            for artifact_path in (
+                parity_replay_path,
+                approval_replay_path,
+                gate_path,
+                proof_path,
+                summary_path,
+            ):
+                artifact_path.write_text("{}\n", encoding="utf-8")
+            parity_report_path.write_text(
+                json.dumps(
+                    {
+                        "objective_met": True,
+                        "summary": {"filled_count": 3, "decision_count": 4},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            approval_report_path.write_text(
+                json.dumps(
+                    {
+                        "objective_met": True,
+                        "summary": {"filled_count": 2, "decision_count": 3},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            shadow_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "torghut.runtime-closure-shadow-validation-plan.v1",
+                        "status": "within_budget",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            replay_plan_path.write_text(
+                json.dumps({"execution_context": {"start_equity": "31590.02"}}) + "\n",
+                encoding="utf-8",
+            )
+            policy = runner.ProfitTargetOraclePolicy()
+            scorecard: dict[str, object] = {
+                "net_pnl_per_day": "620",
+                "portfolio_post_cost_net_pnl_per_day": "620",
+                "target_met": True,
+                "active_day_ratio": "1",
+                "positive_day_ratio": "1",
+                "daily_net": {"2026-03-20": "620", "2026-03-21": "620"},
+                "trading_day_count": 2,
+                "best_day_share": "0.25",
+                "max_single_day_contribution_share": "0.25",
+                "max_cluster_contribution_share": "0.30",
+                "max_single_symbol_contribution_share": "0.30",
+                "worst_day_loss": "0",
+                "max_drawdown": "0",
+                "avg_filled_notional_per_day": "300000",
+                "regime_slice_pass_rate": "0.60",
+                "posterior_edge_lower": "0.01",
+                "shadow_parity_status": "missing",
+                "executable_replay_passed": False,
+                "executable_replay_artifact_ref": "",
+                "executable_replay_order_count": 0,
+                "executable_replay_account_buying_power": "0",
+                "executable_replay_max_notional_per_trade": "0",
+            }
+            scorecard["profit_target_oracle"] = runner.evaluate_profit_target_oracle(
+                scorecard,
+                target_net_pnl_per_day=Decimal("500"),
+                policy=policy,
+            )
+            scorecard["oracle_passed"] = False
+            portfolio = runner.PortfolioCandidateSpec(
+                schema_version="torghut.portfolio-candidate-spec.v1",
+                portfolio_candidate_id="portfolio-test",
+                source_candidate_ids=("candidate-test",),
+                target_net_pnl_per_day=Decimal("500"),
+                sleeves=(
+                    {
+                        "candidate_id": "candidate-test",
+                        "candidate_spec_id": "spec-test",
+                        "runtime_family": "breakout_continuation_consistent",
+                        "runtime_strategy_name": "breakout-sleeve-1",
+                        "weight": "0.5",
+                    },
+                ),
+                capital_budget={},
+                correlation_budget={},
+                drawdown_budget={},
+                evidence_refs=(),
+                objective_scorecard=scorecard,
+                optimizer_report={},
+            )
+
+            updated = runner._portfolio_with_runtime_closure_proof(
+                portfolio=portfolio,
+                runtime_closure={
+                    "status": "ready_for_promotion_review",
+                    "root": str(runtime_root),
+                    "gate_report_path": str(gate_path),
+                    "parity_replay_path": str(parity_replay_path),
+                    "parity_report_path": str(parity_report_path),
+                    "approval_replay_path": str(approval_replay_path),
+                    "approval_report_path": str(approval_report_path),
+                    "shadow_validation_path": str(shadow_path),
+                    "portfolio_proof_receipt_path": str(proof_path),
+                    "replay_plan_path": str(replay_plan_path),
+                },
+                target=Decimal("500"),
+                oracle_policy=policy,
+            )
+
+        self.assertTrue(updated.objective_scorecard["oracle_passed"])
+        self.assertTrue(updated.objective_scorecard["executable_replay_passed"])
+        self.assertEqual(
+            updated.objective_scorecard["shadow_parity_status"], "within_budget"
+        )
+        self.assertEqual(
+            updated.objective_scorecard["executable_replay_order_count"], 2
+        )
+        self.assertEqual(
+            updated.objective_scorecard["executable_replay_artifact_ref"],
+            str(approval_replay_path),
+        )
+        self.assertIn(str(approval_replay_path), updated.evidence_refs)
+
+    def test_runtime_closure_proof_helpers_stay_fail_closed_on_edge_inputs(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            invalid_json_path = Path(tmpdir) / "invalid.json"
+            invalid_json_path.write_text("{", encoding="utf-8")
+            args = self._args(Path(tmpdir) / "epoch")
+            program = runner._load_epoch_program(args)
+
+        portfolio = runner.PortfolioCandidateSpec(
+            schema_version="torghut.portfolio-candidate-spec.v1",
+            portfolio_candidate_id="portfolio-test",
+            source_candidate_ids=("candidate-test",),
+            target_net_pnl_per_day=Decimal("500"),
+            sleeves=(
+                {"candidate_id": "candidate-test", "max_notional_per_trade": "123"},
+                {"candidate_id": "candidate-two", "weight": "-1"},
+            ),
+            capital_budget={},
+            correlation_budget={},
+            drawdown_budget={},
+            evidence_refs=(),
+            objective_scorecard={"target_met": True, "oracle_passed": True},
+            optimizer_report={},
+        )
+        manifest = runner.MlxSnapshotManifest(
+            snapshot_id="mlx-snap-test",
+            created_at="2026-05-06T00:00:00+00:00",
+            source_window_start="2026-03-20",
+            source_window_end="2026-04-09",
+            train_days=6,
+            holdout_days=3,
+            full_window_days=9,
+            symbols=tuple(_CHIP_UNIVERSE),
+            bar_interval="PT1S",
+            quote_quality_policy_id="scheduler_v3_default",
+            feature_set_id="torghut.mlx-autoresearch.v1",
+            cross_sectional_feature_flags={},
+            prior_day_feature_flags={},
+            tape_freshness_receipts=(),
+            row_counts={},
+            tensor_bundle_paths={},
+            manifest_hash="hash",
+        )
+
+        self.assertEqual(runner._oracle_blockers({}), frozenset())
+        self.assertEqual(runner._load_json_mapping_artifact(invalid_json_path), {})
+        self.assertEqual(
+            runner._runtime_report_summary_int(
+                {"summary": {"filled_count": "bad"}}, "filled_count", default=7
+            ),
+            7,
+        )
+        self.assertEqual(
+            runner._portfolio_executable_max_notional(portfolio), Decimal("50000")
+        )
+        self.assertFalse(runner._portfolio_needs_runtime_closure_proof(portfolio))
+        self.assertIs(
+            runner._runtime_closure_program_for_candidate(
+                program=program,
+                manifest=manifest,
+                portfolio=None,
+                oracle_candidate_found=False,
+            ),
+            program,
+        )
+
     def test_candidate_universe_symbols_default_to_chip_coverage_when_empty(
         self,
     ) -> None:
@@ -1173,6 +1453,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             args.real_replay_shard_size = 2
             args.real_replay_shard_timeout_seconds = 900
             args.real_replay_shard_workers = 3
+            args.shadow_validation_artifact = Path("/tmp/shadow-validation.json")
             remediation = {
                 "next_actions": [
                     {
@@ -1200,6 +1481,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(plan["flags"]["--real-replay-shard-size"], "2")
         self.assertEqual(plan["flags"]["--real-replay-shard-timeout-seconds"], "900")
         self.assertEqual(plan["flags"]["--real-replay-shard-workers"], "3")
+        self.assertEqual(
+            plan["flags"]["--shadow-validation-artifact"],
+            "/tmp/shadow-validation.json",
+        )
         self.assertIn(
             {
                 "action": "increase_breadth_and_portfolio_diversity",

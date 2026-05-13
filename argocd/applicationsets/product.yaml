@@ -223,6 +223,14 @@ spec:
                       - /spec/template/spec/enableServiceLinks
                 automation: manual
                 enabled: "false"
+              - name: sag
+                path: argocd/sag
+                namespace: sag
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: auto
+                enabled: "true"
               - name: torghut
                 path: argocd/applications/torghut
                 namespace: torghut

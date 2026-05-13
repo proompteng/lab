@@ -1,212 +1,90 @@
-# Secure Action Gateway Essential Model
+# Secure Action Gateway Architecture Primitives
 
-Date: 2026-05-13
-Status: Simplified primitive model
-Owner: Greg Konush
+The product should be easy to explain to a panel: it protects internal agent work before sensitive authority is granted, and it leaves a clear record of every decision.
 
-## The Real Problem
+## Primitives
 
-The problem is not "run an agent behind a firewall." That is deployment language.
+### AgentRun
 
-The real problem is that important internal work lives in a few people's heads:
+The unit of work being protected.
 
-- which database to query,
-- which API to call next,
-- which cases are safe to fix automatically,
-- which cases need a human,
-- which legacy button or script can be run without breaking production,
-- and how to prove what happened afterward.
+For this submission, SAG reads live Kubernetes `AgentRun` resources from the `agents` namespace. An AgentRun can request secrets, connectors, tools, and runtime actions. SAG evaluates those requests before the work receives sensitive authority.
 
-An AI agent helps because it can interpret the operator's request and propose the next steps. The danger is that the same agent might also invent actions, reach arbitrary systems, use credentials too broadly, or trigger side effects no one approved.
+### Connector
 
-The product exists to separate **suggesting work** from **doing work**.
+A bounded integration target.
 
-## Non-Primitives
+Current connectors:
 
-These are useful implementation details, but they are not the product model:
+- `kubernetes`: live AgentRun inspection.
+- `postgres`: CNPG state persistence.
+- `policy`: rule translation and evaluation.
+- `audit`: JSONL event export.
 
-- **Private:** means the product runs in the customer's network and keeps data/secrets there. It is a deployment boundary, not a domain object.
-- **Lease:** is an implementation technique for short-lived worker authority. The prototype does not need this word. Use approval plus worker handoff.
-- **CRD:** is a Kubernetes packaging option. It is not needed to explain or prove the product.
-- **Sandbox:** is defense in depth for risky execution. It matters, but it is not the core workflow primitive.
-- **Control plane:** too broad for this challenge. The prototype should be one service and one worker.
+Future connectors should be typed adapters with explicit operations and least-privilege credentials. A connector is not a generic shell.
 
-## Minimal Primitives
+### Rule
 
-Only seven concepts are needed.
+A deterministic policy.
 
-### 1. Request
+Rules define:
 
-What the user asks for, who asked, and when.
+- mode: `block`, `approval`, or `audit`;
+- target: secret, connector, action, or prompt;
+- pattern: a compiled server-side match expression;
+- source: system or natural-language.
 
-Example:
+Natural language is used only to create inspectable rules. Enforcement uses deterministic rules.
 
-> Investigate invoice sync failures from the last 24 hours, create tickets for invalid records, and retry only safe failures after approval.
+### Decision
 
-The request is not executable. It is just the starting point.
+The result of evaluating an AgentRun:
 
-### 2. Action
+- `allowed`: no blocking or approval rule matched.
+- `blocked`: the AgentRun requested access that policy forbids.
+- `approval_required`: the AgentRun requested a risky action that needs a human decision.
 
-A named operation the system is allowed to perform.
+### Approval
 
-An action has:
+A human gate for risky actions.
 
-- a name,
-- an input schema,
-- an effect: `read` or `write`,
-- allowed roles,
-- whether approval is required,
-- the connector that runs it.
+Approval must check role permissions. A denied approval attempt is also an event because it is security-relevant.
 
-Example actions:
+### Event
 
-- `find_invoice_failures`
-- `lookup_account_status`
-- `lookup_entitlement`
-- `create_remediation_ticket`
-- `retry_invoice_sync`
+The audit record.
 
-The agent can only choose from known actions. It cannot invent SQL, URLs, shell commands, or legacy operations.
+Every evaluation, rule creation, denial, and approval becomes an event with actor identity, connector, operation, target, status, policy, request hash, and redacted evidence.
 
-### 3. Connector
+## Why This Is The Right Level
 
-The code path that talks to an internal system.
+The original challenge asks for secure agent automation behind a firewall. The smallest useful product is not a broad workflow platform. It is a guard point that can answer:
 
-Examples:
+- Which agent tried to do what?
+- What internal authority did it request?
+- Which policy matched?
+- Was the action allowed, blocked, or held?
+- Who approved it?
+- Can audit verify the evidence later?
 
-- Postgres connector for invoice data,
-- REST connector for account status and ticketing,
-- GraphQL connector for entitlements,
-- legacy adapter for invoice retry.
+The primitives above answer those questions without introducing unnecessary terminology.
 
-The connector owns credentials and network targets. The agent never sees them.
+## Current Implementation Mapping
 
-### 4. Rule
+| Primitive | Implementation                                                                                                |
+| --------- | ------------------------------------------------------------------------------------------------------------- |
+| AgentRun  | `ProtectedAgentRun` in `services/sag/src/server/gateway.ts`; live Kubernetes reader in `server/kubernetes.ts` |
+| Connector | `ConnectorKind` and connector metadata in `gateway.ts`                                                        |
+| Rule      | `GatewayRule`; natural-language creation through `/api/rules`                                                 |
+| Decision  | `evaluateAgentRun` returns `allowed`, `blocked`, or `approval_required`                                       |
+| Approval  | `approveAction`; `/api/approvals/approve`                                                                     |
+| Event     | `GatewayEvent`; `/api/events/export` JSONL                                                                    |
 
-The decision logic for one action call.
+## Platform Path
 
-Rules answer:
-
-- is this user allowed to run this action?
-- is the input valid?
-- is this a read or write?
-- does this action need approval?
-- should this action be blocked?
-
-Rules should be boring and visible. For the prototype they can be normal server code or seed data.
-
-### 5. Approval
-
-A human decision for one exact risky action call.
-
-Approval is not "approve the whole agent run." It is:
-
-- this action,
-- this input,
-- this user,
-- this approver,
-- this timestamp.
-
-If the input changes, the approval no longer applies.
-
-### 6. Run
-
-One execution of a request.
-
-A run contains:
-
-- the original request,
-- the proposed action plan,
-- action calls and their statuses,
-- approvals,
-- final result.
-
-The run is the thing the UI shows.
-
-### 7. Event
-
-One append-only audit record.
-
-Events answer what happened:
-
-- request submitted,
-- plan proposed,
-- action allowed,
-- action blocked,
-- approval requested,
-- approval granted,
-- connector started,
-- connector completed,
-- connector failed,
-- run completed.
-
-The audit log is the review artifact. A reviewer should be able to reconstruct the run from events without trusting server logs.
-
-## Prototype Shape
-
-Keep the implementation small:
-
-```mermaid
-flowchart LR
-  U["Ops user"] --> UI["Web UI"]
-  UI --> API["API service"]
-  API --> Plan["Planner proposes actions"]
-  Plan --> Check["Validate against action catalog"]
-  Check --> Rule["Apply rules"]
-  Rule -->|read or safe write| Worker["Worker executes action"]
-  Rule -->|needs approval| Approval["Approval screen"]
-  Approval --> Worker
-  Worker --> SQL["Postgres"]
-  Worker --> REST["REST API"]
-  Worker --> Graph["GraphQL API"]
-  Worker --> Legacy["Legacy adapter"]
-  API --> Log["Audit log"]
-  Worker --> Log
-```
-
-One API service, one worker, local fixtures, Postgres storage, seeded users.
-
-No CRDs. No reconciler. No separate policy service. No separate planner service.
-
-## Data Model
-
-Prototype tables:
-
-- `users`
-- `actions`
-- `runs`
-- `action_calls`
-- `approvals`
-- `events`
-
-Connector config can be code or environment-backed configuration for the prototype. It does not need a table until the product supports customer-managed connectors.
-
-## Demo Mapping
-
-The invoice-sync demo should prove the model directly:
-
-| Step | Primitive Proven |
-| --- | --- |
-| User submits request | Request |
-| Planner proposes five known steps | Action |
-| API rejects unknown action names | Action, Rule |
-| SQL/REST/GraphQL calls run | Connector |
-| Ticket creation only runs for invalid records | Rule |
-| Legacy retry blocks | Rule |
-| Approver approves exact retry input | Approval |
-| Worker runs retry | Connector, Run |
-| JSONL export shows all steps | Event |
-
-## Why This Fits The Challenge
-
-The challenge asks for natural language to multi-step internal actions, enterprise auth, secure connections, and audit trail.
-
-The simple model satisfies that without inventing a platform:
-
-- natural language becomes a proposed list of known actions,
-- known actions connect to internal systems through connectors,
-- rules enforce RBAC and approval,
-- worker execution keeps credentials out of the planner,
-- events produce the audit trail.
-
-Everything else is production hardening.
+1. Keep the current event log as the reviewer-facing product surface.
+2. Add a validating admission webhook so blocked AgentRuns cannot start.
+3. Add OIDC group mapping for roles.
+4. Add typed internal connectors for customer databases and APIs.
+5. Add immutable audit export to SIEM/data lake.
+6. Add policy packs for common enterprise agent risks.

@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: sag
+resources:
+  - serviceaccount.yaml
+  - rbac.yaml
+  - postgres-cluster.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingressroute.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/sag
+    newName: registry.ide-newton.ts.net/lab/sag
+    newTag: "sag-20260513085024"

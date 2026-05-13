@@ -8,10 +8,14 @@
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM
   reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-13T04:13Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-13T08:28Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-13T04:13Z`):
+- Evidence (current next-work priority, refreshed `2026-05-13T08:45Z`):
+  - `192-torghut-repair-receipt-frontier-and-profit-cutover-2026-05-13.md`
+  - `docs/agents/designs/188-jangar-ready-truth-arbiter-and-stage-credit-cutover-2026-05-13.md`
+  - `192-torghut-freshness-carry-and-repair-proof-slo-2026-05-13.md`
+  - `docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`
   - `192-torghut-typed-consumer-evidence-route-and-capital-safe-repair-dispatch-2026-05-13.md`
   - `docs/agents/designs/188-jangar-typed-torghut-evidence-admission-and-repair-dispatch-2026-05-13.md`
   - `191-torghut-source-serving-proof-and-repair-receipt-promotion-2026-05-13.md`
