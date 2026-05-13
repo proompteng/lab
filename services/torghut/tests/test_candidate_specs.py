@@ -199,18 +199,64 @@ class TestCandidateSpecs(TestCase):
         self.assertEqual(
             set(coverage_profiles), set(candidate_specs_module._FAMILY_RUNTIME)
         )
+        coverage_symbols = set(
+            candidate_specs_module._PORTFOLIO_COVERAGE_UNIVERSE_PROFILE
+        )
         for family_template_id, profiles in coverage_profiles.items():
-            self.assertEqual(len(profiles), 1)
-            profile = profiles[0]
-            self.assertLessEqual(
-                Decimal(str(profile["max_position_pct_equity"])),
-                Decimal("4.0"),
+            self.assertGreaterEqual(len(profiles), 3, family_template_id)
+            self.assertTrue(
+                any(
+                    list(profile["universe_symbols"])
+                    == list(candidate_specs_module._PORTFOLIO_COVERAGE_UNIVERSE_PROFILE)
+                    for profile in profiles
+                ),
                 family_template_id,
             )
-            self.assertEqual(
-                list(profile["universe_symbols"]),
-                list(candidate_specs_module._PORTFOLIO_COVERAGE_UNIVERSE_PROFILE),
+            self.assertTrue(
+                any(
+                    list(profile["universe_symbols"])
+                    == list(
+                        candidate_specs_module._PORTFOLIO_AI_ACCELERATOR_COVERAGE_UNIVERSE_PROFILE
+                    )
+                    for profile in profiles
+                ),
+                family_template_id,
             )
+            self.assertTrue(
+                any(
+                    list(profile["universe_symbols"])
+                    == list(
+                        candidate_specs_module._PORTFOLIO_PLATFORM_COVERAGE_UNIVERSE_PROFILE
+                    )
+                    for profile in profiles
+                ),
+                family_template_id,
+            )
+            for profile in profiles:
+                symbols = [
+                    str(symbol).strip().upper()
+                    for symbol in profile["universe_symbols"]
+                ]
+                self.assertEqual(
+                    len(symbols),
+                    len(set(symbols)),
+                    f"{family_template_id} portfolio coverage profile has duplicate symbols",
+                )
+                self.assertEqual(
+                    sorted(set(symbols) - coverage_symbols),
+                    [],
+                    f"{family_template_id} portfolio coverage profile uses unresearched symbols",
+                )
+                self.assertLessEqual(
+                    Decimal(str(profile["max_position_pct_equity"])),
+                    Decimal("4.0"),
+                    family_template_id,
+                )
+                self.assertLessEqual(
+                    Decimal(str(profile["max_notional_per_trade"])),
+                    Decimal("126360"),
+                    family_template_id,
+                )
 
     def test_same_family_whitepaper_hypotheses_get_distinct_execution_profiles(
         self,
