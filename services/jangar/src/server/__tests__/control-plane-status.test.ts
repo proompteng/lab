@@ -945,6 +945,28 @@ describe('control-plane status', () => {
       allowed_action_classes: expect.arrayContaining(['serve_readonly', 'torghut_observe']),
       blocked_action_classes: expect.arrayContaining(['live_micro_canary', 'live_scale']),
     })
+    expect(status.dependency_verdict_exchange).toMatchObject({
+      mode: 'observe',
+      design_artifact:
+        'docs/agents/designs/186-jangar-route-warrant-dispatch-custody-and-dependency-verdicts-2026-05-13.md',
+      torghut_route_warrant_ref: null,
+      held_action_classes: expect.arrayContaining(['observe', 'repair', 'implement', 'paper']),
+      blocked_action_classes: ['live'],
+    })
+    expect(status.dependency_verdict_exchange.verdicts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'serve_readonly',
+          decision: 'allow',
+          allowed_scope: 'read_only',
+        }),
+        expect.objectContaining({
+          action_class: 'repair',
+          decision: 'hold',
+          blocking_reason_codes: expect.arrayContaining(['route_warrant_missing']),
+        }),
+      ]),
+    )
     expect(status.action_custody_receipts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -972,6 +994,7 @@ describe('control-plane status', () => {
           stage: 'plan',
           action_class: 'dispatch_normal',
           decision: 'allow',
+          dependency_verdict_ref: expect.stringContaining('dependency-verdict:implement:'),
           governing_requirement_refs: expect.arrayContaining([
             'docs/agents/designs/184-jangar-stage-clearance-packets-and-freeze-aware-launch-governor-2026-05-12.md',
           ]),
