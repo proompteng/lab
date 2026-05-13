@@ -57,6 +57,7 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain('Requirements:')
     expect(prompt).toContain(`Keep the progress comment anchored by ${PROGRESS_COMMENT_MARKER} current`)
     expect(prompt).toContain('Do not request Codex review automatically')
+    expect(prompt).toContain('Do not post `@codex review` or `codex:review-request` comments')
     expect(prompt).toContain('permitted to merge the PR once CI is green')
     expect(prompt).toContain('Memory:')
     expect(prompt).toContain('Save a memory for every change made.')
