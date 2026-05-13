@@ -198,6 +198,13 @@ Expected outcomes:
   `clearanceMarketStageAdmissionId`, `clearanceMarketStageDecision`, and selected repair lot. Fire-time schedule
   runners apply the same check before creating an AgentRun and stamp the corresponding
   `swarmClearanceMarket*` parameters on launches that remain admitted.
+- `stage_credit_ledger` cites design doc 187 and prices scheduled stages before they spend runner slots. In observe
+  mode it must expose per-stage `available_credit`, `minimum_spend`, `decision`, `reason_codes`, selected repair lot,
+  and any open `runner_slot_futures`. A normal `discover`, `plan`, `implement`, or `verify` launch is not green
+  rollout evidence once shadow stamping is enabled unless it carries `swarmStageCreditLedgerId`,
+  `swarmStageCreditAccountId`, `swarmRunnerSlotFutureId`, and `swarmStageCreditDecision` in addition to the existing
+  stage-clearance and clearance-market stamps. Rollback is `JANGAR_STAGE_CREDIT_LEDGER_MODE=observe`, then
+  `JANGAR_STAGE_CREDIT_LEDGER_ENABLED=false` only if the payload itself is breaking status generation.
 - If collaboration is degraded or blocked because a runtime helper is missing, `/ready` stays `200` as
   long as the `serving` passport is still `allow` or `degrade`; the blocked `swarm_*` passport surfaces
   the missing component in `reason_codes`.
