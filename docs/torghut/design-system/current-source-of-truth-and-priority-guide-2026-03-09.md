@@ -34,6 +34,8 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v1/historical-dataset-simulation.md`
    - `docs/torghut/design-system/v1/trading-day-simulation-automation.md`
 3. current autonomy/promotion contract source of truth:
+   - `docs/torghut/design-system/v6/191-torghut-source-serving-proof-and-repair-receipt-promotion-2026-05-13.md`
+   - `docs/agents/designs/187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`
    - `docs/torghut/design-system/v6/190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
    - `docs/agents/designs/186-jangar-repair-bid-admission-and-settlement-custody-2026-05-13.md`
    - `docs/agents/designs/184-jangar-reliability-settlement-ledger-and-rollout-slo-escrow-2026-05-12.md`
@@ -131,7 +133,16 @@ If the question is "what should I trust right now?", start here:
 
 The current highest-priority work is:
 
-The May 13 repair-bid settlement handoff is the current top priority:
+The May 13 source-serving proof handoff is the current top priority:
+
+- make Torghut publish `source_serving_repair_receipt_ledger` from status and consumer-evidence surfaces so repair
+  receipts cite source commit, serving build commit, serving image digest, manifest image digest, and required contract
+  canaries before stale evidence can graduate in
+  `docs/torghut/design-system/v6/191-torghut-source-serving-proof-and-repair-receipt-promotion-2026-05-13.md`;
+- make Jangar consume source-serving verdicts before deploy widening, merge-ready, paper support, or live support in
+  `docs/agents/designs/187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`.
+
+The May 13 repair-bid settlement handoff remains the next supporting priority:
 
 - make Torghut preserve the raw route evidence clearinghouse packet while compacting broad negative evidence into
   bounded, deduped, zero-notional repair lots in

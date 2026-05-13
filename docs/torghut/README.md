@@ -4,6 +4,14 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/191-torghut-source-serving-proof-and-repair-receipt-promotion-2026-05-13.md`
+  (current source-serving proof and repair-receipt promotion contract)
+- `docs/agents/designs/187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`
+  (current Jangar source-serving verdict contract)
+- `docs/torghut/design-system/v6/190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
+  (current repair-bid settlement and routeability proof compaction contract)
+- `docs/agents/designs/186-jangar-repair-bid-admission-and-settlement-custody-2026-05-13.md`
+  (current Jangar repair-bid admission and settlement custody contract)
 - `docs/torghut/design-system/v6/188-torghut-evidence-clock-arbiter-and-routeable-profit-candidate-exchange-2026-05-12.md`
   (current evidence-clock arbiter and routeable profit candidate exchange contract)
 - `docs/agents/designs/184-jangar-rollout-custody-and-evidence-clock-dispatch-2026-05-12.md`
@@ -149,6 +157,11 @@ Start here:
   `/trading/revenue-repair`, and `/trading/consumer-evidence`. The ledger preserves raw clearinghouse reasons but
   compacts them into bounded zero-notional repair lots with one required output receipt and at most three
   Jangar-dispatchable lots per account/window.
+- Current implementation contract: doc 191 adds `source_serving_repair_receipt_ledger` to status, health, readyz, and
+  `/trading/consumer-evidence`. The ledger compares source/build commit, manifest and serving image digests, and
+  required route contract canaries before any repair receipt can be treated as source-serving-current evidence.
+  Missing image digest, missing required contracts, schema mismatches, or source/serving commit splits keep
+  `max_notional=0` and classify the payload as repair-only evidence.
 - Current implementation contract: doc 189 adds `clock_settlement_receipt` beside the evidence-clock arbiter on
   status, health, readyz, and `/trading/consumer-evidence`. The receipt compares direct ClickHouse TA freshness, Jangar
   scoped quant, TCA, empirical, promotion, and rollout witnesses against the published clocks, emits zero-notional

@@ -115,6 +115,9 @@ from .trading.routeability_repair_acceptance import (
     build_routeability_repair_acceptance_ledger,
 )
 from .trading.route_reacquisition_board import build_route_reacquisition_board
+from .trading.source_serving_repair_receipt import (
+    build_source_serving_repair_receipt_ledger,
+)
 from .trading.submission_council import (
     build_live_submission_gate_payload,
     build_shadow_first_toggle_parity,
@@ -143,6 +146,13 @@ logger = logging.getLogger(__name__)
 BUILD_VERSION = os.getenv("TORGHUT_VERSION", "dev")
 BUILD_COMMIT = os.getenv("TORGHUT_COMMIT", "unknown")
 BUILD_IMAGE_DIGEST = os.getenv("TORGHUT_IMAGE_DIGEST", "").strip() or None
+BUILD_SOURCE_CI_REF = os.getenv("TORGHUT_SOURCE_CI_REF", "").strip() or None
+BUILD_MANIFEST_COMMIT = os.getenv("TORGHUT_MANIFEST_COMMIT", "").strip() or None
+BUILD_MANIFEST_IMAGE_DIGEST = (
+    os.getenv("TORGHUT_MANIFEST_IMAGE_DIGEST", "").strip() or BUILD_IMAGE_DIGEST
+)
+BUILD_ARGO_SYNC_REVISION = os.getenv("TORGHUT_ARGO_SYNC_REVISION", "").strip() or None
+BUILD_ARGO_HEALTH = os.getenv("TORGHUT_ARGO_HEALTH", "").strip() or None
 RUNTIME_PROFITABILITY_LOOKBACK_HOURS = 72
 RUNTIME_PROFITABILITY_SCHEMA_VERSION = "torghut.runtime-profitability.v1"
 PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS = 86_400
@@ -928,6 +938,14 @@ def _evaluate_trading_health_payload(
         empirical_jobs_status=empirical_jobs,
         market_context_status=market_context_status,
     )
+    source_serving_repair_receipt_ledger = _build_source_serving_repair_receipt_payload(
+        source_commit=BUILD_COMMIT,
+        build=build_payload,
+        consumer_evidence_receipt=consumer_evidence_receipt,
+        route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
+        repair_bid_settlement_ledger=repair_bid_settlement_ledger,
+        route_warrant_exchange=route_warrant_exchange,
+    )
     live_mode = settings.trading_mode == "live"
     empirical_jobs_required = (
         live_mode and settings.trading_empirical_jobs_health_required
@@ -1029,6 +1047,7 @@ def _evaluate_trading_health_payload(
             "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
             "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
             "route_warrant_exchange": route_warrant_exchange,
+            "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
             "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
             "route_reacquisition_board": route_reacquisition_board,
             "quant_evidence": quant_evidence,
@@ -2477,6 +2496,14 @@ def trading_status() -> dict[str, object]:
         empirical_jobs_status=empirical_jobs,
         market_context_status=market_context_status,
     )
+    source_serving_repair_receipt_ledger = _build_source_serving_repair_receipt_payload(
+        source_commit=BUILD_COMMIT,
+        build=build_payload,
+        consumer_evidence_receipt=consumer_evidence_receipt,
+        route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
+        repair_bid_settlement_ledger=repair_bid_settlement_ledger,
+        route_warrant_exchange=route_warrant_exchange,
+    )
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -2516,6 +2543,7 @@ def trading_status() -> dict[str, object]:
         "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
         "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
         "route_warrant_exchange": route_warrant_exchange,
+        "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
         "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
         "route_reacquisition_board": route_reacquisition_board,
         "quant_evidence": quant_evidence,
@@ -2902,6 +2930,14 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         empirical_jobs_status=empirical_jobs,
         market_context_status=market_context_status,
     )
+    source_serving_repair_receipt_ledger = _build_source_serving_repair_receipt_payload(
+        source_commit=BUILD_COMMIT,
+        build=build_payload,
+        consumer_evidence_receipt=consumer_evidence_receipt,
+        route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
+        repair_bid_settlement_ledger=repair_bid_settlement_ledger,
+        route_warrant_exchange=route_warrant_exchange,
+    )
     return {
         "schema_version": "torghut.consumer-evidence-status.v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -2933,6 +2969,7 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
         "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
         "route_warrant_exchange": route_warrant_exchange,
+        "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
     }
 
 
@@ -5147,6 +5184,40 @@ def _build_route_warrant_exchange_payload(*, torghut_revision: str | None, sourc
         tca_summary=tca_summary,
         empirical_jobs_status=empirical_jobs_status,
         market_context_status=market_context_status,
+    )
+
+
+def _build_source_serving_repair_receipt_payload(
+    *,
+    source_commit: str | None,
+    build: Mapping[str, Any],
+    consumer_evidence_receipt: Mapping[str, Any],
+    route_evidence_clearinghouse_packet: Mapping[str, Any],
+    repair_bid_settlement_ledger: Mapping[str, Any],
+    route_warrant_exchange: Mapping[str, Any],
+) -> dict[str, object]:
+    return build_source_serving_repair_receipt_ledger(
+        account_label=settings.trading_account_label,
+        window=settings.trading_jangar_quant_window,
+        source_commit=source_commit,
+        source_ci_ref=BUILD_SOURCE_CI_REF,
+        manifest_commit=BUILD_MANIFEST_COMMIT,
+        manifest_image_digest=BUILD_MANIFEST_IMAGE_DIGEST,
+        argo_sync_revision=BUILD_ARGO_SYNC_REVISION,
+        argo_health=BUILD_ARGO_HEALTH,
+        build=build,
+        observed_contract_payloads={
+            "consumer_evidence_status": {
+                "schema_version": "torghut.consumer-evidence-status.v1",
+            },
+            "consumer_evidence_receipt": consumer_evidence_receipt,
+            "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
+            "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
+            "route_warrant_exchange": route_warrant_exchange,
+        },
+        route_warrant_exchange=route_warrant_exchange,
+        repair_bid_settlement_ledger=repair_bid_settlement_ledger,
+        route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
     )
 
 

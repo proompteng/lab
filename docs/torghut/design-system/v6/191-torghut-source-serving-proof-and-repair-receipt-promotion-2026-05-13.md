@@ -283,6 +283,19 @@ Engineer milestone 1:
 - Add tests that prove `serving_build_commit != source_commit`, null image digest, and missing
   `repair_bid_settlement_ledger` all keep `max_notional=0`.
 
+### Implementation Note (2026-05-13)
+
+Engineer milestone 1 is implemented in observe mode. Torghut now publishes
+`torghut.source-serving-repair-receipt-ledger.v1` on `/trading/status`, `/trading/health`, `/readyz`, and
+`/trading/consumer-evidence`. The reducer compares the source commit, serving build commit, serving image digest,
+manifest image digest, route warrant, repair-bid settlement ledger, route-evidence clearinghouse packet, and
+consumer-evidence contract schemas. Source/serving commit splits, missing image digests, missing contract canaries, or
+schema mismatches all keep `max_notional=0` and mark the ledger as repair-only evidence.
+
+The Torghut release manifest updater now also writes `TORGHUT_IMAGE_DIGEST` into the live and sim Knative services so
+newly promoted images can report the serving digest required by the ledger. Existing route warrants remain the capital
+gate; the source-serving ledger adds contract convergence evidence without authorizing paper or live notional.
+
 Engineer milestone 2:
 
 - Bind `run_zero_notional_repair` receipts to the source-serving ledger.
