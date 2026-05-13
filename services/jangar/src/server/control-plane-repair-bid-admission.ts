@@ -52,6 +52,21 @@ export type RepairBidAdmissionInput = {
   torghutConsumerEvidence: TorghutConsumerEvidenceStatus
 }
 
+export const buildDefaultRepairBidAdmissionState = (
+  now: Date,
+  namespace: string,
+  torghutConsumerEvidence: TorghutConsumerEvidenceStatus,
+) =>
+  buildRepairBidAdmissionState({
+    now,
+    namespace,
+    torghutConsumerEvidence,
+    repository: process.env.CODEX_REPOSITORY ?? process.env.CODEX_REPO_SLUG,
+    branch: process.env.CODEX_BRANCH,
+    swarmName: process.env.SWARM_NAME,
+    stage: process.env.SWARM_STAGE ?? process.env.CODEX_STAGE,
+  })
+
 const hashJson = (value: unknown, length = 18) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, length)
 
