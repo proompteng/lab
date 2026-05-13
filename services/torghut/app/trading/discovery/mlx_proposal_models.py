@@ -25,11 +25,19 @@ def _candidate_target(row: Mapping[str, Any]) -> float:
     activity = _float(row.get("active_day_ratio"))
     concentration_penalty = _float(row.get("best_day_share"))
     veto_penalty = 1.0 if row.get("hard_vetoes") else 0.0
+    gross_overage_penalty = max(
+        0.0, _float(row.get("max_gross_exposure_pct_equity")) - 1.0
+    )
+    cash_deficit_penalty = max(0.0, -_float(row.get("min_cash"))) / 100.0
+    negative_cash_penalty = _float(row.get("negative_cash_observation_count")) * 20.0
     return (
         net
         + (activity * 100.0)
         - (concentration_penalty * 100.0)
         - (veto_penalty * 250.0)
+        - (gross_overage_penalty * 500.0)
+        - cash_deficit_penalty
+        - negative_cash_penalty
     )
 
 
@@ -96,6 +104,8 @@ class ProposalSelectionEntry:
     rank: int
     family_template_id: str
     side_policy: str
+    capital_feasible: bool = True
+    capital_budget_overage_ratio: float = 0.0
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -106,6 +116,8 @@ class ProposalSelectionEntry:
             "rank": self.rank,
             "family_template_id": self.family_template_id,
             "side_policy": self.side_policy,
+            "capital_feasible": self.capital_feasible,
+            "capital_budget_overage_ratio": self.capital_budget_overage_ratio,
         }
 
 
@@ -288,9 +300,40 @@ def select_proposal_batch(
     if limit <= 0 or not descriptors or not proposal_scores:
         return []
     descriptor_by_candidate = _descriptor_by_candidate(descriptors)
-    ordered_scores = sorted(
-        proposal_scores, key=lambda item: (item.rank, -item.score, item.candidate_id)
-    )
+
+    def proposal_sort_key(item: ProposalScore) -> tuple[int, float, int, float, str]:
+        descriptor = descriptor_by_candidate.get(item.candidate_id)
+        if descriptor is None:
+            return (1, math.inf, item.rank, -item.score, item.candidate_id)
+        return (
+            0 if descriptor.capital_feasible else 1,
+            _float(descriptor.capital_budget_overage_ratio),
+            item.rank,
+            -item.score,
+            item.candidate_id,
+        )
+
+    def selection_entry(
+        *,
+        score: ProposalScore,
+        descriptor: MlxCandidateDescriptor,
+        selection_reason: str,
+    ) -> ProposalSelectionEntry:
+        return ProposalSelectionEntry(
+            candidate_id=score.candidate_id,
+            descriptor_id=score.descriptor_id,
+            selection_reason=selection_reason,
+            score=score.score,
+            rank=score.rank,
+            family_template_id=descriptor.family_template_id,
+            side_policy=descriptor.side_policy,
+            capital_feasible=descriptor.capital_feasible,
+            capital_budget_overage_ratio=_float(
+                descriptor.capital_budget_overage_ratio
+            ),
+        )
+
+    ordered_scores = sorted(proposal_scores, key=proposal_sort_key)
     selected: list[ProposalSelectionEntry] = []
     selected_ids: set[str] = set()
     selected_families: set[str] = set()
@@ -302,14 +345,8 @@ def select_proposal_batch(
         if descriptor is None or item.candidate_id in selected_ids:
             continue
         selected.append(
-            ProposalSelectionEntry(
-                candidate_id=item.candidate_id,
-                descriptor_id=item.descriptor_id,
-                selection_reason="exploitation",
-                score=item.score,
-                rank=item.rank,
-                family_template_id=descriptor.family_template_id,
-                side_policy=descriptor.side_policy,
+            selection_entry(
+                score=item, descriptor=descriptor, selection_reason="exploitation"
             )
         )
         selected_ids.add(item.candidate_id)
@@ -358,8 +395,12 @@ def select_proposal_batch(
                 diversity_bonus = _mean(distances)
             else:
                 diversity_bonus = 0.0
+            capital_penalty = _float(descriptor.capital_budget_overage_ratio) * 1000.0
+            if not descriptor.capital_feasible:
+                capital_penalty += 10000.0
             combined = (
                 family_bonus + side_bonus + diversity_bonus + (score.score * 0.001)
+                - capital_penalty
             )
             candidate = (combined, score, descriptor)
             if (
@@ -376,14 +417,10 @@ def select_proposal_batch(
             break
         _, score, descriptor = best_item
         selected.append(
-            ProposalSelectionEntry(
-                candidate_id=score.candidate_id,
-                descriptor_id=score.descriptor_id,
+            selection_entry(
+                score=score,
+                descriptor=descriptor,
                 selection_reason="exploration",
-                score=score.score,
-                rank=score.rank,
-                family_template_id=descriptor.family_template_id,
-                side_policy=descriptor.side_policy,
             )
         )
         selected_ids.add(score.candidate_id)
@@ -554,11 +591,21 @@ def rank_candidate_descriptors(
     history_vectors: list[list[float]] = []
     history_targets: list[float] = []
     for row in history_rows:
+        history_capital_feasible = (
+            bool(row.get("capital_feasible"))
+            if row.get("capital_feasible") is not None
+            else True
+        )
         history_descriptor = [
             float(row.get("entry_window_start_minute") or 0),
             float(row.get("entry_window_end_minute") or 0),
             float(row.get("max_hold_minutes") or 0),
             float(row.get("rank_count") or 0),
+            float(row.get("max_position_pct_equity") or 0),
+            float(row.get("configured_max_gross_exposure_pct_equity") or 0),
+            float(row.get("estimated_max_gross_exposure_pct_equity") or 0),
+            float(row.get("capital_budget_overage_ratio") or 0),
+            float(history_capital_feasible),
             float(bool(row.get("requires_prev_day_features"))),
             float(bool(row.get("requires_cross_sectional_features"))),
             float(bool(row.get("requires_quote_quality_gate"))),

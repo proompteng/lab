@@ -10,9 +10,22 @@ from typing import Any, Mapping, cast
 from app.trading.discovery.autoresearch import FamilyAutoresearchPlan
 from app.trading.discovery.family_templates import FamilyTemplate
 
+DEFAULT_CAPITAL_START_EQUITY = 31590.02
+
 
 def _string(value: Any) -> str:
     return str(value or '').strip()
+
+
+def _float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _format_float(value: float) -> str:
+    return format(value, '.12g')
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -129,6 +142,31 @@ def _infer_budget(value: Any, default: str = '0') -> str:
     return normalized or default
 
 
+def _capital_budget_payload(config: Mapping[str, Any], *, rank_count: int) -> dict[str, Any]:
+    max_notional = _float(_override_value(config, 'max_notional_per_trade'))
+    max_notional_pct_start_equity = (
+        max_notional / DEFAULT_CAPITAL_START_EQUITY if DEFAULT_CAPITAL_START_EQUITY > 0 else 0.0
+    )
+    max_position_pct = _float(_override_value(config, 'max_position_pct_equity'))
+    max_trade_pct_equity = max(max_notional_pct_start_equity, max_position_pct)
+    configured_max_gross_pct = _float(_param_value(config, 'max_gross_exposure_pct_equity'))
+    estimated_max_gross_pct = max(
+        configured_max_gross_pct,
+        max_trade_pct_equity * max(1, rank_count),
+    )
+    capital_budget_overage_ratio = max(0.0, estimated_max_gross_pct - 1.0) + max(
+        0.0, max_trade_pct_equity - 1.0
+    )
+    capital_feasible = estimated_max_gross_pct <= 1.0 and max_trade_pct_equity <= 1.0
+    return {
+        'max_position_pct_equity': _format_float(max_position_pct),
+        'configured_max_gross_exposure_pct_equity': _format_float(configured_max_gross_pct),
+        'estimated_max_gross_exposure_pct_equity': _format_float(estimated_max_gross_pct),
+        'capital_budget_overage_ratio': _format_float(capital_budget_overage_ratio),
+        'capital_feasible': capital_feasible,
+    }
+
+
 def _descriptor_id(payload: Mapping[str, Any]) -> str:
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
@@ -160,6 +198,11 @@ class MlxCandidateDescriptor:
     requires_quote_quality_gate: bool
     expected_fill_mode: str
     approval_path: str
+    max_position_pct_equity: str = '0'
+    configured_max_gross_exposure_pct_equity: str = '0'
+    estimated_max_gross_exposure_pct_equity: str = '0'
+    capital_budget_overage_ratio: str = '0'
+    capital_feasible: bool = True
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -185,6 +228,11 @@ class MlxCandidateDescriptor:
             'requires_quote_quality_gate': self.requires_quote_quality_gate,
             'expected_fill_mode': self.expected_fill_mode,
             'approval_path': self.approval_path,
+            'max_position_pct_equity': self.max_position_pct_equity,
+            'configured_max_gross_exposure_pct_equity': self.configured_max_gross_exposure_pct_equity,
+            'estimated_max_gross_exposure_pct_equity': self.estimated_max_gross_exposure_pct_equity,
+            'capital_budget_overage_ratio': self.capital_budget_overage_ratio,
+            'capital_feasible': self.capital_feasible,
         }
 
 
@@ -208,6 +256,7 @@ def descriptor_from_sweep_config(
     rank_count = _infer_rank_count(sweep_config)
     gross_budget_usd = _infer_budget(_override_value(sweep_config, 'max_notional_per_trade'))
     per_leg_budget_usd = _infer_budget(_override_value(sweep_config, 'max_notional_per_trade'))
+    capital_budget = _capital_budget_payload(sweep_config, rank_count=rank_count)
     normalization_regime = _string(_override_value(sweep_config, 'normalization_regime')) or 'runtime_default'
     regime_gate_id = (
         _string(template.regime_activation_rules[0].get('rule_id')) if template.regime_activation_rules else 'none'
@@ -241,6 +290,7 @@ def descriptor_from_sweep_config(
         'requires_quote_quality_gate': requires_quote_quality_gate,
         'expected_fill_mode': expected_fill_mode,
         'approval_path': approval_path,
+        **capital_budget,
     }
     return MlxCandidateDescriptor(
         descriptor_id=_descriptor_id(descriptor_payload),
@@ -265,6 +315,11 @@ def descriptor_from_sweep_config(
         requires_quote_quality_gate=requires_quote_quality_gate,
         expected_fill_mode=expected_fill_mode,
         approval_path=approval_path,
+        max_position_pct_equity=str(capital_budget['max_position_pct_equity']),
+        configured_max_gross_exposure_pct_equity=str(capital_budget['configured_max_gross_exposure_pct_equity']),
+        estimated_max_gross_exposure_pct_equity=str(capital_budget['estimated_max_gross_exposure_pct_equity']),
+        capital_budget_overage_ratio=str(capital_budget['capital_budget_overage_ratio']),
+        capital_feasible=bool(capital_budget['capital_feasible']),
     )
 
 
@@ -291,6 +346,11 @@ def descriptor_numeric_vector(descriptor: MlxCandidateDescriptor) -> list[float]
         float(descriptor.entry_window_end_minute),
         float(descriptor.max_hold_minutes),
         float(descriptor.rank_count),
+        _float(descriptor.max_position_pct_equity),
+        _float(descriptor.configured_max_gross_exposure_pct_equity),
+        _float(descriptor.estimated_max_gross_exposure_pct_equity),
+        _float(descriptor.capital_budget_overage_ratio),
+        float(descriptor.capital_feasible),
         float(descriptor.requires_prev_day_features),
         float(descriptor.requires_cross_sectional_features),
         float(descriptor.requires_quote_quality_gate),

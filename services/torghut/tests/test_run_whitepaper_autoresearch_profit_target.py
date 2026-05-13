@@ -839,6 +839,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertFalse(payload["best_false_negative_table"][0]["selected_for_replay"])
         selected_rows = [row for row in selection["rows"] if row["selected_for_replay"]]
+        self.assertGreater(selection["budget"]["capital_feasible_candidate_count"], 0)
+        self.assertTrue(
+            all(row["capital_budget"]["capital_feasible"] for row in selected_rows)
+        )
         self.assertEqual(
             {row["selection_reason"] for row in selected_rows},
             {"exploitation", "exploration", "budget_backfill"},
