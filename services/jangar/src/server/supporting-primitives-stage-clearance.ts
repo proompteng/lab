@@ -8,6 +8,14 @@ import type {
 import { asRecord, asString } from '~/server/primitives-http'
 import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
 import {
+  applyEvidencePressureTrace,
+  evidencePressureEnforced,
+  evidencePressureTraceForAction,
+  readEvidencePressureStatusSnapshot,
+  type EvidencePressureStatusSnapshot,
+  type EvidencePressureTrace,
+} from '~/server/supporting-primitives-evidence-pressure'
+import {
   SWARM_STAGE_CLEARANCE_ANNOTATION_ACTION_CLASS,
   SWARM_STAGE_CLEARANCE_ANNOTATION_CLEARANCE_MARKET_LEDGER_ID,
   SWARM_STAGE_CLEARANCE_ANNOTATION_CLEARANCE_MARKET_SELECTED_REPAIR_LOT,
@@ -64,6 +72,7 @@ export type StageClearanceLaunchAdmission = {
   packet: StageClearancePacket | null
   clearanceMarket: StageClearanceMarketTrace | null
   stageCredit: StageCreditTrace | null
+  evidencePressure: EvidencePressureTrace | null
   reason:
     | 'StageClearanceDisabled'
     | 'StageClearanceAllowed'
@@ -73,6 +82,8 @@ export type StageClearanceLaunchAdmission = {
     | 'StageClearanceStale'
     | 'StageClearanceHeld'
     | 'StageClearanceLaunchBudgetExhausted'
+    | 'EvidencePressureHeld'
+    | 'EvidencePressureStale'
   message: string
   annotations: Record<string, string>
   parameters: Record<string, string>
@@ -83,6 +94,7 @@ export type StageClearanceStatusSnapshot = {
   clearanceMarketLedgerId: string | null
   stageAdmissions: ClearanceMarketStageAdmission[]
   stageCredit: StageCreditStatusSnapshot | null
+  evidencePressure: EvidencePressureStatusSnapshot | null
 }
 
 type StageCreditAccountSnapshot = {
@@ -113,7 +125,7 @@ type StageClearanceAdmissionSnapshot = Pick<
   StageClearanceStatusSnapshot,
   'clearanceMarketLedgerId' | 'stageAdmissions'
 > &
-  Partial<Pick<StageClearanceStatusSnapshot, 'stageCredit'>>
+  Partial<Pick<StageClearanceStatusSnapshot, 'stageCredit' | 'evidencePressure'>>
 
 const asArray = (value: unknown) => (Array.isArray(value) ? value : [])
 
@@ -275,6 +287,7 @@ const readStageClearanceStatusSnapshot = (status: Record<string, unknown>): Stag
       .map(readClearanceMarketStageAdmission)
       .filter(isPresent),
     stageCredit: readStageCreditStatusSnapshot(status.stage_credit_ledger),
+    evidencePressure: readEvidencePressureStatusSnapshot(status.evidence_pressure_ledger),
   }
 }
 
@@ -376,6 +389,7 @@ const buildStageClearanceTrace = (
   mode: StageClearanceMode,
   clearanceMarket: StageClearanceMarketTrace | null,
   stageCredit: StageCreditTrace | null,
+  evidencePressure: EvidencePressureTrace | null,
 ): Pick<StageClearanceLaunchAdmission, 'annotations' | 'parameters'> => {
   const reasonCodes = packet.reason_codes.join(',')
   const annotations: Record<string, string> = {
@@ -460,6 +474,7 @@ const buildStageClearanceTrace = (
     annotations[SWARM_STAGE_CREDIT_ANNOTATION_SELECTED_REPAIR_LOT] = stageCredit.selectedRepairLotRef
     parameters.swarmCreditSelectedRepairLotRef = stageCredit.selectedRepairLotRef
   }
+  applyEvidencePressureTrace(annotations, parameters, evidencePressure)
   return { annotations, parameters }
 }
 
@@ -495,6 +510,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       packet: null,
       clearanceMarket: null,
       stageCredit: null,
+      evidencePressure: null,
       reason: 'StageClearanceDisabled',
       message: 'stage clearance enforcement disabled',
       annotations: {},
@@ -520,6 +536,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       packet: null,
       clearanceMarket: null,
       stageCredit: null,
+      evidencePressure: null,
       reason: 'StageClearanceMissing',
       message: `missing stage clearance packet for ${input.swarmName}/${input.stage}/${actionClass}`,
       annotations: {},
@@ -530,7 +547,8 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
   const clearanceMarket = clearanceMarketTraceForPacket(input.clearanceMarket, packet)
   const nowMs = input.nowMs ?? Date.now()
   const stageCredit = stageCreditTraceForPacket(input.clearanceMarket, packet, nowMs)
-  const trace = buildStageClearanceTrace(packet, input.mode, clearanceMarket, stageCredit)
+  const evidencePressure = evidencePressureTraceForAction(input.clearanceMarket, actionClass)
+  const trace = buildStageClearanceTrace(packet, input.mode, clearanceMarket, stageCredit, evidencePressure)
   const freshUntilMs = Date.parse(packet.fresh_until)
   if (!Number.isFinite(freshUntilMs) || freshUntilMs <= nowMs) {
     return {
@@ -541,6 +559,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       packet,
       clearanceMarket,
       stageCredit,
+      evidencePressure,
       reason: 'StageClearanceStale',
       message: `stage clearance packet ${packet.packet_id} is stale`,
       ...trace,
@@ -556,6 +575,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       packet,
       clearanceMarket,
       stageCredit,
+      evidencePressure,
       reason: 'StageClearanceHeld',
       message: summarizeStageClearanceBlock(packet, clearanceMarket),
       ...trace,
@@ -570,6 +590,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       packet,
       clearanceMarket,
       stageCredit,
+      evidencePressure,
       reason: 'StageClearanceHeld',
       message: `clearance market stage admission ${clearanceMarket.stageAdmissionId ?? clearanceMarket.ledgerId} is ${
         clearanceMarket.decision
@@ -588,9 +609,45 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       packet,
       clearanceMarket,
       stageCredit,
+      evidencePressure,
       reason: 'StageClearanceLaunchBudgetExhausted',
       message: `stage clearance packet ${packet.packet_id} has no launch budget`,
       ...trace,
+    }
+  }
+  if (evidencePressure && evidencePressureEnforced(evidencePressure)) {
+    const pressureFreshUntilMs = Date.parse(evidencePressure.freshUntil ?? '')
+    if (!Number.isFinite(pressureFreshUntilMs) || pressureFreshUntilMs <= nowMs) {
+      return {
+        mode: input.mode,
+        admitted: false,
+        stage: input.stage,
+        actionClass,
+        packet,
+        clearanceMarket,
+        stageCredit,
+        evidencePressure,
+        reason: 'EvidencePressureStale',
+        message: `evidence pressure ledger ${evidencePressure.ledgerId} is stale`,
+        ...trace,
+      }
+    }
+    if (evidencePressure.decision !== 'allow') {
+      return {
+        mode: input.mode,
+        admitted: false,
+        stage: input.stage,
+        actionClass,
+        packet,
+        clearanceMarket,
+        stageCredit,
+        evidencePressure,
+        reason: 'EvidencePressureHeld',
+        message: `evidence pressure budget ${evidencePressure.ledgerId}/${actionClass} is ${
+          evidencePressure.decision ?? 'missing'
+        }${evidencePressure.reasonCodes.length > 0 ? `: ${evidencePressure.reasonCodes.join(', ')}` : ''}`,
+        ...trace,
+      }
     }
   }
 
@@ -602,6 +659,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
     packet,
     clearanceMarket,
     stageCredit,
+    evidencePressure,
     reason: input.mode === 'hold' ? 'StageClearanceAllowed' : 'StageClearanceShadow',
     message:
       input.mode === 'hold'
@@ -624,6 +682,7 @@ export const resolveStageClearanceUnavailable = (
   packet: null,
   clearanceMarket: null,
   stageCredit: null,
+  evidencePressure: null,
   reason: 'StageClearanceUnavailable',
   message: `stage clearance snapshot unavailable: ${errorMessage}`,
   annotations: {},
@@ -663,6 +722,7 @@ export const resolveStageClearanceForStage = async (input: {
           clearanceMarketLedgerId: input.clearanceMarket?.clearanceMarketLedgerId ?? null,
           stageAdmissions: input.clearanceMarket?.stageAdmissions ?? [],
           stageCredit: input.clearanceMarket?.stageCredit ?? null,
+          evidencePressure: input.clearanceMarket?.evidencePressure ?? null,
         }
       : await fetchStageClearanceStatusSnapshot(input.namespace, config)
     return resolveStageClearanceAdmissionFromPackets({
@@ -706,6 +766,13 @@ export const stageClearanceStatusForStage = (admission: StageClearanceLaunchAdmi
   runnerSlotFutureId: admission.stageCredit?.runnerSlotFutureId ?? null,
   runnerSlotFutureExpiresAt: admission.stageCredit?.runnerSlotFutureExpiresAt ?? null,
   stageCreditSelectedRepairLotRef: admission.stageCredit?.selectedRepairLotRef ?? null,
+  evidencePressureLedgerId: admission.evidencePressure?.ledgerId ?? null,
+  evidencePressureDecision: admission.evidencePressure?.decision ?? null,
+  evidencePressureMode: admission.evidencePressure?.mode ?? null,
+  evidencePressureFreshUntil: admission.evidencePressure?.freshUntil ?? null,
+  evidencePressureReasonCodes: admission.evidencePressure?.reasonCodes ?? [],
+  evidencePressureWatchBackoffState: admission.evidencePressure?.watchBackoffState ?? null,
+  evidencePressureRequiredRepairReceipts: admission.evidencePressure?.requiredRepairReceipts ?? [],
   reason: admission.reason,
   message: admission.message,
 })

@@ -333,10 +333,55 @@ const buildStageCreditSnapshot = (
   }
 }
 
+const buildEvidencePressureLedger = (
+  decision: 'allow' | 'repair_only' | 'hold' | 'block' = 'allow',
+  evidenceMode: 'observe' | 'shadow' | 'hold' | 'enforce' = 'shadow',
+  freshUntil = '2026-01-20T00:05:00.000Z',
+) => ({
+  ledger_id: 'evidence-pressure-ledger:agents:test',
+  evidence_mode: evidenceMode,
+  fresh_until: freshUntil,
+  watch_backoff_policy: {
+    state: decision === 'allow' ? 'calm' : 'pressured',
+  },
+  action_pressure_budget: [
+    {
+      action_class: 'dispatch_normal' as ActionSloBudgetActionClass,
+      decision,
+      reason_codes: decision === 'allow' ? [] : ['kubernetes_watch_rate_limited'],
+      required_repair_receipts: decision === 'repair_only' ? ['repair-receipt:watch'] : [],
+    },
+  ],
+})
+
+const buildEvidencePressureSnapshot = (
+  decision: 'allow' | 'repair_only' | 'hold' | 'block' = 'allow',
+  evidenceMode: 'observe' | 'shadow' | 'hold' | 'enforce' = 'shadow',
+  freshUntil = '2026-01-20T00:05:00.000Z',
+) => {
+  const ledger = buildEvidencePressureLedger(decision, evidenceMode, freshUntil)
+  const budget = ledger.action_pressure_budget[0]
+  return {
+    ledgerId: ledger.ledger_id,
+    evidenceMode: ledger.evidence_mode,
+    freshUntil: ledger.fresh_until,
+    watchBackoffState: ledger.watch_backoff_policy.state,
+    budgets: [
+      {
+        actionClass: budget.action_class,
+        decision: budget.decision,
+        reasonCodes: budget.reason_codes,
+        requiredRepairReceipts: budget.required_repair_receipts,
+      },
+    ],
+  }
+}
+
 const mockStageClearanceStatus = (
   packets: Array<Record<string, unknown>>,
   clearanceMarketLedger?: Record<string, unknown>,
   stageCreditLedger?: Record<string, unknown>,
+  evidencePressureLedger?: Record<string, unknown>,
 ) =>
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(
     new Response(
@@ -344,6 +389,7 @@ const mockStageClearanceStatus = (
         stage_clearance_packets: packets,
         clearance_market_ledger: clearanceMarketLedger,
         stage_credit_ledger: stageCreditLedger,
+        evidence_pressure_ledger: evidencePressureLedger,
       }),
       {
         status: 200,
@@ -523,13 +569,16 @@ describe('supporting primitives controller', () => {
     expect(command).toContain('JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT')
     expect(command).toContain('JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL')
     expect(command).toContain('JANGAR_STAGE_CLEARANCE_ENFORCEMENT')
+    expect(command).toContain('JANGAR_EVIDENCE_PRESSURE_LEDGER_MODE')
     expect(command).toContain('missing schedule admission passport annotation for')
     expect(command).toContain('stage_clearance_packets')
     expect(command).toContain('clearance_market_ledger')
     expect(command).toContain('stage_credit_ledger')
+    expect(command).toContain('evidence_pressure_ledger')
     expect(command).toContain('current stage clearance packet')
     expect(command).toContain('current clearance market stage admission')
     expect(command).toContain('current stage credit account')
+    expect(command).toContain('current evidence pressure budget')
     expect(command).toContain('runner slot future')
     expect(command).toContain('stage clearance shadow evidence unavailable')
     expect(command).not.toContain('stale schedule admission passport')
@@ -551,6 +600,9 @@ describe('supporting primitives controller', () => {
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageCreditLedgerId"')
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageCreditAccountId"')
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRunnerSlotFutureId"')
+    expect(command).toContain(
+      'writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmEvidencePressureLedgerId"',
+    )
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRecoveryWarrantId"')
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRuntimeKitSetDigest"')
     expect(command).toContain('current schedule recovery warrant')
@@ -645,6 +697,75 @@ describe('supporting primitives controller', () => {
     })
     expect(admission.parameters).not.toHaveProperty('swarmRunnerSlotFutureId')
     expect(admission.annotations).not.toHaveProperty('swarm.proompteng.ai/runner-slot-future-id')
+  })
+
+  it('stamps evidence pressure ledger handoff fields into launch traces', () => {
+    const admission = resolveStageClearanceAdmissionFromPackets({
+      namespace: 'agents',
+      swarmName: 'jangar-control-plane',
+      stage: 'implement',
+      mode: 'hold',
+      packets: [buildStageClearancePacket('implement')],
+      clearanceMarket: {
+        clearanceMarketLedgerId: 'clearance-market:agents:test',
+        stageAdmissions: buildClearanceMarketLedger('implement').stage_admission,
+        stageCredit: buildStageCreditSnapshot('implement'),
+        evidencePressure: buildEvidencePressureSnapshot('hold', 'shadow'),
+      },
+      nowMs: Date.parse('2026-01-20T00:00:00.000Z'),
+    })
+
+    expect(admission.admitted).toBe(true)
+    expect(admission.evidencePressure).toMatchObject({
+      ledgerId: 'evidence-pressure-ledger:agents:test',
+      decision: 'hold',
+      mode: 'shadow',
+      reasonCodes: ['kubernetes_watch_rate_limited'],
+      watchBackoffState: 'pressured',
+    })
+    expect(admission.annotations).toMatchObject({
+      'swarm.proompteng.ai/evidence-pressure-ledger-id': 'evidence-pressure-ledger:agents:test',
+      'swarm.proompteng.ai/evidence-pressure-decision': 'hold',
+      'swarm.proompteng.ai/evidence-pressure-mode': 'shadow',
+      'swarm.proompteng.ai/evidence-pressure-reason-codes': 'kubernetes_watch_rate_limited',
+      'swarm.proompteng.ai/evidence-pressure-watch-backoff-state': 'pressured',
+    })
+    expect(admission.parameters).toMatchObject({
+      swarmEvidencePressureLedgerId: 'evidence-pressure-ledger:agents:test',
+      swarmEvidencePressureDecision: 'hold',
+      swarmEvidencePressureMode: 'shadow',
+      swarmEvidencePressureReasonCodes: 'kubernetes_watch_rate_limited',
+      swarmEvidencePressureWatchBackoffState: 'pressured',
+    })
+  })
+
+  it('blocks launches when hold-mode evidence pressure holds normal dispatch', () => {
+    const admission = resolveStageClearanceAdmissionFromPackets({
+      namespace: 'agents',
+      swarmName: 'jangar-control-plane',
+      stage: 'verify',
+      mode: 'hold',
+      packets: [buildStageClearancePacket('verify')],
+      clearanceMarket: {
+        clearanceMarketLedgerId: 'clearance-market:agents:test',
+        stageAdmissions: buildClearanceMarketLedger('verify').stage_admission,
+        stageCredit: buildStageCreditSnapshot('verify'),
+        evidencePressure: buildEvidencePressureSnapshot('hold', 'hold'),
+      },
+      nowMs: Date.parse('2026-01-20T00:00:00.000Z'),
+    })
+
+    expect(admission.admitted).toBe(false)
+    expect(admission.reason).toBe('EvidencePressureHeld')
+    expect(admission.message).toContain(
+      'evidence pressure budget evidence-pressure-ledger:agents:test/dispatch_normal is hold',
+    )
+    expect(admission.parameters).toMatchObject({
+      swarmEvidencePressureLedgerId: 'evidence-pressure-ledger:agents:test',
+      swarmEvidencePressureDecision: 'hold',
+      swarmEvidencePressureMode: 'hold',
+      swarmEvidencePressureReasonCodes: 'kubernetes_watch_rate_limited',
+    })
   })
 
   it('staggers hourly stage cadence deterministically per stage', () => {
@@ -1098,6 +1219,7 @@ describe('supporting primitives controller', () => {
         { name: 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS', value: '2500' },
         { name: 'JANGAR_STAGE_CLEARANCE_ENFORCEMENT', value: 'hold' },
         { name: 'JANGAR_STAGE_CLEARANCE_HOLD_STAGES', value: 'implement,verify' },
+        { name: 'JANGAR_EVIDENCE_PRESSURE_LEDGER_MODE', value: 'observe' },
       ]),
     )
   })

@@ -429,12 +429,15 @@ Control-plane status and `/ready` also emit `evidence_pressure_ledger` from
 `docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`. The ledger is an
 observe-mode proof-transport budget below stage credit: Kubernetes watch 429s, controller replica splits, metrics-sink
 failures, GitHub review-ingest missing refs, database evidence authority, and Torghut freshness debt become typed
-pressure sources with TTLs, reason codes, and action-class decisions. In observe mode it does not block schedule
-runners, but it already names when `dispatch_normal`, `deploy_widen`, and `merge_ready` would be held while
-`serve_readonly`, `torghut_observe`, and bounded zero-notional repairs remain open. Torghut freshness debt is priced
-from `freshness_carry_ledger.jangar_pressure_refs` when present, so a fresh consumer-evidence receipt can still hold
-normal dispatch if a current zero-notional freshness repair SLO names stale TCA, TA, empirical, market-context, quant,
-or source-serving proof. Rollback is
+pressure sources with TTLs, reason codes, and action-class decisions. Fire-time schedule runners refresh the same
+status payload before creating scheduled AgentRuns and stamp `swarmEvidencePressureLedgerId`,
+`swarmEvidencePressureDecision`, `swarmEvidencePressureReasonCodes`, and the watch backoff state on the launch. In
+`observe` or `shadow` mode the runner records pressure as handoff evidence only; when
+`JANGAR_EVIDENCE_PRESSURE_LEDGER_MODE=hold` or `enforce`, stale ledgers or held `dispatch_normal` budgets fail closed
+before AgentRun creation while read-only status serving remains separate. Torghut freshness debt is priced from
+`freshness_carry_ledger.jangar_pressure_refs` when present, so a fresh consumer-evidence receipt can still hold normal
+dispatch if a current zero-notional freshness repair SLO names stale TCA, TA, empirical, market-context, quant, or
+source-serving proof. Rollback is
 `JANGAR_EVIDENCE_PRESSURE_LEDGER_MODE=observe`; if the payload itself regresses status generation, set
 `JANGAR_EVIDENCE_PRESSURE_LEDGER_ENABLED=false` and continue relying on stage credit, ready-truth, clearance market,
 source-serving verdicts, and runtime-admission passports.
