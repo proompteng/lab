@@ -17,17 +17,20 @@ export const SCHEDULE_RUNNER_RUNTIME_PROOF_CHECK_ENV = 'JANGAR_SWARM_RUNTIME_PRO
 export const SCHEDULE_RUNNER_ADMISSION_STATUS_URL_ENV = 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL'
 export const SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS_ENV = 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS'
 export const SCHEDULE_RUNNER_STAGE_CLEARANCE_ENFORCEMENT_ENV = 'JANGAR_STAGE_CLEARANCE_ENFORCEMENT'
+export const SCHEDULE_RUNNER_STAGE_CLEARANCE_HOLD_STAGES_ENV = 'JANGAR_STAGE_CLEARANCE_HOLD_STAGES'
 
 const KUBERNETES_SERVICE_HOST_ENV = 'KUBERNETES_SERVICE_HOST'
 const KUBERNETES_SERVICE_PORT_ENV = 'KUBERNETES_SERVICE_PORT'
 const SWARM_STAGE_LABEL = 'swarm.proompteng.ai/stage'
 const SWARM_NAME_LABEL = 'swarm.proompteng.ai/name'
-const SWARM_STAGE_CLEARANCE_ANNOTATION_PACKET_ID = 'swarm.proompteng.ai/stage-clearance-packet-id'
-const SWARM_STAGE_CLEARANCE_ANNOTATION_DECISION = 'swarm.proompteng.ai/stage-clearance-decision'
-const SWARM_STAGE_CLEARANCE_ANNOTATION_ACTION_CLASS = 'swarm.proompteng.ai/stage-clearance-action-class'
-const SWARM_STAGE_CLEARANCE_ANNOTATION_FRESH_UNTIL = 'swarm.proompteng.ai/stage-clearance-fresh-until'
-const SWARM_STAGE_CLEARANCE_ANNOTATION_REASON_CODES = 'swarm.proompteng.ai/stage-clearance-reason-codes'
-const SWARM_STAGE_CLEARANCE_ANNOTATION_MODE = 'swarm.proompteng.ai/stage-clearance-mode'
+export const SWARM_STAGE_CLEARANCE_ANNOTATION_PACKET_ID = 'swarm.proompteng.ai/stage-clearance-packet-id'
+export const SWARM_STAGE_CLEARANCE_ANNOTATION_DECISION = 'swarm.proompteng.ai/stage-clearance-decision'
+export const SWARM_STAGE_CLEARANCE_ANNOTATION_ACTION_CLASS = 'swarm.proompteng.ai/stage-clearance-action-class'
+export const SWARM_STAGE_CLEARANCE_ANNOTATION_FRESH_UNTIL = 'swarm.proompteng.ai/stage-clearance-fresh-until'
+export const SWARM_STAGE_CLEARANCE_ANNOTATION_REASON_CODES = 'swarm.proompteng.ai/stage-clearance-reason-codes'
+export const SWARM_STAGE_CLEARANCE_ANNOTATION_MODE = 'swarm.proompteng.ai/stage-clearance-mode'
+export const SWARM_STAGE_CLEARANCE_ANNOTATION_REQUIRED_REPAIR_ACTION =
+  'swarm.proompteng.ai/stage-clearance-required-repair-action'
 
 export const buildScheduleRunnerCommand = (): string =>
   [
@@ -53,6 +56,7 @@ export const buildScheduleRunnerCommand = (): string =>
       freshUntil: SWARM_STAGE_CLEARANCE_ANNOTATION_FRESH_UNTIL,
       reasonCodes: SWARM_STAGE_CLEARANCE_ANNOTATION_REASON_CODES,
       mode: SWARM_STAGE_CLEARANCE_ANNOTATION_MODE,
+      requiredRepairAction: SWARM_STAGE_CLEARANCE_ANNOTATION_REQUIRED_REPAIR_ACTION,
     })};`,
     `  const swarmNameLabelName = ${JSON.stringify(SWARM_NAME_LABEL)};`,
     `  const stageLabelName = ${JSON.stringify(SWARM_STAGE_LABEL)};`,
@@ -62,6 +66,7 @@ export const buildScheduleRunnerCommand = (): string =>
     `  const admissionStatusUrlEnv = ${JSON.stringify(SCHEDULE_RUNNER_ADMISSION_STATUS_URL_ENV)};`,
     `  const admissionStatusTimeoutEnv = ${JSON.stringify(SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS_ENV)};`,
     `  const stageClearanceEnforcementEnv = ${JSON.stringify(SCHEDULE_RUNNER_STAGE_CLEARANCE_ENFORCEMENT_ENV)};`,
+    `  const stageClearanceHoldStagesEnv = ${JSON.stringify(SCHEDULE_RUNNER_STAGE_CLEARANCE_HOLD_STAGES_ENV)};`,
     "  const manifest = JSON.parse(readFileSync('/config/run.json', 'utf8').replaceAll('__JANGAR_DELIVERY_ID__', randomUUID()));",
     '  const terminalRunPhases = new Set(["succeeded", "failed", "error", "errored", "cancelled", "canceled", "completed"]);',
     "  const readEnv = (name) => process.env[name]?.trim() ?? '';",
@@ -108,6 +113,12 @@ export const buildScheduleRunnerCommand = (): string =>
     '    const normalized = String(value ?? "").trim().toLowerCase();',
     '    if (["disabled", "off", "false"].includes(normalized)) return "disabled";',
     '    if (["hold", "enforce", "enforced"].includes(normalized)) return "hold";',
+    '    return "shadow";',
+    '  };',
+    '  const normalizeStageClearanceHoldStages = (value) => new Set(String(value ?? "").split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean));',
+    '  const effectiveStageClearanceMode = (mode, holdStages, stage) => {',
+    '    if (mode !== "hold") return mode;',
+    '    if (holdStages.size === 0 || holdStages.has(stage)) return "hold";',
     '    return "shadow";',
     '  };',
     '  const fetchControlPlaneStatus = async (namespace) => {',
@@ -210,17 +221,18 @@ export const buildScheduleRunnerCommand = (): string =>
     '    if (currentWarrantStatus) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRecoveryWarrantStatus", currentWarrantStatus);',
     '    if (currentRequiredProofCells) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRequiredProofCells", currentRequiredProofCells);',
     '  };',
-    '  const applyCurrentStageClearance = (status, mode) => {',
+    '  const applyCurrentStageClearance = (status, mode, holdStages) => {',
     '    const labels = asRecord(readNested(manifest, ["metadata", "labels"])) ?? {};',
     '    const swarmName = asString(labels[swarmNameLabelName]);',
     '    const stage = asString(labels[stageLabelName]).toLowerCase();',
     '    const actionClass = swarmName ? stageClearanceActionClassByStage[stage] : undefined;',
     '    if (!actionClass) return;',
+    '    const stageMode = effectiveStageClearanceMode(mode, holdStages, stage);',
     '    const packets = asArray(status.stage_clearance_packets).map(asRecord);',
     '    const packet = packets.find((entry) => asString(entry?.swarm_name) === swarmName && asString(entry?.stage) === stage && asString(entry?.action_class) === actionClass);',
     '    if (!packet) {',
     '      const message = `missing current stage clearance packet for ${swarmName}/${stage}/${actionClass}`;',
-    '      if (mode === "shadow") {',
+    '      if (stageMode === "shadow") {',
     '        console.warn(`[jangar] ${message}`);',
     '        return;',
     '      }',
@@ -231,13 +243,14 @@ export const buildScheduleRunnerCommand = (): string =>
     '    const decision = asString(packet.decision);',
     '    const freshUntil = asString(packet.fresh_until);',
     '    const reasonCodes = normalizeRuntimeKits(asArray(packet.reason_codes).map(asString).filter(Boolean));',
+    '    const requiredRepairAction = asString(packet.required_repair_action);',
     '    const freshUntilMs = Date.parse(freshUntil);',
     '    if (!Number.isFinite(freshUntilMs) || freshUntilMs <= Date.now()) {',
     '      const message = `current stage clearance packet ${packetId} is stale`;',
-    '      if (mode !== "shadow") throw new Error(message);',
+    '      if (stageMode !== "shadow") throw new Error(message);',
     '      console.warn(`[jangar] ${message}`);',
     '    }',
-    '    if (mode === "hold" && decision !== "allow") {',
+    '    if (stageMode === "hold" && decision !== "allow") {',
     '      throw new Error(`current stage clearance packet ${packetId} is ${decision || "missing"}`);',
     '    }',
     '    writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.packetId, packetId);',
@@ -245,13 +258,15 @@ export const buildScheduleRunnerCommand = (): string =>
     '    writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.actionClass, actionClass);',
     '    writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.freshUntil, freshUntil);',
     '    writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.reasonCodes, reasonCodes);',
-    '    writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.mode, mode);',
+    '    writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.mode, stageMode);',
+    '    if (requiredRepairAction) writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.requiredRepairAction, requiredRepairAction);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearancePacketId", packetId);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceDecision", decision);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceActionClass", actionClass);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceFreshUntil", freshUntil);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceReasonCodes", reasonCodes);',
-    '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceEnforcement", mode);',
+    '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceEnforcement", stageMode);',
+    '    if (requiredRepairAction) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceRequiredRepairAction", requiredRepairAction);',
     '  };',
     '  const targetByKind = {',
     "  AgentRun: { group: 'agents.proompteng.ai', version: 'v1alpha1', plural: 'agentruns' },",
@@ -267,10 +282,11 @@ export const buildScheduleRunnerCommand = (): string =>
     '    assertCurrentAdmission(controlPlaneStatus);',
     '  }',
     '  const stageClearanceMode = normalizeStageClearanceMode(readEnv(stageClearanceEnforcementEnv));',
+    '  const stageClearanceHoldStages = normalizeStageClearanceHoldStages(readEnv(stageClearanceHoldStagesEnv));',
     '  if (stageClearanceMode !== "disabled") {',
     '    try {',
     '      if (!controlPlaneStatus) controlPlaneStatus = await fetchControlPlaneStatus(scheduleNamespace);',
-    '      applyCurrentStageClearance(controlPlaneStatus, stageClearanceMode);',
+    '      applyCurrentStageClearance(controlPlaneStatus, stageClearanceMode, stageClearanceHoldStages);',
     '    } catch (error) {',
     '      if (stageClearanceMode !== "shadow") throw error;',
     '      console.warn(`[jangar] stage clearance shadow evidence unavailable: ${error instanceof Error ? error.message : String(error)}`);',

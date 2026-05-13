@@ -30,6 +30,12 @@ const parseStageClearanceEnforcement = (
   return 'shadow'
 }
 
+const parseStringList = (value: string | undefined) =>
+  (normalizeNonEmpty(value) ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+
 const parseJsonRecord = (value: string | undefined) => {
   const normalized = normalizeNonEmpty(value)
   if (!normalized) return null
@@ -49,6 +55,7 @@ export type SupportingPrimitivesConfig = {
   swarmRuntimeAdmissionEnforcement: boolean
   swarmRuntimeProofEnforcement: boolean
   stageClearanceEnforcement: 'disabled' | 'shadow' | 'hold'
+  stageClearanceHoldStages: string[]
   scheduleRunnerAdmissionCheck: boolean
   scheduleRunnerAdmissionStatusUrl: string
   scheduleRunnerAdmissionStatusTimeoutMs: number
@@ -70,6 +77,7 @@ export const resolveSupportingPrimitivesConfig = (env: EnvSource = process.env):
   swarmRuntimeAdmissionEnforcement: parseBoolean(env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT, true),
   swarmRuntimeProofEnforcement: parseBoolean(env.JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT, true),
   stageClearanceEnforcement: parseStageClearanceEnforcement(env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT),
+  stageClearanceHoldStages: parseStringList(env.JANGAR_STAGE_CLEARANCE_HOLD_STAGES),
   scheduleRunnerAdmissionCheck: parseBoolean(env.JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK, true),
   scheduleRunnerAdmissionStatusUrl:
     normalizeNonEmpty(env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL) ??
