@@ -75,16 +75,42 @@ def _stable_ref(prefix: str, payload: Mapping[str, object]) -> str:
     return f"{prefix}:{sha256(encoded.encode()).hexdigest()[:20]}"
 
 
-def _selected_repair(frontier: Mapping[str, Any]) -> Mapping[str, Any]:
-    selected_repairs = [
+def _repair_matches_action(repair: Mapping[str, Any], preferred_action: str) -> bool:
+    return _text(repair.get("zero_notional_action")) == preferred_action
+
+
+def _selected_repairs(frontier: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    return [
         _mapping(item)
         for item in _sequence(frontier.get("selected_zero_notional_repairs"))
         if _mapping(item)
     ]
+
+
+def _repair_lots(frontier: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    return [
+        _mapping(item)
+        for item in _sequence(frontier.get("repair_lots"))
+        if _mapping(item)
+    ]
+
+
+def _selected_repair(
+    frontier: Mapping[str, Any],
+    *,
+    preferred_action: str | None = None,
+) -> Mapping[str, Any]:
+    selected_repairs = _selected_repairs(frontier)
+    repair_lots = _repair_lots(frontier)
+    candidates = [*selected_repairs, *repair_lots]
+    if preferred_action:
+        for repair in candidates:
+            if _repair_matches_action(repair, preferred_action):
+                return repair
+        return {}
     if selected_repairs:
         return selected_repairs[0]
-    for raw_lot in _sequence(frontier.get("repair_lots")):
-        lot = _mapping(raw_lot)
+    for lot in repair_lots:
         if _text(lot.get("state")) == "selected_zero_notional_repair":
             return lot
     return {}
@@ -120,6 +146,7 @@ def build_zero_notional_repair_execution_receipt(
     source_commit: str | None,
     profit_freshness_frontier: Mapping[str, Any],
     execute: bool = False,
+    preferred_action: str | None = None,
     action_result: Mapping[str, object] | None = None,
     now: datetime | None = None,
 ) -> dict[str, object]:
@@ -127,7 +154,11 @@ def build_zero_notional_repair_execution_receipt(
 
     generated_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     frontier = _mapping(profit_freshness_frontier)
-    repair = _selected_repair(frontier)
+    normalized_preferred_action = _text(preferred_action)
+    repair = _selected_repair(
+        frontier,
+        preferred_action=normalized_preferred_action or None,
+    )
     action = _text(repair.get("zero_notional_action"))
     action_contract = _mapping(_ALLOWLIST.get(action))
     result = _mapping(action_result)
@@ -137,7 +168,11 @@ def build_zero_notional_repair_execution_receipt(
 
     if not repair:
         execution_state = "no_selected_repair"
-        blocked_reasons.append("profit_freshness_frontier_selected_repair_missing")
+        blocked_reasons.append(
+            f"profit_freshness_frontier_matching_repair_missing:{normalized_preferred_action}"
+            if normalized_preferred_action
+            else "profit_freshness_frontier_selected_repair_missing"
+        )
         command_exit_code = 78
     elif not action_contract:
         execution_state = "unsupported_action"
@@ -163,6 +198,7 @@ def build_zero_notional_repair_execution_receipt(
         "frontier_id": frontier.get("frontier_id"),
         "lot_id": repair.get("lot_id"),
         "action": action,
+        "preferred_action": normalized_preferred_action or None,
         "execute": execute,
         "execution_state": execution_state,
         "blocked_reasons": blocked_reasons,
@@ -183,6 +219,7 @@ def build_zero_notional_repair_execution_receipt(
         "hypothesis_id": repair.get("hypothesis_id"),
         "blocked_dimension": repair.get("blocked_dimension"),
         "zero_notional_action": action or None,
+        "preferred_zero_notional_action": normalized_preferred_action or None,
         "executor": action_contract.get("executor"),
         "value_gate": action_contract.get("value_gate")
         or repair.get("value_gate")
@@ -220,13 +257,18 @@ def run_zero_notional_repair(
     source_commit: str | None,
     profit_freshness_frontier: Mapping[str, Any],
     execute: bool,
+    preferred_action: str | None = None,
     runners: Mapping[str, RepairRunner] | None = None,
     now: datetime | None = None,
 ) -> dict[str, object]:
     """Run or dry-run the selected allowlisted repair and return its receipt."""
 
     frontier = _mapping(profit_freshness_frontier)
-    repair = _selected_repair(frontier)
+    normalized_preferred_action = _text(preferred_action)
+    repair = _selected_repair(
+        frontier,
+        preferred_action=normalized_preferred_action or None,
+    )
     action = _text(repair.get("zero_notional_action"))
     action_contract = _ALLOWLIST.get(action)
     action_result: Mapping[str, object] | None = None
@@ -248,6 +290,7 @@ def run_zero_notional_repair(
         source_commit=source_commit,
         profit_freshness_frontier=frontier,
         execute=execute,
+        preferred_action=normalized_preferred_action or None,
         action_result=action_result,
         now=now,
     )
