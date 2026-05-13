@@ -1,6 +1,6 @@
 import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
 
-import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/agents-controller'
+import { getAgentsControllerHealth } from '~/server/agents-controller'
 import { buildReconciledActionClocks } from '~/server/control-plane-action-clock'
 import { buildAuthorityProvenanceSettlement } from '~/server/control-plane-authority-provenance-settlement'
 import {
@@ -35,6 +35,10 @@ import {
 } from '~/server/control-plane-heartbeat-store'
 import { buildRuntimeAdmissionSnapshot, type RuntimeAdmissionSnapshot } from '~/server/control-plane-runtime-admission'
 import { checkDatabase } from '~/server/control-plane-db-status'
+import {
+  buildAgentRunIngestionStatus,
+  buildServingProcessControllerStatus,
+} from '~/server/control-plane-serving-process-status'
 import { buildControlPlaneDegradedComponents } from '~/server/control-plane-status-degraded-components'
 import {
   buildExecutionTrust,
@@ -82,9 +86,7 @@ import {
 } from '~/server/control-plane-torghut-consumer-evidence'
 import { attachStageClearanceCustodyToTorghutEvidence } from '~/server/control-plane-torghut-stage-custody'
 import type {
-  AgentRunIngestionStatus,
   ControlPlaneStatus,
-  ControllerStatus,
   DatabaseStatus,
   GrpcStatus,
   RuntimeAdapterStatus,
@@ -188,63 +190,6 @@ const defaultGetHeartbeat: HeartbeatResolver = async (input) => {
   } catch (error) {
     console.warn('[jangar] failed to read control-plane heartbeat:', normalizeMessage(error))
     return null
-  }
-}
-
-const buildAgentRunIngestionStatus = (namespace: string, health: ControllerHealth): AgentRunIngestionStatus => {
-  const assessment = assessAgentRunIngestion(namespace, health)
-
-  return {
-    namespace,
-    status: assessment.status,
-    message: assessment.message,
-    last_watch_event_at: assessment.lastWatchEventAt,
-    last_resync_at: assessment.lastResyncAt,
-    untouched_run_count: assessment.untouchedRunCount,
-    oldest_untouched_age_seconds: assessment.oldestUntouchedAgeSeconds,
-  }
-}
-
-const buildServingProcessControllerStatus = (
-  namespace: string,
-  health: ControllerHealth,
-  now: Date,
-): ControllerStatus => {
-  const status =
-    health.started && health.crdsReady !== false
-      ? 'healthy'
-      : health.crdsReady === false
-        ? 'degraded'
-        : health.enabled
-          ? 'unknown'
-          : 'disabled'
-
-  return {
-    name: 'agents-controller',
-    enabled: health.enabled,
-    started: health.started,
-    scope_namespaces: Array.isArray(health.namespaces) ? health.namespaces : [],
-    crds_ready: health.crdsReady === true,
-    missing_crds: health.missingCrds,
-    last_checked_at: health.lastCheckedAt ?? '',
-    status,
-    message:
-      status === 'healthy'
-        ? 'serving process controller state is current'
-        : status === 'disabled'
-          ? 'serving process controller disabled'
-          : status === 'degraded'
-            ? 'serving process controller degraded'
-            : 'serving process controller not started',
-    authority: {
-      mode: 'local',
-      namespace,
-      source_deployment: '',
-      source_pod: '',
-      observed_at: now.toISOString(),
-      fresh: true,
-      message: 'serving process local controller state',
-    },
   }
 }
 
