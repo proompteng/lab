@@ -21,6 +21,7 @@ from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
 MAX_CLUSTER_CONTRIBUTION_SHARE = Decimal("0.40")
 MAX_SINGLE_SYMBOL_CONTRIBUTION_SHARE = Decimal("0.35")
 MAX_ALLOWED_PAIRWISE_CORRELATION = Decimal("0.85")
+PORTFOLIO_SEARCH_BEAM_WIDTH = 256
 
 
 def _decimal(value: Any, *, default: str = "0") -> Decimal:
@@ -428,6 +429,200 @@ def _sleeve_score(bundle: CandidateEvidenceBundle) -> Decimal:
     )
 
 
+def _scorecard_decimal(scorecard: Mapping[str, Any], field: str) -> Decimal:
+    return _decimal(scorecard.get(field))
+
+
+def _portfolio_selection_key(
+    *,
+    selected: Sequence[CandidateEvidenceBundle],
+    scorecard: Mapping[str, Any],
+) -> tuple[Decimal, ...]:
+    return (
+        Decimal(1 if bool(scorecard.get("oracle_passed")) else 0),
+        Decimal(1 if bool(scorecard.get("target_met")) else 0),
+        _scorecard_decimal(scorecard, "net_pnl_per_day"),
+        _scorecard_decimal(scorecard, "active_day_ratio"),
+        _scorecard_decimal(scorecard, "positive_day_ratio"),
+        -_scorecard_decimal(scorecard, "best_day_share"),
+        -_scorecard_decimal(scorecard, "max_single_symbol_contribution_share"),
+        -_scorecard_decimal(scorecard, "max_cluster_contribution_share"),
+        -_scorecard_decimal(scorecard, "worst_day_loss"),
+        -_scorecard_decimal(scorecard, "max_drawdown"),
+        Decimal(len(selected)),
+        sum((_sleeve_score(bundle) for bundle in selected), Decimal("0")),
+    )
+
+
+def _partial_selection_key(
+    selected: Sequence[CandidateEvidenceBundle],
+) -> tuple[Decimal, ...]:
+    if not selected:
+        return (
+            Decimal("0"),
+            Decimal("0"),
+            Decimal("0"),
+            Decimal("0"),
+            Decimal("0"),
+            Decimal("0"),
+            Decimal("0"),
+            Decimal("0"),
+            Decimal("0"),
+            Decimal("0"),
+            Decimal("0"),
+            Decimal("0"),
+        )
+    return (
+        Decimal("0"),
+        Decimal("0"),
+        sum((_net_per_day(bundle) for bundle in selected), Decimal("0")),
+        _mean([_active_ratio(bundle) for bundle in selected]),
+        _mean([_positive_ratio(bundle) for bundle in selected]),
+        -max((_best_day_share(bundle) for bundle in selected), default=Decimal("0")),
+        -_max_share(_symbol_contribution_shares(selected)),
+        -_max_share(_cluster_contribution_shares(selected)),
+        -max((_worst_day_loss(bundle) for bundle in selected), default=Decimal("0")),
+        -max((_max_drawdown(bundle) for bundle in selected), default=Decimal("0")),
+        Decimal(len(selected)),
+        sum((_sleeve_score(bundle) for bundle in selected), Decimal("0")),
+    )
+
+
+def _portfolio_addition_rejection(
+    *,
+    bundle: CandidateEvidenceBundle,
+    selected: Sequence[CandidateEvidenceBundle],
+    requested_portfolio_size_min: int,
+    max_allowed_correlation: Decimal,
+) -> dict[str, Any] | None:
+    cluster = _cluster_id(bundle)
+    selected_clusters = {_cluster_id(item) for item in selected}
+    if cluster in selected_clusters and len(selected) >= requested_portfolio_size_min:
+        return {
+            "candidate_id": bundle.candidate_id,
+            "reason": "cluster_cap",
+            "cluster": cluster,
+        }
+    max_correlation = _max_pairwise_correlation(bundle, selected)
+    if (
+        max_correlation > max_allowed_correlation
+        and len(selected) >= requested_portfolio_size_min
+    ):
+        return {
+            "candidate_id": bundle.candidate_id,
+            "reason": "correlation_cap",
+            "max_pairwise_correlation": str(max_correlation),
+        }
+    return None
+
+
+def _record_unique_rejection(
+    rejected: list[dict[str, Any]],
+    seen_rejections: set[tuple[str, str]],
+    rejection: Mapping[str, Any],
+) -> None:
+    key = (_string(rejection.get("candidate_id")), _string(rejection.get("reason")))
+    if key in seen_rejections:
+        return
+    seen_rejections.add(key)
+    rejected.append(dict(rejection))
+
+
+def _selected_from_state(
+    ordered: Sequence[CandidateEvidenceBundle],
+    state: tuple[int, ...],
+) -> tuple[CandidateEvidenceBundle, ...]:
+    return tuple(ordered[index] for index in state)
+
+
+def _select_portfolio_bundles(
+    *,
+    ordered: Sequence[CandidateEvidenceBundle],
+    rejected: list[dict[str, Any]],
+    target_net_pnl_per_day: Decimal,
+    oracle_policy: ProfitTargetOraclePolicy,
+    requested_portfolio_size_min: int,
+    requested_portfolio_size_max: int,
+    max_allowed_correlation: Decimal,
+) -> tuple[list[CandidateEvidenceBundle], dict[str, Any]] | None:
+    if len(ordered) < requested_portfolio_size_min:
+        return None
+
+    seen_rejections = {
+        (_string(item.get("candidate_id")), _string(item.get("reason")))
+        for item in rejected
+    }
+    scorecard_cache: dict[tuple[int, ...], dict[str, Any]] = {}
+
+    def state_scorecard(state: tuple[int, ...]) -> dict[str, Any]:
+        cached = scorecard_cache.get(state)
+        if cached is not None:
+            return cached
+        scorecard = _portfolio_scorecard(
+            selected=_selected_from_state(ordered, state),
+            target_net_pnl_per_day=target_net_pnl_per_day,
+            oracle_policy=oracle_policy,
+        )
+        scorecard_cache[state] = scorecard
+        return scorecard
+
+    def state_sort_key(state: tuple[int, ...]) -> tuple[tuple[Decimal, ...], str]:
+        selected = _selected_from_state(ordered, state)
+        if len(state) >= requested_portfolio_size_min:
+            quality_key = _portfolio_selection_key(
+                selected=selected,
+                scorecard=state_scorecard(state),
+            )
+        else:
+            quality_key = _partial_selection_key(selected)
+        return (quality_key, "|".join(bundle.candidate_id for bundle in selected))
+
+    beam: list[tuple[int, ...]] = [()]
+    candidate_state_count = 0
+    pruned_state_count = 0
+    for bundle_index, bundle in enumerate(ordered):
+        next_states = list(beam)
+        for state in beam:
+            if len(state) >= requested_portfolio_size_max:
+                continue
+            selected = _selected_from_state(ordered, state)
+            rejection = _portfolio_addition_rejection(
+                bundle=bundle,
+                selected=selected,
+                requested_portfolio_size_min=requested_portfolio_size_min,
+                max_allowed_correlation=max_allowed_correlation,
+            )
+            if rejection is not None:
+                _record_unique_rejection(rejected, seen_rejections, rejection)
+                continue
+            next_states.append((*state, bundle_index))
+            candidate_state_count += 1
+        unique_next_states = list(dict.fromkeys(next_states))
+        unique_next_states.sort(key=state_sort_key, reverse=True)
+        if len(unique_next_states) > PORTFOLIO_SEARCH_BEAM_WIDTH:
+            pruned_state_count += len(unique_next_states) - PORTFOLIO_SEARCH_BEAM_WIDTH
+        beam = unique_next_states[:PORTFOLIO_SEARCH_BEAM_WIDTH]
+
+    finalists: list[tuple[tuple[tuple[Decimal, ...], str], tuple[int, ...]]] = []
+    for state in beam:
+        if len(state) < requested_portfolio_size_min:
+            continue
+        finalists.append((state_sort_key(state), state))
+    if not finalists:
+        return None
+    finalists.sort(key=lambda item: item[0], reverse=True)
+    selected_state = finalists[0][1]
+    selected = list(_selected_from_state(ordered, selected_state))
+    return selected, {
+        "beam_width": PORTFOLIO_SEARCH_BEAM_WIDTH,
+        "candidate_state_count": candidate_state_count,
+        "portfolio_state_count": len(scorecard_cache),
+        "pruned_state_count": pruned_state_count,
+        "finalist_state_count": len(finalists),
+        "search_input_count": len(ordered),
+    }
+
+
 def _portfolio_candidate_id(
     source_candidate_ids: Sequence[str], target: Decimal
 ) -> str:
@@ -464,51 +659,21 @@ def optimize_portfolio_candidate(
         key=lambda item: (_sleeve_score(item), _net_per_day(item), item.candidate_id),
         reverse=True,
     )
-    selected: list[CandidateEvidenceBundle] = []
-    selected_clusters: set[str] = set()
     rejected: list[dict[str, Any]] = list(invalid_evidence_rejections)
     max_allowed_correlation = MAX_ALLOWED_PAIRWISE_CORRELATION
-    for bundle in ordered:
-        cluster = _cluster_id(bundle)
-        if (
-            cluster in selected_clusters
-            and len(selected) >= requested_portfolio_size_min
-        ):
-            rejected.append(
-                {
-                    "candidate_id": bundle.candidate_id,
-                    "reason": "cluster_cap",
-                    "cluster": cluster,
-                }
-            )
-            continue
-        max_correlation = _max_pairwise_correlation(bundle, selected)
-        if (
-            max_correlation > max_allowed_correlation
-            and len(selected) >= requested_portfolio_size_min
-        ):
-            rejected.append(
-                {
-                    "candidate_id": bundle.candidate_id,
-                    "reason": "correlation_cap",
-                    "max_pairwise_correlation": str(max_correlation),
-                }
-            )
-            continue
-        selected.append(bundle)
-        selected_clusters.add(cluster)
-        if len(selected) >= requested_portfolio_size_max:
-            break
-        if len(selected) >= requested_portfolio_size_min:
-            candidate_scorecard = _portfolio_scorecard(
-                selected=selected,
-                target_net_pnl_per_day=target_net_pnl_per_day,
-                oracle_policy=oracle_policy,
-            )
-            if bool(candidate_scorecard.get("oracle_passed")):
-                break
-    if not selected or len(selected) < requested_portfolio_size_min:
+    selection_result = _select_portfolio_bundles(
+        ordered=ordered,
+        rejected=rejected,
+        target_net_pnl_per_day=target_net_pnl_per_day,
+        oracle_policy=oracle_policy,
+        requested_portfolio_size_min=requested_portfolio_size_min,
+        requested_portfolio_size_max=requested_portfolio_size_max,
+        max_allowed_correlation=max_allowed_correlation,
+    )
+    if selection_result is None:
         return None
+    selected, search_report = selection_result
+    selected_clusters = {_cluster_id(bundle) for bundle in selected}
 
     source_candidate_ids = tuple(item.candidate_id for item in selected)
     objective_scorecard = _portfolio_scorecard(
@@ -576,7 +741,8 @@ def optimize_portfolio_candidate(
         "max_single_symbol_contribution_share": objective_scorecard.get(
             "max_single_symbol_contribution_share"
         ),
-        "method": "deterministic_greedy_pareto_v1",
+        "method": "deterministic_beam_oracle_search_v1",
+        **search_report,
         "target_met": bool(objective_scorecard["target_met"]),
         "oracle_passed": bool(objective_scorecard["oracle_passed"]),
     }
