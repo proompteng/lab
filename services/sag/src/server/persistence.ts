@@ -24,6 +24,8 @@ let sql: Sql | null = null
 let schemaReady = false
 type DbClient = Sql | TransactionSql
 
+const jsonParam = (client: DbClient, value: unknown) => client.json(JSON.parse(JSON.stringify(value ?? null)) as never)
+
 const databaseUrl = () => process.env.DATABASE_URL?.trim()
 
 const getSql = () => {
@@ -248,7 +250,7 @@ export const saveGatewayState = async (stateInput: GatewayState) => {
       await seedStaticRows(tx)
       await tx`
         insert into sag_state (key, value, updated_at)
-        values (${stateKey}, ${tx.json(state)}, now())
+        values (${stateKey}, ${jsonParam(tx, state)}, now())
         on conflict (key) do update
         set value = excluded.value,
             updated_at = now()
@@ -326,7 +328,7 @@ const seedStaticRows = async (client: DbClient) => {
   for (const actor of actors) {
     await client`
       insert into sag_identities (id, email, name, role, permissions, updated_at)
-      values (${actor.id}, ${actor.email}, ${actor.name}, ${actor.role}, ${client.json(actor.permissions)}, now())
+      values (${actor.id}, ${actor.email}, ${actor.name}, ${actor.role}, ${jsonParam(client, actor.permissions)}, now())
       on conflict (id) do update
       set email = excluded.email,
           name = excluded.name,
@@ -342,7 +344,7 @@ const seedStaticRows = async (client: DbClient) => {
         ${connector.id},
         ${connector.name},
         ${connector.target},
-        ${client.json(connector.operations)},
+        ${jsonParam(client, connector.operations)},
         ${connector.trustBoundary},
         ${connector.status},
         now()
@@ -421,8 +423,8 @@ const upsertTask = (client: DbClient, task: GatewayTask) => client`
     ${task.updatedAt},
     ${task.completedAt ?? null},
     ${task.approvalId ?? null},
-    ${client.json(task.planStepIds)},
-    ${client.json(task.connectorCallIds)}
+    ${jsonParam(client, task.planStepIds)},
+    ${jsonParam(client, task.connectorCallIds)}
   )
   on conflict (id) do update
   set title = excluded.title,
@@ -453,7 +455,7 @@ const upsertPlanStep = (client: DbClient, step: PlanStep) => client`
     ${step.policy},
     ${step.summary},
     ${step.durationMs},
-    ${client.json(step.evidence)}
+    ${jsonParam(client, step.evidence)}
   )
   on conflict (id) do update
   set status = excluded.status,
@@ -479,7 +481,7 @@ const upsertConnectorCall = (client: DbClient, call: ConnectorCall) => client`
     ${call.finishedAt},
     ${call.durationMs},
     ${call.inputHash},
-    ${client.json(call.evidence)}
+    ${jsonParam(client, call.evidence)}
   )
   on conflict (id) do update
   set status = excluded.status,
@@ -524,11 +526,11 @@ const upsertAgentRun = (client: DbClient, run: ProtectedAgentRun) => client`
     ${run.status},
     ${run.requestedAt},
     ${run.riskScore},
-    ${client.json(run.requestedSecrets)},
-    ${client.json(run.requestedConnectors)},
-    ${client.json(run.requestedTools)},
+    ${jsonParam(client, run.requestedSecrets)},
+    ${jsonParam(client, run.requestedConnectors)},
+    ${jsonParam(client, run.requestedTools)},
     ${run.summary},
-    ${client.json(run.matchedRuleIds)},
+    ${jsonParam(client, run.matchedRuleIds)},
     ${run.manifest}
   )
   on conflict (id) do update
@@ -568,7 +570,7 @@ const upsertAuditEvent = (client: DbClient, event: GatewayEvent) => client`
     ${event.requestHash},
     ${event.correlationId},
     ${event.durationMs},
-    ${client.json(event.evidence)}
+    ${jsonParam(client, event.evidence)}
   )
   on conflict (id) do nothing
 `
