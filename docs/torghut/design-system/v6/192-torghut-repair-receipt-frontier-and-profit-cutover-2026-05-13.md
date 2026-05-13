@@ -289,6 +289,16 @@ Acceptance gates:
 
 The PR must cite this design and the companion Jangar design. It must keep live submission disabled and `max_notional=0`.
 
+Implementation note, 2026-05-13:
+
+- `services/torghut/app/trading/repair_receipt_frontier.py` now builds the
+  `torghut.repair-receipt-frontier.v1` read model from source-serving proof, freshness carry, repair-bid settlement,
+  profit-freshness frontier, route warrants, live submission, and proof-floor inputs.
+- `/trading/status`, `/trading/health`, `/readyz`, and `/trading/consumer-evidence` expose the frontier as additive
+  evidence. It does not authorize order submission; every lot is projected with `max_notional=0`.
+- Source-serving gaps produce a selected `source_serving` repair lot, and non-source lots are held until source-serving
+  proof converges.
+
 ## Deployment And Verification Gates
 
 The deployer stage must prove:

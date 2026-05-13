@@ -1133,6 +1133,24 @@ class TestTradingApi(TestCase):
             freshness_carry["route_warrant_ref"],
             warrant["warrant_id"],
         )
+        repair_receipt_frontier = payload["repair_receipt_frontier"]
+        self.assertEqual(
+            repair_receipt_frontier["schema_version"],
+            "torghut.repair-receipt-frontier.v1",
+        )
+        self.assertEqual(repair_receipt_frontier["max_notional"], "0")
+        self.assertEqual(
+            repair_receipt_frontier["source_serving_ledger_ref"],
+            source_serving["ledger_id"],
+        )
+        self.assertEqual(
+            repair_receipt_frontier["freshness_carry_ledger_ref"],
+            freshness_carry["ledger_id"],
+        )
+        self.assertIn(
+            repair_receipt_frontier["frontier_state"],
+            {"repair_only", "paper_blocked", "paper_candidate", "live_candidate"},
+        )
         frontier = payload["profit_freshness_frontier"]
         self.assertEqual(
             frontier["schema_version"],
@@ -1668,6 +1686,25 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             health_freshness_carry["schema_version"],
             status_freshness_carry["schema_version"],
+        )
+        status_repair_receipt_frontier = status_response.json()[
+            "repair_receipt_frontier"
+        ]
+        health_repair_receipt_frontier = health_response.json()[
+            "repair_receipt_frontier"
+        ]
+        self.assertEqual(
+            status_repair_receipt_frontier["schema_version"],
+            "torghut.repair-receipt-frontier.v1",
+        )
+        self.assertEqual(status_repair_receipt_frontier["max_notional"], "0")
+        self.assertEqual(
+            status_repair_receipt_frontier["source_serving_ledger_ref"],
+            status_source_serving["ledger_id"],
+        )
+        self.assertEqual(
+            health_repair_receipt_frontier["schema_version"],
+            status_repair_receipt_frontier["schema_version"],
         )
         status_frontier = status_response.json()["profit_freshness_frontier"]
         health_frontier = health_response.json()["profit_freshness_frontier"]
@@ -3773,6 +3810,14 @@ class TestTradingApi(TestCase):
             self.assertEqual(
                 runtime_response.json()["live_submission_gate"],
                 shared_gate,
+            )
+            self.assertEqual(
+                ready_response.json()["repair_receipt_frontier"]["schema_version"],
+                "torghut.repair-receipt-frontier.v1",
+            )
+            self.assertEqual(
+                ready_response.json()["repair_receipt_frontier"]["max_notional"],
+                "0",
             )
         finally:
             settings.trading_mode = original_mode
