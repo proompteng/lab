@@ -392,6 +392,24 @@ why a green PR or healthy pod is not yet materially safe to widen. Rollback is
 `JANGAR_READY_TRUTH_ARBITER_MODE=observe`; if the read model itself is wrong, ignore the field and continue relying on
 stage credit, clearance market, source-serving verdicts, runtime-admission passports, and repair-bid admission.
 
+Control-plane status also emits `authority_provenance_settlement` from
+`docs/agents/designs/189-jangar-authority-provenance-settlement-and-rollout-reentry-windows-2026-05-13.md`. The
+settlement journal is a shadow read model over controller heartbeat authority, AgentRun ingestion, watch health,
+source/GitOps/image truth, database/schema health, workflow runtime evidence, stage credit, and Torghut capital
+receipts. It names the winning authority, the current settlement state, action-class decisions, and any bounded
+`dispatch_normal` reentry windows without changing scheduler admission in this PR.
+
+Deploy verification requires the field to be present and well-formed by default, then prints the settlement id, state,
+winner, deploy-widen decision, merge-ready decision, and reentry-window count. Held deploy decisions are reported but
+only fail the verifier when `JANGAR_VERIFY_AUTHORITY_PROVENANCE_ENFORCED=true` or the settlement itself runs in
+`evidence_mode=enforce`. Use the printed settlement summary in PR, NATS, and mission-ledger handoffs so deployers do
+not have to rejoin controller, source, image, and Torghut evidence manually. Emergency verifier rollback is
+`--skip-authority-provenance-verification` or
+`JANGAR_VERIFY_AUTHORITY_PROVENANCE_SETTLEMENT=false`. Projection rollback is
+`JANGAR_AUTHORITY_PROVENANCE_SETTLEMENT_MODE=observe`; if the payload itself regresses status generation, remove the
+field and continue relying on ready truth, stage credit, source rollout truth, runtime-admission passports, and existing
+material-action verdicts.
+
 Control-plane status and `/ready` also emit `evidence_pressure_ledger` from
 `docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`. The ledger is an
 observe-mode proof-transport budget below stage credit: Kubernetes watch 429s, controller replica splits, metrics-sink

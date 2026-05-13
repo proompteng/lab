@@ -7,6 +7,31 @@ describe('verify-deployment', () => {
   const expectedDigest = 'sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222'
   const futureFreshUntil = '2999-01-01T00:00:00.000Z'
 
+  const buildAuthorityProvenanceSettlement = (overrides: Record<string, unknown> = {}) => ({
+    schema_version: 'jangar.authority-provenance-settlement.v1',
+    settlement_id: 'authority-provenance-settlement:test',
+    evidence_mode: 'shadow',
+    settlement_state: 'repairable_split',
+    winning_authority: 'controller_heartbeat',
+    fresh_until: futureFreshUntil,
+    rollback_target: 'JANGAR_AUTHORITY_PROVENANCE_SETTLEMENT_MODE=observe',
+    handoff_summary: 'authority repairable_split; winner=controller_heartbeat',
+    action_class_decisions: [
+      {
+        action_class: 'deploy_widen',
+        decision: 'hold',
+        reason_codes: ['source_rollout_truth_not_converged'],
+      },
+      {
+        action_class: 'merge_ready',
+        decision: 'hold',
+        reason_codes: ['source_rollout_truth_not_converged'],
+      },
+    ],
+    reentry_windows: [],
+    ...overrides,
+  })
+
   const buildRuntimeProofStatus = (overrides: Record<string, unknown> = {}) => ({
     serving_passport_id: 'passport:serving:1',
     admission_passports: [
@@ -137,6 +162,7 @@ describe('verify-deployment', () => {
       'serving,swarm_plan',
       '--skip-admission-passport-verification',
       '--skip-runtime-proof-verification',
+      '--skip-authority-provenance-verification',
     ])
 
     expect(parsed.namespace).toBe('jangar')
@@ -155,6 +181,7 @@ describe('verify-deployment', () => {
     expect(parsed.admissionPassportConsumers).toEqual(['serving', 'swarm_plan'])
     expect(parsed.skipAdmissionPassportVerification).toBe(true)
     expect(parsed.skipRuntimeProofVerification).toBe(true)
+    expect(parsed.skipAuthorityProvenanceVerification).toBe(true)
   })
 
   it('builds the control-plane status service proxy path', () => {
@@ -362,6 +389,59 @@ describe('verify-deployment', () => {
         now: new Date('2026-05-07T00:00:00.000Z'),
       }),
     ).toThrow('superseded recovery warrant recovery-warrant:plan:old still has 1 active backlog seats')
+  })
+
+  it('verifies authority provenance settlement in shadow mode without failing held deploy decisions', () => {
+    const evidence = __private.verifyAuthorityProvenanceSettlement({
+      status: {
+        authority_provenance_settlement: buildAuthorityProvenanceSettlement(),
+      },
+      enforceDecisions: false,
+      now: new Date('2026-05-07T00:00:00.000Z'),
+    })
+
+    expect(evidence).toMatchObject({
+      settlementId: 'authority-provenance-settlement:test',
+      evidenceMode: 'shadow',
+      settlementState: 'repairable_split',
+      deployWidenDecision: 'hold',
+      mergeReadyDecision: 'hold',
+      reentryWindowCount: 0,
+    })
+  })
+
+  it('fails authority provenance verification when enforcement is enabled and deploy widening is held', () => {
+    expect(() =>
+      __private.verifyAuthorityProvenanceSettlement({
+        status: {
+          authority_provenance_settlement: buildAuthorityProvenanceSettlement({ evidence_mode: 'enforce' }),
+        },
+        enforceDecisions: false,
+        now: new Date('2026-05-07T00:00:00.000Z'),
+      }),
+    ).toThrow('Authority provenance deploy_widen is not allow')
+  })
+
+  it('fails authority provenance verification when the settlement field is missing', () => {
+    expect(() =>
+      __private.verifyAuthorityProvenanceSettlement({
+        status: {},
+        enforceDecisions: false,
+        now: new Date('2026-05-07T00:00:00.000Z'),
+      }),
+    ).toThrow('did not include authority_provenance_settlement')
+  })
+
+  it('fails authority provenance verification when the evidence mode is invalid', () => {
+    expect(() =>
+      __private.verifyAuthorityProvenanceSettlement({
+        status: {
+          authority_provenance_settlement: buildAuthorityProvenanceSettlement({ evidence_mode: 'unknown' }),
+        },
+        enforceDecisions: false,
+        now: new Date('2026-05-07T00:00:00.000Z'),
+      }),
+    ).toThrow('invalid evidence_mode')
   })
 
   it('waits while Argo revision is not the expected revision', () => {

@@ -1638,6 +1638,97 @@ export type ReadyTruthArbiter = {
   rollback_target: string
 }
 
+export type AuthorityProvenanceSettlementMode = 'observe' | 'shadow' | 'hold' | 'enforce'
+
+export type AuthorityProvenanceSettlementState =
+  | 'settled'
+  | 'settled_with_split'
+  | 'repairable_split'
+  | 'hold'
+  | 'block'
+
+export type AuthorityProvenanceWinningAuthority =
+  | 'serving_process'
+  | 'controller_heartbeat'
+  | 'kubernetes_rollout'
+  | 'database_projection'
+  | 'gitops_revision'
+  | 'torghut_receipt'
+  | 'none'
+
+export type AuthorityProvenanceSurfaceName =
+  | 'controller_process'
+  | 'agentrun_ingestion'
+  | 'watch_epoch'
+  | 'source_gitops'
+  | 'serving_image'
+  | 'database_schema'
+  | 'workflow_runtime'
+  | 'stage_clearance'
+  | 'torghut_capital'
+
+export type AuthorityProvenanceSurfaceStatus =
+  | 'current'
+  | 'split'
+  | 'missing'
+  | 'degraded'
+  | 'held'
+  | 'blocked'
+  | 'unknown'
+
+export type AuthorityProvenanceActionDecisionValue = 'allow' | 'repair_only' | 'hold' | 'block'
+
+export type AuthorityProvenanceSurface = {
+  surface: AuthorityProvenanceSurfaceName
+  authority: AuthorityProvenanceWinningAuthority
+  status: AuthorityProvenanceSurfaceStatus
+  settlement_state: AuthorityProvenanceSettlementState
+  observed_at: string
+  fresh_until: string
+  evidence_refs: string[]
+  reason_codes: string[]
+  message: string
+}
+
+export type AuthorityProvenanceActionDecision = {
+  action_class: ActionSloBudgetActionClass
+  decision: AuthorityProvenanceActionDecisionValue
+  reason_codes: string[]
+  evidence_refs: string[]
+  max_dispatches: number | null
+  max_runtime_seconds: number | null
+  max_notional: number
+  rollback_target: string
+}
+
+export type AuthorityProvenanceReentryWindow = {
+  window_id: string
+  stage: StageClearanceStage
+  action_class: ActionSloBudgetActionClass
+  max_dispatches: number
+  max_runtime_seconds: number | null
+  max_notional: number
+  required_receipts: string[]
+  expires_at: string
+}
+
+export type AuthorityProvenanceSettlement = {
+  schema_version: 'jangar.authority-provenance-settlement.v1'
+  settlement_id: string
+  namespace: string
+  generated_at: string
+  fresh_until: string
+  governing_design_refs: string[]
+  evidence_mode: AuthorityProvenanceSettlementMode
+  surfaces: AuthorityProvenanceSurface[]
+  winning_authority: AuthorityProvenanceWinningAuthority
+  settlement_state: AuthorityProvenanceSettlementState
+  action_class_decisions: AuthorityProvenanceActionDecision[]
+  reentry_windows: AuthorityProvenanceReentryWindow[]
+  rollback_target: string
+  handoff_summary: string
+}
+
 export type EvidencePressureLedgerMode = 'observe' | 'shadow' | 'hold' | 'enforce'
 
 export type EvidencePressureSourceClass =
@@ -1841,6 +1932,7 @@ export type ControlPlaneStatus = {
   stage_clearance_packets: StageClearancePacket[]
   stage_credit_ledger: StageCreditLedger | null
   ready_truth_arbiter: ReadyTruthArbiter
+  authority_provenance_settlement: AuthorityProvenanceSettlement
   evidence_pressure_ledger: EvidencePressureLedger | null
   ready_action_exchange: ReadyActionExchange
   repair_bid_admission: RepairBidAdmissionState

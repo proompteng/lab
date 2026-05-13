@@ -2,6 +2,7 @@ import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
 
 import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/agents-controller'
 import { buildReconciledActionClocks } from '~/server/control-plane-action-clock'
+import { buildAuthorityProvenanceSettlement } from '~/server/control-plane-authority-provenance-settlement'
 import {
   buildControllerStatusFromHeartbeat,
   buildLocalControlPlaneAuthority,
@@ -612,6 +613,25 @@ export const buildControlPlaneStatus = async (
     repairBidAdmission,
     torghutConsumerEvidence: torghutConsumerEvidence.status,
   })
+  const authorityProvenanceSettlement = buildAuthorityProvenanceSettlement({
+    now,
+    namespace: options.namespace,
+    database,
+    rolloutHealth,
+    runtimeAdapters: effectiveRuntimeAdapters,
+    workflows,
+    watchReliability: watchReliabilityStatus,
+    agentRunIngestion,
+    controllerWitness,
+    sourceRolloutTruthExchange,
+    sourceServingContractVerdictExchange,
+    stageClearancePackets,
+    actionSloBudgets: negativeEvidenceRouter.budgets,
+    projectionWatermarks: runtimeAdmission.projectionWatermarks,
+    stageCreditLedger,
+    readyTruthArbiter,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+  })
   const evidencePressureLedger = isEvidencePressureLedgerEnabled()
     ? buildEvidencePressureLedger({
         now,
@@ -690,6 +710,7 @@ export const buildControlPlaneStatus = async (
     stage_clearance_packets: stageClearancePackets,
     stage_credit_ledger: stageCreditLedger,
     ready_truth_arbiter: readyTruthArbiter,
+    authority_provenance_settlement: authorityProvenanceSettlement,
     evidence_pressure_ledger: evidencePressureLedger,
     ready_action_exchange: readyActionExchange,
     repair_bid_admission: repairBidAdmission,
