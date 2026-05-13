@@ -291,6 +291,32 @@ describe('scheduled AgentRun templates', () => {
     }
   })
 
+  it('wires scheduled swarm runs to live business evidence surfaces', () => {
+    const manifests = readYamlObjects('argocd/applications/agents/swarm-agentrun-templates.yaml')
+    const agentRunTemplates = new Map(
+      manifests
+        .filter((manifest) => manifest.kind === 'AgentRun')
+        .map((agentRun) => [objectAt(objectAt(agentRun, 'metadata'), 'name'), agentRun])
+        .filter((entry): entry is [string, Record<string, unknown>] => typeof entry[0] === 'string'),
+    )
+
+    for (const [name, expectedUrl] of [
+      ['jangar-swarm-discover-template', 'http://agents.agents.svc.cluster.local/ready'],
+      ['jangar-swarm-plan-template', 'http://agents.agents.svc.cluster.local/ready'],
+      ['jangar-swarm-implement-template', 'http://agents.agents.svc.cluster.local/ready'],
+      ['jangar-swarm-verify-template', 'http://agents.agents.svc.cluster.local/ready'],
+      ['torghut-swarm-discover-template', 'http://torghut.torghut.svc.cluster.local/trading/revenue-repair'],
+      ['torghut-swarm-plan-template', 'http://torghut.torghut.svc.cluster.local/trading/revenue-repair'],
+      ['torghut-swarm-implement-template', 'http://torghut.torghut.svc.cluster.local/trading/revenue-repair'],
+      ['torghut-swarm-verify-template', 'http://torghut.torghut.svc.cluster.local/trading/revenue-repair'],
+    ] as const) {
+      const template = agentRunTemplates.get(name)
+      const parameters = objectAt(objectAt(template, 'spec'), 'parameters')
+
+      expect(objectAt(parameters, 'swarmBusinessEvidenceUrl')).toBe(expectedUrl)
+    }
+  })
+
   it('keeps the deployer implementation spec focused on a bounded release slice', () => {
     const manifests = readYamlObjects('argocd/applications/agents/swarm-implspecs.yaml')
     const deployerSpec = manifests.find(
@@ -303,7 +329,22 @@ describe('scheduled AgentRun templates', () => {
     expect(text).toContain('Select at most one unblock-first/high-impact PR')
     expect(text).toContain('Do not use GitHub comments for routine status')
     expect(text).toContain('Never request Codex review automatically')
+    expect(text).toContain('/trading/revenue-repair')
     expect(text).not.toContain('codex:review-request')
+  })
+
+  it('requires implementation runs to use live business evidence before selecting work', () => {
+    const manifests = readYamlObjects('argocd/applications/agents/swarm-implspecs.yaml')
+    const implementerSpec = manifests.find(
+      (manifest) =>
+        manifest.kind === 'ImplementationSpec' &&
+        objectAt(objectAt(manifest, 'metadata'), 'name') === 'swarm-autonomous-implementation-v1',
+    )
+    const text = String(objectAt(objectAt(implementerSpec, 'spec'), 'text') ?? '')
+
+    expect(text).toContain('Read `${swarmBusinessEvidenceUrl}` when provided')
+    expect(text).toContain('top actionable `repair_queue` item')
+    expect(text).toContain('do not enable live submission while `business_state=repair_only`')
   })
 })
 

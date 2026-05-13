@@ -41,6 +41,7 @@ spec:
     objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate the Jangar control plane
     swarmMissionLedgerRef: /workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md
     swarmBusinessMetric: reduce failed AgentRuns and shorten green PR-to-healthy GitOps rollout time for the Jangar control plane
+    swarmBusinessEvidenceUrl: http://agents.agents.svc.cluster.local/ready
     swarmValidationContract: >-
       ["cite the governing Jangar design or runtime requirement before changing code","produce production PRs with tests or report the exact blocker to code","merge only green PRs and prove Argo, workload readiness, and service health after rollout","name the control-plane metric improved or the smallest blocker preventing improvement"]
     swarmValueGates: >-
@@ -100,6 +101,7 @@ spec:
     objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate the Jangar control plane
     swarmMissionLedgerRef: /workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md
     swarmBusinessMetric: reduce failed AgentRuns and shorten green PR-to-healthy GitOps rollout time for the Jangar control plane
+    swarmBusinessEvidenceUrl: http://agents.agents.svc.cluster.local/ready
     swarmValidationContract: >-
       ["cite the governing Jangar design or runtime requirement before changing code","produce production PRs with tests or report the exact blocker to code","merge only green PRs and prove Argo, workload readiness, and service health after rollout","name the control-plane metric improved or the smallest blocker preventing improvement"]
     swarmValueGates: >-
@@ -160,6 +162,7 @@ spec:
     natsSubjectPrefix: workflow
     swarmMissionLedgerRef: /workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md
     swarmBusinessMetric: reduce failed AgentRuns and shorten green PR-to-healthy GitOps rollout time for the Jangar control plane
+    swarmBusinessEvidenceUrl: http://agents.agents.svc.cluster.local/ready
     swarmValidationContract: >-
       ["cite the governing Jangar design or runtime requirement before changing code","produce production PRs with tests or report the exact blocker to code","merge only green PRs and prove Argo, workload readiness, and service health after rollout","name the control-plane metric improved or the smallest blocker preventing improvement"]
     swarmValueGates: >-
@@ -223,6 +226,7 @@ spec:
     objective: as release engineer, make Jangar PRs production-ready by fixing blockers until all required checks are green, then squash-merge and verify in-cluster GitOps rollout health
     swarmMissionLedgerRef: /workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md
     swarmBusinessMetric: reduce failed AgentRuns and shorten green PR-to-healthy GitOps rollout time for the Jangar control plane
+    swarmBusinessEvidenceUrl: http://agents.agents.svc.cluster.local/ready
     swarmValidationContract: >-
       ["cite the governing Jangar design or runtime requirement before changing code","produce production PRs with tests or report the exact blocker to code","merge only green PRs and prove Argo, workload readiness, and service health after rollout","name the control-plane metric improved or the smallest blocker preventing improvement"]
     swarmValueGates: >-
@@ -282,6 +286,7 @@ spec:
     objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate Torghut quant
     swarmMissionLedgerRef: /workspace/.agentrun/swarm/torghut-quant-mission-ledger.md
     swarmBusinessMetric: increase routeable post-cost profit evidence and live trading readiness without weakening capital safety
+    swarmBusinessEvidenceUrl: http://torghut.torghut.svc.cluster.local/trading/revenue-repair
     swarmValidationContract: >-
       ["cite the governing Torghut design or runtime requirement before changing code","produce production PRs that improve readiness, profit evidence, data freshness, execution quality, or capital safety","merge only green PRs and prove image promotion, Argo sync, live service health, and trading or evidence status after rollout","name the revenue metric improved or the smallest blocker preventing revenue impact"]
     swarmValueGates: >-
@@ -341,6 +346,7 @@ spec:
     objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate Torghut quant
     swarmMissionLedgerRef: /workspace/.agentrun/swarm/torghut-quant-mission-ledger.md
     swarmBusinessMetric: increase routeable post-cost profit evidence and live trading readiness without weakening capital safety
+    swarmBusinessEvidenceUrl: http://torghut.torghut.svc.cluster.local/trading/revenue-repair
     swarmValidationContract: >-
       ["cite the governing Torghut design or runtime requirement before changing code","produce production PRs that improve readiness, profit evidence, data freshness, execution quality, or capital safety","merge only green PRs and prove image promotion, Argo sync, live service health, and trading or evidence status after rollout","name the revenue metric improved or the smallest blocker preventing revenue impact"]
     swarmValueGates: >-
@@ -401,6 +407,7 @@ spec:
     natsSubjectPrefix: workflow
     swarmMissionLedgerRef: /workspace/.agentrun/swarm/torghut-quant-mission-ledger.md
     swarmBusinessMetric: increase routeable post-cost profit evidence and live trading readiness without weakening capital safety
+    swarmBusinessEvidenceUrl: http://torghut.torghut.svc.cluster.local/trading/revenue-repair
     swarmValidationContract: >-
       ["cite the governing Torghut design or runtime requirement before changing code","produce production PRs that improve readiness, profit evidence, data freshness, execution quality, or capital safety","merge only green PRs and prove image promotion, Argo sync, live service health, and trading or evidence status after rollout","name the revenue metric improved or the smallest blocker preventing revenue impact"]
     swarmValueGates: >-
@@ -461,6 +468,7 @@ spec:
     objective: as release engineer, make Torghut PRs production-ready by fixing blockers until all required checks are green, then squash-merge and verify in-cluster GitOps rollout health
     swarmMissionLedgerRef: /workspace/.agentrun/swarm/torghut-quant-mission-ledger.md
     swarmBusinessMetric: increase routeable post-cost profit evidence and live trading readiness without weakening capital safety
+    swarmBusinessEvidenceUrl: http://torghut.torghut.svc.cluster.local/trading/revenue-repair
     swarmValidationContract: >-
       ["cite the governing Torghut design or runtime requirement before changing code","produce production PRs that improve readiness, profit evidence, data freshness, execution quality, or capital safety","merge only green PRs and prove image promotion, Argo sync, live service health, and trading or evidence status after rollout","name the revenue metric improved or the smallest blocker preventing revenue impact"]
     swarmValueGates: >-

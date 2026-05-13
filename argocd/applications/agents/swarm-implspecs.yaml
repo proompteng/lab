@@ -45,11 +45,12 @@ spec:
     - ownerChannel (conversation URI): ${ownerChannel}
     - swarmMissionLedgerRef: ${swarmMissionLedgerRef}
     - swarmBusinessMetric: ${swarmBusinessMetric}
+    - swarmBusinessEvidenceUrl: ${swarmBusinessEvidenceUrl}
     - swarmValidationContract: ${swarmValidationContract}
     - swarmValueGates: ${swarmValueGates}
 
     Execution loop (run in order):
-    1) Confirm objective/scope, `${swarmBusinessMetric}`, `${swarmMissionLedgerRef}`, and the validation contract from runtime inputs.
+    1) Confirm objective/scope, `${swarmBusinessMetric}`, `${swarmMissionLedgerRef}`, `${swarmBusinessEvidenceUrl}`, and the validation contract from runtime inputs.
     2) Assess and capture evidence across cluster/source/database surfaces.
     3) Propose ambitious alternatives with tradeoffs and pick one.
     4) Implement architecture artifacts (and any supporting config/code needed to make the design actionable).
@@ -69,8 +70,10 @@ spec:
     - Never request Codex review automatically. Do not post `@codex review` or `codex:review-request` comments, and do not hold merge on a missing large-diff Codex review unless a human explicitly asked for that review.
     - Ensure merged design documents define implementation scope, validation gates, and rollout/rollback expectations for engineer and deployer stages.
     - Write or update the mission ledger at `${swarmMissionLedgerRef}` with goal, business metric, validation contract, current milestone, PR/CI/rollout refs, handoffs, and final evidence.
+    - If `${swarmBusinessEvidenceUrl}` is set, read it before choosing the architecture direction and record the specific business blocker or value gate it exposes.
     - Do not stop at architecture if the validation contract is already implementable; hand off the next bounded implementation milestone.
     - Every planned milestone must map to at least one `${swarmValueGates}` entry.
+    - For Torghut, treat `/trading/revenue-repair` as the live business evidence surface: route architecture toward clearing the top repair queue item, not toward generic strategy or doc output.
     - Design artifacts must be substantial long-form content (problem, context, options, decision, validation, rollout, rollback, risks). Never leave document bodies empty.
     - Audit artifacts (issues/docs) must contain meaningful descriptions and evidence links; never create title-only records.
     - Ticket workflow state is never a runtime gate; tickets/docs are audit artifacts only.
@@ -158,6 +161,7 @@ spec:
     - ownerChannel (conversation URI): ${ownerChannel}
     - swarmMissionLedgerRef: ${swarmMissionLedgerRef}
     - swarmBusinessMetric: ${swarmBusinessMetric}
+    - swarmBusinessEvidenceUrl: ${swarmBusinessEvidenceUrl}
     - swarmValidationContract: ${swarmValidationContract}
     - swarmValueGates: ${swarmValueGates}
 
@@ -171,7 +175,7 @@ spec:
     - swarmRequirementPayload
 
     Execution loop (run in order):
-    1) Select highest-priority runtime work item (P0/P1 first) from objective + payload + signal and map it to `${swarmBusinessMetric}` plus at least one `${swarmValueGates}` entry.
+    1) Read `${swarmBusinessEvidenceUrl}` when provided, then select the highest-priority runtime work item from objective + payload + signal + live business evidence and map it to `${swarmBusinessMetric}` plus at least one `${swarmValueGates}` entry.
     2) Cite governing design artifact and acceptance criteria before coding.
     3) Implement end-to-end with tests and operational safety (including rollback notes).
     4) Open/update PR, fix existing review comments/conflicts, and rerun checks until green.
@@ -180,11 +184,14 @@ spec:
     Requirements:
     - Work only on `${head}` based on `${base}` in `${repository}`.
     - Identify and cite the governing design document and runtime requirement signal (path/PR/issue doc/payload) before coding.
+    - If `${swarmBusinessEvidenceUrl}` is available but cannot be read, fail with the exact command/error and the smallest unblocker instead of choosing speculative work.
+    - For Torghut, `/trading/revenue-repair` is the source of truth for revenue blocker priority. Pick the top actionable `repair_queue` item that maps to `${swarmValueGates}`; do not enable live submission while `business_state=repair_only`, `revenue_ready=false`, or `repair_queue` is non-empty.
     - Prioritize runtime P0/P1 requirements first (objective + payload + signal), not ticket status.
     - If no design document is available, fail with explicit blocker and request the missing artifact.
     - Implement production-quality code/config changes aligned to that design.
     - Treat `${swarmValidationContract}` as pre-written acceptance criteria; add tests or live checks for each applicable assertion before claiming done.
     - Update `${swarmMissionLedgerRef}` with selected value gate, changed files, validation results, PR refs, blocker evidence, and next action.
+    - Record before/after business evidence from `${swarmBusinessEvidenceUrl}` in the mission ledger and PR body: `business_state`, `revenue_ready`, top `repair_queue` item, and the affected value gate.
     - Run required formatters/linters/tests for touched areas and keep results green.
     - Open/update PR with design-document provenance, requirement provenance, risk notes, rollback path, and explicit green-check evidence.
     - Keep PR mergeable and ready for deployer handoff. Do not merge unless objective explicitly requires merge.
@@ -214,7 +221,7 @@ spec:
 
     Done criteria (all required):
     - Highest-priority scoped requirement is implemented.
-    - The shipped change is tied to `${swarmBusinessMetric}` and one or more value gates, or the exact blocker preventing business impact is recorded.
+    - The shipped change is tied to `${swarmBusinessMetric}` and one or more value gates with before/after business evidence, or the exact blocker preventing business impact is recorded.
     - PR is merge-ready with required checks green.
     - Evidence includes validation, risk, rollback, and requirement/design provenance.
     - NATS/Jangar updates are thread-aware and human-readable.
@@ -261,6 +268,7 @@ spec:
     - objective: ${objective}
     - swarmMissionLedgerRef: ${swarmMissionLedgerRef}
     - swarmBusinessMetric: ${swarmBusinessMetric}
+    - swarmBusinessEvidenceUrl: ${swarmBusinessEvidenceUrl}
     - swarmValidationContract: ${swarmValidationContract}
     - swarmValueGates: ${swarmValueGates}
     - targetApplications: ${targetApplications}
@@ -269,7 +277,7 @@ spec:
 
     Execution loop (run in order):
     1) Read current repository state at `${base}` for the GitOps target configuration.
-    2) Confirm `${swarmBusinessMetric}`, `${swarmValueGates}`, `${swarmMissionLedgerRef}`, and `${swarmValidationContract}` as the rollout done contract.
+    2) Confirm `${swarmBusinessMetric}`, `${swarmValueGates}`, `${swarmMissionLedgerRef}`, `${swarmBusinessEvidenceUrl}`, and `${swarmValidationContract}` as the rollout done contract.
     3) Verify each Argo CD Application in `${targetApplications}` is Synced and Healthy.
     4) Verify each deployment in `${targetDeployments}` is rolled out, available, and serving the image configured by GitOps.
     5) Check recent warning/error events for target workloads and include only rollout-relevant events.
@@ -282,6 +290,7 @@ spec:
     - Do not push branches, edit repository files, or mutate Kubernetes resources.
     - Use read-only evidence from GitHub, Argo CD, Kubernetes, and service readiness.
     - Treat `${swarmValidationContract}` as the rollout acceptance contract; record whether the live rollout advances `${swarmBusinessMetric}` or which value gate is blocked.
+    - If `${swarmBusinessEvidenceUrl}` is set, read it after rollout and record the live business state. For Torghut, include `/trading/revenue-repair` fields `business_state`, `revenue_ready`, top `repair_queue` item, and routeable/profit evidence gates.
     - Update `${swarmMissionLedgerRef}` with GitOps evidence, workload readiness, service readiness, business metric/value gate evidence, blocker, rollback path, and exact next action.
     - Treat `jangar-control-plane:verify:verify stage is stale` as a self-referential blocker for this run only. If
       every other rollout signal is healthy and that is the only readiness blocker, complete successfully so this
@@ -357,12 +366,13 @@ spec:
     - ownerChannel (conversation URI): ${ownerChannel}
     - swarmMissionLedgerRef: ${swarmMissionLedgerRef}
     - swarmBusinessMetric: ${swarmBusinessMetric}
+    - swarmBusinessEvidenceUrl: ${swarmBusinessEvidenceUrl}
     - swarmValidationContract: ${swarmValidationContract}
     - swarmValueGates: ${swarmValueGates}
 
     Execution loop (run in order):
-    1) Spend at most 5 minutes gathering current PR, CI, rollout, and readiness state.
-    2) Select at most one unblock-first/high-impact PR that maps to `${swarmBusinessMetric}` or a blocked value gate.
+    1) Spend at most 5 minutes gathering current PR, CI, rollout, readiness, and `${swarmBusinessEvidenceUrl}` state.
+    2) Select at most one unblock-first/high-impact PR that maps to `${swarmBusinessMetric}` or a blocked value gate shown by live business evidence.
        If no such PR is mergeable within this run, stop with one explicit blocker and next action.
     3) Resolve only the selected PR's conflicts/comments and apply only the smallest follow-up fix needed for green checks.
     4) Squash merge the selected PR only after every required check is green.
@@ -375,6 +385,8 @@ spec:
     - Prioritize unblock-first/high-impact, and move at most one selected PR to mergeable state per run.
     - Own selected PRs end-to-end: resolve blocking comments/conflicts and fix code/tests/CI until all required checks are green.
     - Treat `${swarmValidationContract}` as the release acceptance contract; do not count a PR as useful unless it advances `${swarmBusinessMetric}` or records the exact blocker.
+    - If `${swarmBusinessEvidenceUrl}` is available but cannot be read, fail with the exact command/error and smallest unblocker; do not treat message volume, green generic health, or PR count as business impact.
+    - For Torghut, merge priority must be grounded in `/trading/revenue-repair`: prefer PRs that retire the top `repair_queue` item or improve `routeable_candidate_count`, `zero_notional_or_stale_evidence_rate`, `fill_tca_or_slippage_quality`, or `capital_gate_safety`.
     - Never request Codex review automatically. Do not post automated review-request comments, and do not hold green PRs on a missing large-diff Codex review unless a human explicitly asked for that review.
     - Do not use GitHub comments for routine status. Use NATS for live coordination and durable artifacts for audit.
       Update a PR progress comment only when you actually changed the selected PR branch or merge state.
@@ -387,6 +399,7 @@ spec:
       - error events
     - Do not declare success until merged commit rollout is confirmed, or fail with explicit blocker evidence.
     - Update `${swarmMissionLedgerRef}` with merge decision, green checks, rollout evidence, runtime/business metric evidence, rollback path, and next action only after a merge or a changed blocker.
+    - Record before/after business evidence from `${swarmBusinessEvidenceUrl}` in the mission ledger and handoff.
     - No direct production mutations from local shell; promotion is via PR merge and GitOps reconciliation.
     - Audit artifacts are bounded: write one concise handoff for the selected PR or blocker, not broad historical rollout reports.
     - Ticket workflow state is never a runtime gate; tickets/docs are audit artifacts only.
