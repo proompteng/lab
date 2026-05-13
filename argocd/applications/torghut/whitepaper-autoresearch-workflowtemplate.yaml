@@ -29,7 +29,7 @@ spec:
       - name: expectedLastTradingDay
         value: '2026-05-01'
       - name: targetNetPnlPerDay
-        value: '300'
+        value: '500'
       - name: maxCandidates
         value: '64'
       - name: topK
@@ -144,7 +144,7 @@ spec:
               --portfolio-size-min "{{inputs.parameters.portfolioSizeMin}}"
               --portfolio-size-max "{{inputs.parameters.portfolioSizeMax}}"
               --replay-mode real
-              --program config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml
+              --program config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml
               --strategy-configmap /etc/torghut/strategies.yaml
               --clickhouse-http-url "${TA_CLICKHOUSE_URL}"
               --clickhouse-username "${TA_CLICKHOUSE_USERNAME}"
