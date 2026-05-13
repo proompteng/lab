@@ -22,7 +22,10 @@ import type {
   ControlPlaneWatchReliability,
   DatabaseStatus,
 } from '~/server/control-plane-status-types'
-import type { TorghutNegativeEvidenceInput } from '~/server/control-plane-torghut-negative-evidence'
+import {
+  addTorghutEvidenceClockNegativeEvidence,
+  type TorghutNegativeEvidenceInput,
+} from '~/server/control-plane-negative-evidence-router-torghut'
 
 export const NEGATIVE_EVIDENCE_ROUTER_DESIGN_ARTIFACT =
   'docs/agents/designs/111-jangar-negative-evidence-router-and-action-slo-budgets-2026-05-06.md'
@@ -405,67 +408,11 @@ const buildNegativeEvidenceRefs = (input: NegativeEvidenceRouterInput) => {
       )
     }
 
-    const evidenceClockRefs = uniqueStrings([
-      torghut.evidence_clock_arbiter_id ?? '',
-      torghut.routeable_profit_candidate_exchange_id ?? '',
-      torghut.evidence_clock_custody_ref ?? '',
-      ...(torghut.routeable_exchange_zero_notional_repair_lot_ids ?? []),
-    ])
-    if (torghut.evidence_clock_status && torghut.evidence_clock_status !== 'current') {
-      addEvidence(
-        evidence,
-        'data_freshness_negative',
-        `evidence_clock_${torghut.evidence_clock_status}`,
-        evidenceClockRefs.length > 0 ? evidenceClockRefs : [consumerEvidenceRef],
-      )
-    }
-    for (const reason of torghut.evidence_clock_blocking_reason_codes ?? []) {
-      addEvidence(
-        evidence,
-        'data_freshness_negative',
-        reason,
-        evidenceClockRefs.length > 0 ? evidenceClockRefs : [consumerEvidenceRef],
-      )
-    }
-    if (torghut.evidence_clock_custody_status && torghut.evidence_clock_custody_status !== 'current') {
-      const custodyReason = `evidence_clock_custody_${torghut.evidence_clock_custody_status}`
-      addEvidence(
-        evidence,
-        'data_freshness_negative',
-        custodyReason,
-        evidenceClockRefs.length > 0 ? evidenceClockRefs : [consumerEvidenceRef],
-      )
-      addEvidence(
-        evidence,
-        'current_runtime_negative',
-        custodyReason,
-        evidenceClockRefs.length > 0 ? evidenceClockRefs : [consumerEvidenceRef],
-      )
-      addEvidence(
-        evidence,
-        'rollout_ambiguity_negative',
-        custodyReason,
-        evidenceClockRefs.length > 0 ? evidenceClockRefs : [consumerEvidenceRef],
-      )
-    }
-    for (const reason of torghut.evidence_clock_custody_reason_codes ?? []) {
-      addEvidence(
-        evidence,
-        'rollout_ambiguity_negative',
-        reason,
-        evidenceClockRefs.length > 0 ? evidenceClockRefs : [consumerEvidenceRef],
-      )
-    }
-    for (const clockName of torghut.evidence_clock_split_clock_names ?? []) {
-      if (clockName === 'rollout' || clockName === 'capital_gate') {
-        addEvidence(
-          evidence,
-          'rollout_ambiguity_negative',
-          `evidence_clock_${clockName}_split`,
-          evidenceClockRefs.length > 0 ? evidenceClockRefs : [consumerEvidenceRef],
-        )
-      }
-    }
+    addTorghutEvidenceClockNegativeEvidence({
+      torghut,
+      consumerEvidenceRef,
+      addEvidence: (kind, reason, refs) => addEvidence(evidence, kind, reason, refs),
+    })
 
     if (torghut.readiness_status && torghut.readiness_status !== 'healthy') {
       addEvidence(evidence, 'data_freshness_negative', `torghut_readiness_${torghut.readiness_status}`, [

@@ -189,6 +189,109 @@ describe('control-plane Torghut consumer evidence', () => {
     })
   })
 
+  it('maps Torghut evidence-clock splits and missing custody into action-boundary evidence', async () => {
+    process.env = {
+      ...originalEnv,
+      JANGAR_TORGHUT_STATUS_URL: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
+    }
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        buildJsonResponse({
+          schema_version: 'torghut.consumer-evidence-status.v1',
+          route_proven_profit_receipt: {
+            schema_version: 'torghut.route-proven-profit-receipt.v1',
+            receipt_id: 'torghut-route-proven-profit:clock-split',
+            generated_at: '2026-05-12T16:45:00.000Z',
+            fresh_until: '2026-05-12T16:46:00.000Z',
+            paper_readiness_state: 'blocked',
+            live_readiness_state: 'blocked',
+            max_notional: '0',
+            reason_codes: [],
+          },
+          evidence_clock_arbiter: {
+            schema_version: 'torghut.evidence-clock-arbiter.v1',
+            arbiter_id: 'evidence-clock-arbiter:test',
+            routeable_candidate_count: 0,
+            required_jangar_custody_ref: {
+              decision: 'allow',
+              state: 'current',
+              source: 'dependency_quorum_proxy',
+              fresh_until: '2026-05-12T16:46:00.000Z',
+            },
+            clock_splits: [
+              {
+                clock: 'rollout',
+                state: 'split',
+                affected_value_gates: ['capital_gate_safety'],
+                reason_codes: ['route_adjacent_workloads_degraded'],
+                next_repair_class: 'image_digest_reconcile',
+              },
+              {
+                clock: 'postgres_tca',
+                state: 'stale',
+                affected_value_gates: ['fill_tca_or_slippage_quality'],
+                reason_codes: ['execution_tca_stale'],
+                next_repair_class: 'execution_tca_refresh',
+              },
+            ],
+          },
+          routeable_profit_candidate_exchange: {
+            schema_version: 'torghut.routeable-profit-candidate-exchange.v1',
+            exchange_id: 'routeable-profit-candidate-exchange:test',
+            zero_notional_repair_lots: [
+              {
+                lot_id: 'evidence-clock-repair-lot:rollout',
+                target_value_gate: 'capital_gate_safety',
+                repair_class: 'image_digest_reconcile',
+                max_notional: '0',
+              },
+            ],
+            rejected_candidates: [{ candidate_id: 'candidate-a' }],
+            summary: {
+              routeable_candidate_count: 0,
+              rejected_candidate_count: 1,
+            },
+          },
+        }),
+      ),
+    ) as unknown as typeof globalThis.fetch
+
+    const result = await resolveTorghutConsumerEvidence(new Date('2026-05-12T16:45:10.000Z'))
+
+    expect(result.status).toMatchObject({
+      status: 'current',
+      evidence_clock_arbiter_id: 'evidence-clock-arbiter:test',
+      evidence_clock_state: 'split',
+      evidence_clock_split_clock_names: ['rollout', 'postgres_tca'],
+      evidence_clock_blocking_reason_codes: ['route_adjacent_workloads_degraded', 'execution_tca_stale'],
+      evidence_clock_custody_status: 'missing',
+      evidence_clock_custody_ref: null,
+      routeable_profit_candidate_exchange_id: 'routeable-profit-candidate-exchange:test',
+      routeable_exchange_routeable_candidate_count: 0,
+      routeable_exchange_zero_notional_repair_lot_ids: ['evidence-clock-repair-lot:rollout'],
+      routeable_exchange_rejected_candidate_count: 1,
+      operator_summary: {
+        top_clock_split: 'rollout',
+        selected_repair_lot_id: 'evidence-clock-repair-lot:rollout',
+        expected_value_gate: 'capital_gate_safety',
+        next_validation_command:
+          "curl -fsS http://torghut.torghut.svc.cluster.local/trading/consumer-evidence | jq '.evidence_clock_arbiter.summary'",
+      },
+    })
+    expect(result.negativeEvidence).toMatchObject({
+      evidence_clock_arbiter_id: 'evidence-clock-arbiter:test',
+      evidence_clock_status: 'split',
+      evidence_clock_split_clock_names: ['rollout', 'postgres_tca'],
+      evidence_clock_blocking_reason_codes: ['route_adjacent_workloads_degraded', 'execution_tca_stale'],
+      evidence_clock_custody_status: 'missing',
+      evidence_clock_custody_reason_codes: ['evidence_clock_custody_receipt_missing'],
+      routeable_profit_candidate_exchange_id: 'routeable-profit-candidate-exchange:test',
+      routeable_exchange_zero_notional_repair_lot_ids: ['evidence-clock-repair-lot:rollout'],
+      routeable_exchange_routeable_candidate_count: 0,
+      routeable_exchange_rejected_candidate_count: 1,
+    })
+  })
+
   it('maps route 404 to route_missing evidence instead of generic unavailable', async () => {
     process.env = {
       ...originalEnv,

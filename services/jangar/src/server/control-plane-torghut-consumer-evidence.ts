@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
-import type { TorghutNegativeEvidenceInput } from '~/server/control-plane-torghut-negative-evidence'
+import type { TorghutNegativeEvidenceInput } from '~/server/control-plane-negative-evidence-router-torghut'
 import { asRecord } from '~/server/primitives-http'
 
 export type TorghutConsumerEvidenceStatus = {

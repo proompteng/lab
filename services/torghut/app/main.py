@@ -2531,6 +2531,12 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         state=state,
         hypothesis_summary=hypothesis_summary,
     )
+    build_payload = {
+        "version": BUILD_VERSION,
+        "commit": BUILD_COMMIT,
+        "image_digest": BUILD_IMAGE_DIGEST,
+        "active_revision": shadow_first_runtime["active_revision"],
+    }
     proof_floor = _build_profitability_proof_floor_payload(
         state=state,
         torghut_revision=str(shadow_first_runtime["active_revision"]),
@@ -2562,12 +2568,6 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
             dependency_quorum.as_payload()
         ),
     )
-    build_payload = {
-        "version": BUILD_VERSION,
-        "commit": BUILD_COMMIT,
-        "image_digest": BUILD_IMAGE_DIGEST,
-        "active_revision": shadow_first_runtime["active_revision"],
-    }
     profit_signal_quorum = _build_profit_signal_quorum_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
         dependency_quorum=dependency_quorum.as_payload(),

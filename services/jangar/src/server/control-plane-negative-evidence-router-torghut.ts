@@ -1,3 +1,5 @@
+import type { NegativeEvidenceKind } from '~/data/agents-control-plane'
+
 export type TorghutNegativeEvidenceInput = {
   readiness_status?: 'healthy' | 'degraded' | 'unknown'
   readyz_status_code?: number | null
@@ -40,4 +42,47 @@ export type TorghutNegativeEvidenceInput = {
   routeable_exchange_zero_notional_repair_lot_ids?: string[]
   routeable_exchange_routeable_candidate_count?: number | null
   routeable_exchange_rejected_candidate_count?: number | null
+}
+
+type AddEvidence = (kind: NegativeEvidenceKind, reason: string, refs?: string[]) => void
+
+const uniqueStrings = (values: string[]) => [...new Set(values.filter((value) => value.trim().length > 0))]
+
+export const addTorghutEvidenceClockNegativeEvidence = (input: {
+  torghut: TorghutNegativeEvidenceInput
+  consumerEvidenceRef: string
+  addEvidence: AddEvidence
+}) => {
+  const evidenceClockRefs = uniqueStrings([
+    input.torghut.evidence_clock_arbiter_id ?? '',
+    input.torghut.routeable_profit_candidate_exchange_id ?? '',
+    input.torghut.evidence_clock_custody_ref ?? '',
+    ...(input.torghut.routeable_exchange_zero_notional_repair_lot_ids ?? []),
+  ])
+  const refs = evidenceClockRefs.length > 0 ? evidenceClockRefs : [input.consumerEvidenceRef]
+
+  if (input.torghut.evidence_clock_status && input.torghut.evidence_clock_status !== 'current') {
+    input.addEvidence('data_freshness_negative', `evidence_clock_${input.torghut.evidence_clock_status}`, refs)
+  }
+
+  for (const reason of input.torghut.evidence_clock_blocking_reason_codes ?? []) {
+    input.addEvidence('data_freshness_negative', reason, refs)
+  }
+
+  if (input.torghut.evidence_clock_custody_status && input.torghut.evidence_clock_custody_status !== 'current') {
+    const custodyReason = `evidence_clock_custody_${input.torghut.evidence_clock_custody_status}`
+    input.addEvidence('data_freshness_negative', custodyReason, refs)
+    input.addEvidence('current_runtime_negative', custodyReason, refs)
+    input.addEvidence('rollout_ambiguity_negative', custodyReason, refs)
+  }
+
+  for (const reason of input.torghut.evidence_clock_custody_reason_codes ?? []) {
+    input.addEvidence('rollout_ambiguity_negative', reason, refs)
+  }
+
+  for (const clockName of input.torghut.evidence_clock_split_clock_names ?? []) {
+    if (clockName === 'rollout' || clockName === 'capital_gate') {
+      input.addEvidence('rollout_ambiguity_negative', `evidence_clock_${clockName}_split`, refs)
+    }
+  }
 }
