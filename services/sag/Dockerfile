@@ -24,6 +24,11 @@ ENV CODEX_HOME=/home/bun/.codex
 ENV CODEX_AUTH=/home/bun/.codex/auth.json
 ENV BUN_INSTALL=/home/bun/.bun
 ENV PATH=/home/bun/.bun/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /workspace/services/sag/.output ./.output
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
