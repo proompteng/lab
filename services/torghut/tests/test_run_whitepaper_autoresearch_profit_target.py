@@ -1272,12 +1272,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         remediation = runner._candidate_search_remediation(
             failure_reason="portfolio_optimizer_produced_no_candidate",
             candidate_selection={
+                "budget": {"compiled_candidate_count": "not-an-int"},
                 "rows": [
                     {
                         "candidate_spec_id": "spec-selected",
                         "selected_for_replay": True,
                     }
-                ]
+                ],
             },
             evidence_bundles=(),
             false_positive_table=(
@@ -1415,6 +1416,90 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(
             breadth_action["recommended_flags"]["--portfolio-size-min"], "3"
+        )
+
+    def test_remediation_recommends_profile_surface_when_selection_budget_exhausted(
+        self,
+    ) -> None:
+        selected_rows = [
+            {
+                "candidate_spec_id": f"spec-selected-{index}",
+                "family_template_id": family_template_id,
+                "selected_for_replay": True,
+            }
+            for index, family_template_id in enumerate(
+                (
+                    "breakout_reclaim_v2",
+                    "intraday_tsmom_v2",
+                    "mean_reversion_rebound_v1",
+                    "microbar_cross_sectional_pairs_v1",
+                    "microstructure_continuation_matched_filter_v1",
+                )
+                * 3,
+                start=1,
+            )
+        ]
+        remediation = runner._candidate_search_remediation(
+            failure_reason="portfolio_optimizer_produced_no_candidate",
+            candidate_selection={
+                "budget": {
+                    "compiled_candidate_count": 54,
+                    "unique_execution_signature_count": 15,
+                    "selected_count": 15,
+                    "max_candidates": 1032,
+                    "top_k": 520,
+                    "exploration_slots_effective": 512,
+                },
+                "rows": selected_rows,
+            },
+            evidence_bundles=(),
+            false_positive_table=tuple(
+                {
+                    "candidate_spec_id": row["candidate_spec_id"],
+                    "evidence_status": "replayed",
+                    "failure_reasons": [
+                        "active_day_ratio_below_oracle",
+                        "positive_day_ratio_below_oracle",
+                    ],
+                }
+                for row in selected_rows
+            ),
+            best_false_negative_table=(),
+            replay_timeout_seconds=7200,
+            max_frontier_candidates_per_spec=2,
+            current_top_k=520,
+            current_exploration_slots=512,
+            current_portfolio_size_min=3,
+            current_max_candidates=1032,
+            current_max_total_frontier_candidates=128,
+        )
+
+        self.assertTrue(remediation["candidate_surface_exhausted"])
+        surface_action = remediation["next_actions"][0]
+        self.assertEqual(surface_action["action"], "expand_execution_profile_surface")
+        self.assertEqual(
+            surface_action["observed_selection_budget"][
+                "unique_execution_signature_count"
+            ],
+            15,
+        )
+        self.assertEqual(
+            surface_action["target_family_template_ids"],
+            [
+                "breakout_reclaim_v2",
+                "intraday_tsmom_v2",
+                "mean_reversion_rebound_v1",
+                "microbar_cross_sectional_pairs_v1",
+                "microstructure_continuation_matched_filter_v1",
+            ],
+        )
+        self.assertNotIn("recommended_flags", surface_action)
+        self.assertFalse(
+            [
+                action
+                for action in remediation["next_actions"]
+                if action["action"] == "increase_breadth_and_portfolio_diversity"
+            ]
         )
 
     def test_next_epoch_plan_rejects_breadth_shrinking_remediation_flags(self) -> None:
