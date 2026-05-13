@@ -5,7 +5,7 @@ Repository: `proompteng/lab`
 Branch: `codex/swarm-torghut-quant-verify`
 Base: `main`
 Owner channel: `swarm://owner/trading`
-Last refreshed: 2026-05-13T06:26:00Z
+Last refreshed: 2026-05-13T06:56:18Z
 
 ## Owner update message
 
@@ -22,6 +22,10 @@ Runtime remains capital-safe rather than revenue-live. Jangar `/ready` is `ok`, 
 `current`, repair-bid settlement is `current`, repair dispatch admits three zero-notional compacted lots, material
 paper/live actions are held or blocked, and all surfaced max-notional fields remain `0`.
 
+Current release-engineer gate: #6354 is the active Torghut verify PR on the requested branch. It is documentation-only,
+maps to audit evidence for the already-merged Torghut/Jangar release path, and must merge only after the refreshed branch
+is clean against current `main` with its semantic and documentation checks green.
+
 ## Governing requirement
 
 - `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md` is the Torghut design source of
@@ -35,15 +39,23 @@ paper/live actions are held or blocked, and all surfaced max-notional fields rem
 
 ## Open PR enumeration
 
-- #6343 `feat(jangar): admit settled torghut repair lots`
-  - Selected as the only open PR with `torghut` / `quant` in its branch, title, or body.
-  - Mapped to `capital_gate_safety`, `zero_notional_or_stale_evidence_rate`, and `routeable_candidate_count`.
-  - Merged after green checks, clean merge state, and zero review threads.
-- #6349 `fix(jangar): preserve controller heartbeat witnesses`
-  - Open Jangar control-plane PR on a different swarm lane; not selected for Torghut quant verification.
+- #6354 `docs(torghut): record quant release rollout`
+  - Selected as the active PR on `codex/swarm-torghut-quant-verify`.
+  - Maps to the audit and release-verification contract for `capital_gate_safety`,
+    `zero_notional_or_stale_evidence_rate`, and `routeable_candidate_count`.
+  - Documentation-only; no direct production mutation and no runtime manifest change.
+- #6357 `docs(jangar): record control-plane release verification`
+  - Open Jangar control-plane audit PR on a different swarm lane; not selected for Torghut quant verification.
 - #6200, #6206, #6210, #6214, #6215, and #6219
   - Older automated `release/*` PRs for app/docs manifests; not selected because they do not touch Torghut or the
     Torghut quant value gates.
+
+Historical release PR selection for this audit:
+
+- #6343 `feat(jangar): admit settled torghut repair lots`
+  - Selected and merged earlier in this release gate as the only open implementation PR matching the Torghut quant lane.
+  - Mapped to `capital_gate_safety`, `zero_notional_or_stale_evidence_rate`, and `routeable_candidate_count`.
+  - Merged after green checks, clean merge state, and zero review threads.
 
 ## PRs touched
 
@@ -61,17 +73,24 @@ paper/live actions are held or blocked, and all surfaced max-notional fields rem
 - #6351 `chore(release/f0c8c97): automated release PR`
   - Automated release follow-up for the promotion stream.
   - Merged at `551dc4b73d787d87a0142e2b0bdc83f75cf6b81f`.
+- #6354 `docs(torghut): record quant release rollout`
+  - Refreshed against current `origin/main`.
+  - Updated this audit artifact and the anchored progress comment for the current merge gate.
+  - Selected for squash merge after semantic checks, documentation formatting, and GitHub mergeability are green.
 
 ## Comments and conflicts resolved
 
 - #6343 had no review threads.
 - #6343 had no merge conflict; `git merge-tree --write-tree origin/main origin/codex/swarm-torghut-quant` exited `0`.
 - No direct production workload mutation was made from the local shell. Promotion went through #6350 and Argo CD.
-- The verify branch was fast-forwarded to current `origin/main` before writing this audit artifact so the audit PR
-  contains only verification evidence.
+- The verify branch was rebased onto current `origin/main` before refreshing this audit artifact so the audit PR contains
+  only verification evidence.
 
 ## Validation
 
+- PASS: #6354 audit branch validation after rebasing onto current `origin/main`:
+  - `git diff --check`.
+  - `bunx oxfmt --check docs/torghut/rollouts/2026-05-13-torghut-quant-verify.md`.
 - PASS: #6343 PR checks on `e064455424e5a30ff46aa54f0ea54f7e417cbbdb`:
   - `Semantic Commits / Lint commit messages`.
   - `Semantic Pull Request / Validate PR title`.
