@@ -157,24 +157,25 @@ Testing rules for the trading core:
   - per-hypothesis `state`, `capital_stage`, `promotion_eligible`, `rollback_required`, and blocker `reasons`
   - `control_plane_contract.alpha_readiness_*` summary counts for blocked, shadow, canary-live, and scaled-live lanes
   - `last_decision_at` from the newest persisted `trade_decisions.created_at` row so status recency matches stored decision truth after restarts
-- `GET /trading/health` includes an additive `alpha_readiness` block summarizing readiness totals and Jangar quorum state.
+- `GET /trading/health` includes an additive `alpha_readiness` block summarizing readiness totals and any configured
+  external quorum state.
 - `GET /metrics` exports:
   - `torghut_trading_hypothesis_state_total`
   - `torghut_trading_hypothesis_capital_stage_total`
   - `torghut_trading_alpha_readiness_hypotheses_total`
   - `torghut_trading_alpha_readiness_promotion_eligible_total`
   - `torghut_trading_alpha_readiness_rollback_required_total`
-- To enable cross-service dependency quorum checks, set
-  `TRADING_JANGAR_CONTROL_PLANE_STATUS_URL=http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents`.
-  Torghut treats Jangar `dependency_quorum=delay|block` as additive promotion blockers and fails closed when the status
-  payload is unavailable.
-- The live-submission gate also consumes Jangar quant latest-store health. Set
-  `TRADING_JANGAR_QUANT_HEALTH_URL` explicitly in live and sim deployments; Torghut no longer derives the quant route
-  from `TRADING_JANGAR_CONTROL_PLANE_STATUS_URL` or `TRADING_MARKET_CONTEXT_URL`. Missing or unreachable quant-health
-  wiring now clamps the shared live-submission gate to `observe`. Torghut also rejects
-  `TRADING_JANGAR_QUANT_HEALTH_URL` when it does not target the typed
-  `/api/torghut/trading/control-plane/quant/health` surface; use `TRADING_JANGAR_QUANT_WINDOW` to align the expected
-  freshness window.
+- Live and paper trading-loop manifests intentionally do not configure Jangar control-plane, quant-health,
+  symbol-universe, or market-context URLs. The executable universe is declared inside Torghut, and readiness must be
+  proven from Torghut-owned signal, empirical-job, proof-floor, routeability, and execution evidence rather than an
+  external Jangar status service.
+- Optional cross-service dependency quorum checks remain available for off-path experiments by setting
+  `TRADING_JANGAR_CONTROL_PLANE_STATUS_URL`. Do not add that variable to the production live or paper trading services
+  unless the trading loop is explicitly meant to fail closed on that external service.
+- Optional external quant-health checks remain available by setting `TRADING_JANGAR_QUANT_HEALTH_URL`. Torghut rejects
+  that URL when it does not target the typed `/api/torghut/trading/control-plane/quant/health` surface; use
+  `TRADING_JANGAR_QUANT_WINDOW` to align the expected freshness window. The production live and paper trading manifests
+  leave this unset so Jangar availability is not part of the live-submission gate.
 - The shared live-submission gate now projects `profit_window_contract` with deterministic `profit_window_id` and
   `evidence_escrow_id` values per hypothesis lane. The contract records session class, funded/expired/underfunded
   escrow state for quant health, ClickHouse freshness, empirical jobs, market context, forecast/feature coverage, and

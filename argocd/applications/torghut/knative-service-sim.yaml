@@ -174,12 +174,6 @@ spec:
               value: no_signals_in_window,cursor_tail_stable,empty_batch_advanced
             - name: TRADING_HYPOTHESIS_REGISTRY_PATH
               value: config/trading/hypotheses
-            - name: TRADING_JANGAR_CONTROL_PLANE_STATUS_URL
-              value: http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents
-            - name: TRADING_JANGAR_QUANT_HEALTH_URL
-              value: http://jangar.jangar.svc.cluster.local/api/torghut/trading/control-plane/quant/health
-            - name: TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS
-              value: "15"
             - name: TRADING_FORECAST_SERVICE_ALLOWED_MODEL_FAMILIES
               value: chronos,moment,financial_tsfm
             - name: TRADING_EMPIRICAL_JOB_STALE_AFTER_SECONDS
@@ -259,27 +253,19 @@ spec:
             - name: TRADING_STRATEGY_RELOAD_SECONDS
               value: "10"
             - name: TRADING_UNIVERSE_SOURCE
-              value: jangar
+              value: static
             - name: TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR
-              value: "true"
+              value: "false"
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED
-              value: "true"
+              value: "false"
+            - name: TRADING_STATIC_SYMBOLS
+              value: NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS
               value: NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC
             - name: TRADING_UNIVERSE_SYMBOL_ALLOWLIST
               value: NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC
             - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
               value: "900"
-            - name: JANGAR_SYMBOLS_URL
-              value: http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity
-            - name: JANGAR_BASE_URL
-              value: http://jangar.jangar.svc.cluster.local
-            - name: JANGAR_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: jangar-api
-                  key: apiKey
-                  optional: true
             - name: POSTHOG_ENABLED
               value: "false"
             - name: POSTHOG_HOST
@@ -406,24 +392,6 @@ spec:
               value: "300"
             - name: WHITEPAPER_EMBEDDING_BATCH_SIZE
               value: "32"
-            - name: TRADING_MARKET_CONTEXT_URL
-              value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/
-            - name: TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS
-              value: "300"
-            - name: TRADING_MARKET_CONTEXT_REQUIRED
-              value: "false"
-            - name: TRADING_MARKET_CONTEXT_FAIL_MODE
-              value: shadow_only
-            - name: TRADING_MARKET_CONTEXT_MIN_QUALITY
-              value: "0.55"
-            - name: TRADING_MARKET_CONTEXT_MAX_STALENESS_SECONDS
-              value: "300"
-            - name: TRADING_MARKET_CONTEXT_ALLOW_DEGRADED_LAST_GOOD
-              value: "true"
-            - name: TRADING_MARKET_CONTEXT_FUNDAMENTALS_DEGRADED_MAX_STALENESS_SECONDS
-              value: "86400"
-            - name: TRADING_MARKET_CONTEXT_NEWS_DEGRADED_MAX_STALENESS_SECONDS
-              value: "1800"
             - name: TRADING_ALLOCATOR_REGIME_LOW_CONFIDENCE_THRESHOLD
               value: "0.60"
             - name: TRADING_ALLOCATOR_REGIME_LOW_CONFIDENCE_MULTIPLIER
