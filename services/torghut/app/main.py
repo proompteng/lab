@@ -1517,18 +1517,51 @@ def trading_profit_freshness_zero_notional_repair(
             for symbol in cast(Sequence[object], repair.get("symbol_set") or [])
             if str(symbol).strip()
         }
+
+        def select_signals(batch: Any) -> list[Any]:
+            return [
+                signal
+                for signal in cast(Sequence[Any], getattr(batch, "signals", []))
+                if not symbol_set
+                or str(getattr(signal, "symbol", "")).strip().upper() in symbol_set
+            ]
+
+        def replay_window_from_latest_signal() -> tuple[Any | None, list[Any]]:
+            latest_status_fn = getattr(ingestor, "latest_signal_status", None)
+            if not callable(latest_status_fn):
+                return None, []
+            latest_status = latest_status_fn()
+            if not isinstance(latest_status, Mapping):
+                return None, []
+            latest_status_mapping = cast(Mapping[str, object], latest_status)
+            latest_signal_at = latest_status_mapping.get("latest_signal_at")
+            if not isinstance(latest_signal_at, datetime):
+                return None, []
+            if latest_signal_at.tzinfo is None:
+                latest_signal_at = latest_signal_at.replace(tzinfo=timezone.utc)
+            else:
+                latest_signal_at = latest_signal_at.astimezone(timezone.utc)
+            fallback_batch = fetch_with_reason(
+                start=latest_signal_at - timedelta(minutes=lookback_minutes),
+                end=latest_signal_at,
+                limit=drift_limit,
+            )
+            return fallback_batch, select_signals(fallback_batch)
+
         try:
             batch = fetch_with_reason(
                 start=now - timedelta(minutes=lookback_minutes),
                 end=now,
                 limit=drift_limit,
             )
-            signals = [
-                signal
-                for signal in cast(Sequence[Any], getattr(batch, "signals", []))
-                if not symbol_set
-                or str(getattr(signal, "symbol", "")).strip().upper() in symbol_set
-            ]
+            signals = select_signals(batch)
+            replay_window = "current"
+            if not signals:
+                fallback_batch, fallback_signals = replay_window_from_latest_signal()
+                if fallback_signals:
+                    batch = fallback_batch
+                    signals = fallback_signals
+                    replay_window = "latest_signal"
             if not signals:
                 no_signal_reason = str(
                     getattr(batch, "no_signal_reason", None) or "no_signals"
@@ -1542,6 +1575,7 @@ def trading_profit_freshness_zero_notional_repair(
                         "query_start": getattr(batch, "query_start", None),
                         "query_end": getattr(batch, "query_end", None),
                         "symbol_set": sorted(symbol_set),
+                        "replay_window": replay_window,
                     },
                 }
             run_simple_drift_check(signals)
@@ -1567,6 +1601,9 @@ def trading_profit_freshness_zero_notional_repair(
             "result": {
                 "signals_evaluated": len(signals),
                 "symbol_set": sorted(symbol_set),
+                "replay_window": replay_window,
+                "query_start": getattr(batch, "query_start", None),
+                "query_end": getattr(batch, "query_end", None),
                 "drift_status": getattr(scheduler.state, "drift_status", None),
                 "drift_active_reason_codes": list(
                     getattr(scheduler.state, "drift_active_reason_codes", [])
