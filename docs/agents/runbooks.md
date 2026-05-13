@@ -214,11 +214,13 @@ Expected outcomes:
   `swarmClearanceMarket*` parameters on launches that remain admitted.
 - `stage_credit_ledger` cites design doc 187 and prices scheduled stages before they spend runner slots. In observe
   mode it must expose per-stage `available_credit`, `minimum_spend`, `decision`, `reason_codes`, selected repair lot,
-  and any open `runner_slot_futures`. A normal `discover`, `plan`, `implement`, or `verify` launch is not green
-  rollout evidence once shadow stamping is enabled unless it carries `swarmStageCreditLedgerId`,
-  `swarmStageCreditAccountId`, `swarmRunnerSlotFutureId`, and `swarmStageCreditDecision` in addition to the existing
-  stage-clearance and clearance-market stamps. Rollback is `JANGAR_STAGE_CREDIT_LEDGER_MODE=observe`, then
-  `JANGAR_STAGE_CREDIT_LEDGER_ENABLED=false` only if the payload itself is breaking status generation.
+  and any open `runner_slot_futures`. Fire-time schedule runners refresh that payload and stamp admitted launches with
+  `swarmStageCreditLedgerId`, `swarmStageCreditAccountId`, `swarmRunnerSlotFutureId`, and
+  `swarmStageCreditDecision` in addition to the existing stage-clearance and clearance-market stamps. If the ledger is
+  moved to `hold` or `enforce`, a missing, stale, or non-open runner-slot future fails closed before AgentRun creation;
+  in `observe` or `shadow`, the runner records warnings and keeps the current non-enforcing behavior. Rollback is
+  `JANGAR_STAGE_CREDIT_LEDGER_MODE=observe`, then `JANGAR_STAGE_CREDIT_LEDGER_ENABLED=false` only if the payload itself
+  is breaking status generation.
 - If collaboration is degraded or blocked because a runtime helper is missing, `/ready` stays `200` as
   long as the `serving` passport is still `allow` or `degrade`; the blocked `swarm_*` passport surfaces
   the missing component in `reason_codes`.

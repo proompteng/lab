@@ -21,6 +21,15 @@ import {
   SWARM_STAGE_CLEARANCE_ANNOTATION_PACKET_ID,
   SWARM_STAGE_CLEARANCE_ANNOTATION_REASON_CODES,
   SWARM_STAGE_CLEARANCE_ANNOTATION_REQUIRED_REPAIR_ACTION,
+  SWARM_STAGE_CREDIT_ANNOTATION_ACCOUNT_ID,
+  SWARM_STAGE_CREDIT_ANNOTATION_DECISION,
+  SWARM_STAGE_CREDIT_ANNOTATION_FRESH_UNTIL,
+  SWARM_STAGE_CREDIT_ANNOTATION_LEDGER_ID,
+  SWARM_STAGE_CREDIT_ANNOTATION_MODE,
+  SWARM_STAGE_CREDIT_ANNOTATION_REASON_CODES,
+  SWARM_STAGE_CREDIT_ANNOTATION_RUNNER_SLOT_FUTURE_EXPIRES_AT,
+  SWARM_STAGE_CREDIT_ANNOTATION_RUNNER_SLOT_FUTURE_ID,
+  SWARM_STAGE_CREDIT_ANNOTATION_SELECTED_REPAIR_LOT,
 } from '~/server/supporting-primitives-schedule-runner'
 import type { StageName } from '~/server/supporting-primitives-swarm-config'
 
@@ -35,6 +44,18 @@ export type StageClearanceMarketTrace = {
   evidenceRefs: string[]
 }
 
+export type StageCreditTrace = {
+  ledgerId: string
+  accountId: string | null
+  decision: ClearanceMarketDecision | null
+  mode: string | null
+  freshUntil: string | null
+  reasonCodes: string[]
+  runnerSlotFutureId: string | null
+  runnerSlotFutureExpiresAt: string | null
+  selectedRepairLotRef: string | null
+}
+
 export type StageClearanceLaunchAdmission = {
   mode: StageClearanceMode
   admitted: boolean
@@ -42,6 +63,7 @@ export type StageClearanceLaunchAdmission = {
   actionClass: ActionSloBudgetActionClass
   packet: StageClearancePacket | null
   clearanceMarket: StageClearanceMarketTrace | null
+  stageCredit: StageCreditTrace | null
   reason:
     | 'StageClearanceDisabled'
     | 'StageClearanceAllowed'
@@ -60,7 +82,38 @@ export type StageClearanceStatusSnapshot = {
   packets: StageClearancePacket[]
   clearanceMarketLedgerId: string | null
   stageAdmissions: ClearanceMarketStageAdmission[]
+  stageCredit: StageCreditStatusSnapshot | null
 }
+
+type StageCreditAccountSnapshot = {
+  accountId: string
+  stage: StageClearancePacket['stage']
+  actionClass: ActionSloBudgetActionClass
+  decision: ClearanceMarketDecision | null
+  reasonCodes: string[]
+  selectedRepairLotRef: string | null
+}
+
+type RunnerSlotFutureSnapshot = {
+  futureId: string
+  accountId: string
+  expiresAt: string | null
+  settlementState: string | null
+}
+
+type StageCreditStatusSnapshot = {
+  ledgerId: string
+  evidenceMode: string | null
+  freshUntil: string | null
+  accounts: StageCreditAccountSnapshot[]
+  futures: RunnerSlotFutureSnapshot[]
+}
+
+type StageClearanceAdmissionSnapshot = Pick<
+  StageClearanceStatusSnapshot,
+  'clearanceMarketLedgerId' | 'stageAdmissions'
+> &
+  Partial<Pick<StageClearanceStatusSnapshot, 'stageCredit'>>
 
 const asArray = (value: unknown) => (Array.isArray(value) ? value : [])
 
@@ -165,6 +218,54 @@ const readClearanceMarketStageAdmission = (value: unknown): ClearanceMarketStage
   }
 }
 
+const readStageCreditAccountSnapshot = (value: unknown): StageCreditAccountSnapshot | null => {
+  const record = asRecord(value)
+  if (!record) return null
+  const accountId = asString(record.account_id)
+  const stage = asString(record.stage)
+  const actionClass = asString(record.action_class)
+  if (!accountId || !stage || !actionClass) return null
+
+  return {
+    accountId,
+    stage: stage as StageClearancePacket['stage'],
+    actionClass: actionClass as ActionSloBudgetActionClass,
+    decision: parseClearanceMarketDecision(record.decision),
+    reasonCodes: compactStrings(asArray(record.reason_codes)),
+    selectedRepairLotRef: asString(record.selected_repair_lot_ref),
+  }
+}
+
+const readRunnerSlotFutureSnapshot = (value: unknown): RunnerSlotFutureSnapshot | null => {
+  const record = asRecord(value)
+  if (!record) return null
+  const futureId = asString(record.future_id)
+  const accountId = asString(record.account_id)
+  if (!futureId || !accountId) return null
+
+  return {
+    futureId,
+    accountId,
+    expiresAt: asString(record.expires_at),
+    settlementState: asString(record.settlement_state),
+  }
+}
+
+const readStageCreditStatusSnapshot = (value: unknown): StageCreditStatusSnapshot | null => {
+  const record = asRecord(value)
+  if (!record) return null
+  const ledgerId = asString(record.ledger_id)
+  if (!ledgerId) return null
+
+  return {
+    ledgerId,
+    evidenceMode: asString(record.evidence_mode),
+    freshUntil: asString(record.fresh_until),
+    accounts: asArray(record.stage_accounts).map(readStageCreditAccountSnapshot).filter(isPresent),
+    futures: asArray(record.runner_slot_futures).map(readRunnerSlotFutureSnapshot).filter(isPresent),
+  }
+}
+
 const readStageClearanceStatusSnapshot = (status: Record<string, unknown>): StageClearanceStatusSnapshot => {
   const clearanceMarketLedger = asRecord(status.clearance_market_ledger)
   return {
@@ -173,6 +274,7 @@ const readStageClearanceStatusSnapshot = (status: Record<string, unknown>): Stag
     stageAdmissions: asArray(clearanceMarketLedger?.stage_admission)
       .map(readClearanceMarketStageAdmission)
       .filter(isPresent),
+    stageCredit: readStageCreditStatusSnapshot(status.stage_credit_ledger),
   }
 }
 
@@ -231,10 +333,49 @@ const clearanceMarketTraceForPacket = (
   }
 }
 
+const stageCreditTraceForPacket = (
+  snapshot:
+    | Pick<StageClearanceStatusSnapshot, 'stageCredit'>
+    | { stageCredit?: StageCreditStatusSnapshot | null }
+    | null
+    | undefined,
+  packet: StageClearancePacket,
+  nowMs: number,
+): StageCreditTrace | null => {
+  const ledger = snapshot?.stageCredit
+  if (!ledger) return null
+  const ledgerFreshUntilMs = Date.parse(ledger.freshUntil ?? '')
+  const ledgerCurrent = Number.isFinite(ledgerFreshUntilMs) && ledgerFreshUntilMs > nowMs
+  const account =
+    ledger.accounts.find((entry) => entry.stage === packet.stage && entry.actionClass === packet.action_class) ?? null
+  const future =
+    account === null
+      ? null
+      : (ledger.futures.find((entry) => {
+          if (entry.accountId !== account.accountId || entry.settlementState !== 'open') return false
+          if (!ledgerCurrent) return false
+          const expiresAtMs = Date.parse(entry.expiresAt ?? '')
+          return Number.isFinite(expiresAtMs) && expiresAtMs > nowMs
+        }) ?? null)
+
+  return {
+    ledgerId: ledger.ledgerId,
+    accountId: account?.accountId ?? null,
+    decision: account?.decision ?? null,
+    mode: ledger.evidenceMode,
+    freshUntil: ledger.freshUntil,
+    reasonCodes: account?.reasonCodes ?? [],
+    runnerSlotFutureId: future?.futureId ?? null,
+    runnerSlotFutureExpiresAt: future?.expiresAt ?? null,
+    selectedRepairLotRef: account?.selectedRepairLotRef ?? null,
+  }
+}
+
 const buildStageClearanceTrace = (
   packet: StageClearancePacket,
   mode: StageClearanceMode,
   clearanceMarket: StageClearanceMarketTrace | null,
+  stageCredit: StageCreditTrace | null,
 ): Pick<StageClearanceLaunchAdmission, 'annotations' | 'parameters'> => {
   const reasonCodes = packet.reason_codes.join(',')
   const annotations: Record<string, string> = {
@@ -282,6 +423,43 @@ const buildStageClearanceTrace = (
     annotations[SWARM_STAGE_CLEARANCE_ANNOTATION_DEPENDENCY_VERDICT_DECISION] = packet.dependency_verdict_decision
     parameters.swarmDependencyVerdictDecision = packet.dependency_verdict_decision
   }
+  if (stageCredit) {
+    annotations[SWARM_STAGE_CREDIT_ANNOTATION_LEDGER_ID] = stageCredit.ledgerId
+    parameters.swarmStageCreditLedgerId = stageCredit.ledgerId
+  }
+  if (stageCredit?.accountId) {
+    annotations[SWARM_STAGE_CREDIT_ANNOTATION_ACCOUNT_ID] = stageCredit.accountId
+    parameters.swarmStageCreditAccountId = stageCredit.accountId
+  }
+  if (stageCredit?.decision) {
+    annotations[SWARM_STAGE_CREDIT_ANNOTATION_DECISION] = stageCredit.decision
+    parameters.swarmStageCreditDecision = stageCredit.decision
+  }
+  if (stageCredit?.mode) {
+    annotations[SWARM_STAGE_CREDIT_ANNOTATION_MODE] = stageCredit.mode
+    parameters.swarmStageCreditMode = stageCredit.mode
+  }
+  if (stageCredit?.freshUntil) {
+    annotations[SWARM_STAGE_CREDIT_ANNOTATION_FRESH_UNTIL] = stageCredit.freshUntil
+    parameters.swarmStageCreditFreshUntil = stageCredit.freshUntil
+  }
+  if (stageCredit && stageCredit.reasonCodes.length > 0) {
+    const stageCreditReasonCodes = stageCredit.reasonCodes.join(',')
+    annotations[SWARM_STAGE_CREDIT_ANNOTATION_REASON_CODES] = stageCreditReasonCodes
+    parameters.swarmStageCreditReasonCodes = stageCreditReasonCodes
+  }
+  if (stageCredit?.runnerSlotFutureId) {
+    annotations[SWARM_STAGE_CREDIT_ANNOTATION_RUNNER_SLOT_FUTURE_ID] = stageCredit.runnerSlotFutureId
+    parameters.swarmRunnerSlotFutureId = stageCredit.runnerSlotFutureId
+  }
+  if (stageCredit?.runnerSlotFutureExpiresAt) {
+    annotations[SWARM_STAGE_CREDIT_ANNOTATION_RUNNER_SLOT_FUTURE_EXPIRES_AT] = stageCredit.runnerSlotFutureExpiresAt
+    parameters.swarmRunnerSlotFutureExpiresAt = stageCredit.runnerSlotFutureExpiresAt
+  }
+  if (stageCredit?.selectedRepairLotRef) {
+    annotations[SWARM_STAGE_CREDIT_ANNOTATION_SELECTED_REPAIR_LOT] = stageCredit.selectedRepairLotRef
+    parameters.swarmCreditSelectedRepairLotRef = stageCredit.selectedRepairLotRef
+  }
   return { annotations, parameters }
 }
 
@@ -304,7 +482,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
   stage: StageName
   mode: StageClearanceMode
   packets: StageClearancePacket[]
-  clearanceMarket?: Pick<StageClearanceStatusSnapshot, 'clearanceMarketLedgerId' | 'stageAdmissions'> | null
+  clearanceMarket?: StageClearanceAdmissionSnapshot | null
   nowMs?: number
 }): StageClearanceLaunchAdmission => {
   const actionClass = stageClearanceActionClassForStage(input.stage)
@@ -316,6 +494,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       actionClass,
       packet: null,
       clearanceMarket: null,
+      stageCredit: null,
       reason: 'StageClearanceDisabled',
       message: 'stage clearance enforcement disabled',
       annotations: {},
@@ -340,6 +519,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       actionClass,
       packet: null,
       clearanceMarket: null,
+      stageCredit: null,
       reason: 'StageClearanceMissing',
       message: `missing stage clearance packet for ${input.swarmName}/${input.stage}/${actionClass}`,
       annotations: {},
@@ -348,9 +528,11 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
   }
 
   const clearanceMarket = clearanceMarketTraceForPacket(input.clearanceMarket, packet)
-  const trace = buildStageClearanceTrace(packet, input.mode, clearanceMarket)
+  const nowMs = input.nowMs ?? Date.now()
+  const stageCredit = stageCreditTraceForPacket(input.clearanceMarket, packet, nowMs)
+  const trace = buildStageClearanceTrace(packet, input.mode, clearanceMarket, stageCredit)
   const freshUntilMs = Date.parse(packet.fresh_until)
-  if (!Number.isFinite(freshUntilMs) || freshUntilMs <= (input.nowMs ?? Date.now())) {
+  if (!Number.isFinite(freshUntilMs) || freshUntilMs <= nowMs) {
     return {
       mode: input.mode,
       admitted: input.mode === 'shadow',
@@ -358,6 +540,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       actionClass,
       packet,
       clearanceMarket,
+      stageCredit,
       reason: 'StageClearanceStale',
       message: `stage clearance packet ${packet.packet_id} is stale`,
       ...trace,
@@ -372,6 +555,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       actionClass,
       packet,
       clearanceMarket,
+      stageCredit,
       reason: 'StageClearanceHeld',
       message: summarizeStageClearanceBlock(packet, clearanceMarket),
       ...trace,
@@ -385,6 +569,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       actionClass,
       packet,
       clearanceMarket,
+      stageCredit,
       reason: 'StageClearanceHeld',
       message: `clearance market stage admission ${clearanceMarket.stageAdmissionId ?? clearanceMarket.ledgerId} is ${
         clearanceMarket.decision
@@ -402,6 +587,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       actionClass,
       packet,
       clearanceMarket,
+      stageCredit,
       reason: 'StageClearanceLaunchBudgetExhausted',
       message: `stage clearance packet ${packet.packet_id} has no launch budget`,
       ...trace,
@@ -415,6 +601,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
     actionClass,
     packet,
     clearanceMarket,
+    stageCredit,
     reason: input.mode === 'hold' ? 'StageClearanceAllowed' : 'StageClearanceShadow',
     message:
       input.mode === 'hold'
@@ -436,6 +623,7 @@ export const resolveStageClearanceUnavailable = (
   actionClass,
   packet: null,
   clearanceMarket: null,
+  stageCredit: null,
   reason: 'StageClearanceUnavailable',
   message: `stage clearance snapshot unavailable: ${errorMessage}`,
   annotations: {},
@@ -448,7 +636,7 @@ export const resolveStageClearanceForStage = async (input: {
   stage: StageName
   config?: ReturnType<typeof resolveSupportingPrimitivesConfig>
   packets?: StageClearancePacket[]
-  clearanceMarket?: Pick<StageClearanceStatusSnapshot, 'clearanceMarketLedgerId' | 'stageAdmissions'> | null
+  clearanceMarket?: StageClearanceAdmissionSnapshot | null
   nowMs?: number
   onUnavailable?: (message: string) => void
 }): Promise<StageClearanceLaunchAdmission> => {
@@ -474,6 +662,7 @@ export const resolveStageClearanceForStage = async (input: {
           packets: input.packets,
           clearanceMarketLedgerId: input.clearanceMarket?.clearanceMarketLedgerId ?? null,
           stageAdmissions: input.clearanceMarket?.stageAdmissions ?? [],
+          stageCredit: input.clearanceMarket?.stageCredit ?? null,
         }
       : await fetchStageClearanceStatusSnapshot(input.namespace, config)
     return resolveStageClearanceAdmissionFromPackets({
@@ -508,6 +697,15 @@ export const stageClearanceStatusForStage = (admission: StageClearanceLaunchAdmi
   clearanceMarketStageAdmissionId: admission.clearanceMarket?.stageAdmissionId ?? null,
   clearanceMarketStageDecision: admission.clearanceMarket?.decision ?? null,
   clearanceMarketSelectedRepairLotRef: admission.clearanceMarket?.selectedRepairLotRef ?? null,
+  stageCreditLedgerId: admission.stageCredit?.ledgerId ?? null,
+  stageCreditAccountId: admission.stageCredit?.accountId ?? null,
+  stageCreditDecision: admission.stageCredit?.decision ?? null,
+  stageCreditMode: admission.stageCredit?.mode ?? null,
+  stageCreditFreshUntil: admission.stageCredit?.freshUntil ?? null,
+  stageCreditReasonCodes: admission.stageCredit?.reasonCodes ?? [],
+  runnerSlotFutureId: admission.stageCredit?.runnerSlotFutureId ?? null,
+  runnerSlotFutureExpiresAt: admission.stageCredit?.runnerSlotFutureExpiresAt ?? null,
+  stageCreditSelectedRepairLotRef: admission.stageCredit?.selectedRepairLotRef ?? null,
   reason: admission.reason,
   message: admission.message,
 })
