@@ -7,7 +7,7 @@ Owner: Greg Konush
 
 - Live URL: https://sag.proompteng.ai
 - Kubernetes namespace: `sag`
-- Deployed image: `registry.ide-newton.ts.net/lab/sag:sag-20260513093939`
+- Deployed image: `registry.ide-newton.ts.net/lab/sag:sag-20260513095012`
 - Database: CNPG cluster `sag-db` in namespace `sag`
 - Source paths: `services/sag`, `argocd/sag`, `packages/scripts/src/sag`
 
@@ -97,7 +97,7 @@ Expected live result:
 | Requirement                              | Evidence                                                 |
 | ---------------------------------------- | -------------------------------------------------------- |
 | Working product URL or runnable artifact | `https://sag.proompteng.ai`; `services/sag`              |
-| Source code                              | `services/sag`, `argocd/sag`, `packages/scripts/src/sag`; PRs `#6452`, `#6453` |
+| Source code                              | `services/sag`, `argocd/sag`, `packages/scripts/src/sag`; PRs `#6452`, `#6453`, `#6454` |
 | PRD, 1-2 pages                           | `docs/secure-action-gateway/prd-submission.md`           |
 | TDD, 1-2 pages                           | `docs/secure-action-gateway/tdd-submission.md`           |
 | 2-5 minute walkthrough                   | Record the workflow above against the live URL           |
@@ -131,3 +131,4 @@ What broke and how it was debugged:
 - The first loader pulled Postgres code into the browser bundle. Build output showed browser externalization warnings, so the loader was moved to a TanStack Start server function.
 - The first persistence version wrote normalized state beside legacy JSON. Live logs exposed undefined values from older persisted rows, so state normalization and JSON parameter sanitization were added before rollout.
 - Argo reverted direct cluster applies until the image tag was committed and merged through GitOps, so rollout evidence now tracks both the direct deploy and the GitOps image promotion.
+- The Codex CLI was initially installed without Node available in the runtime image. The runner now carries Node 24 and points `SAG_CODEX_BINARY` at the installed Codex executable.

@@ -54,7 +54,7 @@ spec:
             - name: CODEX_AUTH
               value: /home/bun/.codex/auth.json
             - name: SAG_CODEX_BINARY
-              value: codex
+              value: /usr/local/bin/codex
             - name: SAG_CODEX_CWD
               value: /tmp
             - name: DATABASE_URL
