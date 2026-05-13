@@ -10,6 +10,7 @@ from app.trading.forecast_runtime import (
     forecast_calibration_report,
     forecast_registry,
     forecast_status,
+    forecast_status_from_empirical_jobs,
 )
 
 
@@ -17,7 +18,9 @@ class TestForecastRuntime(TestCase):
     def setUp(self) -> None:
         self.original_manifest_path = settings.trading_forecast_registry_manifest_path
         self.original_manifest_url = settings.trading_forecast_registry_manifest_url
-        self.original_refresh_seconds = settings.trading_forecast_registry_refresh_seconds
+        self.original_refresh_seconds = (
+            settings.trading_forecast_registry_refresh_seconds
+        )
         self.original_stale_after_seconds = (
             settings.trading_forecast_calibration_stale_after_seconds
         )
@@ -26,7 +29,9 @@ class TestForecastRuntime(TestCase):
     def tearDown(self) -> None:
         settings.trading_forecast_registry_manifest_path = self.original_manifest_path
         settings.trading_forecast_registry_manifest_url = self.original_manifest_url
-        settings.trading_forecast_registry_refresh_seconds = self.original_refresh_seconds
+        settings.trading_forecast_registry_refresh_seconds = (
+            self.original_refresh_seconds
+        )
         settings.trading_forecast_calibration_stale_after_seconds = (
             self.original_stale_after_seconds
         )
@@ -152,3 +157,43 @@ class TestForecastRuntime(TestCase):
         self.assertEqual(stale_report["status"], "degraded")
         self.assertEqual(replay_report["status"], "ready")
         self.assertTrue(replay_report["models"][0]["promotion_authority_eligible"])
+
+    def test_forecast_status_derives_empirical_authority_from_fresh_job_lineage(
+        self,
+    ) -> None:
+        settings.trading_forecast_registry_manifest_path = None
+        settings.trading_forecast_registry_manifest_url = None
+        forecast_registry.reset()
+
+        status = forecast_status_from_empirical_jobs(
+            {
+                "ready": True,
+                "status": "healthy",
+                "candidate_ids": ["chip-paper-microbar-composite@execution-proof"],
+                "dataset_snapshot_refs": ["torghut-chip-full-day-20260505-4c330ce9-r1"],
+                "model_refs": [
+                    "chronos/chip-paper-microbar-composite@sha256:abc",
+                    "unsupported-family/ignored@sha256:def",
+                ],
+            }
+        )
+
+        self.assertEqual(status["status"], "healthy")
+        self.assertEqual(status["authority"], "empirical")
+        self.assertEqual(status["message"], "empirical_jobs_ready")
+        self.assertEqual(
+            status["registry_ref"],
+            "empirical-jobs:chip-paper-microbar-composite@execution-proof:torghut-chip-full-day-20260505-4c330ce9-r1",
+        )
+        self.assertEqual(status["promotion_authority_eligible_models"], ["chronos"])
+        self.assertEqual(
+            status["model_refs"],
+            [
+                "chronos/chip-paper-microbar-composite@sha256:abc",
+                "unsupported-family/ignored@sha256:def",
+            ],
+        )
+        self.assertEqual(
+            status["eligible_model_refs"],
+            ["chronos/chip-paper-microbar-composite@sha256:abc"],
+        )

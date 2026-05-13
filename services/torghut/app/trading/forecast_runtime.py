@@ -49,6 +49,35 @@ def _parse_datetime(value: object) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _strings(value: object) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [
+        text
+        for item in cast(list[object] | tuple[object, ...], value)
+        if (text := str(item).strip())
+    ]
+
+
+def _model_family_from_ref(value: str, *, allowed: set[str]) -> str | None:
+    normalized = value.lower().replace("-", "_")
+    tokens = [
+        token.strip()
+        for token in normalized.replace("@", "/").replace(":", "/").split("/")
+        if token.strip()
+    ]
+    aliases = {
+        "timesfm": "financial_tsfm",
+        "time_sfm": "financial_tsfm",
+        "financial_tsfm": "financial_tsfm",
+    }
+    for token in tokens:
+        family = aliases.get(token, token)
+        if family in allowed:
+            return family
+    return None
+
+
 @dataclass(frozen=True)
 class RegistryModelEntry:
     model_family: str
@@ -64,7 +93,9 @@ class RegistryModelEntry:
     latency_ms_span: int
     notes: str | None
 
-    def promotion_authority_eligible(self, *, reference_time: datetime | None = None) -> bool:
+    def promotion_authority_eligible(
+        self, *, reference_time: datetime | None = None
+    ) -> bool:
         if self.calibration_updated_at is None:
             return False
         effective_now = (
@@ -79,7 +110,9 @@ class RegistryModelEntry:
             seconds=max(settings.trading_forecast_calibration_stale_after_seconds, 1)
         )
 
-    def artifact_authority(self, *, reference_time: datetime | None = None) -> dict[str, Any]:
+    def artifact_authority(
+        self, *, reference_time: datetime | None = None
+    ) -> dict[str, Any]:
         freshness = (
             {
                 "status": "fresh"
@@ -97,13 +130,18 @@ class RegistryModelEntry:
                 if self.promotion_authority_eligible(reference_time=reference_time)
                 else EvidenceMaturity.CALIBRATED
             ),
-            authoritative=self.promotion_authority_eligible(reference_time=reference_time),
+            authoritative=self.promotion_authority_eligible(
+                reference_time=reference_time
+            ),
             placeholder=False,
             calibration_summary=freshness,
-            notes=self.notes or "Forecast generated from registry-backed empirical model entry.",
+            notes=self.notes
+            or "Forecast generated from registry-backed empirical model entry.",
         )
 
-    def to_status_payload(self, *, reference_time: datetime | None = None) -> dict[str, Any]:
+    def to_status_payload(
+        self, *, reference_time: datetime | None = None
+    ) -> dict[str, Any]:
         return {
             "model_family": self.model_family,
             "model_version": self.model_version,
@@ -120,7 +158,9 @@ class RegistryModelEntry:
             "promotion_authority_eligible": self.promotion_authority_eligible(
                 reference_time=reference_time
             ),
-            "artifact_authority": self.artifact_authority(reference_time=reference_time),
+            "artifact_authority": self.artifact_authority(
+                reference_time=reference_time
+            ),
         }
 
 
@@ -188,7 +228,12 @@ class ForecastRegistry:
                 if not isinstance(raw_item, Mapping):
                     continue
                 item = cast(Mapping[str, Any], raw_item)
-                family = str(item.get("model_family") or "").strip().lower().replace("-", "_")
+                family = (
+                    str(item.get("model_family") or "")
+                    .strip()
+                    .lower()
+                    .replace("-", "_")
+                )
                 if not family:
                     continue
                 parameters_raw = item.get("parameters")
@@ -198,20 +243,31 @@ class ForecastRegistry:
                         parameters[str(key)] = _parse_decimal(value, Decimal("0"))
                 models[family] = RegistryModelEntry(
                     model_family=family,
-                    model_version=str(item.get("model_version") or "unknown").strip() or "unknown",
-                    model_registry_ref=str(item.get("model_registry_ref") or "").strip(),
+                    model_version=str(item.get("model_version") or "unknown").strip()
+                    or "unknown",
+                    model_registry_ref=str(
+                        item.get("model_registry_ref") or ""
+                    ).strip(),
                     training_run_ref=str(item.get("training_run_ref") or "").strip(),
-                    dataset_snapshot_ref=str(item.get("dataset_snapshot_ref") or "").strip(),
+                    dataset_snapshot_ref=str(
+                        item.get("dataset_snapshot_ref") or ""
+                    ).strip(),
                     calibration_ref=str(item.get("calibration_ref") or "").strip(),
-                    calibration_score=_parse_decimal(item.get("calibration_score"), Decimal("0")),
-                    calibration_updated_at=_parse_datetime(item.get("calibration_updated_at")),
+                    calibration_score=_parse_decimal(
+                        item.get("calibration_score"), Decimal("0")
+                    ),
+                    calibration_updated_at=_parse_datetime(
+                        item.get("calibration_updated_at")
+                    ),
                     parameters=parameters,
                     latency_ms_floor=max(1, int(item.get("latency_ms_floor", 20))),
                     latency_ms_span=max(1, int(item.get("latency_ms_span", 40))),
                     notes=str(item.get("notes") or "").strip() or None,
                 )
         return RegistrySnapshot(
-            schema_version=str(payload.get("schema_version") or "torghut-forecast-registry.v1"),
+            schema_version=str(
+                payload.get("schema_version") or "torghut-forecast-registry.v1"
+            ),
             registry_ref=str(payload.get("registry_ref") or "").strip() or None,
             generated_at=_parse_datetime(payload.get("generated_at")),
             models=models,
@@ -226,13 +282,19 @@ class ForecastRegistry:
                 method="GET",
             )
             try:
-                with urlopen(request, timeout=_DEFAULT_REGISTRY_TIMEOUT_SECONDS) as response:
+                with urlopen(
+                    request, timeout=_DEFAULT_REGISTRY_TIMEOUT_SECONDS
+                ) as response:
                     raw = response.read().decode("utf-8")
             except HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="ignore")[:200]
-                raise RuntimeError(f"forecast_registry_http_{exc.code}:{detail}") from exc
+                raise RuntimeError(
+                    f"forecast_registry_http_{exc.code}:{detail}"
+                ) from exc
             except URLError as exc:
-                raise RuntimeError(f"forecast_registry_network_error:{exc.reason}") from exc
+                raise RuntimeError(
+                    f"forecast_registry_network_error:{exc.reason}"
+                ) from exc
             try:
                 decoded = json.loads(raw)
             except json.JSONDecodeError as exc:
@@ -274,7 +336,8 @@ def forecast_calibration_report(
     models = [
         entry.to_status_payload(reference_time=reference_time)
         for _, entry in sorted(snapshot.models.items())
-        if model_family is None or entry.model_family == model_family.strip().lower().replace("-", "_")
+        if model_family is None
+        or entry.model_family == model_family.strip().lower().replace("-", "_")
     ]
     ready, reason = snapshot.readiness(reference_time=reference_time)
     return {
@@ -310,9 +373,78 @@ def forecast_status(*, as_of: str | None = None) -> dict[str, Any]:
         "calibration_status": str(report.get("status") or "unknown"),
         "registry_ref": report.get("registry_ref"),
         "promotion_authority_eligible_models": eligible_models,
-        "allowed_model_families": sorted(settings.trading_forecast_service_allowed_model_families),
+        "allowed_model_families": sorted(
+            settings.trading_forecast_service_allowed_model_families
+        ),
         "require_healthy": False,
         "fail_mode": "allow_operational_fallback",
+    }
+
+
+def forecast_status_from_empirical_jobs(
+    empirical_jobs_status: Mapping[str, Any] | None,
+    *,
+    as_of: str | None = None,
+) -> dict[str, Any]:
+    """Use fresh empirical job lineage when no explicit forecast registry is configured."""
+
+    registry_status = forecast_status(as_of=as_of)
+    if registry_status.get("status") == "healthy":
+        return registry_status
+    if registry_status.get("message") != "registry_empty":
+        return registry_status
+    if not isinstance(empirical_jobs_status, Mapping):
+        return registry_status
+    empirical_status = str(empirical_jobs_status.get("status") or "").strip().lower()
+    if empirical_jobs_status.get("ready") is not True or empirical_status not in {
+        "healthy",
+        "ok",
+        "ready",
+    }:
+        return registry_status
+
+    candidate_ids = _strings(empirical_jobs_status.get("candidate_ids"))
+    dataset_snapshot_refs = _strings(empirical_jobs_status.get("dataset_snapshot_refs"))
+    model_refs = _strings(empirical_jobs_status.get("model_refs"))
+    if not candidate_ids or not dataset_snapshot_refs or not model_refs:
+        return registry_status
+
+    allowed_families = settings.trading_forecast_service_allowed_model_families
+    eligible_models = sorted(
+        {
+            family
+            for model_ref in model_refs
+            if (
+                family := _model_family_from_ref(
+                    model_ref,
+                    allowed=allowed_families,
+                )
+            )
+            is not None
+        }
+    )
+    eligible_model_refs = [
+        model_ref
+        for model_ref in sorted(set(model_refs))
+        if _model_family_from_ref(model_ref, allowed=allowed_families) is not None
+    ]
+    return {
+        "configured": True,
+        "endpoint": None,
+        "status": "healthy",
+        "authority": "empirical",
+        "message": "empirical_jobs_ready",
+        "calibration_status": "ready",
+        "registry_ref": f"empirical-jobs:{candidate_ids[0]}:{dataset_snapshot_refs[0]}",
+        "promotion_authority_eligible_models": eligible_models,
+        "allowed_model_families": sorted(allowed_families),
+        "require_healthy": False,
+        "fail_mode": "allow_operational_fallback",
+        "source": "empirical_jobs",
+        "candidate_ids": candidate_ids,
+        "dataset_snapshot_refs": dataset_snapshot_refs,
+        "model_refs": sorted(set(model_refs)),
+        "eligible_model_refs": eligible_model_refs,
     }
 
 
@@ -323,4 +455,5 @@ __all__ = [
     "forecast_calibration_report",
     "forecast_registry",
     "forecast_status",
+    "forecast_status_from_empirical_jobs",
 ]

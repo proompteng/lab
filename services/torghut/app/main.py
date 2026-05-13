@@ -87,7 +87,7 @@ from .trading.feature_quality import (
     FeatureQualityThresholds,
     evaluate_feature_batch_quality,
 )
-from .trading.forecast_runtime import forecast_status
+from .trading.forecast_runtime import forecast_status_from_empirical_jobs
 from .trading.freshness_carry import build_freshness_carry_ledger
 from .trading.hypotheses import (
     JangarDependencyQuorumStatus,
@@ -814,7 +814,7 @@ def _evaluate_trading_health_payload(
     )
     consumer_evidence_receipt, route_proven_profit_receipt = (
         _build_consumer_evidence_receipt_projection(
-            forecast_service_status=_forecast_service_status(),
+            forecast_service_status=_forecast_service_status(empirical_jobs),
             empirical_jobs_status=empirical_jobs,
             proof_floor=proof_floor,
             live_submission_gate=live_submission_gate,
@@ -2433,7 +2433,7 @@ def trading_status() -> dict[str, object]:
     quant_evidence = load_quant_evidence_status(
         account_label=settings.trading_account_label,
     )
-    forecast_service_status = _forecast_service_status()
+    forecast_service_status = _forecast_service_status(empirical_jobs)
     lean_authority_status = _lean_authority_status()
     with SessionLocal() as session:
         llm_evaluation = _load_llm_evaluation(session)
@@ -2915,7 +2915,7 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
     quant_evidence = load_quant_evidence_status(
         account_label=settings.trading_account_label,
     )
-    forecast_service_status = _forecast_service_status()
+    forecast_service_status = _forecast_service_status(empirical_jobs)
     lean_authority_status = _lean_authority_status()
     with SessionLocal() as session:
         tca_summary = _load_tca_summary(session, scheduler=scheduler)
@@ -3346,6 +3346,7 @@ def trading_autonomy() -> dict[str, object]:
     state = scheduler.state
     active_simulation_context = active_simulation_runtime_context()
     capital_replay_projection = _build_autonomy_capital_replay_projection(scheduler)
+    empirical_jobs = _empirical_jobs_status()
     return {
         "enabled": settings.trading_autonomy_enabled,
         "gate_policy_path": settings.trading_autonomy_gate_policy_path,
@@ -3370,9 +3371,9 @@ def trading_autonomy() -> dict[str, object]:
         "last_ingest_window_start": state.last_ingest_window_start,
         "last_ingest_window_end": state.last_ingest_window_end,
         "failure_streak": state.autonomy_failure_streak,
-        "forecast_service": _forecast_service_status(),
+        "forecast_service": _forecast_service_status(empirical_jobs),
         "lean_authority": _lean_authority_status(),
-        "empirical_jobs": _empirical_jobs_status(),
+        "empirical_jobs": empirical_jobs,
         "capital_replay_board": capital_replay_projection["capital_replay_board"],
         "executable_alpha_receipts": capital_replay_projection[
             "executable_alpha_receipts"
@@ -4253,8 +4254,13 @@ def _check_clickhouse() -> dict[str, object]:
     return {"ok": True, "detail": "ok"}
 
 
-def _forecast_service_status() -> dict[str, object]:
-    return cast(dict[str, object], forecast_status())
+def _forecast_service_status(
+    empirical_jobs_status: Mapping[str, Any] | None = None,
+) -> dict[str, object]:
+    return cast(
+        dict[str, object],
+        forecast_status_from_empirical_jobs(empirical_jobs_status),
+    )
 
 
 def _lean_authority_status() -> dict[str, object]:

@@ -58,7 +58,11 @@ def _as_text(value: object) -> str | None:
 def _as_string_list(value: object) -> list[str]:
     if not isinstance(value, (list, tuple)):
         return []
-    return [text for item in cast(list[object] | tuple[object, ...], value) if (text := _as_text(item))]
+    return [
+        text
+        for item in cast(list[object] | tuple[object, ...], value)
+        if (text := _as_text(item))
+    ]
 
 
 def _lineage_is_complete(
@@ -82,9 +86,15 @@ def empirical_artifact_truthfulness_reasons(payload: Mapping[str, object]) -> li
     if not authority:
         reasons.append("artifact_authority_missing")
     else:
-        if _as_text(authority.get("provenance")) not in AUTHORITATIVE_EMPIRICAL_PROVENANCE:
+        if (
+            _as_text(authority.get("provenance"))
+            not in AUTHORITATIVE_EMPIRICAL_PROVENANCE
+        ):
             reasons.append("artifact_authority_provenance_invalid")
-        if _as_text(authority.get("maturity")) != EvidenceMaturity.EMPIRICALLY_VALIDATED.value:
+        if (
+            _as_text(authority.get("maturity"))
+            != EvidenceMaturity.EMPIRICALLY_VALIDATED.value
+        ):
             reasons.append("artifact_authority_maturity_invalid")
         if not bool(authority.get("authoritative", False)):
             reasons.append("artifact_authority_not_authoritative")
@@ -133,7 +143,9 @@ def _lineage_payload(
     lineage: dict[str, object] = {
         "job_run_id": job_run_id,
         "dataset_snapshot_ref": dataset_snapshot_ref,
-        "runtime_version_refs": [str(item) for item in runtime_version_refs if str(item).strip()],
+        "runtime_version_refs": [
+            str(item) for item in runtime_version_refs if str(item).strip()
+        ],
         "model_refs": [str(item) for item in model_refs if str(item).strip()],
     }
     if extra:
@@ -183,21 +195,27 @@ def build_empirical_benchmark_parity_report(
     }
     required_families = set(BENCHMARK_PARITY_REQUIRED_FAMILIES)
     present_families = {
-        str(item.get("family") or "").strip()
-        for item in normalized_runs
+        str(item.get("family") or "").strip() for item in normalized_runs
     }
-    missing_families = sorted(family for family in required_families if family not in present_families)
+    missing_families = sorted(
+        family for family in required_families if family not in present_families
+    )
     scorecards_pass = all(
         str(item.get("status") or "").strip() == "pass"
         for item in normalized_scorecards.values()
-    ) and not any(name not in normalized_scorecards for name in BENCHMARK_PARITY_REQUIRED_SCORECARDS)
+    ) and not any(
+        name not in normalized_scorecards
+        for name in BENCHMARK_PARITY_REQUIRED_SCORECARDS
+    )
     lineage_ready = _lineage_is_complete(
         job_run_id=job_run_id,
         dataset_snapshot_ref=dataset_snapshot_ref,
         runtime_version_refs=runtime_version_refs,
         model_refs=model_refs,
     )
-    promotion_authority_eligible = scorecards_pass and not missing_families and lineage_ready
+    promotion_authority_eligible = (
+        scorecards_pass and not missing_families and lineage_ready
+    )
     report: dict[str, object] = {
         "schema_version": BENCHMARK_PARITY_SCHEMA_VERSION,
         "candidate_id": candidate_id,
@@ -268,14 +286,18 @@ def build_empirical_foundation_router_parity_report(
     created_at = (now or datetime.now(tz=timezone.utc)).astimezone(timezone.utc)
     required_adapters = set(FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS)
     normalized_adapters = [str(item).strip() for item in adapters if str(item).strip()]
-    missing_adapters = sorted(item for item in required_adapters if item not in normalized_adapters)
+    missing_adapters = sorted(
+        item for item in required_adapters if item not in normalized_adapters
+    )
     lineage_ready = _lineage_is_complete(
         job_run_id=job_run_id,
         dataset_snapshot_ref=dataset_snapshot_ref,
         runtime_version_refs=runtime_version_refs,
         model_refs=model_refs,
     )
-    promotion_authority_eligible = overall_status == "pass" and not missing_adapters and lineage_ready
+    promotion_authority_eligible = (
+        overall_status == "pass" and not missing_adapters and lineage_ready
+    )
     report: dict[str, object] = {
         "schema_version": FOUNDATION_ROUTER_PARITY_SCHEMA_VERSION,
         "candidate_id": candidate_id,
@@ -283,7 +305,9 @@ def build_empirical_foundation_router_parity_report(
         "contract": {
             "schema_version": FOUNDATION_ROUTER_PARITY_CONTRACT_SCHEMA_VERSION,
             "required_adapters": list(FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS),
-            "required_slice_metrics": list(FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS),
+            "required_slice_metrics": list(
+                FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS
+            ),
             "hash_algorithm": "sha256",
             "generation_mode": "empirical_foundation_router_parity_v1",
         },
@@ -377,7 +401,9 @@ def upsert_empirical_job_run(
     payload: Mapping[str, object],
 ) -> VNextEmpiricalJobRun:
     existing = session.execute(
-        select(VNextEmpiricalJobRun).where(VNextEmpiricalJobRun.job_run_id == job_run_id)
+        select(VNextEmpiricalJobRun).where(
+            VNextEmpiricalJobRun.job_run_id == job_run_id
+        )
     ).scalar_one_or_none()
     record = existing or VNextEmpiricalJobRun(
         run_id=run_id,
@@ -431,6 +457,7 @@ def build_empirical_jobs_status(
     ineligible_jobs: list[str] = []
     candidate_ids: set[str] = set()
     dataset_snapshot_refs: set[str] = set()
+    model_refs: set[str] = set()
     for job_type in EMPIRICAL_JOB_TYPES:
         row = latest_by_type.get(job_type)
         if row is None:
@@ -458,12 +485,22 @@ def build_empirical_jobs_status(
         stale = created_at < cutoff or row.status not in {"completed", "success"}
         dataset_snapshot_ref = _as_text(row.dataset_snapshot_ref)
         candidate_id = _as_text(row.candidate_id)
+        lineage = _as_dict(payload.get("lineage"))
+        row_model_refs = _as_string_list(lineage.get("model_refs"))
         blocked_reasons = sorted(
             {
                 *truthful_reasons,
                 *(["job_stale"] if created_at < cutoff else []),
-                *(["job_status_incomplete"] if row.status not in {"completed", "success"} else []),
-                *(["row_authority_not_empirical"] if row.authority != "empirical" else []),
+                *(
+                    ["job_status_incomplete"]
+                    if row.status not in {"completed", "success"}
+                    else []
+                ),
+                *(
+                    ["row_authority_not_empirical"]
+                    if row.authority != "empirical"
+                    else []
+                ),
                 *(
                     ["row_promotion_authority_ineligible"]
                     if not row.promotion_authority_eligible
@@ -482,6 +519,7 @@ def build_empirical_jobs_status(
             candidate_ids.add(candidate_id)
         if dataset_snapshot_ref is not None:
             dataset_snapshot_refs.add(dataset_snapshot_ref)
+        model_refs.update(row_model_refs)
         job_ready = (
             not stale
             and truthful
@@ -495,14 +533,20 @@ def build_empirical_jobs_status(
             ineligible_jobs.append(job_type)
         jobs[job_type] = {
             "status": row.status,
-            "authority": row.authority if truthful and row.authority == "empirical" else "blocked",
+            "authority": row.authority
+            if truthful and row.authority == "empirical"
+            else "blocked",
             "persisted_authority": row.authority,
-            "promotion_authority_eligible": bool(row.promotion_authority_eligible) and truthful,
-            "persisted_promotion_authority_eligible": bool(row.promotion_authority_eligible),
+            "promotion_authority_eligible": bool(row.promotion_authority_eligible)
+            and truthful,
+            "persisted_promotion_authority_eligible": bool(
+                row.promotion_authority_eligible
+            ),
             "dataset_snapshot_ref": row.dataset_snapshot_ref,
             "candidate_id": row.candidate_id,
             "job_run_id": row.job_run_id,
             "created_at": created_at.isoformat(),
+            "model_refs": row_model_refs,
             "artifact_refs": list(cast(list[object], row.artifact_refs or [])),
             "stale": stale,
             "truthful": truthful,
@@ -544,6 +588,7 @@ def build_empirical_jobs_status(
         "ineligible_jobs": sorted(set(ineligible_jobs)),
         "candidate_ids": sorted(candidate_ids),
         "dataset_snapshot_refs": sorted(dataset_snapshot_refs),
+        "model_refs": sorted(model_refs),
         "blocked_reasons": status_blocked_reasons,
         "jobs": jobs,
     }

@@ -693,6 +693,8 @@ def _evaluate_certificate_candidates(
                 candidate_id = promotion_decision.candidate_id
             if capital_stage is None:
                 capital_stage = promotion_decision.state
+        if candidate_id is None:
+            candidate_id = _safe_text(manifest.get("candidate_id"))
         if _safe_text(capital_stage) in {None, "shadow"}:
             reasons.append("promotion_certificate_shadow_only")
 
@@ -728,7 +730,9 @@ def _evaluate_certificate_candidates(
         evaluated_row: dict[str, object] = {
             "hypothesis_id": hypothesis_id,
             "candidate_id": candidate_id,
-            "strategy_id": manifest.get("strategy_family"),
+            "strategy_id": manifest.get("strategy_id")
+            or manifest.get("strategy_family"),
+            "dataset_snapshot_ref": manifest.get("dataset_snapshot_ref"),
             "account": account,
             "window": window,
             "capital_state": capital_stage or "observe",
@@ -843,22 +847,37 @@ def _attach_lineage_refs(
             if candidate_id is not None
             else []
         )
+        declared_dataset_snapshot_ref = _safe_text(
+            evaluated_row.get("dataset_snapshot_ref")
+        )
         hypothesis_rows = (
             hypotheses_by_id.get(hypothesis_id, []) if hypothesis_id is not None else []
         )
 
-        if candidate_id is not None and not dataset_rows:
+        if (
+            candidate_id is not None
+            and not dataset_rows
+            and declared_dataset_snapshot_ref is None
+        ):
             reason_codes.append("dataset_snapshot_missing")
         if hypothesis_id is not None and not hypothesis_rows:
             reason_codes.append("strategy_hypothesis_missing")
 
         dataset_row = dataset_rows[0] if dataset_rows else None
         hypothesis_row = hypothesis_rows[0] if hypothesis_rows else None
-        lineage_missing = (candidate_id is not None and not dataset_rows) or (
-            hypothesis_id is not None and not hypothesis_rows
-        )
+        lineage_missing = (
+            candidate_id is not None
+            and not dataset_rows
+            and declared_dataset_snapshot_ref is None
+        ) or (hypothesis_id is not None and not hypothesis_rows)
         lineage_ref = _default_lineage_ref(
-            status="missing" if lineage_missing else "ready",
+            status=(
+                "missing"
+                if lineage_missing
+                else "manifest_declared"
+                if declared_dataset_snapshot_ref is not None and not dataset_rows
+                else "ready"
+            ),
             candidate_id=candidate_id,
             hypothesis_id=hypothesis_id,
         )
@@ -869,7 +888,9 @@ def _attach_lineage_refs(
                     str(dataset_row.id) if dataset_row is not None else None
                 ),
                 "dataset_snapshot_ref": (
-                    dataset_row.artifact_ref if dataset_row is not None else None
+                    dataset_row.artifact_ref
+                    if dataset_row is not None
+                    else declared_dataset_snapshot_ref
                 ),
                 "dataset_snapshot_run_id": (
                     dataset_row.run_id if dataset_row is not None else None

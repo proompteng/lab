@@ -26,6 +26,7 @@ from app.main import (
     _build_live_submission_gate_payload,
     _build_route_image_proof_summary,
     _check_alpaca,
+    _forecast_service_status,
     healthz,
     _load_options_catalog_freshness_summary,
     _readiness_dependency_cache_key,
@@ -34,6 +35,7 @@ from app.main import (
     _route_claim_symbols,
     app,
 )
+from app.trading.forecast_runtime import forecast_registry
 from app.trading.scheduler import TradingScheduler
 from app.trading.feature_quality import FeatureQualityReport
 from app.trading.completion import (
@@ -260,6 +262,7 @@ class TestTradingApi(TestCase):
             )
             session.add(strategy)
             session.commit()
+
             session.refresh(strategy)
 
             decision = TradeDecision(
@@ -339,6 +342,43 @@ class TestTradingApi(TestCase):
             )
             session.add(review)
             session.commit()
+
+    def test_forecast_service_status_uses_empirical_job_lineage_when_registry_empty(
+        self,
+    ) -> None:
+        original_manifest_path = settings.trading_forecast_registry_manifest_path
+        original_manifest_url = settings.trading_forecast_registry_manifest_url
+        settings.trading_forecast_registry_manifest_path = None
+        settings.trading_forecast_registry_manifest_url = None
+        forecast_registry.reset()
+        self.addCleanup(forecast_registry.reset)
+        self.addCleanup(
+            setattr,
+            settings,
+            "trading_forecast_registry_manifest_path",
+            original_manifest_path,
+        )
+        self.addCleanup(
+            setattr,
+            settings,
+            "trading_forecast_registry_manifest_url",
+            original_manifest_url,
+        )
+
+        status = _forecast_service_status(
+            {
+                "ready": True,
+                "status": "healthy",
+                "candidate_ids": ["chip-paper-microbar-composite@execution-proof"],
+                "dataset_snapshot_refs": ["torghut-chip-full-day-20260505-4c330ce9-r1"],
+                "model_refs": ["rules/intraday_tsmom_v1"],
+            }
+        )
+
+        self.assertEqual(status["status"], "healthy")
+        self.assertEqual(status["authority"], "empirical")
+        self.assertEqual(status["message"], "empirical_jobs_ready")
+        self.assertEqual(status["source"], "empirical_jobs")
 
     def tearDown(self) -> None:
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
