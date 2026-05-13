@@ -53,11 +53,23 @@ _QUANT_METRICS_REASONS = frozenset(
         "quant_pipeline_stages_missing",
     }
 )
-_PROMOTION_TABLE_NAMES = (
+_LEGACY_PROMOTION_TABLE_NAMES = (
     "research_candidates",
     "research_promotions",
     "strategy_promotion_decisions",
     "vnext_promotion_decisions",
+)
+_AUTORESEARCH_PROMOTION_TABLE_NAMES = (
+    "autoresearch_epochs",
+    "autoresearch_candidate_specs",
+    "autoresearch_proposal_scores",
+    "autoresearch_portfolio_candidates",
+    "autoresearch_portfolio_ready",
+    "autoresearch_portfolio_blocked",
+)
+_PROMOTION_TABLE_NAMES = (
+    *_LEGACY_PROMOTION_TABLE_NAMES,
+    *_AUTORESEARCH_PROMOTION_TABLE_NAMES,
 )
 
 
@@ -401,8 +413,9 @@ def _promotion_source(
         name: _safe_int(promotion_table_counts.get(name))
         for name in _PROMOTION_TABLE_NAMES
     }
-    missing = [name for name, count in counts.items() if count <= 0]
-    if missing:
+    legacy_counts = {name: counts[name] for name in _LEGACY_PROMOTION_TABLE_NAMES}
+    legacy_missing = [name for name, count in legacy_counts.items() if count <= 0]
+    if not legacy_missing:
         return _source_record(
             proof_id=proof_id,
             hypothesis_id=hypothesis_id,
@@ -410,11 +423,60 @@ def _promotion_source(
             window=window,
             source_class="research_candidate",
             source_ref="postgres:promotion_tables",
-            freshness_state="missing",
-            rows=sum(counts.values()),
-            decision="repair_only",
-            blocking_reason_codes=[f"{name}_empty" for name in missing],
+            freshness_state="current",
+            rows=sum(legacy_counts.values()),
+            decision="paper_candidate",
         )
+
+    autoresearch_candidates = counts["autoresearch_candidate_specs"]
+    autoresearch_proposals = counts["autoresearch_proposal_scores"]
+    autoresearch_portfolios = counts["autoresearch_portfolio_candidates"]
+    autoresearch_ready = counts["autoresearch_portfolio_ready"]
+    autoresearch_blocked = counts["autoresearch_portfolio_blocked"]
+    autoresearch_rows = (
+        autoresearch_candidates + autoresearch_proposals + autoresearch_portfolios
+    )
+    if autoresearch_rows > 0:
+        autoresearch_missing: list[str] = []
+        if autoresearch_candidates <= 0:
+            autoresearch_missing.append("autoresearch_candidate_specs_empty")
+        if autoresearch_proposals <= 0:
+            autoresearch_missing.append("autoresearch_proposal_scores_empty")
+        if autoresearch_portfolios <= 0:
+            autoresearch_missing.append("autoresearch_portfolio_candidates_empty")
+        if autoresearch_ready > 0 and not autoresearch_missing:
+            return _source_record(
+                proof_id=proof_id,
+                hypothesis_id=hypothesis_id,
+                account=account,
+                window=window,
+                source_class="research_candidate",
+                source_ref="postgres:autoresearch_ledgers",
+                freshness_state="current",
+                rows=autoresearch_rows,
+                decision="paper_candidate",
+            )
+
+        blockers = list(autoresearch_missing)
+        if autoresearch_ready <= 0:
+            blockers.append("autoresearch_portfolio_ready_empty")
+        if autoresearch_blocked > 0:
+            blockers.append("autoresearch_portfolio_candidates_blocked")
+        return _source_record(
+            proof_id=proof_id,
+            hypothesis_id=hypothesis_id,
+            account=account,
+            window=window,
+            source_class="research_candidate",
+            source_ref="postgres:autoresearch_ledgers",
+            freshness_state="blocked"
+            if autoresearch_portfolios > 0 or autoresearch_blocked > 0
+            else "missing",
+            rows=autoresearch_rows,
+            decision="repair_only",
+            blocking_reason_codes=blockers,
+        )
+
     return _source_record(
         proof_id=proof_id,
         hypothesis_id=hypothesis_id,
@@ -422,9 +484,10 @@ def _promotion_source(
         window=window,
         source_class="research_candidate",
         source_ref="postgres:promotion_tables",
-        freshness_state="current",
-        rows=sum(counts.values()),
-        decision="paper_candidate",
+        freshness_state="missing",
+        rows=sum(legacy_counts.values()),
+        decision="repair_only",
+        blocking_reason_codes=[f"{name}_empty" for name in legacy_missing],
     )
 
 
@@ -564,6 +627,8 @@ def _rehydration_lane(reason_codes: Sequence[str]) -> str:
         return "quant_metrics_rebuild"
     if "rejection_drag_high" in reasons or "rejection_drag_unmeasured" in reasons:
         return "rejection_drag_repair"
+    if any(reason.startswith("autoresearch_") for reason in reasons):
+        return "autoresearch_promotion_repair"
     if any(reason.endswith("_empty") for reason in reasons):
         return "promotion_table_repair"
     if any(

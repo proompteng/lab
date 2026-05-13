@@ -16,6 +16,10 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models import (
+    AutoresearchCandidateSpec,
+    AutoresearchEpoch,
+    AutoresearchPortfolioCandidate,
+    AutoresearchProposalScore,
     ResearchCandidate,
     ResearchPromotion,
     StrategyHypothesis,
@@ -60,6 +64,15 @@ _TA_CORE_REASON_CODES = frozenset(
         "signal_continuity_alert_active",
         "signal_lag_exceeded",
     }
+)
+_AUTORESEARCH_PORTFOLIO_READY_STATUSES = (
+    "target_met",
+    "paper_candidate",
+    "promotion_ready",
+    "ready_for_promotion",
+    "ready_for_promotion_review",
+    "accepted",
+    "promoted",
 )
 
 
@@ -932,6 +945,40 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, int]:
         ),
         "vnext_promotion_decisions": int(
             session.execute(select(func.count(VNextPromotionDecision.id))).scalar_one()
+        ),
+        "autoresearch_epochs": int(
+            session.execute(select(func.count(AutoresearchEpoch.id))).scalar_one()
+        ),
+        "autoresearch_candidate_specs": int(
+            session.execute(
+                select(func.count(AutoresearchCandidateSpec.id))
+            ).scalar_one()
+        ),
+        "autoresearch_proposal_scores": int(
+            session.execute(
+                select(func.count(AutoresearchProposalScore.id))
+            ).scalar_one()
+        ),
+        "autoresearch_portfolio_candidates": int(
+            session.execute(
+                select(func.count(AutoresearchPortfolioCandidate.id))
+            ).scalar_one()
+        ),
+        "autoresearch_portfolio_ready": int(
+            session.execute(
+                select(func.count(AutoresearchPortfolioCandidate.id)).where(
+                    AutoresearchPortfolioCandidate.status.in_(
+                        _AUTORESEARCH_PORTFOLIO_READY_STATUSES
+                    )
+                )
+            ).scalar_one()
+        ),
+        "autoresearch_portfolio_blocked": int(
+            session.execute(
+                select(func.count(AutoresearchPortfolioCandidate.id)).where(
+                    AutoresearchPortfolioCandidate.status == "blocked"
+                )
+            ).scalar_one()
         ),
     }
 
