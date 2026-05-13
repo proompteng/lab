@@ -250,6 +250,12 @@ Testing rules for the trading core:
   pending outcome receipts or current terminal receipts, exposes open repair outcome escrows for Jangar terminal-debt
   compaction, and records retired, preserved, or no-delta reason codes. The ledger is observe-mode only:
   `capital_stage=shadow`, `max_notional=0`, and live submit remains disabled while repair results are measured.
+- `GET /trading/consumer-evidence` now also surfaces the May 13 doc 196
+  `torghut.profit-carry-passport-ledger.v1` projection. It builds observe-mode profit-carry passports for AAPL route
+  rehab, NVDA scoped proof refill, megacap breadth probing, and the H-MICRO-01 alpha-readiness refill, then pairs each
+  passport with a Jangar repair-capacity future. Every passport keeps `max_notional=0`, blocks paper and live action
+  classes, cites required receipts before capital promotion, and rolls back by ignoring the passport ledger while
+  preserving existing consumer-evidence, capital-replay, and repair-outcome surfaces.
 - `POST /trading/profit-freshness/zero-notional-repair` returns the May 12 doc 188
   `torghut.zero-notional-repair-execution-receipt.v1` executor receipt for the selected frontier repair. The default
   mode is a dry run. With `execute=true`, the only local runner is bounded route/TCA recompute; empirical proof renewal

@@ -383,7 +383,10 @@ stop blocking launches while preserving the stamped evidence.
 Control-plane status also emits `stage_credit_ledger` from
 `docs/agents/designs/187-jangar-stage-credit-ledger-and-runner-slot-futures-2026-05-13.md`. The ledger is an
 observe-mode account over stage-clearance packets and the clearance market: each stage/action pair receives an account,
-a decision, reason codes, and any open `runner_slot_futures` proving the next runner slot is spendable.
+a decision, reason codes, and any open `runner_slot_futures` proving the next runner slot is spendable. Runner capacity
+debt from recent workflow failure reasons such as `FailedScheduling`, image-pull failures, mount failures, and
+`WorkflowStepTimedOut` is priced into each material account through `runner_capacity_tax`, so normal launch stays held
+until the capacity reason is cleared or a bounded repair path is selected.
 
 Fire-time schedule runners refresh the same status payload before they create an AgentRun. When a current stage-credit
 account and open runner-slot future exist, the runner stamps `swarmStageCreditLedgerId`,

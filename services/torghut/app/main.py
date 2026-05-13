@@ -102,6 +102,7 @@ from .trading.jangar_continuity import load_jangar_route_continuity_packet
 from .trading.lean_lanes import LeanLaneManager
 from .trading.lean_runtime import lean_authority_status
 from .trading.llm.evaluation import build_llm_evaluation_metrics
+from .trading.profit_carry_passports import build_profit_carry_passport_ledger
 from .trading.profit_freshness_frontier import build_profit_freshness_frontier
 from .trading.profit_repair_settlement import build_profit_repair_settlement_ledger
 from .trading.profit_signal_quorum import build_profit_signal_quorum
@@ -3001,6 +3002,16 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
             dependency_quorum.as_payload()
         ),
     )
+    capital_replay_projection = _build_capital_replay_projection_payload(
+        torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        dependency_quorum=dependency_quorum.as_payload(),
+        live_submission_gate=live_submission_gate,
+        proof_floor=proof_floor,
+        route_reacquisition_board=route_reacquisition_board,
+        empirical_jobs_status=empirical_jobs,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+    )
     profit_signal_quorum = _build_profit_signal_quorum_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
         dependency_quorum=dependency_quorum.as_payload(),
@@ -3180,6 +3191,18 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         route_warrant_exchange=route_warrant_exchange,
         live_submission_gate=live_submission_gate,
     )
+    profit_carry_passport_ledger = _build_profit_carry_passport_ledger_payload(
+        torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        capital_replay_board=cast(
+            Mapping[str, Any],
+            capital_replay_projection["capital_replay_board"],
+        ),
+        route_reacquisition_board=route_reacquisition_board,
+        proof_floor=proof_floor,
+        market_context_status=market_context_status,
+        hypothesis_payload=hypothesis_payload,
+        repair_outcome_dividend_ledger=repair_outcome_dividend_ledger,
+    )
     return {
         "schema_version": "torghut.consumer-evidence-status.v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -3215,6 +3238,7 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         "freshness_carry_ledger": freshness_carry_ledger,
         "repair_receipt_frontier": repair_receipt_frontier,
         "repair_outcome_dividend_ledger": repair_outcome_dividend_ledger,
+        "profit_carry_passport_ledger": profit_carry_passport_ledger,
     }
 
 
@@ -5140,6 +5164,30 @@ def _build_capital_replay_projection_payload(
         jangar_contract_graduation_ref=_build_jangar_contract_graduation_ref(
             dependency_quorum
         ),
+    )
+
+
+def _build_profit_carry_passport_ledger_payload(
+    *,
+    torghut_revision: str | None,
+    capital_replay_board: Mapping[str, Any],
+    route_reacquisition_board: Mapping[str, Any],
+    proof_floor: Mapping[str, Any],
+    market_context_status: Mapping[str, Any],
+    hypothesis_payload: Mapping[str, Any],
+    repair_outcome_dividend_ledger: Mapping[str, Any],
+) -> dict[str, object]:
+    return build_profit_carry_passport_ledger(
+        account_label=settings.trading_account_label,
+        window=settings.trading_jangar_quant_window,
+        trading_mode=settings.trading_mode,
+        torghut_revision=torghut_revision,
+        capital_replay_board=capital_replay_board,
+        route_reacquisition_board=route_reacquisition_board,
+        proof_floor=proof_floor,
+        market_context_status=market_context_status,
+        hypothesis_payload=hypothesis_payload,
+        repair_outcome_dividend_ledger=repair_outcome_dividend_ledger,
     )
 
 
