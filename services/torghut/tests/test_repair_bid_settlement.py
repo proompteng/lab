@@ -181,6 +181,42 @@ def test_degraded_jangar_scoped_quant_status_creates_typed_dispatchable_lot() ->
     assert lot["required_output_receipt"] == "torghut.quant-pipeline-current-receipt.v1"
 
 
+def test_feature_coverage_preempts_generic_rollout_repair() -> None:
+    ledger = _build(
+        reason_codes=[
+            "quant_pipeline_degraded",
+            "execution_tca_stale",
+            "route_adjacent_workload_proof_missing",
+            "post_cost_expectancy_non_positive",
+            "alpha_readiness_not_promotion_eligible",
+            "feature_rows_missing",
+            "required_feature_set_unavailable",
+        ]
+    )
+    lots_by_class = {lot["lot_class"]: lot for lot in ledger["compacted_lots"]}
+    dispatchable_classes = [
+        lot["lot_class"]
+        for lot in ledger["compacted_lots"]
+        if lot.get("dispatchable") is True
+    ]
+
+    assert lots_by_class["feature_lineage"]["state"] == "selected"
+    assert lots_by_class["feature_lineage"]["dispatchable"] is True
+    assert lots_by_class["feature_lineage"]["priority"] == 95
+    assert (
+        "feature_rows_missing" in lots_by_class["feature_lineage"]["raw_reason_codes"]
+    )
+    assert (
+        "required_feature_set_unavailable"
+        in lots_by_class["feature_lineage"]["raw_reason_codes"]
+    )
+    assert dispatchable_classes == [
+        "quant_pipeline",
+        "feature_lineage",
+        "execution_tca",
+    ]
+
+
 def test_string_booleans_and_rollout_workload_gaps_create_typed_lots() -> None:
     ledger = _build(
         jangar_status={
