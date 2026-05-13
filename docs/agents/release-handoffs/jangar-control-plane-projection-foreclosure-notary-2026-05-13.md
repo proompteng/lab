@@ -13,8 +13,8 @@
 ## What Shipped
 
 - Added `projection_foreclosure_notary` to the Jangar control-plane status contract.
-- Added a read-only reducer that classifies stale AgentRun projections, market-context active rows, source-rollout
-  truth, stage-clearance packets, and Torghut route-custody receipts.
+- Added a read-only evidence collector and reducer that classifies stale AgentRun projections, market-context active
+  rows, source-rollout truth, stage-clearance packets, and Torghut route-custody receipts.
 - Preserved stale rows as audit-visible `stale_foreclosed` claims instead of mutating database or Kubernetes state.
 - Represented missing Torghut custody receipts as `missing_receipt` with required
   `torghut.execution-tca-refresh-receipt.v1` and `torghut.market-context-freshness-receipt.v1` repair receipts.
@@ -27,8 +27,15 @@
   10s timeout in `src/routes/ready.test.ts`; the test passed alone and the full suite passed on rerun.
 - `bunx vitest run --config vitest.config.ts src/server/__tests__/control-plane-projection-foreclosure-notary.test.ts src/server/__tests__/control-plane-stage-credit-ledger.test.ts src/server/__tests__/control-plane-ready-truth-arbiter.test.ts src/server/__tests__/control-plane-authority-provenance-settlement.test.ts src/server/__tests__/control-plane-status.test.ts` passed: 5 files, 49 tests.
 - `bun run --filter @proompteng/jangar tsc` passed.
+- `cd services/jangar && bunx tsc --noEmit --project tsconfig.paths.json` passed.
 - `bun run --filter @proompteng/jangar lint` passed.
 - `bun run --filter @proompteng/jangar lint:oxlint` passed with pre-existing warnings and 0 errors.
+- `bun run --cwd services/jangar lint:oxlint:type` passed with pre-existing warnings and 0 errors.
+- `bun run --cwd services/jangar docs:inventory:check` passed after regenerating
+  `docs/jangar/architecture-inventory.md`.
+- `bun run --cwd services/jangar check:module-sizes` passed after splitting the collector from the reducer.
+- `bunx oxfmt --check services/jangar packages/scripts/src/jangar argocd/applications/jangar` passed.
+- `bun run --cwd services/jangar build` passed.
 
 ## Risk And Rollback
 
