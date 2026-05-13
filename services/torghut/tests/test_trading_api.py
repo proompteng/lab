@@ -3824,6 +3824,68 @@ class TestTradingApi(TestCase):
         self.assertEqual(payload["live_notional_limit"], "0")
         self.assertEqual(payload["before_refs"], ["market_context:AAPL"])
 
+    def test_zero_notional_repair_endpoint_can_select_queued_route_tca_action(
+        self,
+    ) -> None:
+        status_payload = {
+            "active_revision": "torghut-00320",
+            "profit_freshness_frontier": {
+                "frontier_id": "profit-freshness-frontier:test",
+                "capital_posture": {
+                    "capital_state": "zero_notional",
+                    "paper_notional_limit": "0",
+                    "live_notional_limit": "0",
+                    "capital_behavior_changed": False,
+                },
+                "selected_zero_notional_repairs": [
+                    {
+                        "lot_id": "profit-freshness-repair-lot:empirical",
+                        "candidate_id": "candidate-a",
+                        "hypothesis_id": "H-AAPL",
+                        "blocked_dimension": "empirical_proof",
+                        "zero_notional_action": "renew_empirical_proof_jobs",
+                        "before_refs": ["empirical:stale"],
+                        "paper_notional_limit": "0",
+                        "live_notional_limit": "0",
+                        "state": "selected_zero_notional_repair",
+                    }
+                ],
+                "repair_lots": [
+                    {
+                        "lot_id": "profit-freshness-repair-lot:tca",
+                        "candidate_id": "candidate-b",
+                        "hypothesis_id": "H-NVDA",
+                        "blocked_dimension": "tca_fill_quality",
+                        "zero_notional_action": "recompute_route_tca_and_fill_quality",
+                        "before_refs": ["execution_tca:NVDA"],
+                        "paper_notional_limit": "0",
+                        "live_notional_limit": "0",
+                        "state": "queued_zero_notional_repair",
+                    }
+                ],
+            },
+        }
+        with patch("app.main.trading_status", return_value=status_payload):
+            response = self.client.post(
+                "/trading/profit-freshness/zero-notional-repair"
+                "?action=recompute_route_tca_and_fill_quality"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["execution_state"], "dry_run_ready")
+        self.assertEqual(
+            payload["zero_notional_action"],
+            "recompute_route_tca_and_fill_quality",
+        )
+        self.assertEqual(
+            payload["preferred_zero_notional_action"],
+            "recompute_route_tca_and_fill_quality",
+        )
+        self.assertEqual(payload["repair_lot_ref"], "profit-freshness-repair-lot:tca")
+        self.assertEqual(payload["before_refs"], ["execution_tca:NVDA"])
+        self.assertFalse(payload["order_submission_enabled"])
+
     def test_trading_status_blocks_live_submission_when_lineage_tables_are_empty(
         self,
     ) -> None:

@@ -1440,6 +1440,10 @@ def trading_revenue_repair() -> dict[str, object]:
 @app.post("/trading/profit-freshness/zero-notional-repair")
 def trading_profit_freshness_zero_notional_repair(
     execute: bool = Query(default=False),
+    action: str | None = Query(
+        default=None,
+        description="Optional zero-notional action to select from queued repair lots.",
+    ),
     tca_limit: int = Query(default=250, ge=1, le=5000),
 ) -> dict[str, object]:
     """Plan or run an allowlisted zero-notional repair from the freshness frontier."""
@@ -1482,6 +1486,7 @@ def trading_profit_freshness_zero_notional_repair(
         source_commit=BUILD_COMMIT,
         profit_freshness_frontier=frontier,
         execute=execute,
+        preferred_action=action,
         runners={"recompute_route_tca_and_fill_quality": run_tca_recompute},
     )
     return cast(dict[str, object], jsonable_encoder(receipt))

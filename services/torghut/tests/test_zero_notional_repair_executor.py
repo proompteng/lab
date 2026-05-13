@@ -93,6 +93,91 @@ def test_execute_runs_allowlisted_tca_runner_without_widening_notional() -> None
     assert receipt["live_notional_limit"] == "0"
 
 
+def test_preferred_action_can_execute_queued_route_tca_repair() -> None:
+    frontier = _frontier("renew_empirical_proof_jobs")
+    frontier["repair_lots"] = [
+        {
+            "lot_id": "profit-freshness-repair-lot:empirical",
+            "state": "selected_zero_notional_repair",
+            "zero_notional_action": "renew_empirical_proof_jobs",
+        },
+        {
+            "lot_id": "profit-freshness-repair-lot:tca",
+            "candidate_id": "candidate-b",
+            "hypothesis_id": "H-NVDA",
+            "blocked_dimension": "tca_fill_quality",
+            "zero_notional_action": "recompute_route_tca_and_fill_quality",
+            "before_refs": ["execution_tca:NVDA"],
+            "paper_notional_limit": "0",
+            "live_notional_limit": "0",
+            "state": "queued_zero_notional_repair",
+        },
+    ]
+    called: list[Mapping[str, Any]] = []
+
+    receipt = run_zero_notional_repair(
+        account_label="paper",
+        trading_mode="live",
+        torghut_revision="torghut-00320",
+        source_commit="abc123",
+        profit_freshness_frontier=frontier,
+        execute=True,
+        preferred_action="recompute_route_tca_and_fill_quality",
+        runners={
+            "recompute_route_tca_and_fill_quality": lambda repair: (
+                called.append(repair)
+                or {
+                    "execution_state": "executed",
+                    "command_exit_code": 0,
+                    "after_refs": ["execution_tca_metrics"],
+                }
+            )
+        },
+        now=NOW,
+    )
+
+    assert [repair["lot_id"] for repair in called] == [
+        "profit-freshness-repair-lot:tca"
+    ]
+    assert receipt["execution_state"] == "executed"
+    assert receipt["zero_notional_action"] == "recompute_route_tca_and_fill_quality"
+    assert (
+        receipt["preferred_zero_notional_action"]
+        == "recompute_route_tca_and_fill_quality"
+    )
+    assert receipt["repair_lot_ref"] == "profit-freshness-repair-lot:tca"
+    assert receipt["before_refs"] == ["execution_tca:NVDA"]
+    assert receipt["after_refs"] == ["execution_tca_metrics"]
+    assert receipt["order_submission_enabled"] is False
+
+
+def test_preferred_action_missing_is_fail_closed() -> None:
+    receipt = run_zero_notional_repair(
+        account_label="paper",
+        trading_mode="live",
+        torghut_revision="torghut-00320",
+        source_commit="abc123",
+        profit_freshness_frontier=_frontier("renew_empirical_proof_jobs"),
+        execute=True,
+        preferred_action="recompute_route_tca_and_fill_quality",
+        runners={
+            "recompute_route_tca_and_fill_quality": lambda _repair: {
+                "execution_state": "executed",
+                "command_exit_code": 0,
+            }
+        },
+        now=NOW,
+    )
+
+    assert receipt["execution_state"] == "no_selected_repair"
+    assert receipt["command_exit_code"] == 78
+    assert (
+        "profit_freshness_frontier_matching_repair_missing:recompute_route_tca_and_fill_quality"
+        in receipt["blocked_reasons"]
+    )
+    assert receipt["order_submission_enabled"] is False
+
+
 def test_runner_required_action_reports_admission_block_when_executed_without_runner() -> (
     None
 ):
