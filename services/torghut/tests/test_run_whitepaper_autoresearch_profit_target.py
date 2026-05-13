@@ -1285,7 +1285,6 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "candidate_spec_id": "spec-selected",
                     "evidence_status": "replayed",
                     "failure_reasons": [
-                        "active_day_ratio_below_oracle",
                         "shadow_parity_status_not_within_budget",
                         "executable_replay_not_passed",
                         "executable_replay_artifact_missing",
@@ -1312,6 +1311,62 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "executable_replay_artifact_ref",
             proof_action["required_scorecard_fields"],
         )
+
+    def test_remediation_defers_promotion_proof_until_profit_gates_pass(self) -> None:
+        remediation = runner._candidate_search_remediation(
+            failure_reason="portfolio_candidate_failed_profit_target_oracle",
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": "spec-selected",
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            evidence_bundles=(),
+            false_positive_table=(
+                {
+                    "candidate_spec_id": "spec-selected",
+                    "evidence_status": "replayed",
+                    "failure_reasons": [
+                        "positive_day_ratio_below_oracle",
+                        "max_drawdown_above_oracle",
+                        "shadow_parity_status_not_within_budget",
+                        "executable_replay_not_passed",
+                    ],
+                },
+            ),
+            best_false_negative_table=(),
+            replay_timeout_seconds=7200,
+            max_frontier_candidates_per_spec=2,
+            current_top_k=24,
+            current_exploration_slots=16,
+            current_portfolio_size_min=3,
+            current_max_candidates=96,
+            current_max_total_frontier_candidates=48,
+        )
+
+        self.assertEqual(
+            remediation["next_actions"][0]["action"],
+            "increase_breadth_and_portfolio_diversity",
+        )
+        proof_action = next(
+            action
+            for action in remediation["next_actions"]
+            if action["action"]
+            == "complete_executable_replay_and_shadow_parity_evidence"
+        )
+        self.assertEqual(
+            proof_action["deferred_until"],
+            "portfolio_profit_and_risk_oracle_failures_clear",
+        )
+        self.assertEqual(
+            proof_action["blocked_by_non_proof_failure_counts"][
+                "positive_day_ratio_below_oracle"
+            ],
+            1,
+        )
+        self.assertEqual(proof_action["priority"], 7)
 
     def test_remediation_increases_breadth_from_current_epoch(self) -> None:
         remediation = runner._candidate_search_remediation(

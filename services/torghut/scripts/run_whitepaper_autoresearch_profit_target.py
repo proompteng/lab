@@ -1177,23 +1177,38 @@ def _candidate_search_remediation(
         for reason, count in failure_counts.items()
         if reason in promotion_proof_failures
     }
+    non_proof_failure_counts = {
+        reason: count
+        for reason, count in failure_counts.items()
+        if reason not in promotion_proof_failures
+    }
     if proof_failure_counts:
-        next_actions.append(
-            {
-                "priority": 3,
-                "action": "complete_executable_replay_and_shadow_parity_evidence",
-                "reason": "replayed candidates are missing promotion-closure evidence required by the oracle",
-                "blocking_failure_counts": proof_failure_counts,
-                "required_scorecard_fields": [
-                    "shadow_parity_status",
-                    "executable_replay_passed",
-                    "executable_replay_artifact_ref",
-                    "executable_replay_order_count",
-                    "executable_replay_account_buying_power",
-                    "executable_replay_max_notional_per_trade",
-                ],
-            }
-        )
+        proof_action: dict[str, Any] = {
+            "priority": 3 if not non_proof_failure_counts else 7,
+            "action": "complete_executable_replay_and_shadow_parity_evidence",
+            "reason": (
+                "replayed candidates are missing promotion-closure evidence required by the oracle"
+                if not non_proof_failure_counts
+                else "promotion-closure evidence is required, but current candidates still fail profit or risk gates"
+            ),
+            "blocking_failure_counts": proof_failure_counts,
+            "required_scorecard_fields": [
+                "shadow_parity_status",
+                "executable_replay_passed",
+                "executable_replay_artifact_ref",
+                "executable_replay_order_count",
+                "executable_replay_account_buying_power",
+                "executable_replay_max_notional_per_trade",
+            ],
+        }
+        if non_proof_failure_counts:
+            proof_action["deferred_until"] = (
+                "portfolio_profit_and_risk_oracle_failures_clear"
+            )
+            proof_action["blocked_by_non_proof_failure_counts"] = dict(
+                sorted(non_proof_failure_counts.items())
+            )
+        next_actions.append(proof_action)
     if any(
         reason in failure_counts
         for reason in (
