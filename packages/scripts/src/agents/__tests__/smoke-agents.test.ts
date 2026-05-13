@@ -271,7 +271,7 @@ describe('scheduled AgentRun templates', () => {
     }
   })
 
-  it('bounds scheduled verify runs so deployer lanes cannot hang indefinitely', () => {
+  it('keeps scheduled verify runs bounded to one release slice per cadence', () => {
     const manifests = readYamlObjects('argocd/applications/agents/swarm-agentrun-templates.yaml')
     const agentRunTemplates = new Map(
       manifests
@@ -286,8 +286,24 @@ describe('scheduled AgentRun templates', () => {
       const steps = objectAt(workflow, 'steps') as Record<string, unknown>[] | undefined
       const verifyStep = steps?.find((step) => objectAt(step, 'name') === 'verify')
 
-      expect(objectAt(verifyStep, 'timeoutSeconds')).toBe(5400)
+      expect(objectAt(verifyStep, 'retries')).toBe(0)
+      expect(objectAt(verifyStep, 'timeoutSeconds')).toBe(2700)
     }
+  })
+
+  it('keeps the deployer implementation spec focused on a bounded release slice', () => {
+    const manifests = readYamlObjects('argocd/applications/agents/swarm-implspecs.yaml')
+    const deployerSpec = manifests.find(
+      (manifest) =>
+        manifest.kind === 'ImplementationSpec' &&
+        objectAt(objectAt(manifest, 'metadata'), 'name') === 'swarm-deployer-v1',
+    )
+    const text = String(objectAt(objectAt(deployerSpec, 'spec'), 'text') ?? '')
+
+    expect(text).toContain('Select at most one unblock-first/high-impact PR')
+    expect(text).toContain('Do not use GitHub comments for routine status')
+    expect(text).toContain('Never request Codex review automatically')
+    expect(text).not.toContain('codex:review-request')
   })
 })
 

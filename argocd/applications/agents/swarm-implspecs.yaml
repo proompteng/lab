@@ -361,18 +361,23 @@ spec:
     - swarmValueGates: ${swarmValueGates}
 
     Execution loop (run in order):
-    1) Enumerate open PRs and select unblock-first/high-impact items that map to `${swarmBusinessMetric}` or a blocked value gate.
-    2) Resolve conflicts/comments and apply follow-up fixes until checks are green.
-    3) Squash merge merge-ready PRs.
-    4) Verify GitOps and cluster rollout health for merged commits.
-    5) Report final outcome with evidence and next action.
+    1) Spend at most 5 minutes gathering current PR, CI, rollout, and readiness state.
+    2) Select at most one unblock-first/high-impact PR that maps to `${swarmBusinessMetric}` or a blocked value gate.
+       If no such PR is mergeable within this run, stop with one explicit blocker and next action.
+    3) Resolve only the selected PR's conflicts/comments and apply only the smallest follow-up fix needed for green checks.
+    4) Squash merge the selected PR only after every required check is green.
+    5) Verify GitOps and cluster rollout health for the merged commit.
+    6) Report final outcome with evidence and next action before the step timeout.
 
     Requirements:
     - Work only on `${head}` based on `${base}` in `${repository}`.
-    - Enumerate open PRs, prioritize unblock-first/high-impact, and move each selected PR to mergeable state.
+    - Enumerate open PRs only enough to select one release slice; do not audit the full backlog in a verify run.
+    - Prioritize unblock-first/high-impact, and move at most one selected PR to mergeable state per run.
     - Own selected PRs end-to-end: resolve blocking comments/conflicts and fix code/tests/CI until all required checks are green.
     - Treat `${swarmValidationContract}` as the release acceptance contract; do not count a PR as useful unless it advances `${swarmBusinessMetric}` or records the exact blocker.
-    - Never request Codex review automatically. Do not post `@codex review` or `codex:review-request` comments, and do not hold green PRs on a missing large-diff Codex review unless a human explicitly asked for that review.
+    - Never request Codex review automatically. Do not post automated review-request comments, and do not hold green PRs on a missing large-diff Codex review unless a human explicitly asked for that review.
+    - Do not use GitHub comments for routine status. Use NATS for live coordination and durable artifacts for audit.
+      Update a PR progress comment only when you actually changed the selected PR branch or merge state.
     - Existing human review comments, requested changes, merge conflicts, and required GitHub branch-protection reviews remain real blockers.
     - Never merge while any check is failing, cancelled, or pending.
     - Merge via squash only after all required checks are passing with no failures.
@@ -381,9 +386,9 @@ spec:
       - workload readiness
       - error events
     - Do not declare success until merged commit rollout is confirmed, or fail with explicit blocker evidence.
-    - Update `${swarmMissionLedgerRef}` with merge decision, green checks, rollout evidence, runtime/business metric evidence, rollback path, and next action.
+    - Update `${swarmMissionLedgerRef}` with merge decision, green checks, rollout evidence, runtime/business metric evidence, rollback path, and next action only after a merge or a changed blocker.
     - No direct production mutations from local shell; promotion is via PR merge and GitOps reconciliation.
-    - Audit artifacts (issues/docs) are non-blocking but must be complete: include merge decision, rollout evidence, risk, and rollback notes.
+    - Audit artifacts are bounded: write one concise handoff for the selected PR or blocker, not broad historical rollout reports.
     - Ticket workflow state is never a runtime gate; tickets/docs are audit artifacts only.
 
     NATS collaboration (required):
@@ -408,7 +413,7 @@ spec:
     Done criteria (all required):
     - Selected PRs are conflict-free, comment-clean, and merged with green checks.
     - Post-merge rollout health is verified with cluster/GitOps evidence.
-    - Runtime or business-value evidence is recorded against `${swarmBusinessMetric}` and `${swarmValueGates}`.
+    - Runtime or business-value evidence is recorded against `${swarmBusinessMetric}` and `${swarmValueGates}`, or the exact blocker is named.
     - Rollback path and residual risk are documented.
     - NATS/Jangar updates are thread-aware and human-readable.
 
