@@ -12,6 +12,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority, refreshed `2026-05-13T12:27Z`):
+  - `195-torghut-stale-projection-foreclosure-and-route-custody-2026-05-13.md`
+  - `docs/agents/designs/190-jangar-projection-foreclosure-notary-and-stage-custody-repair-2026-05-13.md`
   - `193-torghut-route-repair-yield-board-and-hypothesis-reentry-guardrails-2026-05-13.md`
   - `docs/agents/designs/189-jangar-authority-provenance-settlement-and-rollout-reentry-windows-2026-05-13.md`
   - `194-torghut-quant-plan-closeout-and-repair-only-handoff-2026-05-13.md`
