@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: 2026-05-12T22:37:12Z
+    deploy.knative.dev/rollout: 2026-05-12T23:17:25Z
 spec:
   replicas: 1
   strategy:
@@ -57,11 +57,11 @@ spec:
             - name: UI_PORT
               value: "8080"
             - name: JANGAR_RUNTIME_IMAGE
-              value: registry.ide-newton.ts.net/lab/jangar:8805a612@sha256:2fbd49000ef5e9cfdb05ed5d7832a843b021038f94be8f1bd935d47b7e45c4e7
+              value: registry.ide-newton.ts.net/lab/jangar:8ae0f291@sha256:1876245a2b3fb9bd8a2a4a4ba98019871eb6700549ee99ea7710195980725218
             - name: JANGAR_SOURCE_HEAD_SHA
-              value: 8805a612e5204e10a5687a8800a41bebafc64aba
+              value: 8ae0f291c553422ee2d33dffb92ce5b477410575
             - name: JANGAR_GITOPS_REVISION
-              value: 8805a612e5204e10a5687a8800a41bebafc64aba
+              value: 8ae0f291c553422ee2d33dffb92ce5b477410575
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: "120"
             - name: JANGAR_BUMBA_TASK_QUEUE
@@ -154,6 +154,10 @@ spec:
               value: jangar_orchestration_controller_enabled
             - name: JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY
               value: jangar_supporting_controller_enabled
+            - name: JANGAR_STAGE_CLEARANCE_ENFORCEMENT
+              value: hold
+            - name: JANGAR_STAGE_CLEARANCE_HOLD_STAGES
+              value: implement,verify
             - name: JANGAR_AGENTS_CONTROLLER_ENABLED_FLAG_KEY
               value: jangar_agents_controller_enabled
             - name: JANGAR_PRIMITIVES_RECONCILER_FLAG_KEY
