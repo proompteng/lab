@@ -338,3 +338,221 @@ def test_closed_frontier_still_does_not_widen_capital_limits() -> None:
     assert frontier["capital_posture"]["paper_replay_candidate_count"] == 1
     assert frontier["capital_posture"]["paper_notional_limit"] == "0"
     assert frontier["capital_posture"]["live_notional_limit"] == "0"
+
+
+def test_tca_dimension_reports_missing_when_proof_dimension_is_absent() -> None:
+    frontier = _frontier(
+        proof_floor_receipt={
+            "schema_version": "torghut.profitability-proof-floor.v1",
+            "account_label": "PA3SX7FYNUTF",
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "blocking_reasons": [],
+            "proof_dimensions": [],
+        }
+    )
+
+    tca_dimension = _dimension(frontier, "tca_fill_quality")
+
+    assert tca_dimension["state"] == "missing"
+    assert tca_dimension["reason_codes"] == ["execution_tca_missing"]
+
+
+def test_tca_dimension_keeps_non_routeability_proof_blockers() -> None:
+    frontier = _frontier(
+        proof_floor_receipt={
+            "schema_version": "torghut.profitability-proof-floor.v1",
+            "account_label": "PA3SX7FYNUTF",
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "blocking_reasons": [],
+            "proof_dimensions": [
+                {
+                    "dimension": "execution_tca",
+                    "state": "pass",
+                    "blocking_reason_codes": [
+                        "capital_state_zero_notional",
+                        "fill_quality_guardrail_failed",
+                    ],
+                }
+            ],
+        }
+    )
+
+    tca_dimension = _dimension(frontier, "tca_fill_quality")
+
+    assert tca_dimension["state"] == "degraded"
+    assert tca_dimension["reason_codes"] == ["fill_quality_guardrail_failed"]
+
+
+def test_tca_dimension_derives_stale_and_failed_reasons_without_explicit_reason() -> (
+    None
+):
+    stale_frontier = _frontier(
+        proof_floor_receipt={
+            "schema_version": "torghut.profitability-proof-floor.v1",
+            "account_label": "PA3SX7FYNUTF",
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "blocking_reasons": [],
+            "proof_dimensions": [
+                {
+                    "dimension": "execution_tca",
+                    "state": "stale",
+                    "freshness_seconds": 330_000,
+                }
+            ],
+        }
+    )
+    failed_frontier = _frontier(
+        proof_floor_receipt={
+            "schema_version": "torghut.profitability-proof-floor.v1",
+            "account_label": "PA3SX7FYNUTF",
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "blocking_reasons": [],
+            "proof_dimensions": [
+                {
+                    "dimension": "execution_tca",
+                    "state": "fail",
+                }
+            ],
+        }
+    )
+
+    stale_dimension = _dimension(stale_frontier, "tca_fill_quality")
+    failed_dimension = _dimension(failed_frontier, "tca_fill_quality")
+
+    assert stale_dimension["state"] == "stale"
+    assert stale_dimension["reason_codes"] == ["execution_tca_stale"]
+    assert failed_dimension["state"] == "blocked"
+    assert failed_dimension["reason_codes"] == ["execution_tca_fail"]
+
+
+def test_fresh_execution_tca_does_not_inherit_routeability_blockers() -> None:
+    frontier = _frontier(
+        proof_floor_receipt={
+            "schema_version": "torghut.profitability-proof-floor.v1",
+            "account_label": "PA3SX7FYNUTF",
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "blocking_reasons": [],
+            "proof_dimensions": [
+                {
+                    "dimension": "execution_tca",
+                    "state": "pass",
+                    "reason": "execution_tca_route_universe_exclusions_applied",
+                    "freshness_seconds": 71,
+                    "source_ref": {
+                        "last_computed_at": "2026-05-12T15:08:49+00:00",
+                    },
+                }
+            ],
+        },
+        routeability_repair_acceptance_ledger={
+            "schema_version": "torghut.routeability-repair-acceptance-ledger.v1",
+            "ledger_id": "routeability-acceptance-ledger:route-blocked",
+            "aggregate_state": "blocked",
+            "accepted_routeable_candidate_count": 0,
+            "aggregate_blocking_reason_codes": [
+                "proof_floor_repair_only",
+                "capital_state_zero_notional",
+                "route_tca_passed_but_dependency_receipts_block_capital",
+                "execution_tca_route_universe_exclusions_applied",
+                "execution_tca_symbol_missing",
+            ],
+            "lots": [
+                {
+                    "lot_id": "routeability-repair-lot:tca",
+                    "lot_type": "route_universe_tca_repair",
+                    "current_state": "blocked",
+                    "blocking_reason_codes": [
+                        "execution_tca_route_universe_exclusions_applied",
+                        "execution_tca_symbol_missing",
+                    ],
+                    "hypothesis_ids": ["H-AAPL", "H-AMD", "H-AMZN"],
+                }
+            ],
+        },
+        route_reacquisition_board={
+            "summary": {"capital_eligible_symbol_count": 0},
+            "rows": [
+                {
+                    "symbol": "AAPL",
+                    "state": "probing",
+                    "current_blocker": (
+                        "route_tca_passed_but_dependency_receipts_block_capital"
+                    ),
+                    "hypothesis_ids": ["H-AAPL"],
+                },
+                {
+                    "symbol": "AMD",
+                    "state": "blocked",
+                    "current_blocker": "execution_tca_route_universe_exclusions_applied",
+                    "hypothesis_ids": ["H-AMD"],
+                },
+                {
+                    "symbol": "AMZN",
+                    "state": "missing",
+                    "current_blocker": "execution_tca_symbol_missing",
+                    "hypothesis_ids": ["H-AMZN"],
+                },
+            ],
+        },
+        quant_evidence={
+            "ok": True,
+            "status": "healthy",
+            "latest_metrics_count": 144,
+            "stage_count": 4,
+        },
+        market_context_status={"status": "healthy", "last_domain_states": {}},
+        empirical_jobs_status={
+            "ready": True,
+            "status": "healthy",
+            "eligible_jobs": [
+                "benchmark_parity",
+                "foundation_router_parity",
+                "janus_event_car",
+                "janus_hgrm_reward",
+            ],
+            "candidate_ids": ["candidate-aapl"],
+            "dataset_snapshot_refs": ["dataset-aapl"],
+        },
+        hypothesis_payload={
+            "summary": {"promotion_eligible_total": 0, "reason_totals": {}},
+            "items": [{"hypothesis_id": "H-AAPL", "reasons": []}],
+        },
+        jangar_reliability_settlement_ref={
+            "settlement_ref": "jangar-reliability-settlement:ready",
+            "decision": "allow",
+            "state": "current",
+            "reason_codes": [],
+        },
+    )
+
+    tca_dimension = _dimension(frontier, "tca_fill_quality")
+    route_dimension = _dimension(frontier, "route_readiness")
+
+    assert tca_dimension["state"] == "current"
+    assert tca_dimension["reason_codes"] == []
+    assert tca_dimension["blocking_hypotheses"] == []
+    assert tca_dimension["details"]["routeability_blocked_symbols"] == [
+        "AAPL",
+        "AMD",
+        "AMZN",
+    ]
+    assert route_dimension["state"] == "blocked"
+    assert "capital_state_zero_notional" in route_dimension["reason_codes"]
+    assert (
+        "route_tca_passed_but_dependency_receipts_block_capital"
+        in route_dimension["reason_codes"]
+    )
+    assert (
+        frontier["next_zero_notional_action"] == "settle_routeability_acceptance_lots"
+    )
+    assert frontier["capital_posture"]["paper_replay_candidate_count"] == 0

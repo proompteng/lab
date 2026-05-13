@@ -87,6 +87,12 @@ _DIMENSION_SUCCESS: Mapping[str, str] = {
     "schema_migration_state": "schema and migration lineage blockers are absent",
     "jangar_settlement": "Jangar reliability settlement allows paper canary consideration",
 }
+_ROUTEABILITY_ONLY_TCA_REASON_CODES = {
+    "execution_tca_route_universe_exclusions_applied",
+    "execution_tca_symbol_missing",
+    "route_tca_passed_but_dependency_receipts_block_capital",
+}
+_ROUTEABILITY_ONLY_TCA_REASON_PREFIXES = ("capital_state_", "proof_floor_")
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -559,6 +565,12 @@ def _route_symbols(route_reacquisition_board: Mapping[str, Any]) -> list[str]:
     )
 
 
+def _routeability_only_tca_reason(reason: str) -> bool:
+    return reason in _ROUTEABILITY_ONLY_TCA_REASON_CODES or reason.startswith(
+        _ROUTEABILITY_ONLY_TCA_REASON_PREFIXES
+    )
+
+
 def _tca_dimension(
     *,
     proof_floor_receipt: Mapping[str, Any],
@@ -573,28 +585,48 @@ def _tca_dimension(
         if _text(lot.get("lot_type")) == "route_universe_tca_repair":
             route_lot = lot
             break
-    reasons = [
-        *_strings(execution_tca.get("blocking_reason_codes")),
+    proof_state = _text(execution_tca.get("state"), "missing").lower()
+    reasons: list[str] = []
+    if not execution_tca:
+        reasons.append("execution_tca_missing")
+    else:
+        for reason in _strings(execution_tca.get("blocking_reason_codes")):
+            if proof_state not in _CURRENT_STATES or not _routeability_only_tca_reason(
+                reason
+            ):
+                reasons.append(reason)
+    proof_reason = _text(execution_tca.get("reason"))
+    if proof_state not in _CURRENT_STATES:
+        if proof_reason:
+            reasons.append(proof_reason)
+        elif proof_state == "missing":
+            reasons.append("execution_tca_missing")
+        elif proof_state == "stale":
+            reasons.append("execution_tca_stale")
+        elif proof_state:
+            reasons.append(f"execution_tca_{proof_state}")
+    routeability_reasons: list[str] = [
+        *_strings(routeability_ledger.get("aggregate_blocking_reason_codes")),
         *_strings(route_lot.get("blocking_reason_codes")),
     ]
-    proof_reason = _text(execution_tca.get("reason"))
-    if (
-        proof_reason
-        and _text(execution_tca.get("state")).lower() not in _CURRENT_STATES
-    ):
-        reasons.append(proof_reason)
+    blocked_symbols: list[str] = []
     for row in _route_rows(route_reacquisition_board):
         row_state = _text(row.get("state")).lower()
         blocker = _text(row.get("current_blocker"))
         if blocker and row_state not in _ROUTE_SETTLED_ROW_STATES:
-            reasons.append(blocker)
+            routeability_reasons.append(blocker)
+            if symbol := _text(row.get("symbol")).upper():
+                blocked_symbols.append(symbol)
     freshness_seconds = _int(execution_tca.get("freshness_seconds"), default=-1)
+    missing = proof_state == "missing" or any("missing" in reason for reason in reasons)
+    stale = proof_state == "stale"
     return _dimension(
         name="tca_fill_quality",
         state=_state_from_reasons(
             reasons,
-            missing=any("missing" in reason for reason in reasons),
-            stale=_text(execution_tca.get("state")).lower() == "stale",
+            missing=missing,
+            stale=stale,
+            blocked=proof_state in _BAD_STATES and not missing and not stale,
         ),
         generated_at=generated_at,
         reason_codes=reasons,
@@ -602,10 +634,16 @@ def _tca_dimension(
             _text(routeability_ledger.get("ledger_id"), "routeability_acceptance"),
             "execution_tca",
         ],
-        blocking_hypotheses=_strings(route_lot.get("hypothesis_ids")),
+        blocking_hypotheses=_strings(route_lot.get("hypothesis_ids"))
+        if reasons
+        else [],
         staleness_seconds=None if freshness_seconds < 0 else freshness_seconds,
         observed_at=_mapping(execution_tca.get("source_ref")).get("last_computed_at"),
-        details={"symbols": _route_symbols(route_reacquisition_board)},
+        details={
+            "symbols": _route_symbols(route_reacquisition_board),
+            "routeability_blocker_codes": _unique(routeability_reasons),
+            "routeability_blocked_symbols": _unique(blocked_symbols),
+        },
     )
 
 
