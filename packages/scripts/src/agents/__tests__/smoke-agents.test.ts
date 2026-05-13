@@ -215,6 +215,21 @@ const objectAt = (value: unknown, key: string) =>
   value && typeof value === 'object' ? ((value as Record<string, unknown>)[key] as unknown) : undefined
 
 describe('scheduled AgentRun templates', () => {
+  it('configures default runner resource requests for swarm jobs', () => {
+    const values = readYamlObjects('argocd/applications/agents/values.yaml')[0]
+    const controller = objectAt(values, 'controller')
+    const defaultWorkload = objectAt(controller, 'defaultWorkload')
+    const resources = objectAt(defaultWorkload, 'resources')
+    const requests = objectAt(resources, 'requests')
+    const limits = objectAt(resources, 'limits')
+
+    expect(objectAt(requests, 'cpu')).toBe('1')
+    expect(objectAt(requests, 'memory')).toBe('2Gi')
+    expect(objectAt(requests, 'ephemeral-storage')).toBe('8Gi')
+    expect(objectAt(limits, 'memory')).toBe('8Gi')
+    expect(objectAt(limits, 'ephemeral-storage')).toBe('16Gi')
+  })
+
   it('disable retention so schedules can always resolve their template targets', () => {
     const manifestPaths = [
       'argocd/applications/agents/swarm-agentrun-templates.yaml',

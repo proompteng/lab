@@ -243,6 +243,10 @@ spec:
             - name: JANGAR_AGENT_RUNNER_POD_SECURITY_CONTEXT
               value: {{ .Values.controller.defaultWorkload.podSecurityContext | toJson | quote }}
             {{- end }}
+            {{- if and .Values.controller.defaultWorkload.resources (gt (len .Values.controller.defaultWorkload.resources) 0) }}
+            - name: JANGAR_AGENT_RUNNER_RESOURCES
+              value: {{ .Values.controller.defaultWorkload.resources | toJson | quote }}
+            {{- end }}
             {{- if and $workloadImagePullSecrets (gt (len $workloadImagePullSecrets) 0) }}
             - name: JANGAR_AGENT_RUNNER_IMAGE_PULL_SECRETS
               value: {{ $workloadImagePullSecrets | toJson | quote }}
