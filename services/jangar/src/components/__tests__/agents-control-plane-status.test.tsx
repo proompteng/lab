@@ -184,6 +184,57 @@ const baseStatus = {
     final_verdicts: [dispatchNormalVerdict],
   },
   material_action_verdicts: [dispatchNormalVerdict],
+  authority_provenance_settlement: {
+    schema_version: 'jangar.authority-provenance-settlement.v1',
+    settlement_id: 'authority-provenance-settlement:test',
+    namespace: 'agents',
+    generated_at: '2026-01-20T00:00:00Z',
+    fresh_until: '2026-01-20T00:01:00Z',
+    governing_design_refs: [
+      'docs/agents/designs/189-jangar-authority-provenance-settlement-and-rollout-reentry-windows-2026-05-13.md',
+    ],
+    evidence_mode: 'shadow',
+    winning_authority: 'controller_heartbeat',
+    settlement_state: 'settled_with_split',
+    surfaces: [
+      {
+        surface: 'controller_process',
+        authority: 'controller_heartbeat',
+        status: 'split',
+        settlement_state: 'settled_with_split',
+        observed_at: '2026-01-20T00:00:00Z',
+        fresh_until: '2026-01-20T00:01:00Z',
+        evidence_refs: ['controller-witness:test'],
+        reason_codes: ['controller_process_split'],
+        message: 'controller heartbeat settles split serving topology',
+      },
+    ],
+    action_class_decisions: [
+      {
+        action_class: 'dispatch_normal',
+        decision: 'repair_only',
+        reason_codes: ['settled_with_split'],
+        evidence_refs: ['controller-witness:test'],
+        max_dispatches: 1,
+        max_runtime_seconds: 900,
+        max_notional: 0,
+        rollback_target: 'hold material action until authority provenance settlement converges',
+      },
+      {
+        action_class: 'deploy_widen',
+        decision: 'hold',
+        reason_codes: ['source_rollout_truth_not_converged'],
+        evidence_refs: ['source-rollout:test'],
+        max_dispatches: 0,
+        max_runtime_seconds: 0,
+        max_notional: 0,
+        rollback_target: 'hold material action until authority provenance settlement converges',
+      },
+    ],
+    reentry_windows: [],
+    rollback_target: 'JANGAR_AUTHORITY_PROVENANCE_SETTLEMENT_MODE=observe',
+    handoff_summary: 'authority settled_with_split; winner=controller_heartbeat',
+  },
   database: {
     configured: true,
     connected: true,
@@ -299,6 +350,8 @@ describe('ControlPlaneStatusPanel', () => {
     expect(normalizedHtml).toContain('Failure-domain leases')
     expect(normalizedHtml).toContain('Held actions: dispatch_normal')
     expect(normalizedHtml).toContain('Evidence pressure')
+    expect(normalizedHtml).toContain('Authority provenance')
+    expect(normalizedHtml).toContain('Held authority actions: dispatch_normal=repair_only, deploy_widen=hold')
     expect(normalizedHtml).toContain('No active evidence pressure sources.')
     expect(normalizedHtml).toContain('workflow_artifact.configmap_missing')
     expect(normalizedHtml).toContain('Material action verdicts')

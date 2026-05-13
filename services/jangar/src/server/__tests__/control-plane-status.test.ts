@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { AUTHORITY_PROVENANCE_SETTLEMENT_DESIGN_ARTIFACT } from '~/server/control-plane-authority-provenance-settlement'
 import {
   buildControlPlaneStatus,
   buildExecutionTrust,
@@ -1108,6 +1109,37 @@ describe('control-plane status', () => {
       allowed_action_classes: expect.arrayContaining(['serve_readonly', 'torghut_observe']),
       held_action_classes: expect.arrayContaining(['dispatch_normal', 'deploy_widen', 'merge_ready']),
     })
+    expect(status.authority_provenance_settlement).toMatchObject({
+      schema_version: 'jangar.authority-provenance-settlement.v1',
+      evidence_mode: 'shadow',
+      governing_design_refs: expect.arrayContaining([AUTHORITY_PROVENANCE_SETTLEMENT_DESIGN_ARTIFACT]),
+      settlement_state: expect.any(String),
+      rollback_target: 'JANGAR_AUTHORITY_PROVENANCE_SETTLEMENT_MODE=observe',
+    })
+    expect(status.authority_provenance_settlement.surfaces).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          surface: 'controller_process',
+          status: 'current',
+        }),
+        expect.objectContaining({
+          surface: 'source_gitops',
+        }),
+      ]),
+    )
+    expect(status.authority_provenance_settlement.action_class_decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_normal',
+        }),
+        expect.objectContaining({
+          action_class: 'deploy_widen',
+        }),
+        expect.objectContaining({
+          action_class: 'merge_ready',
+        }),
+      ]),
+    )
     expect(status.evidence_pressure_ledger).toMatchObject({
       schema_version: 'jangar.evidence-pressure-ledger.v1',
       evidence_mode: 'observe',

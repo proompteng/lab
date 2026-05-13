@@ -101,6 +101,14 @@ const formatPressureActions = (status: ControlPlaneStatus) => {
   return held.map((budget) => `${budget.action_class}=${budget.decision}`).join(', ')
 }
 
+const formatAuthorityActions = (status: ControlPlaneStatus) => {
+  const held = status.authority_provenance_settlement.action_class_decisions.filter(
+    (decision) => decision.decision !== 'allow',
+  )
+  if (held.length === 0) return 'None'
+  return held.map((decision) => `${decision.action_class}=${decision.decision}`).join(', ')
+}
+
 const formatAuthority = (authority: {
   mode: string
   source_deployment: string
@@ -215,6 +223,39 @@ export const ControlPlaneStatusPanel = ({
                 ))}
               </ul>
             ) : null}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Authority provenance
+          </div>
+          <div className="rounded-none border p-2 border-border/60 bg-muted/30 space-y-1">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-medium text-foreground">Settlement journal</span>
+              <StatusBadge label={status.authority_provenance_settlement.settlement_state} />
+            </div>
+            <div className="text-muted-foreground">
+              Mode: {status.authority_provenance_settlement.evidence_mode} · Winner:{' '}
+              {status.authority_provenance_settlement.winning_authority}
+            </div>
+            <div className="text-muted-foreground">Held authority actions: {formatAuthorityActions(status)}</div>
+            <div className="text-muted-foreground">
+              Reentry windows: {status.authority_provenance_settlement.reentry_windows.length}
+            </div>
+            {status.authority_provenance_settlement.surfaces.length > 0 ? (
+              <ul className="space-y-1 pt-1 text-muted-foreground">
+                {status.authority_provenance_settlement.surfaces.slice(0, 5).map((surface) => (
+                  <li key={surface.surface} className="text-[11px]">
+                    <span className="font-medium text-foreground">{surface.surface}</span> · {surface.status} ·{' '}
+                    {surface.settlement_state}
+                    {surface.reason_codes.length > 0 ? ` (${surface.reason_codes.join(', ')})` : ''}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-[11px] text-muted-foreground">No authority surfaces available.</div>
+            )}
           </div>
         </div>
 

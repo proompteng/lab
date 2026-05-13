@@ -30,6 +30,7 @@ type CliOptions = {
   requireSynced?: boolean
   skipAdmissionPassportVerification?: boolean
   skipRuntimeProofVerification?: boolean
+  skipAuthorityProvenanceVerification?: boolean
 }
 
 type CommandResult = {
@@ -62,6 +63,8 @@ type ResolvedOptions = {
   requireSynced: boolean
   skipAdmissionPassportVerification: boolean
   skipRuntimeProofVerification: boolean
+  skipAuthorityProvenanceVerification: boolean
+  enforceAuthorityProvenanceDecisions: boolean
 }
 
 const defaultImageName = 'registry.ide-newton.ts.net/lab/jangar'
@@ -86,6 +89,15 @@ type ExpectedRevisionMode = (typeof supportedRevisionModes)[number]
 const supportedAdmissionPassportConsumers = ['serving', 'swarm_plan', 'swarm_implement', 'swarm_verify'] as const
 type AdmissionPassportConsumer = (typeof supportedAdmissionPassportConsumers)[number]
 const defaultAdmissionPassportConsumers: AdmissionPassportConsumer[] = ['serving', 'swarm_plan', 'swarm_implement']
+const supportedAuthorityProvenanceSettlementStates = [
+  'settled',
+  'settled_with_split',
+  'repairable_split',
+  'hold',
+  'block',
+] as const
+const supportedAuthorityProvenanceEvidenceModes = ['observe', 'shadow', 'hold', 'enforce'] as const
+const supportedAuthorityProvenanceActionDecisions = ['allow', 'repair_only', 'hold', 'block'] as const
 
 type RuntimeKitStatus = {
   runtime_kit_id?: unknown
@@ -147,6 +159,7 @@ type ControlPlaneStatusPayload = {
   recovery_warrants?: unknown
   runtime_proof_cells?: unknown
   projection_watermarks?: unknown
+  authority_provenance_settlement?: unknown
 }
 
 type AdmissionPassportParityEvidence = {
@@ -162,6 +175,35 @@ type RuntimeProofSurfaceParityEvidence = {
   warrantIds: string[]
   proofCellIds: string[]
   projectionWatermarkIds: string[]
+}
+
+type AuthorityProvenanceActionDecision = {
+  action_class?: unknown
+  decision?: unknown
+  reason_codes?: unknown
+}
+
+type AuthorityProvenanceSettlementStatus = {
+  schema_version?: unknown
+  settlement_id?: unknown
+  evidence_mode?: unknown
+  settlement_state?: unknown
+  winning_authority?: unknown
+  fresh_until?: unknown
+  action_class_decisions?: unknown
+  reentry_windows?: unknown
+  rollback_target?: unknown
+  handoff_summary?: unknown
+}
+
+type AuthorityProvenanceEvidence = {
+  settlementId: string
+  evidenceMode: string
+  settlementState: string
+  winningAuthority: string
+  deployWidenDecision: string
+  mergeReadyDecision: string
+  reentryWindowCount: number
 }
 
 const deploymentWarrantExecutionClassByConsumer: Record<AdmissionPassportConsumer, RecoveryWarrantExecutionClass> = {
@@ -398,6 +440,8 @@ Options:
                                       Skip runtime admission passport parity verification
   --skip-runtime-proof-verification
                                       Skip recovery warrant, runtime proof cell, and projection watermark verification
+  --skip-authority-provenance-verification
+                                      Skip authority provenance settlement verification
   --rollout-timeout <duration>       kubectl rollout timeout (default: 10m)
   --health-attempts <number>         Argo health polling attempts (default: 60)
   --health-interval-seconds <number> Argo health polling interval seconds (default: 10)
@@ -419,6 +463,10 @@ Options:
     }
     if (arg === '--skip-runtime-proof-verification') {
       options.skipRuntimeProofVerification = true
+      continue
+    }
+    if (arg === '--skip-authority-provenance-verification') {
+      options.skipAuthorityProvenanceVerification = true
       continue
     }
 
@@ -980,6 +1028,123 @@ const verifyRuntimeProofSurfaceParity = (input: {
   }
 }
 
+const authorityDecisionFor = (
+  settlement: AuthorityProvenanceSettlementStatus,
+  actionClass: string,
+): AuthorityProvenanceActionDecision | null =>
+  asArray(settlement.action_class_decisions)
+    .map((entry) => asRecord(entry) as AuthorityProvenanceActionDecision | null)
+    .filter((entry): entry is AuthorityProvenanceActionDecision => Boolean(entry))
+    .find((entry) => asString(entry.action_class) === actionClass) ?? null
+
+const validateAuthorityDecision = (decision: AuthorityProvenanceActionDecision | null, actionClass: string) => {
+  if (!decision) {
+    throw new Error(`Authority provenance settlement does not include ${actionClass} decision`)
+  }
+  const value = asString(decision.decision)
+  if (
+    !value ||
+    !supportedAuthorityProvenanceActionDecisions.includes(
+      value as (typeof supportedAuthorityProvenanceActionDecisions)[number],
+    )
+  ) {
+    throw new Error(`Authority provenance ${actionClass} decision is invalid: ${value ?? 'missing'}`)
+  }
+  return value
+}
+
+const verifyAuthorityProvenanceSettlement = (input: {
+  status: ControlPlaneStatusPayload
+  enforceDecisions: boolean
+  now?: Date
+}): AuthorityProvenanceEvidence => {
+  const settlement = asRecord(
+    input.status.authority_provenance_settlement,
+  ) as AuthorityProvenanceSettlementStatus | null
+  if (!settlement) {
+    throw new Error('Control-plane status did not include authority_provenance_settlement')
+  }
+  if (asString(settlement.schema_version) !== 'jangar.authority-provenance-settlement.v1') {
+    throw new Error('authority_provenance_settlement has an unsupported schema_version')
+  }
+
+  const settlementId = asString(settlement.settlement_id)
+  if (!settlementId) {
+    throw new Error('authority_provenance_settlement does not include settlement_id')
+  }
+  const evidenceMode = asString(settlement.evidence_mode)
+  if (
+    !evidenceMode ||
+    !supportedAuthorityProvenanceEvidenceModes.includes(
+      evidenceMode as (typeof supportedAuthorityProvenanceEvidenceModes)[number],
+    )
+  ) {
+    throw new Error(
+      `Authority provenance settlement ${settlementId} has invalid evidence_mode ${evidenceMode ?? 'missing'}`,
+    )
+  }
+  const settlementState = asString(settlement.settlement_state)
+  if (
+    !settlementState ||
+    !supportedAuthorityProvenanceSettlementStates.includes(
+      settlementState as (typeof supportedAuthorityProvenanceSettlementStates)[number],
+    )
+  ) {
+    throw new Error(`Authority provenance settlement ${settlementId} has invalid state ${settlementState ?? 'missing'}`)
+  }
+  const winningAuthority = asString(settlement.winning_authority)
+  if (!winningAuthority) {
+    throw new Error(`Authority provenance settlement ${settlementId} does not include winning_authority`)
+  }
+  if (!asString(settlement.rollback_target)) {
+    throw new Error(`Authority provenance settlement ${settlementId} does not include rollback_target`)
+  }
+  if (!asString(settlement.handoff_summary)) {
+    throw new Error(`Authority provenance settlement ${settlementId} does not include handoff_summary`)
+  }
+  if (
+    parseFreshUntilMs(settlement.fresh_until, `Authority provenance settlement ${settlementId}`) <=
+    (input.now ?? new Date()).getTime()
+  ) {
+    throw new Error(`Authority provenance settlement ${settlementId} is stale`)
+  }
+
+  const deployWidenDecision = validateAuthorityDecision(
+    authorityDecisionFor(settlement, 'deploy_widen'),
+    'deploy_widen',
+  )
+  const mergeReadyDecision = validateAuthorityDecision(authorityDecisionFor(settlement, 'merge_ready'), 'merge_ready')
+  const reentryWindowCount = asArray(settlement.reentry_windows).length
+  const enforceDecisions = input.enforceDecisions || evidenceMode === 'enforce'
+
+  if (enforceDecisions && deployWidenDecision !== 'allow') {
+    const decision = authorityDecisionFor(settlement, 'deploy_widen')
+    throw new Error(
+      `Authority provenance deploy_widen is not allow: decision=${deployWidenDecision} reasons=${reasonList(
+        decision?.reason_codes,
+      )}`,
+    )
+  }
+  if (enforceDecisions && mergeReadyDecision !== 'allow') {
+    const decision = authorityDecisionFor(settlement, 'merge_ready')
+    throw new Error(
+      `Authority provenance merge_ready is not allow: decision=${mergeReadyDecision} reasons=${reasonList(
+        decision?.reason_codes,
+      )}`,
+    )
+  }
+
+  return {
+    settlementId,
+    evidenceMode,
+    settlementState,
+    winningAuthority,
+    deployWidenDecision,
+    mergeReadyDecision,
+    reentryWindowCount,
+  }
+}
+
 export const main = async (cliOptions?: CliOptions) => {
   ensureCli('kubectl')
 
@@ -989,6 +1154,11 @@ export const main = async (cliOptions?: CliOptions) => {
   const namespace = parsed.namespace ?? defaultNamespace
   const verifyAdmissionPassports = parseBoolean(process.env.JANGAR_VERIFY_ADMISSION_PASSPORTS, true)
   const verifyRuntimeProofSurface = parseBoolean(process.env.JANGAR_VERIFY_RUNTIME_PROOF_SURFACE, true)
+  const verifyAuthorityProvenance = parseBoolean(process.env.JANGAR_VERIFY_AUTHORITY_PROVENANCE_SETTLEMENT, true)
+  const enforceAuthorityProvenanceDecisions = parseBoolean(
+    process.env.JANGAR_VERIFY_AUTHORITY_PROVENANCE_ENFORCED,
+    false,
+  )
   const skipAdmissionPassportVerification = parsed.skipAdmissionPassportVerification ?? !verifyAdmissionPassports
   const resolvedOptions: ResolvedOptions = {
     namespace,
@@ -1022,6 +1192,8 @@ export const main = async (cliOptions?: CliOptions) => {
     skipAdmissionPassportVerification,
     skipRuntimeProofVerification:
       parsed.skipRuntimeProofVerification ?? (skipAdmissionPassportVerification || !verifyRuntimeProofSurface),
+    skipAuthorityProvenanceVerification: parsed.skipAuthorityProvenanceVerification ?? !verifyAuthorityProvenance,
+    enforceAuthorityProvenanceDecisions,
   }
 
   if (!Number.isInteger(resolvedOptions.healthAttempts) || resolvedOptions.healthAttempts <= 0) {
@@ -1071,7 +1243,9 @@ export const main = async (cliOptions?: CliOptions) => {
   )
 
   const shouldReadControlPlaneStatus =
-    !resolvedOptions.skipAdmissionPassportVerification || !resolvedOptions.skipRuntimeProofVerification
+    !resolvedOptions.skipAdmissionPassportVerification ||
+    !resolvedOptions.skipRuntimeProofVerification ||
+    !resolvedOptions.skipAuthorityProvenanceVerification
   const controlPlaneStatus = shouldReadControlPlaneStatus ? await readControlPlaneStatus(resolvedOptions) : undefined
   const requireControlPlaneStatus = () => {
     if (!controlPlaneStatus) {
@@ -1091,6 +1265,25 @@ export const main = async (cliOptions?: CliOptions) => {
     console.log(`Admission passports verified: ${passportEvidence.passportIds.join(', ')}`)
     console.log(`Runtime kit set digests: ${passportEvidence.runtimeKitSetDigests.join(', ')}`)
     console.log(`Runtime kit image refs: ${passportEvidence.runtimeImageRefs.join(', ')}`)
+  }
+
+  if (resolvedOptions.skipAuthorityProvenanceVerification) {
+    console.log('Authority provenance settlement verification skipped by operator flag.')
+  } else {
+    const authorityEvidence = verifyAuthorityProvenanceSettlement({
+      status: requireControlPlaneStatus(),
+      enforceDecisions: resolvedOptions.enforceAuthorityProvenanceDecisions,
+    })
+    console.log(
+      `Authority provenance verified: ${authorityEvidence.settlementId} state=${
+        authorityEvidence.settlementState
+      } winner=${authorityEvidence.winningAuthority}`,
+    )
+    console.log(
+      `Authority deploy decisions: deploy_widen=${authorityEvidence.deployWidenDecision} merge_ready=${
+        authorityEvidence.mergeReadyDecision
+      } reentry_windows=${authorityEvidence.reentryWindowCount}`,
+    )
   }
 
   if (resolvedOptions.skipRuntimeProofVerification) {
@@ -1121,6 +1314,7 @@ export const __private = {
   isExpectedRevisionSatisfied,
   parseArgs,
   parseAdmissionPassportConsumers,
+  verifyAuthorityProvenanceSettlement,
   verifyAdmissionPassportParity,
   verifyRuntimeProofSurfaceParity,
 }
