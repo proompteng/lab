@@ -233,7 +233,9 @@ https://example.com/paper.pdf
         self.assertTrue(event.requeue_requested)
 
     def test_comment_requeue_keyword_match(self) -> None:
-        self.assertTrue(comment_requests_requeue("Please retry with research whitepaper"))
+        self.assertTrue(
+            comment_requests_requeue("Please retry with research whitepaper")
+        )
         self.assertFalse(comment_requests_requeue("No retry keyword here"))
 
     def test_run_id_is_deterministic_for_same_issue_and_pdf(self) -> None:
@@ -248,7 +250,10 @@ https://example.com/paper.pdf
         self.assertEqual(run_id_one, run_id_two)
 
     def test_ceph_client_prefers_mounted_secret_and_config_over_stale_env(self) -> None:
-        with tempfile.TemporaryDirectory() as secret_dir, tempfile.TemporaryDirectory() as config_dir:
+        with (
+            tempfile.TemporaryDirectory() as secret_dir,
+            tempfile.TemporaryDirectory() as config_dir,
+        ):
             os.environ["WHITEPAPER_CEPH_SECRET_DIR"] = secret_dir
             os.environ["WHITEPAPER_CEPH_CONFIG_DIR"] = config_dir
             os.environ["WHITEPAPER_CEPH_ACCESS_KEY"] = "stale-access"
@@ -256,13 +261,21 @@ https://example.com/paper.pdf
             os.environ["WHITEPAPER_CEPH_BUCKET_HOST"] = "stale-host"
             os.environ["WHITEPAPER_CEPH_BUCKET_PORT"] = "9000"
 
-            with open(os.path.join(secret_dir, "AWS_ACCESS_KEY_ID"), "w", encoding="utf-8") as handle:
+            with open(
+                os.path.join(secret_dir, "AWS_ACCESS_KEY_ID"), "w", encoding="utf-8"
+            ) as handle:
                 handle.write("fresh-access\n")
-            with open(os.path.join(secret_dir, "AWS_SECRET_ACCESS_KEY"), "w", encoding="utf-8") as handle:
+            with open(
+                os.path.join(secret_dir, "AWS_SECRET_ACCESS_KEY"), "w", encoding="utf-8"
+            ) as handle:
                 handle.write("fresh-secret\n")
-            with open(os.path.join(config_dir, "BUCKET_HOST"), "w", encoding="utf-8") as handle:
+            with open(
+                os.path.join(config_dir, "BUCKET_HOST"), "w", encoding="utf-8"
+            ) as handle:
                 handle.write("rook-ceph-rgw-objectstore.rook-ceph.svc\n")
-            with open(os.path.join(config_dir, "BUCKET_PORT"), "w", encoding="utf-8") as handle:
+            with open(
+                os.path.join(config_dir, "BUCKET_PORT"), "w", encoding="utf-8"
+            ) as handle:
                 handle.write("80\n")
 
             client = CephS3Client.from_env()
@@ -271,14 +284,20 @@ https://example.com/paper.pdf
             assert client is not None
             self.assertEqual(client.access_key, "fresh-access")
             self.assertEqual(client.secret_key, "fresh-secret")
-            self.assertEqual(client.endpoint, "http://rook-ceph-rgw-objectstore.rook-ceph.svc:80")
+            self.assertEqual(
+                client.endpoint, "http://rook-ceph-rgw-objectstore.rook-ceph.svc:80"
+            )
 
     @patch("app.whitepapers.workflow.CephS3Client.from_env")
-    def test_store_issue_pdf_refreshes_runtime_ceph_client_and_bucket_name(self, mock_from_env: Any) -> None:
+    def test_store_issue_pdf_refreshes_runtime_ceph_client_and_bucket_name(
+        self, mock_from_env: Any
+    ) -> None:
         with tempfile.TemporaryDirectory() as config_dir:
             os.environ["WHITEPAPER_CEPH_CONFIG_DIR"] = config_dir
             os.environ["WHITEPAPER_CEPH_BUCKET"] = "stale-bucket"
-            with open(os.path.join(config_dir, "BUCKET_NAME"), "w", encoding="utf-8") as handle:
+            with open(
+                os.path.join(config_dir, "BUCKET_NAME"), "w", encoding="utf-8"
+            ) as handle:
                 handle.write("fresh-bucket\n")
 
             fake_ceph = _FakeCephClient()
@@ -287,20 +306,26 @@ https://example.com/paper.pdf
             service = WhitepaperWorkflowService()
             service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
 
-            outcome = service._store_issue_pdf(attachment_url="https://example.com/paper.pdf")
+            outcome = service._store_issue_pdf(
+                attachment_url="https://example.com/paper.pdf"
+            )
 
             self.assertEqual(mock_from_env.call_count, 2)
             self.assertEqual(outcome.ceph_bucket, "fresh-bucket")
             self.assertEqual(outcome.parse_status, "stored")
 
-    def test_dispatch_uses_github_issue_number_from_issue_url_for_replay_payloads(self) -> None:
+    def test_dispatch_uses_github_issue_number_from_issue_url_for_replay_payloads(
+        self,
+    ) -> None:
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
 
         submitted_payloads: list[dict[str, Any]] = []
 
-        def _fake_submit(payload: dict[str, Any], *, idempotency_key: str) -> dict[str, Any]:
+        def _fake_submit(
+            payload: dict[str, Any], *, idempotency_key: str
+        ) -> dict[str, Any]:
             submitted_payloads.append(payload)
             return {
                 "ok": True,
@@ -324,7 +349,10 @@ https://example.com/paper.pdf
             self.assertTrue(kickoff.accepted)
             self.assertEqual(len(submitted_payloads), 1)
             self.assertEqual(submitted_payloads[0]["parameters"]["issueNumber"], "3592")
-            self.assertEqual(submitted_payloads[0]["parameters"]["issueUrl"], "https://github.com/proompteng/lab/issues/3592")
+            self.assertEqual(
+                submitted_payloads[0]["parameters"]["issueUrl"],
+                "https://github.com/proompteng/lab/issues/3592",
+            )
 
     def test_comment_without_keyword_is_ignored(self) -> None:
         service = WhitepaperWorkflowService()
@@ -368,7 +396,9 @@ https://example.com/paper.pdf
             doc_row = session.execute(select(WhitepaperDocument)).scalar_one()
             self.assertEqual(doc_row.source, "github_issue")
 
-            version_row = session.execute(select(WhitepaperDocumentVersion)).scalar_one()
+            version_row = session.execute(
+                select(WhitepaperDocumentVersion)
+            ).scalar_one()
             self.assertEqual(version_row.parse_status, "stored")
 
             agentrun_row = session.execute(select(WhitepaperCodexAgentRun)).scalar_one()
@@ -379,7 +409,10 @@ https://example.com/paper.pdf
                 "synthesis": {
                     "executive_summary": "Strong approach with reproducible results.",
                     "key_findings": ["f1", "f2"],
-                    "implementation_implications": ["Capture deterministic manifests.", "Add walk-forward gates."],
+                    "implementation_implications": [
+                        "Capture deterministic manifests.",
+                        "Add walk-forward gates.",
+                    ],
                     "confidence": "0.87",
                 },
                 "verdict": {
@@ -398,7 +431,9 @@ https://example.com/paper.pdf
                     "pr_url": "https://github.com/proompteng/lab/pull/1234",
                 },
             }
-            result = service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            result = service.finalize_run(
+                session, run_id=run_row.run_id, payload=finalize_payload
+            )
             self.assertEqual(result["status"], "completed")
             session.commit()
 
@@ -415,7 +450,9 @@ https://example.com/paper.pdf
                 "- Capture deterministic manifests.\n- Add walk-forward gates.",
             )
 
-            verdict_row = session.execute(select(WhitepaperViabilityVerdict)).scalar_one()
+            verdict_row = session.execute(
+                select(WhitepaperViabilityVerdict)
+            ).scalar_one()
             self.assertEqual(verdict_row.verdict, "implement")
 
             pr_row = session.execute(select(WhitepaperDesignPullRequest)).scalar_one()
@@ -450,7 +487,9 @@ https://example.com/paper.pdf
                 "synthesis": {
                     "executive_summary": "Strong approach with reproducible results.",
                     "implementation_plan_md": "### Delivery Plan\n- Keep explicit plan",
-                    "implementation_implications": ["Should not overwrite explicit value."],
+                    "implementation_implications": [
+                        "Should not overwrite explicit value."
+                    ],
                     "confidence": "0.87",
                 },
                 "verdict": {
@@ -460,11 +499,16 @@ https://example.com/paper.pdf
                     "requires_followup": False,
                 },
             }
-            service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            service.finalize_run(
+                session, run_id=run_row.run_id, payload=finalize_payload
+            )
             session.commit()
 
             synthesis_row = session.execute(select(WhitepaperSynthesis)).scalar_one()
-            self.assertEqual(synthesis_row.implementation_plan_md, "### Delivery Plan\n- Keep explicit plan")
+            self.assertEqual(
+                synthesis_row.implementation_plan_md,
+                "### Delivery Plan\n- Keep explicit plan",
+            )
             self.assertIsInstance(synthesis_row.synthesis_json, dict)
             assert isinstance(synthesis_row.synthesis_json, dict)
             self.assertEqual(
@@ -472,7 +516,9 @@ https://example.com/paper.pdf
                 "### Delivery Plan\n- Keep explicit plan",
             )
 
-    def test_finalize_falls_back_to_local_indexing_when_finalize_enqueue_fails(self) -> None:
+    def test_finalize_falls_back_to_local_indexing_when_finalize_enqueue_fails(
+        self,
+    ) -> None:
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
@@ -484,7 +530,10 @@ https://example.com/paper.pdf
         indexed_run_ids: list[str] = []
         service._enqueue_finalized_inngest_event = lambda _session, *, run: False  # type: ignore[method-assign]
         service.index_synthesis_semantic_content = (  # type: ignore[method-assign]
-            lambda _session, *, run_id: indexed_run_ids.append(run_id) or {"run_id": run_id, "indexed_chunks": 0}
+            lambda _session, *, run_id: (
+                indexed_run_ids.append(run_id)
+                or {"run_id": run_id, "indexed_chunks": 0}
+            )
         )
 
         with Session(self.engine) as session:
@@ -510,7 +559,9 @@ https://example.com/paper.pdf
                     "requires_followup": False,
                 },
             }
-            result = service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            result = service.finalize_run(
+                session, run_id=run_row.run_id, payload=finalize_payload
+            )
             self.assertEqual(result["status"], "completed")
             session.commit()
 
@@ -582,8 +633,13 @@ https://example.com/paper.pdf
                             "family_template_id": "microstructure_continuation_matched_filter_v1",
                             "economic_mechanism": "Continuation after information-arrival bursts with matched-filter normalization.",
                             "hypothesis": "Matched-filter normalization improves continuation robustness.",
-                            "allowed_normalizations": ["trading_value_scaled", "market_cap_scaled"],
-                            "day_veto_rules": [{"rule": "quote_quality", "action": "block_day"}],
+                            "allowed_normalizations": [
+                                "trading_value_scaled",
+                                "market_cap_scaled",
+                            ],
+                            "day_veto_rules": [
+                                {"rule": "quote_quality", "action": "block_day"}
+                            ],
                         }
                     ],
                 },
@@ -594,7 +650,9 @@ https://example.com/paper.pdf
                     "requires_followup": False,
                 },
             }
-            result = service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            result = service.finalize_run(
+                session, run_id=run_row.run_id, payload=finalize_payload
+            )
             self.assertEqual(result["status"], "completed")
             session.commit()
 
@@ -605,89 +663,147 @@ https://example.com/paper.pdf
             self.assertEqual(len(relations), 1)
             self.assertEqual(relations[0].relation_type, "contradicts")
 
-            templates = session.execute(select(WhitepaperStrategyTemplate)).scalars().all()
+            templates = (
+                session.execute(select(WhitepaperStrategyTemplate)).scalars().all()
+            )
             self.assertEqual(len(templates), 1)
-            self.assertEqual(templates[0].family_template_id, "microstructure_continuation_matched_filter_v1")
+            self.assertEqual(
+                templates[0].family_template_id,
+                "microstructure_continuation_matched_filter_v1",
+            )
 
-            experiment_specs = session.execute(select(WhitepaperExperimentSpec)).scalars().all()
+            experiment_specs = (
+                session.execute(select(WhitepaperExperimentSpec)).scalars().all()
+            )
             self.assertEqual(len(experiment_specs), 1)
-            self.assertEqual(experiment_specs[0].family_template_id, "microstructure_continuation_matched_filter_v1")
+            self.assertEqual(
+                experiment_specs[0].family_template_id,
+                "microstructure_continuation_matched_filter_v1",
+            )
             self.assertIsInstance(experiment_specs[0].payload_json, dict)
 
-            mirrored_vnext = session.execute(select(VNextExperimentSpec)).scalars().all()
+            mirrored_vnext = (
+                session.execute(select(VNextExperimentSpec)).scalars().all()
+            )
             self.assertEqual(len(mirrored_vnext), 1)
             self.assertEqual(mirrored_vnext[0].run_id, run_row.run_id)
 
-            contradiction_events = session.execute(select(WhitepaperContradictionEvent)).scalars().all()
+            contradiction_events = (
+                session.execute(select(WhitepaperContradictionEvent)).scalars().all()
+            )
             self.assertEqual(len(contradiction_events), 1)
-            self.assertEqual(contradiction_events[0].required_action, "revalidate_linked_family")
+            self.assertEqual(
+                contradiction_events[0].required_action, "revalidate_linked_family"
+            )
 
-    def test_structured_output_helpers_cover_direct_nested_and_gating_merge(self) -> None:
+    def test_structured_output_helpers_cover_direct_nested_and_gating_merge(
+        self,
+    ) -> None:
         service = WhitepaperWorkflowService()
         direct = service._structured_output_list(  # type: ignore[attr-defined]
-            {'claims': [{'claim_id': 'claim-1'}]},
-            key='claims',
+            {"claims": [{"claim_id": "claim-1"}]},
+            key="claims",
         )
         nested = service._structured_output_list(  # type: ignore[attr-defined]
-            {'synthesis': {'claims': [{'claim_id': 'claim-2'}]}},
-            key='claims',
+            {"synthesis": {"claims": [{"claim_id": "claim-2"}]}},
+            key="claims",
         )
         compiled = service._compiled_experiment_specs_from_templates(  # type: ignore[attr-defined]
-            run_id='run-1',
-            claims=[{'claim_id': 'claim-1'}],
+            run_id="run-1",
+            claims=[{"claim_id": "claim-1"}],
             relations=[],
             templates=[
                 {
-                    'template_id': 'template-1',
-                    'family_template_id': 'family-1',
-                    'allowed_normalizations': ['matched_filter'],
-                    'day_veto_rules': [{'rule': 'quote_quality'}],
+                    "template_id": "template-1",
+                    "family_template_id": "family-1",
+                    "allowed_normalizations": ["matched_filter"],
+                    "day_veto_rules": [{"rule": "quote_quality"}],
                 }
             ],
         )
         contradictions = service._inferred_contradiction_events(  # type: ignore[attr-defined]
             [
-                {'relation_id': 'rel-ignore', 'relation_type': 'supports', 'source_claim_id': 'claim-1'},
-                {'relation_id': 'rel-missing-source', 'relation_type': 'conflicts_with'},
                 {
-                    'relation_id': 'rel-1',
-                    'relation_type': 'conflicts_with',
-                    'source_claim_id': 'claim-2',
-                    'target_claim_id': 'claim-1',
+                    "relation_id": "rel-ignore",
+                    "relation_type": "supports",
+                    "source_claim_id": "claim-1",
+                },
+                {
+                    "relation_id": "rel-missing-source",
+                    "relation_type": "conflicts_with",
+                },
+                {
+                    "relation_id": "rel-1",
+                    "relation_type": "conflicts_with",
+                    "source_claim_id": "claim-2",
+                    "target_claim_id": "claim-1",
                 },
             ]
         )
         merged = service._build_verdict_gating_payload(  # type: ignore[attr-defined]
-            {'dspy_eval_report': {'score': 0.8}}
+            {"dspy_eval_report": {"score": 0.8}}
         )
 
-        self.assertEqual(direct[0]['claim_id'], 'claim-1')
-        self.assertEqual(nested[0]['claim_id'], 'claim-2')
-        self.assertEqual(compiled[0]['feature_variants'], ['matched_filter'])
+        self.assertEqual(direct[0]["claim_id"], "claim-1")
+        self.assertEqual(nested[0]["claim_id"], "claim-2")
+        self.assertEqual(compiled[0]["feature_variants"], ["matched_filter"])
         self.assertEqual(len(contradictions), 1)
-        self.assertEqual(contradictions[0]['source_claim_id'], 'claim-2')
-        self.assertEqual(merged, {'dspy_eval_report': {'score': 0.8}})
+        self.assertEqual(contradictions[0]["source_claim_id"], "claim-2")
+        self.assertEqual(merged, {"dspy_eval_report": {"score": 0.8}})
 
-    def test_structured_outputs_compile_claims_when_experiment_specs_are_absent(self) -> None:
+    def test_structured_outputs_compile_claims_when_experiment_specs_are_absent(
+        self,
+    ) -> None:
         service = WhitepaperWorkflowService()
         compiled = service._compiled_experiment_specs_from_templates(  # type: ignore[attr-defined]
-            run_id='run-claim-compiler',
+            run_id="run-claim-compiler",
             claims=[
                 {
-                    'claim_id': 'claim-flow',
-                    'claim_type': 'signal_mechanism',
-                    'claim_text': 'Clustered order flow imbalance improves short horizon LOB signals.',
-                    'confidence': '0.82',
+                    "claim_id": "claim-flow",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": "Clustered order flow imbalance improves short horizon LOB signals.",
+                    "confidence": "0.82",
                 }
             ],
             relations=[],
             templates=[],
         )
 
-        self.assertEqual(len(compiled), 3)
+        self.assertEqual(len(compiled), 9)
+        family_profiles: dict[str, list[str]] = {}
+        for item in compiled:
+            candidate_spec = item["candidate_spec"]
+            feature_contract = candidate_spec["feature_contract"]
+            execution_profile = feature_contract["execution_profile"]
+            family_profiles.setdefault(str(item["family_template_id"]), []).append(
+                str(execution_profile["profile_id"])
+            )
         self.assertEqual(
-            {item['selection_objectives']['target_net_pnl_per_day'] for item in compiled},
-            {'500'},
+            family_profiles,
+            {
+                "microstructure_continuation_matched_filter_v1": [
+                    "microstructure_continuation_matched_filter_v1:profile-1",
+                    "microstructure_continuation_matched_filter_v1:profile-2",
+                    "microstructure_continuation_matched_filter_v1:profile-3",
+                ],
+                "microbar_cross_sectional_pairs_v1": [
+                    "microbar_cross_sectional_pairs_v1:profile-1",
+                    "microbar_cross_sectional_pairs_v1:profile-2",
+                    "microbar_cross_sectional_pairs_v1:profile-3",
+                ],
+                "intraday_tsmom_v2": [
+                    "intraday_tsmom_v2:profile-1",
+                    "intraday_tsmom_v2:profile-2",
+                    "intraday_tsmom_v2:profile-3",
+                ],
+            },
+        )
+        self.assertEqual(
+            {
+                item["selection_objectives"]["target_net_pnl_per_day"]
+                for item in compiled
+            },
+            {"500"},
         )
 
     def test_sync_structured_outputs_skips_incomplete_records(self) -> None:
@@ -706,54 +822,82 @@ https://example.com/paper.pdf
             session.commit()
 
             run_row = session.execute(
-                select(WhitepaperAnalysisRun).where(WhitepaperAnalysisRun.run_id == kickoff.run_id)
+                select(WhitepaperAnalysisRun).where(
+                    WhitepaperAnalysisRun.run_id == kickoff.run_id
+                )
             ).scalar_one()
 
             service._sync_structured_research_outputs(  # type: ignore[attr-defined]
                 session,
                 run_row,
                 {
-                    'claims': [
-                        {'claim_id': 'claim-missing-text'},
-                        {'claim_id': 'claim-valid', 'claim_text': 'valid claim'},
+                    "claims": [
+                        {"claim_id": "claim-missing-text"},
+                        {"claim_id": "claim-valid", "claim_text": "valid claim"},
                     ],
-                    'claim_relations': [
-                        {'relation_id': 'rel-missing-target', 'source_claim_id': 'claim-valid'},
+                    "claim_relations": [
                         {
-                            'relation_id': 'rel-valid',
-                            'source_claim_id': 'claim-valid',
-                            'target_claim_id': 'claim-valid',
+                            "relation_id": "rel-missing-target",
+                            "source_claim_id": "claim-valid",
+                        },
+                        {
+                            "relation_id": "rel-valid",
+                            "source_claim_id": "claim-valid",
+                            "target_claim_id": "claim-valid",
                         },
                     ],
-                    'strategy_templates': [
-                        {'template_id': 'template-missing-mechanism', 'family_template_id': 'family-1'},
+                    "strategy_templates": [
                         {
-                            'template_id': 'template-valid',
-                            'family_template_id': 'family-1',
-                            'economic_mechanism': 'valid mechanism',
+                            "template_id": "template-missing-mechanism",
+                            "family_template_id": "family-1",
+                        },
+                        {
+                            "template_id": "template-valid",
+                            "family_template_id": "family-1",
+                            "economic_mechanism": "valid mechanism",
                         },
                     ],
-                    'experiment_specs': [
-                        {'experiment_id': 'exp-missing-family'},
+                    "experiment_specs": [
+                        {"experiment_id": "exp-missing-family"},
                         {
-                            'experiment_id': 'exp-valid',
-                            'family_template_id': 'family-1',
+                            "experiment_id": "exp-valid",
+                            "family_template_id": "family-1",
                         },
                     ],
-                    'contradiction_events': [
-                        {'event_id': 'event-missing-source'},
-                        {'event_id': 'event-valid', 'source_claim_id': 'claim-valid'},
-                        {'event_id': 'event-valid', 'source_claim_id': 'claim-valid'},
+                    "contradiction_events": [
+                        {"event_id": "event-missing-source"},
+                        {"event_id": "event-valid", "source_claim_id": "claim-valid"},
+                        {"event_id": "event-valid", "source_claim_id": "claim-valid"},
                     ],
                 },
             )
             session.commit()
 
-            self.assertEqual(session.execute(select(WhitepaperClaim)).scalars().all()[0].claim_id, 'claim-valid')
-            self.assertEqual(len(session.execute(select(WhitepaperClaimRelation)).scalars().all()), 1)
-            self.assertEqual(len(session.execute(select(WhitepaperStrategyTemplate)).scalars().all()), 1)
-            self.assertEqual(len(session.execute(select(WhitepaperExperimentSpec)).scalars().all()), 1)
-            self.assertEqual(len(session.execute(select(WhitepaperContradictionEvent)).scalars().all()), 1)
+            self.assertEqual(
+                session.execute(select(WhitepaperClaim)).scalars().all()[0].claim_id,
+                "claim-valid",
+            )
+            self.assertEqual(
+                len(session.execute(select(WhitepaperClaimRelation)).scalars().all()), 1
+            )
+            self.assertEqual(
+                len(
+                    session.execute(select(WhitepaperStrategyTemplate)).scalars().all()
+                ),
+                1,
+            )
+            self.assertEqual(
+                len(session.execute(select(WhitepaperExperimentSpec)).scalars().all()),
+                1,
+            )
+            self.assertEqual(
+                len(
+                    session.execute(select(WhitepaperContradictionEvent))
+                    .scalars()
+                    .all()
+                ),
+                1,
+            )
 
     def test_finalize_run_propagates_synthesis_indexing_failures(self) -> None:
         service = WhitepaperWorkflowService()
@@ -796,13 +940,17 @@ https://example.com/paper.pdf
                 },
             }
             with self.assertRaises(RuntimeError):
-                service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+                service.finalize_run(
+                    session, run_id=run_row.run_id, payload=finalize_payload
+                )
             session.rollback()
 
             persisted_run = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
             self.assertEqual(persisted_run.status, prior_status)
 
-    def test_persist_semantic_chunks_does_not_delete_until_embeddings_ready(self) -> None:
+    def test_persist_semantic_chunks_does_not_delete_until_embeddings_ready(
+        self,
+    ) -> None:
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
@@ -823,6 +971,7 @@ https://example.com/paper.pdf
 
             def _fake_execute(statement: Any, *args: Any, **kwargs: Any):
                 statement_log.append(str(statement))
+
                 class _DummyResult:
                     def mappings(self) -> "_DummyResult":
                         return self
@@ -834,7 +983,9 @@ https://example.com/paper.pdf
 
             with patch.object(session, "execute", side_effect=_fake_execute):
                 service._embed_texts = (  # type: ignore[method-assign]
-                    lambda _texts: (_ for _ in ()).throw(RuntimeError("embedding service unavailable"))
+                    lambda _texts: (_ for _ in ()).throw(
+                        RuntimeError("embedding service unavailable")
+                    )
                 )
                 with self.assertRaises(RuntimeError):
                     service._persist_semantic_chunks_and_embeddings(
@@ -889,15 +1040,21 @@ https://example.com/paper.pdf
                     },
                 },
             }
-            service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            service.finalize_run(
+                session, run_id=run_row.run_id, payload=finalize_payload
+            )
             session.commit()
 
-            verdict_row = session.execute(select(WhitepaperViabilityVerdict)).scalar_one()
+            verdict_row = session.execute(
+                select(WhitepaperViabilityVerdict)
+            ).scalar_one()
             self.assertIsInstance(verdict_row.gating_json, dict)
             assert isinstance(verdict_row.gating_json, dict)
             self.assertIn("dspy_eval_report", verdict_row.gating_json)
 
-    def test_finalize_auto_dispatches_engineering_candidate_and_scales_live(self) -> None:
+    def test_finalize_auto_dispatches_engineering_candidate_and_scales_live(
+        self,
+    ) -> None:
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
@@ -907,14 +1064,19 @@ https://example.com/paper.pdf
         service._submit_jangar_agentrun = (  # type: ignore[method-assign]
             lambda _payload, *, idempotency_key: {
                 "resource": {
-                    "metadata": {"name": f"engineering-{idempotency_key}", "uid": "uid-eng"},
+                    "metadata": {
+                        "name": f"engineering-{idempotency_key}",
+                        "uid": "uid-eng",
+                    },
                     "status": {"phase": "Pending"},
                 }
             }
         )
 
         with Session(self.engine) as session:
-            kickoff = service.ingest_github_issue_event(session, self._issue_payload(), source="api")
+            kickoff = service.ingest_github_issue_event(
+                session, self._issue_payload(), source="api"
+            )
             self.assertTrue(kickoff.accepted)
             session.commit()
 
@@ -944,27 +1106,44 @@ https://example.com/paper.pdf
                     },
                 },
             }
-            result = service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            result = service.finalize_run(
+                session, run_id=run_row.run_id, payload=finalize_payload
+            )
             session.commit()
 
             trigger_payload = result.get("engineering_trigger", {})
-            self.assertEqual(trigger_payload.get("implementation_grade"), "engineering_priority")
+            self.assertEqual(
+                trigger_payload.get("implementation_grade"), "engineering_priority"
+            )
             self.assertEqual(trigger_payload.get("decision"), "dispatched")
             self.assertEqual(trigger_payload.get("rollout_profile"), "automatic")
-            rollout = cast(list[dict[str, Any]], trigger_payload.get("rollout_transitions") or [])
+            rollout = cast(
+                list[dict[str, Any]], trigger_payload.get("rollout_transitions") or []
+            )
             self.assertGreaterEqual(len(rollout), 4)
             self.assertEqual(rollout[-1].get("to_stage"), "scaled_live")
             self.assertEqual(rollout[-1].get("status"), "passed")
 
-            trigger_row = session.execute(select(WhitepaperEngineeringTrigger)).scalar_one()
+            trigger_row = session.execute(
+                select(WhitepaperEngineeringTrigger)
+            ).scalar_one()
             self.assertEqual(trigger_row.implementation_grade, "engineering_priority")
             self.assertEqual(trigger_row.decision, "dispatched")
             self.assertEqual(trigger_row.rollout_profile, "automatic")
 
-            rollout_rows = session.execute(select(WhitepaperRolloutTransition)).scalars().all()
-            self.assertTrue(any(row.to_stage == "scaled_live" and row.status == "passed" for row in rollout_rows))
+            rollout_rows = (
+                session.execute(select(WhitepaperRolloutTransition)).scalars().all()
+            )
+            self.assertTrue(
+                any(
+                    row.to_stage == "scaled_live" and row.status == "passed"
+                    for row in rollout_rows
+                )
+            )
 
-    def test_finalize_uses_persisted_verdict_fields_for_deterministic_reason_codes(self) -> None:
+    def test_finalize_uses_persisted_verdict_fields_for_deterministic_reason_codes(
+        self,
+    ) -> None:
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
@@ -972,7 +1151,9 @@ https://example.com/paper.pdf
         os.environ["WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED"] = "true"
 
         with Session(self.engine) as session:
-            kickoff = service.ingest_github_issue_event(session, self._issue_payload(), source="api")
+            kickoff = service.ingest_github_issue_event(
+                session, self._issue_payload(), source="api"
+            )
             self.assertTrue(kickoff.accepted)
             session.commit()
 
@@ -1026,12 +1207,25 @@ https://example.com/paper.pdf
 
             self.assertEqual(first_trigger["implementation_grade"], "reject")
             self.assertEqual(first_trigger["decision"], "suppressed")
-            self.assertEqual(sorted(cast(list[str], first_trigger["reason_codes"])), sorted(expected_reason_codes))
-            self.assertEqual(first_trigger["reason_codes"], second_trigger["reason_codes"])
-            self.assertEqual(second_trigger["gate_snapshot_hash"], first_trigger["gate_snapshot_hash"])
+            self.assertEqual(
+                sorted(cast(list[str], first_trigger["reason_codes"])),
+                sorted(expected_reason_codes),
+            )
+            self.assertEqual(
+                first_trigger["reason_codes"], second_trigger["reason_codes"]
+            )
+            self.assertEqual(
+                second_trigger["gate_snapshot_hash"],
+                first_trigger["gate_snapshot_hash"],
+            )
 
-            trigger_row = session.execute(select(WhitepaperEngineeringTrigger)).scalar_one()
-            self.assertEqual(sorted(cast(list[str], trigger_row.reason_codes_json or [])), sorted(expected_reason_codes))
+            trigger_row = session.execute(
+                select(WhitepaperEngineeringTrigger)
+            ).scalar_one()
+            self.assertEqual(
+                sorted(cast(list[str], trigger_row.reason_codes_json or [])),
+                sorted(expected_reason_codes),
+            )
             self.assertEqual(trigger_row.implementation_grade, "reject")
             self.assertEqual(trigger_row.decision, "suppressed")
 
@@ -1045,11 +1239,16 @@ https://example.com/paper.pdf
 
         submit_calls = {"count": 0}
 
-        def _fake_submit(_payload: dict[str, Any], *, idempotency_key: str) -> dict[str, Any]:
+        def _fake_submit(
+            _payload: dict[str, Any], *, idempotency_key: str
+        ) -> dict[str, Any]:
             submit_calls["count"] += 1
             return {
                 "resource": {
-                    "metadata": {"name": f"engineering-{idempotency_key}", "uid": "uid-eng"},
+                    "metadata": {
+                        "name": f"engineering-{idempotency_key}",
+                        "uid": "uid-eng",
+                    },
                     "status": {"phase": "Pending"},
                 }
             }
@@ -1057,7 +1256,9 @@ https://example.com/paper.pdf
         service._submit_jangar_agentrun = _fake_submit  # type: ignore[method-assign]
 
         with Session(self.engine) as session:
-            kickoff = service.ingest_github_issue_event(session, self._issue_payload(), source="api")
+            kickoff = service.ingest_github_issue_event(
+                session, self._issue_payload(), source="api"
+            )
             self.assertTrue(kickoff.accepted)
             session.commit()
 
@@ -1088,15 +1289,21 @@ https://example.com/paper.pdf
                 },
             }
 
-            first_finalize = service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            first_finalize = service.finalize_run(
+                session, run_id=run_row.run_id, payload=finalize_payload
+            )
             session.commit()
-            second_finalize = service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            second_finalize = service.finalize_run(
+                session, run_id=run_row.run_id, payload=finalize_payload
+            )
             session.commit()
 
             self.assertEqual(submit_calls["count"], 1)
 
             first_trigger = cast(dict[str, Any], first_finalize["engineering_trigger"])
-            second_trigger = cast(dict[str, Any], second_finalize["engineering_trigger"])
+            second_trigger = cast(
+                dict[str, Any], second_finalize["engineering_trigger"]
+            )
             self.assertEqual(first_trigger["decision"], "dispatched")
             self.assertEqual(second_trigger["decision"], "dispatched")
             self.assertEqual(
@@ -1104,14 +1311,18 @@ https://example.com/paper.pdf
                 first_trigger["dispatched_agentrun_name"],
             )
 
-            trigger_row = session.execute(select(WhitepaperEngineeringTrigger)).scalar_one()
+            trigger_row = session.execute(
+                select(WhitepaperEngineeringTrigger)
+            ).scalar_one()
             self.assertEqual(trigger_row.decision, "dispatched")
             self.assertIsNotNone(trigger_row.dispatched_agentrun_name)
 
             agentruns = session.execute(select(WhitepaperCodexAgentRun)).scalars().all()
             self.assertEqual(len(agentruns), 1)
 
-    def test_manual_approval_dispatches_non_eligible_run_with_audit_fields(self) -> None:
+    def test_manual_approval_dispatches_non_eligible_run_with_audit_fields(
+        self,
+    ) -> None:
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
@@ -1120,14 +1331,19 @@ https://example.com/paper.pdf
         service._submit_jangar_agentrun = (  # type: ignore[method-assign]
             lambda _payload, *, idempotency_key: {
                 "resource": {
-                    "metadata": {"name": f"manual-{idempotency_key}", "uid": "uid-manual"},
+                    "metadata": {
+                        "name": f"manual-{idempotency_key}",
+                        "uid": "uid-manual",
+                    },
                     "status": {"phase": "Pending"},
                 }
             }
         )
 
         with Session(self.engine) as session:
-            kickoff = service.ingest_github_issue_event(session, self._issue_payload(), source="api")
+            kickoff = service.ingest_github_issue_event(
+                session, self._issue_payload(), source="api"
+            )
             self.assertTrue(kickoff.accepted)
             session.commit()
 
@@ -1160,7 +1376,9 @@ https://example.com/paper.pdf
             )
             session.commit()
 
-            trigger_before = session.execute(select(WhitepaperEngineeringTrigger)).scalar_one()
+            trigger_before = session.execute(
+                select(WhitepaperEngineeringTrigger)
+            ).scalar_one()
             self.assertEqual(trigger_before.decision, "suppressed")
             self.assertEqual(trigger_before.implementation_grade, "reject")
 
@@ -1174,13 +1392,20 @@ https://example.com/paper.pdf
             )
             session.commit()
 
-            trigger_payload = cast(dict[str, Any], approval_result["engineering_trigger"])
+            trigger_payload = cast(
+                dict[str, Any], approval_result["engineering_trigger"]
+            )
             self.assertEqual(trigger_payload["decision"], "dispatched")
             self.assertEqual(trigger_payload["approval_source"], "jangar_ui")
             self.assertEqual(trigger_payload["approved_by"], "ops@example.com")
-            self.assertIn("manual_override_applied", cast(list[str], trigger_payload["reason_codes"]))
+            self.assertIn(
+                "manual_override_applied",
+                cast(list[str], trigger_payload["reason_codes"]),
+            )
 
-            trigger_after = session.execute(select(WhitepaperEngineeringTrigger)).scalar_one()
+            trigger_after = session.execute(
+                select(WhitepaperEngineeringTrigger)
+            ).scalar_one()
             self.assertEqual(trigger_after.approval_source, "jangar_ui")
             self.assertEqual(trigger_after.approved_by, "ops@example.com")
             self.assertIsNotNone(trigger_after.approved_at)
@@ -1190,7 +1415,9 @@ https://example.com/paper.pdf
             )
             self.assertEqual(trigger_after.decision, "dispatched")
 
-    def test_manual_approval_automatic_rollout_blocks_and_rolls_back_on_gate_failure(self) -> None:
+    def test_manual_approval_automatic_rollout_blocks_and_rolls_back_on_gate_failure(
+        self,
+    ) -> None:
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
@@ -1199,14 +1426,19 @@ https://example.com/paper.pdf
         service._submit_jangar_agentrun = (  # type: ignore[method-assign]
             lambda _payload, *, idempotency_key: {
                 "resource": {
-                    "metadata": {"name": f"manual-{idempotency_key}", "uid": "uid-manual"},
+                    "metadata": {
+                        "name": f"manual-{idempotency_key}",
+                        "uid": "uid-manual",
+                    },
                     "status": {"phase": "Pending"},
                 }
             }
         )
 
         with Session(self.engine) as session:
-            kickoff = service.ingest_github_issue_event(session, self._issue_payload(), source="api")
+            kickoff = service.ingest_github_issue_event(
+                session, self._issue_payload(), source="api"
+            )
             self.assertTrue(kickoff.accepted)
             session.commit()
 
@@ -1251,15 +1483,25 @@ https://example.com/paper.pdf
             )
             session.commit()
 
-            trigger_payload = cast(dict[str, Any], approval_result["engineering_trigger"])
+            trigger_payload = cast(
+                dict[str, Any], approval_result["engineering_trigger"]
+            )
             self.assertEqual(trigger_payload["decision"], "dispatched")
             rollout = cast(list[dict[str, Any]], trigger_payload["rollout_transitions"])
-            self.assertTrue(any(item.get("transition_type") == "rollback" for item in rollout))
-            self.assertTrue(any(item.get("transition_type") == "halt" for item in rollout))
+            self.assertTrue(
+                any(item.get("transition_type") == "rollback" for item in rollout)
+            )
+            self.assertTrue(
+                any(item.get("transition_type") == "halt" for item in rollout)
+            )
             self.assertTrue(any(item.get("status") == "halted" for item in rollout))
 
-            rollout_rows = session.execute(select(WhitepaperRolloutTransition)).scalars().all()
-            self.assertTrue(any(row.transition_type == "rollback" for row in rollout_rows))
+            rollout_rows = (
+                session.execute(select(WhitepaperRolloutTransition)).scalars().all()
+            )
+            self.assertTrue(
+                any(row.transition_type == "rollback" for row in rollout_rows)
+            )
             self.assertTrue(any(row.status == "halted" for row in rollout_rows))
 
     def test_build_whitepaper_prompt_requires_implementation_plan_md(self) -> None:
@@ -1310,18 +1552,27 @@ https://example.com/paper.pdf
             session.commit()
 
             document = session.execute(select(WhitepaperDocument)).scalar_one()
-            self.assertEqual(document.tags_json, ["biostats", "causality", "paper_review"])
+            self.assertEqual(
+                document.tags_json, ["biostats", "causality", "paper_review"]
+            )
             self.assertIsInstance(document.metadata_json, dict)
             assert isinstance(document.metadata_json, dict)
             self.assertEqual(document.metadata_json.get("subject"), "healthcare")
-            self.assertEqual(document.metadata_json.get("analysis_mode"), "analysis_only")
+            self.assertEqual(
+                document.metadata_json.get("analysis_mode"), "analysis_only"
+            )
 
             run = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
             self.assertIsInstance(run.analysis_profile_json, dict)
             assert isinstance(run.analysis_profile_json, dict)
             self.assertEqual(run.analysis_profile_json.get("subject"), "healthcare")
-            self.assertEqual(run.analysis_profile_json.get("tags"), ["biostats", "causality", "paper_review"])
-            self.assertEqual(run.analysis_profile_json.get("analysis_mode"), "analysis_only")
+            self.assertEqual(
+                run.analysis_profile_json.get("tags"),
+                ["biostats", "causality", "paper_review"],
+            )
+            self.assertEqual(
+                run.analysis_profile_json.get("analysis_mode"), "analysis_only"
+            )
 
     def test_analysis_only_prompt_omits_pr_requirement(self) -> None:
         service = WhitepaperWorkflowService()
@@ -1392,19 +1643,26 @@ https://example.com/paper.pdf
             self.assertEqual(runs[0].run_id, first.run_id)
             self.assertEqual(runs[0].status, "failed")
 
-    def test_same_pdf_across_issues_reuses_existing_run_without_duplication(self) -> None:
+    def test_same_pdf_across_issues_reuses_existing_run_without_duplication(
+        self,
+    ) -> None:
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
         service._download_pdf = lambda _url: b"%PDF-1.7 identical-content"  # type: ignore[method-assign]
 
         submit_attempts = {"count": 0}
 
-        def _fake_submit(_payload: dict[str, Any], *, idempotency_key: str) -> dict[str, Any]:
+        def _fake_submit(
+            _payload: dict[str, Any], *, idempotency_key: str
+        ) -> dict[str, Any]:
             submit_attempts["count"] += 1
             return {
                 "ok": True,
                 "resource": {
-                    "metadata": {"name": f"agentrun-{idempotency_key}", "uid": f"uid-{submit_attempts['count']}"},
+                    "metadata": {
+                        "name": f"agentrun-{idempotency_key}",
+                        "uid": f"uid-{submit_attempts['count']}",
+                    },
                     "status": {"phase": "Pending"},
                 },
             }
@@ -1446,7 +1704,9 @@ https://example.com/paper.pdf
             docs = session.execute(select(WhitepaperDocument)).scalars().all()
             self.assertEqual(len(docs), 1)
 
-            versions = session.execute(select(WhitepaperDocumentVersion)).scalars().all()
+            versions = (
+                session.execute(select(WhitepaperDocumentVersion)).scalars().all()
+            )
             self.assertEqual(len(versions), 1)
             self.assertEqual(
                 versions[0].ceph_object_key,
@@ -1462,10 +1722,14 @@ https://example.com/paper.pdf
         consumer = _FakeKafkaConsumer(
             [
                 _FakeKafkaRecord(value=json.dumps({"ignored": False}).encode("utf-8")),
-                _FakeKafkaRecord(value=json.dumps({"raise_error": True}).encode("utf-8")),
+                _FakeKafkaRecord(
+                    value=json.dumps({"raise_error": True}).encode("utf-8")
+                ),
             ]
         )
-        ingestor = WhitepaperKafkaIssueIngestor(workflow_service=_FakeKafkaWorkflowService())
+        ingestor = WhitepaperKafkaIssueIngestor(
+            workflow_service=_FakeKafkaWorkflowService()
+        )
         ingestor._consumer = consumer
         session = _FakeKafkaSession()
 
@@ -1485,7 +1749,9 @@ https://example.com/paper.pdf
                 _FakeKafkaRecord(value=json.dumps({"ignored": False}).encode("utf-8")),
             ]
         )
-        ingestor = WhitepaperKafkaIssueIngestor(workflow_service=_FakeKafkaWorkflowService())
+        ingestor = WhitepaperKafkaIssueIngestor(
+            workflow_service=_FakeKafkaWorkflowService()
+        )
         ingestor._consumer = consumer
         session = _FakeKafkaSession()
 
@@ -1499,11 +1765,15 @@ https://example.com/paper.pdf
         self.assertEqual(session.rollback_calls, 1)
 
     @patch("app.whitepapers.workflow._http_request_bytes")
-    def test_download_pdf_requests_redirect_following(self, mock_http_request: Any) -> None:
+    def test_download_pdf_requests_redirect_following(
+        self, mock_http_request: Any
+    ) -> None:
         os.environ["WHITEPAPER_MAX_PDF_BYTES"] = "123"
         mock_http_request.return_value = (200, {}, b"%PDF-1.7 redirected")
 
-        payload = WhitepaperWorkflowService._download_pdf("https://example.com/paper.pdf")
+        payload = WhitepaperWorkflowService._download_pdf(
+            "https://example.com/paper.pdf"
+        )
 
         self.assertEqual(payload, b"%PDF-1.7 redirected")
         kwargs = mock_http_request.call_args.kwargs
@@ -1518,7 +1788,9 @@ https://example.com/paper.pdf
 
         submit_attempts = {"count": 0}
 
-        def _fake_submit(_payload: dict[str, Any], *, idempotency_key: str) -> dict[str, Any]:
+        def _fake_submit(
+            _payload: dict[str, Any], *, idempotency_key: str
+        ) -> dict[str, Any]:
             submit_attempts["count"] += 1
             phase = "failed" if submit_attempts["count"] == 1 else "pending"
             return {
@@ -1555,9 +1827,15 @@ https://example.com/paper.pdf
             self.assertEqual(len(runs), 1)
             self.assertEqual(runs[0].status, "agentrun_dispatched")
 
-            agentruns = session.execute(
-                select(WhitepaperCodexAgentRun).where(WhitepaperCodexAgentRun.analysis_run_id == runs[0].id)
-            ).scalars().all()
+            agentruns = (
+                session.execute(
+                    select(WhitepaperCodexAgentRun).where(
+                        WhitepaperCodexAgentRun.analysis_run_id == runs[0].id
+                    )
+                )
+                .scalars()
+                .all()
+            )
             self.assertEqual(len(agentruns), 2)
 
     def test_inngest_requeue_uses_new_enqueue_key_per_attempt(self) -> None:
@@ -1592,7 +1870,11 @@ https://example.com/paper.pdf
             self.assertEqual(len(fake_inngest.events), 2)
             self.assertEqual(fake_inngest.events[0]["run_id"], run_row.run_id)
             self.assertEqual(fake_inngest.events[0]["enqueue_attempt"], 1)
-            self.assertEqual(fake_inngest.events[0]["enqueue_key"], f"{run_row.run_id}:1")
+            self.assertEqual(
+                fake_inngest.events[0]["enqueue_key"], f"{run_row.run_id}:1"
+            )
             self.assertEqual(fake_inngest.events[1]["run_id"], run_row.run_id)
             self.assertEqual(fake_inngest.events[1]["enqueue_attempt"], 2)
-            self.assertEqual(fake_inngest.events[1]["enqueue_key"], f"{run_row.run_id}:2")
+            self.assertEqual(
+                fake_inngest.events[1]["enqueue_key"], f"{run_row.run_id}:2"
+            )

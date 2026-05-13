@@ -29,10 +29,10 @@ class TestWhitepaperCandidateCompiler(TestCase):
             seed_sweep_dir=Path("config/trading"),
         )
 
-        self.assertEqual(len(compilation.candidate_specs), 3)
-        self.assertEqual(len(compilation.executable_specs), 3)
-        self.assertEqual(len(compilation.whitepaper_experiment_payloads), 3)
-        self.assertEqual(len(compilation.vnext_experiment_payloads), 3)
+        self.assertEqual(len(compilation.candidate_specs), 9)
+        self.assertEqual(len(compilation.executable_specs), 9)
+        self.assertEqual(len(compilation.whitepaper_experiment_payloads), 9)
+        self.assertEqual(len(compilation.vnext_experiment_payloads), 9)
         family_ids = {spec.family_template_id for spec in compilation.executable_specs}
         self.assertEqual(
             family_ids,
@@ -40,6 +40,21 @@ class TestWhitepaperCandidateCompiler(TestCase):
                 "intraday_tsmom_v2",
                 "microbar_cross_sectional_pairs_v1",
                 "microstructure_continuation_matched_filter_v1",
+            },
+        )
+        self.assertEqual(
+            {
+                family_id: sum(
+                    1
+                    for spec in compilation.executable_specs
+                    if spec.family_template_id == family_id
+                )
+                for family_id in family_ids
+            },
+            {
+                "intraday_tsmom_v2": 3,
+                "microbar_cross_sectional_pairs_v1": 3,
+                "microstructure_continuation_matched_filter_v1": 3,
             },
         )
         self.assertTrue(
@@ -79,7 +94,7 @@ class TestWhitepaperCandidateCompiler(TestCase):
         )
 
         self.assertEqual(len(compilation.executable_specs), 0)
-        self.assertEqual(len(compilation.blocked_specs), 3)
+        self.assertEqual(len(compilation.blocked_specs), 9)
         self.assertEqual(compilation.blockers[0].reason, "family_template_missing")
 
     def test_late_day_continuation_family_is_executable_from_fresh_momentum_claim(
@@ -120,14 +135,29 @@ class TestWhitepaperCandidateCompiler(TestCase):
             for spec in compilation.executable_specs
             if spec.family_template_id == "late_day_continuation_v1"
         ]
-        self.assertEqual(len(late_day_specs), 1)
+        self.assertEqual(len(late_day_specs), 3)
         self.assertEqual(
-            late_day_specs[0].runtime_strategy_name,
-            "late-day-continuation-long-v1",
+            {
+                spec.feature_contract["execution_profile"]["profile_id"]
+                for spec in late_day_specs
+            },
+            {
+                "late_day_continuation_v1:profile-1",
+                "late_day_continuation_v1:profile-2",
+                "late_day_continuation_v1:profile-3",
+            },
         )
-        self.assertEqual(
-            late_day_specs[0].objective["target_net_pnl_per_day"],
-            "300",
+        self.assertTrue(
+            all(
+                spec.runtime_strategy_name == "late-day-continuation-long-v1"
+                for spec in late_day_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.objective["target_net_pnl_per_day"] == "300"
+                for spec in late_day_specs
+            )
         )
 
     def test_end_of_day_reversal_family_is_executable_from_loser_reversal_claim(
@@ -168,12 +198,26 @@ class TestWhitepaperCandidateCompiler(TestCase):
             for spec in compilation.executable_specs
             if spec.family_template_id == "end_of_day_reversal_v1"
         ]
-        self.assertEqual(len(eod_specs), 1)
+        self.assertEqual(len(eod_specs), 2)
         self.assertEqual(
-            eod_specs[0].runtime_strategy_name,
-            "end-of-day-reversal-long-v1",
+            {
+                spec.feature_contract["execution_profile"]["profile_id"]
+                for spec in eod_specs
+            },
+            {
+                "end_of_day_reversal_v1:profile-1",
+                "end_of_day_reversal_v1:profile-2",
+            },
         )
-        self.assertEqual(eod_specs[0].objective["target_net_pnl_per_day"], "300")
+        self.assertTrue(
+            all(
+                spec.runtime_strategy_name == "end-of-day-reversal-long-v1"
+                for spec in eod_specs
+            )
+        )
+        self.assertTrue(
+            all(spec.objective["target_net_pnl_per_day"] == "300" for spec in eod_specs)
+        )
 
     def test_momentum_and_reversal_families_cover_inferred_feature_contracts(
         self,
@@ -270,7 +314,7 @@ class TestWhitepaperCandidateCompiler(TestCase):
             )
 
         self.assertEqual(compilation.executable_specs, ())
-        self.assertEqual(len(compilation.blocked_specs), 3)
+        self.assertEqual(len(compilation.blocked_specs), 9)
         self.assertEqual(compilation.blockers[0].reason, "seed_sweep_missing")
 
     def test_contradictory_claim_relation_blocks_dependent_candidate_specs(
@@ -306,9 +350,9 @@ class TestWhitepaperCandidateCompiler(TestCase):
             seed_sweep_dir=Path("config/trading"),
         )
 
-        self.assertEqual(len(compilation.candidate_specs), 3)
+        self.assertEqual(len(compilation.candidate_specs), 9)
         self.assertEqual(compilation.executable_specs, ())
-        self.assertEqual(len(compilation.blocked_specs), 3)
+        self.assertEqual(len(compilation.blocked_specs), 9)
         self.assertTrue(
             all(
                 blocker.reason == "contradictory_claim_relation"
