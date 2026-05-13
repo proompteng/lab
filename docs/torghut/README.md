@@ -139,8 +139,9 @@ Start here:
 - Current implementation contract: doc 188 publishes shadow `evidence_clock_arbiter` and
   `routeable_profit_candidate_exchange` payloads on status, health, readyz, and the Jangar-facing
   `/trading/consumer-evidence` route so fresh ClickHouse rows cannot mint routeable candidates while Postgres proof,
-  Jangar scoped quant, route/TCA, empirical replay, promotion, rollout, or stage-custody clocks are stale. Jangar
-  treats missing or stale custody evidence as a dispatch/deploy widening hold while zero-notional repair dispatch stays
+  Jangar scoped quant, route/TCA, empirical replay, promotion, rollout, or stage-custody clocks are stale. The TCA
+  clock also fails closed when average absolute slippage is missing or above the active route guardrail. Jangar treats
+  missing or stale custody evidence as a dispatch/deploy widening hold while zero-notional repair dispatch stays
   available.
 - Current implementation contract: doc 188 also exposes an observe-mode `route_evidence_clearinghouse_packet` across
   trading readiness surfaces before route claims can become accepted.
