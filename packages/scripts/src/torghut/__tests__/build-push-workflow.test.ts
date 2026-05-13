@@ -41,4 +41,11 @@ describe('torghut build-push workflow', () => {
     expect(cachePath).toBeGreaterThan(cacheStep)
     expect(installStep).toBeGreaterThan(cachePath)
   })
+
+  it('does not cancel main source CI that release promotion must verify', () => {
+    expect(ciWorkflow).toContain(
+      "group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}",
+    )
+    expect(ciWorkflow).toContain("cancel-in-progress: ${{ github.event_name == 'pull_request' }}")
+  })
 })
