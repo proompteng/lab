@@ -1116,6 +1116,22 @@ class TestTradingApi(TestCase):
             source_serving["route_warrant_ref"],
             warrant["warrant_id"],
         )
+        freshness_carry = payload["freshness_carry_ledger"]
+        self.assertEqual(
+            freshness_carry["schema_version"],
+            "torghut.freshness-carry-ledger.v1",
+        )
+        self.assertEqual(freshness_carry["capital_posture"]["max_notional"], "0")
+        self.assertIn("dimensions", freshness_carry)
+        self.assertIn("repair_proof_slos", freshness_carry)
+        self.assertEqual(
+            freshness_carry["source_serving_ledger_ref"],
+            source_serving["ledger_id"],
+        )
+        self.assertEqual(
+            freshness_carry["route_warrant_ref"],
+            warrant["warrant_id"],
+        )
         frontier = payload["profit_freshness_frontier"]
         self.assertEqual(
             frontier["schema_version"],
@@ -1635,6 +1651,22 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             health_source_serving["schema_version"],
             status_source_serving["schema_version"],
+        )
+        status_freshness_carry = status_response.json()["freshness_carry_ledger"]
+        health_freshness_carry = health_response.json()["freshness_carry_ledger"]
+        self.assertEqual(
+            status_freshness_carry["schema_version"],
+            "torghut.freshness-carry-ledger.v1",
+        )
+        self.assertEqual(
+            status_freshness_carry["capital_posture"]["max_notional"],
+            "0",
+        )
+        self.assertIn("dimensions", status_freshness_carry)
+        self.assertIn("repair_proof_slos", status_freshness_carry)
+        self.assertEqual(
+            health_freshness_carry["schema_version"],
+            status_freshness_carry["schema_version"],
         )
         status_frontier = status_response.json()["profit_freshness_frontier"]
         health_frontier = health_response.json()["profit_freshness_frontier"]

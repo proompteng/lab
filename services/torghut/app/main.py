@@ -84,6 +84,7 @@ from .trading.evidence_receipts import (
 )
 from .trading.executable_alpha_receipts import build_capital_replay_projection
 from .trading.forecast_runtime import forecast_status
+from .trading.freshness_carry import build_freshness_carry_ledger
 from .trading.hypotheses import (
     JangarDependencyQuorumStatus,
     compile_hypothesis_runtime_statuses,
@@ -946,6 +947,16 @@ def _evaluate_trading_health_payload(
         repair_bid_settlement_ledger=repair_bid_settlement_ledger,
         route_warrant_exchange=route_warrant_exchange,
     )
+    freshness_carry_ledger = _build_freshness_carry_ledger_payload(
+        source_serving_repair_receipt_ledger=source_serving_repair_receipt_ledger,
+        route_warrant_exchange=route_warrant_exchange,
+        clickhouse_ta_status=clickhouse_ta_status,
+        tca_summary=tca_summary,
+        empirical_jobs_status=empirical_jobs,
+        market_context_status=market_context_status,
+        quant_evidence=quant_evidence,
+        live_submission_gate=live_submission_gate,
+    )
     live_mode = settings.trading_mode == "live"
     empirical_jobs_required = (
         live_mode and settings.trading_empirical_jobs_health_required
@@ -1048,6 +1059,7 @@ def _evaluate_trading_health_payload(
             "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
             "route_warrant_exchange": route_warrant_exchange,
             "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
+            "freshness_carry_ledger": freshness_carry_ledger,
             "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
             "route_reacquisition_board": route_reacquisition_board,
             "quant_evidence": quant_evidence,
@@ -2504,6 +2516,16 @@ def trading_status() -> dict[str, object]:
         repair_bid_settlement_ledger=repair_bid_settlement_ledger,
         route_warrant_exchange=route_warrant_exchange,
     )
+    freshness_carry_ledger = _build_freshness_carry_ledger_payload(
+        source_serving_repair_receipt_ledger=source_serving_repair_receipt_ledger,
+        route_warrant_exchange=route_warrant_exchange,
+        clickhouse_ta_status=clickhouse_ta_status,
+        tca_summary=tca_summary,
+        empirical_jobs_status=empirical_jobs,
+        market_context_status=market_context_status,
+        quant_evidence=quant_evidence,
+        live_submission_gate=live_submission_gate,
+    )
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -2544,6 +2566,7 @@ def trading_status() -> dict[str, object]:
         "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
         "route_warrant_exchange": route_warrant_exchange,
         "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
+        "freshness_carry_ledger": freshness_carry_ledger,
         "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
         "route_reacquisition_board": route_reacquisition_board,
         "quant_evidence": quant_evidence,
@@ -2938,6 +2961,16 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         repair_bid_settlement_ledger=repair_bid_settlement_ledger,
         route_warrant_exchange=route_warrant_exchange,
     )
+    freshness_carry_ledger = _build_freshness_carry_ledger_payload(
+        source_serving_repair_receipt_ledger=source_serving_repair_receipt_ledger,
+        route_warrant_exchange=route_warrant_exchange,
+        clickhouse_ta_status=clickhouse_ta_status,
+        tca_summary=tca_summary,
+        empirical_jobs_status=empirical_jobs,
+        market_context_status=market_context_status,
+        quant_evidence=quant_evidence,
+        live_submission_gate=live_submission_gate,
+    )
     return {
         "schema_version": "torghut.consumer-evidence-status.v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -2970,6 +3003,7 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
         "route_warrant_exchange": route_warrant_exchange,
         "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
+        "freshness_carry_ledger": freshness_carry_ledger,
     }
 
 
@@ -5218,6 +5252,31 @@ def _build_source_serving_repair_receipt_payload(
         route_warrant_exchange=route_warrant_exchange,
         repair_bid_settlement_ledger=repair_bid_settlement_ledger,
         route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
+    )
+
+
+def _build_freshness_carry_ledger_payload(
+    *,
+    source_serving_repair_receipt_ledger: Mapping[str, Any],
+    route_warrant_exchange: Mapping[str, Any],
+    clickhouse_ta_status: Mapping[str, Any],
+    tca_summary: Mapping[str, Any],
+    empirical_jobs_status: Mapping[str, Any],
+    market_context_status: Mapping[str, Any],
+    quant_evidence: Mapping[str, Any],
+    live_submission_gate: Mapping[str, Any],
+) -> dict[str, object]:
+    return build_freshness_carry_ledger(
+        account_label=settings.trading_account_label,
+        window=settings.trading_jangar_quant_window,
+        source_serving_repair_receipt_ledger=source_serving_repair_receipt_ledger,
+        route_warrant_exchange=route_warrant_exchange,
+        clickhouse_ta_status=clickhouse_ta_status,
+        tca_summary=tca_summary,
+        empirical_jobs_status=empirical_jobs_status,
+        market_context_status=market_context_status,
+        quant_evidence=quant_evidence,
+        live_submission_gate=live_submission_gate,
     )
 
 

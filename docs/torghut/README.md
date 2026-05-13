@@ -8,6 +8,10 @@ Start here:
   (current source-serving proof and repair-receipt promotion contract)
 - `docs/agents/designs/187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`
   (current Jangar source-serving verdict contract)
+- `docs/torghut/design-system/v6/192-torghut-freshness-carry-and-repair-proof-slo-2026-05-13.md`
+  (current freshness carry and repair proof SLO contract)
+- `docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`
+  (current Jangar evidence pressure and watch backoff contract)
 - `docs/torghut/design-system/v6/190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
   (current repair-bid settlement and routeability proof compaction contract)
 - `docs/agents/designs/186-jangar-repair-bid-admission-and-settlement-custody-2026-05-13.md`
@@ -162,6 +166,11 @@ Start here:
   required route contract canaries before any repair receipt can be treated as source-serving-current evidence.
   Missing image digest, missing required contracts, schema mismatches, or source/serving commit splits keep
   `max_notional=0` and classify the payload as repair-only evidence.
+- Current implementation contract: doc 192 adds `freshness_carry_ledger` to status, health, readyz, and
+  `/trading/consumer-evidence`. The ledger prices TA signal, TCA, empirical, market-context, quant-evidence, and
+  source-serving freshness as explicit dimensions with bounded zero-notional repair SLOs. Partial, stale, or
+  low-confidence freshness keeps `max_notional=0`; source-serving proof, route warrants, live submission, and required
+  freshness must agree before routeable candidates can move toward paper capital.
 - Current implementation contract: doc 189 adds `clock_settlement_receipt` beside the evidence-clock arbiter on
   status, health, readyz, and `/trading/consumer-evidence`. The receipt compares direct ClickHouse TA freshness, Jangar
   scoped quant, TCA, empirical, promotion, and rollout witnesses against the published clocks, emits zero-notional

@@ -1,8 +1,8 @@
-# Torghut Design-System Current Source-of-Truth and Priority Guide (updated 2026-05-12)
+# Torghut Design-System Current Source-of-Truth and Priority Guide (updated 2026-05-13)
 
 ## Status
 
-- Date: `2026-05-12`
+- Date: `2026-05-13`
 - Purpose: distinguish live source-of-truth docs from historical milestone records and identify the current highest-priority work
 - Scope: `docs/torghut/design-system/**`, `docs/torghut/**`, `argocd/applications/torghut/**`, `services/torghut/**`, `services/jangar/**`
 
@@ -36,6 +36,8 @@ If the question is "what should I trust right now?", start here:
 3. current autonomy/promotion contract source of truth:
    - `docs/torghut/design-system/v6/191-torghut-source-serving-proof-and-repair-receipt-promotion-2026-05-13.md`
    - `docs/agents/designs/187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`
+   - `docs/torghut/design-system/v6/192-torghut-freshness-carry-and-repair-proof-slo-2026-05-13.md`
+   - `docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`
    - `docs/torghut/design-system/v6/190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
    - `docs/agents/designs/186-jangar-repair-bid-admission-and-settlement-custody-2026-05-13.md`
    - `docs/agents/designs/184-jangar-reliability-settlement-ledger-and-rollout-slo-escrow-2026-05-12.md`
@@ -133,7 +135,17 @@ If the question is "what should I trust right now?", start here:
 
 The current highest-priority work is:
 
-The May 13 source-serving proof handoff is the current top priority:
+The May 13 freshness-carry handoff is the current top priority after the source-serving proof ledger landed:
+
+- make Torghut publish `freshness_carry_ledger` from status, health, readyz, and consumer-evidence surfaces so TA
+  signal, TCA, empirical, market-context, quant-evidence, and source-serving freshness are priced as explicit repair
+  dimensions in
+  `docs/torghut/design-system/v6/192-torghut-freshness-carry-and-repair-proof-slo-2026-05-13.md`;
+- keep partial or stale freshness at `max_notional=0` while exposing bounded zero-notional repair SLOs that Jangar can
+  pressure-budget through
+  `docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`.
+
+The May 13 source-serving proof handoff remains an active supporting priority:
 
 - make Torghut publish `source_serving_repair_receipt_ledger` from status and consumer-evidence surfaces so repair
   receipts cite source commit, serving build commit, serving image digest, manifest image digest, and required contract
