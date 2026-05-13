@@ -1,105 +1,97 @@
 # Secure Action Gateway PRD
 
-Date: 2026-05-13
-Status: Submission-ready PRD
-Owner: Greg Konush
+## Problem
 
-## Summary
+Enterprises are starting to run AI agents inside the firewall, but the hard problem is not chat. The hard problem is action authority. Agents need to inspect tickets, databases, APIs, Kubernetes jobs, and internal tools, yet most enterprises cannot let a model or agent process receive broad secrets, service accounts, or write access with only prompt-level safeguards.
 
-Secure Action Gateway turns a natural-language internal-operations request into a controlled set of known actions against company systems. It is for work that currently depends on brittle dashboards, scripts, SQL snippets, admin pages, and operator memory.
-
-The prototype focuses on one workflow: investigate invoice sync failures from the last 24 hours, check account and entitlement state, create remediation tickets for invalid records, and retry only safe failures after approval.
-
-The product promise is simple: the agent can propose work, but it cannot invent or execute work. Execution is limited to approved actions, connector code holds the credentials, rules decide what is allowed, approvals gate risky writes, and the event log records every step.
+The operational gap is simple: companies want natural-language automation, but they need deterministic control over what an agent can touch, what gets blocked, who approves risky actions, and what evidence exists afterward.
 
 ## Target User And Buyer
 
-Primary user: finance operations, RevOps, support ops, IT operations, procurement ops, or internal tools teams handling cross-system exceptions.
+Primary user:
 
-Buyer: CIO, VP of IT, Head of Enterprise Automation, or business owner responsible for operational continuity. Security and platform teams are required approvers because the product touches internal systems and can trigger side effects.
+- AI platform engineer or security engineer responsible for internal agent workloads.
+- Needs to see which agents are running, what sensitive resources they requested, which rules matched, and what decision was made.
 
-## Problem
+Economic buyer:
 
-Large companies accumulate operational workflows that are never fully productized. A dashboard shows one part of the state, a SQL query finds exceptions, an admin API gives more context, a spreadsheet tracks remediation, and an experienced operator knows which retry is safe.
+- CISO, Head of Platform, or VP Engineering.
+- Cares about adopting agent automation without creating unmanaged access paths to internal systems.
 
-When that operator leaves, credentials rotate, APIs change, or failure volume spikes, the workflow breaks.
+Secondary users:
 
-Static workflow automation is brittle because every branch must be modeled ahead of time. Generic agents are risky because they often combine planning and execution authority. The gap is a product that lets an agent help with investigation while the application controls what can actually run.
+- Compliance and audit teams who need a durable event trail.
+- Operations leaders who want agents to reduce internal-tool work without bypassing controls.
 
-## Product Model
+## Product
 
-The product uses seven primitives:
+Secure Action Gateway is a control point for internal AI agents. It runs behind the firewall, observes an AgentRun before sensitive authority is attached, evaluates the requested connectors/secrets/tools against policy, and records an event for every decision.
 
-- **Request:** what the user asked for.
-- **Action:** a named operation the system allows, such as `find_invoice_failures` or `retry_invoice_sync`.
-- **Connector:** code that talks to an internal database, REST API, GraphQL API, or legacy system.
-- **Rule:** server-side decision logic that allows, blocks, or asks for approval.
-- **Approval:** human approval for one exact risky action and input digest.
-- **Run:** one execution of a request.
-- **Event:** append-only audit record.
+The first product surface is an event log, not a workflow builder. A reviewer should immediately see:
 
-Everything else is implementation detail.
+- which AgentRun was evaluated,
+- what it tried to access,
+- whether SAG allowed, blocked, or held it,
+- which rule matched,
+- who approved or denied an action,
+- and the redacted evidence behind the decision.
 
-## Core Requirements
+## Core Primitives
 
-- Natural-language request intake.
-- Visible action plan generated from the request.
-- Action catalog with input schemas, effect type, allowed roles, approval requirement, and connector.
-- SQL, REST, GraphQL, and legacy connectors.
-- Role-based access checks on each action call.
-- Approval required for risky writes.
-- Rejection of unknown or unsupported actions.
-- Worker execution outside the web request path.
-- Agent event log with request, plan, rule decisions, approvals, connector results, errors, and final state.
-- Runnable artifact with deterministic seeded data.
+- **AgentRun:** the unit of work being protected.
+- **Connector:** a bounded integration target such as Kubernetes, Postgres state, policy, or audit export.
+- **Rule:** deterministic policy translated from operator text or seeded by the system.
+- **Decision:** `allowed`, `blocked`, or `approval_required`.
+- **Approval:** a human decision required before a risky action can proceed.
+- **Event:** the audit record for every evaluation and decision.
 
-## Prototype Experience
+These primitives are intentionally small. They explain the product without inventing a broad control plane.
 
-1. User signs in as `ops_user`.
-2. User submits the invoice-failure request in plain English.
-3. The system proposes a plan made only of known actions.
-4. Unknown actions or invalid inputs are rejected.
-5. Read actions run automatically:
-   - Postgres finds invoice failures.
-   - REST checks account status.
-   - GraphQL checks entitlement state.
-6. Ticket creation runs only for records classified invalid.
-7. Invoice retry is blocked because it is a risky write.
-8. `ops_approver` reviews the exact retry input and approves it.
-9. Worker runs the legacy retry adapter.
-10. Reviewer inspects the agent event log and exports it as JSONL.
+## MVP Scope
 
-## Why Agent-Based Automation Fits
+In scope:
 
-The hard part is not pressing a button. The hard part is interpreting an ambiguous request, gathering evidence across systems, deciding which records are safe to act on, and then executing only the allowed steps.
+- Deployed web product at `sag.proompteng.ai`.
+- Kubernetes `AgentRun` reader for the live `agents` namespace.
+- CNPG persistence.
+- Natural-language rule creation.
+- Rule evaluation for requested secrets, connectors, and mutating tools.
+- RBAC-backed approval decisions.
+- Redacted audit log and JSONL export.
+- Minimal dark event-log UI using Base UI and Tailwind.
 
-An agent is useful for proposing the plan and adapting to intermediate evidence. The application remains responsible for authority: known actions, connector boundaries, rules, approvals, worker execution, and event records.
+Out of scope for this submission:
 
-## Wedge-To-Platform Path
+- Full OIDC/SAML setup.
+- Admission webhook enforcement.
+- Customer-managed connector catalog.
+- Long-term immutable audit storage.
 
-1. **Invoice exception workflow:** prove one useful internal operation end to end.
-2. **Action catalog:** let teams add more governed actions for support, provisioning, procurement, HR, and security operations.
-3. **Connector SDK:** standardize how actions talk to internal systems without exposing credentials to the agent.
-4. **Governance:** add SSO group mapping, approval routing, SIEM export, retention, redaction, and policy tests.
-5. **Enterprise operating layer:** become the safe way for AI agents to operate internal systems.
+Those are platform extensions, not required to prove the wedge.
 
-## Success Criteria
+## User Flow
 
-The submission is successful if a reviewer can run or inspect the artifact and verify:
+1. Security operator opens SAG.
+2. SAG displays the event log and AgentRun list.
+3. Operator evaluates a live AgentRun.
+4. SAG reads the AgentRun through its Kubernetes service account.
+5. SAG detects sensitive requested secrets and blocks the AgentRun before authority is attached.
+6. Operator creates a rule from natural language.
+7. SAG translates the text into a deterministic rule.
+8. A mutating AgentRun action is held for approval.
+9. A non-approver is denied.
+10. A security operator approves.
+11. All actions appear in the event log and JSONL export.
 
-- one natural-language request becomes a multi-step action plan,
-- SQL, REST, GraphQL, and legacy connectors all run,
-- unknown actions are rejected,
-- at least one risky action is blocked before approval,
-- approval unlocks only the exact approved action input,
-- role checks are visible,
-- event log export is complete enough to reconstruct what happened.
+## Wedge To Platform
 
-## Non-Goals
+The wedge is AgentRun safety inside a customer-controlled cluster. It is narrow, visible, and urgent for teams already experimenting with internal agents.
 
-- Generic chatbot.
-- Broad connector marketplace.
-- Kubernetes controller.
-- Autonomous destructive writes.
-- LLM wrapper around static JSON.
-- Public SaaS dependency for the core workflow.
+Platform path:
+
+1. Start with Kubernetes AgentRuns and audit.
+2. Add admission webhook enforcement so unsafe AgentRuns cannot start.
+3. Add customer connectors for internal databases, REST APIs, GraphQL APIs, and legacy interfaces.
+4. Add OIDC/SAML group mapping and approval routing.
+5. Add immutable audit export to the customer's SIEM or data lake.
+6. Expand from AgentRun protection into a general secure action layer for enterprise automation.

@@ -1,0 +1,41 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sag-agentrun-reader
+  labels:
+    app.kubernetes.io/name: sag
+    app.kubernetes.io/part-of: lab
+rules:
+  - apiGroups:
+      - agents.proompteng.ai
+    resources:
+      - agents
+      - agentruns
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sag-agentrun-reader
+  labels:
+    app.kubernetes.io/name: sag
+    app.kubernetes.io/part-of: lab
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sag-agentrun-reader
+subjects:
+  - kind: ServiceAccount
+    name: sag
+    namespace: sag

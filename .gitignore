@@ -216,6 +216,7 @@ dist-electron/
 .nx/workspace-data
 
 .turbo
+.playwright-mcp/
 
 apps/alchimie/*.egg-info
 
