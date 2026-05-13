@@ -109,6 +109,16 @@ def evidence_bundle_from_frontier_candidate(
         scorecard = {**scorecard, "daily_filled_notional": daily_filled_notional}
     if "trading_day_count" in full_window and "trading_day_count" not in scorecard:
         scorecard = {**scorecard, "trading_day_count": full_window["trading_day_count"]}
+    raw_candidate_hard_vetoes = candidate.get("hard_vetoes")
+    if isinstance(raw_candidate_hard_vetoes, str):
+        raw_hard_vetoes: Sequence[Any] = (raw_candidate_hard_vetoes,)
+    else:
+        raw_hard_vetoes = cast(Sequence[Any], raw_candidate_hard_vetoes or ())
+    hard_vetoes = tuple(
+        item for item in (_string(value) for value in raw_hard_vetoes) if item
+    )
+    if hard_vetoes and "hard_vetoes" not in scorecard:
+        scorecard = {**scorecard, "hard_vetoes": list(hard_vetoes)}
     if "symbol_contribution_shares" not in scorecard and "symbol" not in scorecard:
         symbol_shares = _decomposition_symbol_contribution_shares(candidate)
         if symbol_shares:
