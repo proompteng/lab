@@ -68,6 +68,13 @@ _LOT_RECEIPT = {
     "feature_lineage": "torghut.feature-lineage-current-receipt.v1",
 }
 
+_FEATURE_COVERAGE_BLOCKERS = {
+    "feature_rows_missing",
+    "required_feature_set_unavailable",
+    "equity_ta_rows_missing",
+    "options_feature_rows_missing",
+}
+
 _LOT_VALIDATION = {
     "quant_pipeline": "pytest services/torghut/tests/test_repair_bid_settlement.py -k quant_pipeline",
     "execution_tca": "pytest services/torghut/tests/test_repair_bid_settlement.py -k execution_tca",
@@ -371,6 +378,15 @@ def _expected_gate_delta(lot_class: str, reason_codes: Sequence[str]) -> str:
     return f"settle_{lot_class}"
 
 
+def _lot_priority(lot_class: str, reason_codes: Sequence[str]) -> int:
+    priority = _LOT_PRIORITY[lot_class]
+    if lot_class != "feature_lineage":
+        return priority
+    if any(reason in _FEATURE_COVERAGE_BLOCKERS for reason in reason_codes):
+        return 95
+    return priority
+
+
 def _build_lot(
     *,
     account_id: str,
@@ -408,7 +424,7 @@ def _build_lot(
         "lot_id": _ref("compacted-repair-lot", lot_payload),
         "lot_class": lot_class,
         "target_value_gate": _LOT_VALUE_GATE[lot_class],
-        "priority": _LOT_PRIORITY[lot_class],
+        "priority": _lot_priority(lot_class, reason_codes),
         "expected_gate_delta": _expected_gate_delta(lot_class, reason_codes),
         "raw_reason_codes": list(reason_codes),
         "root_cause_hypothesis": _root_cause(lot_class),
