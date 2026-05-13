@@ -16,7 +16,7 @@ controlPlane:
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
-      JANGAR_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/autonomy
+      JANGAR_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence
       JANGAR_TORGHUT_STATUS_TIMEOUT_MS: "3000"
 runner:
   image:

@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { resolveTorghutConsumerEvidence } from '~/server/control-plane-torghut-consumer-evidence'
+
+const REPO_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url))
 
 const originalEnv = { ...process.env }
 const originalFetch = globalThis.fetch
@@ -609,15 +612,13 @@ describe('control-plane Torghut consumer evidence', () => {
   })
 
   it('configures Jangar to read the non-recursive Torghut consumer evidence endpoint', () => {
-    const manifest = readFileSync(
-      resolve(process.cwd(), '..', '..', 'argocd/applications/jangar/deployment.yaml'),
-      'utf8',
-    )
+    const manifest = readFileSync(resolve(REPO_ROOT, 'argocd/applications/agents/values.yaml'), 'utf8')
 
-    expect(manifest).toContain('name: JANGAR_TORGHUT_STATUS_URL')
-    expect(manifest).toContain('value: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence')
+    expect(manifest).toContain(
+      'JANGAR_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
+    )
     expect(manifest).not.toContain(
-      'name: JANGAR_TORGHUT_STATUS_URL\n              value: http://torghut.torghut.svc.cluster.local/trading/status',
+      'JANGAR_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/autonomy',
     )
   })
 })

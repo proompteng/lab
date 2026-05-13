@@ -16,6 +16,8 @@
   - `docs/agents/designs/188-jangar-ready-truth-arbiter-and-stage-credit-cutover-2026-05-13.md`
   - `192-torghut-freshness-carry-and-repair-proof-slo-2026-05-13.md`
   - `docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`
+  - `192-torghut-typed-consumer-evidence-route-and-capital-safe-repair-dispatch-2026-05-13.md`
+  - `docs/agents/designs/188-jangar-typed-torghut-evidence-admission-and-repair-dispatch-2026-05-13.md`
   - `191-torghut-source-serving-proof-and-repair-receipt-promotion-2026-05-13.md`
   - `docs/agents/designs/187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`
   - `190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
