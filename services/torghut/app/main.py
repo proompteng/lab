@@ -1457,6 +1457,13 @@ def trading_profit_freshness_zero_notional_repair(
     ),
     tca_limit: int = Query(default=250, ge=1, le=5000),
     drift_limit: int = Query(default=500, ge=1, le=5000),
+    repair_lot_dispatch_ticket: dict[str, Any] | None = Body(
+        default=None,
+        description=(
+            "Jangar repair_lot_dispatch_ticket authorizing runner-required "
+            "zero-notional repair execution."
+        ),
+    ),
 ) -> dict[str, object]:
     """Plan or run an allowlisted zero-notional repair from the freshness frontier."""
 
@@ -1619,6 +1626,7 @@ def trading_profit_freshness_zero_notional_repair(
         profit_freshness_frontier=frontier,
         execute=execute,
         preferred_action=action,
+        repair_lot_dispatch_ticket=repair_lot_dispatch_ticket,
         runners={
             "recompute_route_tca_and_fill_quality": run_tca_recompute,
             "rerun_drift_checks_for_blocked_hypotheses": run_drift_check_replay,

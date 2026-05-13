@@ -296,6 +296,14 @@ one `required_output_receipt`, a dedupe key, TTL, validation command, and dispat
 account/window. `routeable_candidate_count` remains zero while any compacted lot is unsettled, preserving the capital
 safety gate until receipt validators land in milestone 2.
 
+### Implementation Note (2026-05-13, Dispatch Ticket Enforcement)
+
+Torghut now enforces the first milestone 2 receipt validator in the zero-notional repair executor. Runner-backed repairs
+that require Jangar admission require a `jangar.repair-lot-dispatch-ticket.v1` proving the selected compacted lot id,
+launch allowance, `max_notional=0`, dedupe key, target value gate, required output receipt, and `max_runtime_seconds`
+TTL before a local runner can execute. The `/trading/profit-freshness/zero-notional-repair` POST body carries that ticket
+through to the executor, and missing or mismatched tickets return a fail-closed receipt without widening capital.
+
 ## Validation Gates
 
 Local validation for Torghut PRs:
