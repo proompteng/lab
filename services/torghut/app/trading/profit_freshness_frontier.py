@@ -93,6 +93,9 @@ _ROUTEABILITY_ONLY_TCA_REASON_CODES = {
     "route_tca_passed_but_dependency_receipts_block_capital",
 }
 _ROUTEABILITY_ONLY_TCA_REASON_PREFIXES = ("capital_state_", "proof_floor_")
+_NONBLOCKING_JANGAR_RELIABILITY_REASONS = {
+    "torghut_dependency_quorum_not_required",
+}
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -711,10 +714,15 @@ def _jangar_dimension(
     state = _text(
         jangar_reliability_settlement_ref.get("state") or decision, "missing"
     ).lower()
-    reasons = [
+    raw_reasons = [
         *_strings(jangar_reliability_settlement_ref.get("reason_codes")),
         *_strings(jangar_reliability_settlement_ref.get("blocking_reasons")),
         *_strings(jangar_reliability_settlement_ref.get("reasons")),
+    ]
+    reasons = [
+        reason
+        for reason in raw_reasons
+        if reason not in _NONBLOCKING_JANGAR_RELIABILITY_REASONS
     ]
     if decision not in _CURRENT_STATES:
         reasons.append(f"jangar_reliability_settlement_{decision}")
@@ -740,6 +748,11 @@ def _jangar_dimension(
             "decision": decision,
             "state": state,
             "source": jangar_reliability_settlement_ref.get("source"),
+            "informational_reason_codes": [
+                reason
+                for reason in raw_reasons
+                if reason in _NONBLOCKING_JANGAR_RELIABILITY_REASONS
+            ],
         },
     )
 
