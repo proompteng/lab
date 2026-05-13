@@ -287,7 +287,7 @@ describe('scheduled AgentRun templates', () => {
       const verifyStep = steps?.find((step) => objectAt(step, 'name') === 'verify')
 
       expect(objectAt(verifyStep, 'retries')).toBe(0)
-      expect(objectAt(verifyStep, 'timeoutSeconds')).toBe(2700)
+      expect(objectAt(verifyStep, 'timeoutSeconds')).toBe(7200)
     }
   })
 
