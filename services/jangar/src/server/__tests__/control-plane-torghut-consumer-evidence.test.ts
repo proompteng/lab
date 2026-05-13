@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import type { StageClearancePacket } from '~/data/agents-control-plane'
 import { resolveTorghutConsumerEvidence } from '~/server/control-plane-torghut-consumer-evidence'
+import { attachStageClearanceCustodyToTorghutEvidence } from '~/server/control-plane-torghut-stage-custody'
 
 const REPO_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url))
 
@@ -422,6 +424,87 @@ describe('control-plane Torghut consumer evidence', () => {
       consumer_evidence_status: 'route_missing',
       consumer_evidence_reason_codes: ['torghut_consumer_evidence_route_missing'],
       paper_settlement_clean: false,
+    })
+  })
+
+  it('attaches a local Torghut stage-clearance packet as typed custody evidence', () => {
+    const packet: StageClearancePacket = {
+      schema_version: 'jangar.stage-clearance-packet.v1',
+      packet_id: 'stage-clearance:torghut:paper_canary:fresh-hold',
+      generated_at: '2026-05-13T06:00:00.000Z',
+      fresh_until: '2026-05-13T06:02:00.000Z',
+      namespace: 'agents',
+      swarm_name: 'jangar-control-plane',
+      stage: 'torghut',
+      action_class: 'paper_canary',
+      governing_requirement_refs: [
+        'docs/agents/designs/188-jangar-typed-torghut-evidence-admission-and-repair-dispatch-2026-05-13.md',
+      ],
+      source_rollout_truth_ref: 'source-rollout-truth-exchange:test',
+      controller_witness_ref: 'controller-witness:test',
+      agentrun_ingestion_ref: 'agentrun-ingestion:test',
+      execution_trust_ref: 'execution-trust:test',
+      material_action_verdict_ref: 'material-action-verdict:paper_canary:test',
+      route_stability_ref: 'route-stability:test',
+      torghut_consumer_evidence_ref: 'torghut-route-proven-profit:test',
+      dependency_verdict_ref: null,
+      dependency_verdict_decision: null,
+      failure_domain_leases: [],
+      provider_capacity_ref: null,
+      decision: 'hold',
+      max_launches: 0,
+      max_notional: 0,
+      ttl_seconds: 120,
+      reason_codes: ['torghut_max_notional_zero'],
+      required_repair_action: 'close Torghut zero-notional repair blockers',
+      rollback_target:
+        'set JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow and fall back to material action verdicts plus runtime admission passports',
+    }
+
+    const result = attachStageClearanceCustodyToTorghutEvidence(
+      {
+        status: {
+          status: 'current',
+          endpoint: 'http://torghut/trading/consumer-evidence',
+          receipt_id: 'torghut-route-proven-profit:test',
+          generated_at: '2026-05-13T06:00:00.000Z',
+          fresh_until: '2026-05-13T06:02:00.000Z',
+          candidate_id: null,
+          dataset_snapshot_ref: null,
+          max_notional: '0',
+          reason_codes: [],
+          message: 'current',
+          evidence_clock_arbiter_id: 'evidence-clock-arbiter:test',
+          evidence_clock_custody_status: 'missing',
+          evidence_clock_custody_ref: null,
+        },
+        negativeEvidence: {
+          readiness_status: 'degraded',
+          paper_settlement_clean: false,
+          consumer_evidence_receipt_id: 'torghut-route-proven-profit:test',
+          consumer_evidence_status: 'current',
+          consumer_evidence_fresh_until: '2026-05-13T06:02:00.000Z',
+          consumer_evidence_reason_codes: [],
+          evidence_clock_arbiter_id: 'evidence-clock-arbiter:test',
+          evidence_clock_status: 'current',
+          evidence_clock_custody_status: 'missing',
+          evidence_clock_custody_ref: null,
+          evidence_clock_custody_reason_codes: ['evidence_clock_custody_receipt_missing'],
+        },
+      },
+      [packet],
+      new Date('2026-05-13T06:00:30.000Z'),
+    )
+
+    expect(result.attached).toBe(true)
+    expect(result.resolution.status).toMatchObject({
+      evidence_clock_custody_status: 'blocked',
+      evidence_clock_custody_ref: 'stage-clearance:torghut:paper_canary:fresh-hold',
+    })
+    expect(result.resolution.negativeEvidence).toMatchObject({
+      evidence_clock_custody_status: 'blocked',
+      evidence_clock_custody_ref: 'stage-clearance:torghut:paper_canary:fresh-hold',
+      evidence_clock_custody_reason_codes: ['evidence_clock_custody_stage_clearance_hold'],
     })
   })
 

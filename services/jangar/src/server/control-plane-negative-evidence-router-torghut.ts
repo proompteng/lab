@@ -67,7 +67,6 @@ export const addTorghutEvidenceClockNegativeEvidence = (input: {
   const evidenceClockRefs = uniqueStrings([
     input.torghut.evidence_clock_arbiter_id ?? '',
     input.torghut.routeable_profit_candidate_exchange_id ?? '',
-    input.torghut.evidence_clock_custody_ref ?? '',
     ...(input.torghut.routeable_exchange_zero_notional_repair_lot_ids ?? []),
   ])
   const refs = evidenceClockRefs.length > 0 ? evidenceClockRefs : [input.consumerEvidenceRef]

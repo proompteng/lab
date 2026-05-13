@@ -513,6 +513,20 @@ Rollback: ignore `ready_action_exchange` and `action_custody_receipts` consumers
 material-action verdicts, route-stability escrow, repair-warrant exchange, runtime-admission passports, and Torghut
 proof-floor/notional gates remain the fallback safety boundary.
 
+## Torghut stage-custody evidence
+
+Design doc `docs/agents/designs/188-jangar-typed-torghut-evidence-admission-and-repair-dispatch-2026-05-13.md`
+requires Jangar to expose typed Torghut custody evidence from the non-recursive `/trading/consumer-evidence` route.
+When Torghut reports an evidence-clock arbiter but does not publish a `required_jangar_custody_ref`, control-plane
+status attaches Jangar's current local `stage_clearance_packets[]` entry for the Torghut paper-capital lane to
+`torghut_consumer_evidence.evidence_clock_custody_*`. A fresh held packet is reported as blocked custody with the
+packet id; only absence of a local packet stays `missing`.
+
+This is a status normalization, not a capital override. Paper and live Torghut actions still use material verdicts,
+stage-clearance packets, repair warrants, and `max_notional=0` as their safety boundary. Rollback is to ignore the
+normalized `evidence_clock_custody_*` fields or revert the attachment helper; the existing Torghut proof-floor and
+notional gates continue to hold unsafe capital actions.
+
 ## Workspace storage proof
 
 The supporting-primitives controller reconciles `Workspace` CRs by creating and reading the backing
