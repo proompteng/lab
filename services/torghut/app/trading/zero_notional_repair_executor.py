@@ -12,8 +12,10 @@ from typing import Any, cast
 ZERO_NOTIONAL_REPAIR_EXECUTION_SCHEMA_VERSION = (
     "torghut.zero-notional-repair-execution-receipt.v1"
 )
+REPAIR_LOT_DISPATCH_TICKET_SCHEMA_VERSION = "jangar.repair-lot-dispatch-ticket.v1"
 
 _ZERO_VALUES = {"", "0", "0.0", "0.00", "0.0000"}
+_TRUE_VALUES = {"1", "true", "yes", "on", "allow", "allowed"}
 _ALLOWLIST: Mapping[str, Mapping[str, object]] = {
     "renew_empirical_proof_jobs": {
         "executor": "empirical_proof_renewal",
@@ -77,6 +79,19 @@ def _strings(value: object) -> list[str]:
     return result
 
 
+def _bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return _text(value).lower() in _TRUE_VALUES
+
+
+def _positive_number(value: object) -> bool:
+    try:
+        return float(_text(value)) > 0
+    except ValueError:
+        return False
+
+
 def _stable_ref(prefix: str, payload: Mapping[str, object]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return f"{prefix}:{sha256(encoded.encode()).hexdigest()[:20]}"
@@ -127,6 +142,75 @@ def _is_zero(value: object) -> bool:
     return _text(value, "0") in _ZERO_VALUES
 
 
+def _requires_dispatch_ticket(action_contract: Mapping[str, object]) -> bool:
+    return bool(action_contract.get("requires_torghut_admission", False))
+
+
+def _selected_repair_lot_refs(repair: Mapping[str, Any]) -> set[str]:
+    return {
+        ref
+        for ref in (
+            _text(repair.get("lot_id")),
+            _text(repair.get("compacted_lot_ref")),
+            _text(repair.get("torghut_compacted_lot_ref")),
+            _text(repair.get("repair_bid_settlement_lot_ref")),
+        )
+        if ref
+    }
+
+
+def _dispatch_ticket_reasons(
+    repair: Mapping[str, Any],
+    action_contract: Mapping[str, object],
+    ticket: Mapping[str, Any],
+) -> list[str]:
+    if not _requires_dispatch_ticket(action_contract):
+        return []
+
+    reasons: list[str] = []
+    if not ticket:
+        return ["repair_lot_dispatch_ticket_missing"]
+    if _text(ticket.get("schema_version")) != REPAIR_LOT_DISPATCH_TICKET_SCHEMA_VERSION:
+        reasons.append("repair_lot_dispatch_ticket_schema_mismatch")
+    if not _text(ticket.get("ticket_id")):
+        reasons.append("repair_lot_dispatch_ticket_id_missing")
+    if not _bool(ticket.get("launch_allowed")):
+        reasons.append("repair_lot_dispatch_ticket_not_allowed")
+    if "max_notional" not in ticket:
+        reasons.append("repair_lot_dispatch_ticket_notional_missing")
+    elif not _is_zero(ticket.get("max_notional")):
+        reasons.append("repair_lot_dispatch_ticket_notional_nonzero")
+    if not _text(ticket.get("dedupe_key")):
+        reasons.append("repair_lot_dispatch_ticket_dedupe_key_missing")
+    if not _text(ticket.get("required_output_receipt")):
+        reasons.append("repair_lot_dispatch_ticket_output_receipt_missing")
+    if not _positive_number(ticket.get("max_runtime_seconds")):
+        reasons.append("repair_lot_dispatch_ticket_ttl_invalid")
+
+    ticket_value_gate = _text(ticket.get("target_value_gate"))
+    accepted_value_gates = {
+        value_gate
+        for value_gate in (
+            _text(action_contract.get("value_gate")),
+            _text(repair.get("value_gate")),
+        )
+        if value_gate
+    }
+    if not ticket_value_gate:
+        reasons.append("repair_lot_dispatch_ticket_value_gate_missing")
+    elif accepted_value_gates and ticket_value_gate not in accepted_value_gates:
+        reasons.append("repair_lot_dispatch_ticket_value_gate_mismatch")
+
+    ticket_lot_ref = _text(ticket.get("torghut_lot_id"))
+    accepted_lot_refs = _selected_repair_lot_refs(repair)
+    if not ticket_lot_ref:
+        reasons.append("repair_lot_dispatch_ticket_lot_missing")
+    elif accepted_lot_refs and ticket_lot_ref not in accepted_lot_refs:
+        reasons.append("repair_lot_dispatch_ticket_lot_mismatch")
+
+    return _strings(reasons)
+
+
 def _capital_safety_reasons(
     frontier: Mapping[str, Any], repair: Mapping[str, Any]
 ) -> list[str]:
@@ -155,6 +239,7 @@ def build_zero_notional_repair_execution_receipt(
     execute: bool = False,
     preferred_action: str | None = None,
     action_result: Mapping[str, object] | None = None,
+    repair_lot_dispatch_ticket: Mapping[str, object] | None = None,
     now: datetime | None = None,
 ) -> dict[str, object]:
     """Build a receipt for the selected frontier repair without granting capital."""
@@ -169,7 +254,13 @@ def build_zero_notional_repair_execution_receipt(
     action = _text(repair.get("zero_notional_action"))
     action_contract = _mapping(_ALLOWLIST.get(action))
     result = _mapping(action_result)
+    dispatch_ticket = _mapping(repair_lot_dispatch_ticket)
     blocked_reasons = _capital_safety_reasons(frontier, repair)
+    dispatch_ticket_reasons = _dispatch_ticket_reasons(
+        repair,
+        action_contract,
+        dispatch_ticket,
+    )
     execution_state = "dry_run_ready"
     command_exit_code: int | None = 0
 
@@ -187,6 +278,10 @@ def build_zero_notional_repair_execution_receipt(
         command_exit_code = 78
     elif blocked_reasons:
         execution_state = "capital_safety_blocked"
+        command_exit_code = 78
+    elif execute and dispatch_ticket_reasons:
+        execution_state = "repair_lot_dispatch_ticket_required"
+        blocked_reasons.extend(dispatch_ticket_reasons)
         command_exit_code = 78
     elif execute and result:
         execution_state = _text(result.get("execution_state"), "executed")
@@ -242,6 +337,14 @@ def build_zero_notional_repair_execution_receipt(
         "requires_torghut_admission": bool(
             action_contract.get("requires_torghut_admission", False)
         ),
+        "requires_repair_lot_dispatch_ticket": _requires_dispatch_ticket(
+            action_contract
+        ),
+        "repair_lot_dispatch_ticket_ref": dispatch_ticket.get("ticket_id"),
+        "repair_lot_dispatch_ticket_lot_ref": dispatch_ticket.get("torghut_lot_id"),
+        "repair_lot_dispatch_ticket_launch_allowed": (
+            _bool(dispatch_ticket.get("launch_allowed")) if dispatch_ticket else None
+        ),
         "paper_notional_limit": "0",
         "live_notional_limit": "0",
         "capital_behavior_changed": False,
@@ -265,6 +368,7 @@ def run_zero_notional_repair(
     profit_freshness_frontier: Mapping[str, Any],
     execute: bool,
     preferred_action: str | None = None,
+    repair_lot_dispatch_ticket: Mapping[str, object] | None = None,
     runners: Mapping[str, RepairRunner] | None = None,
     now: datetime | None = None,
 ) -> dict[str, object]:
@@ -278,6 +382,12 @@ def run_zero_notional_repair(
     )
     action = _text(repair.get("zero_notional_action"))
     action_contract = _ALLOWLIST.get(action)
+    dispatch_ticket = _mapping(repair_lot_dispatch_ticket)
+    dispatch_ticket_reasons = _dispatch_ticket_reasons(
+        repair,
+        _mapping(action_contract),
+        dispatch_ticket,
+    )
     action_result: Mapping[str, object] | None = None
 
     if (
@@ -285,6 +395,7 @@ def run_zero_notional_repair(
         and repair
         and action_contract
         and not _capital_safety_reasons(frontier, repair)
+        and not dispatch_ticket_reasons
         and action in (runners or {})
     ):
         runner = cast(Mapping[str, RepairRunner], runners)[action]
@@ -299,12 +410,14 @@ def run_zero_notional_repair(
         execute=execute,
         preferred_action=normalized_preferred_action or None,
         action_result=action_result,
+        repair_lot_dispatch_ticket=dispatch_ticket,
         now=now,
     )
 
 
 __all__ = [
     "ZERO_NOTIONAL_REPAIR_EXECUTION_SCHEMA_VERSION",
+    "REPAIR_LOT_DISPATCH_TICKET_SCHEMA_VERSION",
     "build_zero_notional_repair_execution_receipt",
     "run_zero_notional_repair",
 ]

@@ -3908,6 +3908,70 @@ class TestTradingApi(TestCase):
         self.assertEqual(payload["live_notional_limit"], "0")
         self.assertEqual(payload["before_refs"], ["market_context:AAPL"])
 
+    def test_zero_notional_repair_endpoint_accepts_dispatch_ticket_body(self) -> None:
+        status_payload = {
+            "active_revision": "torghut-00320",
+            "profit_freshness_frontier": {
+                "frontier_id": "profit-freshness-frontier:test",
+                "capital_posture": {
+                    "capital_state": "zero_notional",
+                    "paper_notional_limit": "0",
+                    "live_notional_limit": "0",
+                    "capital_behavior_changed": False,
+                },
+                "selected_zero_notional_repairs": [
+                    {
+                        "lot_id": "profit-freshness-repair-lot:test",
+                        "candidate_id": "candidate-a",
+                        "hypothesis_id": "H-AAPL",
+                        "blocked_dimension": "market_context",
+                        "zero_notional_action": "refresh_stale_market_context_domains",
+                        "before_refs": ["market_context:AAPL"],
+                        "paper_notional_limit": "0",
+                        "live_notional_limit": "0",
+                        "state": "selected_zero_notional_repair",
+                    }
+                ],
+            },
+        }
+        repair_lot_dispatch_ticket = {
+            "schema_version": "jangar.repair-lot-dispatch-ticket.v1",
+            "ticket_id": "repair-lot-dispatch-ticket:test",
+            "admission_receipt_id": "repair-bid-admission-receipt:test",
+            "torghut_lot_id": "profit-freshness-repair-lot:test",
+            "lot_class": "market_context_refresh",
+            "target_value_gate": "zero_notional_or_stale_evidence_rate",
+            "dedupe_key": "torghut-repair:test",
+            "required_output_receipt": "torghut.market-context-current-receipt.v1",
+            "launch_allowed": True,
+            "launch_reason": "current_zero_notional_compacted_lot",
+            "stop_conditions": ["fresh_until_expired", "dedupe_key_became_active"],
+            "max_runtime_seconds": 1200,
+            "max_notional": 0,
+            "expected_gate_delta": 1,
+            "rollback_target": "keep Torghut max_notional=0",
+        }
+        with patch("app.main.trading_status", return_value=status_payload):
+            response = self.client.post(
+                "/trading/profit-freshness/zero-notional-repair?execute=true",
+                json=repair_lot_dispatch_ticket,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["execution_state"], "runner_admission_required")
+        self.assertEqual(payload["command_exit_code"], 78)
+        self.assertEqual(
+            payload["blocked_reasons"],
+            ["zero_notional_runner_admission_required"],
+        )
+        self.assertEqual(
+            payload["repair_lot_dispatch_ticket_ref"],
+            "repair-lot-dispatch-ticket:test",
+        )
+        self.assertTrue(payload["repair_lot_dispatch_ticket_launch_allowed"])
+        self.assertFalse(payload["order_submission_enabled"])
+
     def test_zero_notional_repair_endpoint_can_select_queued_route_tca_action(
         self,
     ) -> None:

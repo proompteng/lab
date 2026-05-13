@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.trading.zero_notional_repair_executor import (
+    REPAIR_LOT_DISPATCH_TICKET_SCHEMA_VERSION,
     ZERO_NOTIONAL_REPAIR_EXECUTION_SCHEMA_VERSION,
     build_zero_notional_repair_execution_receipt,
     run_zero_notional_repair,
@@ -40,6 +41,32 @@ def _frontier(action: str = "refresh_stale_market_context_domains") -> dict[str,
     }
 
 
+def _dispatch_ticket(
+    lot_id: str = "profit-freshness-repair-lot:test",
+    overrides: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    ticket: dict[str, object] = {
+        "schema_version": REPAIR_LOT_DISPATCH_TICKET_SCHEMA_VERSION,
+        "ticket_id": "repair-lot-dispatch-ticket:test",
+        "admission_receipt_id": "repair-bid-admission-receipt:test",
+        "torghut_lot_id": lot_id,
+        "lot_class": "market_context_refresh",
+        "target_value_gate": "zero_notional_or_stale_evidence_rate",
+        "dedupe_key": "torghut-repair:test",
+        "required_output_receipt": "torghut.market-context-current-receipt.v1",
+        "launch_allowed": True,
+        "launch_reason": "current_zero_notional_compacted_lot",
+        "stop_conditions": ["fresh_until_expired", "dedupe_key_became_active"],
+        "max_runtime_seconds": 1200,
+        "max_notional": 0,
+        "expected_gate_delta": 1,
+        "rollback_target": "keep Torghut max_notional=0",
+    }
+    if overrides:
+        ticket.update(overrides)
+    return ticket
+
+
 def test_dry_run_receipt_keeps_selected_repair_zero_notional() -> None:
     receipt = build_zero_notional_repair_execution_receipt(
         account_label="paper",
@@ -59,6 +86,8 @@ def test_dry_run_receipt_keeps_selected_repair_zero_notional() -> None:
     assert receipt["live_notional_limit"] == "0"
     assert receipt["before_refs"] == ["market_context:AAPL"]
     assert receipt["value_gate"] == "zero_notional_or_stale_evidence_rate"
+    assert receipt["requires_repair_lot_dispatch_ticket"] is True
+    assert receipt["repair_lot_dispatch_ticket_ref"] is None
 
 
 def test_execute_runs_allowlisted_tca_runner_without_widening_notional() -> None:
@@ -221,7 +250,7 @@ def test_preferred_action_missing_is_fail_closed() -> None:
     assert receipt["order_submission_enabled"] is False
 
 
-def test_runner_required_action_reports_admission_block_when_executed_without_runner() -> (
+def test_runner_required_action_requires_dispatch_ticket_before_runner_admission() -> (
     None
 ):
     receipt = run_zero_notional_repair(
@@ -235,11 +264,181 @@ def test_runner_required_action_reports_admission_block_when_executed_without_ru
         now=NOW,
     )
 
-    assert receipt["execution_state"] == "runner_admission_required"
+    assert receipt["execution_state"] == "repair_lot_dispatch_ticket_required"
     assert receipt["command_exit_code"] == 78
     assert receipt["requires_torghut_admission"] is True
-    assert "zero_notional_runner_admission_required" in receipt["blocked_reasons"]
+    assert receipt["requires_repair_lot_dispatch_ticket"] is True
+    assert "repair_lot_dispatch_ticket_missing" in receipt["blocked_reasons"]
     assert receipt["order_submission_enabled"] is False
+
+
+def test_runner_required_action_does_not_call_runner_without_dispatch_ticket() -> None:
+    called: list[Mapping[str, Any]] = []
+
+    receipt = run_zero_notional_repair(
+        account_label="paper",
+        trading_mode="live",
+        torghut_revision="torghut-00320",
+        source_commit="abc123",
+        profit_freshness_frontier=_frontier("refresh_stale_market_context_domains"),
+        execute=True,
+        runners={
+            "refresh_stale_market_context_domains": lambda repair: (
+                called.append(repair)
+                or {
+                    "execution_state": "executed",
+                    "command_exit_code": 0,
+                }
+            ),
+        },
+        now=NOW,
+    )
+
+    assert called == []
+    assert receipt["execution_state"] == "repair_lot_dispatch_ticket_required"
+    assert receipt["command_exit_code"] == 78
+    assert receipt["blocked_reasons"] == ["repair_lot_dispatch_ticket_missing"]
+    assert receipt["repair_lot_dispatch_ticket_ref"] is None
+    assert receipt["order_submission_enabled"] is False
+
+
+def test_runner_required_action_executes_with_matching_dispatch_ticket() -> None:
+    called: list[Mapping[str, Any]] = []
+
+    receipt = run_zero_notional_repair(
+        account_label="paper",
+        trading_mode="live",
+        torghut_revision="torghut-00320",
+        source_commit="abc123",
+        profit_freshness_frontier=_frontier("refresh_stale_market_context_domains"),
+        execute=True,
+        repair_lot_dispatch_ticket=_dispatch_ticket(),
+        runners={
+            "refresh_stale_market_context_domains": lambda repair: (
+                called.append(repair)
+                or {
+                    "execution_state": "executed",
+                    "command_exit_code": 0,
+                    "after_refs": ["market_context:AAPL:refreshed"],
+                }
+            ),
+        },
+        now=NOW,
+    )
+
+    assert [repair["lot_id"] for repair in called] == [
+        "profit-freshness-repair-lot:test"
+    ]
+    assert receipt["execution_state"] == "executed"
+    assert receipt["command_exit_code"] == 0
+    assert receipt["after_refs"] == ["market_context:AAPL:refreshed"]
+    assert receipt["requires_repair_lot_dispatch_ticket"] is True
+    assert (
+        receipt["repair_lot_dispatch_ticket_ref"] == "repair-lot-dispatch-ticket:test"
+    )
+    assert (
+        receipt["repair_lot_dispatch_ticket_lot_ref"]
+        == "profit-freshness-repair-lot:test"
+    )
+    assert receipt["repair_lot_dispatch_ticket_launch_allowed"] is True
+    assert receipt["paper_notional_limit"] == "0"
+    assert receipt["live_notional_limit"] == "0"
+    assert receipt["order_submission_enabled"] is False
+
+
+def test_runner_required_action_rejects_mismatched_dispatch_ticket() -> None:
+    called: list[Mapping[str, Any]] = []
+
+    receipt = run_zero_notional_repair(
+        account_label="paper",
+        trading_mode="live",
+        torghut_revision="torghut-00320",
+        source_commit="abc123",
+        profit_freshness_frontier=_frontier("refresh_stale_market_context_domains"),
+        execute=True,
+        repair_lot_dispatch_ticket=_dispatch_ticket(
+            "profit-freshness-repair-lot:other",
+            {
+                "launch_allowed": False,
+                "max_notional": 1,
+                "target_value_gate": "capital_gate_safety",
+            },
+        ),
+        runners={
+            "refresh_stale_market_context_domains": lambda repair: (
+                called.append(repair)
+                or {
+                    "execution_state": "executed",
+                    "command_exit_code": 0,
+                }
+            ),
+        },
+        now=NOW,
+    )
+
+    assert called == []
+    assert receipt["execution_state"] == "repair_lot_dispatch_ticket_required"
+    assert receipt["command_exit_code"] == 78
+    assert receipt["blocked_reasons"] == [
+        "repair_lot_dispatch_ticket_not_allowed",
+        "repair_lot_dispatch_ticket_notional_nonzero",
+        "repair_lot_dispatch_ticket_value_gate_mismatch",
+        "repair_lot_dispatch_ticket_lot_mismatch",
+    ]
+    assert (
+        receipt["repair_lot_dispatch_ticket_ref"] == "repair-lot-dispatch-ticket:test"
+    )
+    assert receipt["repair_lot_dispatch_ticket_launch_allowed"] is False
+
+
+def test_runner_required_action_rejects_malformed_dispatch_ticket() -> None:
+    called: list[Mapping[str, Any]] = []
+
+    receipt = run_zero_notional_repair(
+        account_label="paper",
+        trading_mode="live",
+        torghut_revision="torghut-00320",
+        source_commit="abc123",
+        profit_freshness_frontier=_frontier("refresh_stale_market_context_domains"),
+        execute=True,
+        repair_lot_dispatch_ticket={
+            "schema_version": "jangar.repair-lot-dispatch-ticket.v0",
+            "ticket_id": "",
+            "torghut_lot_id": "",
+            "target_value_gate": "",
+            "dedupe_key": "",
+            "required_output_receipt": "",
+            "launch_allowed": "no",
+            "max_runtime_seconds": "not-a-ttl",
+        },
+        runners={
+            "refresh_stale_market_context_domains": lambda repair: (
+                called.append(repair)
+                or {
+                    "execution_state": "executed",
+                    "command_exit_code": 0,
+                }
+            ),
+        },
+        now=NOW,
+    )
+
+    assert called == []
+    assert receipt["execution_state"] == "repair_lot_dispatch_ticket_required"
+    assert receipt["command_exit_code"] == 78
+    assert receipt["blocked_reasons"] == [
+        "repair_lot_dispatch_ticket_schema_mismatch",
+        "repair_lot_dispatch_ticket_id_missing",
+        "repair_lot_dispatch_ticket_not_allowed",
+        "repair_lot_dispatch_ticket_notional_missing",
+        "repair_lot_dispatch_ticket_dedupe_key_missing",
+        "repair_lot_dispatch_ticket_output_receipt_missing",
+        "repair_lot_dispatch_ticket_ttl_invalid",
+        "repair_lot_dispatch_ticket_value_gate_missing",
+        "repair_lot_dispatch_ticket_lot_missing",
+    ]
+    assert receipt["repair_lot_dispatch_ticket_ref"] == ""
+    assert receipt["repair_lot_dispatch_ticket_launch_allowed"] is False
 
 
 def test_nonzero_frontier_notional_blocks_repair_execution() -> None:

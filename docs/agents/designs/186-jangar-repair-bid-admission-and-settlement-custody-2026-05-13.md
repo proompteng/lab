@@ -242,6 +242,19 @@ Engineer milestone 2:
 - Add deployer validation output that ties Argo, runtime kit, Torghut `/readyz`, settlement ledger, and dispatch ticket
   refs together.
 
+### Implementation Note (2026-05-13, Torghut Dispatch Guard)
+
+Torghut milestone 2 now starts at the zero-notional repair executor boundary. Runner-backed repair actions that require
+Jangar admission fail closed unless the caller supplies a `jangar.repair-lot-dispatch-ticket.v1` body proving launch is
+allowed for the selected compacted lot, `max_notional=0`, a dedupe key, a target value gate, a required output receipt,
+and an explicit TTL through `max_runtime_seconds`.
+
+The `/trading/profit-freshness/zero-notional-repair` endpoint accepts that dispatch ticket as the POST body and passes it
+into `run_zero_notional_repair`. Missing, denied, mismatched, malformed, nonzero-notional, or wrong-value-gate tickets
+return `repair_lot_dispatch_ticket_required` before any local runner is invoked; matching tickets still preserve the
+existing zero-capital receipt invariants. This closes the raw-bid execution path while leaving non-admission repairs such
+as TCA recompute and drift replay unchanged.
+
 ## Validation Gates
 
 Local validation for Jangar PRs:
