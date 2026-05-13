@@ -56,7 +56,7 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain('Head branch: codex/issue-77-abc123')
     expect(prompt).toContain('Requirements:')
     expect(prompt).toContain(`Keep the progress comment anchored by ${PROGRESS_COMMENT_MARKER} current`)
-    expect(prompt).toContain('If total PR changes exceed 1000 lines')
+    expect(prompt).toContain('Do not request Codex review automatically')
     expect(prompt).toContain('permitted to merge the PR once CI is green')
     expect(prompt).toContain('Memory:')
     expect(prompt).toContain('Save a memory for every change made.')
