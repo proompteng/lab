@@ -275,6 +275,12 @@ Testing rules for the trading core:
   canaries. Missing or mismatched source-serving proof keeps the ledger in repair-only zero-notional mode; the Torghut
   release manifest updater now writes `TORGHUT_IMAGE_DIGEST` into live and sim Knative env so runtime payloads can
   report the promoted digest.
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/consumer-evidence` now expose the
+  May 13 doc 192 `torghut.freshness-carry-ledger.v1` ledger. It derives TA signal, TCA, empirical, market-context,
+  quant-evidence, and source-serving freshness dimensions from existing status inputs, emits bounded zero-notional
+  repair proof SLOs for non-current dimensions, and keeps `max_notional=0` whenever freshness is partial or
+  source-serving proof is not current. It is observe-mode evidence only; route warrants and live-submission gates remain
+  the capital authority.
 - The simple direct-submit lane is no longer an authority bypass in live mode. Before submitting to Alpaca it evaluates
   the same live-submission gate as the scheduler path and persists the gate payload in decision metadata when a
   submission is blocked. Paper-mode simple execution remains unchanged.

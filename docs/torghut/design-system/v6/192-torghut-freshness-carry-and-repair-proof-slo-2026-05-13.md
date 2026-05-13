@@ -260,6 +260,18 @@ Engineer milestone 1:
 - Expose the ledger on `/trading/consumer-evidence`, `/trading/status`, and `/readyz` in observe mode.
 - Add tests proving partial freshness keeps `max_notional=0` while admitting a bounded zero-notional repair SLO.
 
+Implementation status:
+
+- Phase 1 is implemented in `services/torghut/app/trading/freshness_carry.py` as a pure read-model reducer with no
+  database writes, broker actions, or scheduler dispatch.
+- Runtime surfaces now include `freshness_carry_ledger` on `/trading/consumer-evidence`, `/trading/status`,
+  `/trading/health`, and `/readyz`.
+- The first shipped dimensions are `ta_signals`, `tca`, `empirical`, `market_context`, `quant_evidence`, and
+  `source_serving`. Any non-current dimension keeps `capital_posture.max_notional=0` and emits bounded repair SLOs
+  with required output receipts.
+- Source-serving proof is a dispatch precondition for non-source freshness repairs; if source-serving proof is stale,
+  only the source-serving repair SLO is dispatchable.
+
 Engineer milestone 2:
 
 - Require zero-notional repair receipts to cite a freshness dimension and repair proof SLO when the repair target is
