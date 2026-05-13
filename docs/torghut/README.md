@@ -144,6 +144,10 @@ Start here:
   available.
 - Current implementation contract: doc 188 also exposes an observe-mode `route_evidence_clearinghouse_packet` across
   trading readiness surfaces before route claims can become accepted.
+- Current implementation contract: doc 190 adds `repair_bid_settlement_ledger` to status, health, readyz,
+  `/trading/revenue-repair`, and `/trading/consumer-evidence`. The ledger preserves raw clearinghouse reasons but
+  compacts them into bounded zero-notional repair lots with one required output receipt and at most three
+  Jangar-dispatchable lots per account/window.
 - Current implementation contract: doc 189 adds `clock_settlement_receipt` beside the evidence-clock arbiter on
   status, health, readyz, and `/trading/consumer-evidence`. The receipt compares direct ClickHouse TA freshness, Jangar
   scoped quant, TCA, empirical, promotion, and rollout witnesses against the published clocks, emits zero-notional
