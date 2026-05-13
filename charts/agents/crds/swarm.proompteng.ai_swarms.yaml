@@ -386,12 +386,30 @@ spec:
                       type: integer
                     blocked:
                       type: integer
+                    admissionBlocked:
+                      type: integer
+                    stageClearanceBlocked:
+                      type: integer
                     completed:
                       type: integer
                     invalidChannel:
                       type: integer
+                    rejected:
+                      type: integer
                     duplicates:
                       type: integer
+                    paused:
+                      type: boolean
+                    admission:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    stageClearance:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    pauseReason:
+                      type: string
+                    pauseMessage:
+                      type: string
                     error:
                       type: string
                 discoveries24h:
