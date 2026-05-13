@@ -505,15 +505,90 @@ export const createGatewayState = (): GatewayState => ({
   ruleMessages: [],
 })
 
+const normalizeConnector = (value: unknown): ConnectorKind => {
+  if (value === 'postgres') return 'sql'
+  return isConnectorKind(value) ? value : 'audit'
+}
+
+const normalizeRuleTarget = (value: unknown): RuleTarget => {
+  if (value === 'agentrun.secret') return 'secret'
+  if (value === 'agentrun.connector') return 'connector'
+  if (value === 'connector.action') return 'operation'
+  if (value === 'prompt') return 'intent'
+  if (
+    value === 'secret' ||
+    value === 'operation' ||
+    value === 'connector' ||
+    value === 'intent' ||
+    value === 'identity'
+  ) {
+    return value
+  }
+  return 'intent'
+}
+
+const normalizeEvent = (event: Partial<GatewayEvent>): GatewayEvent => ({
+  id: event.id ?? `evt-${hashPayload(event).slice(0, 8)}`,
+  timestamp: event.timestamp ?? now(),
+  taskId: event.taskId ?? event.runId ?? event.id ?? 'legacy',
+  runId: event.runId ?? event.taskId ?? event.id ?? 'legacy',
+  actorId: isActorId(event.actorId) ? event.actorId : 'greg',
+  actorEmail: event.actorEmail ?? findActor('greg').email,
+  actorRole: event.actorRole ?? findActor('greg').role,
+  connector: normalizeConnector(event.connector),
+  operation: event.operation ?? 'legacy.import',
+  target: event.target ?? 'legacy',
+  status: event.status ?? 'accepted',
+  severity: event.severity ?? 'info',
+  summary: event.summary ?? 'Imported legacy audit event.',
+  policy: event.policy ?? 'legacy-import',
+  requestHash: event.requestHash ?? hashPayload(event),
+  correlationId: event.correlationId ?? `${event.runId ?? event.id ?? 'legacy'}:import`,
+  durationMs: event.durationMs ?? 0,
+  evidence: event.evidence ?? {},
+})
+
+const normalizeRule = (rule: Partial<GatewayRule>): GatewayRule => ({
+  id: rule.id ?? `rule-${hashPayload(rule).slice(0, 8)}`,
+  name: rule.name ?? 'Imported rule',
+  mode: rule.mode === 'block' || rule.mode === 'approval' || rule.mode === 'audit' ? rule.mode : 'audit',
+  target: normalizeRuleTarget(rule.target),
+  pattern: rule.pattern ?? '.*',
+  enabled: rule.enabled ?? true,
+  source: rule.source === 'natural-language' ? 'natural-language' : 'system',
+  createdBy: isActorId(rule.createdBy) ? rule.createdBy : 'greg',
+  createdAt: rule.createdAt ?? now(),
+  summary: rule.summary ?? 'Imported legacy rule.',
+  translatedFrom: rule.translatedFrom,
+  translator: rule.translator,
+})
+
+const normalizeAgentRun = (run: Partial<ProtectedAgentRun>): ProtectedAgentRun => ({
+  id: run.id ?? `arun-${hashPayload(run).slice(0, 8)}`,
+  name: run.name ?? 'agentrun',
+  namespace: run.namespace ?? 'agents',
+  agent: run.agent ?? 'agent',
+  status:
+    run.status === 'blocked' || run.status === 'approval_required' || run.status === 'allowed' ? run.status : 'allowed',
+  requestedAt: run.requestedAt ?? now(),
+  riskScore: run.riskScore ?? 0,
+  requestedSecrets: run.requestedSecrets ?? [],
+  requestedConnectors: (run.requestedConnectors ?? []).map(normalizeConnector),
+  requestedTools: run.requestedTools ?? [],
+  summary: run.summary ?? 'Imported AgentRun evaluation.',
+  matchedRuleIds: run.matchedRuleIds ?? [],
+  manifest: run.manifest ?? '{}',
+})
+
 export const normalizeGatewayState = (value: Partial<GatewayState> | null | undefined): GatewayState => ({
   sequence: Number(value?.sequence ?? 0),
-  events: value?.events ?? [],
+  events: (value?.events ?? []).map(normalizeEvent),
   approvals: value?.approvals ?? [],
-  rules: value?.rules?.length ? value.rules : defaultRules(),
+  rules: value?.rules?.length ? value.rules.map(normalizeRule) : defaultRules(),
   tasks: value?.tasks ?? [],
   planSteps: value?.planSteps ?? [],
   connectorCalls: value?.connectorCalls ?? [],
-  agentRuns: value?.agentRuns ?? [],
+  agentRuns: (value?.agentRuns ?? []).map(normalizeAgentRun),
   ruleMessages: value?.ruleMessages ?? [],
 })
 
