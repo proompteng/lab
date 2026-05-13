@@ -676,7 +676,6 @@ def _evaluate_trading_health_payload(
     try:
         with SessionLocal() as session:
             tca_summary = _load_tca_summary(session, scheduler=scheduler)
-            options_catalog_freshness = _load_options_catalog_freshness_summary(session)
         _hypothesis_payload, hypothesis_summary, _dependency_quorum = (
             _build_hypothesis_runtime_payload(
                 scheduler,
@@ -713,10 +712,6 @@ def _evaluate_trading_health_payload(
             message=str(exc),
         )
         hypothesis_summary = {}
-        options_catalog_freshness = {
-            "status": "unavailable",
-            "reason_codes": ["options_catalog_freshness_summary_unavailable"],
-        }
 
     llm_status = scheduler.llm_status()
     dspy_runtime = (
@@ -2087,7 +2082,6 @@ def trading_status() -> dict[str, object]:
     with SessionLocal() as session:
         llm_evaluation = _load_llm_evaluation(session)
         tca_summary = _load_tca_summary(session, scheduler=scheduler)
-        options_catalog_freshness = _load_options_catalog_freshness_summary(session)
     market_context_status = scheduler.market_context_status()
     hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
         _build_hypothesis_runtime_payload(
