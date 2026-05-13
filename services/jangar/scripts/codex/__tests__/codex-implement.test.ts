@@ -1670,7 +1670,7 @@ exit 1
         [
           'Summary:',
           '- Decision: NO-GO for merge.',
-          '- Blocker: required Codex large-diff review gate did not post because connector usage-limit errors.',
+          '- Blocker: required operator release approval is explicitly held.',
           '- Evidence: PR #5412 is CLEAN/MERGEABLE and visible checks are passing.',
           '- No squash merge and no production rollout were performed.',
           '- Audit artifact: /workspace/.agentrun/swarm/torghut-quant-verify.md.',
