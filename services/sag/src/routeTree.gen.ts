@@ -15,10 +15,13 @@ import { Route as ConnectorsRouteImport } from './routes/connectors'
 import { Route as ApprovalsRouteImport } from './routes/approvals'
 import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiTasksRouteImport } from './routes/api/tasks'
 import { Route as ApiSnapshotRouteImport } from './routes/api/snapshot'
 import { Route as ApiRulesRouteImport } from './routes/api/rules'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as ApiWorkspaceClearRouteImport } from './routes/api/workspace/clear'
+import { Route as ApiInternalLegacyRouteImport } from './routes/api/internal/legacy'
+import { Route as ApiInternalGraphqlRouteImport } from './routes/api/internal/graphql'
 import { Route as ApiEventsExportRouteImport } from './routes/api/events/export'
 import { Route as ApiApprovalsApproveRouteImport } from './routes/api/approvals/approve'
 import { Route as ApiAgentsRunsRouteImport } from './routes/api/agents/runs'
@@ -53,6 +56,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiTasksRoute = ApiTasksRouteImport.update({
+  id: '/api/tasks',
+  path: '/api/tasks',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiSnapshotRoute = ApiSnapshotRouteImport.update({
   id: '/api/snapshot',
   path: '/api/snapshot',
@@ -71,6 +79,16 @@ const ApiHealthRoute = ApiHealthRouteImport.update({
 const ApiWorkspaceClearRoute = ApiWorkspaceClearRouteImport.update({
   id: '/api/workspace/clear',
   path: '/api/workspace/clear',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiInternalLegacyRoute = ApiInternalLegacyRouteImport.update({
+  id: '/api/internal/legacy',
+  path: '/api/internal/legacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiInternalGraphqlRoute = ApiInternalGraphqlRouteImport.update({
+  id: '/api/internal/graphql',
+  path: '/api/internal/graphql',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiEventsExportRoute = ApiEventsExportRouteImport.update({
@@ -99,9 +117,12 @@ export interface FileRoutesByFullPath {
   '/api/health': typeof ApiHealthRoute
   '/api/rules': typeof ApiRulesRoute
   '/api/snapshot': typeof ApiSnapshotRoute
+  '/api/tasks': typeof ApiTasksRoute
   '/api/agents/runs': typeof ApiAgentsRunsRoute
   '/api/approvals/approve': typeof ApiApprovalsApproveRoute
   '/api/events/export': typeof ApiEventsExportRoute
+  '/api/internal/graphql': typeof ApiInternalGraphqlRoute
+  '/api/internal/legacy': typeof ApiInternalLegacyRoute
   '/api/workspace/clear': typeof ApiWorkspaceClearRoute
 }
 export interface FileRoutesByTo {
@@ -114,9 +135,12 @@ export interface FileRoutesByTo {
   '/api/health': typeof ApiHealthRoute
   '/api/rules': typeof ApiRulesRoute
   '/api/snapshot': typeof ApiSnapshotRoute
+  '/api/tasks': typeof ApiTasksRoute
   '/api/agents/runs': typeof ApiAgentsRunsRoute
   '/api/approvals/approve': typeof ApiApprovalsApproveRoute
   '/api/events/export': typeof ApiEventsExportRoute
+  '/api/internal/graphql': typeof ApiInternalGraphqlRoute
+  '/api/internal/legacy': typeof ApiInternalLegacyRoute
   '/api/workspace/clear': typeof ApiWorkspaceClearRoute
 }
 export interface FileRoutesById {
@@ -130,9 +154,12 @@ export interface FileRoutesById {
   '/api/health': typeof ApiHealthRoute
   '/api/rules': typeof ApiRulesRoute
   '/api/snapshot': typeof ApiSnapshotRoute
+  '/api/tasks': typeof ApiTasksRoute
   '/api/agents/runs': typeof ApiAgentsRunsRoute
   '/api/approvals/approve': typeof ApiApprovalsApproveRoute
   '/api/events/export': typeof ApiEventsExportRoute
+  '/api/internal/graphql': typeof ApiInternalGraphqlRoute
+  '/api/internal/legacy': typeof ApiInternalLegacyRoute
   '/api/workspace/clear': typeof ApiWorkspaceClearRoute
 }
 export interface FileRouteTypes {
@@ -147,9 +174,12 @@ export interface FileRouteTypes {
     | '/api/health'
     | '/api/rules'
     | '/api/snapshot'
+    | '/api/tasks'
     | '/api/agents/runs'
     | '/api/approvals/approve'
     | '/api/events/export'
+    | '/api/internal/graphql'
+    | '/api/internal/legacy'
     | '/api/workspace/clear'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -162,9 +192,12 @@ export interface FileRouteTypes {
     | '/api/health'
     | '/api/rules'
     | '/api/snapshot'
+    | '/api/tasks'
     | '/api/agents/runs'
     | '/api/approvals/approve'
     | '/api/events/export'
+    | '/api/internal/graphql'
+    | '/api/internal/legacy'
     | '/api/workspace/clear'
   id:
     | '__root__'
@@ -177,9 +210,12 @@ export interface FileRouteTypes {
     | '/api/health'
     | '/api/rules'
     | '/api/snapshot'
+    | '/api/tasks'
     | '/api/agents/runs'
     | '/api/approvals/approve'
     | '/api/events/export'
+    | '/api/internal/graphql'
+    | '/api/internal/legacy'
     | '/api/workspace/clear'
   fileRoutesById: FileRoutesById
 }
@@ -193,9 +229,12 @@ export interface RootRouteChildren {
   ApiHealthRoute: typeof ApiHealthRoute
   ApiRulesRoute: typeof ApiRulesRoute
   ApiSnapshotRoute: typeof ApiSnapshotRoute
+  ApiTasksRoute: typeof ApiTasksRoute
   ApiAgentsRunsRoute: typeof ApiAgentsRunsRoute
   ApiApprovalsApproveRoute: typeof ApiApprovalsApproveRoute
   ApiEventsExportRoute: typeof ApiEventsExportRoute
+  ApiInternalGraphqlRoute: typeof ApiInternalGraphqlRoute
+  ApiInternalLegacyRoute: typeof ApiInternalLegacyRoute
   ApiWorkspaceClearRoute: typeof ApiWorkspaceClearRoute
 }
 
@@ -243,6 +282,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/tasks': {
+      id: '/api/tasks'
+      path: '/api/tasks'
+      fullPath: '/api/tasks'
+      preLoaderRoute: typeof ApiTasksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/snapshot': {
       id: '/api/snapshot'
       path: '/api/snapshot'
@@ -269,6 +315,20 @@ declare module '@tanstack/react-router' {
       path: '/api/workspace/clear'
       fullPath: '/api/workspace/clear'
       preLoaderRoute: typeof ApiWorkspaceClearRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/internal/legacy': {
+      id: '/api/internal/legacy'
+      path: '/api/internal/legacy'
+      fullPath: '/api/internal/legacy'
+      preLoaderRoute: typeof ApiInternalLegacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/internal/graphql': {
+      id: '/api/internal/graphql'
+      path: '/api/internal/graphql'
+      fullPath: '/api/internal/graphql'
+      preLoaderRoute: typeof ApiInternalGraphqlRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/events/export': {
@@ -305,9 +365,12 @@ const rootRouteChildren: RootRouteChildren = {
   ApiHealthRoute: ApiHealthRoute,
   ApiRulesRoute: ApiRulesRoute,
   ApiSnapshotRoute: ApiSnapshotRoute,
+  ApiTasksRoute: ApiTasksRoute,
   ApiAgentsRunsRoute: ApiAgentsRunsRoute,
   ApiApprovalsApproveRoute: ApiApprovalsApproveRoute,
   ApiEventsExportRoute: ApiEventsExportRoute,
+  ApiInternalGraphqlRoute: ApiInternalGraphqlRoute,
+  ApiInternalLegacyRoute: ApiInternalLegacyRoute,
   ApiWorkspaceClearRoute: ApiWorkspaceClearRoute,
 }
 export const routeTree = rootRouteImport

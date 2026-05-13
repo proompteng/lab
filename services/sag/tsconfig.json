@@ -10,7 +10,8 @@
     "strict": true,
     "paths": {
       "~/*": ["./src/*"],
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@proompteng/codex": ["../../packages/codex/src/index.ts"]
     }
   },
   "include": ["src/**/*"]

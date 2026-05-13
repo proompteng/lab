@@ -11,6 +11,7 @@ export const Route = createFileRoute('/api/health')({
           ok: true,
           service: 'secure-action-gateway',
           persistence: persistenceEnabled() ? 'postgres' : 'memory',
+          totalTasks: snapshot.stats.totalTasks,
           totalEvents: snapshot.stats.totalEvents,
           awaitingApproval: snapshot.stats.awaitingApproval,
           blockedAgentRuns: snapshot.stats.blockedAgentRuns,

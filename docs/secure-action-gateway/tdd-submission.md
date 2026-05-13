@@ -1,122 +1,114 @@
-# Secure Action Gateway TDD
+# SAG Technical Design
 
-## Architecture
+## Runtime Shape
 
-Secure Action Gateway runs as a standalone service in the `sag` namespace.
+SAG runs as one TanStack Start service in `services/sag`, deployed by Argo from `argocd/sag` to the `sag` namespace at `https://sag.proompteng.ai`.
 
-Components:
+Core components:
 
-- **Web/API service:** TanStack Start application in `services/sag`.
-- **State store:** CNPG Postgres cluster `sag-db`, storing a single structured SAG state document.
-- **Kubernetes reader:** service account `sag` with read access to `AgentRun` resources in the `agents` namespace.
-- **Policy engine:** deterministic server-side evaluator for AgentRun secrets, connectors, tools, and natural-language rules.
-- **Audit export:** JSONL endpoint at `/api/events/export`.
-- **GitOps package:** manifests under `argocd/sag`, exposed at `sag.proompteng.ai`.
+- Web/API service: task intake, UI, approval routes, audit export.
+- CNPG Postgres: normalized state and append-only audit events.
+- Policy engine: deterministic pre-action checks.
+- Codex app-server rule translator: natural-language policy text to deterministic rule JSON.
+- Kubernetes reader: read-only service account for live AgentRuns and Jobs.
+- Internal GraphQL endpoint: `/api/internal/graphql`, backed by persisted SAG records.
+- Legacy endpoint: `/api/internal/legacy`, a line-oriented feed parsed by the connector layer.
 
-The service is intentionally one deployable unit for the submission. There is no hidden worker and no static product fixture behind the UI.
+## Data Model
 
-## Firewall-Constrained Environment
+The backend persists first-class primitives instead of one JSON document:
 
-SAG is deployed inside the cluster where the protected agents run. It does not require inbound access to internal systems from the public internet. The external route exposes only the product UI/API; internal access is performed from the in-cluster service account and CNPG connection.
+- `sag_identities`
+- `sag_connectors`
+- `sag_policies`
+- `sag_tasks`
+- `sag_plan_steps`
+- `sag_connector_calls`
+- `sag_approvals`
+- `sag_agent_runs`
+- `sag_rule_messages`
+- `sag_audit_events`
 
-Current internal integrations:
+`sag_state` remains as a compatibility snapshot during migration, but the product reads and writes the normalized tables.
 
-- Kubernetes API for live AgentRun inspection.
-- CNPG for persisted rules, approvals, AgentRun decisions, and event history.
-- Policy engine in-process for deterministic evaluation.
-- JSONL audit export for review.
+## Workflow
 
-Production extension:
+1. User submits natural-language intent to `/api/tasks`.
+2. Server resolves identity from trusted headers/default environment, not from request body.
+3. Planner creates ordered steps: SQL policy context, Kubernetes REST AgentRun read, internal GraphQL audit graph, legacy feed parser, and optional guarded mutation step.
+4. Policy evaluates each step before execution.
+5. Block rules stop the task. Approval rules create `sag_approvals` records and leave the task waiting.
+6. Allowed steps execute connector code and write `sag_connector_calls`.
+7. Every received, planned, allowed, blocked, approved, and executed action writes `sag_audit_events`.
 
-- Move write-time enforcement into a validating admission webhook.
-- Add NetworkPolicy so the service can only reach Kubernetes, CNPG, and approved connectors.
-- Add signed connector definitions for internal databases and APIs.
+## Connector Contract
 
-## Auth And Security Model
+Each connector has an explicit operation, target, trust boundary, evidence payload, request hash, duration, and audit event.
 
-Current submission model:
+Implemented connectors:
 
-- `greg`: security operator with `audit:read`, `rule:create`, `agentrun:evaluate`, and `approval:approve`.
-- `ops`: operator with `audit:read` and `agentrun:evaluate`.
-- `audit`: read-only audit role.
+- SQL: reads live CNPG table counts for policy/audit context.
+- REST: calls the Kubernetes API through the in-cluster service account to read live AgentRuns.
+- GraphQL: serves and queries a real internal graph endpoint over persisted SAG tasks/events/calls.
+- Legacy: parses a pipe-delimited status feed sourced from live AgentRun metadata.
+- Kubernetes: evaluates AgentRun runtime authority.
+- Policy: evaluates rules and approvals.
+- Audit: writes and exports JSONL.
 
-The approval API checks permissions before changing approval state. A non-approver denial is recorded as an audit event.
+## Auth And Security
 
-Production model:
+Roles:
 
-- Map OIDC/SAML/LDAP groups into SAG roles.
-- Enforce role checks on every route.
-- Store approval identity from the authenticated session rather than request body.
-- Require short-lived connector credentials from the customer's secret manager.
+- `greg`: operator and approver.
+- `ops`: operator and approver.
+- `audit`: read-only.
 
-## Policy Model
+Production identity integration maps OIDC/SAML/LDAP headers to these roles. The current service already enforces permissions server-side and ignores caller-supplied actor bodies for task, rule, and approval routes.
 
-Rules have:
+Codex app-server auth is mounted from `codex-auth` in namespace `sag` through `argocd/sag/codex-auth-sealedsecret.yaml`. The container sets:
 
-- `mode`: `block`, `approval`, or `audit`.
-- `target`: AgentRun secret, AgentRun connector, connector action, or prompt.
-- `pattern`: deterministic regex compiled server-side.
-- `source`: system or natural-language.
+- `CODEX_HOME=/home/bun/.codex`
+- `CODEX_AUTH=/home/bun/.codex/auth.json`
+- `SAG_CODEX_BINARY=codex`
 
-Default rules:
+## Audit And Redaction
 
-- Block sensitive secret requests matching production/auth/token/password-style names.
-- Require approval for mutating operations such as apply, update, delete, execute, mutate, or merge.
-
-Natural-language rule creation converts operator intent into one of these deterministic rule shapes. The model is not trusted as the enforcement engine; it only helps create inspectable rules.
-
-## Connector Strategy
-
-Current connectors are the minimum product spine:
-
-- `kubernetes`: reads live AgentRuns.
-- `postgres`: persists SAG state in CNPG.
-- `policy`: translates and evaluates rules.
-- `audit`: exports redacted events.
-
-Future internal-system connectors should follow the same contract:
-
-- explicit operation names,
-- least-privilege credentials,
-- typed request/response schema,
-- redaction before persistence,
-- rule evaluation before write access,
-- and event emission for every call.
-
-## Audit Trail
-
-Each event stores:
+SAG redacts secret-like keys and values before storing evidence. Audit records include:
 
 - timestamp,
-- actor id/email/role,
+- identity,
 - connector,
 - operation,
 - target,
 - status,
-- matched policy,
+- policy,
 - request hash,
 - correlation id,
 - duration,
-- and redacted evidence.
+- redacted evidence.
 
-Sensitive secret names are hashed as `secret:<hash>`. Raw secret names are not stored in manifests, API responses, or JSONL export.
+`/api/events/export` returns JSONL for panel review and compliance evidence.
+
+## Isolation Path
+
+Today SAG runs as a hardened non-root Kubernetes deployment with runtime default seccomp and read-only scoped service account permissions. For higher-risk customer deployments, the next isolation layer is a Kubernetes `RuntimeClass` backed by gVisor/runsc. Kubernetes uses RuntimeClass to select a runtime per Pod, and gVisor places an application kernel between the workload and host kernel.
 
 ## Validation
 
-Local:
+Local gates:
 
-- `bun run --filter @proompteng/sag tsc`
-- `bun run --filter @proompteng/sag test`
-- `bun run --filter @proompteng/sag lint`
-- `bun run --filter @proompteng/sag lint:oxlint`
-- `bun run --filter @proompteng/sag build`
-- `bun run lint:argocd`
+```sh
+bun run --filter @proompteng/sag test
+bun run --filter @proompteng/sag tsc
+bun run --filter @proompteng/sag build
+```
 
-Live:
+Live gates:
 
-- Deployment image: `registry.ide-newton.ts.net/lab/sag:sag-20260513010817`.
-- Deployment is ready in namespace `sag`.
-- Health endpoint reports Postgres persistence.
-- Live AgentRun evaluation blocks sensitive secret requests.
-- Mutating action approval flow denies `ops` and allows `greg`.
-- Root page and JSONL export contain no raw sensitive secret names.
+```sh
+curl -fsS https://sag.proompteng.ai/api/health
+curl -fsS -X POST https://sag.proompteng.ai/api/tasks \
+  -H 'content-type: application/json' \
+  --data '{"text":"Inspect live agent runs, read SQL policy state, query audit graph, and parse the legacy feed"}'
+curl -fsS https://sag.proompteng.ai/api/events/export
+```

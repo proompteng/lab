@@ -4,6 +4,7 @@ namespace: sag
 resources:
   - serviceaccount.yaml
   - rbac.yaml
+  - codex-auth-sealedsecret.yaml
   - postgres-cluster.yaml
   - deployment.yaml
   - service.yaml
@@ -11,4 +12,4 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/sag
     newName: registry.ide-newton.ts.net/lab/sag
-    newTag: "sag-20260513085024"
+    newTag: "sag-20260513092734"

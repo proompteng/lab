@@ -26,7 +26,7 @@ function ApprovalsRoute() {
   })
   const snapshot = snapshotQuery.data
   const mutation = useMutation({
-    mutationFn: (approvalId: string) => approveRun('greg', approvalId),
+    mutationFn: (approvalId: string) => approveRun(approvalId),
     onSuccess: (result) => queryClient.setQueryData(['sag-snapshot'], result.snapshot),
   })
 
