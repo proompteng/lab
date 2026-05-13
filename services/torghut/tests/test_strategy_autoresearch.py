@@ -195,6 +195,8 @@ class TestStrategyAutoresearch(TestCase):
                         'max_worst_day_loss': '450',
                         'max_drawdown': '1000',
                         'min_regime_slice_pass_rate': '0.40',
+                        'max_gross_exposure_pct_equity': '1.25',
+                        'min_cash': '0',
                     },
                     'runtime_closure_policy': {
                         'enabled': False,
@@ -258,6 +260,8 @@ class TestStrategyAutoresearch(TestCase):
             program = load_strategy_autoresearch_program(program_path, family_dir=family_dir)
             self.assertEqual(program.program_id, 'daily-profit')
             self.assertEqual(program.objective.target_net_pnl_per_day, Decimal('500'))
+            self.assertEqual(program.objective.max_gross_exposure_pct_equity, Decimal('1.25'))
+            self.assertEqual(program.objective.min_cash, Decimal('0'))
             self.assertEqual(program.families[0].family_template.family_id, 'breakout_reclaim_v2')
             self.assertEqual(program.families[0].strategy_override_mutations['normalization_regime'].mode, 'allowed_normalizations')
 
@@ -271,6 +275,8 @@ class TestStrategyAutoresearch(TestCase):
             self.assertEqual(updated['constraints']['holdout_target_net_per_day'], '500')
             self.assertEqual(updated['consistency_constraints']['min_daily_net_pnl'], '0')
             self.assertEqual(updated['consistency_constraints']['max_best_day_share_of_total_pnl'], '0.35')
+            self.assertEqual(updated['consistency_constraints']['max_gross_exposure_pct_equity'], '1.25')
+            self.assertEqual(updated['consistency_constraints']['min_cash'], '0')
             self.assertEqual(updated['consistency_constraints']['min_active_days'], 8)
 
     def test_checked_in_300_daily_profit_program_targets_daily_net(self) -> None:
@@ -298,6 +304,20 @@ class TestStrategyAutoresearch(TestCase):
                 for source in program.research_sources
             )
         )
+
+    def test_checked_in_500_daily_profit_program_enforces_cash_capital_realism(self) -> None:
+        program_path = Path(
+            'config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml'
+        )
+
+        program = load_strategy_autoresearch_program(
+            program_path,
+            family_dir=Path('config/trading/families'),
+        )
+
+        self.assertEqual(program.objective.target_net_pnl_per_day, Decimal('500'))
+        self.assertEqual(program.objective.max_gross_exposure_pct_equity, Decimal('1.0'))
+        self.assertEqual(program.objective.min_cash, Decimal('0'))
 
     def test_load_program_rejects_non_mapping_schema_and_missing_families(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -596,6 +616,8 @@ class TestStrategyAutoresearch(TestCase):
             require_every_day_active=False,
             min_regime_slice_pass_rate=Decimal('0.40'),
             stop_when_objective_met=False,
+            max_gross_exposure_pct_equity=Decimal('1.50'),
+            min_cash=Decimal('0'),
         )
         candidate = {
             'hard_vetoes': [],
@@ -608,10 +630,18 @@ class TestStrategyAutoresearch(TestCase):
                 'worst_day_loss': '300',
                 'max_drawdown': '900',
                 'regime_slice_pass_rate': '0.45',
+                'max_gross_exposure_pct_equity': '1.25',
+                'min_cash': '2500',
             },
             'full_window': {'trading_day_count': 9, 'active_days': 7},
         }
         self.assertTrue(candidate_meets_objective(candidate, objective=objective))
+        over_levered = copy.deepcopy(candidate)
+        over_levered['objective_scorecard']['max_gross_exposure_pct_equity'] = '1.51'
+        self.assertFalse(candidate_meets_objective(over_levered, objective=objective))
+        negative_cash = copy.deepcopy(candidate)
+        negative_cash['objective_scorecard']['min_cash'] = '-0.01'
+        self.assertFalse(candidate_meets_objective(negative_cash, objective=objective))
         vetoed = dict(candidate)
         vetoed['hard_vetoes'] = ['best_day_share_above_max']
         self.assertFalse(candidate_meets_objective(vetoed, objective=objective))

@@ -77,6 +77,8 @@ class FullWindowConsistencyPolicy:
     min_regime_slice_pass_rate: Decimal = Decimal('0')
     max_symbol_concentration_share: Decimal = Decimal('1')
     max_entry_family_contribution_share: Decimal = Decimal('1')
+    max_gross_exposure_pct_equity: Decimal = Decimal('999999999')
+    min_cash: Decimal = Decimal('-999999999')
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -95,6 +97,8 @@ class FullWindowConsistencyPolicy:
             'min_regime_slice_pass_rate': str(self.min_regime_slice_pass_rate),
             'max_symbol_concentration_share': str(self.max_symbol_concentration_share),
             'max_entry_family_contribution_share': str(self.max_entry_family_contribution_share),
+            'max_gross_exposure_pct_equity': str(self.max_gross_exposure_pct_equity),
+            'min_cash': str(self.min_cash),
         }
 
 
@@ -285,6 +289,21 @@ def _objective_veto_policy(
         required_min_regime_slice_pass_rate=max(
             consistency_policy.min_regime_slice_pass_rate,
             Decimal(str(template_defaults.get('required_min_regime_slice_pass_rate', '0'))),
+        ),
+        required_max_gross_exposure_pct_equity=min(
+            consistency_policy.max_gross_exposure_pct_equity,
+            Decimal(
+                str(
+                    template_defaults.get(
+                        'required_max_gross_exposure_pct_equity',
+                        str(consistency_policy.max_gross_exposure_pct_equity),
+                    )
+                )
+            ),
+        ),
+        required_min_cash=max(
+            consistency_policy.min_cash,
+            Decimal(str(template_defaults.get('required_min_cash', str(consistency_policy.min_cash)))),
         ),
     )
 
@@ -676,6 +695,44 @@ def _daily_filled_notional(payload: Mapping[str, Any]) -> dict[str, Decimal]:
     return filled_notional
 
 
+def _daily_decimal_metric(payload: Mapping[str, Any], key: str) -> dict[str, Decimal]:
+    daily_payload = cast(Mapping[str, Any], payload.get('daily') or {})
+    values: dict[str, Decimal] = {}
+    for day, value in daily_payload.items():
+        if not isinstance(value, Mapping):
+            continue
+        raw_value = cast(Mapping[str, Any], value).get(key)
+        if raw_value is None:
+            continue
+        values[str(day)] = Decimal(str(raw_value))
+    return values
+
+
+def _daily_int_metric(payload: Mapping[str, Any], key: str) -> dict[str, int]:
+    daily_payload = cast(Mapping[str, Any], payload.get('daily') or {})
+    values: dict[str, int] = {}
+    for day, value in daily_payload.items():
+        if not isinstance(value, Mapping):
+            continue
+        raw_value = cast(Mapping[str, Any], value).get(key)
+        if raw_value is None:
+            continue
+        values[str(day)] = int(raw_value)
+    return values
+
+
+def _decimal_payload_metric(
+    payload: Mapping[str, Any],
+    key: str,
+    *,
+    default: Decimal,
+) -> Decimal:
+    raw_value = payload.get(key)
+    if raw_value is None:
+        return default
+    return Decimal(str(raw_value))
+
+
 def _max_best_day_share_of_total_pnl(
     *,
     daily_net: Mapping[str, Decimal],
@@ -696,6 +753,15 @@ def _consistency_penalty(
 ) -> tuple[Decimal, dict[str, Any]]:
     summary = summarize_replay_profitability(full_window_payload)
     daily_filled_notional = _daily_filled_notional(full_window_payload)
+    daily_gross_exposure_pct_equity = _daily_decimal_metric(
+        full_window_payload,
+        'max_gross_exposure_pct_equity',
+    )
+    daily_min_cash = _daily_decimal_metric(full_window_payload, 'min_cash')
+    daily_negative_cash_observations = _daily_int_metric(
+        full_window_payload,
+        'negative_cash_observation_count',
+    )
     negative_days = sum(1 for value in summary.daily_net.values() if value < 0)
     positive_days = sum(1 for value in summary.daily_net.values() if value > 0)
     drawdown = _max_drawdown_from_daily_net(summary.daily_net)
@@ -725,6 +791,28 @@ def _consistency_penalty(
     )
     if policy.min_daily_net_pnl > 0 and len(summary.daily_net) < summary.trading_day_count:
         daily_net_below_min_count += summary.trading_day_count - len(summary.daily_net)
+    max_gross_exposure_pct_equity = max(
+        (
+            _decimal_payload_metric(
+                full_window_payload,
+                'max_gross_exposure_pct_equity',
+                default=Decimal('0'),
+            ),
+            *daily_gross_exposure_pct_equity.values(),
+        ),
+        default=Decimal('0'),
+    )
+    min_cash = min(
+        (
+            _decimal_payload_metric(full_window_payload, 'min_cash', default=Decimal('0')),
+            *daily_min_cash.values(),
+        ),
+        default=Decimal('0'),
+    )
+    negative_cash_observation_count = max(
+        int(full_window_payload.get('negative_cash_observation_count') or 0),
+        sum(daily_negative_cash_observations.values()),
+    )
     penalties = Decimal('0')
 
     if summary.net_per_day < policy.target_net_per_day:
@@ -761,6 +849,12 @@ def _consistency_penalty(
         penalties += (
             policy.min_avg_filled_notional_per_active_day - avg_filled_notional_per_active_day
         ) / Decimal('1000')
+    if max_gross_exposure_pct_equity > policy.max_gross_exposure_pct_equity:
+        penalties += (
+            max_gross_exposure_pct_equity - policy.max_gross_exposure_pct_equity
+        ) * Decimal('1000')
+    if min_cash < policy.min_cash:
+        penalties += policy.min_cash - min_cash
 
     return (
         penalties,
@@ -783,8 +877,19 @@ def _consistency_penalty(
             'avg_filled_notional_per_day': str(avg_filled_notional_per_day),
             'avg_filled_notional_per_active_day': str(avg_filled_notional_per_active_day),
             'best_day_share_of_total_pnl': str(best_day_share_of_total_pnl),
+            'max_gross_exposure_pct_equity': str(max_gross_exposure_pct_equity),
+            'max_gross_exposure_pct_equity_required': str(policy.max_gross_exposure_pct_equity),
+            'min_cash': str(min_cash),
+            'min_cash_required': str(policy.min_cash),
+            'negative_cash_observation_count': negative_cash_observation_count,
             'daily_net': {day: str(value) for day, value in summary.daily_net.items()},
             'daily_filled_notional': {day: str(value) for day, value in daily_filled_notional.items()},
+            'daily_max_gross_exposure_pct_equity': {
+                day: str(value)
+                for day, value in daily_gross_exposure_pct_equity.items()
+            },
+            'daily_min_cash': {day: str(value) for day, value in daily_min_cash.items()},
+            'daily_negative_cash_observation_count': daily_negative_cash_observations,
         },
     )
 
@@ -1096,6 +1201,13 @@ def _rank_scored_candidates(scored: list[dict[str, Any]]) -> list[dict[str, Any]
             entry_family_contribution_share=Decimal(
                 str(item['objective_scorecard']['entry_family_contribution_share'])
             ),
+            max_gross_exposure_pct_equity=Decimal(
+                str(item['objective_scorecard'].get('max_gross_exposure_pct_equity', '0'))
+            ),
+            min_cash=Decimal(str(item['objective_scorecard'].get('min_cash', '0'))),
+            negative_cash_observation_count=int(
+                item['objective_scorecard'].get('negative_cash_observation_count') or 0
+            ),
         )
         for item in scored
     }
@@ -1294,6 +1406,10 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         min_regime_slice_pass_rate=Decimal(str(consistency_constraints.get('min_regime_slice_pass_rate', '0'))),
         max_symbol_concentration_share=Decimal(str(consistency_constraints.get('max_symbol_concentration_share', '1'))),
         max_entry_family_contribution_share=Decimal(str(consistency_constraints.get('max_entry_family_contribution_share', '1'))),
+        max_gross_exposure_pct_equity=Decimal(
+            str(consistency_constraints.get('max_gross_exposure_pct_equity', '999999999'))
+        ),
+        min_cash=Decimal(str(consistency_constraints.get('min_cash', '-999999999'))),
     )
     max_train_screen_worst_day_loss = Decimal(
         str(
@@ -1579,6 +1695,13 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     regime_slice_pass_rate=regime_slice_pass_rate(decomposition),
                     symbol_concentration_share=max_symbol_concentration_share(decomposition),
                     entry_family_contribution_share=max_family_contribution_share(decomposition),
+                    max_gross_exposure_pct_equity=Decimal(
+                        str(full_window_summary.get('max_gross_exposure_pct_equity', '0'))
+                    ),
+                    min_cash=Decimal(str(full_window_summary.get('min_cash', '0'))),
+                    negative_cash_observation_count=int(
+                        full_window_summary.get('negative_cash_observation_count') or 0
+                    ),
                 )
                 hard_vetoes = list(
                     evaluate_vetoes(

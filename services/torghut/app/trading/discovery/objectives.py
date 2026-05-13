@@ -15,6 +15,8 @@ class ObjectiveVetoPolicy:
     required_max_worst_day_loss: Decimal = Decimal('999999999')
     required_max_drawdown: Decimal = Decimal('999999999')
     required_min_regime_slice_pass_rate: Decimal = Decimal('0')
+    required_max_gross_exposure_pct_equity: Decimal = Decimal('999999999')
+    required_min_cash: Decimal = Decimal('-999999999')
 
     def to_payload(self) -> dict[str, str]:
         return {
@@ -24,6 +26,8 @@ class ObjectiveVetoPolicy:
             'required_max_worst_day_loss': str(self.required_max_worst_day_loss),
             'required_max_drawdown': str(self.required_max_drawdown),
             'required_min_regime_slice_pass_rate': str(self.required_min_regime_slice_pass_rate),
+            'required_max_gross_exposure_pct_equity': str(self.required_max_gross_exposure_pct_equity),
+            'required_min_cash': str(self.required_min_cash),
         }
 
 
@@ -44,6 +48,9 @@ class CandidateObjectiveScorecard:
     regime_slice_pass_rate: Decimal
     symbol_concentration_share: Decimal
     entry_family_contribution_share: Decimal
+    max_gross_exposure_pct_equity: Decimal = Decimal('0')
+    min_cash: Decimal = Decimal('0')
+    negative_cash_observation_count: int = 0
     veto_reasons: tuple[str, ...] = ()
     pareto_tier: int | None = None
     tie_breaker_score: Decimal | None = None
@@ -79,6 +86,9 @@ class CandidateObjectiveScorecard:
             'regime_slice_pass_rate': str(self.regime_slice_pass_rate),
             'symbol_concentration_share': str(self.symbol_concentration_share),
             'entry_family_contribution_share': str(self.entry_family_contribution_share),
+            'max_gross_exposure_pct_equity': str(self.max_gross_exposure_pct_equity),
+            'min_cash': str(self.min_cash),
+            'negative_cash_observation_count': self.negative_cash_observation_count,
             'veto_reasons': list(self.veto_reasons),
             'pareto_tier': self.pareto_tier,
             'tie_breaker_score': str(self.tie_breaker_score) if self.tie_breaker_score is not None else None,
@@ -103,6 +113,9 @@ def build_scorecard(
     regime_slice_pass_rate: Decimal,
     symbol_concentration_share: Decimal,
     entry_family_contribution_share: Decimal,
+    max_gross_exposure_pct_equity: Decimal = Decimal('0'),
+    min_cash: Decimal = Decimal('0'),
+    negative_cash_observation_count: int = 0,
 ) -> CandidateObjectiveScorecard:
     day_count = max(trading_day_count, 1)
     return CandidateObjectiveScorecard(
@@ -121,6 +134,9 @@ def build_scorecard(
         regime_slice_pass_rate=regime_slice_pass_rate,
         symbol_concentration_share=symbol_concentration_share,
         entry_family_contribution_share=entry_family_contribution_share,
+        max_gross_exposure_pct_equity=max_gross_exposure_pct_equity,
+        min_cash=min_cash,
+        negative_cash_observation_count=negative_cash_observation_count,
     )
 
 
@@ -143,6 +159,10 @@ def evaluate_vetoes(
         reasons.append('max_drawdown_above_max')
     if scorecard.regime_slice_pass_rate < policy.required_min_regime_slice_pass_rate:
         reasons.append('regime_slice_pass_rate_below_min')
+    if scorecard.max_gross_exposure_pct_equity > policy.required_max_gross_exposure_pct_equity:
+        reasons.append('gross_exposure_pct_equity_above_max')
+    if scorecard.min_cash < policy.required_min_cash:
+        reasons.append('min_cash_below_min')
     if not is_fresh:
         reasons.append('stale_tape')
     return tuple(reasons)
@@ -158,6 +178,7 @@ def _maximize_metrics(scorecard: CandidateObjectiveScorecard) -> tuple[Decimal, 
         scorecard.rolling_3d_lower_bound,
         scorecard.rolling_5d_lower_bound,
         scorecard.regime_slice_pass_rate,
+        scorecard.min_cash,
     )
 
 
@@ -169,6 +190,8 @@ def _minimize_metrics(scorecard: CandidateObjectiveScorecard) -> tuple[Decimal, 
         Decimal(scorecard.negative_day_count),
         scorecard.symbol_concentration_share,
         scorecard.entry_family_contribution_share,
+        scorecard.max_gross_exposure_pct_equity,
+        Decimal(scorecard.negative_cash_observation_count),
     )
 
 
@@ -199,12 +222,15 @@ def tie_breaker(scorecard: CandidateObjectiveScorecard) -> Decimal:
         + (scorecard.regime_slice_pass_rate * Decimal('100'))
         + scorecard.rolling_3d_lower_bound
         + scorecard.rolling_5d_lower_bound
+        + (scorecard.min_cash / Decimal('10000'))
         - (scorecard.worst_day_loss * Decimal('0.5'))
         - (scorecard.max_drawdown * Decimal('0.1'))
         - (scorecard.best_day_share * Decimal('500'))
         - (scorecard.symbol_concentration_share * Decimal('100'))
         - (scorecard.entry_family_contribution_share * Decimal('25'))
+        - (scorecard.max_gross_exposure_pct_equity * Decimal('50'))
         - (Decimal(scorecard.negative_day_count) * Decimal('20'))
+        - (Decimal(scorecard.negative_cash_observation_count) * Decimal('5'))
     )
 
 

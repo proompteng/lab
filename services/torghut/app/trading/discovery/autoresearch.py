@@ -120,6 +120,8 @@ class StrategyObjective:
     min_regime_slice_pass_rate: Decimal
     stop_when_objective_met: bool
     min_daily_net_pnl: Decimal = Decimal('0')
+    max_gross_exposure_pct_equity: Decimal = Decimal('999999999')
+    min_cash: Decimal = Decimal('-999999999')
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -134,6 +136,8 @@ class StrategyObjective:
             'require_every_day_active': self.require_every_day_active,
             'min_regime_slice_pass_rate': str(self.min_regime_slice_pass_rate),
             'stop_when_objective_met': self.stop_when_objective_met,
+            'max_gross_exposure_pct_equity': str(self.max_gross_exposure_pct_equity),
+            'min_cash': str(self.min_cash),
         }
 
 
@@ -459,6 +463,14 @@ def load_strategy_autoresearch_program(
             default='0.35',
         ),
         stop_when_objective_met=bool(objective_payload.get('stop_when_objective_met', False)),
+        max_gross_exposure_pct_equity=_coerce_decimal(
+            objective_payload.get('max_gross_exposure_pct_equity'),
+            default='999999999',
+        ),
+        min_cash=_coerce_decimal(
+            objective_payload.get('min_cash'),
+            default='-999999999',
+        ),
     )
     snapshot_policy_payload = _mapping(payload.get('snapshot_policy'))
     snapshot_policy = SnapshotPolicy(
@@ -648,6 +660,8 @@ def apply_program_objective(
         )
     consistency['require_every_day_active'] = bool(objective.require_every_day_active)
     consistency['min_regime_slice_pass_rate'] = str(objective.min_regime_slice_pass_rate)
+    consistency['max_gross_exposure_pct_equity'] = str(objective.max_gross_exposure_pct_equity)
+    consistency['min_cash'] = str(objective.min_cash)
     payload['constraints'] = constraints
     payload['consistency_constraints'] = consistency
     return payload
@@ -801,6 +815,11 @@ def candidate_meets_objective(
     worst_day_loss = _coerce_decimal(scorecard.get('worst_day_loss'), default='999999999')
     max_drawdown = _coerce_decimal(scorecard.get('max_drawdown'), default='999999999')
     regime_slice_pass_rate = _coerce_decimal(scorecard.get('regime_slice_pass_rate'), default='0')
+    max_gross_exposure_pct_equity = _coerce_decimal(
+        scorecard.get('max_gross_exposure_pct_equity') or full_window.get('max_gross_exposure_pct_equity'),
+        default='0',
+    )
+    min_cash = _coerce_decimal(scorecard.get('min_cash') or full_window.get('min_cash'), default='0')
     trading_day_count = int(full_window.get('trading_day_count') or 0)
     active_days = int(full_window.get('active_days') or 0)
     if objective.require_every_day_active and trading_day_count > 0 and active_days != trading_day_count:
@@ -826,6 +845,8 @@ def candidate_meets_objective(
             worst_day_loss <= objective.max_worst_day_loss,
             max_drawdown <= objective.max_drawdown,
             regime_slice_pass_rate >= objective.min_regime_slice_pass_rate,
+            max_gross_exposure_pct_equity <= objective.max_gross_exposure_pct_equity,
+            min_cash >= objective.min_cash,
         )
     )
 

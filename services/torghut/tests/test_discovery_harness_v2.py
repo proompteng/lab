@@ -428,6 +428,9 @@ class TestDiscoveryHarnessV2(TestCase):
             regime_slice_pass_rate=Decimal('0.10'),
             symbol_concentration_share=Decimal('0.80'),
             entry_family_contribution_share=Decimal('0.90'),
+            max_gross_exposure_pct_equity=Decimal('2.20'),
+            min_cash=Decimal('-2500'),
+            negative_cash_observation_count=4,
         )
         self.assertTrue(dominates(dominant, dominated))
         self.assertFalse(dominates(dominated, dominant))
@@ -442,11 +445,15 @@ class TestDiscoveryHarnessV2(TestCase):
                 required_max_worst_day_loss=Decimal('200'),
                 required_max_drawdown=Decimal('400'),
                 required_min_regime_slice_pass_rate=Decimal('0.40'),
+                required_max_gross_exposure_pct_equity=Decimal('1.50'),
+                required_min_cash=Decimal('0'),
             ),
             is_fresh=False,
         )
         self.assertIn('worst_day_loss_above_max', vetoes)
         self.assertIn('regime_slice_pass_rate_below_min', vetoes)
+        self.assertIn('gross_exposure_pct_equity_above_max', vetoes)
+        self.assertIn('min_cash_below_min', vetoes)
         self.assertIn('stale_tape', vetoes)
 
         ranked = rank_scorecards(
