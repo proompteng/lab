@@ -327,6 +327,7 @@ describe('scheduled AgentRun templates', () => {
     const text = String(objectAt(objectAt(deployerSpec, 'spec'), 'text') ?? '')
 
     expect(text).toContain('Select at most one unblock-first/high-impact PR')
+    expect(text).toContain('Ignore or close superseded release/promotion PRs')
     expect(text).toContain('Do not use GitHub comments for routine status')
     expect(text).toContain('Never request Codex review automatically')
     expect(text).toContain('/trading/revenue-repair')
@@ -343,6 +344,7 @@ describe('scheduled AgentRun templates', () => {
     const text = String(objectAt(objectAt(implementerSpec, 'spec'), 'text') ?? '')
 
     expect(text).toContain('Read `${swarmBusinessEvidenceUrl}` when provided')
+    expect(text).toContain('If the remote `${head}` branch is absent')
     expect(text).toContain('top actionable `repair_queue` item')
     expect(text).toContain('do not enable live submission while `business_state=repair_only`')
   })
