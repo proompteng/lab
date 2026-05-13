@@ -1593,6 +1593,51 @@ export type StageCreditLedger = {
   }
 }
 
+export type ReadyTruthArbiterMode = 'observe' | 'shadow' | 'hold' | 'enforce'
+
+export type ReadyTruthServingReadiness = 'ok' | 'degraded' | 'down'
+
+export type ReadyTruthMaterialReadiness = 'allow' | 'repair_only' | 'hold' | 'block'
+
+export type ReadyTruthActionDecision = ReadyTruthMaterialReadiness
+
+export type ReadyTruthGateReceipt = {
+  receipt_id: string
+  action_class: ActionSloBudgetActionClass
+  decision: ReadyTruthActionDecision
+  required_evidence_refs: string[]
+  reason_codes: string[]
+}
+
+export type ReadyTruthArbiter = {
+  schema_version: 'jangar.ready-truth-arbiter.v1'
+  mode: ReadyTruthArbiterMode
+  verdict_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  governing_design_refs: string[]
+  serving_readiness: ReadyTruthServingReadiness
+  material_readiness: ReadyTruthMaterialReadiness
+  argo_revision: string | null
+  argo_health: ControlPlaneRolloutHealth['status']
+  workload_rollout_ref: string
+  controller_witness_ref: string
+  runtime_adapter_refs: string[]
+  stage_credit_ledger_ref: string | null
+  source_serving_verdict_ref: string | null
+  torghut_repair_receipt_ref: string | null
+  retained_failure_debt_refs: string[]
+  ready_status_truth_reasons: string[]
+  allowed_action_classes: ActionSloBudgetActionClass[]
+  repair_only_action_classes: ActionSloBudgetActionClass[]
+  held_action_classes: ActionSloBudgetActionClass[]
+  blocked_action_classes: ActionSloBudgetActionClass[]
+  merge_gate_receipt: ReadyTruthGateReceipt
+  deployer_receipt: ReadyTruthGateReceipt
+  rollback_target: string
+}
+
 export type DeploymentRolloutStatus = {
   name: string
   namespace: string
@@ -1709,6 +1754,7 @@ export type ControlPlaneStatus = {
   action_custody_receipts: ActionCustodyReceipt[]
   stage_clearance_packets: StageClearancePacket[]
   stage_credit_ledger: StageCreditLedger | null
+  ready_truth_arbiter: ReadyTruthArbiter
   ready_action_exchange: ReadyActionExchange
   repair_bid_admission: RepairBidAdmissionState
   repair_warrant_exchange: RepairWarrantExchange

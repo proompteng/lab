@@ -35,6 +35,7 @@ import {
 } from '~/server/control-plane-failure-domain-leases'
 import { buildControlPlaneLeaderElectionStatus } from '~/server/control-plane-leader-election-status'
 import { buildNegativeEvidenceRouterStatus } from '~/server/control-plane-negative-evidence-router'
+import { buildReadyTruthArbiter } from '~/server/control-plane-ready-truth-arbiter'
 import { buildDefaultRepairBidAdmissionState } from '~/server/control-plane-repair-bid-admission'
 import {
   buildRolloutHealth,
@@ -713,6 +714,20 @@ export const buildControlPlaneStatus = async (
     rolloutHealth,
     torghutConsumerEvidence: torghutConsumerEvidence.status,
   })
+  const readyTruthArbiter = buildReadyTruthArbiter({
+    now,
+    namespace: options.namespace,
+    database,
+    rolloutHealth,
+    runtimeAdapters: effectiveRuntimeAdapters,
+    admissionPassports: runtimeAdmission.admissionPassports,
+    controllerWitness,
+    executionTrust: executionTrust.executionTrust,
+    stageCreditLedger,
+    sourceServingContractVerdictExchange,
+    repairBidAdmission,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+  })
   const consumerEvidenceLeases = buildConsumerEvidenceLeaseSet({
     now,
     namespace: options.namespace,
@@ -775,6 +790,7 @@ export const buildControlPlaneStatus = async (
     action_custody_receipts: actionCustodyReceipts,
     stage_clearance_packets: stageClearancePackets,
     stage_credit_ledger: stageCreditLedger,
+    ready_truth_arbiter: readyTruthArbiter,
     ready_action_exchange: readyActionExchange,
     repair_bid_admission: repairBidAdmission,
     repair_warrant_exchange: repairWarrantExchange,

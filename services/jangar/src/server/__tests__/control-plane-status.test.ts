@@ -7,6 +7,7 @@ import {
 } from '~/server/control-plane-status'
 import { CLEARANCE_MARKET_DESIGN_ARTIFACT } from '~/server/control-plane-clearance-market'
 import { CONSUMER_EVIDENCE_LEASES_DESIGN_ARTIFACT } from '~/server/control-plane-consumer-evidence-leases'
+import { READY_TRUTH_ARBITER_DESIGN_ARTIFACT } from '~/server/control-plane-ready-truth-arbiter'
 import { SOURCE_SERVING_CONTRACT_VERDICT_DESIGN_ARTIFACT } from '~/server/control-plane-source-serving-contract-verdict'
 import { STAGE_CREDIT_LEDGER_DESIGN_ARTIFACT } from '~/server/control-plane-stage-credit-ledger'
 import * as kubeGatewayModule from '~/server/kube-gateway'
@@ -378,6 +379,7 @@ describe('control-plane status', () => {
     delete process.env.JANGAR_CONTROL_PLANE_ROUTE_NAMESPACE
     delete process.env.JANGAR_FAILURE_DOMAIN_EVIDENCE_NAMESPACES
     delete process.env.JANGAR_CLEARANCE_MARKET_ENABLED
+    delete process.env.JANGAR_READY_TRUTH_ARBITER_MODE
     delete process.env.JANGAR_SOURCE_HEAD_SHA
     delete process.env.JANGAR_GITOPS_REVISION
   })
@@ -1090,6 +1092,19 @@ describe('control-plane status', () => {
         available_credit: expect.any(Number),
       }),
     )
+    expect(status.ready_truth_arbiter).toMatchObject({
+      schema_version: 'jangar.ready-truth-arbiter.v1',
+      mode: 'shadow',
+      governing_design_refs: expect.arrayContaining([READY_TRUTH_ARBITER_DESIGN_ARTIFACT]),
+      serving_readiness: 'ok',
+      material_readiness: 'hold',
+      argo_health: 'healthy',
+      controller_witness_ref: status.control_plane_controller_witness.quorum_id,
+      stage_credit_ledger_ref: status.stage_credit_ledger?.ledger_id,
+      source_serving_verdict_ref: status.source_serving_contract_verdict_exchange.exchange_id,
+      allowed_action_classes: expect.arrayContaining(['serve_readonly', 'torghut_observe']),
+      held_action_classes: expect.arrayContaining(['dispatch_normal', 'deploy_widen', 'merge_ready']),
+    })
     expect(status.torghut_action_slo_budgets).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1239,6 +1254,92 @@ describe('control-plane status', () => {
       decision: 'repair_only',
       selected_repair_lot_ref: expect.stringContaining('clearance-repair-lot:'),
     })
+  })
+
+  it('keeps serving readiness ok while material readiness holds on controller runtime and execution debt', async () => {
+    setRolloutDeploymentList(
+      [healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment],
+      [healthyRuntimePod()],
+    )
+    const degradedTrust: ExecutionTrustStatus = {
+      ...healthyExecutionTrust,
+      status: 'degraded',
+      reason: 'execution trust degraded by swarm freeze StageStaleness',
+      blocking_windows: [
+        {
+          type: 'swarms',
+          scope: 'agents',
+          name: 'jangar-control-plane',
+          reason: 'active freeze on jangar-control-plane: StageStaleness',
+          class: 'degraded',
+        },
+      ],
+      evidence_summary: ['swarms:agents:jangar-control-plane:StageStaleness'],
+    }
+
+    const status = await buildStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(
+          buildHeartbeatRows({
+            'agents-controller': {
+              status: 'degraded',
+              message: 'agents controller not started',
+            },
+            'workflow-runtime': {
+              status: 'degraded',
+              message: 'workflow and job runtimes not started',
+            },
+          }),
+        ),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+        resolveExecutionTrust: async () => ({
+          executionTrust: degradedTrust,
+          swarms: [blockedExecutionTrustSwarm],
+          stages: blockedExecutionTrustStages,
+        }),
+      },
+    )
+
+    expect(status.ready_truth_arbiter).toMatchObject({
+      mode: 'shadow',
+      serving_readiness: 'ok',
+      material_readiness: 'hold',
+      argo_health: 'healthy',
+      allowed_action_classes: expect.arrayContaining(['serve_readonly', 'torghut_observe']),
+      held_action_classes: expect.arrayContaining(['dispatch_normal', 'deploy_widen', 'merge_ready']),
+      controller_witness_ref: status.control_plane_controller_witness.quorum_id,
+      stage_credit_ledger_ref: status.stage_credit_ledger?.ledger_id,
+      source_serving_verdict_ref: status.source_serving_contract_verdict_exchange.exchange_id,
+    })
+    expect(status.ready_truth_arbiter.ready_status_truth_reasons).toEqual(
+      expect.arrayContaining([
+        'controller_witness_repair_only',
+        'runtime_adapter_workflow_degraded',
+        'runtime_adapter_job_degraded',
+        'execution_trust_degraded',
+      ]),
+    )
+    expect(status.ready_truth_arbiter.merge_gate_receipt).toMatchObject({
+      action_class: 'merge_ready',
+      decision: 'hold',
+    })
+    expect(status.namespaces[0]?.status).toBe('degraded')
   })
 
   it('exposes repair-bid admission receipts from current Torghut settlement lots', async () => {

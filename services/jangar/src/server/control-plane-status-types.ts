@@ -22,6 +22,7 @@ import type {
   ReadyActionExchange,
   ReconciledActionClock,
   RecoveryWarrantStatus,
+  ReadyTruthArbiter,
   RepairBidAdmissionState,
   RepairWarrantExchange,
   RouteStabilityEscrow,
@@ -189,6 +190,7 @@ export type ControlPlaneStatus = {
   action_custody_receipts: ActionCustodyReceipt[]
   stage_clearance_packets: StageClearancePacket[]
   stage_credit_ledger: StageCreditLedger | null
+  ready_truth_arbiter: ReadyTruthArbiter
   ready_action_exchange: ReadyActionExchange
   repair_bid_admission: RepairBidAdmissionState
   repair_warrant_exchange: RepairWarrantExchange

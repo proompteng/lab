@@ -378,6 +378,20 @@ is set to `hold` or `enforce`, stale ledgers, held accounts, or missing open fut
 creation. Rollback: set `JANGAR_STAGE_CREDIT_LEDGER_MODE=observe`; if status generation itself regresses, set
 `JANGAR_STAGE_CREDIT_LEDGER_ENABLED=false`.
 
+Control-plane status also emits `ready_truth_arbiter` from
+`docs/agents/designs/188-jangar-ready-truth-arbiter-and-stage-credit-cutover-2026-05-13.md`. The arbiter is a
+shadow read model over serving readiness, controller witnesses, workflow/job runtime adapters, execution trust,
+stage credit, source-serving verdicts, repair-bid admission, and retained failure debt. It intentionally keeps
+`/ready` as a serving probe: `serving_readiness=ok` can coexist with `material_readiness=hold` when Jangar can serve
+read-only evidence but normal dispatch, deploy widening, or merge-ready claims lack current material authority.
+
+The first rollout is projection-only. The arbiter emits one verdict id, action-class buckets, merge/deployer receipts,
+and reason codes for the status surface; schedule runners and deploy gates do not consume it yet. Use
+`ready_truth_arbiter.material_readiness` and the `merge_gate_receipt`/`deployer_receipt` reason codes when explaining
+why a green PR or healthy pod is not yet materially safe to widen. Rollback is
+`JANGAR_READY_TRUTH_ARBITER_MODE=observe`; if the read model itself is wrong, ignore the field and continue relying on
+stage credit, clearance market, source-serving verdicts, runtime-admission passports, and repair-bid admission.
+
 The next architecture contract is the evidence-pressure ledger in
 `docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`. It adds a
 proof-transport budget below stage credit: Kubernetes watch 429s, controller replica splits, metrics-sink failures,
