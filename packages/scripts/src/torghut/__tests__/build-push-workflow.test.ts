@@ -7,10 +7,6 @@ const workflow = readFileSync(
   'utf8',
 )
 const ciWorkflow = readFileSync(new URL('../../../../../.github/workflows/torghut-ci.yml', import.meta.url), 'utf8')
-const releaseWorkflow = readFileSync(
-  new URL('../../../../../.github/workflows/torghut-release.yml', import.meta.url),
-  'utf8',
-)
 
 const pathPatternIndex = (pattern: string): number =>
   workflow.split('\n').findIndex((line) => line.trim() === `- '${pattern}'`)
@@ -26,14 +22,12 @@ describe('torghut build-push workflow', () => {
     expect(testFilesExclude).toBeGreaterThan(scriptsInclude)
   })
 
-  it('caches Bun downloads before installing script dependencies', () => {
-    const cacheStep = workflow.indexOf('name: Cache Bun downloads')
-    const cachePath = workflow.indexOf('path: ~/.bun/install/cache')
-    const installStep = workflow.indexOf('name: Install dependencies')
+  it('does not use actions/cache on the ARC-backed build runner', () => {
+    const buildJob = workflow.indexOf('build-and-push:')
+    const cacheStep = workflow.indexOf('uses: actions/cache@v4', buildJob)
 
-    expect(cacheStep).toBeGreaterThan(-1)
-    expect(cachePath).toBeGreaterThan(cacheStep)
-    expect(installStep).toBeGreaterThan(cachePath)
+    expect(buildJob).toBeGreaterThan(-1)
+    expect(cacheStep).toBe(-1)
   })
 
   it('caches Bun downloads before manifest-only CI installs script dependencies', () => {
@@ -46,15 +40,5 @@ describe('torghut build-push workflow', () => {
     expect(cacheStep).toBeGreaterThan(releaseManifestJob)
     expect(cachePath).toBeGreaterThan(cacheStep)
     expect(installStep).toBeGreaterThan(cachePath)
-  })
-
-  it('caches Bun downloads before release workflow runs Torghut scripts', () => {
-    const cacheStep = releaseWorkflow.indexOf('name: Cache Bun downloads')
-    const cachePath = releaseWorkflow.indexOf('path: ~/.bun/install/cache')
-    const resolveStep = releaseWorkflow.indexOf('name: Resolve release metadata')
-
-    expect(cacheStep).toBeGreaterThan(-1)
-    expect(cachePath).toBeGreaterThan(cacheStep)
-    expect(resolveStep).toBeGreaterThan(cachePath)
   })
 })
