@@ -11,6 +11,7 @@ import type {
 import { buildActionCustodyProjection } from '~/server/control-plane-action-custody'
 import { buildClearanceMarketLedger, isClearanceMarketEnabled } from '~/server/control-plane-clearance-market'
 import { buildMaterialActionActivationReceipts } from '~/server/control-plane-controller-witness'
+import { buildDependencyVerdictExchange } from '~/server/control-plane-dependency-verdict'
 import type { ExecutionTrustSnapshot } from '~/server/control-plane-execution-trust'
 import { type FailureDomainRouteProbe } from '~/server/control-plane-failure-domain-leases'
 import { buildMaterialActionVerdictEpoch } from '~/server/control-plane-material-action-verdict'
@@ -135,6 +136,17 @@ export const buildControlPlaneMaterialActionArtifacts = async (input: ControlPla
     materialActionVerdictEpoch,
     torghutConsumerEvidence: input.torghutConsumerEvidence,
   })
+  const dependencyVerdictExchange = buildDependencyVerdictExchange({
+    now: input.now,
+    namespace: input.namespace,
+    database: input.database,
+    watchReliability: input.watchReliability,
+    rolloutHealth: input.rolloutHealth,
+    controllerWitness: input.controllerWitness,
+    executionTrust: input.executionTrust.executionTrust,
+    sourceRolloutTruthExchange: input.sourceRolloutTruthExchange,
+    torghutConsumerEvidence: input.torghutConsumerEvidence,
+  })
   const stageClearancePackets = buildStageClearancePackets({
     now: input.now,
     namespace: input.namespace,
@@ -148,6 +160,7 @@ export const buildControlPlaneMaterialActionArtifacts = async (input: ControlPla
     materialActionVerdictEpoch,
     failureDomainLeases: input.failureDomainLeases,
     torghutConsumerEvidence: input.torghutConsumerEvidence,
+    dependencyVerdictExchange,
   })
   const clearanceMarketLedger = isClearanceMarketEnabled()
     ? buildClearanceMarketLedger({
@@ -175,6 +188,7 @@ export const buildControlPlaneMaterialActionArtifacts = async (input: ControlPla
     routeStabilityEscrow,
     materialActionActivationReceipts,
     stageClearancePackets,
+    dependencyVerdictExchange,
     clearanceMarketLedger,
     ...actionCustodyProjection,
   }

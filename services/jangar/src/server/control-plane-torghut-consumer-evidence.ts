@@ -43,6 +43,17 @@ export type TorghutConsumerEvidenceStatus = {
   routeable_exchange_routeable_candidate_count?: number | null
   routeable_exchange_zero_notional_repair_lot_ids?: string[]
   routeable_exchange_rejected_candidate_count?: number | null
+  route_warrant_id?: string | null
+  route_warrant_state?: string | null
+  route_warrant_fresh_until?: string | null
+  route_warrant_repair_packet_ids?: string[]
+  route_warrant_repair_target_value_gates?: string[]
+  route_warrant_blocking_dependency_names?: string[]
+  route_warrant_blocking_reason_codes?: string[]
+  route_warrant_zero_notional_or_stale_evidence_rate?: number | null
+  route_warrant_fill_tca_or_slippage_quality?: string | null
+  route_warrant_capital_gate_safety?: string | null
+  route_warrant_post_cost_daily_net_pnl_state?: string | null
   operator_summary?: {
     top_clock_split: string | null
     selected_repair_lot_id: string | null
@@ -87,6 +98,8 @@ const parseNumber = (value: string | null) => {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
 }
+
+const normalizeNumber = (value: unknown) => parseNumber(normalizeNonEmpty(value))
 
 const paperActionStates = new Set(['allow', 'allowed', 'current', 'paper_canary', 'paper_candidate', 'ready'])
 
@@ -428,6 +441,59 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     parseNumber(normalizeNonEmpty(routeableExchangeSummary?.rejected_candidate_count)) ?? rejectedCandidates.length
   const topClockSplit = evidenceClockSplits[0]
   const selectedEvidenceClockRepair = zeroNotionalRepairLots[0]
+  const routeWarrant = asRecord(
+    payload.route_warrant_exchange ?? payload.route_warrant_exchange_v1 ?? payload.route_warrant,
+  )
+  const routeWarrantId = normalizeNonEmpty(routeWarrant?.warrant_id ?? routeWarrant?.exchange_id)
+  const routeWarrantRepairPackets = Array.isArray(routeWarrant?.repair_packets)
+    ? routeWarrant.repair_packets
+        .map((packet) => asRecord(packet))
+        .filter((packet): packet is Record<string, unknown> => Boolean(packet))
+    : []
+  const routeWarrantWitnesses = [
+    ...((Array.isArray(routeWarrant?.direct_data_witnesses) ? routeWarrant.direct_data_witnesses : []) as unknown[]),
+    ...((Array.isArray(routeWarrant?.active_tca_witnesses) ? routeWarrant.active_tca_witnesses : []) as unknown[]),
+    ...((Array.isArray(routeWarrant?.empirical_replay_witnesses)
+      ? routeWarrant.empirical_replay_witnesses
+      : []) as unknown[]),
+    ...((Array.isArray(routeWarrant?.market_context_witnesses)
+      ? routeWarrant.market_context_witnesses
+      : []) as unknown[]),
+    ...((Array.isArray(routeWarrant?.ingestion_materialization_witnesses)
+      ? routeWarrant.ingestion_materialization_witnesses
+      : []) as unknown[]),
+  ]
+    .map((witness) => asRecord(witness))
+    .filter((witness): witness is Record<string, unknown> => Boolean(witness))
+  const staleWitnesses = routeWarrantWitnesses.filter((witness) => {
+    const state = normalizeReason(
+      witness.observed_state ?? witness.state ?? witness.status ?? witness.freshness_state ?? witness.verdict,
+    )
+    return Boolean(state && !['accepted', 'current', 'fresh', 'healthy', 'ok', 'pass', 'ready'].includes(state))
+  })
+  const routeWarrantRepairPacketIds = uniqueStrings(
+    routeWarrantRepairPackets.map((packet) => normalizeNonEmpty(packet.packet_id ?? packet.repair_packet_id)),
+  )
+  const routeWarrantRepairTargetValueGates = uniqueStrings(
+    routeWarrantRepairPackets.map((packet) => normalizeReason(packet.target_value_gate)),
+  )
+  const routeWarrantBlockingDependencies = uniqueStrings([
+    ...stringList(routeWarrant?.blocking_dependency_names),
+    ...routeWarrantRepairPackets.map((packet) => normalizeReason(packet.target_dependency)),
+    ...staleWitnesses.map((witness) =>
+      normalizeReason(
+        witness.target_dependency ?? witness.dependency ?? witness.dependency_name ?? witness.name ?? witness.source,
+      ),
+    ),
+  ])
+  const routeWarrantBlockingReasonCodes = uniqueStrings([
+    ...stringList(routeWarrant?.blocking_reason_codes),
+    ...routeWarrantRepairPackets.flatMap((packet) => stringList(packet.blocking_reason_codes)),
+    ...staleWitnesses.flatMap((witness) => [
+      ...stringList(witness.reason_codes),
+      ...stringList(witness.contradiction_reason_codes),
+    ]),
+  ])
   const operatorSummary = evidenceClockArbiter
     ? {
         top_clock_split: normalizeNonEmpty(topClockSplit?.clock),
@@ -477,6 +543,21 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       routeable_exchange_routeable_candidate_count: routeableExchangeRouteableCandidateCount,
       routeable_exchange_zero_notional_repair_lot_ids: routeableExchangeZeroNotionalRepairLotIds,
       routeable_exchange_rejected_candidate_count: routeableExchangeRejectedCandidateCount,
+      route_warrant_id: routeWarrantId,
+      route_warrant_state: normalizeReason(
+        routeWarrant?.warrant_state ?? routeWarrant?.state ?? routeWarrant?.decision,
+      ),
+      route_warrant_fresh_until: normalizeNonEmpty(routeWarrant?.fresh_until),
+      route_warrant_repair_packet_ids: routeWarrantRepairPacketIds,
+      route_warrant_repair_target_value_gates: routeWarrantRepairTargetValueGates,
+      route_warrant_blocking_dependency_names: routeWarrantBlockingDependencies,
+      route_warrant_blocking_reason_codes: routeWarrantBlockingReasonCodes,
+      route_warrant_zero_notional_or_stale_evidence_rate: normalizeNumber(
+        routeWarrant?.zero_notional_or_stale_evidence_rate,
+      ),
+      route_warrant_fill_tca_or_slippage_quality: normalizeReason(routeWarrant?.fill_tca_or_slippage_quality),
+      route_warrant_capital_gate_safety: normalizeReason(routeWarrant?.capital_gate_safety),
+      route_warrant_post_cost_daily_net_pnl_state: normalizeReason(routeWarrant?.post_cost_daily_net_pnl_state),
       operator_summary: operatorSummary,
       reason_codes: reasonCodes,
       message:
@@ -525,6 +606,13 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       routeable_exchange_zero_notional_repair_lot_ids: routeableExchangeZeroNotionalRepairLotIds,
       routeable_exchange_routeable_candidate_count: routeableExchangeRouteableCandidateCount,
       routeable_exchange_rejected_candidate_count: routeableExchangeRejectedCandidateCount,
+      route_warrant_id: routeWarrantId,
+      route_warrant_state: normalizeReason(
+        routeWarrant?.warrant_state ?? routeWarrant?.state ?? routeWarrant?.decision,
+      ),
+      route_warrant_repair_packet_ids: routeWarrantRepairPacketIds,
+      route_warrant_blocking_dependency_names: routeWarrantBlockingDependencies,
+      route_warrant_blocking_reason_codes: routeWarrantBlockingReasonCodes,
     },
   }
 }

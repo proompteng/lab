@@ -507,6 +507,77 @@ export type ActionSloBudgetActionClass =
 
 export type ActionSloBudgetDecision = 'allow' | 'observe_only' | 'repair_only' | 'shadow_only' | 'hold' | 'block'
 
+export type DependencyVerdictActionClass =
+  | 'serve_readonly'
+  | 'observe'
+  | 'repair'
+  | 'implement'
+  | 'paper'
+  | 'live'
+  | 'deploy_widen'
+  | 'merge_ready'
+
+export type DependencyVerdictDecision = 'allow' | 'repair_only' | 'hold' | 'block'
+
+export type DependencyVerdictAllowedScope =
+  | 'none'
+  | 'read_only'
+  | 'observe_only'
+  | 'zero_notional_repair'
+  | 'normal_implementation'
+  | 'paper_support'
+  | 'live_support'
+  | 'deploy_widen'
+  | 'merge_ready'
+
+export type DependencyVerdict = {
+  schema_version: 'jangar.dependency-verdict.v1'
+  verdict_id: string
+  generated_at: string
+  fresh_until: string
+  repository: string
+  branch: string
+  namespace: string
+  swarm_name: string
+  stage: 'serve' | 'observe' | 'repair' | 'implement' | 'paper' | 'live' | 'deploy' | 'verify'
+  action_class: DependencyVerdictActionClass
+  decision: DependencyVerdictDecision
+  allowed_scope: DependencyVerdictAllowedScope
+  max_dispatches: number | null
+  max_runtime_seconds: number | null
+  max_notional: number | null
+  execution_trust_ref: string
+  source_rollout_ref: string
+  argo_health_ref: string
+  controller_watch_ref: string
+  torghut_route_warrant_ref: string | null
+  torghut_repair_packet_refs: string[]
+  blocking_dependency_names: string[]
+  blocking_reason_codes: string[]
+  required_validation_commands: string[]
+  evidence_refs: string[]
+  rollback_gate: string
+}
+
+export type DependencyVerdictExchange = {
+  mode: 'observe' | 'enforce'
+  design_artifact: string
+  exchange_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  status: DependencyVerdictDecision
+  torghut_route_warrant_ref: string | null
+  verdict_refs: string[]
+  allowed_action_classes: DependencyVerdictActionClass[]
+  repair_only_action_classes: DependencyVerdictActionClass[]
+  held_action_classes: DependencyVerdictActionClass[]
+  blocked_action_classes: DependencyVerdictActionClass[]
+  reason_codes: string[]
+  verdicts: DependencyVerdict[]
+  rollback_target: string
+}
+
 export type NegativeEvidenceRef = {
   kind: NegativeEvidenceKind
   reason: string
@@ -965,6 +1036,27 @@ export type TorghutConsumerEvidenceStatus = {
   profit_freshness_state?: string | null
   profit_freshness_repair_lot_ids?: string[]
   profit_freshness_selected_repair_ids?: string[]
+  evidence_clock_arbiter_id?: string | null
+  evidence_clock_state?: string | null
+  evidence_clock_split_clock_names?: string[]
+  evidence_clock_blocking_reason_codes?: string[]
+  evidence_clock_custody_status?: string | null
+  evidence_clock_custody_ref?: string | null
+  routeable_profit_candidate_exchange_id?: string | null
+  routeable_exchange_routeable_candidate_count?: number | null
+  routeable_exchange_zero_notional_repair_lot_ids?: string[]
+  routeable_exchange_rejected_candidate_count?: number | null
+  route_warrant_id?: string | null
+  route_warrant_state?: string | null
+  route_warrant_fresh_until?: string | null
+  route_warrant_repair_packet_ids?: string[]
+  route_warrant_repair_target_value_gates?: string[]
+  route_warrant_blocking_dependency_names?: string[]
+  route_warrant_blocking_reason_codes?: string[]
+  route_warrant_zero_notional_or_stale_evidence_rate?: number | null
+  route_warrant_fill_tca_or_slippage_quality?: string | null
+  route_warrant_capital_gate_safety?: string | null
+  route_warrant_post_cost_daily_net_pnl_state?: string | null
   reason_codes: string[]
   message: string
 }
@@ -1043,6 +1135,8 @@ export type StageClearancePacket = {
   material_action_verdict_ref: string
   route_stability_ref: string
   torghut_consumer_evidence_ref: string | null
+  dependency_verdict_ref?: string | null
+  dependency_verdict_decision?: DependencyVerdictDecision | null
   failure_domain_leases: string[]
   provider_capacity_ref: string | null
   decision: StageClearanceDecision
@@ -1299,6 +1393,7 @@ export type ControlPlaneStatus = {
   negative_evidence_router: NegativeEvidenceRouterStatus
   action_slo_budgets: ActionSloBudget[]
   torghut_action_slo_budgets: ActionSloBudget[]
+  dependency_verdict_exchange: DependencyVerdictExchange
   control_plane_controller_witness: ControlPlaneControllerWitnessQuorum
   material_action_verdict_epoch: MaterialActionVerdictEpoch
   material_action_verdicts: MaterialActionVerdict[]

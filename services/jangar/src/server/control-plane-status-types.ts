@@ -7,6 +7,7 @@ import type {
   ClearanceMarketLedger,
   ControlPlaneControllerWitnessQuorum,
   DatabaseMigrationConsistency,
+  DependencyVerdictExchange,
   DependencyQuorumStatus,
   ExecutionTrustStage,
   ExecutionTrustStatus,
@@ -175,6 +176,7 @@ export type ControlPlaneStatus = {
   negative_evidence_router: NegativeEvidenceRouterStatus
   action_slo_budgets: ActionSloBudget[]
   torghut_action_slo_budgets: ActionSloBudget[]
+  dependency_verdict_exchange: DependencyVerdictExchange
   control_plane_controller_witness: ControlPlaneControllerWitnessQuorum
   material_action_verdict_epoch: MaterialActionVerdictEpoch
   material_action_verdicts: MaterialActionVerdict[]
