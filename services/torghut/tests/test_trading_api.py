@@ -1061,6 +1061,13 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(clearinghouse["accepted_routeable_candidate_count"], 0)
         self.assertEqual(clearinghouse["max_notional"], "0")
+        warrant = payload["route_warrant_exchange"]
+        self.assertEqual(
+            warrant["schema_version"],
+            "torghut.route-warrant-exchange.v1",
+        )
+        self.assertEqual(warrant["accepted_routeable_candidate_count"], 0)
+        self.assertEqual(warrant["max_notional"], "0")
         frontier = payload["profit_freshness_frontier"]
         self.assertEqual(
             frontier["schema_version"],
@@ -1529,6 +1536,18 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             health_clearinghouse["schema_version"],
             status_clearinghouse["schema_version"],
+        )
+        status_warrant = status_response.json()["route_warrant_exchange"]
+        health_warrant = health_response.json()["route_warrant_exchange"]
+        self.assertEqual(
+            status_warrant["schema_version"],
+            "torghut.route-warrant-exchange.v1",
+        )
+        self.assertEqual(status_warrant["accepted_routeable_candidate_count"], 0)
+        self.assertEqual(status_warrant["max_notional"], "0")
+        self.assertEqual(
+            health_warrant["schema_version"],
+            status_warrant["schema_version"],
         )
         status_frontier = status_response.json()["profit_freshness_frontier"]
         health_frontier = health_response.json()["profit_freshness_frontier"]
