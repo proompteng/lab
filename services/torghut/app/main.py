@@ -83,6 +83,10 @@ from .trading.evidence_receipts import (
     build_service_health_receipt,
 )
 from .trading.executable_alpha_receipts import build_capital_replay_projection
+from .trading.feature_quality import (
+    FeatureQualityThresholds,
+    evaluate_feature_batch_quality,
+)
 from .trading.forecast_runtime import forecast_status
 from .trading.freshness_carry import build_freshness_carry_ledger
 from .trading.hypotheses import (
@@ -126,6 +130,7 @@ from .trading.submission_council import (
     resolve_active_capital_stage,
 )
 from .trading.ingest import ClickHouseSignalIngestor
+from .trading.models import SignalEnvelope
 from .trading.tca import build_tca_gate_inputs, refresh_execution_tca_metrics
 from .trading.simulation_progress import (
     active_simulation_runtime_context,
@@ -1488,6 +1493,7 @@ def trading_profit_freshness_zero_notional_repair(
     ),
     tca_limit: int = Query(default=250, ge=1, le=5000),
     drift_limit: int = Query(default=500, ge=1, le=5000),
+    feature_limit: int = Query(default=500, ge=1, le=5000),
     repair_lot_dispatch_ticket: dict[str, Any] | None = Body(
         default=None,
         description=(
@@ -1649,6 +1655,142 @@ def trading_profit_freshness_zero_notional_repair(
             },
         }
 
+    def run_feature_coverage_replay(repair: Mapping[str, Any]) -> Mapping[str, object]:
+        scheduler: TradingScheduler | None = getattr(
+            app.state, "trading_scheduler", None
+        )
+        pipeline = getattr(scheduler, "_pipeline", None) if scheduler else None
+        ingestor = getattr(pipeline, "ingestor", None)
+        fetch_with_reason = getattr(ingestor, "fetch_signals_with_reason", None)
+        if not callable(fetch_with_reason) or scheduler is None:
+            return {
+                "execution_state": "runner_failed",
+                "command_exit_code": 78,
+                "blocked_reasons": ["feature_coverage_runner_unavailable"],
+                "after_refs": [],
+            }
+
+        now = datetime.now(timezone.utc)
+        lookback_minutes = max(1, int(settings.trading_signal_lookback_minutes))
+        symbol_set = {
+            str(symbol).strip().upper()
+            for symbol in cast(Sequence[object], repair.get("symbol_set") or [])
+            if str(symbol).strip()
+        }
+
+        def select_signals(batch: Any) -> list[Any]:
+            return [
+                signal
+                for signal in cast(Sequence[Any], getattr(batch, "signals", []))
+                if not symbol_set
+                or str(getattr(signal, "symbol", "")).strip().upper() in symbol_set
+            ]
+
+        def replay_window_from_latest_signal() -> tuple[Any | None, list[Any]]:
+            latest_status_fn = getattr(ingestor, "latest_signal_status", None)
+            if not callable(latest_status_fn):
+                return None, []
+            latest_status = latest_status_fn()
+            if not isinstance(latest_status, Mapping):
+                return None, []
+            latest_status_mapping = cast(Mapping[str, object], latest_status)
+            latest_signal_at = latest_status_mapping.get("latest_signal_at")
+            if not isinstance(latest_signal_at, datetime):
+                return None, []
+            if latest_signal_at.tzinfo is None:
+                latest_signal_at = latest_signal_at.replace(tzinfo=timezone.utc)
+            else:
+                latest_signal_at = latest_signal_at.astimezone(timezone.utc)
+            fallback_batch = fetch_with_reason(
+                start=latest_signal_at - timedelta(minutes=lookback_minutes),
+                end=latest_signal_at,
+                limit=feature_limit,
+            )
+            return fallback_batch, select_signals(fallback_batch)
+
+        try:
+            batch = fetch_with_reason(
+                start=now - timedelta(minutes=lookback_minutes),
+                end=now,
+                limit=feature_limit,
+            )
+            signals = select_signals(batch)
+            replay_window = "current"
+            if not signals:
+                fallback_batch, fallback_signals = replay_window_from_latest_signal()
+                if fallback_signals:
+                    batch = fallback_batch
+                    signals = fallback_signals
+                    replay_window = "latest_signal"
+            if not signals:
+                no_signal_reason = str(
+                    getattr(batch, "no_signal_reason", None) or "no_signals"
+                )
+                return {
+                    "execution_state": "runner_blocked",
+                    "command_exit_code": 78,
+                    "blocked_reasons": [
+                        f"feature_coverage_no_signals:{no_signal_reason}"
+                    ],
+                    "after_refs": [],
+                    "result": {
+                        "query_start": getattr(batch, "query_start", None),
+                        "query_end": getattr(batch, "query_end", None),
+                        "symbol_set": sorted(symbol_set),
+                        "replay_window": replay_window,
+                    },
+                }
+
+            quality_report = evaluate_feature_batch_quality(
+                cast(list[SignalEnvelope], signals),
+                thresholds=FeatureQualityThresholds(
+                    max_required_null_rate=settings.trading_feature_max_required_null_rate,
+                    max_staleness_ms=settings.trading_feature_max_staleness_ms,
+                    max_duplicate_ratio=settings.trading_feature_max_duplicate_ratio,
+                ),
+            )
+            metrics = scheduler.state.metrics
+            metrics.feature_batch_rows_total = max(
+                int(getattr(metrics, "feature_batch_rows_total", 0) or 0),
+                quality_report.rows_total,
+            )
+            metrics.feature_null_rate = dict(quality_report.null_rate_by_field)
+            metrics.feature_staleness_ms_p95 = quality_report.staleness_ms_p95
+            metrics.feature_duplicate_ratio = quality_report.duplicate_ratio
+            metrics.feature_schema_mismatch_total += (
+                quality_report.schema_mismatch_total
+            )
+            if not quality_report.accepted:
+                metrics.feature_quality_rejections_total += 1
+                metrics.record_feature_quality_rejection(quality_report.reasons)
+        except Exception as exc:  # pragma: no cover - fail-closed receipt path
+            logger.exception("Zero-notional feature-coverage repair failed")
+            return {
+                "execution_state": "runner_failed",
+                "command_exit_code": 1,
+                "blocked_reasons": [
+                    f"feature_coverage_replay_failed:{type(exc).__name__}"
+                ],
+                "after_refs": [],
+            }
+
+        return {
+            "execution_state": "executed",
+            "command_exit_code": 0,
+            "after_refs": ["feature_coverage_rows"],
+            "result": {
+                "signals_evaluated": len(signals),
+                "rows_total": quality_report.rows_total,
+                "accepted": quality_report.accepted,
+                "reason_codes": list(quality_report.reasons),
+                "symbol_set": sorted(symbol_set),
+                "replay_window": replay_window,
+                "query_start": getattr(batch, "query_start", None),
+                "query_end": getattr(batch, "query_end", None),
+                "feature_batch_rows_total": metrics.feature_batch_rows_total,
+            },
+        }
+
     receipt = run_zero_notional_repair(
         account_label=settings.trading_account_label,
         trading_mode=settings.trading_mode,
@@ -1661,6 +1803,7 @@ def trading_profit_freshness_zero_notional_repair(
         runners={
             "recompute_route_tca_and_fill_quality": run_tca_recompute,
             "rerun_drift_checks_for_blocked_hypotheses": run_drift_check_replay,
+            "rebuild_required_feature_rows": run_feature_coverage_replay,
         },
     )
     return cast(dict[str, object], jsonable_encoder(receipt))

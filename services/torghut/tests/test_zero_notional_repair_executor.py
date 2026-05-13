@@ -165,6 +165,47 @@ def test_execute_runs_allowlisted_drift_runner_without_widening_notional() -> No
     assert receipt["live_notional_limit"] == "0"
 
 
+def test_execute_runs_feature_coverage_runner_without_widening_notional() -> None:
+    called: list[Mapping[str, Any]] = []
+
+    def runner(repair: Mapping[str, Any]) -> Mapping[str, object]:
+        called.append(repair)
+        return {
+            "execution_state": "executed",
+            "command_exit_code": 0,
+            "after_refs": ["feature_coverage_rows"],
+            "result": {"rows_total": 12},
+        }
+
+    receipt = run_zero_notional_repair(
+        account_label="paper",
+        trading_mode="live",
+        torghut_revision="torghut-00320",
+        source_commit="abc123",
+        profit_freshness_frontier=_frontier("rebuild_required_feature_rows"),
+        execute=True,
+        runners={"rebuild_required_feature_rows": runner},
+        now=NOW,
+    )
+
+    assert len(called) == 1
+    assert receipt["execution_state"] == "executed"
+    assert receipt["command_exit_code"] == 0
+    assert receipt["executor"] == "hypothesis_feature_coverage_replay"
+    assert receipt["value_gate"] == "zero_notional_or_stale_evidence_rate"
+    assert receipt["after_refs"] == ["feature_coverage_rows"]
+    assert receipt["runner_result"] == {
+        "execution_state": "executed",
+        "command_exit_code": 0,
+        "after_refs": ["feature_coverage_rows"],
+        "result": {"rows_total": 12},
+    }
+    assert receipt["capital_behavior_changed"] is False
+    assert receipt["order_submission_enabled"] is False
+    assert receipt["paper_notional_limit"] == "0"
+    assert receipt["live_notional_limit"] == "0"
+
+
 def test_preferred_action_can_execute_queued_route_tca_repair() -> None:
     frontier = _frontier("renew_empirical_proof_jobs")
     frontier["repair_lots"] = [
