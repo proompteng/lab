@@ -194,7 +194,7 @@ def test_runner_required_action_reports_admission_block_when_executed_without_ru
 
     assert receipt["execution_state"] == "runner_admission_required"
     assert receipt["command_exit_code"] == 78
-    assert receipt["requires_jangar_admission"] is True
+    assert receipt["requires_torghut_admission"] is True
     assert "zero_notional_runner_admission_required" in receipt["blocked_reasons"]
     assert receipt["order_submission_enabled"] is False
 

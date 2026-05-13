@@ -708,7 +708,7 @@ class TestHypothesisReadiness(TestCase):
 
         urlopen_mock.assert_not_called()
         self.assertEqual(status.decision, "allow")
-        self.assertEqual(status.reasons, ["jangar_dependency_quorum_not_required"])
+        self.assertEqual(status.reasons, ["torghut_dependency_quorum_not_required"])
 
     def test_hypothesis_registry_dependency_check_rejects_blank_capability(
         self,

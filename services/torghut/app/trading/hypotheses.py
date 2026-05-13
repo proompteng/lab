@@ -184,7 +184,7 @@ def resolve_hypothesis_dependency_quorum(
         return load_jangar_dependency_quorum()
     return JangarDependencyQuorumStatus(
         decision="allow",
-        reasons=["jangar_dependency_quorum_not_required"],
+        reasons=["torghut_dependency_quorum_not_required"],
         message="Torghut hypothesis registry is self-governed for dependency quorum.",
     )
 
@@ -619,13 +619,13 @@ def _fallback_quorum_from_legacy_status(
             return JangarDependencyQuorumStatus(
                 decision="block",
                 reasons=["workflows_data_unknown"],
-                message="Jangar workflow reliability is unavailable.",
+                message="Torghut workflow reliability is unavailable.",
             )
         if backoff_jobs > 0 or confidence == "degraded":
             return JangarDependencyQuorumStatus(
                 decision="delay",
                 reasons=["workflows_degraded"],
-                message="Jangar workflow reliability is degraded.",
+                message="Torghut workflow reliability is degraded.",
             )
     namespaces = payload.get("namespaces")
     if isinstance(namespaces, Sequence) and not isinstance(
@@ -639,12 +639,12 @@ def _fallback_quorum_from_legacy_status(
                 return JangarDependencyQuorumStatus(
                     decision="delay",
                     reasons=["jangar_namespace_degraded"],
-                    message="Jangar namespace health is degraded.",
+                    message="Torghut namespace health is degraded.",
                 )
     return JangarDependencyQuorumStatus(
         decision="unknown",
         reasons=["jangar_dependency_quorum_missing"],
-        message="Jangar control-plane status did not include dependency_quorum.",
+        message="Torghut control-plane status did not include dependency_quorum.",
     )
 
 
@@ -681,21 +681,21 @@ def load_jangar_dependency_quorum() -> JangarDependencyQuorumStatus:
                 return JangarDependencyQuorumStatus(
                     decision="unknown",
                     reasons=[f"jangar_status_http_{response.status}"],
-                    message=f"Jangar control-plane status returned HTTP {response.status}.",
+                    message=f"Torghut control-plane status returned HTTP {response.status}.",
                 )
             decoded = json.loads(response.read().decode("utf-8"))
     except Exception as exc:
         return JangarDependencyQuorumStatus(
             decision="unknown",
             reasons=["jangar_status_fetch_failed"],
-            message=f"Jangar control-plane status fetch failed: {exc}",
+            message=f"Torghut control-plane status fetch failed: {exc}",
         )
 
     if not isinstance(decoded, Mapping):
         return JangarDependencyQuorumStatus(
             decision="unknown",
             reasons=["jangar_status_payload_invalid"],
-            message="Jangar control-plane status payload was invalid.",
+            message="Torghut control-plane status payload was invalid.",
         )
     payload = cast(Mapping[str, Any], decoded)
     raw_quorum = payload.get("dependency_quorum")

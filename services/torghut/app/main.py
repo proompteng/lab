@@ -4805,7 +4805,7 @@ def _build_routeability_repair_acceptance_ledger_payload(
         live_submission_gate=live_submission_gate,
         quant_evidence=quant_evidence,
         market_context_status=market_context_status,
-        jangar_routeability_admission_ref=_build_jangar_routeability_admission_ref(
+        torghut_routeability_admission_ref=_build_torghut_routeability_admission_ref(
             dependency_quorum
         ),
     )
@@ -4842,7 +4842,9 @@ def _build_evidence_clock_payloads(
         routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
         profit_signal_quorum=profit_signal_quorum,
         live_submission_gate=live_submission_gate,
-        jangar_custody_ref=_build_jangar_stage_clearance_packet_ref(dependency_quorum),
+        torghut_custody_ref=_build_torghut_stage_clearance_packet_ref(
+            dependency_quorum
+        ),
         clickhouse_ta_status=clickhouse_ta_status,
     )
 
@@ -5030,7 +5032,7 @@ def _build_jangar_reliability_settlement_ref(
     }
 
 
-def _build_jangar_routeability_admission_ref(
+def _build_torghut_routeability_admission_ref(
     dependency_quorum: Mapping[str, Any],
 ) -> dict[str, object]:
     raw_admission = dependency_quorum.get("routeability_admission")
@@ -5089,7 +5091,7 @@ def _build_jangar_routeability_admission_ref(
     }
 
 
-def _build_jangar_stage_clearance_packet_ref(
+def _build_torghut_stage_clearance_packet_ref(
     dependency_quorum: Mapping[str, Any],
 ) -> dict[str, object]:
     raw_packet = dependency_quorum.get("stage_clearance_packet")
@@ -5158,7 +5160,7 @@ def _build_profit_signal_quorum_payload(
         proof_floor_receipt=proof_floor,
         route_reacquisition_board=route_reacquisition_board,
         live_submission_gate=live_submission_gate,
-        jangar_stage_clearance_packet=_build_jangar_stage_clearance_packet_ref(
+        torghut_stage_clearance_packet=_build_torghut_stage_clearance_packet_ref(
             dependency_quorum
         ),
     )

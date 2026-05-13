@@ -247,13 +247,13 @@ def _clickhouse_ta_clock(
 def _quant_clock(quant_evidence: Mapping[str, Any]) -> dict[str, object]:
     if not quant_evidence:
         return _clock(
-            name="jangar_quant",
+            name="torghut_quant",
             state="missing",
             affected_value_gates=[
                 "zero_notional_or_stale_evidence_rate",
                 "routeable_candidate_count",
             ],
-            reason_codes=["jangar_quant_evidence_missing"],
+            reason_codes=["torghut_quant_evidence_missing"],
         )
     reasons = [
         *_strings(quant_evidence.get("blocking_reasons")),
@@ -262,9 +262,9 @@ def _quant_clock(quant_evidence: Mapping[str, Any]) -> dict[str, object]:
     ]
     status = _state_from_status(quant_evidence)
     if quant_evidence.get("ok") is False:
-        reasons.append(_text(quant_evidence.get("reason"), "jangar_quant_degraded"))
+        reasons.append(_text(quant_evidence.get("reason"), "torghut_quant_degraded"))
     if status in _BAD_STATES:
-        reasons.append(f"jangar_quant_{status}")
+        reasons.append(f"torghut_quant_{status}")
     latest_count = _int(
         _first_value(quant_evidence, "latest_metrics_count", "latestMetricsCount"),
         default=-1,
@@ -273,18 +273,18 @@ def _quant_clock(quant_evidence: Mapping[str, Any]) -> dict[str, object]:
         _first_value(quant_evidence, "stage_count", "stageCount"), default=-1
     )
     if latest_count == 0:
-        reasons.append("jangar_quant_latest_metrics_empty")
+        reasons.append("torghut_quant_latest_metrics_empty")
     elif latest_count < 0 and quant_evidence.get("ok") is not True:
-        reasons.append("jangar_quant_latest_metrics_missing")
+        reasons.append("torghut_quant_latest_metrics_missing")
     if stage_count == 0 or _bool(
         quant_evidence.get("missing_pipeline_health_stages")
         or quant_evidence.get("missingPipelineHealthStages")
     ):
-        reasons.append("jangar_quant_scoped_stages_missing")
+        reasons.append("torghut_quant_scoped_stages_missing")
     for key, reason in (
-        ("ingestion_ok", "jangar_quant_ingestion_degraded"),
-        ("materialization_ok", "jangar_quant_materialization_degraded"),
-        ("compute_ok", "jangar_quant_compute_degraded"),
+        ("ingestion_ok", "torghut_quant_ingestion_degraded"),
+        ("materialization_ok", "torghut_quant_materialization_degraded"),
+        ("compute_ok", "torghut_quant_compute_degraded"),
     ):
         if quant_evidence.get(key) is False:
             reasons.append(reason)
@@ -298,7 +298,7 @@ def _quant_clock(quant_evidence: Mapping[str, Any]) -> dict[str, object]:
     if reasons:
         state = "split" if latest_count > 0 else "stale"
     return _clock(
-        name="jangar_quant",
+        name="torghut_quant",
         state=state,
         affected_value_gates=[
             "zero_notional_or_stale_evidence_rate",
@@ -637,7 +637,7 @@ def _profit_signal_clock(profit_signal_quorum: Mapping[str, Any]) -> dict[str, o
 def _capital_clock(
     proof_floor_receipt: Mapping[str, Any],
     live_submission_gate: Mapping[str, Any],
-    jangar_custody_ref: Mapping[str, Any],
+    torghut_custody_ref: Mapping[str, Any],
 ) -> dict[str, object]:
     reasons: list[str] = []
     route_state = _text(proof_floor_receipt.get("route_state"), "unknown").lower()
@@ -654,13 +654,13 @@ def _capital_clock(
             _text(live_submission_gate.get("reason"), "live_submission_gate_closed")
         )
     custody_decision = _text(
-        jangar_custody_ref.get("decision")
-        or jangar_custody_ref.get("state")
-        or jangar_custody_ref.get("status"),
+        torghut_custody_ref.get("decision")
+        or torghut_custody_ref.get("state")
+        or torghut_custody_ref.get("status"),
         "missing",
     ).lower()
     if custody_decision not in _PAPER_ACTION_STATES:
-        reasons.append(f"jangar_custody_{custody_decision}")
+        reasons.append(f"torghut_custody_{custody_decision}")
     return _clock(
         name="capital_gate",
         state="current" if not reasons else "blocked",
@@ -673,7 +673,7 @@ def _capital_clock(
             "capital_state": capital_state,
             "max_notional": max_notional,
             "live_submission_allowed": _bool(live_submission_gate.get("allowed")),
-            "jangar_custody_decision": custody_decision,
+            "torghut_custody_decision": custody_decision,
         },
     )
 
@@ -716,7 +716,7 @@ def _capital_decision(
 def _repair_class_for_clock(clock_name: str) -> str:
     return {
         "clickhouse_ta": "market_data_clock_refresh",
-        "jangar_quant": "quant_ingestion_repair",
+        "torghut_quant": "quant_ingestion_repair",
         "market_context": "market_context_domain_refresh",
         "postgres_tca": "execution_tca_refresh",
         "empirical_replay": "empirical_job_refresh",
@@ -873,7 +873,7 @@ def build_evidence_clock_arbiter_and_exchange(
     routeability_repair_acceptance_ledger: Mapping[str, Any],
     profit_signal_quorum: Mapping[str, Any],
     live_submission_gate: Mapping[str, Any],
-    jangar_custody_ref: Mapping[str, Any],
+    torghut_custody_ref: Mapping[str, Any],
     clickhouse_ta_status: Mapping[str, Any] | None = None,
     rollout_status: Mapping[str, Any] | None = None,
     now: datetime | None = None,
@@ -896,7 +896,7 @@ def build_evidence_clock_arbiter_and_exchange(
         _rollout_clock(_mapping(rollout_status), build),
         _routeability_clock(routeability_repair_acceptance_ledger),
         _profit_signal_clock(profit_signal_quorum),
-        _capital_clock(proof_floor_receipt, live_submission_gate, jangar_custody_ref),
+        _capital_clock(proof_floor_receipt, live_submission_gate, torghut_custody_ref),
     ]
     all_clocks_current = all(_is_current(clock) for clock in clocks)
     ledger_routeable_count = _int(
@@ -957,7 +957,7 @@ def build_evidence_clock_arbiter_and_exchange(
         "zero_notional_or_stale_evidence_rate": stale_rate,
         "capital_decision": decision,
         "max_notional": "0",
-        "required_jangar_custody_ref": dict(jangar_custody_ref),
+        "required_torghut_custody_ref": dict(torghut_custody_ref),
         "selected_repair_lot_ids": [lot["lot_id"] for lot in repair_lots],
         "summary": {
             "clock_count": len(clocks),

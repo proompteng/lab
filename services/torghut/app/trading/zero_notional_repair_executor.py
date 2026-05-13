@@ -18,21 +18,21 @@ _ALLOWLIST: Mapping[str, Mapping[str, object]] = {
     "renew_empirical_proof_jobs": {
         "executor": "empirical_proof_renewal",
         "runner_required": True,
-        "requires_jangar_admission": True,
+        "requires_torghut_admission": True,
         "value_gate": "zero_notional_or_stale_evidence_rate",
         "rollback_path": "cancel empirical renewal run and keep stale proof lot queued at max_notional=0",
     },
     "refresh_stale_market_context_domains": {
         "executor": "market_context_refresh",
         "runner_required": True,
-        "requires_jangar_admission": True,
+        "requires_torghut_admission": True,
         "value_gate": "zero_notional_or_stale_evidence_rate",
         "rollback_path": "discard refreshed context receipt and keep prior last-good context decision",
     },
     "recompute_route_tca_and_fill_quality": {
         "executor": "route_tca_recompute",
         "runner_required": False,
-        "requires_jangar_admission": False,
+        "requires_torghut_admission": False,
         "value_gate": "fill_tca_or_slippage_quality",
         "rollback_path": "ignore recomputed TCA receipt and leave routeability lot unsettled",
     },
@@ -232,8 +232,8 @@ def build_zero_notional_repair_execution_receipt(
         "after_refs": _strings(result.get("after_refs")),
         "runner_result": dict(result),
         "blocked_reasons": blocked_reasons,
-        "requires_jangar_admission": bool(
-            action_contract.get("requires_jangar_admission", False)
+        "requires_torghut_admission": bool(
+            action_contract.get("requires_torghut_admission", False)
         ),
         "paper_notional_limit": "0",
         "live_notional_limit": "0",

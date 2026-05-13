@@ -477,7 +477,7 @@ def _rejection_source(
     )
 
 
-def _jangar_action_lease_source(
+def _torghut_capital_lease_source(
     *,
     proof_id: str,
     hypothesis_id: str,
@@ -493,7 +493,7 @@ def _jangar_action_lease_source(
             hypothesis_id=hypothesis_id,
             account=account,
             window=window,
-            source_class="jangar_action_lease",
+            source_class="torghut_capital_lease",
             source_ref=dependency_quorum.get("source_ref"),
             observed_at=dependency_quorum.get("observed_at"),
             fresh_until=dependency_quorum.get("fresh_until"),
@@ -506,13 +506,13 @@ def _jangar_action_lease_source(
         hypothesis_id=hypothesis_id,
         account=account,
         window=window,
-        source_class="jangar_action_lease",
+        source_class="torghut_capital_lease",
         source_ref=dependency_quorum.get("source_ref"),
         observed_at=dependency_quorum.get("observed_at"),
         fresh_until=dependency_quorum.get("fresh_until"),
         freshness_state="blocked" if capital_hold or decision == "block" else "missing",
         decision="repair_only",
-        blocking_reason_codes=reasons or [f"jangar_action_lease_{decision}"],
+        blocking_reason_codes=reasons or [f"torghut_capital_lease_{decision}"],
     )
 
 
@@ -567,10 +567,10 @@ def _rehydration_lane(reason_codes: Sequence[str]) -> str:
     if any(reason.endswith("_empty") for reason in reasons):
         return "promotion_table_repair"
     if any(
-        "jangar_action_lease" in reason or "torghut_capital" in reason
+        "torghut_capital_lease" in reason or "torghut_capital" in reason
         for reason in reasons
     ):
-        return "jangar_action_lease_reconcile"
+        return "torghut_capital_lease_reconcile"
     return "proof_repair"
 
 
@@ -679,7 +679,7 @@ def build_profit_lease_projection(
                 window=window_label,
                 rejection_summary=rejection,
             ),
-            _jangar_action_lease_source(
+            _torghut_capital_lease_source(
                 proof_id=proof_id,
                 hypothesis_id=hypothesis_id,
                 account=account_label,
@@ -769,7 +769,7 @@ def build_profit_lease_projection(
         "window": window_label,
         "leases": leases,
         "source_provenance": source_records,
-        "jangar_consumer": {
+        "torghut_capital": {
             "action_class": "torghut_capital",
             "allowed": capital_allowed,
             "capital_decision": compact_decision,

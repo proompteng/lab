@@ -96,7 +96,7 @@ def _base_inputs() -> dict[str, Any]:
             "reason": "ready",
             "blocked_reasons": [],
         },
-        "jangar_custody_ref": {
+        "torghut_custody_ref": {
             "packet_id": "jangar-custody:paper",
             "decision": "paper_candidate",
             "fresh_until": (NOW + timedelta(minutes=5)).isoformat(),
@@ -176,9 +176,9 @@ def test_global_quant_latest_does_not_override_missing_scoped_stages() -> None:
 
     arbiter, exchange = _build(quant_evidence=quant)
 
-    quant_clock = _clock(arbiter, "jangar_quant")
+    quant_clock = _clock(arbiter, "torghut_quant")
     assert quant_clock["state"] == "split"
-    assert "jangar_quant_scoped_stages_missing" in quant_clock["reason_codes"]
+    assert "torghut_quant_scoped_stages_missing" in quant_clock["reason_codes"]
     assert arbiter["routeable_candidate_count"] == 0
     assert any(
         lot["repair_class"] == "quant_ingestion_repair"

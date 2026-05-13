@@ -117,7 +117,7 @@ def _base_inputs() -> dict[str, object]:
                 "regime": {"status": "stale"},
             },
         },
-        "jangar_routeability_admission_ref": {
+        "torghut_routeability_admission_ref": {
             "admission_ref": "jangar-routeability:test",
             "decision": "hold",
             "state": "degraded",
@@ -169,7 +169,7 @@ def test_routeability_acceptance_ledger_projects_all_doc185_lots_at_zero_notiona
         "route_universe_tca_repair",
         "forecast_and_promotion_repair",
         "submit_gate_hold",
-        "jangar_admission_witness",
+        "torghut_admission_witness",
     }
 
 
@@ -210,13 +210,13 @@ def test_repair_only_route_tca_and_submit_gate_keep_candidate_count_zero() -> No
     assert ledger["accepted_routeable_candidate_count"] == 0
 
 
-def test_missing_or_degraded_jangar_admission_blocks_routeability_claims() -> None:
-    ledger = _ledger(jangar_routeability_admission_ref={})
-    jangar_lot = _lot(ledger, "jangar_admission_witness")
+def test_missing_or_degraded_torghut_admission_blocks_routeability_claims() -> None:
+    ledger = _ledger(torghut_routeability_admission_ref={})
+    jangar_lot = _lot(ledger, "torghut_admission_witness")
 
     assert jangar_lot["current_state"] == "missing"
     assert (
-        "jangar_routeability_admission_missing" in jangar_lot["blocking_reason_codes"]
+        "torghut_routeability_admission_missing" in jangar_lot["blocking_reason_codes"]
     )
     assert ledger["accepted_routeable_candidate_count"] == 0
 
@@ -273,7 +273,7 @@ def test_probing_route_rows_keep_routeability_unsettled_until_tca_acceptance() -
             "stage_count": 3,
         },
         market_context_status={"status": "healthy", "last_domain_states": {}},
-        jangar_routeability_admission_ref={
+        torghut_routeability_admission_ref={
             "admission_ref": "jangar-routeability:ready",
             "decision": "allow",
             "state": "current",
@@ -344,7 +344,7 @@ def test_all_receipts_must_settle_before_accepting_routeable_candidates() -> Non
             "stage_count": 3,
         },
         market_context_status={"status": "healthy", "last_domain_states": {}},
-        jangar_routeability_admission_ref={
+        torghut_routeability_admission_ref={
             "admission_ref": "jangar-routeability:ready",
             "decision": "allow",
             "state": "current",
