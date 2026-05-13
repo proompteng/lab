@@ -34,7 +34,9 @@ class TestEmpiricalJobs(TestCase):
             future=True,
         )
 
-    def test_empirical_benchmark_report_is_authoritative_when_required_families_present(self) -> None:
+    def test_empirical_benchmark_report_is_authoritative_when_required_families_present(
+        self,
+    ) -> None:
         report = build_empirical_benchmark_parity_report(
             candidate_id="cand-1",
             baseline_candidate_id="base-1",
@@ -91,9 +93,13 @@ class TestEmpiricalJobs(TestCase):
 
         self.assertTrue(report["promotion_authority_eligible"])
         self.assertTrue(report["artifact_authority"]["authoritative"])
-        self.assertEqual(report["contract"]["generation_mode"], "empirical_benchmark_parity_v1")
+        self.assertEqual(
+            report["contract"]["generation_mode"], "empirical_benchmark_parity_v1"
+        )
 
-    def test_empirical_benchmark_report_requires_runtime_and_model_lineage(self) -> None:
+    def test_empirical_benchmark_report_requires_runtime_and_model_lineage(
+        self,
+    ) -> None:
         report = build_empirical_benchmark_parity_report(
             candidate_id="cand-1",
             baseline_candidate_id="base-1",
@@ -189,17 +195,29 @@ class TestEmpiricalJobs(TestCase):
             )
             session.commit()
 
-            status = build_empirical_jobs_status(session=session, stale_after_seconds=86400)
+            status = build_empirical_jobs_status(
+                session=session, stale_after_seconds=86400
+            )
 
         self.assertEqual(status["status"], "degraded")
         self.assertFalse(status["ready"])
-        self.assertEqual(status["message"], "missing empirical jobs: benchmark_parity, janus_event_car, janus_hgrm_reward")
+        self.assertEqual(
+            status["message"],
+            "missing empirical jobs: benchmark_parity, janus_event_car, janus_hgrm_reward",
+        )
         self.assertEqual(status["eligible_jobs"], ["foundation_router_parity"])
+        self.assertEqual(status["model_refs"], ["models/candidate@sha256:def"])
         self.assertEqual(
             status["missing_jobs"],
             ["benchmark_parity", "janus_event_car", "janus_hgrm_reward"],
         )
-        self.assertEqual(status["jobs"]["foundation_router_parity"]["authority"], "empirical")
+        self.assertEqual(
+            status["jobs"]["foundation_router_parity"]["authority"], "empirical"
+        )
+        self.assertEqual(
+            status["jobs"]["foundation_router_parity"]["model_refs"],
+            ["models/candidate@sha256:def"],
+        )
         self.assertEqual(status["jobs"]["benchmark_parity"]["status"], "missing")
 
     def test_promoted_janus_payload_requires_summary_and_lineage_refs(self) -> None:
@@ -269,12 +287,19 @@ class TestEmpiricalJobs(TestCase):
                 )
             session.commit()
 
-            status = build_empirical_jobs_status(session=session, stale_after_seconds=86400)
+            status = build_empirical_jobs_status(
+                session=session, stale_after_seconds=86400
+            )
 
         self.assertEqual(status["authority"], "blocked")
         self.assertFalse(status["ready"])
-        self.assertEqual(status["message"], "ineligible empirical jobs: janus_hgrm_reward")
-        self.assertEqual(status["eligible_jobs"], ["benchmark_parity", "foundation_router_parity", "janus_event_car"])
+        self.assertEqual(
+            status["message"], "ineligible empirical jobs: janus_hgrm_reward"
+        )
+        self.assertEqual(
+            status["eligible_jobs"],
+            ["benchmark_parity", "foundation_router_parity", "janus_event_car"],
+        )
         self.assertEqual(status["ineligible_jobs"], ["janus_hgrm_reward"])
         self.assertFalse(status["jobs"]["janus_hgrm_reward"]["truthful"])
         self.assertEqual(status["jobs"]["janus_hgrm_reward"]["authority"], "blocked")
@@ -331,7 +356,9 @@ class TestEmpiricalJobs(TestCase):
                 )
             session.commit()
 
-            status = build_empirical_jobs_status(session=session, stale_after_seconds=86400)
+            status = build_empirical_jobs_status(
+                session=session, stale_after_seconds=86400
+            )
 
         self.assertFalse(status["ready"])
         self.assertEqual(status["status"], "degraded")

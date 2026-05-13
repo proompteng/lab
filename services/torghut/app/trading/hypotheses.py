@@ -214,6 +214,9 @@ class HypothesisManifest(BaseModel):
     hypothesis_id: str
     lane_id: str
     strategy_family: str
+    candidate_id: str | None = None
+    strategy_id: str | None = None
+    dataset_snapshot_ref: str | None = None
     initial_state: Literal["shadow", "blocked"] = "shadow"
     market_regimes: list[str] = Field(default_factory=list)
     required_feature_sets: list[str] = Field(default_factory=list)
@@ -262,6 +265,14 @@ class HypothesisManifest(BaseModel):
         if not normalized:
             raise ValueError("manifest text fields cannot be empty")
         return normalized
+
+    @field_validator("candidate_id", "strategy_id", "dataset_snapshot_ref")
+    @classmethod
+    def _normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
 
 @dataclass(frozen=True)
@@ -1032,6 +1043,9 @@ def compile_hypothesis_runtime_statuses(
         statuses.append(
             {
                 "hypothesis_id": manifest.hypothesis_id,
+                "candidate_id": manifest.candidate_id,
+                "strategy_id": manifest.strategy_id or manifest.strategy_family,
+                "dataset_snapshot_ref": manifest.dataset_snapshot_ref,
                 "lane_id": manifest.lane_id,
                 "strategy_family": manifest.strategy_family,
                 "initial_state": manifest.initial_state,
@@ -1070,6 +1084,17 @@ def compile_hypothesis_runtime_statuses(
                     ),
                 },
                 "dependency_quorum": jangar_dependency_quorum.as_payload(),
+                "lineage_ref": {
+                    "status": "manifest_declared"
+                    if manifest.candidate_id or manifest.dataset_snapshot_ref
+                    else "unverified",
+                    "candidate_id": manifest.candidate_id,
+                    "hypothesis_id": manifest.hypothesis_id,
+                    "dataset_snapshot_ref": manifest.dataset_snapshot_ref,
+                    "strategy_id": manifest.strategy_id or manifest.strategy_family,
+                    "lane_id": manifest.lane_id,
+                    "strategy_family": manifest.strategy_family,
+                },
             }
         )
     return statuses

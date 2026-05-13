@@ -56,12 +56,15 @@ def _hypothesis_manifest_payload(
     strategy_family: str,
     required_dependency_capabilities: list[str],
     initial_state: str = "shadow",
+    candidate_id: str | None = None,
+    strategy_id: str | None = None,
+    dataset_snapshot_ref: str | None = None,
     required_feature_rows: bool = True,
     require_drift_checks: bool = True,
     require_evidence_continuity: bool = True,
     max_market_context_freshness_seconds: int | None = None,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "schema_version": "torghut.hypothesis-manifest.v1",
         "hypothesis_id": hypothesis_id,
         "lane_id": lane_id,
@@ -85,6 +88,13 @@ def _hypothesis_manifest_payload(
             "required_dependency_quorum": "allow",
         },
     }
+    if candidate_id is not None:
+        payload["candidate_id"] = candidate_id
+    if strategy_id is not None:
+        payload["strategy_id"] = strategy_id
+    if dataset_snapshot_ref is not None:
+        payload["dataset_snapshot_ref"] = dataset_snapshot_ref
+    return payload
 
 
 class _FakeHttpResponse:
@@ -612,6 +622,74 @@ class TestHypothesisReadiness(TestCase):
         self.assertEqual(
             status_a["dependency_capabilities"]["required"],
             ["jangar_dependency_quorum", "signal_continuity"],
+        )
+
+    def test_compile_hypothesis_runtime_statuses_projects_manifest_lineage(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "h-micro.json").write_text(
+                json.dumps(
+                    _hypothesis_manifest_payload(
+                        hypothesis_id="H-MICRO-01",
+                        lane_id="microstructure-breakout",
+                        strategy_family="microstructure_breakout",
+                        candidate_id="chip-paper-microbar-composite@execution-proof",
+                        strategy_id="microbar_volume_continuation_long_top2_chip_v1@paper",
+                        dataset_snapshot_ref="torghut-chip-full-day-20260505-4c330ce9-r1",
+                        required_dependency_capabilities=[],
+                        required_feature_rows=False,
+                        require_drift_checks=False,
+                        require_evidence_continuity=False,
+                    )
+                ),
+                encoding="utf-8",
+            )
+            settings.trading_hypothesis_registry_path = str(root)
+            registry = load_hypothesis_registry()
+
+            statuses = compile_hypothesis_runtime_statuses(
+                registry=registry,
+                state=_state(signal_lag_seconds=15),
+                tca_summary={
+                    "order_count": 0,
+                    "avg_abs_slippage_bps": 0,
+                    "avg_realized_shortfall_bps": 0,
+                },
+                market_context_status={"last_freshness_seconds": None},
+                jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                    decision="allow",
+                    reasons=[],
+                    message="ok",
+                ),
+                now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+            )
+
+        micro = statuses[0]
+        self.assertEqual(
+            micro["candidate_id"],
+            "chip-paper-microbar-composite@execution-proof",
+        )
+        self.assertEqual(
+            micro["strategy_id"],
+            "microbar_volume_continuation_long_top2_chip_v1@paper",
+        )
+        self.assertEqual(
+            micro["dataset_snapshot_ref"],
+            "torghut-chip-full-day-20260505-4c330ce9-r1",
+        )
+        self.assertEqual(
+            micro["lineage_ref"],
+            {
+                "status": "manifest_declared",
+                "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                "hypothesis_id": "H-MICRO-01",
+                "dataset_snapshot_ref": "torghut-chip-full-day-20260505-4c330ce9-r1",
+                "strategy_id": "microbar_volume_continuation_long_top2_chip_v1@paper",
+                "lane_id": "microstructure-breakout",
+                "strategy_family": "microstructure_breakout",
+            },
         )
 
     def test_summarize_hypothesis_runtime_statuses_reports_state_totals(self) -> None:
