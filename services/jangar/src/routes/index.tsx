@@ -181,10 +181,7 @@ function MemoriesByDayChart({ data }: { data: { day: string; count: number }[] }
           minTickGap={24}
           tickFormatter={(value: string) => formatShortDay(value)}
         />
-        <ChartTooltip
-          cursor={false}
-          content={({ content: _content, ...props }) => <ChartTooltipContent {...props} />}
-        />
+        <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
         <Line
           dataKey="count"
           type="monotone"
@@ -220,10 +217,7 @@ function MemoriesTopNamespacesChart({ data }: { data: { namespace: string; count
           tickMargin={8}
           tickFormatter={(value: string) => truncateLabel(value)}
         />
-        <ChartTooltip
-          cursor={false}
-          content={({ content: _content, ...props }) => <ChartTooltipContent {...props} />}
-        />
+        <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
         <Bar dataKey="count" fill="var(--color-count)" radius={4} />
       </BarChart>
     </ChartContainer>
