@@ -33,7 +33,12 @@ def _profile_ids_for_family(family_template_id: str) -> list[str]:
     return [
         f"{family_template_id}:profile-{index + 1}"
         for index in range(
-            len(candidate_specs_module._FAMILY_EXECUTION_PROFILES[family_template_id])
+            len(
+                candidate_specs_module._execution_profiles_for_target(
+                    family_template_id=family_template_id,
+                    target_net_pnl_per_day=Decimal("500"),
+                )
+            )
         )
     ]
 
