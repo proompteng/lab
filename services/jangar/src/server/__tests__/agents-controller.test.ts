@@ -1365,6 +1365,83 @@ describe('agents controller reconcileAgentRun', () => {
     expect(findCondition(status, 'Accepted')?.status).toBe('True')
   })
 
+  it('applies configured runner resource defaults when an AgentRun omits workload resources', async () => {
+    const previousResources = process.env.JANGAR_AGENT_RUNNER_RESOURCES
+    process.env.JANGAR_AGENT_RUNNER_RESOURCES = JSON.stringify({
+      requests: {
+        cpu: '1',
+        memory: '2Gi',
+        'ephemeral-storage': '8Gi',
+      },
+      limits: {
+        memory: '8Gi',
+        'ephemeral-storage': '16Gi',
+      },
+    })
+
+    try {
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        return { ...resource, metadata: { ...metadata, uid } }
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+            }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          return null
+        }),
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        buildAgentRun(),
+        'agents',
+        [],
+        [],
+        defaultConcurrency,
+        buildInFlight(),
+        0,
+      )
+
+      const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
+      const job = appliedResources.find((resource) => resource.kind === 'Job')
+      const jobSpec = (job?.spec ?? {}) as Record<string, unknown>
+      const template = (jobSpec.template ?? {}) as Record<string, unknown>
+      const podSpec = (template.spec ?? {}) as Record<string, unknown>
+      const containers = (podSpec.containers ?? []) as Record<string, unknown>[]
+
+      expect(containers[0]?.resources).toEqual({
+        requests: {
+          cpu: '1',
+          memory: '2Gi',
+          'ephemeral-storage': '8Gi',
+        },
+        limits: {
+          memory: '8Gi',
+          'ephemeral-storage': '16Gi',
+        },
+      })
+    } finally {
+      if (previousResources === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_RESOURCES
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_RESOURCES = previousResources
+      }
+    }
+  })
+
   it('allows immutable spec mutations before Accepted', async () => {
     const kube = buildKube({
       get: vi.fn(async (resource: string) => {

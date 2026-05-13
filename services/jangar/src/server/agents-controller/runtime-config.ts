@@ -1,4 +1,4 @@
-import { asRecord, asString } from '~/server/primitives-http'
+import { asRecord } from '~/server/primitives-http'
 
 type EnvSource = Record<string, string | undefined>
 
@@ -77,6 +77,7 @@ export type AgentRunnerDefaultsConfig = {
   affinity: Record<string, unknown> | null
   podSecurityContext: Record<string, unknown> | null
   imagePullSecrets: unknown[] | null
+  resources: Record<string, unknown> | null
   defaultRunnerImage: string | null
 }
 
@@ -139,6 +140,7 @@ export const resolveAgentRunnerDefaultsConfig = (env: EnvSource = process.env): 
   const tolerations = parseJson(env.JANGAR_AGENT_RUNNER_TOLERATIONS)
   const topologySpreadConstraints = parseJson(env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS)
   const imagePullSecrets = parseJson(env.JANGAR_AGENT_RUNNER_IMAGE_PULL_SECRETS)
+  const resources = asRecord(parseJson(env.JANGAR_AGENT_RUNNER_RESOURCES))
 
   return {
     serviceAccount: normalizeNonEmpty(env.JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT),
@@ -164,6 +166,7 @@ export const resolveAgentRunnerDefaultsConfig = (env: EnvSource = process.env): 
     affinity,
     podSecurityContext,
     imagePullSecrets: Array.isArray(imagePullSecrets) ? imagePullSecrets : null,
+    resources,
     defaultRunnerImage:
       normalizeNonEmpty(env.JANGAR_AGENT_RUNNER_IMAGE) ?? normalizeNonEmpty(env.JANGAR_AGENT_IMAGE) ?? null,
   }

@@ -92,6 +92,14 @@ controller:
   defaultWorkload:
     nodeSelector:
       kubernetes.io/arch: arm64
+    resources:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+        ephemeral-storage: 8Gi
+      limits:
+        memory: 8Gi
+        ephemeral-storage: 16Gi
   namespaces:
     - agents
   concurrency:

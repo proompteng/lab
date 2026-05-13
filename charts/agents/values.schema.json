@@ -901,6 +901,14 @@
             "affinity": { "type": "object" },
             "topologySpreadConstraints": { "type": "array", "items": { "type": "object" } },
             "podSecurityContext": { "type": "object" },
+            "resources": {
+              "type": "object",
+              "properties": {
+                "requests": { "type": "object", "additionalProperties": { "type": "string" } },
+                "limits": { "type": "object", "additionalProperties": { "type": "string" } }
+              },
+              "additionalProperties": false
+            },
             "imagePullSecrets": { "type": "array", "items": { "type": "string" } },
             "priorityClassName": { "type": "string" },
             "schedulerName": { "type": "string" }

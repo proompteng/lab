@@ -111,13 +111,36 @@ export const resolveRunnerServiceAccount = (runtimeConfig: Record<string, unknow
   asString(runtimeConfig.serviceAccountName) ??
   resolveAgentRunnerDefaultsConfig(process.env).serviceAccount
 
+const normalizeResourceQuantityMap = (value: unknown) => {
+  const resourceMap = asRecord(value)
+  if (!resourceMap) return {}
+  return Object.fromEntries(
+    Object.entries(resourceMap)
+      .map(([key, quantity]) => {
+        const normalizedKey = key.trim()
+        const normalizedQuantity = asString(quantity)?.trim()
+        return normalizedKey && normalizedQuantity ? [normalizedKey, normalizedQuantity] : null
+      })
+      .filter((entry): entry is [string, string] => entry !== null),
+  )
+}
+
 const buildJobResources = (workload: Record<string, unknown>) => {
+  const defaultResources = resolveAgentRunnerDefaultsConfig(process.env).resources ?? {}
   const resources = asRecord(workload.resources) ?? {}
-  const requests = asRecord(resources.requests) ?? {}
-  const limits = asRecord(resources.limits) ?? {}
+  const workloadRequests = asRecord(resources.requests) ?? {}
+  const workloadLimits = asRecord(resources.limits) ?? {}
+  const requests = {
+    ...normalizeResourceQuantityMap(readNested(defaultResources, ['requests'])),
+    ...normalizeResourceQuantityMap(workloadRequests),
+  }
+  const limits = {
+    ...normalizeResourceQuantityMap(readNested(defaultResources, ['limits'])),
+    ...normalizeResourceQuantityMap(workloadLimits),
+  }
   return {
-    requests,
-    limits,
+    ...(Object.keys(requests).length > 0 ? { requests } : {}),
+    ...(Object.keys(limits).length > 0 ? { limits } : {}),
   }
 }
 

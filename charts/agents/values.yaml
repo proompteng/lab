@@ -343,6 +343,7 @@ controller:
     affinity: {}
     topologySpreadConstraints: []
     podSecurityContext: {}
+    resources: {}
     imagePullSecrets: []
     priorityClassName: ''
     schedulerName: ''
