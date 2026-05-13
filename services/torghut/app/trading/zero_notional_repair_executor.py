@@ -53,7 +53,11 @@ _ALLOWLIST: Mapping[str, Mapping[str, object]] = {
         "rollback_path": "discard replayed feature coverage receipt and keep the hypothesis repair lot queued",
     },
 }
-
+_FRESHNESS_DIMENSION_BY_ACTION: Mapping[str, str] = {
+    "renew_empirical_proof_jobs": "empirical",
+    "refresh_stale_market_context_domains": "market_context",
+    "recompute_route_tca_and_fill_quality": "tca",
+}
 
 RepairRunner = Callable[[Mapping[str, Any]], Mapping[str, object]]
 
@@ -218,6 +222,105 @@ def _dispatch_ticket_reasons(
     return _strings(reasons)
 
 
+def _freshness_dimension_id(
+    action: str, action_contract: Mapping[str, object]
+) -> str | None:
+    configured_dimension = _text(action_contract.get("freshness_dimension_id"))
+    if configured_dimension:
+        return configured_dimension
+    action_dimension = _FRESHNESS_DIMENSION_BY_ACTION.get(action)
+    if action_dimension:
+        return action_dimension
+    return None
+
+
+def _freshness_carry_citation(
+    *,
+    action: str,
+    action_contract: Mapping[str, object],
+    freshness_carry_ledger: Mapping[str, Any],
+) -> dict[str, object]:
+    dimension_id = _freshness_dimension_id(action, action_contract)
+    if not dimension_id:
+        return {
+            "required": False,
+            "state": "not_required",
+            "ledger_ref": None,
+            "dimension_id": None,
+            "dimension_state": None,
+            "dimension_proof_authority": None,
+            "dimension_stale_reason_codes": [],
+            "repair_proof_slo_ref": None,
+            "repair_proof_slo_dispatchable": None,
+            "target_value_gate": None,
+            "required_output_receipts": [],
+            "blocking_reasons": [],
+        }
+
+    ledger_ref = freshness_carry_ledger.get("ledger_id")
+    blocking_reasons: list[str] = []
+    citation_state = "cited"
+    matched_dimension: Mapping[str, Any] = {}
+    matched_slo: Mapping[str, Any] = {}
+
+    if not freshness_carry_ledger:
+        citation_state = "missing_ledger"
+        blocking_reasons.append("freshness_carry_ledger_missing")
+    else:
+        for raw_dimension in _sequence(freshness_carry_ledger.get("dimensions")):
+            dimension = _mapping(raw_dimension)
+            if _text(dimension.get("dimension_id")) == dimension_id:
+                matched_dimension = dimension
+                break
+        if not matched_dimension:
+            citation_state = "missing_dimension"
+            blocking_reasons.append(f"freshness_dimension_missing:{dimension_id}")
+
+        for raw_slo in _sequence(freshness_carry_ledger.get("repair_proof_slos")):
+            slo = _mapping(raw_slo)
+            if _text(slo.get("target_dimension_id")) == dimension_id:
+                matched_slo = slo
+                break
+        if not matched_slo:
+            citation_state = "missing_slo"
+            blocking_reasons.append(
+                f"freshness_repair_proof_slo_missing:{dimension_id}"
+            )
+        elif not _bool(matched_slo.get("dispatchable")):
+            citation_state = "not_dispatchable"
+            blocking_reasons.append(
+                f"freshness_repair_proof_slo_not_dispatchable:{dimension_id}"
+            )
+            blocking_reasons.extend(_strings(matched_slo.get("hold_reason_codes")))
+
+    return {
+        "required": True,
+        "state": citation_state,
+        "ledger_ref": ledger_ref,
+        "dimension_id": dimension_id,
+        "dimension_state": matched_dimension.get("state"),
+        "dimension_proof_authority": matched_dimension.get("proof_authority"),
+        "dimension_stale_reason_codes": _strings(
+            matched_dimension.get("stale_reason_codes")
+        ),
+        "repair_proof_slo_ref": matched_slo.get("repair_id"),
+        "repair_proof_slo_dispatchable": _bool(matched_slo.get("dispatchable"))
+        if matched_slo
+        else None,
+        "target_value_gate": matched_slo.get("target_value_gate"),
+        "required_output_receipts": _strings(
+            matched_slo.get("required_output_receipts")
+        ),
+        "blocking_reasons": _strings(blocking_reasons),
+    }
+
+
+def _freshness_citation_blocking_reasons(citation: Mapping[str, object]) -> list[str]:
+    if not bool(citation.get("required")):
+        return []
+    return _strings(citation.get("blocking_reasons"))
+
+
 def _capital_safety_reasons(
     frontier: Mapping[str, Any], repair: Mapping[str, Any]
 ) -> list[str]:
@@ -247,6 +350,7 @@ def build_zero_notional_repair_execution_receipt(
     preferred_action: str | None = None,
     action_result: Mapping[str, object] | None = None,
     repair_lot_dispatch_ticket: Mapping[str, object] | None = None,
+    freshness_carry_ledger: Mapping[str, Any] | None = None,
     now: datetime | None = None,
 ) -> dict[str, object]:
     """Build a receipt for the selected frontier repair without granting capital."""
@@ -267,6 +371,14 @@ def build_zero_notional_repair_execution_receipt(
         repair,
         action_contract,
         dispatch_ticket,
+    )
+    freshness_citation = _freshness_carry_citation(
+        action=action,
+        action_contract=action_contract,
+        freshness_carry_ledger=_mapping(freshness_carry_ledger),
+    )
+    freshness_citation_reasons = _freshness_citation_blocking_reasons(
+        freshness_citation
     )
     execution_state = "dry_run_ready"
     command_exit_code: int | None = 0
@@ -289,6 +401,10 @@ def build_zero_notional_repair_execution_receipt(
     elif execute and dispatch_ticket_reasons:
         execution_state = "repair_lot_dispatch_ticket_required"
         blocked_reasons.extend(dispatch_ticket_reasons)
+        command_exit_code = 78
+    elif execute and freshness_citation_reasons:
+        execution_state = "freshness_repair_slo_required"
+        blocked_reasons.extend(freshness_citation_reasons)
         command_exit_code = 78
     elif execute and result:
         execution_state = _text(result.get("execution_state"), "executed")
@@ -329,6 +445,25 @@ def build_zero_notional_repair_execution_receipt(
         "blocked_dimension": repair.get("blocked_dimension"),
         "zero_notional_action": action or None,
         "preferred_zero_notional_action": normalized_preferred_action or None,
+        "freshness_carry_ledger_ref": freshness_citation["ledger_ref"],
+        "freshness_citation_required": freshness_citation["required"],
+        "freshness_citation_state": freshness_citation["state"],
+        "freshness_dimension_id": freshness_citation["dimension_id"],
+        "freshness_dimension_state": freshness_citation["dimension_state"],
+        "freshness_dimension_proof_authority": freshness_citation[
+            "dimension_proof_authority"
+        ],
+        "freshness_dimension_stale_reason_codes": freshness_citation[
+            "dimension_stale_reason_codes"
+        ],
+        "freshness_repair_proof_slo_ref": freshness_citation["repair_proof_slo_ref"],
+        "freshness_repair_proof_slo_dispatchable": freshness_citation[
+            "repair_proof_slo_dispatchable"
+        ],
+        "freshness_target_value_gate": freshness_citation["target_value_gate"],
+        "freshness_required_output_receipts": freshness_citation[
+            "required_output_receipts"
+        ],
         "executor": action_contract.get("executor"),
         "value_gate": action_contract.get("value_gate")
         or repair.get("value_gate")
@@ -376,6 +511,7 @@ def run_zero_notional_repair(
     execute: bool,
     preferred_action: str | None = None,
     repair_lot_dispatch_ticket: Mapping[str, object] | None = None,
+    freshness_carry_ledger: Mapping[str, Any] | None = None,
     runners: Mapping[str, RepairRunner] | None = None,
     now: datetime | None = None,
 ) -> dict[str, object]:
@@ -395,6 +531,14 @@ def run_zero_notional_repair(
         _mapping(action_contract),
         dispatch_ticket,
     )
+    freshness_citation = _freshness_carry_citation(
+        action=action,
+        action_contract=_mapping(action_contract),
+        freshness_carry_ledger=_mapping(freshness_carry_ledger),
+    )
+    freshness_citation_reasons = _freshness_citation_blocking_reasons(
+        freshness_citation
+    )
     action_result: Mapping[str, object] | None = None
 
     if (
@@ -403,6 +547,7 @@ def run_zero_notional_repair(
         and action_contract
         and not _capital_safety_reasons(frontier, repair)
         and not dispatch_ticket_reasons
+        and not freshness_citation_reasons
         and action in (runners or {})
     ):
         runner = cast(Mapping[str, RepairRunner], runners)[action]
@@ -418,6 +563,7 @@ def run_zero_notional_repair(
         preferred_action=normalized_preferred_action or None,
         action_result=action_result,
         repair_lot_dispatch_ticket=dispatch_ticket,
+        freshness_carry_ledger=freshness_carry_ledger,
         now=now,
     )
 

@@ -67,6 +67,47 @@ def _dispatch_ticket(
     return ticket
 
 
+def _freshness_carry_ledger(
+    dimension_id: str = "market_context",
+    *,
+    dispatchable: bool = True,
+) -> dict[str, object]:
+    output_receipt_by_dimension = {
+        "empirical": "torghut.empirical-proof-refresh-receipt.v1",
+        "market_context": "torghut.market-context-freshness-receipt.v1",
+        "tca": "torghut.execution-tca-refresh-receipt.v1",
+    }
+    value_gate_by_dimension = {
+        "empirical": "post_cost_daily_net_pnl",
+        "market_context": "zero_notional_or_stale_evidence_rate",
+        "tca": "fill_tca_or_slippage_quality",
+    }
+    return {
+        "schema_version": "torghut.freshness-carry-ledger.v1",
+        "ledger_id": "freshness-carry-ledger:test",
+        "dimensions": [
+            {
+                "dimension_id": dimension_id,
+                "state": "stale",
+                "proof_authority": "app_health",
+                "stale_reason_codes": [f"{dimension_id}_stale"],
+            }
+        ],
+        "repair_proof_slos": [
+            {
+                "repair_id": f"freshness-repair-slo:{dimension_id}",
+                "target_dimension_id": dimension_id,
+                "target_value_gate": value_gate_by_dimension[dimension_id],
+                "required_output_receipts": [output_receipt_by_dimension[dimension_id]],
+                "dispatchable": dispatchable,
+                "hold_reason_codes": []
+                if dispatchable
+                else ["source_serving_not_current"],
+            }
+        ],
+    }
+
+
 def test_dry_run_receipt_keeps_selected_repair_zero_notional() -> None:
     receipt = build_zero_notional_repair_execution_receipt(
         account_label="paper",
@@ -75,6 +116,7 @@ def test_dry_run_receipt_keeps_selected_repair_zero_notional() -> None:
         source_commit="abc123",
         profit_freshness_frontier=_frontier(),
         execute=False,
+        freshness_carry_ledger=_freshness_carry_ledger(),
         now=NOW,
     )
 
@@ -86,6 +128,16 @@ def test_dry_run_receipt_keeps_selected_repair_zero_notional() -> None:
     assert receipt["live_notional_limit"] == "0"
     assert receipt["before_refs"] == ["market_context:AAPL"]
     assert receipt["value_gate"] == "zero_notional_or_stale_evidence_rate"
+    assert receipt["freshness_carry_ledger_ref"] == "freshness-carry-ledger:test"
+    assert receipt["freshness_citation_required"] is True
+    assert receipt["freshness_citation_state"] == "cited"
+    assert receipt["freshness_dimension_id"] == "market_context"
+    assert receipt["freshness_repair_proof_slo_ref"] == (
+        "freshness-repair-slo:market_context"
+    )
+    assert receipt["freshness_required_output_receipts"] == [
+        "torghut.market-context-freshness-receipt.v1"
+    ]
     assert receipt["requires_repair_lot_dispatch_ticket"] is True
     assert receipt["repair_lot_dispatch_ticket_ref"] is None
 
@@ -108,6 +160,7 @@ def test_execute_runs_allowlisted_tca_runner_without_widening_notional() -> None
         source_commit="abc123",
         profit_freshness_frontier=_frontier("recompute_route_tca_and_fill_quality"),
         execute=True,
+        freshness_carry_ledger=_freshness_carry_ledger("tca"),
         runners={"recompute_route_tca_and_fill_quality": runner},
         now=NOW,
     )
@@ -236,6 +289,7 @@ def test_preferred_action_can_execute_queued_route_tca_repair() -> None:
         profit_freshness_frontier=frontier,
         execute=True,
         preferred_action="recompute_route_tca_and_fill_quality",
+        freshness_carry_ledger=_freshness_carry_ledger("tca"),
         runners={
             "recompute_route_tca_and_fill_quality": lambda repair: (
                 called.append(repair)
@@ -354,6 +408,7 @@ def test_runner_required_action_executes_with_matching_dispatch_ticket() -> None
         profit_freshness_frontier=_frontier("refresh_stale_market_context_domains"),
         execute=True,
         repair_lot_dispatch_ticket=_dispatch_ticket(),
+        freshness_carry_ledger=_freshness_carry_ledger(),
         runners={
             "refresh_stale_market_context_domains": lambda repair: (
                 called.append(repair)
@@ -382,6 +437,9 @@ def test_runner_required_action_executes_with_matching_dispatch_ticket() -> None
         == "profit-freshness-repair-lot:test"
     )
     assert receipt["repair_lot_dispatch_ticket_launch_allowed"] is True
+    assert receipt["freshness_citation_state"] == "cited"
+    assert receipt["freshness_dimension_id"] == "market_context"
+    assert receipt["freshness_repair_proof_slo_dispatchable"] is True
     assert receipt["paper_notional_limit"] == "0"
     assert receipt["live_notional_limit"] == "0"
     assert receipt["order_submission_enabled"] is False
@@ -601,6 +659,7 @@ def test_execute_without_local_runner_is_fail_closed() -> None:
         source_commit="abc123",
         profit_freshness_frontier=_frontier("recompute_route_tca_and_fill_quality"),
         execute=True,
+        freshness_carry_ledger=_freshness_carry_ledger("tca"),
         runners={},
         now=NOW,
     )
@@ -608,6 +667,44 @@ def test_execute_without_local_runner_is_fail_closed() -> None:
     assert receipt["execution_state"] == "runner_not_configured"
     assert receipt["command_exit_code"] == 78
     assert "zero_notional_runner_not_configured" in receipt["blocked_reasons"]
+    assert receipt["order_submission_enabled"] is False
+
+
+def test_execute_freshness_targeted_repair_requires_dispatchable_freshness_slo() -> (
+    None
+):
+    called: list[Mapping[str, Any]] = []
+
+    receipt = run_zero_notional_repair(
+        account_label="paper",
+        trading_mode="live",
+        torghut_revision="torghut-00320",
+        source_commit="abc123",
+        profit_freshness_frontier=_frontier("recompute_route_tca_and_fill_quality"),
+        execute=True,
+        freshness_carry_ledger=_freshness_carry_ledger("tca", dispatchable=False),
+        runners={
+            "recompute_route_tca_and_fill_quality": lambda repair: (
+                called.append(repair)
+                or {
+                    "execution_state": "executed",
+                    "command_exit_code": 0,
+                }
+            ),
+        },
+        now=NOW,
+    )
+
+    assert called == []
+    assert receipt["execution_state"] == "freshness_repair_slo_required"
+    assert receipt["command_exit_code"] == 78
+    assert receipt["freshness_citation_state"] == "not_dispatchable"
+    assert receipt["freshness_dimension_id"] == "tca"
+    assert receipt["freshness_repair_proof_slo_ref"] == "freshness-repair-slo:tca"
+    assert receipt["blocked_reasons"] == [
+        "freshness_repair_proof_slo_not_dispatchable:tca",
+        "source_serving_not_current",
+    ]
     assert receipt["order_submission_enabled"] is False
 
 

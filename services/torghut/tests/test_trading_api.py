@@ -90,6 +90,41 @@ def _install_pipeline_universe_resolver(
     setattr(scheduler, "_pipeline", SimpleNamespace(universe_resolver=resolver))
 
 
+def _freshness_carry_ledger_for_test(dimension_id: str) -> dict[str, object]:
+    output_receipt_by_dimension = {
+        "empirical": "torghut.empirical-proof-refresh-receipt.v1",
+        "market_context": "torghut.market-context-freshness-receipt.v1",
+        "tca": "torghut.execution-tca-refresh-receipt.v1",
+    }
+    value_gate_by_dimension = {
+        "empirical": "post_cost_daily_net_pnl",
+        "market_context": "zero_notional_or_stale_evidence_rate",
+        "tca": "fill_tca_or_slippage_quality",
+    }
+    return {
+        "schema_version": "torghut.freshness-carry-ledger.v1",
+        "ledger_id": "freshness-carry-ledger:test",
+        "dimensions": [
+            {
+                "dimension_id": dimension_id,
+                "state": "stale",
+                "proof_authority": "app_health",
+                "stale_reason_codes": [f"{dimension_id}_stale"],
+            }
+        ],
+        "repair_proof_slos": [
+            {
+                "repair_id": f"freshness-repair-slo:{dimension_id}",
+                "target_dimension_id": dimension_id,
+                "target_value_gate": value_gate_by_dimension[dimension_id],
+                "required_output_receipts": [output_receipt_by_dimension[dimension_id]],
+                "dispatchable": True,
+                "hold_reason_codes": [],
+            }
+        ],
+    }
+
+
 def _mark_static_universe_loaded(scheduler: TradingScheduler) -> None:
     scheduler.state.universe_source_status = "ok"
     scheduler.state.universe_source_reason = "static_symbols_loaded"
@@ -3984,6 +4019,9 @@ class TestTradingApi(TestCase):
     def test_zero_notional_repair_endpoint_returns_dry_run_receipt(self) -> None:
         status_payload = {
             "active_revision": "torghut-00320",
+            "freshness_carry_ledger": _freshness_carry_ledger_for_test(
+                "market_context"
+            ),
             "profit_freshness_frontier": {
                 "frontier_id": "profit-freshness-frontier:test",
                 "capital_posture": {
@@ -4024,10 +4062,23 @@ class TestTradingApi(TestCase):
         self.assertEqual(payload["paper_notional_limit"], "0")
         self.assertEqual(payload["live_notional_limit"], "0")
         self.assertEqual(payload["before_refs"], ["market_context:AAPL"])
+        self.assertEqual(
+            payload["freshness_carry_ledger_ref"],
+            "freshness-carry-ledger:test",
+        )
+        self.assertEqual(payload["freshness_citation_state"], "cited")
+        self.assertEqual(payload["freshness_dimension_id"], "market_context")
+        self.assertEqual(
+            payload["freshness_repair_proof_slo_ref"],
+            "freshness-repair-slo:market_context",
+        )
 
     def test_zero_notional_repair_endpoint_accepts_dispatch_ticket_body(self) -> None:
         status_payload = {
             "active_revision": "torghut-00320",
+            "freshness_carry_ledger": _freshness_carry_ledger_for_test(
+                "market_context"
+            ),
             "profit_freshness_frontier": {
                 "frontier_id": "profit-freshness-frontier:test",
                 "capital_posture": {
@@ -4086,6 +4137,8 @@ class TestTradingApi(TestCase):
             payload["repair_lot_dispatch_ticket_ref"],
             "repair-lot-dispatch-ticket:test",
         )
+        self.assertEqual(payload["freshness_citation_state"], "cited")
+        self.assertEqual(payload["freshness_dimension_id"], "market_context")
         self.assertTrue(payload["repair_lot_dispatch_ticket_launch_allowed"])
         self.assertFalse(payload["order_submission_enabled"])
 
@@ -4094,6 +4147,7 @@ class TestTradingApi(TestCase):
     ) -> None:
         status_payload = {
             "active_revision": "torghut-00320",
+            "freshness_carry_ledger": _freshness_carry_ledger_for_test("tca"),
             "profit_freshness_frontier": {
                 "frontier_id": "profit-freshness-frontier:test",
                 "capital_posture": {
@@ -4149,6 +4203,8 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(payload["repair_lot_ref"], "profit-freshness-repair-lot:tca")
         self.assertEqual(payload["before_refs"], ["execution_tca:NVDA"])
+        self.assertEqual(payload["freshness_citation_state"], "cited")
+        self.assertEqual(payload["freshness_dimension_id"], "tca")
         self.assertFalse(payload["order_submission_enabled"])
 
     def test_zero_notional_repair_endpoint_executes_drift_replay(self) -> None:
