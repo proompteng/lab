@@ -82,6 +82,7 @@ class ReplayConfig:
     symbols: tuple[str, ...] = ()
     progress_log_interval_seconds: int = DEFAULT_PROGRESS_LOG_INTERVAL_SECONDS
     capture_traces: bool = False
+    capture_trace_funnel: bool = False
     max_executable_spread_bps: Decimal = DEFAULT_MAX_EXECUTABLE_SPREAD_BPS
     max_quote_mid_jump_bps: Decimal = DEFAULT_MAX_QUOTE_MID_JUMP_BPS
     max_jump_with_wide_spread_bps: Decimal = DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS
@@ -203,6 +204,11 @@ def _parse_args() -> argparse.Namespace:
         '--collect-traces',
         action='store_true',
         help='Capture per-strategy runtime traces and emit them in payload trace output.',
+    )
+    parser.add_argument(
+        '--collect-trace-funnel',
+        action='store_true',
+        help='Capture aggregate runtime gate funnel diagnostics without emitting per-row trace records.',
     )
     parser.add_argument('--no-flatten-eod', action='store_true')
     parser.add_argument('--json', action='store_true')
@@ -805,6 +811,9 @@ def _init_funnel_stats() -> dict[str, Any]:
         'quote_valid_rows': 0,
         'strategy_evaluations': 0,
         'gate_pass_counts': defaultdict(int),
+        'first_failed_gate_counts': defaultdict(int),
+        'failing_threshold_counts': defaultdict(int),
+        'passed_trace_count': 0,
         'decision_count': 0,
         'filled_count': 0,
         'filled_notional': Decimal('0'),
@@ -834,11 +843,23 @@ def _record_trace_for_funnel(
     trace: StrategyTrace,
 ) -> None:
     stats['strategy_evaluations'] += 1
+    if trace.passed:
+        stats['passed_trace_count'] += 1
     for gate in trace.gates:
         if not gate.passed:
             break
         gate_key = f'{trace.strategy_type}:{gate.gate}'
         stats['gate_pass_counts'][gate_key] += 1
+    if trace.first_failed_gate is None:
+        return
+    failed_gate_key = f'{trace.strategy_type}:{trace.first_failed_gate}'
+    stats['first_failed_gate_counts'][failed_gate_key] += 1
+    failed_gate = trace.failed_gate()
+    if failed_gate is None:
+        return
+    for threshold in failed_gate.failing_thresholds():
+        threshold_key = f'{trace.strategy_type}:{failed_gate.gate}:{threshold.metric}'
+        stats['failing_threshold_counts'][threshold_key] += 1
 
 
 def _build_near_miss(trace: StrategyTrace, *, trading_day: str) -> NearMissRecord | None:
@@ -1352,7 +1373,8 @@ def _apply_filled_decision(
 def run_replay(config: ReplayConfig) -> dict[str, Any]:
     strategies = _load_strategies(config.strategy_configmap_path)
     strategies_by_id = {str(strategy.id): strategy for strategy in strategies}
-    engine = DecisionEngine(price_fetcher=None, runtime_trace_enabled=config.capture_traces)
+    capture_runtime_traces = config.capture_traces or config.capture_trace_funnel
+    engine = DecisionEngine(price_fetcher=None, runtime_trace_enabled=capture_runtime_traces)
     quote_quality = SignalQuoteQualityTracker(
         policy=QuoteQualityPolicy(
             max_executable_spread_bps=config.max_executable_spread_bps,
@@ -1507,7 +1529,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             )
             telemetry = engine.consume_runtime_telemetry()
             symbol_bucket['runtime_evaluable_rows'] += 1
-            telemetry_traces = telemetry.traces if config.capture_traces else ()
+            telemetry_traces = telemetry.traces if capture_runtime_traces else ()
             for trace in telemetry_traces:
                 _record_trace_for_funnel(symbol_bucket, trace)
                 near_miss = _build_near_miss(trace, trading_day=signal_day.isoformat())
@@ -1707,6 +1729,9 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 quote_valid_rows=int(bucket['quote_valid_rows']),
                 strategy_evaluations=int(bucket['strategy_evaluations']),
                 gate_pass_counts=dict(bucket['gate_pass_counts']),
+                first_failed_gate_counts=dict(bucket['first_failed_gate_counts']),
+                failing_threshold_counts=dict(bucket['failing_threshold_counts']),
+                passed_trace_count=int(bucket['passed_trace_count']),
                 decision_count=int(bucket['decision_count']),
                 filled_count=int(bucket['filled_count']),
                 filled_notional=bucket['filled_notional'],
@@ -1945,6 +1970,7 @@ def main() -> None:
             or args.funnel_output is not None
             or args.near_misses_output is not None
         ),
+        capture_trace_funnel=bool(getattr(args, "collect_trace_funnel", False)),
         max_executable_spread_bps=Decimal(str(args.max_executable_spread_bps)),
         max_quote_mid_jump_bps=Decimal(str(args.max_quote_mid_jump_bps)),
         max_jump_with_wide_spread_bps=Decimal(str(args.max_jump_with_wide_spread_bps)),

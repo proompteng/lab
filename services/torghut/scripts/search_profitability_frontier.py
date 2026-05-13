@@ -247,6 +247,7 @@ def _build_replay_config(
     chunk_minutes: int,
     symbols: tuple[str, ...],
     progress_log_interval_seconds: int,
+    capture_trace_funnel: bool = False,
 ) -> ReplayConfig:
     return ReplayConfig(
         strategy_configmap_path=strategy_configmap_path,
@@ -260,6 +261,7 @@ def _build_replay_config(
         start_equity=start_equity,
         symbols=symbols,
         progress_log_interval_seconds=progress_log_interval_seconds,
+        capture_trace_funnel=capture_trace_funnel,
     )
 
 

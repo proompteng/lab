@@ -10,7 +10,7 @@ import json
 import os
 import sys
 import tempfile
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -230,6 +230,11 @@ def _parse_args() -> argparse.Namespace:
         '--max-train-screen-worst-day-loss',
         default='',
         help='Optional max train worst-day loss before holdout/full-window replay. Defaults to the consistency max worst-day loss.',
+    )
+    parser.add_argument(
+        '--collect-train-gate-diagnostics',
+        action='store_true',
+        help='Capture aggregate train-window gate failure diagnostics in frontier candidates.',
     )
     return parser.parse_args()
 
@@ -909,6 +914,118 @@ def _symbol_contributions_from_replay_payload(
     )
 
 
+def _top_counter_payload(counter: Counter[str], *, limit: int = 10) -> list[dict[str, Any]]:
+    return [
+        {'key': key, 'count': count}
+        for key, count in counter.most_common(max(1, limit))
+    ]
+
+
+def _counter_from_payload(value: Any) -> Counter[str]:
+    counter: Counter[str] = Counter()
+    if not isinstance(value, Mapping):
+        return counter
+    for key, raw_count in value.items():
+        try:
+            count = int(raw_count)
+        except (TypeError, ValueError):
+            continue
+        if count > 0:
+            counter[str(key)] += count
+    return counter
+
+
+def _near_miss_digest(raw_near_miss: Mapping[str, Any]) -> dict[str, Any]:
+    thresholds = raw_near_miss.get('thresholds')
+    threshold_digest: list[dict[str, Any]] = []
+    if isinstance(thresholds, list):
+        for item in thresholds[:3]:
+            if not isinstance(item, Mapping):
+                continue
+            threshold_digest.append(
+                {
+                    'metric': str(item.get('metric') or ''),
+                    'value': item.get('value'),
+                    'threshold': item.get('threshold'),
+                    'distance_to_pass': item.get('distance_to_pass'),
+                }
+            )
+    return {
+        'trading_day': raw_near_miss.get('trading_day'),
+        'symbol': raw_near_miss.get('symbol'),
+        'strategy_type': raw_near_miss.get('strategy_type'),
+        'event_ts': raw_near_miss.get('event_ts'),
+        'first_failed_gate': raw_near_miss.get('first_failed_gate'),
+        'distance_score': raw_near_miss.get('distance_score'),
+        'thresholds': threshold_digest,
+    }
+
+
+def _train_gate_diagnostics_from_replay_payload(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    funnel = payload.get('funnel')
+    buckets = (
+        cast(list[Any], funnel.get('buckets'))
+        if isinstance(funnel, Mapping) and isinstance(funnel.get('buckets'), list)
+        else []
+    )
+    aggregate = {
+        'retained_rows': 0,
+        'runtime_evaluable_rows': 0,
+        'quote_valid_rows': 0,
+        'strategy_evaluations': 0,
+        'passed_trace_count': 0,
+        'decision_count': int(payload.get('decision_count') or 0),
+        'filled_count': int(payload.get('filled_count') or 0),
+    }
+    first_failed_gate_counts: Counter[str] = Counter()
+    failing_threshold_counts: Counter[str] = Counter()
+    gate_pass_counts: Counter[str] = Counter()
+    for raw_bucket in buckets:
+        if not isinstance(raw_bucket, Mapping):
+            continue
+        for key in (
+            'retained_rows',
+            'runtime_evaluable_rows',
+            'quote_valid_rows',
+            'strategy_evaluations',
+            'passed_trace_count',
+        ):
+            try:
+                aggregate[key] += int(raw_bucket.get(key) or 0)
+            except (TypeError, ValueError):
+                continue
+        first_failed_gate_counts.update(
+            _counter_from_payload(raw_bucket.get('first_failed_gate_counts'))
+        )
+        failing_threshold_counts.update(
+            _counter_from_payload(raw_bucket.get('failing_threshold_counts'))
+        )
+        gate_pass_counts.update(_counter_from_payload(raw_bucket.get('gate_pass_counts')))
+
+    near_misses = payload.get('near_misses')
+    near_miss_digest = [
+        _near_miss_digest(item)
+        for item in (near_misses if isinstance(near_misses, list) else [])[:20]
+        if isinstance(item, Mapping)
+    ]
+    status = (
+        'available'
+        if aggregate['strategy_evaluations'] > 0
+        else 'no_runtime_trace_evaluations'
+    )
+    return {
+        'schema_version': 'torghut.frontier-train-gate-diagnostics.v1',
+        'status': status,
+        'aggregate': aggregate,
+        'top_first_failed_gates': _top_counter_payload(first_failed_gate_counts),
+        'top_failing_thresholds': _top_counter_payload(failing_threshold_counts),
+        'top_gate_pass_counts': _top_counter_payload(gate_pass_counts),
+        'near_misses': near_miss_digest,
+    }
+
+
 def _generate_symbol_prune_children(
     *,
     cli_symbols: tuple[str, ...],
@@ -1214,6 +1331,9 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         template_defaults=family_template.default_hard_vetoes,
         trading_day_count=len(window.train_days) + len(window.holdout_days),
     )
+    collect_train_gate_diagnostics = bool(
+        getattr(args, 'collect_train_gate_diagnostics', False)
+    )
 
     symbols = tuple(
         symbol.strip().upper()
@@ -1311,6 +1431,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         chunk_minutes=max(1, int(args.chunk_minutes)),
                         symbols=candidate_symbols,
                         progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
+                        capture_trace_funnel=collect_train_gate_diagnostics,
                     )
                 )
                 train_screen_failures = (
@@ -1480,6 +1601,10 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 candidate_payload['normalization_regime'] = normalization_regime
                 candidate_payload['objective_scorecard'] = objective_scorecard.to_payload()
                 candidate_payload['hard_vetoes'] = sorted(dict.fromkeys(hard_vetoes))
+                if collect_train_gate_diagnostics:
+                    candidate_payload['train_gate_diagnostics'] = (
+                        _train_gate_diagnostics_from_replay_payload(train_payload)
+                    )
                 if cached_rows is not None:
                     candidate_payload['prefetched_row_count'] = len(cached_rows)
                     candidate_payload['prefetched_symbols'] = list(prefetch_symbols)

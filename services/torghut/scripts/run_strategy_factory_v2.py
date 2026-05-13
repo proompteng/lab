@@ -87,6 +87,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-last-trading-day", default="")
     parser.add_argument("--allow-stale-tape", action="store_true")
     parser.add_argument("--prefetch-full-window-rows", action="store_true")
+    parser.add_argument(
+        "--collect-train-gate-diagnostics",
+        action="store_true",
+        help="Persist aggregate train-window gate diagnostics for each frontier candidate.",
+    )
     parser.add_argument("--top-n", type=int, default=5)
     parser.add_argument("--max-candidates-to-evaluate", type=int, default=0)
     parser.add_argument(
@@ -408,6 +413,9 @@ def _frontier_args(
         allow_stale_tape=bool(args.allow_stale_tape),
         family_template_dir=args.family_template_dir,
         prefetch_full_window_rows=bool(args.prefetch_full_window_rows),
+        collect_train_gate_diagnostics=bool(
+            getattr(args, "collect_train_gate_diagnostics", False)
+        ),
         top_n=int(args.top_n),
         max_candidates_to_evaluate=(
             int(max_candidates_to_evaluate)

@@ -195,6 +195,9 @@ class ReplayFunnelBucket:
     quote_valid_rows: int
     strategy_evaluations: int
     gate_pass_counts: dict[str, int]
+    first_failed_gate_counts: dict[str, int]
+    failing_threshold_counts: dict[str, int]
+    passed_trace_count: int
     decision_count: int
     filled_count: int
     filled_notional: Decimal
@@ -212,6 +215,9 @@ class ReplayFunnelBucket:
             'quote_valid_rows': self.quote_valid_rows,
             'strategy_evaluations': self.strategy_evaluations,
             'gate_pass_counts': dict(sorted(self.gate_pass_counts.items())),
+            'first_failed_gate_counts': dict(sorted(self.first_failed_gate_counts.items())),
+            'failing_threshold_counts': dict(sorted(self.failing_threshold_counts.items())),
+            'passed_trace_count': self.passed_trace_count,
             'decision_count': self.decision_count,
             'filled_count': self.filled_count,
             'filled_notional': str(self.filled_notional),

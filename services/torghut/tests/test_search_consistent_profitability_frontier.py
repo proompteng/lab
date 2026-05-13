@@ -53,6 +53,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     '0.25',
                     '--max-train-screen-worst-day-loss',
                     '125',
+                    '--collect-train-gate-diagnostics',
                 ],
             ):
                 args = frontier._parse_args()
@@ -66,6 +67,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(args.min_train_screen_net_per_day, '-50')
         self.assertEqual(args.min_train_screen_active_ratio, '0.25')
         self.assertEqual(args.max_train_screen_worst_day_loss, '125')
+        self.assertTrue(args.collect_train_gate_diagnostics)
 
     def test_clickhouse_password_env_resolution_keeps_secret_out_of_argv(self) -> None:
         with patch.dict('os.environ', {'TORGHUT_CLICKHOUSE_PASSWORD': 'from-env'}):
@@ -481,6 +483,134 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(contributions['AVGO']['downside_pnl'], '120')
         self.assertEqual(contributions['MSFT']['contribution_score'], '220')
 
+    def test_train_gate_diagnostics_from_replay_payload_summarizes_funnel(self) -> None:
+        payload = {
+            'decision_count': 0,
+            'filled_count': 0,
+            'funnel': {
+                'buckets': [
+                    {
+                        'retained_rows': 10,
+                        'runtime_evaluable_rows': 8,
+                        'quote_valid_rows': 9,
+                        'strategy_evaluations': 8,
+                        'passed_trace_count': 1,
+                        'gate_pass_counts': {'short:eligibility': 8},
+                        'first_failed_gate_counts': {'short:confirmation': 5},
+                        'failing_threshold_counts': {
+                            'short:confirmation:imbalance_pressure': 5,
+                        },
+                    },
+                    {
+                        'retained_rows': 4,
+                        'runtime_evaluable_rows': 3,
+                        'quote_valid_rows': 3,
+                        'strategy_evaluations': 3,
+                        'passed_trace_count': 0,
+                        'first_failed_gate_counts': {'short:structure': 3},
+                        'failing_threshold_counts': {'short:structure:rsi14': 3},
+                    },
+                ]
+            },
+            'near_misses': [
+                {
+                    'trading_day': '2026-05-01',
+                    'symbol': 'AAPL',
+                    'strategy_type': 'short',
+                    'event_ts': '2026-05-01T15:00:00+00:00',
+                    'first_failed_gate': 'confirmation',
+                    'distance_score': '0.02',
+                    'thresholds': [
+                        {
+                            'metric': 'imbalance_pressure',
+                            'value': '0.01',
+                            'threshold': '0.00',
+                            'distance_to_pass': '0.01',
+                        }
+                    ],
+                }
+            ],
+        }
+
+        diagnostics = frontier._train_gate_diagnostics_from_replay_payload(payload)
+
+        self.assertEqual(diagnostics['status'], 'available')
+        self.assertEqual(diagnostics['aggregate']['strategy_evaluations'], 11)
+        self.assertEqual(
+            diagnostics['top_first_failed_gates'][0],
+            {'key': 'short:confirmation', 'count': 5},
+        )
+        self.assertEqual(
+            diagnostics['top_failing_thresholds'][0],
+            {'key': 'short:confirmation:imbalance_pressure', 'count': 5},
+        )
+        self.assertEqual(
+            diagnostics['near_misses'][0]['thresholds'][0]['metric'],
+            'imbalance_pressure',
+        )
+
+    def test_train_gate_diagnostics_from_replay_payload_ignores_malformed_items(self) -> None:
+        payload = {
+            'decision_count': 1,
+            'filled_count': 0,
+            'funnel': {
+                'buckets': [
+                    'not-a-bucket',
+                    {
+                        'retained_rows': 'bad-count',
+                        'runtime_evaluable_rows': '2',
+                        'quote_valid_rows': '2',
+                        'strategy_evaluations': '2',
+                        'passed_trace_count': '0',
+                        'gate_pass_counts': {'short:structure': '2'},
+                        'first_failed_gate_counts': {
+                            'short:confirmation': 'bad-count',
+                            'short:structure': '1',
+                        },
+                    },
+                ]
+            },
+            'near_misses': [
+                {
+                    'trading_day': '2026-05-01',
+                    'symbol': 'AAPL',
+                    'strategy_type': 'short',
+                    'event_ts': '2026-05-01T15:00:00+00:00',
+                    'first_failed_gate': 'confirmation',
+                    'distance_score': '0.02',
+                    'thresholds': [
+                        'not-a-threshold',
+                        {
+                            'metric': 'rsi14',
+                            'value': '72',
+                            'threshold': '70',
+                            'distance_to_pass': '2',
+                        },
+                    ],
+                }
+            ],
+        }
+
+        diagnostics = frontier._train_gate_diagnostics_from_replay_payload(payload)
+
+        self.assertEqual(diagnostics['aggregate']['retained_rows'], 0)
+        self.assertEqual(diagnostics['aggregate']['runtime_evaluable_rows'], 2)
+        self.assertEqual(
+            diagnostics['top_first_failed_gates'],
+            [{'key': 'short:structure', 'count': 1}],
+        )
+        self.assertEqual(
+            diagnostics['near_misses'][0]['thresholds'],
+            [
+                {
+                    'metric': 'rsi14',
+                    'value': '72',
+                    'threshold': '70',
+                    'distance_to_pass': '2',
+                }
+            ],
+        )
+
     def test_generate_symbol_prune_children_removes_worst_symbols_from_universe(self) -> None:
         children = frontier._generate_symbol_prune_children(
             cli_symbols=(),
@@ -736,6 +866,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 json_output=json_output,
             )
             args.min_train_screen_net_per_day = '1'
+            args.collect_train_gate_diagnostics = True
             recent_days = tuple(date(2026, 3, 18) + timedelta(days=index) for index in range(6))
             snapshot_receipt = SimpleNamespace(
                 snapshot_id='snap-partial',
@@ -809,7 +940,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                             '2026-03-23': '110',
                         }
                     )
-                return self._payload(
+                replay_payload = self._payload(
                     start_date=start_date,
                     end_date=end_date,
                     daily_net=daily_net,
@@ -818,6 +949,17 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     wins=3,
                     losses=0,
                 )
+                if getattr(config, 'capture_trace_funnel', False):
+                    replay_payload['funnel'] = {
+                        'buckets': [
+                            {
+                                'strategy_evaluations': 2,
+                                'passed_trace_count': 0,
+                                'first_failed_gate_counts': {'breakout:confirmation': 2},
+                            }
+                        ]
+                    }
+                return replay_payload
 
             with (
                 patch('scripts.search_consistent_profitability_frontier._resolve_recent_trading_days', return_value=recent_days),
@@ -829,6 +971,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
 
             self.assertEqual(payload['status'], 'completed')
             self.assertEqual(payload['candidate_count'], 2)
+            self.assertEqual(payload['top'][0]['train_gate_diagnostics']['status'], 'available')
             persisted = json.loads(json_output.read_text(encoding='utf-8'))
             self.assertEqual(persisted['status'], 'completed')
             self.assertEqual(persisted['candidate_count'], 2)
