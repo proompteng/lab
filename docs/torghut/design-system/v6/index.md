@@ -12,6 +12,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority, refreshed `2026-05-13T20:13Z`):
+  - `197-torghut-executable-alpha-repair-receipts-and-zero-notional-reentry-2026-05-13.md`
+  - `docs/agents/designs/192-jangar-material-readiness-reentry-clearinghouse-and-source-rollout-receipts-2026-05-13.md`
   - `197-torghut-serving-promotion-closure-and-no-delta-repair-value-2026-05-13.md`
   - `docs/agents/designs/192-jangar-source-to-serving-promotion-closure-and-repair-value-accounting-2026-05-13.md`
   - `197-torghut-alpha-readiness-strike-ledger-and-routeable-candidate-ladder-2026-05-13.md`
