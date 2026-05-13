@@ -12,7 +12,7 @@ The chart is published on Artifact Hub:
 
 - Artifact Hub: <https://artifacthub.io/packages/helm/agents/agents>
 - OCI chart: `oci://ghcr.io/proompteng/charts/agents`
-- Current chart version: `0.9.13`
+- Current chart version: `0.9.15`
 
 ## Start Here
 
