@@ -35,15 +35,6 @@ jobs:
         with:
           bun-version: 1.3.13
 
-      - name: Cache Bun downloads
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.3.13-torghut-build-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-1.3.13-torghut-build-
-            ${{ runner.os }}-bun-1.3.13-
-
       - name: Resolve image tag
         id: meta
         run: echo "tag=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
