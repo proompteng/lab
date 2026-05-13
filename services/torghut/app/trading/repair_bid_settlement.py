@@ -84,6 +84,14 @@ _LOT_VALIDATION = {
     "feature_lineage": "pytest services/torghut/tests/test_repair_bid_settlement.py -k feature_lineage",
 }
 
+_ALPHA_READINESS_STRIKE_PRIORITY = 98
+_ALPHA_READINESS_STRIKE_RECEIPT = "torghut.executable-alpha-receipts.v1"
+_ALPHA_READINESS_STRIKE_REASONS = {
+    "alpha_hypothesis_not_promotion_eligible",
+    "alpha_readiness_not_promotion_eligible",
+    "hypothesis_not_promotion_eligible",
+}
+
 
 def _mapping(value: object) -> Mapping[str, Any]:
     return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
@@ -378,13 +386,61 @@ def _expected_gate_delta(lot_class: str, reason_codes: Sequence[str]) -> str:
     return f"settle_{lot_class}"
 
 
+def _is_alpha_readiness_strike(lot_class: str, reason_codes: Sequence[str]) -> bool:
+    if lot_class != "promotion_custody":
+        return False
+    return any(
+        reason in _ALPHA_READINESS_STRIKE_REASONS
+        or reason.startswith("alpha_readiness_")
+        or reason.startswith("alpha_hypothesis_")
+        for reason in reason_codes
+    )
+
+
+def _prioritize_lot_reason_codes(
+    lot_class: str, reason_codes: Sequence[str]
+) -> list[str]:
+    normalized = _unique(list(reason_codes))
+    if not _is_alpha_readiness_strike(lot_class, normalized):
+        return normalized
+
+    def strike_rank(reason: str) -> int:
+        if reason.startswith("alpha_readiness_"):
+            return 0
+        if reason.startswith("alpha_hypothesis_"):
+            return 1
+        if reason == "hypothesis_not_promotion_eligible":
+            return 2
+        return 3
+
+    strike_reasons = sorted(
+        [
+            reason
+            for reason in normalized
+            if reason in _ALPHA_READINESS_STRIKE_REASONS
+            or reason.startswith("alpha_readiness_")
+            or reason.startswith("alpha_hypothesis_")
+        ],
+        key=strike_rank,
+    )
+    return _unique([*strike_reasons, *normalized])
+
+
 def _lot_priority(lot_class: str, reason_codes: Sequence[str]) -> int:
     priority = _LOT_PRIORITY[lot_class]
+    if _is_alpha_readiness_strike(lot_class, reason_codes):
+        return _ALPHA_READINESS_STRIKE_PRIORITY
     if lot_class != "feature_lineage":
         return priority
     if any(reason in _FEATURE_COVERAGE_BLOCKERS for reason in reason_codes):
         return 95
     return priority
+
+
+def _lot_receipt(lot_class: str, reason_codes: Sequence[str]) -> str:
+    if _is_alpha_readiness_strike(lot_class, reason_codes):
+        return _ALPHA_READINESS_STRIKE_RECEIPT
+    return _LOT_RECEIPT[lot_class]
 
 
 def _build_lot(
@@ -407,6 +463,7 @@ def _build_lot(
         hold_reasons.append("dedupe_key_active")
     if packet_is_stale:
         hold_reasons.append("raw_clearinghouse_packet_stale")
+    ordered_reason_codes = _prioritize_lot_reason_codes(lot_class, reason_codes)
     state = (
         "active"
         if "dedupe_key_active" in hold_reasons
@@ -424,9 +481,9 @@ def _build_lot(
         "lot_id": _ref("compacted-repair-lot", lot_payload),
         "lot_class": lot_class,
         "target_value_gate": _LOT_VALUE_GATE[lot_class],
-        "priority": _lot_priority(lot_class, reason_codes),
-        "expected_gate_delta": _expected_gate_delta(lot_class, reason_codes),
-        "raw_reason_codes": list(reason_codes),
+        "priority": _lot_priority(lot_class, ordered_reason_codes),
+        "expected_gate_delta": _expected_gate_delta(lot_class, ordered_reason_codes),
+        "raw_reason_codes": ordered_reason_codes,
         "root_cause_hypothesis": _root_cause(lot_class),
         "required_input_refs": _input_refs(
             clearinghouse_packet=clearinghouse_packet,
@@ -435,7 +492,7 @@ def _build_lot(
             rollout_image_summary=rollout_image_summary,
             bid_ids=source_bid_ids,
         ),
-        "required_output_receipt": _LOT_RECEIPT[lot_class],
+        "required_output_receipt": _lot_receipt(lot_class, ordered_reason_codes),
         "required_output_receipt_count": 1,
         "validation_commands": [_LOT_VALIDATION[lot_class]],
         "dedupe_key": dedupe_key,

@@ -212,9 +212,55 @@ def test_feature_coverage_preempts_generic_rollout_repair() -> None:
     )
     assert dispatchable_classes == [
         "quant_pipeline",
+        "promotion_custody",
         "feature_lineage",
-        "execution_tca",
     ]
+
+
+def test_alpha_readiness_strike_reserves_promotion_custody_dispatch_capacity() -> None:
+    ledger = _build(
+        reason_codes=[
+            "quant_health_not_configured",
+            "feature_rows_missing",
+            "route_tca_passed_but_dependency_receipts_block_capital",
+            "route_adjacent_workload_proof_missing",
+            "post_cost_expectancy_non_positive",
+            "hypothesis_not_promotion_eligible",
+            "alpha_readiness_not_promotion_eligible",
+            "simple_submit_disabled",
+        ]
+    )
+    lots_by_class = {lot["lot_class"]: lot for lot in ledger["compacted_lots"]}
+    dispatchable_classes = [
+        lot["lot_class"]
+        for lot in ledger["compacted_lots"]
+        if lot.get("dispatchable") is True
+    ]
+
+    promotion_lot = lots_by_class["promotion_custody"]
+    assert promotion_lot["state"] == "selected"
+    assert promotion_lot["dispatchable"] is True
+    assert promotion_lot["priority"] == 98
+    assert promotion_lot["target_value_gate"] == "routeable_candidate_count"
+    assert (
+        promotion_lot["required_output_receipt"]
+        == "torghut.executable-alpha-receipts.v1"
+    )
+    assert promotion_lot["expected_gate_delta"] == (
+        "retire_alpha_readiness_not_promotion_eligible"
+    )
+    assert promotion_lot["max_notional"] == "0"
+    assert ledger["capital_decision"] == "repair_only"
+    assert ledger["max_notional"] == "0"
+    assert dispatchable_classes == [
+        "quant_pipeline",
+        "promotion_custody",
+        "feature_lineage",
+    ]
+    assert lots_by_class["execution_tca"]["dispatchable"] is False
+    assert (
+        "dispatch_limit_exceeded" in lots_by_class["execution_tca"]["hold_reason_codes"]
+    )
 
 
 def test_string_booleans_and_rollout_workload_gaps_create_typed_lots() -> None:
