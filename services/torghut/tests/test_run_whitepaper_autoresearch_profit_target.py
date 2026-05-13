@@ -1033,6 +1033,184 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             proof_action["required_scorecard_fields"],
         )
 
+    def test_remediation_increases_breadth_from_current_epoch(self) -> None:
+        remediation = runner._candidate_search_remediation(
+            failure_reason="portfolio_optimizer_produced_no_candidate",
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": "spec-selected",
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            evidence_bundles=(),
+            false_positive_table=(
+                {
+                    "candidate_spec_id": "spec-selected",
+                    "evidence_status": "replayed",
+                    "failure_reasons": [
+                        "active_day_ratio_below_oracle",
+                        "positive_day_ratio_below_oracle",
+                    ],
+                },
+            ),
+            best_false_negative_table=(),
+            replay_timeout_seconds=7200,
+            max_frontier_candidates_per_spec=2,
+            current_top_k=16,
+            current_exploration_slots=8,
+            current_portfolio_size_min=2,
+            current_max_candidates=64,
+            current_max_total_frontier_candidates=24,
+        )
+
+        breadth_action = remediation["next_actions"][0]
+        self.assertEqual(
+            breadth_action["action"], "increase_breadth_and_portfolio_diversity"
+        )
+        self.assertEqual(breadth_action["recommended_flags"]["--top-k"], "24")
+        self.assertEqual(
+            breadth_action["recommended_flags"]["--exploration-slots"], "16"
+        )
+        self.assertEqual(breadth_action["recommended_flags"]["--max-candidates"], "96")
+        self.assertEqual(
+            breadth_action["recommended_flags"]["--max-total-frontier-candidates"],
+            "48",
+        )
+        self.assertEqual(
+            breadth_action["recommended_flags"]["--portfolio-size-min"], "3"
+        )
+
+    def test_next_epoch_plan_rejects_breadth_shrinking_remediation_flags(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            args = self._args(Path(tmpdir) / "epoch")
+            args.max_candidates = 64
+            args.top_k = 16
+            args.exploration_slots = 8
+            args.portfolio_size_min = 2
+            args.replay_mode = "real"
+            remediation = {
+                "next_actions": [
+                    {
+                        "action": "increase_breadth_and_portfolio_diversity",
+                        "recommended_flags": {
+                            "--top-k": "11",
+                            "--exploration-slots": "4",
+                            "--portfolio-size-min": "3",
+                        },
+                    }
+                ]
+            }
+
+            plan = runner._profitability_next_epoch_plan(
+                args=args, target=Decimal("500"), remediation=remediation
+            )
+
+        self.assertEqual(plan["flags"]["--target-net-pnl-per-day"], "500")
+        self.assertEqual(plan["flags"]["--replay-mode"], "real")
+        self.assertEqual(plan["flags"]["--max-candidates"], "64")
+        self.assertEqual(plan["flags"]["--top-k"], "16")
+        self.assertEqual(plan["flags"]["--exploration-slots"], "8")
+        self.assertEqual(plan["flags"]["--portfolio-size-min"], "3")
+        self.assertIn(
+            {
+                "action": "increase_breadth_and_portfolio_diversity",
+                "flag": "--top-k",
+                "current_value": "16",
+                "recommended_value": "11",
+                "reason": "rejected_to_preserve_or_increase_search_breadth",
+            },
+            plan["rejected_recommended_flags"],
+        )
+        self.assertIn(
+            {
+                "action": "increase_breadth_and_portfolio_diversity",
+                "flag": "--exploration-slots",
+                "current_value": "8",
+                "recommended_value": "4",
+                "reason": "rejected_to_preserve_or_increase_search_breadth",
+            },
+            plan["rejected_recommended_flags"],
+        )
+        self.assertIn(
+            "timeout remediation may reduce --max-frontier-candidates-per-spec only to finish complete evidence",
+            plan["no_fast_path_policy"]["allowed_decreases"],
+        )
+
+    def test_next_epoch_plan_allows_timeout_frontier_shrink_only(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            args = self._args(Path(tmpdir) / "epoch")
+            args.max_frontier_candidates_per_spec = 8
+            remediation = {
+                "next_actions": [
+                    {
+                        "action": "shrink_per_spec_frontier_or_extend_timeout",
+                        "recommended_flags": {
+                            "--max-frontier-candidates-per-spec": "2",
+                            "--real-replay-timeout-seconds": "7200",
+                        },
+                    }
+                ]
+            }
+
+            plan = runner._profitability_next_epoch_plan(
+                args=args, target=Decimal("500"), remediation=remediation
+            )
+
+        self.assertEqual(plan["flags"]["--max-frontier-candidates-per-spec"], "2")
+        self.assertEqual(plan["flags"]["--real-replay-timeout-seconds"], "7200")
+        self.assertFalse(plan["rejected_recommended_flags"])
+
+    def test_next_epoch_plan_preserves_runtime_flags_and_rejects_invalid_numbers(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            args = self._args(Path(tmpdir) / "epoch")
+            args.max_candidates = "not-a-number"
+            args.max_total_frontier_candidates = 24
+            args.real_replay_timeout_seconds = 7200
+            args.real_replay_shard_size = 2
+            args.real_replay_shard_timeout_seconds = 900
+            args.real_replay_shard_workers = 3
+            remediation = {
+                "next_actions": [
+                    {
+                        "action": "increase_breadth_and_portfolio_diversity",
+                        "recommended_flags": {
+                            "--top-k": "not-a-number",
+                            "--max-total-frontier-candidates": "48",
+                        },
+                    }
+                ]
+            }
+
+            plan = runner._profitability_next_epoch_plan(
+                args=args, target=Decimal("500"), remediation=remediation
+            )
+            flags = runner._profitability_next_epoch_flags(
+                args=args, target=Decimal("500"), remediation=remediation
+            )
+
+        self.assertEqual(flags, plan["flags"])
+        self.assertEqual(plan["flags"]["--max-candidates"], "64")
+        self.assertEqual(plan["flags"]["--top-k"], "16")
+        self.assertEqual(plan["flags"]["--max-total-frontier-candidates"], "48")
+        self.assertEqual(plan["flags"]["--real-replay-timeout-seconds"], "7200")
+        self.assertEqual(plan["flags"]["--real-replay-shard-size"], "2")
+        self.assertEqual(plan["flags"]["--real-replay-shard-timeout-seconds"], "900")
+        self.assertEqual(plan["flags"]["--real-replay-shard-workers"], "3")
+        self.assertIn(
+            {
+                "action": "increase_breadth_and_portfolio_diversity",
+                "flag": "--top-k",
+                "current_value": "16",
+                "recommended_value": "not-a-number",
+                "reason": "rejected_invalid_numeric_remediation_flag",
+            },
+            plan["rejected_recommended_flags"],
+        )
+
     def test_train_ranker_script_main_writes_model_and_scores(self) -> None:
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
