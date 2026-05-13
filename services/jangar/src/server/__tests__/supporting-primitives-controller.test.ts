@@ -2119,6 +2119,124 @@ describe('supporting primitives controller', () => {
     })
   })
 
+  it('uses active workflow step attempts for stage freshness when AgentRun start time is stale', async () => {
+    vi.setSystemTime(new Date('2026-01-20T03:00:00Z'))
+
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const staleStartedAt = '2026-01-20T00:00:00Z'
+    const recentStepStartedAt = '2026-01-20T02:30:00Z'
+    const recentJobObservedAt = '2026-01-20T02:31:00Z'
+    const staleScheduleRunAt = '2026-01-20T00:00:00Z'
+    const stageRuns = ['discover', 'plan', 'implement', 'verify'].map((stage) => ({
+      kind: 'AgentRun',
+      metadata: {
+        name: `jangar-control-plane-${stage}-retry-active`,
+        namespace: 'agents',
+        labels: {
+          'swarm.proompteng.ai/name': 'jangar-control-plane',
+          'swarm.proompteng.ai/stage': stage,
+          'swarm.proompteng.ai/uid': 'swarm-uid',
+        },
+        creationTimestamp: staleStartedAt,
+      },
+      status: {
+        phase: 'Running',
+        startedAt: staleStartedAt,
+        workflow: {
+          steps: [
+            {
+              attempt: 2,
+              name: stage,
+              phase: 'Running',
+              startedAt: recentStepStartedAt,
+              jobObservedAt: recentJobObservedAt,
+            },
+          ],
+        },
+      },
+    }))
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Schedule) {
+        return { status: { phase: 'Active', lastRunTime: staleScheduleRunAt } }
+      }
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-sample', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+            parameters: {},
+          },
+        }
+      }
+      return null
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) return { items: stageRuns }
+      return { items: [] }
+    })
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '1h',
+          planEvery: '1h',
+          implementEvery: '1h',
+          verifyEvery: '1h',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        mission: {
+          ledgerRef: '/workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md',
+          businessMetric: 'reduce failed AgentRuns',
+          validationContract: ['dispatch requirements only when business value is named'],
+          valueGates: ['failed_agentrun_rate'],
+        },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    expect(applyStatus).toHaveBeenCalledTimes(1)
+    const status = (applyStatus.mock.calls[0]?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    const stageStates = (status.stageStates ?? {}) as Record<string, Record<string, unknown>>
+    for (const stage of ['discover', 'plan', 'implement', 'verify']) {
+      expect(stageStates[stage]?.fresh).toBe(true)
+      expect(stageStates[stage]?.healthy).toBe(true)
+      expect(stageStates[stage]?.recentActiveAt).toBe(new Date(recentJobObservedAt).toISOString())
+      expect(stageStates[stage]?.recentSuccessAt).toBeNull()
+    }
+    expect(status.lastVerifyAt).toBe(new Date(recentJobObservedAt).toISOString())
+
+    const conditions = Array.isArray(status.conditions) ? status.conditions : []
+    const ready = conditions.find((condition) => condition.type === 'Ready')
+    const degraded = conditions.find((condition) => condition.type === 'Degraded')
+    expect(ready).toMatchObject({ status: 'True', reason: 'Active', message: 'swarm active' })
+    expect(degraded).toMatchObject({
+      status: 'False',
+      reason: 'Healthy',
+      message: 'all stage and requirement health checks passing',
+    })
+  })
+
   it('dispatches NATS requirement signals into implement runs', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})

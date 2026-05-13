@@ -137,12 +137,38 @@ export const getRunTimestamp = (resource: Record<string, unknown>) => {
     )
   }
 
+  const workflowStepTimestamp = resolveLatestWorkflowStepTimestamp(resource)
   return (
+    workflowStepTimestamp ??
     asString(readNested(resource, ['status', 'startedAt'])) ??
     asString(readNested(resource, ['status', 'finishedAt'])) ??
     asString(readNested(resource, ['status', 'updatedAt'])) ??
     asString(readNested(resource, ['metadata', 'creationTimestamp']))
   )
+}
+
+const resolveLatestWorkflowStepTimestamp = (resource: Record<string, unknown>) => {
+  const steps = readNested(resource, ['status', 'workflow', 'steps'])
+  if (!Array.isArray(steps)) return null
+
+  let latestMs: number | null = null
+  for (const step of steps) {
+    const record = asRecord(step)
+    if (!record) continue
+    const phase = (asString(record.phase) ?? '').toLowerCase()
+    if (!ACTIVE_PHASES.has(phase)) continue
+    for (const candidate of [
+      asString(record.jobObservedAt),
+      asString(record.startedAt),
+      asString(record.lastTransitionTime),
+    ]) {
+      const parsed = parseTimeOrNull(candidate)
+      if (parsed === null) continue
+      latestMs = latestMs === null ? parsed : Math.max(latestMs, parsed)
+    }
+  }
+
+  return latestMs === null ? null : new Date(latestMs).toISOString()
 }
 
 export const parseTimeOrNull = (value: string | null | undefined) => {
