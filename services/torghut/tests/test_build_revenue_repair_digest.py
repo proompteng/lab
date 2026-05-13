@@ -237,6 +237,36 @@ def _repair_only_status() -> dict[str, object]:
                 }
             ],
         },
+        "repair_bid_settlement_ledger": {
+            "schema_version": "torghut.repair-bid-settlement-ledger.v1",
+            "ledger_id": "repair-bid-settlement-ledger:test",
+            "account_id": "PA3SX7FYNUTF",
+            "session_id": "15m",
+            "trading_mode": "live",
+            "capital_decision": "repair_only",
+            "max_notional": "0",
+            "routeable_candidate_count": 0,
+            "active_dedupe_keys": [],
+            "compacted_lots": [
+                {
+                    "lot_id": "compacted-repair-lot:promotion",
+                    "lot_class": "promotion_custody",
+                    "target_value_gate": "routeable_candidate_count",
+                    "priority": 60,
+                    "expected_gate_delta": "retire_alpha_readiness_not_promotion_eligible",
+                    "raw_reason_codes": ["alpha_readiness_not_promotion_eligible"],
+                    "required_output_receipt": "torghut.promotion-custody-decision-receipt.v1",
+                    "dedupe_key": "PA3SX7FYNUTF:15m:promotion_custody",
+                    "ttl_seconds": 900,
+                    "max_runtime_seconds": 1200,
+                    "max_notional": "0",
+                    "state": "held",
+                    "dispatchable": False,
+                    "hold_reason_codes": ["selection_limit_exceeded"],
+                    "source_bid_ids": ["route-evidence-repair-bid:promotion"],
+                }
+            ],
+        },
         "simple_lane_reject_reason_totals": {
             "insufficient_buying_power": 8,
         },
@@ -335,6 +365,30 @@ class TestBuildRevenueRepairDigest(TestCase):
             repair_queue[0]["capital_rule"],
             "zero_notional_repair_only",
         )
+        strike_ledger = digest["alpha_readiness_strike_ledger"]
+        self.assertIsInstance(strike_ledger, dict)
+        self.assertEqual(
+            strike_ledger["schema_version"],
+            "torghut.alpha-readiness-strike-ledger.v1",
+        )
+        self.assertEqual(strike_ledger["status"], "dispatchable")
+        self.assertEqual(
+            strike_ledger["selected_business_blocker"]["value_gate"],
+            "routeable_candidate_count",
+        )
+        strike_slots = strike_ledger["strike_slots"]
+        self.assertIsInstance(strike_slots, list)
+        self.assertEqual(strike_slots[0]["lot_class"], "promotion_custody")
+        self.assertEqual(
+            strike_slots[0]["required_output_receipt"],
+            "torghut.promotion-custody-decision-receipt.v1",
+        )
+        self.assertEqual(strike_slots[0]["max_notional"], "0")
+        self.assertGreaterEqual(
+            set(strike_ledger["guarded_action_classes"]),
+            {"paper_canary", "live_micro_canary", "live_scale"},
+        )
+        self.assertIn("max_notional=0", strike_ledger["rollback_target"])
         self.assertEqual(repair_queue[1]["code"], "repair_execution_tca")
         self.assertNotIn("repair_repair_only", [item["code"] for item in repair_queue])
         self.assertIn(
