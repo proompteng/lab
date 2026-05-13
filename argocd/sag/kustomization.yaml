@@ -11,4 +11,4 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/sag
     newName: registry.ide-newton.ts.net/lab/sag
-    newTag: "sag-20260513010817"
+    newTag: "sag-20260513084116"
