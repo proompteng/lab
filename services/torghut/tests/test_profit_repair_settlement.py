@@ -147,3 +147,22 @@ def test_profit_repair_settlement_groups_execution_trust_lots_at_zero_notional()
     schema = _lot(ledger, "schema_lineage")
     assert "schema_lineage_missing" in schema["blocking_reason_codes"]
     assert "rejection_drag_unmeasured" in schema["blocking_reason_codes"]
+
+
+def test_optional_unconfigured_quant_health_does_not_create_quant_repair() -> None:
+    ledger = _ledger(
+        quant_evidence={
+            "required": False,
+            "ok": True,
+            "status": "not_required",
+            "reason": "quant_health_not_configured",
+            "blocking_reasons": [],
+            "informational_reasons": ["quant_health_not_configured"],
+            "source_url": None,
+        }
+    )
+
+    quant = _lot(ledger, "quant_freshness")
+
+    assert quant["current_state"] == "observe"
+    assert quant["blocking_reason_codes"] == []

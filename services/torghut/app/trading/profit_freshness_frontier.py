@@ -96,6 +96,9 @@ _ROUTEABILITY_ONLY_TCA_REASON_PREFIXES = ("capital_state_", "proof_floor_")
 _NONBLOCKING_JANGAR_RELIABILITY_REASONS = {
     "torghut_dependency_quorum_not_required",
 }
+_NONBLOCKING_QUANT_HEALTH_REASONS = {
+    "quant_health_not_configured",
+}
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -404,9 +407,13 @@ def _signal_dimension(
     hypothesis_payload: Mapping[str, Any],
     generated_at: datetime,
 ) -> dict[str, object]:
+    informational_reasons = [
+        reason
+        for reason in _strings(quant_evidence.get("informational_reasons"))
+        if reason in _NONBLOCKING_QUANT_HEALTH_REASONS
+    ]
     reasons = [
         *_strings(quant_evidence.get("blocking_reasons")),
-        *_strings(quant_evidence.get("informational_reasons")),
         *_strings(quant_evidence.get("non_promoting_receipts")),
     ]
     latest_count = _int(
@@ -427,9 +434,17 @@ def _signal_dimension(
         ),
     )
     status = _text(quant_evidence.get("status") or quant_evidence.get("state")).lower()
-    if latest_count <= 0:
+    quant_required = quant_evidence.get("required") is True
+    quant_is_not_required = quant_evidence.get("required") is False and (
+        status == "not_required"
+        or not _text(
+            quant_evidence.get("source_url") or quant_evidence.get("sourceUrl")
+        )
+    )
+    quant_counts_are_authoritative = quant_required or not quant_is_not_required
+    if quant_counts_are_authoritative and latest_count <= 0:
         reasons.append("signal_latest_metrics_missing")
-    if stage_count <= 0:
+    if quant_counts_are_authoritative and stage_count <= 0:
         reasons.append("signal_pipeline_stages_missing")
     if quant_evidence.get("ok") is False:
         reasons.append(_text(quant_evidence.get("reason"), "quant_health_degraded"))
@@ -454,6 +469,11 @@ def _signal_dimension(
         details={
             "latest_metrics_count": latest_count if latest_count >= 0 else None,
             "stage_count": stage_count,
+            **(
+                {"informational_reason_codes": informational_reasons}
+                if informational_reasons
+                else {}
+            ),
         },
     )
 

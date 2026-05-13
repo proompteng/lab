@@ -351,6 +351,99 @@ def test_jangar_allow_with_real_blocking_reason_still_holds_frontier() -> None:
     assert frontier["frontier_state"] == "held"
 
 
+def test_optional_unconfigured_quant_health_does_not_select_signal_repair() -> None:
+    frontier = _frontier(
+        quant_evidence={
+            "required": False,
+            "ok": True,
+            "status": "not_required",
+            "reason": "quant_health_not_configured",
+            "blocking_reasons": [],
+            "informational_reasons": ["quant_health_not_configured"],
+            "source_url": None,
+        },
+        market_context_status={"status": "healthy", "last_domain_states": {}},
+        empirical_jobs_status={
+            "ready": True,
+            "status": "healthy",
+            "eligible_jobs": [
+                "benchmark_parity",
+                "foundation_router_parity",
+                "janus_event_car",
+                "janus_hgrm_reward",
+            ],
+            "candidate_ids": ["candidate-nvda"],
+            "dataset_snapshot_refs": ["dataset-nvda"],
+        },
+        jangar_reliability_settlement_ref={
+            "settlement_ref": (
+                "jangar-reliability-settlement:"
+                "dependency-quorum:allow:torghut_dependency_quorum_not_required"
+            ),
+            "decision": "allow",
+            "state": "current",
+            "reason_codes": ["torghut_dependency_quorum_not_required"],
+            "source": "dependency_quorum_proxy",
+        },
+    )
+
+    signal = _dimension(frontier, "signal_ingestion")
+
+    assert signal["state"] == "current"
+    assert signal["reason_codes"] == []
+    assert signal["details"]["informational_reason_codes"] == [
+        "quant_health_not_configured"
+    ]
+    assert all(
+        repair["blocked_dimension"] != "signal_ingestion"
+        for repair in cast(
+            list[Mapping[str, Any]], frontier["selected_zero_notional_repairs"]
+        )
+    )
+
+
+def test_required_unconfigured_quant_health_still_selects_signal_repair() -> None:
+    frontier = _frontier(
+        quant_evidence={
+            "required": True,
+            "ok": False,
+            "status": "unknown",
+            "reason": "quant_health_not_configured",
+            "blocking_reasons": ["quant_health_not_configured"],
+            "informational_reasons": [],
+            "source_url": None,
+        },
+        market_context_status={"status": "healthy", "last_domain_states": {}},
+        empirical_jobs_status={
+            "ready": True,
+            "status": "healthy",
+            "eligible_jobs": [
+                "benchmark_parity",
+                "foundation_router_parity",
+                "janus_event_car",
+                "janus_hgrm_reward",
+            ],
+            "candidate_ids": ["candidate-nvda"],
+            "dataset_snapshot_refs": ["dataset-nvda"],
+        },
+        jangar_reliability_settlement_ref={
+            "settlement_ref": "jangar-reliability-settlement:ready",
+            "decision": "allow",
+            "state": "current",
+            "reason_codes": [],
+        },
+    )
+
+    signal = _dimension(frontier, "signal_ingestion")
+
+    assert signal["state"] == "missing"
+    assert "quant_health_not_configured" in signal["reason_codes"]
+    assert any(
+        lot["blocked_dimension"] == "signal_ingestion"
+        for lot in cast(list[Mapping[str, Any]], frontier["repair_lots"])
+    )
+
+
 def test_closed_frontier_still_does_not_widen_capital_limits() -> None:
     frontier = _frontier(
         proof_floor_receipt={

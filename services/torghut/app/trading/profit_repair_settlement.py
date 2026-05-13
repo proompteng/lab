@@ -34,6 +34,9 @@ _SCHEMA_REJECTION_FRAGMENTS = (
     "strategy_promotion_decisions",
     "vnext_promotion_decisions",
 )
+_NONBLOCKING_QUANT_HEALTH_REASONS = {
+    "quant_health_not_configured",
+}
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -158,10 +161,20 @@ def _execution_trust_blockers(ref: Mapping[str, Any]) -> list[str]:
 def _quant_blockers(quant: Mapping[str, Any]) -> list[str]:
     blockers = [
         *_strings(quant.get("blocking_reasons")),
-        *_strings(quant.get("informational_reasons")),
         *_strings(quant.get("non_promoting_receipts")),
     ]
-    if _int(quant.get("stage_count"), default=-1) == 0:
+    status = _text(quant.get("status") or quant.get("state")).lower()
+    source_url = _text(quant.get("source_url") or quant.get("sourceUrl"))
+    quant_counts_are_authoritative = (
+        quant.get("required") is True
+        or bool(source_url)
+        or bool(blockers)
+        or (bool(status) and status != "not_required")
+    )
+    if (
+        quant_counts_are_authoritative
+        and _int(quant.get("stage_count"), default=-1) == 0
+    ):
         blockers.append("quant_pipeline_stages_missing")
     degraded_count = _int(
         quant.get("degraded_latest_metrics_count")
@@ -170,9 +183,15 @@ def _quant_blockers(quant: Mapping[str, Any]) -> list[str]:
     )
     if degraded_count > 0:
         blockers.append("quant_latest_metrics_degraded")
-    if quant.get("ok") is False and not blockers:
+    if quant_counts_are_authoritative and quant.get("ok") is False and not blockers:
         blockers.append(_text(quant.get("reason"), "quant_health_degraded"))
-    return _unique(blockers)
+    return _unique(
+        [
+            blocker
+            for blocker in blockers
+            if blocker not in _NONBLOCKING_QUANT_HEALTH_REASONS
+        ]
+    )
 
 
 def _state(blockers: Sequence[str], *, paper_candidate: bool = False) -> str:
