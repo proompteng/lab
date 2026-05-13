@@ -108,6 +108,13 @@ describe('Torghut manifest scheduling', () => {
       }),
     )
     expect(JSON.stringify(template)).toContain('run_whitepaper_autoresearch_profit_target.py')
+    expect(parameterValue(manifest, 'targetNetPnlPerDay')).toBe('500')
+    expect(JSON.stringify(template)).toContain(
+      'config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml',
+    )
+    expect(JSON.stringify(template)).not.toContain(
+      'config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml',
+    )
     expect(JSON.stringify(template)).toContain('--require-no-flat-days')
     expect(JSON.stringify(template)).toContain('--real-replay-shard-size')
     expect(JSON.stringify(template)).toContain('--real-replay-shard-timeout-seconds')
