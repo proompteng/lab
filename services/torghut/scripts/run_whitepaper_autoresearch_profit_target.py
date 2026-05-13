@@ -1080,6 +1080,11 @@ def _candidate_search_remediation(
     best_false_negative_table: Sequence[Mapping[str, Any]],
     replay_timeout_seconds: int,
     max_frontier_candidates_per_spec: int,
+    current_top_k: int = 16,
+    current_exploration_slots: int = 8,
+    current_portfolio_size_min: int = 2,
+    current_max_candidates: int = 64,
+    current_max_total_frontier_candidates: int = 0,
 ) -> dict[str, Any]:
     failure_counts: dict[str, int] = {}
     for row in _list_of_mappings(list(false_positive_table)):
@@ -1173,16 +1178,38 @@ def _candidate_search_remediation(
             "positive_day_ratio_below_oracle",
         )
     ):
+        next_top_k = min(
+            max(1, current_max_candidates),
+            max(16, current_top_k + max(4, current_exploration_slots)),
+        )
+        next_exploration_slots = min(
+            max(1, current_max_candidates),
+            max(8, current_exploration_slots + max(4, current_exploration_slots)),
+        )
+        next_max_candidates = max(
+            current_max_candidates,
+            next_top_k + next_exploration_slots,
+            min(128, current_max_candidates + 32),
+        )
+        recommended_flags = {
+            "--max-candidates": str(next_max_candidates),
+            "--top-k": str(next_top_k),
+            "--exploration-slots": str(next_exploration_slots),
+            "--portfolio-size-min": str(max(3, current_portfolio_size_min)),
+        }
+        if current_max_total_frontier_candidates > 0:
+            recommended_flags["--max-total-frontier-candidates"] = str(
+                max(
+                    current_max_total_frontier_candidates,
+                    min(128, current_max_total_frontier_candidates * 2),
+                )
+            )
         next_actions.append(
             {
                 "priority": 4,
                 "action": "increase_breadth_and_portfolio_diversity",
                 "reason": "replayed candidates had flat or non-positive days",
-                "recommended_flags": {
-                    "--top-k": str(max(4, len(selected_rows))),
-                    "--exploration-slots": "4",
-                    "--portfolio-size-min": "3",
-                },
+                "recommended_flags": recommended_flags,
             }
         )
     if any(
@@ -1486,42 +1513,161 @@ def _profitability_next_epoch_flags(
     target: Decimal,
     remediation: Mapping[str, Any] | None,
 ) -> dict[str, str]:
+    return cast(
+        dict[str, str],
+        _profitability_next_epoch_plan(
+            args=args, target=target, remediation=remediation
+        )["flags"],
+    )
+
+
+def _int_arg(args: argparse.Namespace, name: str, default: int) -> int:
+    try:
+        return int(getattr(args, name, default) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _flag_int(value: Any) -> int | None:
+    text = _string(value)
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def _profitability_next_epoch_plan(
+    *,
+    args: argparse.Namespace,
+    target: Decimal,
+    remediation: Mapping[str, Any] | None,
+) -> dict[str, Any]:
     flags: dict[str, str] = {
         "--target-net-pnl-per-day": str(target),
         "--program": str(
             getattr(args, "program", _DEFAULT_STRICT_DAILY_PROFIT_PROGRAM)
         ),
         "--replay-mode": "real",
-        "--top-k": str(max(16, int(getattr(args, "top_k", 16) or 16))),
-        "--exploration-slots": str(
-            max(8, int(getattr(args, "exploration_slots", 8) or 8))
-        ),
-        "--portfolio-size-min": str(
-            max(2, int(getattr(args, "portfolio_size_min", 2) or 2))
-        ),
-        "--portfolio-size-max": str(
-            max(8, int(getattr(args, "portfolio_size_max", 8) or 8))
-        ),
+        "--max-candidates": str(max(64, _int_arg(args, "max_candidates", 64))),
+        "--top-k": str(max(16, _int_arg(args, "top_k", 16))),
+        "--exploration-slots": str(max(8, _int_arg(args, "exploration_slots", 8))),
+        "--portfolio-size-min": str(max(2, _int_arg(args, "portfolio_size_min", 2))),
+        "--portfolio-size-max": str(max(8, _int_arg(args, "portfolio_size_max", 8))),
         "--max-frontier-candidates-per-spec": str(
             max(
                 1,
-                int(
-                    getattr(
-                        args,
-                        "max_frontier_candidates_per_spec",
-                        _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
-                    )
-                    or _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC
+                _int_arg(
+                    args,
+                    "max_frontier_candidates_per_spec",
+                    _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
                 ),
             )
         ),
     }
+    max_total_frontier_candidates = _int_arg(args, "max_total_frontier_candidates", 0)
+    if max_total_frontier_candidates > 0:
+        flags["--max-total-frontier-candidates"] = str(max_total_frontier_candidates)
+    real_replay_timeout_seconds = _int_arg(args, "real_replay_timeout_seconds", 0)
+    if real_replay_timeout_seconds > 0:
+        flags["--real-replay-timeout-seconds"] = str(real_replay_timeout_seconds)
+    real_replay_shard_size = _int_arg(args, "real_replay_shard_size", 0)
+    if real_replay_shard_size > 0:
+        flags["--real-replay-shard-size"] = str(real_replay_shard_size)
+    real_replay_shard_timeout_seconds = _int_arg(
+        args, "real_replay_shard_timeout_seconds", 0
+    )
+    if real_replay_shard_timeout_seconds > 0:
+        flags["--real-replay-shard-timeout-seconds"] = str(
+            real_replay_shard_timeout_seconds
+        )
+    real_replay_shard_workers = _int_arg(args, "real_replay_shard_workers", 1)
+    if real_replay_shard_workers > 1:
+        flags["--real-replay-shard-workers"] = str(real_replay_shard_workers)
+
+    applied_recommended_flags: list[dict[str, str]] = []
+    rejected_recommended_flags: list[dict[str, str]] = []
+    monotonic_int_flags = {
+        "--max-candidates",
+        "--top-k",
+        "--exploration-slots",
+        "--portfolio-size-min",
+        "--portfolio-size-max",
+        "--max-total-frontier-candidates",
+        "--real-replay-timeout-seconds",
+    }
     if remediation is not None:
         for action in _list_of_mappings(remediation.get("next_actions")):
+            action_name = _string(action.get("action"))
             for key, value in _mapping(action.get("recommended_flags")).items():
                 if key.startswith("--") and _string(value):
+                    current_value = flags.get(key)
+                    current_int = _flag_int(current_value)
+                    recommended_int = _flag_int(value)
+                    if key in monotonic_int_flags and recommended_int is None:
+                        rejected_recommended_flags.append(
+                            {
+                                "action": action_name,
+                                "flag": key,
+                                "current_value": str(current_value or ""),
+                                "recommended_value": _string(value),
+                                "reason": "rejected_invalid_numeric_remediation_flag",
+                            }
+                        )
+                        continue
+                    if (
+                        key in monotonic_int_flags
+                        and current_int is not None
+                        and recommended_int is not None
+                        and recommended_int < current_int
+                    ):
+                        rejected_recommended_flags.append(
+                            {
+                                "action": action_name,
+                                "flag": key,
+                                "current_value": str(current_int),
+                                "recommended_value": str(recommended_int),
+                                "reason": (
+                                    "rejected_to_preserve_or_increase_search_breadth"
+                                ),
+                            }
+                        )
+                        continue
                     flags[key] = _string(value)
-    return flags
+                    applied_recommended_flags.append(
+                        {
+                            "action": action_name,
+                            "flag": key,
+                            "value": _string(value),
+                        }
+                    )
+    argv: list[str] = [
+        "python",
+        "services/torghut/scripts/run_whitepaper_autoresearch_profit_target.py",
+        "--output-dir",
+        "<next-epoch-output-dir>",
+    ]
+    for key, value in flags.items():
+        argv.extend([key, value])
+    return {
+        "entrypoint": "services/torghut/scripts/run_whitepaper_autoresearch_profit_target.py",
+        "flags": flags,
+        "argv": argv,
+        "applied_recommended_flags": applied_recommended_flags,
+        "rejected_recommended_flags": rejected_recommended_flags,
+        "no_fast_path_policy": {
+            "target_net_pnl_per_day_is_fixed": str(target),
+            "replay_mode": "real",
+            "monotonic_search_flags": sorted(monotonic_int_flags),
+            "allowed_decreases": [
+                (
+                    "timeout remediation may reduce "
+                    "--max-frontier-candidates-per-spec only to finish complete evidence"
+                )
+            ],
+        },
+    }
 
 
 def _profitability_search_goal(
@@ -1548,7 +1694,7 @@ def _profitability_search_goal(
     remediation: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     replay_mode = _string(getattr(args, "replay_mode", "")) or "real"
-    next_epoch_flags = _profitability_next_epoch_flags(
+    next_epoch_plan = _profitability_next_epoch_plan(
         args=args, target=target, remediation=remediation
     )
     return {
@@ -1633,10 +1779,7 @@ def _profitability_search_goal(
             "program_forbidden_mutations": list(program.forbidden_mutations),
             "promotion_policy": program.promotion_policy,
         },
-        "recommended_next_epoch": {
-            "entrypoint": "services/torghut/scripts/run_whitepaper_autoresearch_profit_target.py",
-            "flags": next_epoch_flags,
-        },
+        "recommended_next_epoch": next_epoch_plan,
         "profit_target_oracle": dict(profit_target_oracle or {}),
         "candidate_search_remediation": dict(remediation or {}),
         "artifacts": {
@@ -2940,6 +3083,13 @@ def run_whitepaper_autoresearch_profit_target(
                 )
                 or _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC
             ),
+            current_top_k=int(getattr(args, "top_k", 16) or 16),
+            current_exploration_slots=int(getattr(args, "exploration_slots", 8) or 8),
+            current_portfolio_size_min=int(getattr(args, "portfolio_size_min", 2) or 2),
+            current_max_candidates=int(getattr(args, "max_candidates", 64) or 64),
+            current_max_total_frontier_candidates=int(
+                getattr(args, "max_total_frontier_candidates", 0) or 0
+            ),
         )
         remediation_path = output_dir / "candidate-search-remediation.json"
         _write_json(remediation_path, remediation)
@@ -3125,6 +3275,13 @@ def run_whitepaper_autoresearch_profit_target(
                     _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
                 )
                 or _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC
+            ),
+            current_top_k=int(getattr(args, "top_k", 16) or 16),
+            current_exploration_slots=int(getattr(args, "exploration_slots", 8) or 8),
+            current_portfolio_size_min=int(getattr(args, "portfolio_size_min", 2) or 2),
+            current_max_candidates=int(getattr(args, "max_candidates", 64) or 64),
+            current_max_total_frontier_candidates=int(
+                getattr(args, "max_total_frontier_candidates", 0) or 0
             ),
         )
         _write_json(remediation_path, candidate_search_remediation)
