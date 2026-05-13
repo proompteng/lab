@@ -1061,6 +1061,17 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(clearinghouse["accepted_routeable_candidate_count"], 0)
         self.assertEqual(clearinghouse["max_notional"], "0")
+        repair_bid_settlement = payload["repair_bid_settlement_ledger"]
+        self.assertEqual(
+            repair_bid_settlement["schema_version"],
+            "torghut.repair-bid-settlement-ledger.v1",
+        )
+        self.assertEqual(repair_bid_settlement["routeable_candidate_count"], 0)
+        self.assertEqual(repair_bid_settlement["max_notional"], "0")
+        self.assertLessEqual(
+            len(repair_bid_settlement["selected_lot_ids"]),
+            repair_bid_settlement["summary"]["max_selected_lots"],
+        )
         warrant = payload["route_warrant_exchange"]
         self.assertEqual(
             warrant["schema_version"],
@@ -1536,6 +1547,26 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             health_clearinghouse["schema_version"],
             status_clearinghouse["schema_version"],
+        )
+        status_repair_bid_settlement = status_response.json()[
+            "repair_bid_settlement_ledger"
+        ]
+        health_repair_bid_settlement = health_response.json()[
+            "repair_bid_settlement_ledger"
+        ]
+        self.assertEqual(
+            status_repair_bid_settlement["schema_version"],
+            "torghut.repair-bid-settlement-ledger.v1",
+        )
+        self.assertEqual(status_repair_bid_settlement["routeable_candidate_count"], 0)
+        self.assertEqual(status_repair_bid_settlement["max_notional"], "0")
+        self.assertLessEqual(
+            len(status_repair_bid_settlement["dispatchable_lot_ids"]),
+            status_repair_bid_settlement["summary"]["max_dispatchable_lots"],
+        )
+        self.assertEqual(
+            health_repair_bid_settlement["schema_version"],
+            status_repair_bid_settlement["schema_version"],
         )
         status_warrant = status_response.json()["route_warrant_exchange"]
         health_warrant = health_response.json()["route_warrant_exchange"]
@@ -3736,6 +3767,20 @@ class TestTradingApi(TestCase):
                 "held_action_classes": ["paper_canary", "live_micro_canary"],
                 "summary": {"route_claim_count": 1},
             },
+            "repair_bid_settlement_ledger": {
+                "schema_version": "torghut.repair-bid-settlement-ledger.v1",
+                "ledger_id": "repair-bid-settlement-ledger:test",
+                "capital_decision": "repair_only",
+                "raw_repair_bid_count": 1,
+                "routeable_candidate_count": 0,
+                "selected_lot_ids": ["compacted-repair-lot:test"],
+                "dispatchable_lot_ids": ["compacted-repair-lot:test"],
+                "summary": {
+                    "compacted_lot_count": 1,
+                    "selected_lot_count": 1,
+                    "dispatchable_lot_count": 1,
+                },
+            },
         }
         with (
             patch(
@@ -3777,6 +3822,14 @@ class TestTradingApi(TestCase):
             payload["evidence"]["route_evidence_clearinghouse"][
                 "selected_repair_bid_count"
             ],
+            1,
+        )
+        self.assertEqual(
+            payload["repair_bid_settlement_ledger"]["ledger_id"],
+            "repair-bid-settlement-ledger:test",
+        )
+        self.assertEqual(
+            payload["evidence"]["repair_bid_settlement"]["dispatchable_lot_count"],
             1,
         )
 

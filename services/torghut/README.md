@@ -257,6 +257,11 @@ Testing rules for the trading core:
   `GET /trading/consumer-evidence` also expose the May 12 doc 188 observe-mode
   `torghut.route-evidence-clearinghouse-packet.v1` packet. It never widens notional and keeps stale TCA, missing image
   proof, missing options provider clocks, and zero-notional capital holds out of accepted routeable counts.
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, `GET /trading/revenue-repair`, and
+  `GET /trading/consumer-evidence` also expose the May 13 doc 190
+  `torghut.repair-bid-settlement-ledger.v1` ledger. It compacts raw route-evidence repair bids into bounded
+  zero-notional lots with dedupe keys, one required output receipt, and at most three Jangar-dispatchable lots per
+  account/window. Routeable candidate count remains zero while selected lots are unsettled.
 - `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/consumer-evidence` now expose the
   May 13 doc 190 observe-mode `torghut.route-warrant-exchange.v1` warrant. It reconciles consumer evidence, evidence
   clocks, routeability acceptance, profit freshness, ingestion/materialization proof, active-session TCA, empirical

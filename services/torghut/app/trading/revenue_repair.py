@@ -528,6 +528,39 @@ def _summarize_route_evidence_clearinghouse(
     }
 
 
+def _summarize_repair_bid_settlement(
+    settlement_ledger: Mapping[str, Any],
+) -> dict[str, object]:
+    if not settlement_ledger:
+        return {
+            "ledger_id": None,
+            "schema_version": None,
+            "capital_decision": "missing",
+            "raw_repair_bid_count": 0,
+            "compacted_lot_count": 0,
+            "selected_lot_count": 0,
+            "dispatchable_lot_count": 0,
+            "routeable_candidate_count": 0,
+        }
+    summary = _mapping(settlement_ledger.get("summary"))
+    return {
+        "ledger_id": settlement_ledger.get("ledger_id"),
+        "schema_version": settlement_ledger.get("schema_version"),
+        "capital_decision": _text(settlement_ledger.get("capital_decision"), "missing"),
+        "raw_repair_bid_count": _int(settlement_ledger.get("raw_repair_bid_count")),
+        "compacted_lot_count": _int(summary.get("compacted_lot_count")),
+        "selected_lot_count": _int(summary.get("selected_lot_count")),
+        "dispatchable_lot_count": _int(summary.get("dispatchable_lot_count")),
+        "routeable_candidate_count": _int(
+            settlement_ledger.get("routeable_candidate_count")
+        ),
+        "selected_lot_ids": _string_items(settlement_ledger.get("selected_lot_ids")),
+        "dispatchable_lot_ids": _string_items(
+            settlement_ledger.get("dispatchable_lot_ids")
+        ),
+    }
+
+
 def _business_state(
     *,
     revenue_ready: bool,
@@ -575,6 +608,10 @@ def build_revenue_repair_digest(
         status_payload.get("route_evidence_clearinghouse_packet"),
         readyz_payload.get("route_evidence_clearinghouse_packet"),
     )
+    repair_bid_settlement = _choose_mapping(
+        status_payload.get("repair_bid_settlement_ledger"),
+        readyz_payload.get("repair_bid_settlement_ledger"),
+    )
     dependencies = _mapping(readyz_payload.get("dependencies"))
     blocking_reasons = _collect_blocking_reasons(readyz_payload, status_payload)
     repair_queue = _build_repair_queue(proof_floor, status_payload, blocking_reasons)
@@ -604,6 +641,7 @@ def build_revenue_repair_digest(
             "ledger_id"
         ),
         "route_evidence_clearinghouse_packet": dict(route_evidence_clearinghouse),
+        "repair_bid_settlement_ledger": dict(repair_bid_settlement),
         "business_state": _business_state(
             revenue_ready=revenue_ready,
             proof_floor=proof_floor,
@@ -664,6 +702,9 @@ def build_revenue_repair_digest(
             ),
             "route_evidence_clearinghouse": _summarize_route_evidence_clearinghouse(
                 route_evidence_clearinghouse
+            ),
+            "repair_bid_settlement": _summarize_repair_bid_settlement(
+                repair_bid_settlement
             ),
             "simple_lane_reject_reason_totals": _collect_reason_counts(status_payload),
         },

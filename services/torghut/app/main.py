@@ -106,6 +106,7 @@ from .trading.quality_adjusted_profit_frontier import (
 )
 from .trading.renewal_bond_profit_escrow import build_renewal_bond_profit_escrow
 from .trading.revenue_repair import build_revenue_repair_digest
+from .trading.repair_bid_settlement import build_repair_bid_settlement_ledger
 from .trading.route_evidence_clearinghouse import (
     build_route_evidence_clearinghouse_packet,
 )
@@ -903,6 +904,15 @@ def _evaluate_trading_health_payload(
         tca_summary=tca_summary,
         options_catalog_freshness=options_catalog_freshness,
     )
+    repair_bid_settlement_ledger = _build_repair_bid_settlement_payload(
+        torghut_revision=BUILD_COMMIT,
+        source_commit=BUILD_COMMIT,
+        dependency_quorum=_dependency_quorum.as_payload(),
+        build=build_payload,
+        route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
+        routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+        quant_evidence=quant_evidence,
+    )
     route_warrant_exchange = _build_route_warrant_exchange_payload(
         torghut_revision=BUILD_COMMIT,
         source_commit=BUILD_COMMIT,
@@ -1017,6 +1027,7 @@ def _evaluate_trading_health_payload(
             "routeable_profit_candidate_exchange": routeable_profit_candidate_exchange,
             "clock_settlement_receipt": clock_settlement_receipt,
             "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
+            "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
             "route_warrant_exchange": route_warrant_exchange,
             "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
             "route_reacquisition_board": route_reacquisition_board,
@@ -2305,6 +2316,15 @@ def trading_status() -> dict[str, object]:
         tca_summary=tca_summary,
         options_catalog_freshness=options_catalog_freshness,
     )
+    repair_bid_settlement_ledger = _build_repair_bid_settlement_payload(
+        torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        source_commit=BUILD_COMMIT,
+        dependency_quorum=hypothesis_dependency_quorum.as_payload(),
+        build=build_payload,
+        route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
+        routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+        quant_evidence=quant_evidence,
+    )
     route_warrant_exchange = _build_route_warrant_exchange_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
         source_commit=BUILD_COMMIT,
@@ -2357,6 +2377,7 @@ def trading_status() -> dict[str, object]:
         "routeable_profit_candidate_exchange": routeable_profit_candidate_exchange,
         "clock_settlement_receipt": clock_settlement_receipt,
         "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
+        "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
         "route_warrant_exchange": route_warrant_exchange,
         "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
         "route_reacquisition_board": route_reacquisition_board,
@@ -2674,6 +2695,15 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         tca_summary=tca_summary,
         options_catalog_freshness=options_catalog_freshness,
     )
+    repair_bid_settlement_ledger = _build_repair_bid_settlement_payload(
+        torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        source_commit=BUILD_COMMIT,
+        dependency_quorum=dependency_quorum.as_payload(),
+        build=build_payload,
+        route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
+        routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+        quant_evidence=quant_evidence,
+    )
     profit_freshness_frontier = _build_profit_freshness_frontier_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
         dependency_quorum=dependency_quorum.as_payload(),
@@ -2764,6 +2794,7 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         "routeable_profit_candidate_exchange": routeable_profit_candidate_exchange,
         "clock_settlement_receipt": clock_settlement_receipt,
         "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
+        "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
         "route_warrant_exchange": route_warrant_exchange,
     }
 
@@ -4934,6 +4965,26 @@ def _build_route_evidence_clearinghouse_payload(*, torghut_revision: str | None,
         ),
         routeability_acceptance_ledger=routeability_repair_acceptance_ledger,
         live_submission_gate=live_submission_gate,
+    )
+
+
+# fmt: off
+def _build_repair_bid_settlement_payload(*, torghut_revision: str | None, source_commit: str | None, dependency_quorum: Mapping[str, Any], build: Mapping[str, Any], route_evidence_clearinghouse_packet: Mapping[str, Any], routeability_repair_acceptance_ledger: Mapping[str, Any], quant_evidence: Mapping[str, Any]) -> dict[str, object]:
+# fmt: on
+    return build_repair_bid_settlement_ledger(
+        account_label=settings.trading_account_label,
+        session_id=settings.trading_jangar_quant_window,
+        trading_mode=settings.trading_mode,
+        torghut_revision=torghut_revision,
+        source_commit=source_commit,
+        route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
+        routeability_acceptance_ledger=routeability_repair_acceptance_ledger,
+        active_run_dedupe_state={},
+        jangar_scoped_quant_status=quant_evidence,
+        rollout_image_summary=_build_route_image_proof_summary(
+            build=build,
+            dependency_quorum=dependency_quorum,
+        ),
     )
 
 

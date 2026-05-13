@@ -284,6 +284,18 @@ Engineer milestone 2:
 - Add delta accounting: expected gate delta before dispatch, actual gate delta after receipt, and stale/expired
   classification when a lot does not move a value gate.
 
+### Implementation Note (2026-05-13)
+
+Engineer milestone 1 is implemented as an observe-mode `repair_bid_settlement` reducer in Torghut. The reducer consumes
+the route-evidence clearinghouse packet plus scoped quant and rollout context, preserves raw reason codes, compacts
+equivalent reasons into bounded zero-notional lots, and exposes `repair_bid_settlement_ledger` through `/readyz`,
+`/trading/status`, `/trading/revenue-repair`, and `/trading/consumer-evidence`.
+
+The initial runtime contract intentionally does not grant paper or live notional. Selected lots carry `max_notional=0`,
+one `required_output_receipt`, a dedupe key, TTL, validation command, and dispatchability capped to three lots per
+account/window. `routeable_candidate_count` remains zero while any compacted lot is unsettled, preserving the capital
+safety gate until receipt validators land in milestone 2.
+
 ## Validation Gates
 
 Local validation for Torghut PRs:
