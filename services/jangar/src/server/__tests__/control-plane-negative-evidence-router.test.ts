@@ -315,4 +315,65 @@ describe('negative evidence router', () => {
     )
     expect(findBudget(result.budgets, 'serve_readonly').decision).toBe('allow')
   })
+
+  it('uses Torghut evidence-clock custody to hold normal dispatch and deploy widening', () => {
+    const result = buildNegativeEvidenceRouterStatus(
+      baseInput({
+        torghut: {
+          readiness_status: 'healthy',
+          market_context_status: 'healthy',
+          open_quant_alerts: 0,
+          critical_quant_alerts: 0,
+          paper_settlement_clean: false,
+          consumer_evidence_receipt_id: 'torghut-route-proven-profit:test',
+          consumer_evidence_status: 'current',
+          evidence_clock_arbiter_id: 'evidence-clock-arbiter:test',
+          evidence_clock_status: 'split',
+          evidence_clock_split_clock_names: ['rollout', 'postgres_tca'],
+          evidence_clock_blocking_reason_codes: ['route_adjacent_workloads_degraded', 'execution_tca_stale'],
+          evidence_clock_custody_status: 'missing',
+          evidence_clock_custody_ref: null,
+          evidence_clock_custody_reason_codes: ['evidence_clock_custody_receipt_missing'],
+          routeable_profit_candidate_exchange_id: 'routeable-profit-candidate-exchange:test',
+          routeable_exchange_zero_notional_repair_lot_ids: ['evidence-clock-repair-lot:rollout'],
+          routeable_exchange_routeable_candidate_count: 0,
+          routeable_exchange_rejected_candidate_count: 1,
+        },
+      }),
+    )
+
+    const normalDispatch = findBudget(result.budgets, 'dispatch_normal')
+    expect(normalDispatch.decision).toBe('repair_only')
+    expect(normalDispatch.downgrade_reasons).toEqual(['evidence_clock_custody_missing'])
+    expect(normalDispatch.evidence_refs).toEqual(
+      expect.arrayContaining([
+        'evidence-clock-arbiter:test',
+        'routeable-profit-candidate-exchange:test',
+        'evidence-clock-repair-lot:rollout',
+      ]),
+    )
+
+    const deployWiden = findBudget(result.budgets, 'deploy_widen')
+    expect(deployWiden.decision).toBe('hold')
+    expect(deployWiden.blocked_reasons).toEqual(
+      expect.arrayContaining([
+        'evidence_clock_custody_missing',
+        'evidence_clock_custody_receipt_missing',
+        'evidence_clock_rollout_split',
+      ]),
+    )
+
+    const paperCanary = findBudget(result.budgets, 'paper_canary')
+    expect(paperCanary.decision).toBe('hold')
+    expect(paperCanary.blocked_reasons).toEqual(
+      expect.arrayContaining([
+        'evidence_clock_split',
+        'route_adjacent_workloads_degraded',
+        'execution_tca_stale',
+        'evidence_clock_custody_missing',
+      ]),
+    )
+    expect(findBudget(result.budgets, 'dispatch_repair').decision).toBe('allow')
+    expect(findBudget(result.budgets, 'serve_readonly').decision).toBe('allow')
+  })
 })

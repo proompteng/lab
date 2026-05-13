@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
-import type { TorghutNegativeEvidenceInput } from '~/server/control-plane-negative-evidence-router'
+import type { TorghutNegativeEvidenceInput } from '~/server/control-plane-negative-evidence-router-torghut'
 import { asRecord } from '~/server/primitives-http'
 
 export type TorghutConsumerEvidenceStatus = {
@@ -33,6 +33,22 @@ export type TorghutConsumerEvidenceStatus = {
   profit_freshness_state?: string | null
   profit_freshness_repair_lot_ids?: string[]
   profit_freshness_selected_repair_ids?: string[]
+  evidence_clock_arbiter_id?: string | null
+  evidence_clock_state?: string | null
+  evidence_clock_split_clock_names?: string[]
+  evidence_clock_blocking_reason_codes?: string[]
+  evidence_clock_custody_status?: string | null
+  evidence_clock_custody_ref?: string | null
+  routeable_profit_candidate_exchange_id?: string | null
+  routeable_exchange_routeable_candidate_count?: number | null
+  routeable_exchange_zero_notional_repair_lot_ids?: string[]
+  routeable_exchange_rejected_candidate_count?: number | null
+  operator_summary?: {
+    top_clock_split: string | null
+    selected_repair_lot_id: string | null
+    expected_value_gate: string | null
+    next_validation_command: string
+  } | null
   reason_codes: string[]
   message: string
 }
@@ -71,6 +87,8 @@ const parseNumber = (value: string | null) => {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
 }
+
+const paperActionStates = new Set(['allow', 'allowed', 'current', 'paper_canary', 'paper_candidate', 'ready'])
 
 const CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION = 'torghut.consumer-evidence-status.v1'
 const CONSUMER_EVIDENCE_RECEIPT_SCHEMA_VERSION = 'torghut.consumer-evidence-receipt.v1'
@@ -348,6 +366,76 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     profitFreshnessFrontier?.frontier_state ?? profitFreshnessFrontier?.aggregate_state,
   )
   const profitFreshnessFrontierId = normalizeNonEmpty(profitFreshnessFrontier?.frontier_id)
+  const evidenceClockArbiter = asRecord(payload.evidence_clock_arbiter)
+  const evidenceClockSplits = Array.isArray(evidenceClockArbiter?.clock_splits)
+    ? evidenceClockArbiter.clock_splits
+        .map((split) => asRecord(split))
+        .filter((split): split is Record<string, unknown> => Boolean(split))
+    : []
+  const evidenceClockArbiterId = normalizeNonEmpty(evidenceClockArbiter?.arbiter_id)
+  const evidenceClockState = evidenceClockArbiter ? (evidenceClockSplits.length > 0 ? 'split' : 'current') : 'missing'
+  const evidenceClockSplitClockNames = uniqueStrings(evidenceClockSplits.map((split) => normalizeNonEmpty(split.clock)))
+  const evidenceClockReasonCodes = uniqueStrings([
+    ...stringList(evidenceClockArbiter?.reason_codes),
+    ...evidenceClockSplits.flatMap((split) => stringList(split.reason_codes)),
+  ])
+  const custodyRef = asRecord(evidenceClockArbiter?.required_jangar_custody_ref)
+  const custodyRefId = normalizeNonEmpty(
+    custodyRef?.packet_id ?? custodyRef?.id ?? custodyRef?.receipt_id ?? custodyRef?.settlement_ref,
+  )
+  const custodyDecision = normalizeReason(custodyRef?.decision ?? custodyRef?.state ?? custodyRef?.status)
+  const custodySource = normalizeReason(custodyRef?.source)
+  const custodyFreshUntil = normalizeNonEmpty(custodyRef?.fresh_until)
+  const custodyFreshUntilMs = parseTimestampMs(custodyFreshUntil)
+  const evidenceClockCustodyStatus =
+    !evidenceClockArbiter || !custodyRefId || custodySource !== 'stage_clearance_packet'
+      ? 'missing'
+      : !custodyFreshUntilMs || custodyFreshUntilMs <= now.getTime()
+        ? 'stale'
+        : custodyDecision && paperActionStates.has(custodyDecision)
+          ? 'current'
+          : 'blocked'
+  const evidenceClockCustodyReasonCodes = uniqueStrings([
+    ...stringList(custodyRef?.reason_codes),
+    ...(evidenceClockCustodyStatus === 'missing' ? ['evidence_clock_custody_receipt_missing'] : []),
+    ...(evidenceClockCustodyStatus === 'stale'
+      ? [custodyFreshUntilMs ? 'evidence_clock_custody_stale' : 'evidence_clock_custody_fresh_until_missing']
+      : []),
+    ...(evidenceClockCustodyStatus === 'blocked' ? [`evidence_clock_custody_${custodyDecision ?? 'blocked'}`] : []),
+  ])
+  const routeableExchange = asRecord(payload.routeable_profit_candidate_exchange)
+  const routeableExchangeSummary = asRecord(routeableExchange?.summary)
+  const zeroNotionalRepairLots = Array.isArray(routeableExchange?.zero_notional_repair_lots)
+    ? routeableExchange.zero_notional_repair_lots
+        .map((lot) => asRecord(lot))
+        .filter((lot): lot is Record<string, unknown> => Boolean(lot))
+    : []
+  const rejectedCandidates = Array.isArray(routeableExchange?.rejected_candidates)
+    ? routeableExchange.rejected_candidates
+        .map((candidate) => asRecord(candidate))
+        .filter((candidate): candidate is Record<string, unknown> => Boolean(candidate))
+    : []
+  const routeableExchangeId = normalizeNonEmpty(routeableExchange?.exchange_id)
+  const routeableExchangeZeroNotionalRepairLotIds = uniqueStrings(
+    zeroNotionalRepairLots.map((lot) => normalizeNonEmpty(lot.lot_id)),
+  )
+  const routeableExchangeRouteableCandidateCount = parseNumber(
+    normalizeNonEmpty(
+      routeableExchangeSummary?.routeable_candidate_count ?? routeableExchange?.routeable_candidate_count,
+    ),
+  )
+  const routeableExchangeRejectedCandidateCount =
+    parseNumber(normalizeNonEmpty(routeableExchangeSummary?.rejected_candidate_count)) ?? rejectedCandidates.length
+  const topClockSplit = evidenceClockSplits[0]
+  const selectedEvidenceClockRepair = zeroNotionalRepairLots[0]
+  const operatorSummary = evidenceClockArbiter
+    ? {
+        top_clock_split: normalizeNonEmpty(topClockSplit?.clock),
+        selected_repair_lot_id: normalizeNonEmpty(selectedEvidenceClockRepair?.lot_id),
+        expected_value_gate: normalizeNonEmpty(selectedEvidenceClockRepair?.target_value_gate),
+        next_validation_command: `curl -fsS ${endpoint} | jq '.evidence_clock_arbiter.summary'`,
+      }
+    : null
 
   return {
     status: {
@@ -379,6 +467,17 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       profit_freshness_state: profitFreshnessState,
       profit_freshness_repair_lot_ids: profitFreshnessRepairLotIds,
       profit_freshness_selected_repair_ids: profitFreshnessSelectedRepairIds,
+      evidence_clock_arbiter_id: evidenceClockArbiterId,
+      evidence_clock_state: evidenceClockState,
+      evidence_clock_split_clock_names: evidenceClockSplitClockNames,
+      evidence_clock_blocking_reason_codes: evidenceClockReasonCodes,
+      evidence_clock_custody_status: evidenceClockCustodyStatus,
+      evidence_clock_custody_ref: custodyRefId,
+      routeable_profit_candidate_exchange_id: routeableExchangeId,
+      routeable_exchange_routeable_candidate_count: routeableExchangeRouteableCandidateCount,
+      routeable_exchange_zero_notional_repair_lot_ids: routeableExchangeZeroNotionalRepairLotIds,
+      routeable_exchange_rejected_candidate_count: routeableExchangeRejectedCandidateCount,
+      operator_summary: operatorSummary,
       reason_codes: reasonCodes,
       message:
         status === 'current'
@@ -415,6 +514,17 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       profit_freshness_repair_lot_ids: profitFreshnessRepairLotIds,
       profit_freshness_selected_repair_ids: profitFreshnessSelectedRepairIds,
       profit_freshness_blocking_reason_codes: profitFreshnessReasonCodes,
+      evidence_clock_arbiter_id: evidenceClockArbiterId,
+      evidence_clock_status: evidenceClockState,
+      evidence_clock_split_clock_names: evidenceClockSplitClockNames,
+      evidence_clock_blocking_reason_codes: evidenceClockReasonCodes,
+      evidence_clock_custody_status: evidenceClockCustodyStatus,
+      evidence_clock_custody_ref: custodyRefId,
+      evidence_clock_custody_reason_codes: evidenceClockCustodyReasonCodes,
+      routeable_profit_candidate_exchange_id: routeableExchangeId,
+      routeable_exchange_zero_notional_repair_lot_ids: routeableExchangeZeroNotionalRepairLotIds,
+      routeable_exchange_routeable_candidate_count: routeableExchangeRouteableCandidateCount,
+      routeable_exchange_rejected_candidate_count: routeableExchangeRejectedCandidateCount,
     },
   }
 }

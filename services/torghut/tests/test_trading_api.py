@@ -913,6 +913,18 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(frontier["capital_posture"]["paper_notional_limit"], "0")
         self.assertEqual(frontier["capital_posture"]["live_notional_limit"], "0")
+        arbiter = payload["evidence_clock_arbiter"]
+        self.assertEqual(
+            arbiter["schema_version"],
+            "torghut.evidence-clock-arbiter.v1",
+        )
+        self.assertEqual(arbiter["routeable_candidate_count"], 0)
+        exchange = payload["routeable_profit_candidate_exchange"]
+        self.assertEqual(
+            exchange["schema_version"],
+            "torghut.routeable-profit-candidate-exchange.v1",
+        )
+        self.assertEqual(exchange["summary"]["routeable_candidate_count"], 0)
         dependency_fetch.assert_not_called()
         continuity_fetch.assert_not_called()
 
