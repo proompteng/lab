@@ -258,6 +258,62 @@ class TestCandidateSpecs(TestCase):
                     family_template_id,
                 )
 
+    def test_short_exhaustion_claim_compiles_short_sleeve_profiles(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-short-exhaustion",
+            claims=[
+                {
+                    "claim_id": "claim-short-fade",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Short-side upside exhaustion fade with offer pressure can "
+                        "profit from overbought intraday weakness."
+                    ),
+                    "confidence": "0.81",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
+        )
+        short_specs = [
+            spec
+            for spec in specs
+            if spec.family_template_id == "mean_reversion_exhaustion_short_v1"
+        ]
+
+        self.assertEqual(len(short_specs), 3)
+        self.assertTrue(
+            all(
+                spec.runtime_family == "mean_reversion_exhaustion_short_consistent"
+                for spec in short_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.runtime_strategy_name == "mean-reversion-exhaustion-short-v1"
+                for spec in short_specs
+            )
+        )
+        self.assertEqual(
+            {
+                spec.feature_contract["execution_profile"]["profile_id"]
+                for spec in short_specs
+            },
+            {
+                "mean_reversion_exhaustion_short_v1:profile-1",
+                "mean_reversion_exhaustion_short_v1:profile-2",
+                "mean_reversion_exhaustion_short_v1:profile-3",
+            },
+        )
+        self.assertTrue(
+            all(
+                "short_stop_loss_bps" in spec.strategy_overrides["params"]
+                for spec in short_specs
+            )
+        )
+
     def test_same_family_whitepaper_hypotheses_get_distinct_execution_profiles(
         self,
     ) -> None:
