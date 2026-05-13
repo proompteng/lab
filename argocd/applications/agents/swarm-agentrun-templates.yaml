@@ -196,9 +196,9 @@ spec:
   workflow:
     steps:
       - name: verify
-        retries: 1
+        retries: 0
         retryBackoffSeconds: 30
-        timeoutSeconds: 5400
+        timeoutSeconds: 2700
         parameters:
           stage: verify
   parameters:
@@ -437,9 +437,9 @@ spec:
   workflow:
     steps:
       - name: verify
-        retries: 1
+        retries: 0
         retryBackoffSeconds: 30
-        timeoutSeconds: 5400
+        timeoutSeconds: 2700
         parameters:
           stage: verify
   parameters:
