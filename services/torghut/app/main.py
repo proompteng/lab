@@ -1456,6 +1456,7 @@ def trading_profit_freshness_zero_notional_repair(
         description="Optional zero-notional action to select from queued repair lots.",
     ),
     tca_limit: int = Query(default=250, ge=1, le=5000),
+    drift_limit: int = Query(default=500, ge=1, le=5000),
 ) -> dict[str, object]:
     """Plan or run an allowlisted zero-notional repair from the freshness frontier."""
 
@@ -1490,6 +1491,89 @@ def trading_profit_freshness_zero_notional_repair(
             "result": result,
         }
 
+    def run_drift_check_replay(repair: Mapping[str, Any]) -> Mapping[str, object]:
+        scheduler: TradingScheduler | None = getattr(
+            app.state, "trading_scheduler", None
+        )
+        pipeline = getattr(scheduler, "_pipeline", None) if scheduler else None
+        ingestor = getattr(pipeline, "ingestor", None)
+        fetch_with_reason = getattr(ingestor, "fetch_signals_with_reason", None)
+        run_simple_drift_check = getattr(pipeline, "_run_simple_drift_check", None)
+        if not callable(fetch_with_reason) or not callable(run_simple_drift_check):
+            return {
+                "execution_state": "runner_failed",
+                "command_exit_code": 78,
+                "blocked_reasons": ["drift_check_runner_unavailable"],
+                "after_refs": [],
+            }
+
+        assert scheduler is not None
+        now = datetime.now(timezone.utc)
+        lookback_minutes = max(
+            1, int(settings.trading_autonomy_signal_lookback_minutes)
+        )
+        symbol_set = {
+            str(symbol).strip().upper()
+            for symbol in cast(Sequence[object], repair.get("symbol_set") or [])
+            if str(symbol).strip()
+        }
+        try:
+            batch = fetch_with_reason(
+                start=now - timedelta(minutes=lookback_minutes),
+                end=now,
+                limit=drift_limit,
+            )
+            signals = [
+                signal
+                for signal in cast(Sequence[Any], getattr(batch, "signals", []))
+                if not symbol_set
+                or str(getattr(signal, "symbol", "")).strip().upper() in symbol_set
+            ]
+            if not signals:
+                no_signal_reason = str(
+                    getattr(batch, "no_signal_reason", None) or "no_signals"
+                )
+                return {
+                    "execution_state": "runner_blocked",
+                    "command_exit_code": 78,
+                    "blocked_reasons": [f"drift_check_no_signals:{no_signal_reason}"],
+                    "after_refs": [],
+                    "result": {
+                        "query_start": getattr(batch, "query_start", None),
+                        "query_end": getattr(batch, "query_end", None),
+                        "symbol_set": sorted(symbol_set),
+                    },
+                }
+            run_simple_drift_check(signals)
+        except Exception as exc:  # pragma: no cover - fail-closed receipt path
+            logger.exception("Zero-notional drift-check repair failed")
+            return {
+                "execution_state": "runner_failed",
+                "command_exit_code": 1,
+                "blocked_reasons": [f"drift_check_replay_failed:{type(exc).__name__}"],
+                "after_refs": [],
+            }
+
+        drift_path = str(
+            getattr(scheduler.state, "drift_last_detection_path", "") or ""
+        )
+        after_refs = ["drift_detection_checks"]
+        if drift_path:
+            after_refs.append(drift_path)
+        return {
+            "execution_state": "executed",
+            "command_exit_code": 0,
+            "after_refs": after_refs,
+            "result": {
+                "signals_evaluated": len(signals),
+                "symbol_set": sorted(symbol_set),
+                "drift_status": getattr(scheduler.state, "drift_status", None),
+                "drift_active_reason_codes": list(
+                    getattr(scheduler.state, "drift_active_reason_codes", [])
+                ),
+            },
+        }
+
     receipt = run_zero_notional_repair(
         account_label=settings.trading_account_label,
         trading_mode=settings.trading_mode,
@@ -1498,7 +1582,10 @@ def trading_profit_freshness_zero_notional_repair(
         profit_freshness_frontier=frontier,
         execute=execute,
         preferred_action=action,
-        runners={"recompute_route_tca_and_fill_quality": run_tca_recompute},
+        runners={
+            "recompute_route_tca_and_fill_quality": run_tca_recompute,
+            "rerun_drift_checks_for_blocked_hypotheses": run_drift_check_replay,
+        },
     )
     return cast(dict[str, object], jsonable_encoder(receipt))
 
