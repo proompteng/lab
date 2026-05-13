@@ -202,6 +202,11 @@ const isBlockingSwarmFreezeReason = (reason: string | null | undefined) => {
   return reasons.some((entry) => entry !== 'StageStaleness')
 }
 
+const isOnlyStageStalenessFreezeReason = (reason: string | null | undefined) => {
+  const reasons = splitSwarmFreezeReasons(reason)
+  return reasons.length > 0 && reasons.every((entry) => entry === 'StageStaleness')
+}
+
 type SwarmLaunchAdmission = {
   enforced: boolean
   proofEnforced: boolean
@@ -2029,13 +2034,22 @@ const reconcileSwarm = async (
   let freezeUntil = existingFreezeUntil ?? undefined
   const failureWindowStartMs = existingFreezeAt !== null && existingFreezeAt <= nowMs ? existingFreezeAt : null
   const recentImplementRuns = filterRunsAfterTime(implementRuns, failureWindowStartMs)
-  let consecutiveFailures = 0
+  let consecutiveFailures = countConsecutiveFailures(recentImplementRuns)
+  const failureRunSummary = collectRecentFailureRuns(recentImplementRuns)
+  const failureFreezeReason = resolveConsecutiveFailureFreezeReason(recentImplementRuns, freezeAfterFailures)
 
   const freezeTriggerReasons: string[] = []
+  if (
+    freezeActive &&
+    isOnlyStageStalenessFreezeReason(freezeReason) &&
+    staleStageSignals.length === 0 &&
+    !failureFreezeReason
+  ) {
+    freezeActive = false
+    freezeReason = 'Healthy'
+    freezeUntil = undefined
+  }
   if (!freezeActive) {
-    consecutiveFailures = countConsecutiveFailures(recentImplementRuns)
-    const failureRunSummary = collectRecentFailureRuns(recentImplementRuns)
-    const failureFreezeReason = resolveConsecutiveFailureFreezeReason(recentImplementRuns, freezeAfterFailures)
     if (failureFreezeReason) {
       freezeTriggerReasons.push(failureFreezeReason)
     } else {
