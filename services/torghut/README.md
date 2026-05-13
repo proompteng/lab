@@ -234,6 +234,12 @@ Testing rules for the trading core:
   falls back to the existing bps proxy. The frontier names one selected repair when proof is stale, but
   `paper_notional_limit=0`, `live_notional_limit=0`, and existing proof-floor/submission gates remain the only capital
   authority.
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/consumer-evidence` now surface the
+  May 13 doc 192 `torghut.repair-receipt-frontier.v1` projection. It compacts source-serving proof, freshness carry,
+  repair-bid settlement, route warrants, and profit-freshness repairs into one ranked zero-notional frontier with paper
+  and live cutover requirements. Non-source repairs are held until source-serving proof converges, every frontier lot
+  reports `max_notional=0`, and rollback is to ignore the projection while consuming the existing source-serving,
+  repair-bid, and profit-freshness payloads.
 - `POST /trading/profit-freshness/zero-notional-repair` returns the May 12 doc 188
   `torghut.zero-notional-repair-execution-receipt.v1` executor receipt for the selected frontier repair. The default
   mode is a dry run. With `execute=true`, the only local runner is bounded route/TCA recompute; empirical proof renewal
