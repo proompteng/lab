@@ -7,6 +7,7 @@ import {
 } from '~/server/control-plane-status'
 import { CLEARANCE_MARKET_DESIGN_ARTIFACT } from '~/server/control-plane-clearance-market'
 import { CONSUMER_EVIDENCE_LEASES_DESIGN_ARTIFACT } from '~/server/control-plane-consumer-evidence-leases'
+import { STAGE_CREDIT_LEDGER_DESIGN_ARTIFACT } from '~/server/control-plane-stage-credit-ledger'
 import * as kubeGatewayModule from '~/server/kube-gateway'
 import type {
   ControlPlaneHeartbeatRow,
@@ -1051,6 +1052,20 @@ describe('control-plane status', () => {
         evidence_refs: expect.arrayContaining([status.source_rollout_truth_exchange.exchange_id]),
       }),
     )
+    expect(status.stage_credit_ledger).toMatchObject({
+      schema_version: 'jangar.stage-credit-ledger.v1',
+      evidence_mode: 'observe',
+      governing_design_refs: expect.arrayContaining([STAGE_CREDIT_LEDGER_DESIGN_ARTIFACT]),
+      retained_failure_debt_refs: expect.arrayContaining([expect.stringContaining('clearance-failure-debt:7d:')]),
+    })
+    expect(status.stage_credit_ledger?.stage_accounts).toContainEqual(
+      expect.objectContaining({
+        stage: 'plan',
+        action_class: 'dispatch_normal',
+        decision: 'allow',
+        available_credit: expect.any(Number),
+      }),
+    )
     expect(status.torghut_action_slo_budgets).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1184,6 +1199,21 @@ describe('control-plane status', () => {
       state: 'active',
       failed_count: 2,
       backoff_count: 1,
+    })
+    const stageCreditAccounts = new Map(
+      status.stage_credit_ledger?.stage_accounts.map((account) => [
+        `${account.stage}:${account.action_class}`,
+        account,
+      ]) ?? [],
+    )
+    expect(stageCreditAccounts.get('plan:dispatch_normal')).toMatchObject({
+      decision: 'hold',
+      available_credit: 0,
+      reason_codes: expect.arrayContaining(['stage_credit_insufficient']),
+    })
+    expect(stageCreditAccounts.get('repair:dispatch_repair')).toMatchObject({
+      decision: 'repair_only',
+      selected_repair_lot_ref: expect.stringContaining('clearance-repair-lot:'),
     })
   })
 
