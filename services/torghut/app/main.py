@@ -120,12 +120,13 @@ from .trading.submission_council import (
     resolve_active_capital_stage,
 )
 from .trading.ingest import ClickHouseSignalIngestor
-from .trading.tca import build_tca_gate_inputs
+from .trading.tca import build_tca_gate_inputs, refresh_execution_tca_metrics
 from .trading.simulation_progress import (
     active_simulation_runtime_context,
     simulation_progress_snapshot,
 )
 from .trading.time_source import trading_time_status
+from .trading.zero_notional_repair_executor import run_zero_notional_repair
 from .whitepapers import (
     WhitepaperKafkaWorker,
     WhitepaperWorkflowService,
@@ -1422,6 +1423,56 @@ def trading_revenue_repair() -> dict[str, object]:
             )
         ),
     )
+
+
+@app.post("/trading/profit-freshness/zero-notional-repair")
+def trading_profit_freshness_zero_notional_repair(
+    execute: bool = Query(default=False),
+    tca_limit: int = Query(default=250, ge=1, le=5000),
+) -> dict[str, object]:
+    """Plan or run an allowlisted zero-notional repair from the freshness frontier."""
+
+    status_payload = trading_status()
+    frontier = cast(
+        Mapping[str, Any],
+        status_payload.get("profit_freshness_frontier") or {},
+    )
+
+    def run_tca_recompute(_repair: Mapping[str, Any]) -> Mapping[str, object]:
+        try:
+            with SessionLocal() as session:
+                result = refresh_execution_tca_metrics(
+                    session,
+                    account_label=settings.trading_account_label,
+                    limit=tca_limit,
+                    dry_run=False,
+                )
+                session.commit()
+        except Exception as exc:  # pragma: no cover - fail-closed receipt path
+            logger.exception("Zero-notional route/TCA repair failed")
+            return {
+                "execution_state": "runner_failed",
+                "command_exit_code": 1,
+                "blocked_reasons": [f"route_tca_recompute_failed:{type(exc).__name__}"],
+                "after_refs": [],
+            }
+        return {
+            "execution_state": "executed",
+            "command_exit_code": 0,
+            "after_refs": ["execution_tca_metrics"],
+            "result": result,
+        }
+
+    receipt = run_zero_notional_repair(
+        account_label=settings.trading_account_label,
+        trading_mode=settings.trading_mode,
+        torghut_revision=cast(str | None, status_payload.get("active_revision")),
+        source_commit=BUILD_COMMIT,
+        profit_freshness_frontier=frontier,
+        execute=execute,
+        runners={"recompute_route_tca_and_fill_quality": run_tca_recompute},
+    )
+    return cast(dict[str, object], jsonable_encoder(receipt))
 
 
 @app.get("/")

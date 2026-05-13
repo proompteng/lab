@@ -149,6 +149,10 @@ Start here:
   scoped quant, TCA, empirical, promotion, and rollout witnesses against the published clocks, emits zero-notional
   repair packets such as `clock_wiring_split`, and keeps `max_notional=0` while any clock is stale, missing, split, or
   blocked.
+- Current execution contract: `POST /trading/profit-freshness/zero-notional-repair` emits a doc 188
+  zero-notional repair execution receipt. It can dry-run any selected frontier repair and can execute only bounded
+  route/TCA recompute locally; empirical proof and market-context repairs stay Jangar-admission-gated until their
+  runners are wired.
 - TA replay procedure (concrete steps): `argocd/applications/torghut/README.md`
 - Historical simulation operations playbook: `docs/torghut/rollouts/historical-simulation-playbook.md`
 - Incident context (example): `docs/incidents/2025-12-20-longhorn-upgrade-kafka-failure.md`

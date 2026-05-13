@@ -3761,6 +3761,50 @@ class TestTradingApi(TestCase):
             1,
         )
 
+    def test_zero_notional_repair_endpoint_returns_dry_run_receipt(self) -> None:
+        status_payload = {
+            "active_revision": "torghut-00320",
+            "profit_freshness_frontier": {
+                "frontier_id": "profit-freshness-frontier:test",
+                "capital_posture": {
+                    "capital_state": "zero_notional",
+                    "paper_notional_limit": "0",
+                    "live_notional_limit": "0",
+                    "capital_behavior_changed": False,
+                },
+                "selected_zero_notional_repairs": [
+                    {
+                        "lot_id": "profit-freshness-repair-lot:test",
+                        "candidate_id": "candidate-a",
+                        "hypothesis_id": "H-AAPL",
+                        "blocked_dimension": "market_context",
+                        "zero_notional_action": "refresh_stale_market_context_domains",
+                        "before_refs": ["market_context:AAPL"],
+                        "paper_notional_limit": "0",
+                        "live_notional_limit": "0",
+                        "state": "selected_zero_notional_repair",
+                    }
+                ],
+            },
+        }
+        with patch("app.main.trading_status", return_value=status_payload):
+            response = self.client.post(
+                "/trading/profit-freshness/zero-notional-repair"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(
+            payload["schema_version"],
+            "torghut.zero-notional-repair-execution-receipt.v1",
+        )
+        self.assertEqual(payload["execution_state"], "dry_run_ready")
+        self.assertEqual(payload["command_exit_code"], 0)
+        self.assertFalse(payload["order_submission_enabled"])
+        self.assertEqual(payload["paper_notional_limit"], "0")
+        self.assertEqual(payload["live_notional_limit"], "0")
+        self.assertEqual(payload["before_refs"], ["market_context:AAPL"])
+
     def test_trading_status_blocks_live_submission_when_lineage_tables_are_empty(
         self,
     ) -> None:

@@ -233,6 +233,11 @@ Testing rules for the trading core:
   falls back to the existing bps proxy. The frontier names one selected repair when proof is stale, but
   `paper_notional_limit=0`, `live_notional_limit=0`, and existing proof-floor/submission gates remain the only capital
   authority.
+- `POST /trading/profit-freshness/zero-notional-repair` returns the May 12 doc 188
+  `torghut.zero-notional-repair-execution-receipt.v1` executor receipt for the selected frontier repair. The default
+  mode is a dry run. With `execute=true`, the only local runner is bounded route/TCA recompute; empirical proof renewal
+  and market-context refresh remain admission-gated receipt plans until their external runners are wired. The receipt
+  always reports `order_submission_enabled=false`, `paper_notional_limit=0`, and `live_notional_limit=0`.
 - `GET /trading/status`, `GET /trading/health`, and `GET /readyz` also expose the May 8 doc 184
   `torghut.profit-signal-quorum.v1` shadow receipt. It evaluates each hypothesis against scoped quant latest metrics,
   quant pipeline stages, market-context route health, hypothesis lineage, promotion-decision evidence, route/TCA,
