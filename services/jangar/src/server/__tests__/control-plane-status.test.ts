@@ -2695,6 +2695,39 @@ describe('control-plane status', () => {
     )
   })
 
+  it('buildExecutionTrust ignores inactive NotFrozen freeze records with future timestamps', async () => {
+    const kubeGateway = createTestKubeGateway({
+      listSwarms: vi.fn(async () => [
+        buildExecutionTrustSwarmResource({
+          phase: 'Active',
+          freezeReason: 'NotFrozen',
+          freezeUntil: '2026-01-20T00:40:00Z',
+          requirementsPending: 0,
+          requirementsLastSeen: '2026-01-20T00:19:00Z',
+        }),
+      ]),
+    })
+
+    const snapshot = await buildExecutionTrust({
+      namespace: 'agents',
+      now: new Date('2026-01-20T00:20:00Z'),
+      swarms: ['jangar-control-plane'],
+      kube: kubeGateway,
+      summaryLimit: 20,
+    })
+
+    expect(snapshot.executionTrust.status).toBe('healthy')
+    expect(snapshot.executionTrust.blocking_windows).toEqual([])
+    expect(snapshot.swarms[0]).toMatchObject({
+      phase: 'Active',
+      ready: true,
+      freeze: {
+        reason: 'NotFrozen',
+        until: '2026-01-20T00:40:00Z',
+      },
+    })
+  })
+
   it('buildExecutionTrust degrades when freeze expiry is unreconciled', async () => {
     const kubeGateway = createTestKubeGateway({
       listSwarms: vi.fn(async () => [

@@ -98,6 +98,11 @@ const isBlockingFreezeReason = (reason: string | null) => {
   return reasons.some((entry) => entry !== 'StageStaleness')
 }
 
+const isInactiveFreezeReason = (reason: string | null) => {
+  const reasons = splitFreezeReasons(reason).map((entry) => entry.toLowerCase())
+  return reasons.length > 0 && reasons.every((entry) => entry === 'notfrozen')
+}
+
 const readRequirementsPending = (raw: unknown): number => {
   if (typeof raw === 'number' && Number.isFinite(raw)) return Math.max(0, Math.floor(raw))
   if (typeof raw === 'string' && raw.trim() !== '') {
@@ -333,10 +338,11 @@ export const buildExecutionTrust = async ({
     const freezeRaw = asRecord(status.freeze) ?? {}
     const freezeUntil = asString(freezeRaw.until)
     const freezeUntilMs = parseDateMs(freezeUntil)
-    const freezeActive = freezeUntilMs !== null && freezeUntilMs > nowMs
-    const freezeExpiredUnreconciled =
-      phase.toLowerCase() === 'frozen' && freezeUntilMs !== null && freezeUntilMs <= nowMs
     const freezeReason = asString(freezeRaw.reason) ?? null
+    const inactiveFreeze = isInactiveFreezeReason(freezeReason)
+    const freezeActive = !inactiveFreeze && freezeUntilMs !== null && freezeUntilMs > nowMs
+    const freezeExpiredUnreconciled =
+      !inactiveFreeze && phase.toLowerCase() === 'frozen' && freezeUntilMs !== null && freezeUntilMs <= nowMs
     const freezeBlocking = freezeActive && isBlockingFreezeReason(freezeReason)
     const projectedPhase = freezeExpiredUnreconciled ? 'Recovering' : phase
     const ready =
