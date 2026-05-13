@@ -211,6 +211,10 @@ packet before writing launch-capable `implement` or `verify` schedules; a non-`a
 packet deletes the generated Schedule/ConfigMap/CronJob path and records `StageClearanceBlocked` instead of letting a
 CronJob fail at fire time. Cross-swarm requirement dispatch uses the same `implement` packet, keeps held requirements
 pending, and stamps admitted requirement runs with packet id, decision, reason codes, and required repair action.
+The Swarm CR status keeps the requirement-bridge counters, admission/stage-clearance evidence, pause reason, and
+template error field in the CRD schema. When a previously missing implement template is restored, the controller writes
+an empty `requirements.error` so Kubernetes merge-patch status updates replace the stale operator-facing error instead
+of preserving it from an older reconcile.
 Rollback for packet lookup is `JANGAR_STAGE_CLEARANCE_ENFORCEMENT=disabled`; rollback for hold-only behavior is
 `JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow` or removing the stage from `JANGAR_STAGE_CLEARANCE_HOLD_STAGES`.
 
