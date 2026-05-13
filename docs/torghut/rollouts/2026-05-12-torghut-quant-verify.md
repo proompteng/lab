@@ -12,6 +12,109 @@
 - Value gates: `post_cost_daily_net_pnl`, `routeable_candidate_count`,
   `zero_notional_or_stale_evidence_rate`, `fill_tca_or_slippage_quality`, and `capital_gate_safety`.
 
+## 2026-05-13T01:30Z Release Gate Update
+
+Governing Torghut requirements:
+
+- `docs/torghut/design-system/v6/188-torghut-route-evidence-clearinghouse-and-execution-freshness-market-2026-05-12.md`
+  requires observe-mode route evidence clearinghouse packets, zero-notional repair bids, and no widening of live
+  submission defaults while source freshness, TCA, image proof, routeability, or capital evidence is unsettled.
+- `docs/torghut/design-system/v6/188-torghut-evidence-clock-arbiter-and-routeable-profit-candidate-exchange-2026-05-12.md`
+  requires evidence-clock arbitration and routeable candidate exchange evidence at the Jangar action boundary.
+- `docs/torghut/design-system/v6/189-torghut-clock-settled-repair-execution-and-routeability-reentry-2026-05-12.md`
+  requires clock-settlement receipts to keep `max_notional=0` while ClickHouse, TCA, empirical, promotion, rollout,
+  custody, or capital clocks are stale, missing, split, or blocked.
+- `docs/torghut/design-system/v6/190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
+  keeps routeability repair settlement zero-notional until the proof floor, rollout image proof, route/TCA evidence,
+  and capital clocks are settled.
+
+Selected PR:
+
+- `#6235` `feat(torghut): settle zero-notional route evidence repairs`
+  - URL: `https://github.com/proompteng/lab/pull/6235`
+  - Current head: `ad95e042866ba07b84026948b84c4180979fb2ae`
+  - Diff: 2,854 additions and 232 deletions across the PR, so the large-diff Codex review gate applies.
+  - Value gates: `routeable_candidate_count`, `zero_notional_or_stale_evidence_rate`,
+    `fill_tca_or_slippage_quality`, `capital_gate_safety`, and downstream `post_cost_daily_net_pnl` once accepted
+    route claims settle into paper or live receipts.
+
+Comments, conflicts, and fixes:
+
+- Merged current `main` into `codex/swarm-torghut-quant` after GitHub reported conflicts and preserved the branch's
+  stricter route-evidence, clock-settlement, and Jangar consumer-evidence surfaces.
+- Resolved conflicts in Torghut runtime/docs/tests and Jangar control-plane evidence routers without loosening the live
+  submission, proof-floor, source-freshness, routeability, TCA, or capital gates.
+- Fixed a capital-safety regression in `services/torghut/app/trading/zero_notional_repair_executor.py`: configured
+  zero-notional repair runners now run only after a selected repair is present, allowlisted, and free of capital-safety
+  blockers.
+- Added regression coverage in `services/torghut/tests/test_zero_notional_repair_executor.py` so capital-safety
+  blockers return a blocked receipt without invoking local runner side effects.
+- Requested latest-head Codex review for `ad95e042866ba07b84026948b84c4180979fb2ae`; the connector returned the Codex
+  usage-limit response instead of posting a review.
+
+Merge decision:
+
+- No-go at this checkpoint.
+- The PR is non-draft and current branch head is pushed.
+- Hosted checks completed green for Torghut changed-file plan, bytecode/lint/migration guard, Pyright, pytest shards
+  `0` through `3`, aggregate bytecode/pytest/coverage, quality signals, Jangar lint/typecheck, semantic title,
+  semantic commit lint, changed-files, agents validate, and `agents-ci / integration` (`13m24s`, run
+  `25772097902`, job `75697237497`).
+- Large-diff review gate remains blocked. The latest posted Codex review predates the current head; latest-head review
+  request `<!-- codex:review-request-ad95e0428 -->` returned: "You have reached your Codex usage limits for code
+  reviews." Because this PR exceeds 1,000 changed lines, do not squash merge until a latest-head Codex review posts and
+  any threads are resolved, or repo ownership explicitly waives the gate.
+
+Current cluster evidence before any `#6235` rollout:
+
+- Argo CD at revision `e0fd1d0dd90bce184f06fd15fe4895afcab5fc7b`:
+  - `torghut`: `Synced` / `Degraded`
+  - `torghut-options`: `Synced` / `Healthy`
+  - `agents`: `Synced` / `Healthy`
+  - `agents-ci`: `Synced` / `Healthy`
+  - `jangar`: `Synced` / `Healthy`
+- Workloads:
+  - Current live Knative deployment `torghut-00327-deployment`: deployment `1/1` available, pod `2/2 Running`, zero
+    restarts, serving image digest `sha256:d5d8052dcf4f0966be7abfaa9779d41f11179b52c28cee6c8865c53e6d643bfc`.
+  - Current sim Knative deployment `torghut-sim-00425-deployment`: deployment `1/1` available, pod `2/2 Running`,
+    zero restarts, serving the same digest.
+  - Options catalog, options enricher, options TA, TA, TA sim, websocket, and websocket-options deployments are
+    available with observed pods running.
+- Runtime endpoints:
+  - `GET /readyz`: HTTP 503 with `status=degraded`; scheduler, Postgres, ClickHouse, Alpaca, database schema, and
+    universe checks are OK, while live submission and profitability proof floor fail closed.
+  - `GET /trading/status`: HTTP 200, `running=true`, `mode=live`, build
+    `v0.569.1-66-g565d4f065`, commit `565d4f0654c301e337bcd02bb5e9d26435d74ff0`, active revision
+    `torghut-00327`, `live_submission_gate.allowed=false`, `reason=simple_submit_disabled`, and blockers
+    `alpha_readiness_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`.
+  - `GET /trading/status` routeability evidence: `accepted_routeable_candidate_count=0`,
+    `zero_notional_or_stale_evidence_rate=1.0`, routeable exchange `routeable_candidate_count=0`,
+    `zero_notional_repair_lot_count=9`, and `rejected_candidate_count=3`.
+  - `GET /trading/revenue-repair`: HTTP 200, `business_state=repair_only`, `revenue_ready=false`,
+    `capital_state=zero_notional`, `max_notional=0`, clearinghouse `source_state=current`, `execution_state=hold`,
+    `rollout_state=hold`, and `capital_state=hold`.
+  - `GET /trading/consumer-evidence`: HTTP 200, `empirical_jobs.ready=false`, empirical status `degraded`, forecast
+    status `degraded`, and market-context alert `market_context_stale`.
+
+Runtime and business-value judgment:
+
+- No `#6235` production rollout has occurred because the merge gate is closed.
+- `capital_gate_safety` is intact: live submission remains disabled, routeability acceptance is blocked, and max
+  notional remains `0`.
+- Revenue impact remains blocked. The smallest blocker preventing release is the latest-head Codex review usage-limit
+  failure for the large diff. Runtime evidence also shows `accepted_routeable_candidate_count=0` with
+  `zero_notional_or_stale_evidence_rate=1.0`, so the revenue metric is not yet routeable post-cost PnL.
+
+Rollback and next action:
+
+- If `#6235` later merges and rollout degrades, revert the squash commit through PR flow or disable downstream
+  consumption of `route_evidence_clearinghouse_packet`, `routeable_profit_candidate_exchange`,
+  `clock_settlement_receipt`, and `zero_notional_repair_execution_receipt`.
+- Do not loosen proof-floor, live-submission, source freshness, TCA/slippage, image proof, custody, clock, notional, or
+  capital gates as rollback.
+- Continue holding the merge until a latest-head Codex review posts or repo ownership explicitly waives the large-diff
+  gate.
+
 ## 2026-05-12T23:10Z Release Gate Update
 
 Governing Torghut requirements:
