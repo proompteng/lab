@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 
+import type { TorghutRepairBidSettlementLot, TorghutRepairBidSettlementStatus } from '~/data/agents-control-plane'
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
 import type { TorghutNegativeEvidenceInput } from '~/server/control-plane-negative-evidence-router-torghut'
 import { asRecord } from '~/server/primitives-http'
@@ -60,6 +61,18 @@ export type TorghutConsumerEvidenceStatus = {
   route_warrant_capital_gate_safety?: string | null
   route_warrant_post_cost_daily_net_pnl_state?: string | null
   repair_bid_settlement_ledger_id?: string | null
+  repair_bid_settlement_status?: TorghutRepairBidSettlementStatus
+  repair_bid_settlement_generated_at?: string | null
+  repair_bid_settlement_fresh_until?: string | null
+  repair_bid_settlement_capital_decision?: string | null
+  repair_bid_settlement_max_notional?: string | null
+  repair_bid_settlement_routeable_candidate_count?: number | null
+  repair_bid_settlement_selected_lot_ids?: string[]
+  repair_bid_settlement_dispatchable_lot_ids?: string[]
+  repair_bid_settlement_held_lot_ids?: string[]
+  repair_bid_settlement_active_dedupe_keys?: string[]
+  repair_bid_settlement_compacted_lots?: TorghutRepairBidSettlementLot[]
+  repair_bid_settlement_reason_codes?: string[]
   operator_summary?: {
     top_clock_split: string | null
     selected_repair_lot_id: string | null
@@ -93,6 +106,9 @@ const uniqueStrings = (values: Array<string | null | undefined>) => [...new Set(
 const stringList = (value: unknown) =>
   Array.isArray(value) ? uniqueStrings(value.map((item) => normalizeReason(item))) : []
 
+const stringValues = (value: unknown) =>
+  Array.isArray(value) ? uniqueStrings(value.map((item) => normalizeNonEmpty(item))) : []
+
 const parseTimestampMs = (value: string | null | undefined) => {
   if (!value) return null
   const parsed = Date.parse(value)
@@ -107,6 +123,14 @@ const parseNumber = (value: string | null) => {
 
 const normalizeNumber = (value: unknown) => parseNumber(normalizeNonEmpty(value))
 
+const normalizeBoolean = (value: unknown) => {
+  if (typeof value === 'boolean') return value
+  const normalized = normalizeReason(value)
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') return false
+  return false
+}
+
 const paperActionStates = new Set(['allow', 'allowed', 'current', 'paper_canary', 'paper_candidate', 'ready'])
 
 const CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION = 'torghut.consumer-evidence-status.v1'
@@ -119,6 +143,34 @@ type JsonRouteResult = {
   ok: boolean
   statusCode: number | null
   payload: Record<string, unknown> | null
+}
+
+const normalizeRepairBidSettlementLot = (value: unknown): TorghutRepairBidSettlementLot | null => {
+  const lot = asRecord(value)
+  const lotId = normalizeNonEmpty(lot?.lot_id)
+  if (!lot || !lotId) return null
+  return {
+    lot_id: lotId,
+    lot_class: normalizeReason(lot.lot_class) ?? 'unknown',
+    target_value_gate: normalizeReason(lot.target_value_gate) ?? '',
+    priority: normalizeNumber(lot.priority),
+    expected_gate_delta: normalizeReason(lot.expected_gate_delta),
+    raw_reason_codes: stringList(lot.raw_reason_codes),
+    root_cause_hypothesis: normalizeNonEmpty(lot.root_cause_hypothesis),
+    required_input_refs: stringValues(lot.required_input_refs),
+    required_output_receipt: normalizeNonEmpty(lot.required_output_receipt),
+    required_output_receipt_count: normalizeNumber(lot.required_output_receipt_count),
+    validation_commands: stringValues(lot.validation_commands),
+    dedupe_key: normalizeNonEmpty(lot.dedupe_key),
+    ttl_seconds: normalizeNumber(lot.ttl_seconds),
+    max_runtime_seconds: normalizeNumber(lot.max_runtime_seconds),
+    max_parallelism: normalizeNumber(lot.max_parallelism),
+    max_notional: normalizeNonEmpty(lot.max_notional),
+    state: normalizeReason(lot.state),
+    dispatchable: normalizeBoolean(lot.dispatchable),
+    hold_reason_codes: stringList(lot.hold_reason_codes),
+    source_bid_ids: stringValues(lot.source_bid_ids),
+  }
 }
 
 const requestJson = async (url: string, timeoutMs: number): Promise<JsonRouteResult> => {
@@ -463,12 +515,11 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   const routeWarrant = asRecord(
     payload.route_warrant_exchange ?? payload.route_warrant_exchange_v1 ?? payload.route_warrant,
   )
-  const repairBidSettlementLedger = asRecord(payload.repair_bid_settlement_ledger)
+  const repairBidSettlement = asRecord(payload.repair_bid_settlement_ledger)
   const sourceServingRepairReceiptLedger = asRecord(payload.source_serving_repair_receipt_ledger)
-  const repairBidSettlementLedgerId = normalizeNonEmpty(repairBidSettlementLedger?.ledger_id)
   const observedContracts = uniqueStrings([
     routeWarrant ? 'route_warrant_exchange' : null,
-    repairBidSettlementLedger ? 'repair_bid_settlement_ledger' : null,
+    repairBidSettlement ? 'repair_bid_settlement_ledger' : null,
     sourceServingRepairReceiptLedger ? 'source_serving_repair_receipt_ledger' : null,
     routeabilityLedger ? 'routeability_repair_acceptance_ledger' : null,
     profitRepairLedger ? 'profit_repair_settlement_ledger' : null,
@@ -480,10 +531,10 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     normalizeNonEmpty(routeWarrant.schema_version) !== ROUTE_WARRANT_EXCHANGE_SCHEMA_VERSION
       ? `route_warrant_exchange:${normalizeNonEmpty(routeWarrant.schema_version)}`
       : null,
-    repairBidSettlementLedger &&
-    normalizeNonEmpty(repairBidSettlementLedger.schema_version) &&
-    normalizeNonEmpty(repairBidSettlementLedger.schema_version) !== REPAIR_BID_SETTLEMENT_LEDGER_SCHEMA_VERSION
-      ? `repair_bid_settlement_ledger:${normalizeNonEmpty(repairBidSettlementLedger.schema_version)}`
+    repairBidSettlement &&
+    normalizeNonEmpty(repairBidSettlement.schema_version) &&
+    normalizeNonEmpty(repairBidSettlement.schema_version) !== REPAIR_BID_SETTLEMENT_LEDGER_SCHEMA_VERSION
+      ? `repair_bid_settlement_ledger:${normalizeNonEmpty(repairBidSettlement.schema_version)}`
       : null,
   ])
   const routeWarrantId = normalizeNonEmpty(routeWarrant?.warrant_id ?? routeWarrant?.exchange_id)
@@ -535,6 +586,29 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       ...stringList(witness.reason_codes),
       ...stringList(witness.contradiction_reason_codes),
     ]),
+  ])
+  const repairBidSettlementSchema = normalizeNonEmpty(repairBidSettlement?.schema_version)
+  const repairBidSettlementLedgerId = normalizeNonEmpty(repairBidSettlement?.ledger_id)
+  const repairBidSettlementFreshUntil = normalizeNonEmpty(repairBidSettlement?.fresh_until)
+  const repairBidSettlementFreshUntilMs = parseTimestampMs(repairBidSettlementFreshUntil)
+  const repairBidSettlementLots = Array.isArray(repairBidSettlement?.compacted_lots)
+    ? repairBidSettlement.compacted_lots
+        .map((lot) => normalizeRepairBidSettlementLot(lot))
+        .filter((lot): lot is TorghutRepairBidSettlementLot => Boolean(lot))
+    : []
+  const repairBidSettlementStatus: TorghutRepairBidSettlementStatus = !repairBidSettlement
+    ? 'missing'
+    : repairBidSettlementSchema !== REPAIR_BID_SETTLEMENT_LEDGER_SCHEMA_VERSION
+      ? 'schema_mismatch'
+      : !repairBidSettlementLedgerId || !repairBidSettlementFreshUntil
+        ? 'malformed'
+        : repairBidSettlementFreshUntilMs && repairBidSettlementFreshUntilMs > now.getTime()
+          ? 'current'
+          : 'stale'
+  const repairBidSettlementReasonCodes = uniqueStrings([
+    ...(repairBidSettlementStatus === 'current' ? [] : [`repair_bid_settlement_${repairBidSettlementStatus}`]),
+    ...stringList(repairBidSettlement?.raw_reason_codes_preserved),
+    ...repairBidSettlementLots.flatMap((lot) => [...lot.raw_reason_codes, ...lot.hold_reason_codes]),
   ])
   const operatorSummary = evidenceClockArbiter
     ? {
@@ -606,6 +680,18 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       route_warrant_capital_gate_safety: normalizeReason(routeWarrant?.capital_gate_safety),
       route_warrant_post_cost_daily_net_pnl_state: normalizeReason(routeWarrant?.post_cost_daily_net_pnl_state),
       repair_bid_settlement_ledger_id: repairBidSettlementLedgerId,
+      repair_bid_settlement_status: repairBidSettlementStatus,
+      repair_bid_settlement_generated_at: normalizeNonEmpty(repairBidSettlement?.generated_at),
+      repair_bid_settlement_fresh_until: repairBidSettlementFreshUntil,
+      repair_bid_settlement_capital_decision: normalizeReason(repairBidSettlement?.capital_decision),
+      repair_bid_settlement_max_notional: normalizeNonEmpty(repairBidSettlement?.max_notional),
+      repair_bid_settlement_routeable_candidate_count: normalizeNumber(repairBidSettlement?.routeable_candidate_count),
+      repair_bid_settlement_selected_lot_ids: stringValues(repairBidSettlement?.selected_lot_ids),
+      repair_bid_settlement_dispatchable_lot_ids: stringValues(repairBidSettlement?.dispatchable_lot_ids),
+      repair_bid_settlement_held_lot_ids: stringValues(repairBidSettlement?.held_lot_ids),
+      repair_bid_settlement_active_dedupe_keys: stringValues(repairBidSettlement?.active_dedupe_keys),
+      repair_bid_settlement_compacted_lots: repairBidSettlementLots,
+      repair_bid_settlement_reason_codes: repairBidSettlementReasonCodes,
       operator_summary: operatorSummary,
       reason_codes: reasonCodes,
       message:
@@ -661,6 +747,12 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       route_warrant_repair_packet_ids: routeWarrantRepairPacketIds,
       route_warrant_blocking_dependency_names: routeWarrantBlockingDependencies,
       route_warrant_blocking_reason_codes: routeWarrantBlockingReasonCodes,
+      repair_bid_settlement_ledger_id: repairBidSettlementLedgerId,
+      repair_bid_settlement_status: repairBidSettlementStatus,
+      repair_bid_settlement_selected_lot_ids: stringValues(repairBidSettlement?.selected_lot_ids),
+      repair_bid_settlement_dispatchable_lot_ids: stringValues(repairBidSettlement?.dispatchable_lot_ids),
+      repair_bid_settlement_held_lot_ids: stringValues(repairBidSettlement?.held_lot_ids),
+      repair_bid_settlement_blocking_reason_codes: repairBidSettlementReasonCodes,
     },
   }
 }

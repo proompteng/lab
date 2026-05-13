@@ -145,6 +145,32 @@ declare module 'echarts' {
   ) => EChartsInstance
 }
 
+declare module 'recharts' {
+  import type { ComponentType, ReactNode } from 'react'
+  import type { Props as DefaultLegendContentProps } from 'recharts/types/component/DefaultLegendContent'
+  import type { TooltipProps } from 'recharts/types/component/Tooltip'
+
+  export type { Props as DefaultLegendContentProps } from 'recharts/types/component/DefaultLegendContent'
+  export type { TooltipContentProps, TooltipProps } from 'recharts/types/component/Tooltip'
+
+  type RechartsComponentProps = {
+    children?: ReactNode
+    [key: string]: unknown
+  }
+
+  export const Bar: ComponentType<RechartsComponentProps>
+  export const BarChart: ComponentType<RechartsComponentProps>
+  export const CartesianGrid: ComponentType<RechartsComponentProps>
+  export const DefaultLegendContent: ComponentType<DefaultLegendContentProps>
+  export const Legend: ComponentType<DefaultLegendContentProps & RechartsComponentProps>
+  export const Line: ComponentType<RechartsComponentProps>
+  export const LineChart: ComponentType<RechartsComponentProps>
+  export const ResponsiveContainer: ComponentType<RechartsComponentProps>
+  export const Tooltip: ComponentType<TooltipProps & RechartsComponentProps>
+  export const XAxis: ComponentType<RechartsComponentProps>
+  export const YAxis: ComponentType<RechartsComponentProps>
+}
+
 type JangarServerRouteArgs = {
   request: Request
   params: Record<string, string>

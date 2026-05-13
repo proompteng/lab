@@ -35,6 +35,7 @@ import {
 } from '~/server/control-plane-failure-domain-leases'
 import { buildControlPlaneLeaderElectionStatus } from '~/server/control-plane-leader-election-status'
 import { buildNegativeEvidenceRouterStatus } from '~/server/control-plane-negative-evidence-router'
+import { buildRepairBidAdmissionState } from '~/server/control-plane-repair-bid-admission'
 import {
   buildRolloutHealth,
   maybeUseSplitTopologyControllerRollout,
@@ -641,6 +642,15 @@ export const buildControlPlaneStatus = async (
     executionTrust: executionTrust.executionTrust,
   })
   const torghutConsumerEvidence = await (deps.resolveTorghutConsumerEvidence ?? resolveTorghutConsumerEvidence)(now)
+  const repairBidAdmission = buildRepairBidAdmissionState({
+    now,
+    namespace: options.namespace,
+    repository: process.env.CODEX_REPOSITORY ?? process.env.CODEX_REPO_SLUG,
+    branch: process.env.CODEX_BRANCH,
+    swarmName: process.env.SWARM_NAME,
+    stage: process.env.SWARM_STAGE ?? process.env.CODEX_STAGE,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+  })
   const negativeEvidenceRouter = buildNegativeEvidenceRouterStatus({
     now,
     namespace: options.namespace,
@@ -779,6 +789,7 @@ export const buildControlPlaneStatus = async (
     stage_clearance_packets: stageClearancePackets,
     stage_credit_ledger: stageCreditLedger,
     ready_action_exchange: readyActionExchange,
+    repair_bid_admission: repairBidAdmission,
     repair_warrant_exchange: repairWarrantExchange,
     consumer_evidence_leases: consumerEvidenceLeases,
     clearance_market_ledger: clearanceMarketLedger,

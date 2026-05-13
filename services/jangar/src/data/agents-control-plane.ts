@@ -696,6 +696,92 @@ export type ActionSloBudget = {
   evidence_refs: string[]
 }
 
+export type TorghutRepairBidSettlementStatus = 'current' | 'stale' | 'missing' | 'schema_mismatch' | 'malformed'
+
+export type TorghutRepairBidSettlementLot = {
+  lot_id: string
+  lot_class: string
+  target_value_gate: string
+  priority: number | null
+  expected_gate_delta: string | null
+  raw_reason_codes: string[]
+  root_cause_hypothesis: string | null
+  required_input_refs: string[]
+  required_output_receipt: string | null
+  required_output_receipt_count: number | null
+  validation_commands: string[]
+  dedupe_key: string | null
+  ttl_seconds: number | null
+  max_runtime_seconds: number | null
+  max_parallelism: number | null
+  max_notional: string | null
+  state: string | null
+  dispatchable: boolean
+  hold_reason_codes: string[]
+  source_bid_ids: string[]
+}
+
+export type RepairBidAdmissionDecision = 'allow' | 'repair_only' | 'hold' | 'block'
+
+export type RepairBidAdmissionReceipt = {
+  schema_version: 'jangar.repair-bid-admission-receipt.v1'
+  receipt_id: string
+  generated_at: string
+  fresh_until: string
+  repository: string
+  branch: string
+  swarm_name: string
+  stage: string
+  action_class: ActionSloBudgetActionClass
+  decision: RepairBidAdmissionDecision
+  torghut_settlement_ledger_ref: string | null
+  torghut_compacted_lot_refs: string[]
+  active_dedupe_keys: string[]
+  admitted_lot_ids: string[]
+  held_lot_ids: string[]
+  denied_reason_codes: string[]
+  max_parallelism: number
+  max_runtime_seconds: number
+  max_notional: number
+  validation_commands: string[]
+  rollback_gate: string
+}
+
+export type RepairLotDispatchTicket = {
+  schema_version: 'jangar.repair-lot-dispatch-ticket.v1'
+  ticket_id: string
+  admission_receipt_id: string
+  torghut_lot_id: string
+  lot_class: string
+  target_value_gate: string
+  dedupe_key: string
+  required_output_receipt: string
+  launch_allowed: boolean
+  launch_reason: string
+  stop_conditions: string[]
+  max_runtime_seconds: number
+  max_notional: number
+  expected_gate_delta: string | null
+  rollback_target: string
+}
+
+export type RepairBidAdmissionState = {
+  schema_version: 'jangar.repair-bid-admission-state.v1'
+  mode: 'observe' | 'enforce'
+  design_artifact: string
+  generated_at: string
+  fresh_until: string
+  status: RepairBidAdmissionDecision
+  torghut_settlement_ledger_ref: string | null
+  receipts: RepairBidAdmissionReceipt[]
+  dispatch_tickets: RepairLotDispatchTicket[]
+  admitted_lot_ids: string[]
+  held_lot_ids: string[]
+  active_dedupe_keys: string[]
+  reason_codes: string[]
+  rollback_target: string
+}
+
 export type ControllerWitnessSurface =
   | 'serving_process'
   | 'controller_process'
@@ -1140,6 +1226,18 @@ export type TorghutConsumerEvidenceStatus = {
   route_warrant_capital_gate_safety?: string | null
   route_warrant_post_cost_daily_net_pnl_state?: string | null
   repair_bid_settlement_ledger_id?: string | null
+  repair_bid_settlement_status?: TorghutRepairBidSettlementStatus
+  repair_bid_settlement_generated_at?: string | null
+  repair_bid_settlement_fresh_until?: string | null
+  repair_bid_settlement_capital_decision?: string | null
+  repair_bid_settlement_max_notional?: string | null
+  repair_bid_settlement_routeable_candidate_count?: number | null
+  repair_bid_settlement_selected_lot_ids?: string[]
+  repair_bid_settlement_dispatchable_lot_ids?: string[]
+  repair_bid_settlement_held_lot_ids?: string[]
+  repair_bid_settlement_active_dedupe_keys?: string[]
+  repair_bid_settlement_compacted_lots?: TorghutRepairBidSettlementLot[]
+  repair_bid_settlement_reason_codes?: string[]
   reason_codes: string[]
   message: string
 }
@@ -1612,6 +1710,7 @@ export type ControlPlaneStatus = {
   stage_clearance_packets: StageClearancePacket[]
   stage_credit_ledger: StageCreditLedger | null
   ready_action_exchange: ReadyActionExchange
+  repair_bid_admission: RepairBidAdmissionState
   repair_warrant_exchange: RepairWarrantExchange
   consumer_evidence_leases: ConsumerEvidenceLeaseSet
   clearance_market_ledger: ClearanceMarketLedger | null

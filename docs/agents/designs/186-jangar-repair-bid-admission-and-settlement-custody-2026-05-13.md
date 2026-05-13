@@ -221,6 +221,19 @@ Engineer milestone 1:
 - Add tests proving read-only serving remains allowed while normal dispatch, deploy widening, paper support, and live
   support are held on unsettled Torghut repair lots.
 
+### Implementation Note (2026-05-13)
+
+Engineer milestone 1 is implemented in shadow/observe mode. Jangar now parses Torghut
+`repair_bid_settlement_ledger` from `/trading/consumer-evidence`, builds `repair_bid_admission_receipt` rows for each
+action class, and emits `repair_lot_dispatch_ticket` records only for current compacted lots that are zero-notional,
+deduped, and tied to exactly one required output receipt.
+
+The first implementation is deliberately capital-safe: `serve_readonly` and `torghut_observe` can remain allowed,
+`dispatch_repair` is allowed only when at least one admitted compacted lot exists, and `dispatch_normal`,
+`deploy_widen`, `merge_ready`, `paper_canary`, `live_micro_canary`, and `live_scale` stay held or blocked while Torghut
+settlement is stale, missing, malformed, repair-only, or contains unsettled lots. The new admission state is exposed in
+Jangar `/ready` and the control-plane status payload so deployer and verifier runs can cite the same custody surface.
+
 Engineer milestone 2:
 
 - Wire Torghut quant repair schedule generation to require `repair_lot_dispatch_ticket`.

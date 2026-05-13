@@ -47,6 +47,12 @@ export type TorghutNegativeEvidenceInput = {
   route_warrant_repair_packet_ids?: string[]
   route_warrant_blocking_dependency_names?: string[]
   route_warrant_blocking_reason_codes?: string[]
+  repair_bid_settlement_ledger_id?: string | null
+  repair_bid_settlement_status?: string | null
+  repair_bid_settlement_selected_lot_ids?: string[]
+  repair_bid_settlement_dispatchable_lot_ids?: string[]
+  repair_bid_settlement_held_lot_ids?: string[]
+  repair_bid_settlement_blocking_reason_codes?: string[]
 }
 
 type AddEvidence = (kind: NegativeEvidenceKind, reason: string, refs?: string[]) => void

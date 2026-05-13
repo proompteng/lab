@@ -1,0 +1,157 @@
+import { describe, expect, it } from 'vitest'
+
+import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
+import {
+  buildRepairBidAdmissionState,
+  REPAIR_BID_ADMISSION_DESIGN_ARTIFACT,
+} from '~/server/control-plane-repair-bid-admission'
+
+const now = new Date('2026-05-13T05:20:00.000Z')
+
+const baseConsumerEvidence = (
+  overrides: Partial<TorghutConsumerEvidenceStatus> = {},
+): TorghutConsumerEvidenceStatus => ({
+  status: 'current',
+  endpoint: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
+  receipt_id: 'torghut-route-proven-profit:test',
+  generated_at: now.toISOString(),
+  fresh_until: '2026-05-13T05:21:00.000Z',
+  candidate_id: null,
+  dataset_snapshot_ref: null,
+  max_notional: '0',
+  reason_codes: [],
+  message: 'current',
+  repair_bid_settlement_ledger_id: 'repair-bid-settlement-ledger:test',
+  repair_bid_settlement_status: 'current',
+  repair_bid_settlement_generated_at: now.toISOString(),
+  repair_bid_settlement_fresh_until: '2026-05-13T05:21:00.000Z',
+  repair_bid_settlement_capital_decision: 'repair_only',
+  repair_bid_settlement_max_notional: '0',
+  repair_bid_settlement_routeable_candidate_count: 0,
+  repair_bid_settlement_selected_lot_ids: ['compacted-repair-lot:quant'],
+  repair_bid_settlement_dispatchable_lot_ids: ['compacted-repair-lot:quant'],
+  repair_bid_settlement_held_lot_ids: [],
+  repair_bid_settlement_active_dedupe_keys: [],
+  repair_bid_settlement_compacted_lots: [
+    {
+      lot_id: 'compacted-repair-lot:quant',
+      lot_class: 'quant_pipeline',
+      target_value_gate: 'zero_notional_or_stale_evidence_rate',
+      priority: 100,
+      expected_gate_delta: 'retire_jangar_quant_ingestion_degraded',
+      raw_reason_codes: ['jangar_quant_ingestion_degraded'],
+      root_cause_hypothesis: 'scoped quant ingestion proof is degraded',
+      required_input_refs: ['route-evidence-clearinghouse:test'],
+      required_output_receipt: 'torghut.quant-pipeline-current-receipt.v1',
+      required_output_receipt_count: 1,
+      validation_commands: ['pytest services/torghut/tests/test_repair_bid_settlement.py -k quant_pipeline'],
+      dedupe_key: 'PA3SX7FYNUTF:15m:quant_pipeline',
+      ttl_seconds: 900,
+      max_runtime_seconds: 1200,
+      max_parallelism: 1,
+      max_notional: '0',
+      state: 'selected',
+      dispatchable: true,
+      hold_reason_codes: [],
+      source_bid_ids: ['route-evidence-repair-bid:quant'],
+    },
+  ],
+  repair_bid_settlement_reason_codes: ['jangar_quant_ingestion_degraded'],
+  ...overrides,
+})
+
+const buildAdmission = (overrides: Partial<TorghutConsumerEvidenceStatus> = {}) =>
+  buildRepairBidAdmissionState({
+    now,
+    namespace: 'agents',
+    repository: 'proompteng/lab',
+    branch: 'codex/swarm-torghut-quant',
+    swarmName: 'torghut-quant',
+    stage: 'implement',
+    torghutConsumerEvidence: baseConsumerEvidence(overrides),
+  })
+
+describe('control-plane repair bid admission', () => {
+  it('admits only current zero-notional compacted Torghut lots for repair dispatch', () => {
+    const admission = buildAdmission()
+    const byAction = new Map(admission.receipts.map((receipt) => [receipt.action_class, receipt]))
+
+    expect(admission.design_artifact).toBe(REPAIR_BID_ADMISSION_DESIGN_ARTIFACT)
+    expect(byAction.get('serve_readonly')).toMatchObject({ decision: 'allow', max_notional: 0 })
+    expect(byAction.get('dispatch_repair')).toMatchObject({
+      decision: 'allow',
+      admitted_lot_ids: ['compacted-repair-lot:quant'],
+      max_parallelism: 1,
+      max_runtime_seconds: 1200,
+      max_notional: 0,
+    })
+    expect(byAction.get('dispatch_normal')).toMatchObject({
+      decision: 'hold',
+      denied_reason_codes: expect.arrayContaining([
+        'torghut_repair_lots_unsettled',
+        'torghut_repair_bid_settlement_repair_only',
+      ]),
+    })
+    expect(byAction.get('live_scale')).toMatchObject({
+      decision: 'block',
+      max_notional: 0,
+    })
+    expect(admission.dispatch_tickets).toEqual([
+      expect.objectContaining({
+        torghut_lot_id: 'compacted-repair-lot:quant',
+        dedupe_key: 'PA3SX7FYNUTF:15m:quant_pipeline',
+        required_output_receipt: 'torghut.quant-pipeline-current-receipt.v1',
+        launch_allowed: true,
+        max_notional: 0,
+      }),
+    ])
+  })
+
+  it('holds repair dispatch when the settlement ledger is stale', () => {
+    const admission = buildAdmission({
+      repair_bid_settlement_status: 'stale',
+      repair_bid_settlement_fresh_until: '2026-05-13T05:19:00.000Z',
+    })
+    const repairReceipt = admission.receipts.find((receipt) => receipt.action_class === 'dispatch_repair')
+
+    expect(repairReceipt).toMatchObject({
+      decision: 'hold',
+      admitted_lot_ids: [],
+      denied_reason_codes: expect.arrayContaining(['torghut_repair_bid_settlement_stale']),
+    })
+    expect(admission.dispatch_tickets[0]).toMatchObject({
+      launch_allowed: false,
+      stop_conditions: expect.arrayContaining(['torghut_repair_bid_settlement_not_current']),
+    })
+  })
+
+  it('denies duplicate or malformed lots without widening notional', () => {
+    const admission = buildAdmission({
+      repair_bid_settlement_active_dedupe_keys: ['PA3SX7FYNUTF:15m:quant_pipeline'],
+      repair_bid_settlement_compacted_lots: [
+        {
+          ...baseConsumerEvidence().repair_bid_settlement_compacted_lots![0]!,
+          required_output_receipt_count: 2,
+          max_notional: '25',
+        },
+      ],
+    })
+    const repairReceipt = admission.receipts.find((receipt) => receipt.action_class === 'dispatch_repair')
+
+    expect(repairReceipt).toMatchObject({
+      decision: 'hold',
+      admitted_lot_ids: [],
+      denied_reason_codes: expect.arrayContaining(['no_admissible_compacted_repair_lot']),
+      max_notional: 0,
+    })
+    expect(admission.dispatch_tickets[0]).toMatchObject({
+      launch_allowed: false,
+      stop_conditions: expect.arrayContaining([
+        'repair_lot_notional_nonzero',
+        'repair_lot_dedupe_key_active',
+        'repair_lot_output_receipt_count_invalid',
+      ]),
+      max_notional: 0,
+    })
+  })
+})
