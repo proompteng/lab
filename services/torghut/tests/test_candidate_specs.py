@@ -14,6 +14,7 @@ from app.trading.discovery.hypothesis_cards import (
     HypothesisCard,
     build_hypothesis_cards,
 )
+from app.trading.discovery.mlx_training_data import candidate_spec_capital_features
 from app.trading.discovery.whitepaper_candidate_compiler import (
     compile_whitepaper_candidate_specs,
 )
@@ -108,10 +109,13 @@ class TestCandidateSpecs(TestCase):
         )
 
         continuation_profiles = sorted(
-            spec.feature_contract["execution_profile"]["profile_id"]
-            for spec in specs
-            if spec.family_template_id
-            == "microstructure_continuation_matched_filter_v1"
+            (
+                spec.feature_contract["execution_profile"]["profile_id"]
+                for spec in specs
+                if spec.family_template_id
+                == "microstructure_continuation_matched_filter_v1"
+            ),
+            key=lambda profile_id: int(str(profile_id).rsplit("-", 1)[1]),
         )
         expected_continuation_profiles = [
             f"microstructure_continuation_matched_filter_v1:profile-{index + 1}"
@@ -256,6 +260,47 @@ class TestCandidateSpecs(TestCase):
                     Decimal(str(profile["max_notional_per_trade"])),
                     Decimal("126360"),
                     family_template_id,
+                )
+
+    def test_portfolio_profit_target_adds_capital_constrained_profiles(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-capital-realistic",
+            claims=[
+                {
+                    "claim_id": "claim-flow-capital",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": "Order-flow clustering can predict short-horizon continuation.",
+                    "confidence": "0.82",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        for family_template_id in candidate_specs_module._FAMILY_RUNTIME:
+            capital_specs = [
+                spec
+                for spec in specs
+                if spec.family_template_id == family_template_id
+                and spec.strategy_overrides.get("capital_profile")
+                == "initial_equity_cash_constrained_1x"
+            ]
+            self.assertTrue(capital_specs, family_template_id)
+            for spec in capital_specs:
+                features = candidate_spec_capital_features(spec)
+                self.assertEqual(features["capital_feasible_flag"], 1.0)
+                self.assertLessEqual(
+                    Decimal(str(features["estimated_max_gross_exposure_pct_equity"])),
+                    Decimal("1.0"),
+                    spec.candidate_spec_id,
+                )
+                self.assertEqual(
+                    spec.strategy_overrides["params"][
+                        "max_gross_exposure_pct_equity"
+                    ],
+                    "1.0",
                 )
 
     def test_short_exhaustion_claim_compiles_short_sleeve_profiles(self) -> None:

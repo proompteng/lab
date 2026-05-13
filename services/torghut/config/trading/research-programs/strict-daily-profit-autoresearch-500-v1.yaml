@@ -171,12 +171,15 @@ families:
         deltas: ['-300', '0', '300']
         minimum: '300'
         maximum: '1500'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
     strategy_override_mutations:
       normalization_regime:
         mode: allowed_normalizations
       max_notional_per_trade:
         mode: explicit_values
-        values: ['157950.10', '236925.15', '315900.20']
+        values: ['7500', '15000', '22500', '30000']
   - family_template_id: microbar_cross_sectional_pairs_v1
     seed_sweep_config: ../profitability-frontier-consistent-microbar-cross-sectional-pairs.yaml
     max_iterations: 2
@@ -197,12 +200,15 @@ families:
         deltas: ['-1', '0', '1']
         minimum: '1'
         maximum: '3'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
     strategy_override_mutations:
       normalization_regime:
         mode: allowed_normalizations
       max_notional_per_trade:
         mode: explicit_values
-        values: ['157950.10', '236925.15', '315900.20']
+        values: ['7500', '15000', '22500', '30000']
   - family_template_id: intraday_tsmom_v2
     seed_sweep_config: ../profitability-frontier-strict-daily-tsmom.yaml
     max_iterations: 2
@@ -223,12 +229,15 @@ families:
         deltas: ['-0.05', '0', '0.05']
         minimum: '0.45'
         maximum: '0.75'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
     strategy_override_mutations:
       normalization_regime:
         mode: allowed_normalizations
       max_notional_per_trade:
         mode: explicit_values
-        values: ['63180', '126360', '189540']
+        values: ['7500', '15000', '22500', '30000']
   - family_template_id: momentum_pullback_v1
     seed_sweep_config: ../profitability-frontier-strict-daily-momentum-pullback.yaml
     max_iterations: 2
@@ -249,13 +258,16 @@ families:
         deltas: ['-120', '0', '120']
         minimum: '300'
         maximum: '1200'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
     strategy_override_mutations:
       max_notional_per_trade:
         mode: explicit_values
-        values: ['63180', '126360', '189540']
+        values: ['7500', '15000', '22500', '30000']
       max_position_pct_equity:
         mode: explicit_values
-        values: ['2.0', '4.0']
+        values: ['0.25', '0.50', '0.75', '1.0']
   - family_template_id: late_day_continuation_v1
     seed_sweep_config: ../profitability-frontier-strict-daily-late-day-continuation.yaml
     max_iterations: 2
@@ -281,13 +293,16 @@ families:
         deltas: ['-3', '0', '3']
         minimum: '8'
         maximum: '18'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
     strategy_override_mutations:
       max_notional_per_trade:
         mode: explicit_values
-        values: ['94770', '126360', '189540']
+        values: ['7500', '15000', '22500', '30000']
       max_position_pct_equity:
         mode: explicit_values
-        values: ['3.0', '4.0']
+        values: ['0.25', '0.50', '0.75', '1.0']
   - family_template_id: end_of_day_reversal_v1
     seed_sweep_config: ../profitability-frontier-strict-daily-end-of-day-reversal.yaml
     max_iterations: 2
@@ -313,13 +328,16 @@ families:
         deltas: ['-10', '0', '10']
         minimum: '-60'
         maximum: '-20'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
     strategy_override_mutations:
       max_notional_per_trade:
         mode: explicit_values
-        values: ['63180', '126360']
+        values: ['7500', '15000', '22500', '30000']
       max_position_pct_equity:
         mode: explicit_values
-        values: ['2.0', '4.0']
+        values: ['0.25', '0.50', '0.75', '1.0']
   - family_template_id: breakout_reclaim_v2
     seed_sweep_config: ../profitability-frontier-strict-daily-breakout-reclaim.yaml
     max_iterations: 2
@@ -340,9 +358,18 @@ families:
         deltas: ['-2', '0', '2']
         minimum: '8'
         maximum: '16'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
     strategy_override_mutations:
       normalization_regime:
         mode: allowed_normalizations
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
   - family_template_id: mean_reversion_rebound_v1
     seed_sweep_config: ../profitability-frontier-strict-daily-mean-reversion.yaml
     max_iterations: 2
@@ -363,13 +390,16 @@ families:
         deltas: ['-0.05', '0', '0.05']
         minimum: '0.60'
         maximum: '0.90'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
     strategy_override_mutations:
       max_notional_per_trade:
         mode: explicit_values
-        values: ['63180', '126360', '189540']
+        values: ['7500', '15000', '22500', '30000']
       max_position_pct_equity:
         mode: explicit_values
-        values: ['2.0', '4.0']
+        values: ['0.25', '0.50', '0.75', '1.0']
   - family_template_id: mean_reversion_exhaustion_short_v1
     seed_sweep_config: ../profitability-frontier-strict-daily-exhaustion-short.yaml
     max_iterations: 2
@@ -400,10 +430,13 @@ families:
         deltas: ['-0.05', '0', '0.05']
         minimum: '0.55'
         maximum: '0.75'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
     strategy_override_mutations:
       max_notional_per_trade:
         mode: explicit_values
-        values: ['20000', '30000', '50000']
+        values: ['7500', '15000', '22500', '30000']
       max_position_pct_equity:
         mode: explicit_values
-        values: ['0.75', '1.0']
+        values: ['0.25', '0.50', '0.75', '1.0']

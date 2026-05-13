@@ -37,9 +37,15 @@ class TestMlxTrainingData(TestCase):
             hypothesis_cards=cards,
             target_net_pnl_per_day=Decimal("500"),
         )
+        evidenced_spec = next(
+            spec
+            for spec in specs
+            if spec.strategy_overrides.get("capital_profile")
+            == "initial_equity_cash_constrained_1x"
+        )
         bundles = [
             evidence_bundle_from_frontier_candidate(
-                candidate_spec_id=specs[0].candidate_spec_id,
+                candidate_spec_id=evidenced_spec.candidate_spec_id,
                 candidate={
                     "candidate_id": "cand-1",
                     "objective_scorecard": {
@@ -60,7 +66,7 @@ class TestMlxTrainingData(TestCase):
         self.assertEqual(len(rows), len(specs))
         self.assertEqual(model.backend, "numpy-fallback")
         self.assertEqual(ranked[0].rank, 1)
-        self.assertEqual(ranked[0].candidate_spec_id, specs[0].candidate_spec_id)
+        self.assertEqual(ranked[0].candidate_spec_id, evidenced_spec.candidate_spec_id)
 
     def test_negative_rank_bucket_lift_demotes_to_heuristic_order(self) -> None:
         rows = [
@@ -102,3 +108,65 @@ class TestMlxTrainingData(TestCase):
         self.assertLess(result.rank_bucket_lift.lift, 0)
         self.assertEqual(result.ranked_rows[0].candidate_spec_id, "aaa-strong")
         self.assertEqual(result.ranked_rows[0].score, 500.0)
+
+    def test_training_rows_penalize_capital_infeasible_specs(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-capital-features",
+            claims=[
+                {
+                    "claim_id": "claim-capital-features",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": "Order-flow clustering improves intraday continuation.",
+                    "confidence": "0.82",
+                }
+            ],
+        )
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+        over_budget = next(
+            spec
+            for spec in specs
+            if spec.strategy_overrides.get("capital_profile")
+            != "initial_equity_cash_constrained_1x"
+        )
+        feasible = next(
+            spec
+            for spec in specs
+            if spec.strategy_overrides.get("capital_profile")
+            == "initial_equity_cash_constrained_1x"
+        )
+        bundles = [
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=spec.candidate_spec_id,
+                candidate={
+                    "candidate_id": f"cand-{index}",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "500",
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                    },
+                },
+                dataset_snapshot_id="snapshot-capital",
+                result_path=f"/tmp/cand-{index}.json",
+            )
+            for index, spec in enumerate((over_budget, feasible), start=1)
+        ]
+
+        rows = build_mlx_training_rows(
+            candidate_specs=[over_budget, feasible],
+            evidence_bundles=bundles,
+        )
+        row_by_spec = {row.candidate_spec_id: row for row in rows}
+        over_payload = row_by_spec[over_budget.candidate_spec_id].to_payload()
+        feasible_payload = row_by_spec[feasible.candidate_spec_id].to_payload()
+
+        self.assertGreater(
+            over_payload["features"]["capital_budget_overage_ratio"], 0.0
+        )
+        self.assertEqual(over_payload["features"]["capital_feasible_flag"], 0.0)
+        self.assertEqual(feasible_payload["features"]["capital_feasible_flag"], 1.0)
+        self.assertLess(
+            row_by_spec[over_budget.candidate_spec_id].target,
+            row_by_spec[feasible.candidate_spec_id].target,
+        )

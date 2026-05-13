@@ -12,6 +12,7 @@ from app.trading.discovery.candidate_specs import CandidateSpec
 from app.trading.discovery.evidence_bundles import CandidateEvidenceBundle
 
 MLX_RANKER_SCHEMA_VERSION = "torghut.mlx-ranker.v1"
+DEFAULT_CAPITAL_START_EQUITY = 31590.02
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
@@ -147,6 +148,72 @@ def _float(value: Any) -> float:
         return 0.0
 
 
+def _mapping(value: Any) -> Mapping[str, Any]:
+    if isinstance(value, Mapping):
+        return cast(Mapping[str, Any], value)
+    return {}
+
+
+def _positive_or_default(value: float, default: float) -> float:
+    return value if value > 0.0 else default
+
+
+def candidate_spec_capital_features(spec: CandidateSpec) -> Mapping[str, float]:
+    overrides = _mapping(spec.strategy_overrides)
+    params = _mapping(overrides.get("params"))
+    max_notional = _float(overrides.get("max_notional_per_trade"))
+    max_position_pct = _float(overrides.get("max_position_pct_equity"))
+    configured_max_gross_pct = _float(params.get("max_gross_exposure_pct_equity"))
+    max_entries = _positive_or_default(_float(params.get("max_entries_per_session")), 1.0)
+    max_notional_pct_start_equity = (
+        max_notional / DEFAULT_CAPITAL_START_EQUITY
+        if DEFAULT_CAPITAL_START_EQUITY > 0.0
+        else 0.0
+    )
+    max_trade_pct_equity = max(
+        max_notional_pct_start_equity,
+        _positive_or_default(max_position_pct, 0.0),
+    )
+    inferred_max_gross_pct = max_trade_pct_equity * max_entries
+    estimated_max_gross_pct = max(configured_max_gross_pct, inferred_max_gross_pct)
+    capital_budget_overage_ratio = max(0.0, estimated_max_gross_pct - 1.0) + max(
+        0.0, max_trade_pct_equity - 1.0
+    )
+    capital_feasible = (
+        1.0
+        if estimated_max_gross_pct <= 1.0 and max_trade_pct_equity <= 1.0
+        else 0.0
+    )
+    return {
+        "max_notional_per_trade": max_notional,
+        "max_notional_pct_start_equity": max_notional_pct_start_equity,
+        "max_position_pct_equity": max_position_pct,
+        "configured_max_gross_exposure_pct_equity": configured_max_gross_pct,
+        "estimated_max_gross_exposure_pct_equity": estimated_max_gross_pct,
+        "max_entries_per_session": max_entries,
+        "capital_budget_overage_ratio": capital_budget_overage_ratio,
+        "capital_feasible_flag": capital_feasible,
+    }
+
+
+def capital_budget_penalty(features: Mapping[str, float]) -> float:
+    return (
+        _float(features.get("capital_budget_overage_ratio")) * 125.0
+        + max(0.0, _float(features.get("max_position_pct_equity")) - 1.0) * 35.0
+        + max(0.0, _float(features.get("max_notional_pct_start_equity")) - 1.0)
+        * 35.0
+    )
+
+
+def observed_capital_penalty(scorecard: Mapping[str, Any]) -> float:
+    return (
+        max(0.0, _float(scorecard.get("max_gross_exposure_pct_equity")) - 1.0)
+        * 500.0
+        + max(0.0, -_float(scorecard.get("min_cash"))) / 100.0
+        + _float(scorecard.get("negative_cash_observation_count")) * 20.0
+    )
+
+
 def _format_float(value: float) -> str:
     return format(value, ".12g")
 
@@ -206,23 +273,48 @@ def build_mlx_training_rows(
             "required_feature_count",
             "failure_mode_count",
             "target_net_pnl_per_day",
+            "max_notional_per_trade",
+            "max_notional_pct_start_equity",
+            "max_position_pct_equity",
+            "configured_max_gross_exposure_pct_equity",
+            "estimated_max_gross_exposure_pct_equity",
+            "max_entries_per_session",
+            "capital_budget_overage_ratio",
+            "capital_feasible_flag",
             "history_net_pnl_per_day",
             "history_active_day_ratio",
             "history_positive_day_ratio",
+            "history_max_gross_exposure_pct_equity",
+            "history_min_cash",
+            "history_negative_cash_observation_count",
         )
+        capital_features = candidate_spec_capital_features(spec)
         feature_values = (
             _family_code(spec.family_template_id),
             float(len(spec.feature_contract.get("required_features") or [])),
             float(len(spec.expected_failure_modes)),
             _float(spec.objective.get("target_net_pnl_per_day")),
+            _float(capital_features.get("max_notional_per_trade")),
+            _float(capital_features.get("max_notional_pct_start_equity")),
+            _float(capital_features.get("max_position_pct_equity")),
+            _float(capital_features.get("configured_max_gross_exposure_pct_equity")),
+            _float(capital_features.get("estimated_max_gross_exposure_pct_equity")),
+            _float(capital_features.get("max_entries_per_session")),
+            _float(capital_features.get("capital_budget_overage_ratio")),
+            _float(capital_features.get("capital_feasible_flag")),
             _float(scorecard.get("net_pnl_per_day")),
             _float(scorecard.get("active_day_ratio")),
             _float(scorecard.get("positive_day_ratio")),
+            _float(scorecard.get("max_gross_exposure_pct_equity")),
+            _float(scorecard.get("min_cash")),
+            _float(scorecard.get("negative_cash_observation_count")),
         )
         target = (
             _float(scorecard.get("net_pnl_per_day"))
             + (_float(scorecard.get("active_day_ratio")) * 100.0)
             + (_float(scorecard.get("positive_day_ratio")) * 50.0)
+            - capital_budget_penalty(capital_features)
+            - observed_capital_penalty(scorecard)
         )
         rows.append(
             MlxTrainingRow(

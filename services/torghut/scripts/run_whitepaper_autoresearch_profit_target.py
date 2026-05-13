@@ -48,6 +48,8 @@ from app.trading.discovery.mlx_snapshot import MlxSnapshotManifest
 from app.trading.discovery.mlx_snapshot import write_mlx_snapshot_manifest
 from app.trading.discovery.mlx_training_data import build_mlx_training_rows
 from app.trading.discovery.mlx_training_data import (
+    capital_budget_penalty,
+    candidate_spec_capital_features,
     rank_training_rows,
     rank_training_rows_with_lift_policy,
     train_mlx_ranker,
@@ -1937,7 +1939,10 @@ def _pre_replay_candidate_score(spec: CandidateSpec) -> Decimal:
         else 0
     )
     failure_penalty = Decimal(len(spec.expected_failure_modes)) * Decimal("0.25")
-    return family_score + Decimal(feature_count) - failure_penalty
+    capital_penalty = Decimal(
+        str(capital_budget_penalty(candidate_spec_capital_features(spec)))
+    )
+    return family_score + Decimal(feature_count) - failure_penalty - capital_penalty
 
 
 def _pre_replay_prior_bundle(spec: CandidateSpec) -> CandidateEvidenceBundle:
@@ -2066,6 +2071,17 @@ def _select_candidate_specs_for_replay(
         spec.candidate_spec_id: _candidate_spec_execution_signature(spec)
         for spec in specs
     }
+    capital_features_by_spec = {
+        spec.candidate_spec_id: dict(candidate_spec_capital_features(spec))
+        for spec in specs
+    }
+
+    def capital_sort_key(candidate_spec_id: str) -> tuple[int, Decimal, str]:
+        features = capital_features_by_spec.get(candidate_spec_id, {})
+        feasible = Decimal(str(features.get("capital_feasible_flag", 0)))
+        overage = Decimal(str(features.get("capital_budget_overage_ratio", 0)))
+        return (0 if feasible >= Decimal("1") else 1, overage, candidate_spec_id)
+
     max_budget = max(1, int(max_candidates))
     model_confidence = _proposal_score_confidence(proposal_rows)
     requested_exploration_slots = max(0, int(exploration_slots))
@@ -2083,6 +2099,7 @@ def _select_candidate_specs_for_replay(
         for row in sorted(
             _list_of_mappings(list(proposal_rows)),
             key=lambda row: (
+                *capital_sort_key(str(row.get("candidate_spec_id") or ""))[:2],
                 int(row.get("rank") or 10**9),
                 -float(row.get("proposal_score") or 0.0),
                 str(row.get("candidate_spec_id") or ""),
@@ -2092,7 +2109,12 @@ def _select_candidate_specs_for_replay(
     ]
     ranked_ids.extend(
         spec.candidate_spec_id
-        for spec in sorted(specs, key=lambda item: item.candidate_spec_id)
+        for spec in sorted(
+            specs,
+            key=lambda item: (
+                *capital_sort_key(item.candidate_spec_id),
+            ),
+        )
         if spec.candidate_spec_id not in set(ranked_ids)
     )
     ordered = [spec_by_id[candidate_spec_id] for candidate_spec_id in ranked_ids]
@@ -2219,6 +2241,38 @@ def _select_candidate_specs_for_replay(
             != spec.candidate_spec_id
             else None,
             "pre_replay_score": str(_pre_replay_candidate_score(spec)),
+            "capital_budget": {
+                "max_notional_per_trade": str(
+                    capital_features_by_spec[spec.candidate_spec_id][
+                        "max_notional_per_trade"
+                    ]
+                ),
+                "max_notional_pct_start_equity": str(
+                    capital_features_by_spec[spec.candidate_spec_id][
+                        "max_notional_pct_start_equity"
+                    ]
+                ),
+                "max_position_pct_equity": str(
+                    capital_features_by_spec[spec.candidate_spec_id][
+                        "max_position_pct_equity"
+                    ]
+                ),
+                "estimated_max_gross_exposure_pct_equity": str(
+                    capital_features_by_spec[spec.candidate_spec_id][
+                        "estimated_max_gross_exposure_pct_equity"
+                    ]
+                ),
+                "capital_budget_overage_ratio": str(
+                    capital_features_by_spec[spec.candidate_spec_id][
+                        "capital_budget_overage_ratio"
+                    ]
+                ),
+                "capital_feasible": bool(
+                    capital_features_by_spec[spec.candidate_spec_id][
+                        "capital_feasible_flag"
+                    ]
+                ),
+            },
             "rank": index,
             "selected_for_replay": spec.candidate_spec_id in selected_ids,
             "selection_reason": row_selection_reason(spec),
@@ -2247,6 +2301,12 @@ def _select_candidate_specs_for_replay(
             "compiled_candidate_count": len(specs),
             "unique_execution_signature_count": len(ordered_unique),
             "replay_order_policy": "diversity_pick_order",
+            "capital_feasible_candidate_count": sum(
+                1
+                for features in capital_features_by_spec.values()
+                if Decimal(str(features.get("capital_feasible_flag", 0)))
+                >= Decimal("1")
+            ),
         },
         "proposal_score_confidence": model_confidence,
         "selected_candidate_spec_ids": [item.candidate_spec_id for item in selected],

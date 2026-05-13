@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, Mapping, Sequence, cast
 
 from app.trading.discovery.hypothesis_cards import HypothesisCard
@@ -1901,6 +1901,49 @@ def _mapping(value: Any) -> dict[str, Any]:
     return {str(key): item for key, item in cast(Mapping[Any, Any], value).items()}
 
 
+def _profile_decimal(value: Any, *, default: str = "0") -> Decimal:
+    try:
+        return Decimal(str(value if value is not None else default))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal(default)
+
+
+def _profile_slot_count(profile: Mapping[str, Any]) -> int:
+    params = _mapping(profile.get("params"))
+    slot_values = [
+        _profile_decimal(params.get("max_entries_per_session"), default="1"),
+        _profile_decimal(params.get("max_pair_legs"), default="1"),
+        _profile_decimal(params.get("top_n"), default="1"),
+    ]
+    return max(1, int(max(slot_values)))
+
+
+def _capital_limited_profile_values(profile: Mapping[str, Any]) -> tuple[str, str]:
+    slot_count = _profile_slot_count(profile)
+    if slot_count <= 1:
+        return "30000", "1.0"
+    if slot_count == 2:
+        return "15000", "0.50"
+    return "7500", "0.25"
+
+
+def _capital_constrained_execution_profiles(
+    profiles: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    constrained: list[dict[str, Any]] = []
+    for profile in profiles:
+        next_profile = json.loads(json.dumps(profile))
+        params = _mapping(next_profile.get("params"))
+        max_notional, max_position = _capital_limited_profile_values(next_profile)
+        next_profile["max_notional_per_trade"] = max_notional
+        next_profile["max_position_pct_equity"] = max_position
+        next_profile["capital_profile"] = "initial_equity_cash_constrained_1x"
+        params["max_gross_exposure_pct_equity"] = "1.0"
+        next_profile["params"] = params
+        constrained.append(next_profile)
+    return tuple(constrained)
+
+
 def _universe_symbol_override(symbols: Sequence[str]) -> tuple[str, ...]:
     cleaned: list[str] = []
     seen: set[str] = set()
@@ -2226,9 +2269,13 @@ def _execution_profiles_for_target(
     base_profiles = _BASE_FAMILY_EXECUTION_PROFILES.get(family_template_id, ())
     if target_net_pnl_per_day < _PORTFOLIO_TARGET_NET_PNL_PER_DAY:
         return base_profiles
+    portfolio_profiles = _PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES.get(
+        family_template_id, ()
+    )
+    exploratory_profiles = (*base_profiles, *portfolio_profiles)
     return (
-        *base_profiles,
-        *_PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES.get(family_template_id, ()),
+        *exploratory_profiles,
+        *_capital_constrained_execution_profiles(exploratory_profiles),
     )
 
 

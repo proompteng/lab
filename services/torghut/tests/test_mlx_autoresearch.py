@@ -156,6 +156,7 @@ class TestMlxAutoresearch(TestCase):
                 },
                 "strategy_overrides": {
                     "max_notional_per_trade": ["315900.20"],
+                    "max_position_pct_equity": ["10.0"],
                     "normalization_regime": ["price_scaled"],
                 },
             },
@@ -167,7 +168,9 @@ class TestMlxAutoresearch(TestCase):
         self.assertEqual(descriptor.rank_count, 2)
         self.assertTrue(descriptor.requires_prev_day_features)
         self.assertTrue(descriptor.requires_cross_sectional_features)
-        self.assertEqual(len(descriptor_numeric_vector(descriptor)), 7)
+        self.assertFalse(descriptor.capital_feasible)
+        self.assertGreater(float(descriptor.capital_budget_overage_ratio), 0.0)
+        self.assertEqual(len(descriptor_numeric_vector(descriptor)), 12)
 
     def test_write_mlx_signal_bundle_persists_signal_rows(self) -> None:
         rows = [
@@ -458,6 +461,92 @@ class TestMlxAutoresearch(TestCase):
         )
         self.assertEqual(selected[0].selection_reason, "exploitation")
         self.assertEqual(selected[1].selection_reason, "exploration")
+
+    def test_select_proposal_batch_prefers_capital_feasible_candidates(self) -> None:
+        infeasible_descriptor = MlxCandidateDescriptor(
+            descriptor_id="desc-infeasible",
+            candidate_id="infeasible",
+            family_template_id="breakout_reclaim_v2",
+            runtime_family="breakout_continuation_consistent",
+            strategy_name="breakout-continuation-long-v1",
+            side_policy="long",
+            entry_window_start_minute=45,
+            entry_window_end_minute=75,
+            max_hold_minutes=30,
+            entry_type="breakout_reclaim",
+            exit_type="time_exit",
+            rank_policy="rank",
+            rank_count=1,
+            gross_budget_usd="315900.20",
+            per_leg_budget_usd="315900.20",
+            normalization_regime="runtime_default",
+            regime_gate_id="regime-bull",
+            requires_prev_day_features=True,
+            requires_cross_sectional_features=True,
+            requires_quote_quality_gate=True,
+            expected_fill_mode="market",
+            approval_path="scheduler_v3",
+            max_position_pct_equity="10.0",
+            estimated_max_gross_exposure_pct_equity="10.0",
+            capital_budget_overage_ratio="18.0",
+            capital_feasible=False,
+        )
+        feasible_descriptor = MlxCandidateDescriptor(
+            descriptor_id="desc-feasible",
+            candidate_id="feasible",
+            family_template_id="intraday_tsmom_v2",
+            runtime_family="intraday_tsmom_consistent",
+            strategy_name="intraday-tsmom-profit-v3",
+            side_policy="long",
+            entry_window_start_minute=45,
+            entry_window_end_minute=75,
+            max_hold_minutes=30,
+            entry_type="momentum",
+            exit_type="time_exit",
+            rank_policy="rank",
+            rank_count=1,
+            gross_budget_usd="30000",
+            per_leg_budget_usd="30000",
+            normalization_regime="runtime_default",
+            regime_gate_id="regime-bull",
+            requires_prev_day_features=True,
+            requires_cross_sectional_features=True,
+            requires_quote_quality_gate=True,
+            expected_fill_mode="market",
+            approval_path="scheduler_v3",
+            max_position_pct_equity="1.0",
+            estimated_max_gross_exposure_pct_equity="1.0",
+            capital_budget_overage_ratio="0",
+            capital_feasible=True,
+        )
+
+        selected = select_proposal_batch(
+            descriptors=[infeasible_descriptor, feasible_descriptor],
+            proposal_scores=[
+                ProposalScore(
+                    "infeasible",
+                    "desc-infeasible",
+                    1000.0,
+                    1,
+                    "numpy-fallback",
+                    "ranking_only",
+                ),
+                ProposalScore(
+                    "feasible",
+                    "desc-feasible",
+                    10.0,
+                    2,
+                    "numpy-fallback",
+                    "ranking_only",
+                ),
+            ],
+            limit=1,
+            top_k=1,
+            exploration_slots=0,
+        )
+
+        self.assertEqual(selected[0].candidate_id, "feasible")
+        self.assertTrue(selected[0].capital_feasible)
 
     def test_build_proposal_diagnostics_reports_lift_and_failure_tables(self) -> None:
         descriptors = [
