@@ -5,6 +5,7 @@ from typing import Any, cast
 
 from app.trading.freshness_carry import (
     FRESHNESS_CARRY_LEDGER_SCHEMA_VERSION,
+    _jangar_pressure_refs,
     build_freshness_carry_ledger,
 )
 
@@ -113,6 +114,25 @@ def test_partial_ta_freshness_keeps_capital_zero_and_opens_repair_slo() -> None:
     assert ta_slo["required_output_receipts"] == [
         "torghut.ta-freshness-repair-receipt.v1"
     ]
+    pressure_ref = next(
+        ref
+        for ref in ledger["jangar_pressure_refs"]
+        if ref["target_dimension_id"] == "ta_signals"
+    )
+    assert str(pressure_ref["pressure_ref_id"]).startswith("freshness-pressure-ref:")
+    assert pressure_ref["source_class"] == "torghut_freshness"
+    assert pressure_ref["action_class"] == "dispatch_repair"
+    assert pressure_ref["freshness_carry_ledger_ref"] == ledger["ledger_id"]
+    assert pressure_ref["repair_proof_slo_ref"] == ta_slo["repair_id"]
+    assert pressure_ref["target_value_gate"] == "zero_notional_or_stale_evidence_rate"
+    assert pressure_ref["required_output_receipts"] == [
+        "torghut.ta-freshness-repair-receipt.v1"
+    ]
+    assert pressure_ref["ttl_seconds"] == 60
+    assert str(pressure_ref["dedupe_key"]).startswith("freshness-pressure-dedupe:")
+    assert pressure_ref["max_notional"] == "0"
+    assert pressure_ref["dispatchable"] is True
+    assert pressure_ref["reason_codes"] == ["ta_signal_lag_exceeded"]
 
 
 def test_current_freshness_can_be_paper_candidate_without_widening_route_warrant() -> (
@@ -124,6 +144,7 @@ def test_current_freshness_can_be_paper_candidate_without_widening_route_warrant
     assert ledger["capital_posture"]["max_notional"] == "25"
     assert ledger["capital_posture"]["reason_codes"] == []
     assert ledger["repair_proof_slos"] == []
+    assert ledger["jangar_pressure_refs"] == []
     assert ledger["summary"]["zero_notional_or_stale_evidence_rate"] == "0"
     assert all(
         dimension["stale_reason_codes"] == [] for dimension in ledger["dimensions"]
@@ -163,6 +184,45 @@ def test_source_serving_gap_holds_non_source_freshness_repairs() -> None:
     assert source_slo["dispatchable"] is True
     assert tca_slo["dispatchable"] is False
     assert tca_slo["hold_reason_codes"] == ["source_serving_not_current"]
+    tca_pressure_ref = next(
+        ref
+        for ref in ledger["jangar_pressure_refs"]
+        if ref["target_dimension_id"] == "tca"
+    )
+    assert tca_pressure_ref["dispatchable"] is False
+    assert tca_pressure_ref["hold_reason_codes"] == ["source_serving_not_current"]
+    assert tca_pressure_ref["reason_codes"] == [
+        "expected_shortfall_coverage_low",
+        "source_serving_not_current",
+    ]
+
+
+def test_pressure_refs_backfill_external_ids_and_skip_malformed_slos() -> None:
+    refs = _jangar_pressure_refs(
+        account_label="PA3SX7FYNUTF",
+        window="15m",
+        ledger_id="freshness-carry-ledger:test",
+        fresh_until=(NOW + timedelta(seconds=60)).isoformat(),
+        dimensions=[
+            {
+                "dimension_id": "ta_signals",
+                "state": "stale",
+                "stale_reason_codes": ["ta_signal_lag_exceeded"],
+            }
+        ],
+        repair_proof_slos=[{"repair_id": "repair-proof-slo:malformed"}],
+        external_refs=[
+            {
+                "schema_version": "torghut.jangar-pressure-ref.v1",
+                "source_class": "manual_freshness",
+                "target_dimension_id": "manual",
+            }
+        ],
+    )
+
+    assert len(refs) == 1
+    assert str(refs[0]["pressure_ref_id"]).startswith("freshness-pressure-ref:")
+    assert refs[0]["source_class"] == "manual_freshness"
 
 
 def test_malformed_freshness_inputs_are_repair_only_with_typed_reasons() -> None:

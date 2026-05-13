@@ -275,13 +275,17 @@ Implementation status:
   receipts now cite the matching `freshness_carry_ledger` dimension and `repair_proof_slo` for market-context,
   empirical, and TCA freshness repairs. `execute=true` fails closed before runner invocation when that citation is
   missing or the SLO is not dispatchable.
+- Phase 2 now also emits deterministic `jangar_pressure_refs` from each non-current freshness repair SLO. Each ref
+  carries the freshness ledger id, repair SLO id, target value gate, required output receipt, TTL, dedupe key,
+  `max_notional=0`, dispatchability, and hold reasons so Jangar can price Torghut freshness debt without
+  reinterpreting the full ledger.
 
 Engineer milestone 2:
 
 - Require zero-notional repair receipts to cite a freshness dimension and repair proof SLO when the repair target is
   market context, technicals, TCA, empirical replay, or routeability.
 - Add a direct-proof upgrade path so exporter-derived dimensions can be promoted after SQL/ClickHouse validation exists.
-- Emit Jangar pressure refs so the Jangar pressure ledger can price Torghut freshness debt.
+- Consume emitted Jangar pressure refs in pressure-ledger scheduling decisions after observe-mode parity is stable.
 
 Deployer milestone:
 

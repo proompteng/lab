@@ -270,4 +270,43 @@ describe('control-plane evidence pressure ledger', () => {
     expect(budget(ledger, 'serve_readonly')).toMatchObject({ decision: 'block' })
     expect(budget(ledger, 'dispatch_normal')).toMatchObject({ decision: 'block' })
   })
+
+  it('prices Torghut freshness pressure refs even when the consumer receipt is fresh', () => {
+    const ledger = buildLedger({
+      torghutConsumerEvidence: torghutEvidence({
+        repair_bid_settlement_dispatchable_lot_ids: [],
+        freshness_carry_ledger_id: 'freshness-carry-ledger:test',
+        freshness_carry_state: 'repair_only',
+        freshness_carry_pressure_ref_ids: ['freshness-pressure-ref:tca'],
+        freshness_carry_dispatchable_pressure_ref_ids: ['freshness-pressure-ref:tca'],
+        freshness_carry_required_output_receipts: ['torghut.execution-tca-refresh-receipt.v1'],
+        freshness_carry_target_value_gates: ['fill_tca_or_slippage_quality'],
+        freshness_carry_reason_codes: ['tca_computed_at_stale'],
+      }),
+    })
+
+    expect(ledger.pressure_sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source_class: 'torghut_freshness',
+          severity: 'warning',
+          evidence_ref: 'freshness-pressure-ref:tca',
+          value_gates: expect.arrayContaining(['fill_tca_or_slippage_quality']),
+          reason_codes: expect.arrayContaining(['torghut_freshness_pressure_active', 'tca_computed_at_stale']),
+        }),
+      ]),
+    )
+    expect(budget(ledger, 'dispatch_repair')).toMatchObject({
+      decision: 'repair_only',
+      max_notional: 0,
+      required_repair_receipts: expect.arrayContaining([
+        'freshness-pressure-ref:tca',
+        'torghut.execution-tca-refresh-receipt.v1',
+      ]),
+    })
+    expect(budget(ledger, 'dispatch_normal')).toMatchObject({
+      decision: 'hold',
+      reason_codes: expect.arrayContaining(['torghut_freshness_pressure_active', 'tca_computed_at_stale']),
+    })
+  })
 })

@@ -2,7 +2,19 @@ import { createHash } from 'node:crypto'
 
 import type { TorghutRepairBidSettlementLot, TorghutRepairBidSettlementStatus } from '~/data/agents-control-plane'
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
+import { readTorghutFreshnessCarryEvidence } from '~/server/control-plane-torghut-freshness-carry'
 import type { TorghutNegativeEvidenceInput } from '~/server/control-plane-negative-evidence-router-torghut'
+import {
+  normalizeNonEmpty,
+  normalizeNumber,
+  normalizeReason,
+  parseNumber,
+  parseTimestampMs,
+  stringList,
+  stringValues,
+  uniqueStrings,
+} from '~/server/control-plane-torghut-evidence-normalizers'
+import { normalizeRepairBidSettlementLot } from '~/server/control-plane-torghut-repair-bid-settlement'
 import { asRecord } from '~/server/primitives-http'
 
 export type TorghutConsumerEvidenceStatus = {
@@ -73,6 +85,13 @@ export type TorghutConsumerEvidenceStatus = {
   repair_bid_settlement_active_dedupe_keys?: string[]
   repair_bid_settlement_compacted_lots?: TorghutRepairBidSettlementLot[]
   repair_bid_settlement_reason_codes?: string[]
+  freshness_carry_ledger_id?: string | null
+  freshness_carry_state?: string | null
+  freshness_carry_pressure_ref_ids?: string[]
+  freshness_carry_dispatchable_pressure_ref_ids?: string[]
+  freshness_carry_required_output_receipts?: string[]
+  freshness_carry_target_value_gates?: string[]
+  freshness_carry_reason_codes?: string[]
   operator_summary?: {
     top_clock_split: string | null
     selected_repair_lot_id: string | null
@@ -91,46 +110,6 @@ export type TorghutConsumerEvidenceResolution = {
 const hashJson = (value: unknown, length = 16) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, length)
 
-const normalizeNonEmpty = (value: unknown) => {
-  const normalized = typeof value === 'string' ? value.trim() : value == null ? '' : String(value).trim()
-  return normalized.length > 0 ? normalized : null
-}
-
-const normalizeReason = (value: unknown) =>
-  normalizeNonEmpty(value)
-    ?.toLowerCase()
-    .replace(/[^a-z0-9_.:-]+/g, '_') ?? null
-
-const uniqueStrings = (values: Array<string | null | undefined>) => [...new Set(values.filter(Boolean) as string[])]
-
-const stringList = (value: unknown) =>
-  Array.isArray(value) ? uniqueStrings(value.map((item) => normalizeReason(item))) : []
-
-const stringValues = (value: unknown) =>
-  Array.isArray(value) ? uniqueStrings(value.map((item) => normalizeNonEmpty(item))) : []
-
-const parseTimestampMs = (value: string | null | undefined) => {
-  if (!value) return null
-  const parsed = Date.parse(value)
-  return Number.isNaN(parsed) ? null : parsed
-}
-
-const parseNumber = (value: string | null) => {
-  if (!value) return null
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-const normalizeNumber = (value: unknown) => parseNumber(normalizeNonEmpty(value))
-
-const normalizeBoolean = (value: unknown) => {
-  if (typeof value === 'boolean') return value
-  const normalized = normalizeReason(value)
-  if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true
-  if (normalized === 'false' || normalized === '0' || normalized === 'no') return false
-  return false
-}
-
 const paperActionStates = new Set(['allow', 'allowed', 'current', 'paper_canary', 'paper_candidate', 'ready'])
 
 const CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION = 'torghut.consumer-evidence-status.v1'
@@ -143,34 +122,6 @@ type JsonRouteResult = {
   ok: boolean
   statusCode: number | null
   payload: Record<string, unknown> | null
-}
-
-const normalizeRepairBidSettlementLot = (value: unknown): TorghutRepairBidSettlementLot | null => {
-  const lot = asRecord(value)
-  const lotId = normalizeNonEmpty(lot?.lot_id)
-  if (!lot || !lotId) return null
-  return {
-    lot_id: lotId,
-    lot_class: normalizeReason(lot.lot_class) ?? 'unknown',
-    target_value_gate: normalizeReason(lot.target_value_gate) ?? '',
-    priority: normalizeNumber(lot.priority),
-    expected_gate_delta: normalizeReason(lot.expected_gate_delta),
-    raw_reason_codes: stringList(lot.raw_reason_codes),
-    root_cause_hypothesis: normalizeNonEmpty(lot.root_cause_hypothesis),
-    required_input_refs: stringValues(lot.required_input_refs),
-    required_output_receipt: normalizeNonEmpty(lot.required_output_receipt),
-    required_output_receipt_count: normalizeNumber(lot.required_output_receipt_count),
-    validation_commands: stringValues(lot.validation_commands),
-    dedupe_key: normalizeNonEmpty(lot.dedupe_key),
-    ttl_seconds: normalizeNumber(lot.ttl_seconds),
-    max_runtime_seconds: normalizeNumber(lot.max_runtime_seconds),
-    max_parallelism: normalizeNumber(lot.max_parallelism),
-    max_notional: normalizeNonEmpty(lot.max_notional),
-    state: normalizeReason(lot.state),
-    dispatchable: normalizeBoolean(lot.dispatchable),
-    hold_reason_codes: stringList(lot.hold_reason_codes),
-    source_bid_ids: stringValues(lot.source_bid_ids),
-  }
 }
 
 const requestJson = async (url: string, timeoutMs: number): Promise<JsonRouteResult> => {
@@ -367,7 +318,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   const freshUntil = normalizeNonEmpty(receipt.fresh_until)
   const freshUntilMs = parseTimestampMs(freshUntil)
   const status = freshUntilMs && freshUntilMs > now.getTime() ? 'current' : 'stale'
-  const reasonCodes = uniqueStrings([
+  const receiptReasonCodes = uniqueStrings([
     ...(status === 'current' ? [] : ['torghut_consumer_evidence_stale']),
     ...stringList(receipt.reason_codes),
   ])
@@ -517,10 +468,13 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   )
   const repairBidSettlement = asRecord(payload.repair_bid_settlement_ledger)
   const sourceServingRepairReceiptLedger = asRecord(payload.source_serving_repair_receipt_ledger)
+  const freshnessCarry = readTorghutFreshnessCarryEvidence(payload)
+  const reasonCodes = uniqueStrings([...receiptReasonCodes, ...freshnessCarry.reasonCodes])
   const observedContracts = uniqueStrings([
     routeWarrant ? 'route_warrant_exchange' : null,
     repairBidSettlement ? 'repair_bid_settlement_ledger' : null,
     sourceServingRepairReceiptLedger ? 'source_serving_repair_receipt_ledger' : null,
+    freshnessCarry.present ? 'freshness_carry_ledger' : null,
     routeabilityLedger ? 'routeability_repair_acceptance_ledger' : null,
     profitRepairLedger ? 'profit_repair_settlement_ledger' : null,
     routeableExchange ? 'routeable_profit_candidate_exchange' : null,
@@ -536,6 +490,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     normalizeNonEmpty(repairBidSettlement.schema_version) !== REPAIR_BID_SETTLEMENT_LEDGER_SCHEMA_VERSION
       ? `repair_bid_settlement_ledger:${normalizeNonEmpty(repairBidSettlement.schema_version)}`
       : null,
+    freshnessCarry.contractSchemaMismatch,
   ])
   const routeWarrantId = normalizeNonEmpty(routeWarrant?.warrant_id ?? routeWarrant?.exchange_id)
   const routeWarrantRepairPackets = Array.isArray(routeWarrant?.repair_packets)
@@ -692,6 +647,13 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       repair_bid_settlement_active_dedupe_keys: stringValues(repairBidSettlement?.active_dedupe_keys),
       repair_bid_settlement_compacted_lots: repairBidSettlementLots,
       repair_bid_settlement_reason_codes: repairBidSettlementReasonCodes,
+      freshness_carry_ledger_id: freshnessCarry.ledgerId,
+      freshness_carry_state: freshnessCarry.state,
+      freshness_carry_pressure_ref_ids: freshnessCarry.pressureRefIds,
+      freshness_carry_dispatchable_pressure_ref_ids: freshnessCarry.dispatchablePressureRefIds,
+      freshness_carry_required_output_receipts: freshnessCarry.requiredOutputReceipts,
+      freshness_carry_target_value_gates: freshnessCarry.targetValueGates,
+      freshness_carry_reason_codes: freshnessCarry.reasonCodes,
       operator_summary: operatorSummary,
       reason_codes: reasonCodes,
       message:

@@ -405,6 +405,74 @@ describe('control-plane Torghut consumer evidence', () => {
     })
   })
 
+  it('maps freshness carry pressure refs for Jangar pressure pricing', async () => {
+    process.env = {
+      ...originalEnv,
+      JANGAR_TORGHUT_STATUS_URL: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
+    }
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        buildJsonResponse({
+          schema_version: 'torghut.consumer-evidence-status.v1',
+          route_proven_profit_receipt: {
+            schema_version: 'torghut.route-proven-profit-receipt.v1',
+            receipt_id: 'torghut-route-proven-profit:freshness',
+            generated_at: '2026-05-13T09:15:00.000Z',
+            fresh_until: '2026-05-13T09:16:00.000Z',
+            paper_readiness_state: 'blocked',
+            live_readiness_state: 'blocked',
+            max_notional: '0',
+            reason_codes: [],
+          },
+          freshness_carry_ledger: {
+            schema_version: 'torghut.freshness-carry-ledger.v1',
+            ledger_id: 'freshness-carry-ledger:test',
+            capital_posture: {
+              decision: 'repair_only',
+              reason_codes: ['tca_computed_at_stale'],
+              max_notional: '0',
+            },
+            dimensions: [
+              {
+                dimension_id: 'tca',
+                state: 'stale',
+                stale_reason_codes: ['tca_computed_at_stale'],
+              },
+            ],
+            jangar_pressure_refs: [
+              {
+                schema_version: 'torghut.jangar-pressure-ref.v1',
+                pressure_ref_id: 'freshness-pressure-ref:tca',
+                target_dimension_id: 'tca',
+                target_value_gate: 'fill_tca_or_slippage_quality',
+                required_output_receipts: ['torghut.execution-tca-refresh-receipt.v1'],
+                reason_codes: ['tca_computed_at_stale'],
+                max_notional: '0',
+                ttl_seconds: 60,
+                dispatchable: true,
+              },
+            ],
+          },
+        }),
+      ),
+    ) as unknown as typeof globalThis.fetch
+
+    const result = await resolveTorghutConsumerEvidence(new Date('2026-05-13T09:15:10.000Z'))
+
+    expect(result.status).toMatchObject({
+      status: 'current',
+      receipt_id: 'torghut-route-proven-profit:freshness',
+      freshness_carry_ledger_id: 'freshness-carry-ledger:test',
+      freshness_carry_state: 'repair_only',
+      freshness_carry_pressure_ref_ids: ['freshness-pressure-ref:tca'],
+      freshness_carry_dispatchable_pressure_ref_ids: ['freshness-pressure-ref:tca'],
+      freshness_carry_required_output_receipts: ['torghut.execution-tca-refresh-receipt.v1'],
+      freshness_carry_target_value_gates: ['fill_tca_or_slippage_quality'],
+      freshness_carry_reason_codes: ['tca_computed_at_stale'],
+      reason_codes: ['tca_computed_at_stale'],
+    })
+  })
+
   it('maps route 404 to route_missing evidence instead of generic unavailable', async () => {
     process.env = {
       ...originalEnv,
