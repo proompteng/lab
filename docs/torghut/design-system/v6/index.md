@@ -11,7 +11,9 @@
   `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-13T08:28Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-13T08:45Z`):
+- Evidence (current next-work priority, refreshed `2026-05-13T12:11Z`):
+  - `193-torghut-repair-outcome-dividend-ledger-and-capital-reentry-frontier-2026-05-13.md`
+  - `docs/agents/designs/189-jangar-terminal-debt-compaction-and-repair-outcome-escrow-2026-05-13.md`
   - `192-torghut-repair-receipt-frontier-and-profit-cutover-2026-05-13.md`
   - `docs/agents/designs/188-jangar-ready-truth-arbiter-and-stage-credit-cutover-2026-05-13.md`
   - `192-torghut-freshness-carry-and-repair-proof-slo-2026-05-13.md`
