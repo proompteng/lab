@@ -256,6 +256,101 @@ def test_positive_partial_signal_does_not_create_paper_candidate_when_jangar_hol
     assert frontier["capital_posture"]["capital_behavior_changed"] is False
 
 
+def test_jangar_not_required_allow_reason_does_not_hold_frontier() -> None:
+    frontier = _frontier(
+        quant_evidence={
+            "ok": True,
+            "status": "healthy",
+            "latest_metrics_count": 144,
+            "stage_count": 4,
+        },
+        market_context_status={"status": "healthy", "last_domain_states": {}},
+        empirical_jobs_status={
+            "ready": True,
+            "status": "healthy",
+            "eligible_jobs": [
+                "benchmark_parity",
+                "foundation_router_parity",
+                "janus_event_car",
+                "janus_hgrm_reward",
+            ],
+            "candidate_ids": ["candidate-nvda"],
+            "dataset_snapshot_refs": ["dataset-nvda"],
+        },
+        jangar_reliability_settlement_ref={
+            "settlement_ref": (
+                "jangar-reliability-settlement:"
+                "dependency-quorum:allow:torghut_dependency_quorum_not_required"
+            ),
+            "decision": "allow",
+            "state": "current",
+            "reason_codes": ["torghut_dependency_quorum_not_required"],
+            "source": "dependency_quorum_proxy",
+        },
+    )
+
+    jangar = _dimension(frontier, "jangar_settlement")
+
+    assert jangar["state"] == "current"
+    assert jangar["reason_codes"] == []
+    assert jangar["details"]["informational_reason_codes"] == [
+        "torghut_dependency_quorum_not_required"
+    ]
+    assert all(
+        repair["blocked_dimension"] != "jangar_settlement"
+        for repair in cast(
+            list[Mapping[str, Any]], frontier["selected_zero_notional_repairs"]
+        )
+    )
+    assert frontier["frontier_state"] != "held"
+    assert (
+        frontier["next_zero_notional_action"] != "refresh_jangar_reliability_settlement"
+    )
+
+
+def test_jangar_allow_with_real_blocking_reason_still_holds_frontier() -> None:
+    frontier = _frontier(
+        quant_evidence={
+            "ok": True,
+            "status": "healthy",
+            "latest_metrics_count": 144,
+            "stage_count": 4,
+        },
+        market_context_status={"status": "healthy", "last_domain_states": {}},
+        empirical_jobs_status={
+            "ready": True,
+            "status": "healthy",
+            "eligible_jobs": [
+                "benchmark_parity",
+                "foundation_router_parity",
+                "janus_event_car",
+                "janus_hgrm_reward",
+            ],
+            "candidate_ids": ["candidate-nvda"],
+            "dataset_snapshot_refs": ["dataset-nvda"],
+        },
+        jangar_reliability_settlement_ref={
+            "settlement_ref": "jangar-reliability-settlement:blocking",
+            "decision": "allow",
+            "state": "current",
+            "reason_codes": [
+                "torghut_dependency_quorum_not_required",
+                "jangar_controller_unavailable",
+            ],
+            "source": "dependency_quorum_proxy",
+        },
+    )
+
+    jangar = _dimension(frontier, "jangar_settlement")
+
+    assert jangar["state"] == "blocked"
+    assert jangar["reason_codes"] == ["jangar_controller_unavailable"]
+    assert jangar["details"]["informational_reason_codes"] == [
+        "torghut_dependency_quorum_not_required"
+    ]
+    assert frontier["frontier_state"] == "held"
+
+
 def test_closed_frontier_still_does_not_widen_capital_limits() -> None:
     frontier = _frontier(
         proof_floor_receipt={
