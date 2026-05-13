@@ -101,6 +101,13 @@ const formatPressureActions = (status: ControlPlaneStatus) => {
   return held.map((budget) => `${budget.action_class}=${budget.decision}`).join(', ')
 }
 
+const formatTerminalDebtActions = (status: ControlPlaneStatus) => {
+  const ledger = status.terminal_debt_compaction_ledger
+  if (!ledger) return 'Not emitted'
+  if (ledger.scheduler_contract.would_hold_action_classes.length === 0) return 'None'
+  return ledger.scheduler_contract.would_hold_action_classes.join(', ')
+}
+
 const formatAuthorityActions = (status: ControlPlaneStatus) => {
   const held = status.authority_provenance_settlement.action_class_decisions.filter(
     (decision) => decision.decision !== 'allow',
@@ -255,6 +262,33 @@ export const ControlPlaneStatusPanel = ({
               </ul>
             ) : (
               <div className="text-[11px] text-muted-foreground">No authority surfaces available.</div>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Terminal debt</div>
+          <div className="rounded-none border p-2 border-border/60 bg-muted/30 space-y-1">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-medium text-foreground">Compaction ledger</span>
+              <StatusBadge label={status.terminal_debt_compaction_ledger?.scheduler_contract.status ?? 'missing'} />
+            </div>
+            <div className="text-muted-foreground">
+              Active: {status.terminal_debt_compaction_ledger?.active_debt_summary.count ?? 0} · Retained audit:{' '}
+              {status.terminal_debt_compaction_ledger?.retained_audit_summary.count ?? 0}
+            </div>
+            <div className="text-muted-foreground">Would hold: {formatTerminalDebtActions(status)}</div>
+            {status.terminal_debt_compaction_ledger?.cohorts.length ? (
+              <ul className="space-y-1 pt-1 text-muted-foreground">
+                {status.terminal_debt_compaction_ledger.cohorts.slice(0, 5).map((cohort) => (
+                  <li key={cohort.cohort_id} className="text-[11px]">
+                    <span className="font-medium text-foreground">{cohort.class}</span> · {cohort.state} ·{' '}
+                    {cohort.count} · {cohort.active_gate_effect}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-[11px] text-muted-foreground">No terminal debt cohorts.</div>
             )}
           </div>
         </div>

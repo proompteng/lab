@@ -18,6 +18,13 @@ import {
   type EvidencePressureMetricsSinkStatus,
 } from '~/server/control-plane-evidence-pressure-ledger'
 import {
+  buildTerminalDebtCompactionLedger,
+  collectTerminalDebtEvidence,
+  emptyTerminalDebtEvidence,
+  isTerminalDebtCompactionEnabled,
+  type TerminalDebtCompactionEvidence,
+} from '~/server/control-plane-terminal-debt-compaction'
+import {
   buildControlPlaneMaterialActionArtifacts,
   type RepairScheduleAttemptResolver,
 } from '~/server/control-plane-material-action-artifacts'
@@ -124,6 +131,10 @@ export type ControlPlaneStatusDeps = {
   resolveRepairScheduleAttempts?: RepairScheduleAttemptResolver
   resolveMetricsSinkPressure?: () => EvidencePressureMetricsSinkStatus
   resolveGithubIngestPressure?: () => EvidencePressureGithubIngestStatus
+  resolveTerminalDebtEvidence?: (input: {
+    namespace: string
+    kube: KubeGateway
+  }) => Promise<TerminalDebtCompactionEvidence>
   resolveRouteProbe?: (input: { now: Date; namespace: string; service: string }) => Promise<FailureDomainRouteProbe>
   resolveFailureDomainKubernetesEvidence?: (input: {
     now: Date
@@ -647,6 +658,28 @@ export const buildControlPlaneStatus = async (
         torghutConsumerEvidence: torghutConsumerEvidence.status,
       })
     : null
+  const terminalDebtCompactionLedger = isTerminalDebtCompactionEnabled()
+    ? buildTerminalDebtCompactionLedger({
+        now,
+        namespace: options.namespace,
+        workflows,
+        watchReliability: watchReliabilityStatus,
+        controllerWitness,
+        stageCreditLedger,
+        readyTruthArbiter,
+        repairBidAdmission,
+        torghutConsumerEvidence: torghutConsumerEvidence.status,
+        ...(await (deps.resolveTerminalDebtEvidence ?? collectTerminalDebtEvidence)({
+          namespace: options.namespace,
+          kube: kubeGateway,
+        }).catch(
+          (error: unknown): TerminalDebtCompactionEvidence => ({
+            ...emptyTerminalDebtEvidence(),
+            collectionErrors: [`terminal debt evidence collection failed: ${normalizeMessage(error)}`],
+          }),
+        )),
+      })
+    : null
   const consumerEvidenceLeases = buildConsumerEvidenceLeaseSet({
     now,
     namespace: options.namespace,
@@ -712,6 +745,7 @@ export const buildControlPlaneStatus = async (
     ready_truth_arbiter: readyTruthArbiter,
     authority_provenance_settlement: authorityProvenanceSettlement,
     evidence_pressure_ledger: evidencePressureLedger,
+    terminal_debt_compaction_ledger: terminalDebtCompactionLedger,
     ready_action_exchange: readyActionExchange,
     repair_bid_admission: repairBidAdmission,
     repair_warrant_exchange: repairWarrantExchange,

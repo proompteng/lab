@@ -350,6 +350,8 @@ describe('ControlPlaneStatusPanel', () => {
     expect(normalizedHtml).toContain('Failure-domain leases')
     expect(normalizedHtml).toContain('Held actions: dispatch_normal')
     expect(normalizedHtml).toContain('Evidence pressure')
+    expect(normalizedHtml).toContain('Terminal debt')
+    expect(normalizedHtml).toContain('No terminal debt cohorts.')
     expect(normalizedHtml).toContain('Authority provenance')
     expect(normalizedHtml).toContain('Held authority actions: dispatch_normal=repair_only, deploy_widen=hold')
     expect(normalizedHtml).toContain('No active evidence pressure sources.')
