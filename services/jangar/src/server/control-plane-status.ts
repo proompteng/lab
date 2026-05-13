@@ -1,6 +1,6 @@
 import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
 
-import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/agents-controller'
+import { getAgentsControllerHealth } from '~/server/agents-controller'
 import { buildReconciledActionClocks } from '~/server/control-plane-action-clock'
 import { buildAuthorityProvenanceSettlement } from '~/server/control-plane-authority-provenance-settlement'
 import {
@@ -35,7 +35,14 @@ import {
 } from '~/server/control-plane-heartbeat-store'
 import { buildRuntimeAdmissionSnapshot, type RuntimeAdmissionSnapshot } from '~/server/control-plane-runtime-admission'
 import { checkDatabase } from '~/server/control-plane-db-status'
-import { buildControlPlaneDegradedComponents } from '~/server/control-plane-status-degraded-components'
+import {
+  buildAgentRunIngestionStatus,
+  buildServingProcessControllerStatus,
+} from '~/server/control-plane-serving-process-status'
+import {
+  buildControlPlaneDegradedComponents,
+  buildControlPlaneNamespaces,
+} from '~/server/control-plane-status-degraded-components'
 import {
   buildExecutionTrust,
   resolveExecutionTrustSummaryLimit,
@@ -60,6 +67,7 @@ import {
 } from '~/server/control-plane-projection-foreclosure-notary'
 import { buildReadyTruthArbiter } from '~/server/control-plane-ready-truth-arbiter'
 import { buildDefaultRepairBidAdmissionState } from '~/server/control-plane-repair-bid-admission'
+import { buildRolloutProofStatusFields } from '~/server/control-plane-rollout-proof-passport'
 import {
   buildRolloutHealth,
   maybeUseSplitTopologyControllerRollout,
@@ -77,9 +85,7 @@ import {
 } from '~/server/control-plane-torghut-consumer-evidence'
 import { attachStageClearanceCustodyToTorghutEvidence } from '~/server/control-plane-torghut-stage-custody'
 import type {
-  AgentRunIngestionStatus,
   ControlPlaneStatus,
-  ControllerStatus,
   DatabaseStatus,
   GrpcStatus,
   RuntimeAdapterStatus,
@@ -186,63 +192,6 @@ const defaultGetHeartbeat: HeartbeatResolver = async (input) => {
   }
 }
 
-const buildAgentRunIngestionStatus = (namespace: string, health: ControllerHealth): AgentRunIngestionStatus => {
-  const assessment = assessAgentRunIngestion(namespace, health)
-
-  return {
-    namespace,
-    status: assessment.status,
-    message: assessment.message,
-    last_watch_event_at: assessment.lastWatchEventAt,
-    last_resync_at: assessment.lastResyncAt,
-    untouched_run_count: assessment.untouchedRunCount,
-    oldest_untouched_age_seconds: assessment.oldestUntouchedAgeSeconds,
-  }
-}
-
-const buildServingProcessControllerStatus = (
-  namespace: string,
-  health: ControllerHealth,
-  now: Date,
-): ControllerStatus => {
-  const status =
-    health.started && health.crdsReady !== false
-      ? 'healthy'
-      : health.crdsReady === false
-        ? 'degraded'
-        : health.enabled
-          ? 'unknown'
-          : 'disabled'
-
-  return {
-    name: 'agents-controller',
-    enabled: health.enabled,
-    started: health.started,
-    scope_namespaces: Array.isArray(health.namespaces) ? health.namespaces : [],
-    crds_ready: health.crdsReady === true,
-    missing_crds: health.missingCrds,
-    last_checked_at: health.lastCheckedAt ?? '',
-    status,
-    message:
-      status === 'healthy'
-        ? 'serving process controller state is current'
-        : status === 'disabled'
-          ? 'serving process controller disabled'
-          : status === 'degraded'
-            ? 'serving process controller degraded'
-            : 'serving process controller not started',
-    authority: {
-      mode: 'local',
-      namespace,
-      source_deployment: '',
-      source_pod: '',
-      observed_at: now.toISOString(),
-      fresh: true,
-      message: 'serving process local controller state',
-    },
-  }
-}
-
 const resolveTemporalAdapter = async (): Promise<RuntimeAdapterStatus> => {
   try {
     const config = await loadTemporalConfig({
@@ -278,7 +227,6 @@ export const buildControlPlaneStatus = async (
   const agentsHealth = (deps.getAgentsControllerHealth ?? getAgentsControllerHealth)()
   const supportingHealth = (deps.getSupportingControllerHealth ?? getSupportingControllerHealth)()
   const orchestrationHealth = (deps.getOrchestrationControllerHealth ?? getOrchestrationControllerHealth)()
-
   const [agentsHeartbeat, supportingHeartbeat, orchestrationHeartbeat, workflowRuntimeHeartbeat] = await Promise.all([
     heartbeatResolver({ namespace: options.namespace, component: 'agents-controller', workloadRole: 'controllers' }),
     heartbeatResolver({
@@ -293,7 +241,6 @@ export const buildControlPlaneStatus = async (
     }),
     heartbeatResolver({ namespace: options.namespace, component: 'workflow-runtime', workloadRole: 'controllers' }),
   ])
-
   const agentsController = buildControllerStatusFromHeartbeat({
     name: 'agents-controller',
     health: agentsHealth,
@@ -344,7 +291,6 @@ export const buildControlPlaneStatus = async (
       authority: buildLocalControlPlaneAuthority('agents'),
     },
   ]
-
   const database = await (deps.checkDatabase ?? checkDatabase)()
   const grpcStatus = options.grpc
   const watchReliability = (deps.getWatchReliabilitySummary ?? getWatchReliabilitySummary)()
@@ -486,7 +432,6 @@ export const buildControlPlaneStatus = async (
     watchReliability: watchReliabilityStatus,
     empiricalServices,
   })
-
   const isWorkflowsDataUnknown = workflows.data_confidence === 'unknown'
   const isWorkflowsDataDegraded = workflows.data_confidence === 'degraded'
   const isWorkflowsDataUnavailable = isWorkflowsDataUnknown || isWorkflowsDataDegraded
@@ -647,6 +592,20 @@ export const buildControlPlaneStatus = async (
     torghutConsumerEvidence: torghutConsumerEvidence.status,
     projectionForeclosureNotary,
   })
+  const rolloutProofStatusFields = buildRolloutProofStatusFields({
+    now,
+    namespace: options.namespace,
+    sourceRolloutTruthExchange,
+    sourceServingContractVerdictExchange,
+    database,
+    rolloutHealth,
+    controllerWitness,
+    readyTruthArbiter,
+    workflows,
+    runtimeAdapters: effectiveRuntimeAdapters,
+    kubernetesEvidence: failureDomainKubernetesEvidence,
+    stageCreditLedger,
+  })
   const authorityProvenanceSettlement = buildAuthorityProvenanceSettlement({
     now,
     namespace: options.namespace,
@@ -767,6 +726,7 @@ export const buildControlPlaneStatus = async (
     projection_foreclosure_notary: projectionForeclosureNotary,
     stage_credit_ledger: stageCreditLedger,
     ready_truth_arbiter: readyTruthArbiter,
+    ...rolloutProofStatusFields,
     authority_provenance_settlement: authorityProvenanceSettlement,
     evidence_pressure_ledger: evidencePressureLedger,
     terminal_debt_compaction_ledger: terminalDebtCompactionLedger,
@@ -779,12 +739,6 @@ export const buildControlPlaneStatus = async (
     route_stability_escrow: routeStabilityEscrow,
     empirical_services: empiricalServices,
     torghut_consumer_evidence: torghutConsumerEvidence.status,
-    namespaces: [
-      {
-        namespace: options.namespace,
-        status: degradedComponents.length === 0 ? 'healthy' : 'degraded',
-        degraded_components: degradedComponents,
-      },
-    ],
+    namespaces: buildControlPlaneNamespaces(options.namespace, degradedComponents),
   }
 }

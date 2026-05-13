@@ -1818,6 +1818,84 @@ export type ReadyTruthArbiter = {
   rollback_target: string
 }
 
+export type RolloutProofPassportStatus = 'current' | 'collecting' | 'stale' | 'degraded' | 'contradicted'
+
+export type RolloutProofPassport = {
+  schema_version: 'jangar.rollout-proof-passport.v1'
+  passport_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  governing_design_refs: string[]
+  source_head_sha: string | null
+  source_ci_run_id: string | null
+  source_ci_conclusion: string | null
+  manifest_sha: string | null
+  manifest_image_digest: string | null
+  registry_image_digest: string | null
+  argo_sync_revision: string | null
+  argo_health: ControlPlaneRolloutHealth['status']
+  workload_ready: boolean
+  serving_revision: string | null
+  serving_build_commit: string | null
+  serving_image_digest: string | null
+  database_projection_ref: string
+  database_status: DatabaseStatus['status']
+  controller_witness_ref: string
+  controller_witness_decision: ControlPlaneControllerWitnessQuorum['decision']
+  ready_truth_ref: string
+  serving_readiness: ReadyTruthServingReadiness
+  material_launch_decision: ReadyTruthMaterialReadiness
+  status: RolloutProofPassportStatus
+  material_action_decision: ReadyTruthMaterialReadiness
+  reason_codes: string[]
+  evidence_refs: string[]
+  value_gates: string[]
+  rollback_target: string
+}
+
+export type RunnerCapacityFutureStatus = 'available' | 'constrained' | 'unavailable' | 'unknown'
+
+export type RunnerCapacityFuture = {
+  schema_version: 'jangar.runner-capacity-future.v1'
+  future_id: string
+  generated_at: string
+  expires_at: string
+  namespace: string
+  governing_design_refs: string[]
+  stage: StageClearanceStage
+  action_class: ActionSloBudgetActionClass
+  launch_window: '15m'
+  capacity_state: RunnerCapacityFutureStatus
+  max_parallelism: number
+  max_runtime_seconds: number | null
+  recent_failure_reasons: string[]
+  reason_codes: string[]
+  evidence_refs: string[]
+  value_gates: string[]
+  rollback_target: string
+}
+
+export type StageLaunchTicketDecision = 'allow' | 'hold' | 'block'
+
+export type StageLaunchTicket = {
+  schema_version: 'jangar.stage-launch-ticket.v1'
+  ticket_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  governing_design_refs: string[]
+  stage: StageClearanceStage
+  action_class: ActionSloBudgetActionClass
+  rollout_proof_passport_ref: string
+  runner_capacity_future_ref: string
+  decision: StageLaunchTicketDecision
+  reason_codes: string[]
+  evidence_refs: string[]
+  value_gates: string[]
+  rollback_target: string
+}
+
 export type AuthorityProvenanceSettlementMode = 'observe' | 'shadow' | 'hold' | 'enforce'
 
 export type AuthorityProvenanceSettlementState =
@@ -2236,6 +2314,9 @@ export type ControlPlaneStatus = {
   projection_foreclosure_notary: ProjectionForeclosureNotary | null
   stage_credit_ledger: StageCreditLedger | null
   ready_truth_arbiter: ReadyTruthArbiter
+  rollout_proof_passport: RolloutProofPassport
+  runner_capacity_futures: RunnerCapacityFuture[]
+  stage_launch_tickets: StageLaunchTicket[]
   authority_provenance_settlement: AuthorityProvenanceSettlement
   evidence_pressure_ledger: EvidencePressureLedger | null
   terminal_debt_compaction_ledger: TerminalDebtCompactionLedger | null

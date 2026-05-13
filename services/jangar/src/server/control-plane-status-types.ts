@@ -29,12 +29,15 @@ import type {
   RepairBidAdmissionState,
   RepairWarrantExchange,
   RouteStabilityEscrow,
+  RolloutProofPassport,
+  RunnerCapacityFuture,
   RuntimeProofCellStatus,
   RuntimeKitStatus,
   SourceServingContractVerdictExchange,
   SourceRolloutTruthExchange,
   StageClearancePacket,
   StageCreditLedger,
+  StageLaunchTicket,
   TerminalDebtCompactionLedger,
   WorkflowsReliabilityStatus,
 } from '~/data/agents-control-plane'
@@ -196,6 +199,9 @@ export type ControlPlaneStatus = {
   projection_foreclosure_notary: ProjectionForeclosureNotary | null
   stage_credit_ledger: StageCreditLedger | null
   ready_truth_arbiter: ReadyTruthArbiter
+  rollout_proof_passport: RolloutProofPassport
+  runner_capacity_futures: RunnerCapacityFuture[]
+  stage_launch_tickets: StageLaunchTicket[]
   authority_provenance_settlement: AuthorityProvenanceSettlement
   evidence_pressure_ledger: EvidencePressureLedger | null
   terminal_debt_compaction_ledger: TerminalDebtCompactionLedger | null

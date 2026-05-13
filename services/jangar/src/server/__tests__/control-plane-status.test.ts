@@ -10,6 +10,7 @@ import { CLEARANCE_MARKET_DESIGN_ARTIFACT } from '~/server/control-plane-clearan
 import { CONSUMER_EVIDENCE_LEASES_DESIGN_ARTIFACT } from '~/server/control-plane-consumer-evidence-leases'
 import { EVIDENCE_PRESSURE_LEDGER_DESIGN_ARTIFACT } from '~/server/control-plane-evidence-pressure-ledger'
 import { READY_TRUTH_ARBITER_DESIGN_ARTIFACT } from '~/server/control-plane-ready-truth-arbiter'
+import { ROLLOUT_PROOF_PASSPORT_DESIGN_ARTIFACT } from '~/server/control-plane-rollout-proof-passport'
 import { SOURCE_SERVING_CONTRACT_VERDICT_DESIGN_ARTIFACT } from '~/server/control-plane-source-serving-contract-verdict'
 import { STAGE_CREDIT_LEDGER_DESIGN_ARTIFACT } from '~/server/control-plane-stage-credit-ledger'
 import { TERMINAL_DEBT_COMPACTION_DESIGN_ARTIFACT } from '~/server/control-plane-terminal-debt-compaction'
@@ -1111,6 +1112,41 @@ describe('control-plane status', () => {
       allowed_action_classes: expect.arrayContaining(['serve_readonly', 'torghut_observe']),
       held_action_classes: expect.arrayContaining(['dispatch_normal', 'deploy_widen', 'merge_ready']),
     })
+    expect(status.rollout_proof_passport).toMatchObject({
+      schema_version: 'jangar.rollout-proof-passport.v1',
+      governing_design_refs: expect.arrayContaining([ROLLOUT_PROOF_PASSPORT_DESIGN_ARTIFACT]),
+      status: 'collecting',
+      serving_readiness: 'ok',
+      material_action_decision: 'hold',
+      reason_codes: expect.arrayContaining([
+        'source_ci_retention_receipt_missing',
+        'manifest_image_digest_missing',
+        'registry_image_digest_missing',
+      ]),
+    })
+    expect(status.runner_capacity_futures).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          schema_version: 'jangar.runner-capacity-future.v1',
+          stage: 'plan',
+          action_class: 'dispatch_normal',
+          capacity_state: 'constrained',
+          reason_codes: expect.arrayContaining(['runner_capacity_image_digest_missing']),
+          value_gates: expect.arrayContaining(['failed_agentrun_rate', 'manual_intervention_count']),
+        }),
+      ]),
+    )
+    expect(status.stage_launch_tickets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          schema_version: 'jangar.stage-launch-ticket.v1',
+          stage: 'plan',
+          action_class: 'dispatch_normal',
+          decision: 'hold',
+          rollout_proof_passport_ref: status.rollout_proof_passport.passport_id,
+        }),
+      ]),
+    )
     expect(status.authority_provenance_settlement).toMatchObject({
       schema_version: 'jangar.authority-provenance-settlement.v1',
       evidence_mode: 'shadow',

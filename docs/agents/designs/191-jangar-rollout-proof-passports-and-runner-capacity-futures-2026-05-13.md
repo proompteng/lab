@@ -475,6 +475,20 @@ Verify stage is not complete until these runtime checks are recorded:
 5. Enable implement and verify normal dispatch after failure counts and scheduler predictions match.
 6. Promote deployer runbooks to require passport current and capacity available before merge-ready.
 
+Implementation note: observe-mode status reducer (2026-05-13).
+
+- `services/jangar/src/server/control-plane-rollout-proof-passport.ts` now emits a read-only
+  `rollout_proof_passport` from source rollout truth, source-serving verdicts, database status, controller witness,
+  rollout health, and ready truth.
+- The passport reports `current`, `collecting`, `stale`, `degraded`, or `contradicted`; missing source CI, manifest
+  digest, or registry digest proof holds material launch evidence without changing serving readiness.
+- The same reducer emits `runner_capacity_futures` for normal swarm dispatch lanes using recent scheduling events,
+  workflow timeout evidence, runtime adapter health, stage credit, and passport image-digest state.
+- `stage_launch_tickets` bind the passport and runner future for handoff evidence only. This implementation does not
+  change scheduler admission or deployer cutover behavior.
+- Rollback is consumer-side: keep existing ready truth, stage credit, runtime-admission passports, and source-serving
+  verdicts as authority while ignoring the new status fields or keeping downstream consumers in observe mode.
+
 ## Rollback Plan
 
 Rollback is configuration-first:

@@ -74,3 +74,11 @@ export const buildControlPlaneDegradedComponents = ({
     ...runtimeKits.filter((kit) => kit.decision !== 'healthy').map((kit) => `runtime_kit:${kit.kit_class}`),
   ]
 }
+
+export const buildControlPlaneNamespaces = (namespace: string, degradedComponents: string[]) => [
+  {
+    namespace,
+    status: degradedComponents.length === 0 ? ('healthy' as const) : ('degraded' as const),
+    degraded_components: degradedComponents,
+  },
+]
