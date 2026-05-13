@@ -264,10 +264,25 @@ export const countConsecutiveProviderCapacityFailures = (resources: Record<strin
   return failures
 }
 
+export const countConsecutiveBlockingFailures = (resources: Record<string, unknown>[]) => {
+  const sorted = sortByMostRecentRun(resources)
+  let failures = 0
+  for (const resource of sorted) {
+    if (isIdempotencyDuplicateRun(resource)) continue
+    const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
+    if (!phase) continue
+    if (TERMINAL_FAILURE_PHASES.has(phase)) {
+      if (isProviderCapacityFailureRun(resource)) continue
+      failures += 1
+      continue
+    }
+    if (TERMINAL_SUCCESS_PHASES.has(phase) || ACTIVE_PHASES.has(phase)) break
+  }
+  return failures
+}
+
 export const resolveConsecutiveFailureFreezeReason = (resources: Record<string, unknown>[], threshold: number) => {
-  // Provider quota exhaustion is deterministic during the reset window; retrying immediately only burns schedule slots.
-  if (countConsecutiveProviderCapacityFailures(resources) >= 1) return 'ProviderCapacityExhausted'
-  if (countConsecutiveFailures(resources) >= threshold) return 'ConsecutiveFailures'
+  if (countConsecutiveBlockingFailures(resources) >= threshold) return 'ConsecutiveFailures'
   return null
 }
 

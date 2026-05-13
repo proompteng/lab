@@ -200,12 +200,7 @@ const splitSwarmFreezeReasons = (reason: string | null | undefined) =>
 const isBlockingSwarmFreezeReason = (reason: string | null | undefined) => {
   const reasons = splitSwarmFreezeReasons(reason)
   if (reasons.length === 0) return true
-  return reasons.some((entry) => entry !== 'StageStaleness')
-}
-
-const isOnlyStageStalenessFreezeReason = (reason: string | null | undefined) => {
-  const reasons = splitSwarmFreezeReasons(reason)
-  return reasons.length > 0 && reasons.every((entry) => entry === 'StageStaleness')
+  return reasons.some((entry) => entry !== 'StageStaleness' && entry !== 'ProviderCapacityExhausted')
 }
 
 type SwarmLaunchAdmission = {
@@ -2056,7 +2051,7 @@ const reconcileSwarm = async (
   const freezeTriggerReasons: string[] = []
   if (
     freezeActive &&
-    isOnlyStageStalenessFreezeReason(freezeReason) &&
+    !isBlockingSwarmFreezeReason(freezeReason) &&
     staleStageSignals.length === 0 &&
     !failureFreezeReason
   ) {
