@@ -12,6 +12,7 @@ import { EVIDENCE_PRESSURE_LEDGER_DESIGN_ARTIFACT } from '~/server/control-plane
 import { READY_TRUTH_ARBITER_DESIGN_ARTIFACT } from '~/server/control-plane-ready-truth-arbiter'
 import { SOURCE_SERVING_CONTRACT_VERDICT_DESIGN_ARTIFACT } from '~/server/control-plane-source-serving-contract-verdict'
 import { STAGE_CREDIT_LEDGER_DESIGN_ARTIFACT } from '~/server/control-plane-stage-credit-ledger'
+import { TERMINAL_DEBT_COMPACTION_DESIGN_ARTIFACT } from '~/server/control-plane-terminal-debt-compaction'
 import * as kubeGatewayModule from '~/server/kube-gateway'
 import type {
   ControlPlaneHeartbeatRow,
@@ -35,6 +36,7 @@ import { getRegisteredMigrationNames } from '~/server/kysely-migrations'
 
 const createTestKubeGateway = (overrides: Partial<KubeGateway> = {}): KubeGateway => ({
   listDeployments: vi.fn(async () => []),
+  listAgentRuns: vi.fn(async () => []),
   listJobs: vi.fn(async () => []),
   listPods: vi.fn(async () => []),
   listEvents: vi.fn(async () => []),
@@ -1149,6 +1151,21 @@ describe('control-plane status', () => {
       },
       scheduler_handoff: {
         status: 'allow',
+      },
+    })
+    expect(status.terminal_debt_compaction_ledger).toMatchObject({
+      schema_version: 'jangar.terminal-debt-compaction-ledger.v1',
+      evidence_mode: 'observe',
+      governing_design_refs: expect.arrayContaining([TERMINAL_DEBT_COMPACTION_DESIGN_ARTIFACT]),
+      active_debt_summary: {
+        count: 0,
+      },
+      retained_audit_summary: {
+        count: 0,
+      },
+      scheduler_contract: {
+        status: 'allow',
+        would_hold_action_classes: [],
       },
     })
     expect(status.torghut_action_slo_budgets).toEqual(

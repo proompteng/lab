@@ -34,6 +34,7 @@ import type {
   SourceRolloutTruthExchange,
   StageClearancePacket,
   StageCreditLedger,
+  TerminalDebtCompactionLedger,
   WorkflowsReliabilityStatus,
 } from '~/data/agents-control-plane'
 
@@ -195,6 +196,7 @@ export type ControlPlaneStatus = {
   ready_truth_arbiter: ReadyTruthArbiter
   authority_provenance_settlement: AuthorityProvenanceSettlement
   evidence_pressure_ledger: EvidencePressureLedger | null
+  terminal_debt_compaction_ledger: TerminalDebtCompactionLedger | null
   ready_action_exchange: ReadyActionExchange
   repair_bid_admission: RepairBidAdmissionState
   repair_warrant_exchange: RepairWarrantExchange

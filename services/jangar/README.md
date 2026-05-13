@@ -421,6 +421,17 @@ runners, but it already names when `dispatch_normal`, `deploy_widen`, and `merge
 `JANGAR_EVIDENCE_PRESSURE_LEDGER_ENABLED=false` and continue relying on stage credit, ready-truth, clearance market,
 source-serving verdicts, and runtime-admission passports.
 
+Control-plane status also emits `terminal_debt_compaction_ledger` from
+`docs/agents/designs/189-jangar-terminal-debt-compaction-and-repair-outcome-escrow-2026-05-13.md`. The first rollout is
+observe-only: failed AgentRuns, Jobs, and Pods are grouped into active debt cohorts or retained audit cohorts using the
+current workflow window. A clean 15 minute workflow window keeps old failed objects visible for handoff evidence without
+letting them block deploy widening or merge-ready claims by themselves; fresh failures or collection errors remain
+active debt and would hold `dispatch_normal`, `deploy_widen`, and `merge_ready`.
+
+Rollback is `JANGAR_TERMINAL_DEBT_COMPACTION_MODE=observe`; if the payload itself regresses status generation, set
+`JANGAR_TERMINAL_DEBT_COMPACTION_ENABLED=false`. The reducer does not mutate Kubernetes objects, database rows, or
+schedule admission in this milestone.
+
 ## Lease reconciliation action clocks
 
 Control-plane status projects shadow `reconciled_action_clocks` from the contract in

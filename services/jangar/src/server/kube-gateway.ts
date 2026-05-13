@@ -61,6 +61,24 @@ export type KubeGatewayJob = {
   }
 }
 
+export type KubeGatewayAgentRun = {
+  metadata: KubeGatewayMetadata
+  spec: {
+    parameters: Record<string, string>
+    agentRefName: string | null
+    implementationSpecRefName: string | null
+    runtimeType: string | null
+  }
+  status: {
+    phase: string | null
+    reason: string | null
+    message: string | null
+    startedAt: string | null
+    finishedAt: string | null
+    conditions: KubeGatewayCondition[]
+  }
+}
+
 export type KubeGatewayContainerState = {
   waiting?: {
     reason: string | null
@@ -115,6 +133,7 @@ export type KubeGatewayResourceAccess = 'ok' | 'missing' | 'forbidden'
 
 export type KubeGateway = {
   listDeployments: (namespace: string) => Promise<KubeGatewayDeployment[]>
+  listAgentRuns: (namespace: string, labelSelector?: string) => Promise<KubeGatewayAgentRun[]>
   listJobs: (namespace: string, labelSelector?: string) => Promise<KubeGatewayJob[]>
   listPods: (namespace: string, labelSelector?: string) => Promise<KubeGatewayPod[]>
   listEvents: (namespace: string, fieldSelector?: string) => Promise<KubeGatewayEvent[]>
@@ -267,6 +286,17 @@ const parseContainerStatuses = (value: unknown) =>
     })
     .filter((entry): entry is KubeGatewayContainerStatus => entry !== null)
 
+const parseStringMap = (value: unknown) => {
+  const record = asRecord(value)
+  if (!record) return {}
+
+  return Object.fromEntries(
+    Object.entries(record)
+      .map(([key, candidate]) => [key, asString(candidate)] as const)
+      .filter((entry): entry is [string, string] => entry[1] !== null),
+  )
+}
+
 const parseInvolvedObject = (value: unknown) => {
   const record = asRecord(value) ?? {}
   return {
@@ -312,6 +342,44 @@ export const createKubeGateway = (client: KubernetesClient = createKubernetesCli
           }
         })
         .filter((entry): entry is KubeGatewayDeployment => entry !== null)
+    }),
+  listAgentRuns: async (namespace, labelSelector) =>
+    wrapTransport('kube agentruns list failed', async () => {
+      const items = parseListItems(
+        await client.list(RESOURCE_MAP.AgentRun, namespace, labelSelector),
+        'kube agentruns list',
+      )
+
+      return items
+        .map((item): KubeGatewayAgentRun | null => {
+          const metadata = parseMetadata(item.metadata)
+          if (!metadata) return null
+
+          const spec = asRecord(item.spec) ?? {}
+          const status = asRecord(item.status) ?? {}
+          const agentRef = asRecord(spec.agentRef)
+          const implementationSpecRef = asRecord(spec.implementationSpecRef)
+          const runtime = asRecord(spec.runtime)
+
+          return {
+            metadata,
+            spec: {
+              parameters: parseStringMap(spec.parameters),
+              agentRefName: asString(agentRef?.name),
+              implementationSpecRefName: asString(implementationSpecRef?.name),
+              runtimeType: asString(runtime?.type),
+            },
+            status: {
+              phase: asString(status.phase),
+              reason: asString(status.reason),
+              message: asString(status.message),
+              startedAt: asString(status.startedAt),
+              finishedAt: asString(status.finishedAt),
+              conditions: parseConditions(status.conditions),
+            },
+          }
+        })
+        .filter((entry): entry is KubeGatewayAgentRun => entry !== null)
     }),
   listJobs: async (namespace, labelSelector) =>
     wrapTransport('kube jobs list failed', async () => {

@@ -1813,6 +1813,129 @@ export type EvidencePressureLedger = {
   rollback_target: string
 }
 
+export type TerminalDebtCompactionMode = 'observe' | 'shadow' | 'hold' | 'enforce'
+
+export type TerminalDebtCohortClass =
+  | 'agentrun'
+  | 'job'
+  | 'pod'
+  | 'workflow_step'
+  | 'torghut_repair_lot'
+  | 'source_ingest'
+  | 'metrics_sink'
+
+export type TerminalDebtCohortState =
+  | 'active'
+  | 'pending_settlement'
+  | 'settled'
+  | 'retained_audit'
+  | 'suppressed_duplicate'
+
+export type TerminalDebtGateEffect = 'allow' | 'hold' | 'block' | 'audit_only'
+
+export type TerminalDebtDecision = 'allow' | 'repair_only' | 'hold' | 'block'
+
+export type TerminalDebtSourceWindow = {
+  source_class: TerminalDebtCohortClass
+  window_minutes: number
+  observed_count: number
+  active_debt_count: number
+  retained_audit_count: number
+  collection_error: string | null
+  evidence_refs: string[]
+}
+
+export type TerminalDebtSummaryByClass = {
+  class: TerminalDebtCohortClass
+  count: number
+}
+
+export type TerminalDebtSummary = {
+  count: number
+  by_class: TerminalDebtSummaryByClass[]
+  reason_codes: string[]
+  representative_refs: string[]
+  value_gates: string[]
+}
+
+export type TerminalDebtCohort = {
+  cohort_id: string
+  class: TerminalDebtCohortClass
+  stage: StageClearanceStage | 'unknown'
+  action_class: ActionSloBudgetActionClass | 'unknown'
+  state: TerminalDebtCohortState
+  first_seen_at: string
+  last_seen_at: string
+  expires_active_at: string
+  retained_until: string
+  count: number
+  reason_codes: string[]
+  representative_refs: string[]
+  compacted_artifact_ref: string
+  active_gate_effect: TerminalDebtGateEffect
+  value_gates: string[]
+}
+
+export type RepairOutcomeEscrow = {
+  escrow_id: string
+  dispatch_ticket_id: string | null
+  repair_lot_id: string | null
+  expected_output_receipt: string | null
+  expected_reason_code_delta: string[]
+  launched_agentrun_ref: string | null
+  terminal_state: 'pending' | 'succeeded' | 'failed' | 'timed_out' | 'superseded'
+  outcome: 'pending' | 'retired_reason_codes' | 'no_delta' | 'degraded' | 'invalid_receipt'
+  retired_reason_codes: string[]
+  preserved_reason_codes: string[]
+  next_action: 'release_credit' | 'burn_credit' | 'roll_forward' | 'hold'
+}
+
+export type TerminalDebtSchedulerContract = {
+  status: TerminalDebtDecision
+  mode: TerminalDebtCompactionMode
+  ledger_ref: string
+  active_debt_count: number
+  retained_audit_count: number
+  would_hold_action_classes: ActionSloBudgetActionClass[]
+  reason_codes: string[]
+}
+
+export type TerminalDebtDeployerContract = {
+  status: TerminalDebtDecision
+  ledger_ref: string
+  active_debt_count: number
+  retained_audit_count: number
+  merge_ready_action: TerminalDebtDecision
+  deploy_widen_action: TerminalDebtDecision
+  reason_codes: string[]
+  evidence_refs: string[]
+}
+
+export type TerminalDebtRollbackContract = {
+  mode_target: string
+  disable_target: string
+  safe_without_database_migration: boolean
+  notes: string[]
+}
+
+export type TerminalDebtCompactionLedger = {
+  schema_version: 'jangar.terminal-debt-compaction-ledger.v1'
+  ledger_id: string
+  namespace: string
+  generated_at: string
+  fresh_until: string
+  governing_design_refs: string[]
+  evidence_mode: TerminalDebtCompactionMode
+  source_windows: TerminalDebtSourceWindow[]
+  active_debt_summary: TerminalDebtSummary
+  retained_audit_summary: TerminalDebtSummary
+  cohorts: TerminalDebtCohort[]
+  repair_outcome_escrows: RepairOutcomeEscrow[]
+  scheduler_contract: TerminalDebtSchedulerContract
+  deployer_contract: TerminalDebtDeployerContract
+  rollback_contract: TerminalDebtRollbackContract
+}
+
 export type DeploymentRolloutStatus = {
   name: string
   namespace: string
@@ -1934,6 +2057,7 @@ export type ControlPlaneStatus = {
   ready_truth_arbiter: ReadyTruthArbiter
   authority_provenance_settlement: AuthorityProvenanceSettlement
   evidence_pressure_ledger: EvidencePressureLedger | null
+  terminal_debt_compaction_ledger: TerminalDebtCompactionLedger | null
   ready_action_exchange: ReadyActionExchange
   repair_bid_admission: RepairBidAdmissionState
   repair_warrant_exchange: RepairWarrantExchange
