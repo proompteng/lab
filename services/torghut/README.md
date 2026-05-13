@@ -269,6 +269,12 @@ Testing rules for the trading core:
   warrant keeps `max_notional=0`; stale or split dependencies produce zero-notional repair packets mapped to one value
   gate and one expected output receipt. Active-session TCA must also publish a slippage-quality verdict inside the
   route guardrail, with the doc 188 `8` bps average absolute slippage limit as the conservative fallback.
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/consumer-evidence` now expose the
+  May 13 doc 191 `torghut.source-serving-repair-receipt-ledger.v1` ledger. It binds repair and routeability evidence
+  to the source commit, serving build commit, serving image digest, manifest image digest, and required contract
+  canaries. Missing or mismatched source-serving proof keeps the ledger in repair-only zero-notional mode; the Torghut
+  release manifest updater now writes `TORGHUT_IMAGE_DIGEST` into live and sim Knative env so runtime payloads can
+  report the promoted digest.
 - The simple direct-submit lane is no longer an authority bypass in live mode. Before submitting to Alpaca it evaluates
   the same live-submission gate as the scheduler path and persists the gate payload in decision metadata when a
   submission is blocked. Paper-mode simple execution remains unchanged.

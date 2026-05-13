@@ -301,6 +301,8 @@ spec:
               value: v0.569.1-170-gd28fd2509
             - name: TORGHUT_COMMIT
               value: d28fd2509af33fd8b751f8222ca41dd172384c00
+            - name: TORGHUT_IMAGE_DIGEST
+              value: sha256:2c3f6bd7af6058ccad135a26740bdedb6cd3b9c9222af1d2dd7ccb6d6cb3bd51
           livenessProbe:
             httpGet:
               path: /healthz

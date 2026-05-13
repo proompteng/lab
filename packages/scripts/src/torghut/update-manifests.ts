@@ -120,6 +120,20 @@ const upsertKnativeRolloutTimestamp = (source: string, rolloutTimestamp: string)
   )
 }
 
+const upsertKnativeEnvValue = (source: string, envName: string, value: string): string => {
+  const envPattern = new RegExp(`(- name:\\s*${escapeRegex(envName)}\\s*\\n\\s*value:\\s*)([^\\n]+)`)
+  if (envPattern.test(source)) {
+    return source.replace(envPattern, `$1${value}`)
+  }
+
+  const commitEnvPattern = /(- name:\s*TORGHUT_COMMIT\s*\n\s*value:\s*[^\n]+\n)/
+  if (!commitEnvPattern.test(source)) {
+    throw new Error(`Unable to locate TORGHUT_COMMIT env anchor for ${envName} in torghut manifest`)
+  }
+
+  return source.replace(commitEnvPattern, `$1            - name: ${envName}\n              value: ${value}\n`)
+}
+
 const updateTorghutManifest = (options: UpdateManifestsOptions) => {
   const manifestPath = resolvePath(options.manifestPath ?? defaultManifestPath)
   const source = readFileSync(manifestPath, 'utf8')
@@ -135,6 +149,7 @@ const updateTorghutManifest = (options: UpdateManifestsOptions) => {
   )
   updated = replaceIfPresent(updated, /(- name:\s*TORGHUT_VERSION\s*\n\s*value:\s*)([^\n]+)/, `$1${options.version}`)
   updated = replaceIfPresent(updated, /(- name:\s*TORGHUT_COMMIT\s*\n\s*value:\s*)([^\n]+)/, `$1${options.commit}`)
+  updated = upsertKnativeEnvValue(updated, 'TORGHUT_IMAGE_DIGEST', options.digest)
   updated = updated.replace(/^\s*serving\.knative\.dev\/lastModifier:\s*[^\n]+\n/gm, '')
 
   if (updated !== source) {

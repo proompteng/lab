@@ -1096,6 +1096,26 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(warrant["accepted_routeable_candidate_count"], 0)
         self.assertEqual(warrant["max_notional"], "0")
+        source_serving = payload["source_serving_repair_receipt_ledger"]
+        self.assertEqual(
+            source_serving["schema_version"],
+            "torghut.source-serving-repair-receipt-ledger.v1",
+        )
+        self.assertEqual(source_serving["max_notional"], "0")
+        self.assertIn(
+            source_serving["source_serving_state"],
+            {
+                "converged",
+                "digest_unknown",
+                "contract_missing",
+                "source_ahead",
+                "unknown",
+            },
+        )
+        self.assertEqual(
+            source_serving["route_warrant_ref"],
+            warrant["warrant_id"],
+        )
         frontier = payload["profit_freshness_frontier"]
         self.assertEqual(
             frontier["schema_version"],
@@ -1596,6 +1616,25 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             health_warrant["schema_version"],
             status_warrant["schema_version"],
+        )
+        status_source_serving = status_response.json()[
+            "source_serving_repair_receipt_ledger"
+        ]
+        health_source_serving = health_response.json()[
+            "source_serving_repair_receipt_ledger"
+        ]
+        self.assertEqual(
+            status_source_serving["schema_version"],
+            "torghut.source-serving-repair-receipt-ledger.v1",
+        )
+        self.assertEqual(status_source_serving["max_notional"], "0")
+        self.assertEqual(
+            status_source_serving["route_warrant_ref"],
+            status_warrant["warrant_id"],
+        )
+        self.assertEqual(
+            health_source_serving["schema_version"],
+            status_source_serving["schema_version"],
         )
         status_frontier = status_response.json()["profit_freshness_frontier"]
         health_frontier = health_response.json()["profit_freshness_frontier"]
