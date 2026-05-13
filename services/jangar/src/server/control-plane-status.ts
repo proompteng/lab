@@ -17,6 +17,7 @@ import {
 } from '~/server/control-plane-heartbeat-store'
 import { buildRuntimeAdmissionSnapshot, type RuntimeAdmissionSnapshot } from '~/server/control-plane-runtime-admission'
 import { checkDatabase } from '~/server/control-plane-db-status'
+import { buildControlPlaneDegradedComponents } from '~/server/control-plane-status-degraded-components'
 import {
   buildExecutionTrust,
   resolveExecutionTrustSummaryLimit,
@@ -717,32 +718,20 @@ export const buildControlPlaneStatus = async (
     empiricalServices,
   })
 
-  const degradedComponents = [
-    ...effectiveControllers
-      .filter(
-        (controller) =>
-          controller.status === 'degraded' || controller.status === 'disabled' || controller.status === 'unknown',
-      )
-      .map((controller) => controller.name),
-    ...effectiveRuntimeAdapters
-      .filter((adapter) => adapter.name !== 'custom' && (adapter.status === 'degraded' || adapter.status === 'unknown'))
-      .map((adapter) => `runtime:${adapter.name}`),
-    ...(database.status === 'healthy' ? [] : ['database']),
-    ...(grpcStatus.enabled && grpcStatus.status !== 'healthy' ? ['grpc'] : []),
-    ...(watchReliability.status === 'degraded' ? ['watch_reliability'] : []),
-    ...(agentRunIngestion.status === 'degraded' ? ['agentrun_ingestion'] : []),
-    ...(isWorkflowsDataUnavailable || isWorkflowsWarning || isWorkflowsDegraded ? ['workflows'] : []),
-    ...(isWorkflowsDataUnknown || isWorkflowsDegraded ? ['runtime:workflows'] : []),
-    ...(rolloutHealth.status === 'degraded' ? ['rollout_health'] : []),
-    ...(empiricalServices.forecast.status === 'degraded' ? ['empirical:forecast'] : []),
-    ...(empiricalServices.lean.status === 'degraded' ? ['empirical:lean'] : []),
-    ...(empiricalServices.jobs.status === 'degraded' ? ['empirical:jobs'] : []),
-    ...(torghutConsumerEvidence.status.status === 'unavailable' ? ['torghut_consumer_evidence'] : []),
-    ...(executionTrust.executionTrust.status !== 'healthy' ? ['execution_trust'] : []),
-    ...runtimeAdmission.runtimeKits
-      .filter((kit) => kit.decision !== 'healthy')
-      .map((kit) => `runtime_kit:${kit.kit_class}`),
-  ]
+  const degradedComponents = buildControlPlaneDegradedComponents({
+    agentRunIngestion,
+    database,
+    effectiveControllers,
+    effectiveRuntimeAdapters,
+    empiricalServices,
+    executionTrust,
+    grpcStatus,
+    rolloutHealth,
+    runtimeKits: runtimeAdmission.runtimeKits,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+    watchReliabilityStatus,
+    workflowFlags: [isWorkflowsDataUnavailable, isWorkflowsWarning, isWorkflowsDegraded, isWorkflowsDataUnknown],
+  })
 
   return {
     service,
