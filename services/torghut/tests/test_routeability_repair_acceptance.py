@@ -184,6 +184,28 @@ def test_quant_latest_metrics_do_not_accept_routeability_without_scoped_stages()
     assert ledger["accepted_routeable_candidate_count"] == 0
 
 
+def test_optional_unconfigured_quant_health_does_not_create_routeability_lot() -> None:
+    ledger = _ledger(
+        quant_evidence={
+            "required": False,
+            "ok": True,
+            "status": "not_required",
+            "reason": "quant_health_not_configured",
+            "blocking_reasons": [],
+            "informational_reasons": ["quant_health_not_configured"],
+            "source_url": None,
+        }
+    )
+
+    quant_lot = _lot(ledger, "quant_scoped_stage_repair")
+
+    assert quant_lot["current_state"] == "accepted"
+    assert quant_lot["blocking_reason_codes"] == []
+    assert (
+        "quant_health_not_configured" not in ledger["aggregate_blocking_reason_codes"]
+    )
+
+
 def test_stale_market_context_domains_keep_acceptance_unsettled() -> None:
     ledger = _ledger()
     market_lot = _lot(ledger, "market_context_domain_repair")

@@ -19,6 +19,9 @@ _ALLOW_DECISIONS = {"allow", "allowed", "approved", "current", "ok", "pass"}
 _REPAIR_DECISIONS = {*_ALLOW_DECISIONS, "dispatch_repair", "repair", "repair_only"}
 _ROUTE_REPAIR_STATES = {"blocked", "missing", "probing"}
 _REJECTION_DRAG_FRAGMENTS = ("rejection_drag", "schema_lineage")
+_NONBLOCKING_QUANT_HEALTH_REASONS = {
+    "quant_health_not_configured",
+}
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -109,7 +112,6 @@ def _signal(
 def _quant_reason_codes(quant: Mapping[str, Any]) -> list[str]:
     reasons = [
         *_strings(quant.get("blocking_reasons")),
-        *_strings(quant.get("informational_reasons")),
         *_strings(quant.get("non_promoting_receipts")),
     ]
     status = _first(quant, "status", "state", default="unknown").lower()
@@ -135,7 +137,13 @@ def _quant_reason_codes(quant: Mapping[str, Any]) -> list[str]:
     )
     if degraded_count > 0:
         reasons.append("quant_latest_metrics_degraded")
-    return _unique(reasons)
+    return _unique(
+        [
+            reason
+            for reason in reasons
+            if reason not in _NONBLOCKING_QUANT_HEALTH_REASONS
+        ]
+    )
 
 
 def _quant_signal(quant: Mapping[str, Any]) -> dict[str, object]:

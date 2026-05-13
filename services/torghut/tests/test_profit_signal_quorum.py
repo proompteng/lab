@@ -85,6 +85,27 @@ def test_global_quant_green_but_scoped_pipeline_degraded_stays_zero_notional():
     assert quorum["required_repair_action"] == "refresh_scoped_quant_pipeline_stages"
 
 
+def test_optional_unconfigured_quant_health_does_not_degrade_quorum():
+    quorum = _only_quorum(
+        _build(
+            quant=dict(
+                required=False,
+                ok=True,
+                status="not_required",
+                reason="quant_health_not_configured",
+                blocking_reasons=[],
+                informational_reasons=["quant_health_not_configured"],
+                source_url=None,
+            )
+        )
+    )
+
+    assert quorum["decision"] == "paper_candidate"
+    assert quorum["quant_signal"]["state"] == "fresh"
+    assert quorum["quant_signal"]["reason_codes"] == []
+    assert "quant_health_not_configured" not in quorum["reason_codes"]
+
+
 def test_degraded_inputs_emit_scoped_repair_reasons_without_capital():
     quorum = _only_quorum(
         _build(

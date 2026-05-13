@@ -16,6 +16,9 @@ ROUTEABILITY_REPAIR_ACCEPTANCE_LEDGER_SCHEMA_VERSION = (
 
 _FRESHNESS_SECONDS = 60
 _ACCEPTED_STATES = {"allow", "approved", "current", "healthy", "ok", "pass", "ready"}
+_NONBLOCKING_QUANT_HEALTH_REASONS = {
+    "quant_health_not_configured",
+}
 _FORECAST_READY = {
     "disabled",
     "healthy",
@@ -167,12 +170,11 @@ def _profit_lease_blockers(live_submission_gate: Mapping[str, Any]) -> list[str]
 
 
 def _quant_blockers(quant_evidence: Mapping[str, Any]) -> list[str]:
+    status = _text(quant_evidence.get("status") or quant_evidence.get("state")).lower()
     blockers = [
         *_strings(quant_evidence.get("blocking_reasons")),
-        *_strings(quant_evidence.get("informational_reasons")),
         *_strings(quant_evidence.get("non_promoting_receipts")),
     ]
-    status = _text(quant_evidence.get("status") or quant_evidence.get("state")).lower()
     reason = _text(quant_evidence.get("reason"))
     latest_count = _int(
         _first_present(
@@ -189,19 +191,46 @@ def _quant_blockers(quant_evidence: Mapping[str, Any]) -> list[str]:
         ),
         default=-1,
     )
+    source_url = _text(
+        quant_evidence.get("source_url") or quant_evidence.get("sourceUrl")
+    )
+    quant_counts_are_authoritative = (
+        quant_evidence.get("required") is True
+        or bool(source_url)
+        or bool(blockers)
+        or (bool(status) and status != "not_required")
+    )
 
-    if latest_count == 0:
+    if quant_counts_are_authoritative and latest_count == 0:
         blockers.append("quant_latest_metrics_empty")
-    if stage_count == 0 or _bool(
-        quant_evidence.get("missingPipelineHealthStages")
-        or quant_evidence.get("missing_pipeline_health_stages")
+    if quant_counts_are_authoritative and (
+        stage_count == 0
+        or _bool(
+            quant_evidence.get("missingPipelineHealthStages")
+            or quant_evidence.get("missing_pipeline_health_stages")
+        )
     ):
         blockers.append("quant_pipeline_stages_missing")
-    if status and status not in _ACCEPTED_STATES and status != "not_required":
+    if (
+        quant_counts_are_authoritative
+        and status
+        and status not in _ACCEPTED_STATES
+        and status != "not_required"
+    ):
         blockers.append(reason or f"quant_health_{status}")
-    if quant_evidence.get("ok") is False and not blockers:
+    if (
+        quant_counts_are_authoritative
+        and quant_evidence.get("ok") is False
+        and not blockers
+    ):
         blockers.append(reason or "quant_health_degraded")
-    return _unique(blockers)
+    return _unique(
+        [
+            blocker
+            for blocker in blockers
+            if blocker not in _NONBLOCKING_QUANT_HEALTH_REASONS
+        ]
+    )
 
 
 def _market_domain_states(
