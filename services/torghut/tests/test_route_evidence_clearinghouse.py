@@ -174,6 +174,49 @@ def test_requested_route_symbol_without_catalog_row_holds_option_route() -> None
     assert "options_route_symbol_catalog_missing" in route_claim["reason_codes"]
 
 
+def test_route_symbol_catalog_contract_quality_gaps_hold_option_route() -> None:
+    packet = _build(
+        profit_signal_quorum=_option_quorum(),
+        options_catalog_freshness={
+            **BASE_INPUTS["options_catalog_freshness"],
+            "route_symbol_freshness": {
+                "AAPL": {
+                    "active_contracts": 0,
+                    "missing_provider_updated_ts_count": 2,
+                    "provider_updated_ts_present": False,
+                    "newest_provider_updated_ts": NOW.isoformat(),
+                    "newest_last_seen_ts": NOW.isoformat(),
+                    "missing_close_price_count": 1,
+                    "zero_open_interest_count": 1,
+                },
+            },
+        },
+    )
+    route_claim = packet["route_claims"][0]
+
+    assert packet["accepted_routeable_candidate_count"] == 0
+    assert route_claim["source_freshness_decision"] == "hold"
+    assert "options_catalog_active_contracts_missing" in route_claim["reason_codes"]
+    assert "options_close_price_coverage_incomplete" in route_claim["reason_codes"]
+    assert "options_open_interest_coverage_incomplete" in route_claim["reason_codes"]
+    assert "options_provider_updated_ts_missing" not in route_claim["reason_codes"]
+
+
+def test_aggregate_option_catalog_without_active_contracts_holds_route() -> None:
+    packet = _build(
+        profit_signal_quorum=_option_quorum(),
+        options_catalog_freshness={
+            **BASE_INPUTS["options_catalog_freshness"],
+            "active_contracts": 0,
+        },
+    )
+    route_claim = packet["route_claims"][0]
+
+    assert packet["accepted_routeable_candidate_count"] == 0
+    assert route_claim["source_freshness_decision"] == "hold"
+    assert "options_catalog_active_contracts_missing" in route_claim["reason_codes"]
+
+
 def test_aggregate_option_catalog_partial_provider_clocks_hold_route() -> None:
     packet = _build(
         profit_signal_quorum=_option_quorum(),
