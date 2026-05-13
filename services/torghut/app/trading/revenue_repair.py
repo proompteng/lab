@@ -344,10 +344,14 @@ def _build_repair_queue(
     blocking_reasons: Sequence[str],
 ) -> list[dict[str, object]]:
     proof_floor_repair_only = _text(proof_floor.get("route_state")) == "repair_only"
+    blocking_reason_set = set(blocking_reasons)
     repairs_by_code: dict[str, dict[str, object]] = {}
     for raw_item in _sequence(proof_floor.get("repair_ladder")):
         item = _mapping(raw_item)
         if not item:
+            continue
+        item_reason = _text(item.get("reason"), _text(item.get("code")))
+        if item_reason and item_reason not in blocking_reason_set:
             continue
         repair = _repair_from_ladder_item(
             item, proof_floor_repair_only=proof_floor_repair_only
