@@ -23,7 +23,7 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   const context = resolve(repoRoot, options.context ?? process.env.SAG_BUILD_CONTEXT ?? '.')
   const dockerfile = resolve(repoRoot, options.dockerfile ?? process.env.SAG_DOCKERFILE ?? 'services/sag/Dockerfile')
   const platforms = options.platforms ??
-    process.env.SAG_IMAGE_PLATFORMS?.split(',').map((platform) => platform.trim()) ?? ['linux/arm64']
+    process.env.SAG_IMAGE_PLATFORMS?.split(',').map((platform) => platform.trim()) ?? ['linux/amd64']
   const cacheRef = options.cacheRef ?? process.env.SAG_BUILD_CACHE_REF ?? `${registry}/${repository}:buildcache`
 
   return buildAndPushDockerImage({
