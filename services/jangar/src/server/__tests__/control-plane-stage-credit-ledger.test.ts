@@ -6,6 +6,8 @@ import type {
   ClearanceMarketRepairLot,
   ControlPlaneControllerWitnessQuorum,
   DatabaseStatus,
+  ProjectionForeclosureAuthorityState,
+  ProjectionForeclosureNotary,
   StageClearancePacket,
   StageClearanceStage,
   TorghutConsumerEvidenceStatus,
@@ -239,6 +241,55 @@ const account = (
   return found!
 }
 
+const projectionTotals = (
+  overrides: Partial<Record<ProjectionForeclosureAuthorityState, number>> = {},
+): Record<ProjectionForeclosureAuthorityState, number> => ({
+  authoritative: 0,
+  grace: 0,
+  stale_foreclosed: 0,
+  contradictory: 0,
+  missing_receipt: 0,
+  terminal_audit: 0,
+  unknown: 0,
+  ...overrides,
+})
+
+const projectionNotary = (overrides: Partial<ProjectionForeclosureNotary> = {}): ProjectionForeclosureNotary => {
+  const totals = projectionTotals({ missing_receipt: 1 })
+  return {
+    schema_version: 'jangar.projection-foreclosure-notary.v1',
+    generated_at: now.toISOString(),
+    fresh_until: freshUntil,
+    namespace: 'agents',
+    source_revision: {
+      source_head_sha: 'source:current',
+      gitops_revision: 'gitops:current',
+    },
+    decision: 'repair_only',
+    notary_id: 'projection-foreclosure-notary:agents:missing-receipt',
+    governing_design_refs: [
+      'docs/agents/designs/190-jangar-projection-foreclosure-notary-and-stage-custody-repair-2026-05-13.md',
+    ],
+    active_authority_summary: totals,
+    stale_projection_summary: projectionTotals(),
+    claim_totals_by_state: totals,
+    stage_custody_verdict: {
+      decision: 'repair_only',
+      evidence_clock_custody_status: 'missing',
+      evidence_clock_custody_ref: null,
+      max_notional: '0',
+      reason_codes: ['evidence_clock_custody_missing'],
+      evidence_refs: ['torghut-route-proven-profit:missing'],
+    },
+    claims: [],
+    foreclosure_receipts: [],
+    missing_receipts: [],
+    required_repair_actions: ['attach current Torghut route-custody receipt'],
+    rollback_target: 'JANGAR_PROJECTION_FORECLOSURE_NOTARY_ENABLED=false',
+    ...overrides,
+  }
+}
+
 describe('control-plane stage credit ledger', () => {
   it('gives held normal stages zero spendable credit and no runner future', () => {
     const packets = [
@@ -341,5 +392,41 @@ describe('control-plane stage credit ledger', () => {
     expect(ledger.handoff_contract.value_gates).toEqual(
       expect.arrayContaining(['failed_agentrun_rate', 'pr_to_rollout_latency', 'ready_status_truth']),
     )
+  })
+
+  it('consumes projection notary missing receipts only when the safe flag is enabled', () => {
+    const previous = process.env.JANGAR_PROJECTION_FORECLOSURE_CONSUME
+    process.env.JANGAR_PROJECTION_FORECLOSURE_CONSUME = 'true'
+    try {
+      const ledger = buildStageCreditLedger({
+        now,
+        namespace: 'agents',
+        database,
+        workflows: workflows(),
+        agentRunIngestion: agentRunIngestion(),
+        controllerWitness: controllerWitness(),
+        stageClearancePackets: [packet('implement', 'dispatch_normal', 'allow')],
+        clearanceMarketLedger: clearanceLedger([stageAdmission('implement', 'dispatch_normal', 'allow')]),
+        torghutConsumerEvidence: torghutEvidence({
+          status: 'current',
+          decision: 'allow',
+          reason_codes: [],
+        }),
+        projectionForeclosureNotary: projectionNotary(),
+      })
+
+      const implement = account(ledger, 'implement', 'dispatch_normal')
+      expect(implement).toMatchObject({
+        decision: 'hold',
+        reason_codes: expect.arrayContaining(['projection_foreclosure_missing_receipt', 'stage_credit_insufficient']),
+        evidence_refs: expect.arrayContaining(['projection-foreclosure-notary:agents:missing-receipt']),
+      })
+    } finally {
+      if (previous === undefined) {
+        delete process.env.JANGAR_PROJECTION_FORECLOSURE_CONSUME
+      } else {
+        process.env.JANGAR_PROJECTION_FORECLOSURE_CONSUME = previous
+      }
+    }
   })
 })

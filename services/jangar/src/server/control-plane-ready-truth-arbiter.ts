@@ -6,6 +6,7 @@ import type {
   AdmissionPassportStatus,
   ControlPlaneControllerWitnessQuorum,
   ExecutionTrustStatus,
+  ProjectionForeclosureNotary,
   ReadyTruthActionDecision,
   ReadyTruthArbiter,
   ReadyTruthArbiterMode,
@@ -21,6 +22,7 @@ import type {
   StageCreditLedger,
   TorghutConsumerEvidenceStatus,
 } from '~/data/agents-control-plane'
+import { isProjectionForeclosureConsumptionEnabled } from '~/server/control-plane-projection-foreclosure-notary'
 import type {
   ControlPlaneRolloutHealth,
   DatabaseStatus,
@@ -76,6 +78,7 @@ export type ReadyTruthArbiterInput = {
   sourceServingContractVerdictExchange: SourceServingContractVerdictExchange
   repairBidAdmission: RepairBidAdmissionState
   torghutConsumerEvidence: TorghutConsumerEvidenceStatus
+  projectionForeclosureNotary?: ProjectionForeclosureNotary | null
 }
 
 type ActionAssessment = {
@@ -252,6 +255,31 @@ const repairBidReasons = (
   }
 }
 
+const projectionAuthorityReasons = (
+  input: ReadyTruthArbiterInput,
+  actionClass: ActionSloBudgetActionClass,
+  allowRepairOnly: boolean,
+) => {
+  const notary = input.projectionForeclosureNotary
+  if (!notary || !isProjectionForeclosureConsumptionEnabled())
+    return { reasons: [] as string[], evidenceRefs: [] as string[] }
+  if (actionClass === 'serve_readonly' || actionClass === 'torghut_observe') {
+    return { reasons: [] as string[], evidenceRefs: [notary.notary_id] }
+  }
+
+  const totals = notary.claim_totals_by_state
+  const hardHold = totals.unknown + totals.contradictory
+  const missingReceipt = totals.missing_receipt
+  const reasons = [
+    ...(hardHold > 0 ? ['projection_foreclosure_authority_hold'] : []),
+    ...(totals.unknown > 0 ? ['projection_foreclosure_unknown'] : []),
+    ...(totals.contradictory > 0 ? ['projection_foreclosure_contradictory'] : []),
+    ...(missingReceipt > 0 && !allowRepairOnly ? ['projection_foreclosure_missing_receipt'] : []),
+  ]
+
+  return { reasons, evidenceRefs: [notary.notary_id] }
+}
+
 const assessServeReadonly = (
   input: ReadyTruthArbiterInput,
   servingReadiness: ReadyTruthServingReadiness,
@@ -298,10 +326,12 @@ const assessMaterialAction = (
   const source = sourceReasons(input, actionClass, allowRepairOnly)
   const repairBid = repairBidReasons(input, actionClass, allowRepairOnly)
   const stageCredit = stageCreditDecisionFor(input.stageCreditLedger, actionClass)
+  const projectionAuthority = projectionAuthorityReasons(input, actionClass, allowRepairOnly)
   const reasons = uniqueStrings([
     ...core.reasons,
     ...source.reasons,
     ...repairBid.reasons,
+    ...projectionAuthority.reasons,
     ...(stageCredit.decision === 'allow' || (allowRepairOnly && stageCredit.decision === 'repair_only')
       ? []
       : [`stage_credit_${stageCredit.decision}`, ...stageCredit.reasonCodes]),
@@ -324,6 +354,7 @@ const assessMaterialAction = (
       ...core.evidenceRefs,
       ...source.evidenceRefs,
       ...repairBid.evidenceRefs,
+      ...projectionAuthority.evidenceRefs,
       ...stageCredit.evidenceRefs,
     ]),
   }
@@ -399,6 +430,7 @@ export const buildReadyTruthArbiter = (
     stage_credit_ledger_ref: input.stageCreditLedger?.ledger_id ?? null,
     source_serving_verdict_ref: input.sourceServingContractVerdictExchange.exchange_id,
     repair_bid_ref: input.repairBidAdmission.torghut_settlement_ledger_ref,
+    projection_foreclosure_notary_ref: input.projectionForeclosureNotary?.notary_id ?? null,
   })}`
 
   return {
@@ -420,6 +452,10 @@ export const buildReadyTruthArbiter = (
     source_serving_verdict_ref: input.sourceServingContractVerdictExchange.exchange_id,
     torghut_repair_receipt_ref: input.repairBidAdmission.torghut_settlement_ledger_ref,
     retained_failure_debt_refs: uniqueStrings(retainedFailureDebtRefs),
+    projection_foreclosure_notary_ref: input.projectionForeclosureNotary?.notary_id ?? null,
+    projection_authority_decision: input.projectionForeclosureNotary?.decision ?? null,
+    projection_claim_totals_by_state: input.projectionForeclosureNotary?.claim_totals_by_state ?? null,
+    projection_required_repair_actions: input.projectionForeclosureNotary?.required_repair_actions ?? [],
     ready_status_truth_reasons: reasons,
     allowed_action_classes: byDecision('allow'),
     repair_only_action_classes: byDecision('repair_only'),

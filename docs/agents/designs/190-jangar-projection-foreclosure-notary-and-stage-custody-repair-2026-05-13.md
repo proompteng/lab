@@ -507,6 +507,21 @@ Acceptance gates:
 - old terminal objects remain audit-visible;
 - tests cover each authority state.
 
+## Implementation Note 2026-05-13
+
+Milestone 1 is implemented in `services/jangar/src/server/control-plane-projection-foreclosure-notary.ts` as a
+read-only status reducer. The reducer emits `projection_foreclosure_notary` on the Jangar control-plane status payload,
+classifies stale `agent_runs` and market-context active rows without mutating them, and represents missing Torghut
+route-custody receipts as `missing_receipt`.
+
+Stage credit and ready truth now accept the notary verdict, but admission consumption is guarded by
+`JANGAR_PROJECTION_FORECLOSURE_CONSUME`. The default rollout remains visibility-only; enabling the flag makes missing
+receipts and contradictory/unknown projection authority hold material action classes while keeping read-only serving
+separate.
+
+Rollback remains configuration-first: set `JANGAR_PROJECTION_FORECLOSURE_NOTARY_ENABLED=false` to remove the status
+payload, or leave the payload visible and set `JANGAR_PROJECTION_FORECLOSURE_CONSUME=false` to disable consumer impact.
+
 ## Handoff To Deployer
 
 Deployers should stop using raw retained failure or stale row counts as the rollout truth once this lands. Use the

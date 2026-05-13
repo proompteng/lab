@@ -21,6 +21,7 @@ import type {
   MaterialActionActivationReceipt,
   NegativeEvidenceRouterStatus,
   ProjectionWatermarkStatus,
+  ProjectionForeclosureNotary,
   ReadyActionExchange,
   ReconciledActionClock,
   RecoveryWarrantStatus,
@@ -192,6 +193,7 @@ export type ControlPlaneStatus = {
   material_action_activation_receipts: MaterialActionActivationReceipt[]
   action_custody_receipts: ActionCustodyReceipt[]
   stage_clearance_packets: StageClearancePacket[]
+  projection_foreclosure_notary: ProjectionForeclosureNotary | null
   stage_credit_ledger: StageCreditLedger | null
   ready_truth_arbiter: ReadyTruthArbiter
   authority_provenance_settlement: AuthorityProvenanceSettlement

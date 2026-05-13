@@ -8,6 +8,7 @@ import type {
   ClearanceMarketStageAdmission,
   ControlPlaneControllerWitnessQuorum,
   DatabaseStatus,
+  ProjectionForeclosureNotary,
   StageClearancePacket,
   StageCreditAccount,
   StageCreditDecision,
@@ -16,6 +17,7 @@ import type {
   TorghutConsumerEvidenceStatus,
   WorkflowsReliabilityStatus,
 } from '~/data/agents-control-plane'
+import { isProjectionForeclosureConsumptionEnabled } from '~/server/control-plane-projection-foreclosure-notary'
 import type { AgentRunIngestionStatus } from '~/server/control-plane-status-types'
 
 export const STAGE_CREDIT_LEDGER_DESIGN_ARTIFACT =
@@ -50,6 +52,7 @@ export type StageCreditLedgerInput = {
   stageClearancePackets: StageClearancePacket[]
   clearanceMarketLedger: ClearanceMarketLedger | null
   torghutConsumerEvidence: TorghutConsumerEvidenceStatus
+  projectionForeclosureNotary?: ProjectionForeclosureNotary | null
 }
 
 const hashJson = (value: unknown, length = 16) =>
@@ -258,6 +261,41 @@ const capitalSafetyTax = (input: StageCreditLedgerInput, actionClass: ActionSloB
   return 0
 }
 
+const projectionAuthorityTax = (
+  input: StageCreditLedgerInput,
+  actionClass: ActionSloBudgetActionClass,
+  consumeProjectionForeclosure: boolean,
+) => {
+  if (!consumeProjectionForeclosure || !input.projectionForeclosureNotary) return 0
+  if (actionClass === 'serve_readonly' || actionClass === 'torghut_observe') return 0
+
+  const totals = input.projectionForeclosureNotary.claim_totals_by_state
+  const hardHold = totals.unknown + totals.contradictory
+  const missingReceipt = totals.missing_receipt
+
+  if (hardHold > 0) return 50
+  if (missingReceipt > 0 && actionClass !== 'dispatch_repair') return 30
+  return 0
+}
+
+const projectionAuthorityReasons = (
+  input: StageCreditLedgerInput,
+  actionClass: ActionSloBudgetActionClass,
+  consumeProjectionForeclosure: boolean,
+) => {
+  if (!consumeProjectionForeclosure || !input.projectionForeclosureNotary) return []
+  if (actionClass === 'serve_readonly' || actionClass === 'torghut_observe') return []
+
+  const totals = input.projectionForeclosureNotary.claim_totals_by_state
+  return [
+    ...(totals.unknown > 0 ? ['projection_foreclosure_unknown'] : []),
+    ...(totals.contradictory > 0 ? ['projection_foreclosure_contradictory'] : []),
+    ...(totals.missing_receipt > 0 && actionClass !== 'dispatch_repair'
+      ? ['projection_foreclosure_missing_receipt']
+      : []),
+  ]
+}
+
 const evidenceFreshnessBonus = (
   input: StageCreditLedgerInput,
   packet: StageClearancePacket,
@@ -314,7 +352,11 @@ const requiredReceipts = (input: StageCreditLedgerInput, account: StageCreditAcc
     input.torghutConsumerEvidence.receipt_id,
   ])
 
-const buildAccount = (input: StageCreditLedgerInput, packet: StageClearancePacket): StageCreditAccount => {
+const buildAccount = (
+  input: StageCreditLedgerInput,
+  packet: StageClearancePacket,
+  consumeProjectionForeclosure: boolean,
+): StageCreditAccount => {
   const policy = policyForAction(packet.action_class)
   const stageAdmission = stageAdmissionForPacket(input.clearanceMarketLedger, packet)
   const clearanceDecision = stageAdmission?.decision ?? packet.decision
@@ -323,11 +365,12 @@ const buildAccount = (input: StageCreditLedgerInput, packet: StageClearancePacke
   const controllerTax = controllerWitnessTax(input, packet.action_class)
   const sourceTax = sourceRolloutTax(clearanceDecision, stageAdmission, packet.action_class, packet.reason_codes)
   const capitalTax = capitalSafetyTax(input, packet.action_class)
+  const projectionTax = projectionAuthorityTax(input, packet.action_class, consumeProjectionForeclosure)
   const freshnessBonus = evidenceFreshnessBonus(input, packet, packet.action_class)
   const repairCredit = repairValueCredit(input, packet.action_class, selectedRepairLot)
   const rolloutDeposit = rolloutTruthDeposit(input, packet.action_class)
   const totalCredit = policy.baseCredit + freshnessBonus + repairCredit + rolloutDeposit
-  const availableCredit = capped(totalCredit - failureTax - controllerTax - sourceTax - capitalTax)
+  const availableCredit = capped(totalCredit - failureTax - controllerTax - sourceTax - capitalTax - projectionTax)
   const nonWaivableBlock =
     isLiveCapitalAction(packet.action_class) ||
     packet.reason_codes.some((reason) => normalizeReason(reason).includes('source_rollout_truth_block'))
@@ -342,6 +385,7 @@ const buildAccount = (input: StageCreditLedgerInput, packet: StageClearancePacke
   const reasonCodes = normalizeReasons([
     ...packet.reason_codes,
     ...(stageAdmission?.reason_codes ?? []),
+    ...projectionAuthorityReasons(input, packet.action_class, consumeProjectionForeclosure),
     ...(availableCredit < policy.minimumSpend ? ['stage_credit_insufficient'] : []),
     ...(selectedRepairLot && decision === 'repair_only' ? ['stage_credit_repair_future_open'] : []),
   ])
@@ -379,6 +423,7 @@ const buildAccount = (input: StageCreditLedgerInput, packet: StageClearancePacke
       input.clearanceMarketLedger?.ledger_id,
       input.controllerWitness.quorum_id,
       input.torghutConsumerEvidence.receipt_id,
+      input.projectionForeclosureNotary?.notary_id,
       selectedRepairLot?.lot_id,
     ]),
     selected_repair_lot_ref: selectedRepairLot?.lot_id ?? null,
@@ -423,7 +468,10 @@ export const buildStageCreditLedger = (
   input: StageCreditLedgerInput,
   evidenceMode = resolveStageCreditEvidenceMode(),
 ): StageCreditLedger => {
-  const accounts = input.stageClearancePackets.map((packet) => buildAccount(input, packet))
+  const consumeProjectionForeclosure = isProjectionForeclosureConsumptionEnabled()
+  const accounts = input.stageClearancePackets.map((packet) =>
+    buildAccount(input, packet, consumeProjectionForeclosure),
+  )
   const futures = accounts
     .map((account) => buildFuture(input, account))
     .filter((future): future is NonNullable<typeof future> => Boolean(future))

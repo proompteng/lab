@@ -1525,6 +1525,106 @@ export type ClearanceMarketLedger = {
 
 export type StageCreditEvidenceMode = 'observe' | 'shadow' | 'hold' | 'enforce'
 
+export type ProjectionForeclosureDecision = 'allow' | 'observe_only' | 'repair_only' | 'hold'
+
+export type ProjectionForeclosureAuthorityState =
+  | 'authoritative'
+  | 'grace'
+  | 'stale_foreclosed'
+  | 'contradictory'
+  | 'missing_receipt'
+  | 'terminal_audit'
+  | 'unknown'
+
+export type ProjectionForeclosureClaimClass =
+  | 'agentrun_execution'
+  | 'workflow_schedule'
+  | 'market_context_fundamentals'
+  | 'market_context_news'
+  | 'torghut_route_custody'
+  | 'source_rollout_truth'
+  | 'stage_clearance'
+
+export type ProjectionForeclosureValueGate =
+  | 'failed_agentrun_rate'
+  | 'pr_to_rollout_latency'
+  | 'ready_status_truth'
+  | 'manual_intervention_count'
+  | 'handoff_evidence_quality'
+
+export type ProjectionForeclosureClaimTotalsByState = Record<ProjectionForeclosureAuthorityState, number>
+
+export type ProjectionForeclosureClaim = {
+  claim_id: string
+  claim_class: ProjectionForeclosureClaimClass
+  source_ref: string
+  source_owner: string
+  lane: string | null
+  status: string
+  observed_at: string | null
+  last_heartbeat_at: string | null
+  fresh_until: string | null
+  live_authority_ref: string | null
+  projection_ref: string | null
+  authority_state: ProjectionForeclosureAuthorityState
+  reason_codes: string[]
+  value_gates: ProjectionForeclosureValueGate[]
+}
+
+export type ProjectionForeclosureReceipt = {
+  receipt_id: string
+  claim_id: string
+  claim_class: ProjectionForeclosureClaimClass
+  authority_state: ProjectionForeclosureAuthorityState
+  source_ref: string
+  projection_ref: string | null
+  live_authority_ref: string | null
+  reason_codes: string[]
+  value_gates: ProjectionForeclosureValueGate[]
+}
+
+export type ProjectionMissingReceipt = {
+  missing_receipt_id: string
+  claim_id: string
+  claim_class: ProjectionForeclosureClaimClass
+  required_receipt_schema: string
+  required_repair_action: string
+  reason_codes: string[]
+  evidence_refs: string[]
+}
+
+export type ProjectionForeclosureStageCustodyVerdict = {
+  decision: 'current' | 'repair_only' | 'hold' | 'unknown'
+  evidence_clock_custody_status: string | null
+  evidence_clock_custody_ref: string | null
+  max_notional: string | null
+  reason_codes: string[]
+  evidence_refs: string[]
+}
+
+export type ProjectionForeclosureNotary = {
+  schema_version: 'jangar.projection-foreclosure-notary.v1'
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  source_revision: {
+    source_head_sha: string | null
+    gitops_revision: string | null
+  }
+  decision: ProjectionForeclosureDecision
+  notary_id: string
+  governing_design_refs: string[]
+  active_authority_summary: ProjectionForeclosureClaimTotalsByState
+  stale_projection_summary: ProjectionForeclosureClaimTotalsByState
+  claim_totals_by_state: ProjectionForeclosureClaimTotalsByState
+  stage_custody_verdict: ProjectionForeclosureStageCustodyVerdict
+  claims: ProjectionForeclosureClaim[]
+  foreclosure_receipts: ProjectionForeclosureReceipt[]
+  missing_receipts: ProjectionMissingReceipt[]
+  required_repair_actions: string[]
+  rollback_target: string
+}
+
 export type StageCreditDecision = ClearanceMarketDecision
 
 export type StageCreditAccount = {
@@ -1635,6 +1735,10 @@ export type ReadyTruthArbiter = {
   source_serving_verdict_ref: string | null
   torghut_repair_receipt_ref: string | null
   retained_failure_debt_refs: string[]
+  projection_foreclosure_notary_ref: string | null
+  projection_authority_decision: ProjectionForeclosureDecision | null
+  projection_claim_totals_by_state: ProjectionForeclosureClaimTotalsByState | null
+  projection_required_repair_actions: string[]
   ready_status_truth_reasons: string[]
   allowed_action_classes: ActionSloBudgetActionClass[]
   repair_only_action_classes: ActionSloBudgetActionClass[]
@@ -2060,6 +2164,7 @@ export type ControlPlaneStatus = {
   material_action_activation_receipts: MaterialActionActivationReceipt[]
   action_custody_receipts: ActionCustodyReceipt[]
   stage_clearance_packets: StageClearancePacket[]
+  projection_foreclosure_notary: ProjectionForeclosureNotary | null
   stage_credit_ledger: StageCreditLedger | null
   ready_truth_arbiter: ReadyTruthArbiter
   authority_provenance_settlement: AuthorityProvenanceSettlement
