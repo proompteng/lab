@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
 
 from .alpha_readiness_strike_ledger import build_alpha_readiness_strike_ledger
+from .executable_alpha_receipts import build_executable_alpha_repair_receipts
 
 
 SCHEMA_VERSION = "torghut.revenue-repair-digest.v1"
@@ -922,6 +923,15 @@ def build_revenue_repair_digest(
         capital=capital,
         evidence=evidence,
     )
+    executable_alpha_repair_receipts = build_executable_alpha_repair_receipts(
+        generated_at=generated,
+        business_state=business_state,
+        revenue_ready=revenue_ready,
+        repair_queue=cast(Sequence[Mapping[str, Any]], repair_queue),
+        alpha_readiness=alpha,
+        capital=capital,
+        repair_bid_settlement_ledger=repair_bid_settlement,
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated.isoformat(),
@@ -931,6 +941,7 @@ def build_revenue_repair_digest(
         "route_evidence_clearinghouse_packet": dict(route_evidence_clearinghouse),
         "repair_bid_settlement_ledger": dict(repair_bid_settlement),
         "alpha_readiness_strike_ledger": alpha_readiness_strike_ledger,
+        "executable_alpha_repair_receipts": executable_alpha_repair_receipts,
         "business_state": business_state,
         "revenue_ready": revenue_ready,
         "health": {
