@@ -4251,6 +4251,88 @@ describe('supporting primitives controller', () => {
     })
   })
 
+  it('releases stage-staleness freezes once stage evidence is fresh again', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue({
+      status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' },
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          items: ['discover', 'plan', 'implement', 'verify'].map((stage) => ({
+            metadata: {
+              name: `fresh-${stage}`,
+              creationTimestamp: '2026-01-20T00:00:00Z',
+              labels: {
+                'swarm.proompteng.ai/name': 'torghut-quant',
+                'swarm.proompteng.ai/stage': stage,
+              },
+            },
+            status: { phase: 'Succeeded', startedAt: '2026-01-20T00:00:00Z' },
+          })),
+        }
+      }
+      if (resource === RESOURCE_MAP.OrchestrationRun) {
+        return { items: [] }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'torghut-quant', namespace: 'agents', generation: 1, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'trading-owner', channel: 'swarm://owner/trading' },
+        domains: ['autonomous-trading'],
+        objectives: ['improve risk-adjusted return'],
+        mode: 'lights-out',
+        cadence: {
+          discoverEvery: '1m',
+          planEvery: '5m',
+          implementEvery: '15m',
+          verifyEvery: '1m',
+        },
+        discovery: { sources: [{ name: 'market-feed' }] },
+        delivery: { deploymentTargets: ['torghut'] },
+        risk: { freezeAfterFailures: 2, freezeDuration: '60m' },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'OrchestrationRun', name: 'orchestrationrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+      status: {
+        freeze: {
+          reason: 'StageStaleness',
+          until: '2026-01-20T00:40:00Z',
+          enteredAt: '2026-01-19T23:40:00Z',
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    expect(apply).toHaveBeenCalledTimes(4)
+    expect(deleteFn).not.toHaveBeenCalled()
+    const firstStatusCall = applyStatus.mock.calls[0]
+    const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(status.phase).toBe('Active')
+    expect(status.freeze).toMatchObject({
+      reason: 'NotFrozen',
+      consecutiveFailures: 0,
+      evidence: {
+        triggeringRuns: [],
+        stageStaleness: [],
+        triggers: [],
+      },
+    })
+  })
+
   it('includes nested workflow failure detail in freeze evidence when top-level status is empty', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
