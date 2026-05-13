@@ -99,6 +99,10 @@ _NONBLOCKING_JANGAR_RELIABILITY_REASONS = {
 _NONBLOCKING_QUANT_HEALTH_REASONS = {
     "quant_health_not_configured",
 }
+_ROUTEABILITY_TCA_REPAIR_LOT_TYPES = {"route_universe_tca_repair"}
+_ROUTEABILITY_TCA_REPAIR_ACTION = "recompute_route_tca_and_fill_quality"
+_ROUTEABILITY_TCA_REPAIR_REASON_PREFIXES = ("execution_tca_", "route_tca_")
+_ROUTEABILITY_TCA_REPAIR_REASON_FRAGMENTS = ("slippage", "route_universe")
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -701,6 +705,38 @@ def _route_readiness_dimension(
     )
 
 
+def _is_routeability_tca_repair_reason(reason: str) -> bool:
+    normalized = reason.strip().lower()
+    return normalized.startswith(_ROUTEABILITY_TCA_REPAIR_REASON_PREFIXES) or any(
+        fragment in normalized for fragment in _ROUTEABILITY_TCA_REPAIR_REASON_FRAGMENTS
+    )
+
+
+def _route_readiness_action(routeability_ledger: Mapping[str, Any]) -> str:
+    for raw_lot in _sequence(routeability_ledger.get("lots")):
+        lot = _mapping(raw_lot)
+        if _text(lot.get("lot_type")) not in _ROUTEABILITY_TCA_REPAIR_LOT_TYPES:
+            continue
+        if _text(lot.get("current_state")).lower() in _CURRENT_STATES:
+            continue
+        if any(
+            _is_routeability_tca_repair_reason(reason)
+            for reason in _strings(lot.get("blocking_reason_codes"))
+        ):
+            return _ROUTEABILITY_TCA_REPAIR_ACTION
+    return _DIMENSION_ACTION["route_readiness"]
+
+
+def _zero_notional_action(
+    dimension_name: str,
+    *,
+    routeability_ledger: Mapping[str, Any],
+) -> str:
+    if dimension_name == "route_readiness":
+        return _route_readiness_action(routeability_ledger)
+    return _DIMENSION_ACTION.get(dimension_name, "observe_profit_freshness_frontier")
+
+
 def _schema_dimension(
     *,
     proof_floor_receipt: Mapping[str, Any],
@@ -969,8 +1005,9 @@ def _repair_lot(
         "symbol_set": symbol_set,
         "blocked_dimension": dimension_name,
         "before_refs": _strings(dimension.get("evidence_refs")),
-        "zero_notional_action": _DIMENSION_ACTION.get(
-            dimension_name, "observe_profit_freshness_frontier"
+        "zero_notional_action": _zero_notional_action(
+            dimension_name,
+            routeability_ledger=routeability_ledger,
         ),
         "expected_profit_unlock_bps": float(expected_bps),
         "expected_daily_net_pnl_unlock": _decimal_text(expected_daily_net_pnl_unlock),
