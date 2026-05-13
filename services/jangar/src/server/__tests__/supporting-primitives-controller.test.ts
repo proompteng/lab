@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 
+import type {
+  ActionSloBudgetActionClass,
+  ClearanceMarketDecision,
+  ClearanceMarketStageAdmission,
+  StageClearancePacket,
+} from '~/data/agents-control-plane'
+
 vi.mock('~/server/feature-flags', () => ({
   resolveBooleanFeatureToggle: vi.fn(async () => true),
 }))
@@ -45,6 +52,7 @@ import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { asString } from '~/server/primitives-http'
 import type { KubernetesClient } from '~/server/primitives-kube'
 import { RESOURCE_MAP } from '~/server/primitives-kube'
+import { resolveStageClearanceAdmissionFromPackets } from '~/server/supporting-primitives-stage-clearance'
 import {
   __test__,
   startSupportingPrimitivesController,
@@ -203,7 +211,10 @@ const buildAdmissionSnapshot = (
   }
 }
 
-const buildStageClearancePacket = (stage: 'discover' | 'plan' | 'implement' | 'verify', decision = 'allow') => ({
+const buildStageClearancePacket = (
+  stage: 'discover' | 'plan' | 'implement' | 'verify',
+  decision: StageClearancePacket['decision'] = 'allow',
+): StageClearancePacket => ({
   schema_version: 'jangar.stage-clearance-packet.v1',
   packet_id: `stage-clearance:${stage}:dispatch_normal:test`,
   generated_at: '2026-01-20T00:00:00.000Z',
@@ -235,7 +246,7 @@ const buildStageClearancePacket = (stage: 'discover' | 'plan' | 'implement' | 'v
 
 const buildClearanceMarketLedger = (
   stage: 'discover' | 'plan' | 'implement' | 'verify',
-  decision = 'allow',
+  decision: ClearanceMarketDecision = 'allow',
   selectedRepairLotRef: string | null = null,
 ) => ({
   ledger_id: 'clearance-market:agents:test',
@@ -243,25 +254,102 @@ const buildClearanceMarketLedger = (
     {
       admission_id: `clearance-stage:${stage}:dispatch_normal:test`,
       stage,
-      action_class: 'dispatch_normal',
+      action_class: 'dispatch_normal' as ActionSloBudgetActionClass,
       decision,
       packet_ref: `stage-clearance:${stage}:dispatch_normal:test`,
       selected_repair_lot_ref: selectedRepairLotRef,
       reason_codes: decision === 'allow' ? [] : ['rollout_degraded'],
       evidence_refs: ['clearance-market:agents:test'],
     },
-  ],
+  ] satisfies ClearanceMarketStageAdmission[],
 })
+
+const buildStageCreditLedger = (
+  stage: 'discover' | 'plan' | 'implement' | 'verify',
+  decision: ClearanceMarketDecision = 'allow',
+  futureExpiresAt = '2026-01-20T00:05:00.000Z',
+) => {
+  const accountId = `stage-credit-account:${stage}:dispatch_normal:test`
+  return {
+    ledger_id: 'stage-credit-ledger:agents:test',
+    evidence_mode: 'shadow',
+    fresh_until: '2026-01-20T00:05:00.000Z',
+    stage_accounts: [
+      {
+        account_id: accountId,
+        stage,
+        action_class: 'dispatch_normal' as ActionSloBudgetActionClass,
+        decision,
+        reason_codes: decision === 'allow' ? [] : ['stage_credit_insufficient'],
+        selected_repair_lot_ref: null,
+      },
+    ],
+    runner_slot_futures:
+      decision === 'allow'
+        ? [
+            {
+              future_id: `runner-slot-future:${stage}:test`,
+              account_id: accountId,
+              expires_at: futureExpiresAt,
+              settlement_state: 'open',
+            },
+          ]
+        : [],
+  }
+}
+
+const buildStageCreditSnapshot = (
+  stage: 'discover' | 'plan' | 'implement' | 'verify',
+  decision: ClearanceMarketDecision = 'allow',
+  futureExpiresAt = '2026-01-20T00:05:00.000Z',
+) => {
+  const ledger = buildStageCreditLedger(stage, decision, futureExpiresAt)
+  const account = ledger.stage_accounts[0]
+  const future = ledger.runner_slot_futures[0]
+  return {
+    ledgerId: ledger.ledger_id,
+    evidenceMode: ledger.evidence_mode,
+    freshUntil: ledger.fresh_until,
+    accounts: [
+      {
+        accountId: account.account_id,
+        stage: account.stage,
+        actionClass: account.action_class,
+        decision: account.decision,
+        reasonCodes: account.reason_codes,
+        selectedRepairLotRef: account.selected_repair_lot_ref,
+      },
+    ],
+    futures: future
+      ? [
+          {
+            futureId: future.future_id,
+            accountId: future.account_id,
+            expiresAt: future.expires_at,
+            settlementState: future.settlement_state,
+          },
+        ]
+      : [],
+  }
+}
 
 const mockStageClearanceStatus = (
   packets: Array<Record<string, unknown>>,
   clearanceMarketLedger?: Record<string, unknown>,
+  stageCreditLedger?: Record<string, unknown>,
 ) =>
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-    new Response(JSON.stringify({ stage_clearance_packets: packets, clearance_market_ledger: clearanceMarketLedger }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    }),
+    new Response(
+      JSON.stringify({
+        stage_clearance_packets: packets,
+        clearance_market_ledger: clearanceMarketLedger,
+        stage_credit_ledger: stageCreditLedger,
+      }),
+      {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      },
+    ),
   )
 
 describe('supporting primitives controller', () => {
@@ -438,8 +526,11 @@ describe('supporting primitives controller', () => {
     expect(command).toContain('missing schedule admission passport annotation for')
     expect(command).toContain('stage_clearance_packets')
     expect(command).toContain('clearance_market_ledger')
+    expect(command).toContain('stage_credit_ledger')
     expect(command).toContain('current stage clearance packet')
     expect(command).toContain('current clearance market stage admission')
+    expect(command).toContain('current stage credit account')
+    expect(command).toContain('runner slot future')
     expect(command).toContain('stage clearance shadow evidence unavailable')
     expect(command).not.toContain('stale schedule admission passport')
     expect(command).not.toContain('stale schedule runtime-kit digest')
@@ -457,6 +548,9 @@ describe('supporting primitives controller', () => {
     expect(command).toContain(
       'writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmClearanceMarketSelectedRepairLotRef"',
     )
+    expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageCreditLedgerId"')
+    expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageCreditAccountId"')
+    expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRunnerSlotFutureId"')
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRecoveryWarrantId"')
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRuntimeKitSetDigest"')
     expect(command).toContain('current schedule recovery warrant')
@@ -482,6 +576,75 @@ describe('supporting primitives controller', () => {
     expect(stderr).toContain('/config/run.json')
     expect(() => new Function(command)).not.toThrow()
     expect(() => new Function(command.replace(/\s+/g, ' '))).not.toThrow()
+  })
+
+  it('stamps current stage credit futures into stage clearance launch traces', () => {
+    const admission = resolveStageClearanceAdmissionFromPackets({
+      namespace: 'agents',
+      swarmName: 'jangar-control-plane',
+      stage: 'implement',
+      mode: 'hold',
+      packets: [buildStageClearancePacket('implement')],
+      clearanceMarket: {
+        clearanceMarketLedgerId: 'clearance-market:agents:test',
+        stageAdmissions: buildClearanceMarketLedger('implement').stage_admission,
+        stageCredit: buildStageCreditSnapshot('implement'),
+      },
+      nowMs: Date.parse('2026-01-20T00:00:00.000Z'),
+    })
+
+    expect(admission.admitted).toBe(true)
+    expect(admission.stageCredit).toMatchObject({
+      ledgerId: 'stage-credit-ledger:agents:test',
+      accountId: 'stage-credit-account:implement:dispatch_normal:test',
+      decision: 'allow',
+      mode: 'shadow',
+      runnerSlotFutureId: 'runner-slot-future:implement:test',
+      runnerSlotFutureExpiresAt: '2026-01-20T00:05:00.000Z',
+    })
+    expect(admission.annotations).toMatchObject({
+      'swarm.proompteng.ai/stage-credit-ledger-id': 'stage-credit-ledger:agents:test',
+      'swarm.proompteng.ai/stage-credit-account-id': 'stage-credit-account:implement:dispatch_normal:test',
+      'swarm.proompteng.ai/stage-credit-decision': 'allow',
+      'swarm.proompteng.ai/runner-slot-future-id': 'runner-slot-future:implement:test',
+    })
+    expect(admission.parameters).toMatchObject({
+      swarmStageCreditLedgerId: 'stage-credit-ledger:agents:test',
+      swarmStageCreditAccountId: 'stage-credit-account:implement:dispatch_normal:test',
+      swarmStageCreditDecision: 'allow',
+      swarmRunnerSlotFutureId: 'runner-slot-future:implement:test',
+    })
+  })
+
+  it('does not stamp stale stage credit futures as current launch evidence', () => {
+    const admission = resolveStageClearanceAdmissionFromPackets({
+      namespace: 'agents',
+      swarmName: 'jangar-control-plane',
+      stage: 'verify',
+      mode: 'hold',
+      packets: [buildStageClearancePacket('verify')],
+      clearanceMarket: {
+        clearanceMarketLedgerId: 'clearance-market:agents:test',
+        stageAdmissions: buildClearanceMarketLedger('verify').stage_admission,
+        stageCredit: buildStageCreditSnapshot('verify', 'allow', '2026-01-19T23:59:00.000Z'),
+      },
+      nowMs: Date.parse('2026-01-20T00:00:00.000Z'),
+    })
+
+    expect(admission.admitted).toBe(true)
+    expect(admission.stageCredit).toMatchObject({
+      ledgerId: 'stage-credit-ledger:agents:test',
+      accountId: 'stage-credit-account:verify:dispatch_normal:test',
+      decision: 'allow',
+      runnerSlotFutureId: null,
+    })
+    expect(admission.parameters).toMatchObject({
+      swarmStageCreditLedgerId: 'stage-credit-ledger:agents:test',
+      swarmStageCreditAccountId: 'stage-credit-account:verify:dispatch_normal:test',
+      swarmStageCreditDecision: 'allow',
+    })
+    expect(admission.parameters).not.toHaveProperty('swarmRunnerSlotFutureId')
+    expect(admission.annotations).not.toHaveProperty('swarm.proompteng.ai/runner-slot-future-id')
   })
 
   it('staggers hourly stage cadence deterministically per stage', () => {

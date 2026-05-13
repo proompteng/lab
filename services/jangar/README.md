@@ -365,6 +365,19 @@ stage-clearance packets, material-action verdicts, runtime-admission passports, 
 truth remain the fallback authority. For scheduler admission only, set `JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow` to
 stop blocking launches while preserving the stamped evidence.
 
+Control-plane status also emits `stage_credit_ledger` from
+`docs/agents/designs/187-jangar-stage-credit-ledger-and-runner-slot-futures-2026-05-13.md`. The ledger is an
+observe-mode account over stage-clearance packets and the clearance market: each stage/action pair receives an account,
+a decision, reason codes, and any open `runner_slot_futures` proving the next runner slot is spendable.
+
+Fire-time schedule runners refresh the same status payload before they create an AgentRun. When a current stage-credit
+account and open runner-slot future exist, the runner stamps `swarmStageCreditLedgerId`,
+`swarmStageCreditAccountId`, `swarmRunnerSlotFutureId`, and `swarmStageCreditDecision` onto the launch. In
+`observe` or `shadow` mode, missing credit is recorded as warning evidence only. If `JANGAR_STAGE_CREDIT_LEDGER_MODE`
+is set to `hold` or `enforce`, stale ledgers, held accounts, or missing open futures fail closed before AgentRun
+creation. Rollback: set `JANGAR_STAGE_CREDIT_LEDGER_MODE=observe`; if status generation itself regresses, set
+`JANGAR_STAGE_CREDIT_LEDGER_ENABLED=false`.
+
 ## Lease reconciliation action clocks
 
 Control-plane status projects shadow `reconciled_action_clocks` from the contract in
