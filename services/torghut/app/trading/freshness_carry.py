@@ -507,6 +507,91 @@ def _value_gate_impacts(
     return impacts
 
 
+def _jangar_pressure_refs(
+    *,
+    account_label: str,
+    window: str,
+    ledger_id: str,
+    fresh_until: str,
+    dimensions: Sequence[Mapping[str, object]],
+    repair_proof_slos: Sequence[Mapping[str, object]],
+    external_refs: Sequence[Mapping[str, object]] | None,
+) -> list[dict[str, object]]:
+    dimension_by_id = {
+        _text(dimension.get("dimension_id")): dimension for dimension in dimensions
+    }
+    refs: list[dict[str, object]] = []
+    for slo in repair_proof_slos:
+        dimension_id = _text(slo.get("target_dimension_id"))
+        if not dimension_id:
+            continue
+        dimension = dimension_by_id.get(dimension_id, {})
+        required_output_receipts = _strings(slo.get("required_output_receipts"))
+        pressure_payload = {
+            "account_label": account_label,
+            "window": window,
+            "ledger_id": ledger_id,
+            "repair_proof_slo_ref": _text(slo.get("repair_id")),
+            "target_dimension_id": dimension_id,
+            "required_output_receipts": required_output_receipts,
+        }
+        reason_codes = sorted(
+            set(
+                [
+                    *_strings(dimension.get("stale_reason_codes")),
+                    *_strings(slo.get("hold_reason_codes")),
+                ]
+            )
+        )
+        refs.append(
+            {
+                "schema_version": "torghut.jangar-pressure-ref.v1",
+                "pressure_ref_id": _stable_ref(
+                    "freshness-pressure-ref", pressure_payload
+                ),
+                "source_class": "torghut_freshness",
+                "action_class": "dispatch_repair",
+                "evidence_ref": ledger_id,
+                "freshness_carry_ledger_ref": ledger_id,
+                "repair_proof_slo_ref": slo.get("repair_id"),
+                "target_dimension_id": dimension_id,
+                "state": dimension.get("state"),
+                "target_value_gate": slo.get("target_value_gate"),
+                "required_output_receipts": required_output_receipts,
+                "reason_codes": reason_codes,
+                "ttl_seconds": _FRESHNESS_SECONDS,
+                "expires_at": fresh_until,
+                "dedupe_key": _stable_ref(
+                    "freshness-pressure-dedupe",
+                    {
+                        "account_label": account_label,
+                        "window": window,
+                        "target_dimension_id": dimension_id,
+                        "required_output_receipts": required_output_receipts,
+                    },
+                ),
+                "max_notional": _ZERO_NOTIONAL,
+                "max_runtime_seconds": slo.get("max_runtime_seconds"),
+                "max_retries": slo.get("max_retries"),
+                "dispatchable": _bool(slo.get("dispatchable")),
+                "hold_reason_codes": _strings(slo.get("hold_reason_codes")),
+                "settlement_status": slo.get("settlement_status"),
+                "rollback_target": slo.get("rollback_target"),
+            }
+        )
+
+    for external_ref in external_refs or ():
+        ref = dict(external_ref)
+        if not _text(ref.get("pressure_ref_id")):
+            ref["pressure_ref_id"] = _stable_ref("freshness-pressure-ref", ref)
+        refs.append(ref)
+
+    unique_refs: dict[str, dict[str, object]] = {}
+    for ref in refs:
+        unique_refs[_text(ref.get("pressure_ref_id"))] = ref
+    return [ref for key, ref in unique_refs.items() if key]
+
+
 def build_freshness_carry_ledger(
     *,
     account_label: str,
@@ -563,6 +648,7 @@ def build_freshness_carry_ledger(
         dimensions=dimensions,
         source_serving_current=source_current,
     )
+    fresh_until = (generated_at + timedelta(seconds=_FRESHNESS_SECONDS)).isoformat()
     non_current_count = sum(
         1 for dimension in dimensions if _text(dimension.get("state")) != "current"
     )
@@ -577,9 +663,7 @@ def build_freshness_carry_ledger(
         "schema_version": FRESHNESS_CARRY_LEDGER_SCHEMA_VERSION,
         "ledger_id": ledger_id,
         "generated_at": generated_at.isoformat(),
-        "fresh_until": (
-            generated_at + timedelta(seconds=_FRESHNESS_SECONDS)
-        ).isoformat(),
+        "fresh_until": fresh_until,
         "account": account_label,
         "window": window,
         "source_serving_ledger_ref": source_serving_repair_receipt_ledger.get(
@@ -589,7 +673,15 @@ def build_freshness_carry_ledger(
         "dimensions": dimensions,
         "repair_proof_slos": repair_proof_slos,
         "capital_posture": capital_posture,
-        "jangar_pressure_refs": [dict(item) for item in jangar_pressure_refs or ()],
+        "jangar_pressure_refs": _jangar_pressure_refs(
+            account_label=account_label,
+            window=window,
+            ledger_id=ledger_id,
+            fresh_until=fresh_until,
+            dimensions=dimensions,
+            repair_proof_slos=repair_proof_slos,
+            external_refs=jangar_pressure_refs,
+        ),
         "value_gate_impacts": _value_gate_impacts(dimensions),
         "summary": {
             "dimension_count": len(dimensions),

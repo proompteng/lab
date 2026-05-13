@@ -170,7 +170,9 @@ Start here:
   `/trading/consumer-evidence`. The ledger prices TA signal, TCA, empirical, market-context, quant-evidence, and
   source-serving freshness as explicit dimensions with bounded zero-notional repair SLOs. Partial, stale, or
   low-confidence freshness keeps `max_notional=0`; source-serving proof, route warrants, live submission, and required
-  freshness must agree before routeable candidates can move toward paper capital.
+  freshness must agree before routeable candidates can move toward paper capital. Non-current freshness SLOs also emit
+  deterministic `jangar_pressure_refs` with value gate, output receipt, TTL, dedupe key, and `max_notional=0` so the
+  Jangar pressure ledger can price Torghut freshness debt directly.
 - Current implementation contract: doc 189 adds `clock_settlement_receipt` beside the evidence-clock arbiter on
   status, health, readyz, and `/trading/consumer-evidence`. The receipt compares direct ClickHouse TA freshness, Jangar
   scoped quant, TCA, empirical, promotion, and rollout witnesses against the published clocks, emits zero-notional

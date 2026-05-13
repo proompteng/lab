@@ -287,8 +287,9 @@ Testing rules for the trading core:
   May 13 doc 192 `torghut.freshness-carry-ledger.v1` ledger. It derives TA signal, TCA, empirical, market-context,
   quant-evidence, and source-serving freshness dimensions from existing status inputs, emits bounded zero-notional
   repair proof SLOs for non-current dimensions, and keeps `max_notional=0` whenever freshness is partial or
-  source-serving proof is not current. It is observe-mode evidence only; route warrants and live-submission gates remain
-  the capital authority.
+  source-serving proof is not current. Those SLOs also emit `jangar_pressure_refs` with target value gate, output
+  receipt, TTL, dedupe key, dispatchability, and `max_notional=0` for pressure-ledger consumers. It is observe-mode
+  evidence only; route warrants and live-submission gates remain the capital authority.
 - The simple direct-submit lane is no longer an authority bypass in live mode. Before submitting to Alpaca it evaluates
   the same live-submission gate as the scheduler path and persists the gate payload in decision metadata when a
   submission is blocked. Paper-mode simple execution remains unchanged.

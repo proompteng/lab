@@ -416,7 +416,10 @@ observe-mode proof-transport budget below stage credit: Kubernetes watch 429s, c
 failures, GitHub review-ingest missing refs, database evidence authority, and Torghut freshness debt become typed
 pressure sources with TTLs, reason codes, and action-class decisions. In observe mode it does not block schedule
 runners, but it already names when `dispatch_normal`, `deploy_widen`, and `merge_ready` would be held while
-`serve_readonly`, `torghut_observe`, and bounded zero-notional repairs remain open. Rollback is
+`serve_readonly`, `torghut_observe`, and bounded zero-notional repairs remain open. Torghut freshness debt is priced
+from `freshness_carry_ledger.jangar_pressure_refs` when present, so a fresh consumer-evidence receipt can still hold
+normal dispatch if a current zero-notional freshness repair SLO names stale TCA, TA, empirical, market-context, quant,
+or source-serving proof. Rollback is
 `JANGAR_EVIDENCE_PRESSURE_LEDGER_MODE=observe`; if the payload itself regresses status generation, set
 `JANGAR_EVIDENCE_PRESSURE_LEDGER_ENABLED=false` and continue relying on stage credit, ready-truth, clearance market,
 source-serving verdicts, and runtime-admission passports.

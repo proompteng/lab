@@ -73,6 +73,13 @@ export type TorghutConsumerEvidenceStatus = {
   repair_bid_settlement_active_dedupe_keys?: string[]
   repair_bid_settlement_compacted_lots?: TorghutRepairBidSettlementLot[]
   repair_bid_settlement_reason_codes?: string[]
+  freshness_carry_ledger_id?: string | null
+  freshness_carry_state?: string | null
+  freshness_carry_pressure_ref_ids?: string[]
+  freshness_carry_dispatchable_pressure_ref_ids?: string[]
+  freshness_carry_required_output_receipts?: string[]
+  freshness_carry_target_value_gates?: string[]
+  freshness_carry_reason_codes?: string[]
   operator_summary?: {
     top_clock_split: string | null
     selected_repair_lot_id: string | null
@@ -138,6 +145,7 @@ const CONSUMER_EVIDENCE_RECEIPT_SCHEMA_VERSION = 'torghut.consumer-evidence-rece
 const ROUTE_PROVEN_PROFIT_RECEIPT_SCHEMA_VERSION = 'torghut.route-proven-profit-receipt.v1'
 const ROUTE_WARRANT_EXCHANGE_SCHEMA_VERSION = 'torghut.route-warrant-exchange.v1'
 const REPAIR_BID_SETTLEMENT_LEDGER_SCHEMA_VERSION = 'torghut.repair-bid-settlement-ledger.v1'
+const FRESHNESS_CARRY_LEDGER_SCHEMA_VERSION = 'torghut.freshness-carry-ledger.v1'
 
 type JsonRouteResult = {
   ok: boolean
@@ -367,7 +375,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   const freshUntil = normalizeNonEmpty(receipt.fresh_until)
   const freshUntilMs = parseTimestampMs(freshUntil)
   const status = freshUntilMs && freshUntilMs > now.getTime() ? 'current' : 'stale'
-  const reasonCodes = uniqueStrings([
+  const receiptReasonCodes = uniqueStrings([
     ...(status === 'current' ? [] : ['torghut_consumer_evidence_stale']),
     ...stringList(receipt.reason_codes),
   ])
@@ -517,10 +525,57 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   )
   const repairBidSettlement = asRecord(payload.repair_bid_settlement_ledger)
   const sourceServingRepairReceiptLedger = asRecord(payload.source_serving_repair_receipt_ledger)
+  const freshnessCarryLedger = asRecord(payload.freshness_carry_ledger)
+  const freshnessCarrySchema = normalizeNonEmpty(freshnessCarryLedger?.schema_version)
+  const freshnessCarryCapitalPosture = asRecord(freshnessCarryLedger?.capital_posture)
+  const freshnessCarryDimensions = Array.isArray(freshnessCarryLedger?.dimensions)
+    ? freshnessCarryLedger.dimensions
+        .map((dimension) => asRecord(dimension))
+        .filter((dimension): dimension is Record<string, unknown> => Boolean(dimension))
+    : []
+  const freshnessCarryPressureRefs = Array.isArray(freshnessCarryLedger?.jangar_pressure_refs)
+    ? freshnessCarryLedger.jangar_pressure_refs
+        .map((pressureRef) => asRecord(pressureRef))
+        .filter((pressureRef): pressureRef is Record<string, unknown> => Boolean(pressureRef))
+    : []
+  const freshnessCarryLedgerId = normalizeNonEmpty(freshnessCarryLedger?.ledger_id)
+  const freshnessCarryState = normalizeReason(
+    freshnessCarryCapitalPosture?.decision ?? freshnessCarryLedger?.state ?? freshnessCarryLedger?.status,
+  )
+  const freshnessCarryPressureRefIds = uniqueStrings(
+    freshnessCarryPressureRefs.map((pressureRef) =>
+      normalizeNonEmpty(pressureRef.pressure_ref_id ?? pressureRef.ref_id ?? pressureRef.evidence_ref),
+    ),
+  )
+  const freshnessCarryDispatchablePressureRefIds = uniqueStrings(
+    freshnessCarryPressureRefs
+      .filter((pressureRef) => normalizeBoolean(pressureRef.dispatchable))
+      .map((pressureRef) =>
+        normalizeNonEmpty(pressureRef.pressure_ref_id ?? pressureRef.ref_id ?? pressureRef.evidence_ref),
+      ),
+  )
+  const freshnessCarryRequiredOutputReceipts = uniqueStrings([
+    ...freshnessCarryPressureRefs.flatMap((pressureRef) => stringValues(pressureRef.required_output_receipts)),
+    ...freshnessCarryPressureRefs.map((pressureRef) => normalizeNonEmpty(pressureRef.required_output_receipt)),
+  ])
+  const freshnessCarryTargetValueGates = uniqueStrings(
+    freshnessCarryPressureRefs.map((pressureRef) => normalizeReason(pressureRef.target_value_gate)),
+  )
+  const freshnessCarryReasonCodes = uniqueStrings([
+    freshnessCarryLedger && freshnessCarrySchema && freshnessCarrySchema !== FRESHNESS_CARRY_LEDGER_SCHEMA_VERSION
+      ? `freshness_carry_ledger_schema_mismatch:${freshnessCarrySchema}`
+      : null,
+    ...stringList(freshnessCarryCapitalPosture?.reason_codes),
+    ...freshnessCarryDimensions.flatMap((dimension) => stringList(dimension.stale_reason_codes)),
+    ...freshnessCarryPressureRefs.flatMap((pressureRef) => stringList(pressureRef.reason_codes)),
+    ...freshnessCarryPressureRefs.flatMap((pressureRef) => stringList(pressureRef.hold_reason_codes)),
+  ])
+  const reasonCodes = uniqueStrings([...receiptReasonCodes, ...freshnessCarryReasonCodes])
   const observedContracts = uniqueStrings([
     routeWarrant ? 'route_warrant_exchange' : null,
     repairBidSettlement ? 'repair_bid_settlement_ledger' : null,
     sourceServingRepairReceiptLedger ? 'source_serving_repair_receipt_ledger' : null,
+    freshnessCarryLedger ? 'freshness_carry_ledger' : null,
     routeabilityLedger ? 'routeability_repair_acceptance_ledger' : null,
     profitRepairLedger ? 'profit_repair_settlement_ledger' : null,
     routeableExchange ? 'routeable_profit_candidate_exchange' : null,
@@ -535,6 +590,9 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     normalizeNonEmpty(repairBidSettlement.schema_version) &&
     normalizeNonEmpty(repairBidSettlement.schema_version) !== REPAIR_BID_SETTLEMENT_LEDGER_SCHEMA_VERSION
       ? `repair_bid_settlement_ledger:${normalizeNonEmpty(repairBidSettlement.schema_version)}`
+      : null,
+    freshnessCarryLedger && freshnessCarrySchema && freshnessCarrySchema !== FRESHNESS_CARRY_LEDGER_SCHEMA_VERSION
+      ? `freshness_carry_ledger:${freshnessCarrySchema}`
       : null,
   ])
   const routeWarrantId = normalizeNonEmpty(routeWarrant?.warrant_id ?? routeWarrant?.exchange_id)
@@ -692,6 +750,13 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       repair_bid_settlement_active_dedupe_keys: stringValues(repairBidSettlement?.active_dedupe_keys),
       repair_bid_settlement_compacted_lots: repairBidSettlementLots,
       repair_bid_settlement_reason_codes: repairBidSettlementReasonCodes,
+      freshness_carry_ledger_id: freshnessCarryLedgerId,
+      freshness_carry_state: freshnessCarryState,
+      freshness_carry_pressure_ref_ids: freshnessCarryPressureRefIds,
+      freshness_carry_dispatchable_pressure_ref_ids: freshnessCarryDispatchablePressureRefIds,
+      freshness_carry_required_output_receipts: freshnessCarryRequiredOutputReceipts,
+      freshness_carry_target_value_gates: freshnessCarryTargetValueGates,
+      freshness_carry_reason_codes: freshnessCarryReasonCodes,
       operator_summary: operatorSummary,
       reason_codes: reasonCodes,
       message:

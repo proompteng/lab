@@ -356,19 +356,46 @@ const databasePressureSource = (input: EvidencePressureLedgerInput): SourceDraft
 
 const torghutPressureSource = (input: EvidencePressureLedgerInput): SourceDraft | null => {
   const torghut = input.torghutConsumerEvidence
-  if (!torghut || torghut.status === 'current' || torghut.status === 'disabled') return null
+  if (!torghut) return null
 
-  const severity: EvidencePressureSeverity = torghut.status === 'stale' ? 'warning' : 'hold'
+  const freshnessPressureRefIds = torghut.freshness_carry_pressure_ref_ids ?? []
+  const dispatchableFreshnessPressureRefIds = torghut.freshness_carry_dispatchable_pressure_ref_ids ?? []
+  const hasFreshnessPressure =
+    freshnessPressureRefIds.length > 0 || (torghut.freshness_carry_reason_codes ?? []).length > 0
+  if ((torghut.status === 'current' || torghut.status === 'disabled') && !hasFreshnessPressure) return null
+
+  const severity: EvidencePressureSeverity = hasFreshnessPressure
+    ? dispatchableFreshnessPressureRefIds.length > 0
+      ? 'warning'
+      : 'hold'
+    : torghut.status === 'stale'
+      ? 'warning'
+      : 'hold'
   return {
     sourceClass: 'torghut_freshness',
     severity,
-    evidenceRef: torghut.receipt_id ?? `torghut-consumer-evidence:${torghut.status}`,
-    message: torghut.message || `Torghut consumer evidence is ${torghut.status}`,
+    evidenceRef:
+      dispatchableFreshnessPressureRefIds[0] ??
+      freshnessPressureRefIds[0] ??
+      torghut.receipt_id ??
+      `torghut-consumer-evidence:${torghut.status}`,
+    message: hasFreshnessPressure
+      ? `Torghut freshness carry has ${freshnessPressureRefIds.length} pressure refs`
+      : torghut.message || `Torghut consumer evidence is ${torghut.status}`,
     retryable: true,
     terminal: false,
     suggestedBackoffSeconds: severity === 'hold' ? 120 : 60,
-    valueGates: ['failed_agentrun_rate', 'ready_status_truth', 'handoff_evidence_quality'],
-    reasonCodes: uniqueStrings([`torghut_consumer_evidence_${torghut.status}`, ...torghut.reason_codes]),
+    valueGates: uniqueStrings([
+      'failed_agentrun_rate',
+      'ready_status_truth',
+      'handoff_evidence_quality',
+      ...(torghut.freshness_carry_target_value_gates ?? []),
+    ]),
+    reasonCodes: uniqueStrings([
+      hasFreshnessPressure ? 'torghut_freshness_pressure_active' : `torghut_consumer_evidence_${torghut.status}`,
+      ...torghut.reason_codes,
+      ...(torghut.freshness_carry_reason_codes ?? []),
+    ]),
   }
 }
 
@@ -504,6 +531,7 @@ const hasZeroNotionalRepairLot = (torghut: TorghutConsumerEvidenceStatus | null 
   if (parseNotional(torghut.max_notional) > 0) return false
   if ((torghut.repair_bid_settlement_dispatchable_lot_ids ?? []).length > 0) return true
   if ((torghut.routeable_exchange_zero_notional_repair_lot_ids ?? []).length > 0) return true
+  if ((torghut.freshness_carry_dispatchable_pressure_ref_ids ?? []).length > 0) return true
   return torghut.decision === 'repair' || torghut.decision === 'repair_only'
 }
 
@@ -513,6 +541,8 @@ const repairReceiptRefs = (torghut: TorghutConsumerEvidenceStatus | null | undef
     torghut?.route_warrant_id,
     ...(torghut?.repair_bid_settlement_dispatchable_lot_ids ?? []),
     ...(torghut?.routeable_exchange_zero_notional_repair_lot_ids ?? []),
+    ...(torghut?.freshness_carry_dispatchable_pressure_ref_ids ?? []),
+    ...(torghut?.freshness_carry_required_output_receipts ?? []),
   ])
 
 const decisionForAction = (input: {

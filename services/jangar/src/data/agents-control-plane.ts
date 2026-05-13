@@ -1238,6 +1238,13 @@ export type TorghutConsumerEvidenceStatus = {
   repair_bid_settlement_active_dedupe_keys?: string[]
   repair_bid_settlement_compacted_lots?: TorghutRepairBidSettlementLot[]
   repair_bid_settlement_reason_codes?: string[]
+  freshness_carry_ledger_id?: string | null
+  freshness_carry_state?: string | null
+  freshness_carry_pressure_ref_ids?: string[]
+  freshness_carry_dispatchable_pressure_ref_ids?: string[]
+  freshness_carry_required_output_receipts?: string[]
+  freshness_carry_target_value_gates?: string[]
+  freshness_carry_reason_codes?: string[]
   reason_codes: string[]
   message: string
 }
