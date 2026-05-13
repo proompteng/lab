@@ -7,7 +7,7 @@ Owner: Greg Konush
 
 - Live URL: https://sag.proompteng.ai
 - Kubernetes namespace: `sag`
-- Deployed image: `registry.ide-newton.ts.net/lab/sag:sag-20260513010817`
+- Deployed image: `registry.ide-newton.ts.net/lab/sag:sag-20260513093939`
 - Database: CNPG cluster `sag-db` in namespace `sag`
 - Source paths: `services/sag`, `argocd/sag`, `packages/scripts/src/sag`
 
@@ -26,21 +26,25 @@ bun run --filter @proompteng/sag build
 
 ## Core Workflow
 
-The product protects Kubernetes `AgentRun` workloads before they receive sensitive runtime authority.
+The product is a behind-the-firewall action gateway. Operators submit natural-language work requests; SAG turns the request into a plan, executes allowed read steps against internal systems, holds risky mutations for approval, and records every decision in an append-only audit log.
 
 1. Open https://sag.proompteng.ai.
-2. Click `Evaluate AgentRun`.
-3. SAG reads live `AgentRun` resources from the `agents` namespace.
-4. If the AgentRun requests sensitive secret material, SAG blocks it and records a redacted audit event.
-5. Add a natural-language rule in `Rules`, for example:
+2. Submit an operational intent such as:
 
 ```text
-Require approval before AgentRuns apply or mutate Kubernetes resources
+Inspect live agent runs, read SQL policy state, query audit graph, and parse the legacy feed
 ```
 
-6. Evaluate a mutating AgentRun action.
-7. SAG holds the action for approval, denies a non-approver, approves with the security operator, and writes every decision to the event log.
-8. Export `/api/events/export` to inspect the JSONL audit trail.
+3. SAG creates a task, expands it into plan steps, and executes real connector calls across SQL, REST, GraphQL, and a legacy feed.
+4. Submit a higher-risk intent such as:
+
+```text
+Inspect AgentRuns and execute a guarded restart if policy allows it
+```
+
+5. SAG evaluates policy before execution, parks the mutation behind an approval, and records the pending decision.
+6. Approve the pending action as an authorized operator.
+7. Export `/api/events/export` to inspect the JSONL audit trail.
 
 ## Verification
 
@@ -66,37 +70,34 @@ curl -fsS https://sag.proompteng.ai/api/health
 End-to-end API check:
 
 ```sh
-curl -fsS -X POST https://sag.proompteng.ai/api/workspace/clear \
+curl -fsS -X POST https://sag.proompteng.ai/api/tasks \
   -H 'content-type: application/json' \
-  --data '{}'
+  --data '{"text":"Inspect live agent runs, read SQL policy state, query audit graph, and parse the legacy feed"}'
 
-curl -fsS -X POST https://sag.proompteng.ai/api/agents/runs \
+curl -fsS -X POST https://sag.proompteng.ai/api/tasks \
   -H 'content-type: application/json' \
-  --data '{"actorId":"greg"}'
+  --data '{"text":"Inspect AgentRuns and execute a guarded restart if policy allows it"}'
 
 curl -fsS -X POST https://sag.proompteng.ai/api/rules \
   -H 'content-type: application/json' \
-  --data '{"actorId":"greg","text":"Require approval before AgentRuns apply or mutate Kubernetes resources"}'
+  --data '{"text":"Require approval before agents update production databases"}'
 
 curl -fsS https://sag.proompteng.ai/api/events/export
 ```
 
-Verified live result on 2026-05-13:
+Expected live result:
 
-- Live AgentRun `torghut-quant-discover-sched-qlth5` was blocked.
-- Secret references were stored as `secret:<hash>` values.
-- Raw sensitive secret names were absent from the manifest, API response, JSONL export, and root HTML.
-- A mutating AgentRun action entered `approval_required`.
-- `ops` was denied approval because it lacks `approval:approve`.
-- `greg` approved the action.
-- The live root page showed `AgentRuns`, `Events`, `5 events`, and `1 blocked`.
+- The read task succeeds and records SQL, REST, GraphQL, and legacy connector calls.
+- The guarded mutation task enters `waiting_approval` before executing the risky step.
+- Approving the generated approval records an `approval:approved` event and completes the held decision.
+- The JSONL export contains task, plan, connector, policy, approval, and audit events without raw secret values.
 
 ## Deliverable Map
 
 | Requirement                              | Evidence                                                 |
 | ---------------------------------------- | -------------------------------------------------------- |
 | Working product URL or runnable artifact | `https://sag.proompteng.ai`; `services/sag`              |
-| Source code                              | `services/sag`, `argocd/sag`, `packages/scripts/src/sag` |
+| Source code                              | `services/sag`, `argocd/sag`, `packages/scripts/src/sag`; PRs `#6452`, `#6453` |
 | PRD, 1-2 pages                           | `docs/secure-action-gateway/prd-submission.md`           |
 | TDD, 1-2 pages                           | `docs/secure-action-gateway/tdd-submission.md`           |
 | 2-5 minute walkthrough                   | Record the workflow above against the live URL           |
@@ -108,13 +109,15 @@ Personally built:
 
 - TanStack Start service in `services/sag`.
 - Minimal event-log UI using Tailwind and Base UI primitives.
-- CNPG-backed state persistence.
+- CNPG-backed tables for identities, connectors, policies, tasks, plan steps, connector calls, approvals, AgentRuns, rule messages, and audit events.
+- Natural-language task intake that produces multi-step plans and executes real connector calls.
+- SQL, REST, GraphQL, legacy-feed, Kubernetes, policy, and audit connector surfaces.
 - Kubernetes service account integration for reading live AgentRuns in the `agents` namespace.
-- Policy evaluation for requested secrets, requested connectors, and mutating tools.
-- Natural-language rule builder that translates operator text into enforced rules.
-- Approval flow with RBAC checks.
+- Policy evaluation for requested secrets, requested connectors, mutating operations, and approval-gated actions.
+- Natural-language rule builder wired through the Codex app server with deterministic fallback.
+- Approval flow with server-side actor resolution and RBAC checks.
 - Redacted JSONL audit export.
-- Docker image build, Kubernetes manifests, CNPG cluster, service account, RBAC, Traefik ingress, and deploy script.
+- Docker image build, Kubernetes manifests, CNPG cluster, service account, RBAC, Traefik ingress, sealed Codex auth, and deploy script.
 
 Reused:
 
@@ -124,7 +127,7 @@ Reused:
 
 What broke and how it was debugged:
 
-- The first product surface mixed a request form with the event log. Live browser inspection made the confusion obvious, so the root page was reduced to events plus AgentRuns.
+- The first product surface looked like a mock dashboard. It was reduced to one operator workflow: task intake, current task state, policy decision, and audit evidence.
 - The first loader pulled Postgres code into the browser bundle. Build output showed browser externalization warnings, so the loader was moved to a TanStack Start server function.
-- Stale generated routes kept deleted request endpoints alive. A production build regenerated `routeTree.gen.ts` and removed those paths.
-- Earlier persisted connector fixture tables were removed from CNPG and the state was cleared before final live verification.
+- The first persistence version wrote normalized state beside legacy JSON. Live logs exposed undefined values from older persisted rows, so state normalization and JSON parameter sanitization were added before rollout.
+- Argo reverted direct cluster applies until the image tag was committed and merged through GitOps, so rollout evidence now tracks both the direct deploy and the GitOps image promotion.
