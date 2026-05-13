@@ -259,6 +259,50 @@ class TestWhitepaperCandidateCompiler(TestCase):
             all(spec.objective["target_net_pnl_per_day"] == "300" for spec in eod_specs)
         )
 
+    def test_short_exhaustion_family_is_executable_from_fade_claim(self) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-run-short-exhaustion",
+            claims=[
+                {
+                    "claim_id": "claim-short-exhaustion",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Short-side upside exhaustion fade with offer pressure can "
+                        "profit from overbought intraday weakness."
+                    ),
+                    "required_features": [
+                        "session_open_extension",
+                        "offer_pressure",
+                        "quote_quality",
+                    ],
+                    "confidence": "0.79",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("300"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        short_specs = [
+            spec
+            for spec in compilation.executable_specs
+            if spec.family_template_id == "mean_reversion_exhaustion_short_v1"
+        ]
+        self.assertEqual(len(short_specs), 3)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+        )
+        self.assertTrue(
+            all(
+                spec.runtime_strategy_name == "mean-reversion-exhaustion-short-v1"
+                for spec in short_specs
+            )
+        )
+
     def test_momentum_and_reversal_families_cover_inferred_feature_contracts(
         self,
     ) -> None:

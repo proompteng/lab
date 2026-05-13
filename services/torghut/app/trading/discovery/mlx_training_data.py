@@ -162,6 +162,7 @@ def _family_code(family_template_id: str) -> float:
         "intraday_tsmom_v2": 7.0,
         "late_day_continuation_v1": 8.0,
         "end_of_day_reversal_v1": 9.0,
+        "mean_reversion_exhaustion_short_v1": 10.0,
     }
     return families.get(family_template_id, 0.0)
 

@@ -21,6 +21,7 @@ EXECUTABLE_FAMILY_IDS = {
     "washout_rebound_v2",
     "momentum_pullback_v1",
     "mean_reversion_rebound_v1",
+    "mean_reversion_exhaustion_short_v1",
     "microbar_cross_sectional_pairs_v1",
     "microstructure_continuation_matched_filter_v1",
     "intraday_tsmom_v2",
