@@ -95,12 +95,13 @@ const splitFreezeReasons = (reason: string | null) =>
 const isBlockingFreezeReason = (reason: string | null) => {
   const reasons = splitFreezeReasons(reason)
   if (reasons.length === 0) return true
+  if (reasons.every((entry) => entry === 'NotFrozen' || entry === 'Healthy')) return false
   return reasons.some((entry) => entry !== 'StageStaleness')
 }
 
 const isInactiveFreezeReason = (reason: string | null) => {
   const reasons = splitFreezeReasons(reason).map((entry) => entry.toLowerCase())
-  return reasons.length > 0 && reasons.every((entry) => entry === 'notfrozen')
+  return reasons.length > 0 && reasons.every((entry) => entry === 'notfrozen' || entry === 'healthy')
 }
 
 const readRequirementsPending = (raw: unknown): number => {
@@ -187,7 +188,14 @@ const buildExecutionTrustStage = (input: {
 
   const rawPhase = asString(input.stageState['phase']) ?? 'Unknown'
   const frozen = rawPhase.toLowerCase() === 'frozen'
-  const phase = input.freezeState === 'expired_unreconciled' && frozen ? 'Recovering' : rawPhase
+  const recoveredInactiveFreeze =
+    input.freezeState === 'inactive' && frozen && healthy === true && latestFailureCount === 0 && !stale
+  const phase =
+    input.freezeState === 'expired_unreconciled' && frozen
+      ? 'Recovering'
+      : recoveredInactiveFreeze
+        ? 'Active'
+        : rawPhase
   const reason =
     input.freezeState === 'active'
       ? input.freezeBlocking === false
@@ -195,15 +203,17 @@ const buildExecutionTrustStage = (input: {
         : `${input.stage} blocked by swarm freeze`
       : input.freezeState === 'expired_unreconciled'
         ? `${input.stage} waiting for freeze reconciliation`
-        : frozen
-          ? `${input.stage} stage is frozen`
-          : stale
-            ? `${input.stage} stage is stale`
-            : latestFailureCount > 0
-              ? `${input.stage} consecutive failures`
-              : asString(input.stageState['phase']) === null
-                ? `${input.stage} phase missing`
-                : null
+        : recoveredInactiveFreeze
+          ? null
+          : frozen
+            ? `${input.stage} stage is frozen`
+            : stale
+              ? `${input.stage} stage is stale`
+              : latestFailureCount > 0
+                ? `${input.stage} consecutive failures`
+                : asString(input.stageState['phase']) === null
+                  ? `${input.stage} phase missing`
+                  : null
   const classReason =
     input.freezeState === 'active'
       ? input.freezeBlocking === false
@@ -211,13 +221,15 @@ const buildExecutionTrustStage = (input: {
         : 'blocked'
       : input.freezeState === 'expired_unreconciled'
         ? 'degraded'
-        : frozen || stale
-          ? 'degraded'
-          : latestFailureCount > 0 || stageUnhealthy
+        : recoveredInactiveFreeze
+          ? null
+          : frozen || stale
             ? 'degraded'
-            : healthy === null
-              ? 'unknown'
-              : null
+            : latestFailureCount > 0 || stageUnhealthy
+              ? 'degraded'
+              : healthy === null
+                ? 'unknown'
+                : null
 
   return {
     stageData: {
@@ -344,7 +356,11 @@ export const buildExecutionTrust = async ({
     const freezeExpiredUnreconciled =
       !inactiveFreeze && phase.toLowerCase() === 'frozen' && freezeUntilMs !== null && freezeUntilMs <= nowMs
     const freezeBlocking = freezeActive && isBlockingFreezeReason(freezeReason)
-    const projectedPhase = freezeExpiredUnreconciled ? 'Recovering' : phase
+    const projectedPhase = freezeExpiredUnreconciled
+      ? 'Recovering'
+      : inactiveFreeze && phase.toLowerCase() === 'frozen'
+        ? 'Active'
+        : phase
     const ready =
       projectedPhase.toLowerCase() !== 'frozen' &&
       projectedPhase.toLowerCase() !== 'recovering' &&

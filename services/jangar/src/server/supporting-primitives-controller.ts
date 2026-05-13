@@ -200,6 +200,7 @@ const splitSwarmFreezeReasons = (reason: string | null | undefined) =>
 const isBlockingSwarmFreezeReason = (reason: string | null | undefined) => {
   const reasons = splitSwarmFreezeReasons(reason)
   if (reasons.length === 0) return true
+  if (reasons.every((entry) => entry === 'NotFrozen' || entry === 'Healthy')) return false
   return reasons.some((entry) => entry !== 'StageStaleness' && entry !== 'ProviderCapacityExhausted')
 }
 
@@ -2655,7 +2656,7 @@ const reconcileSwarm = async (
     }
   }
 
-  const inactiveFreezeUntil = freezeUntil ?? existingFreezeUntil ?? nowIso()
+  const inactiveFreezeUntil = nowIso()
   const inactiveFreezeEnteredAt = freezeEnteredAt ?? existingFreezeEnteredAt ?? nowIso()
   let conditions = conditionsBase
   const unhealthyStages = STAGE_NAMES.filter((stage) => {

@@ -3051,11 +3051,45 @@ describe('control-plane status', () => {
     const kubeGateway = createTestKubeGateway({
       listSwarms: vi.fn(async () => [
         buildExecutionTrustSwarmResource({
-          phase: 'Active',
+          phase: 'Frozen',
           freezeReason: 'NotFrozen',
           freezeUntil: '2026-01-20T00:40:00Z',
           requirementsPending: 0,
           requirementsLastSeen: '2026-01-20T00:19:00Z',
+          stageStates: {
+            discover: {
+              phase: 'Frozen',
+              healthy: true,
+              fresh: true,
+              cadence: '1m',
+              recentSuccessAt: '2026-01-20T00:19:00Z',
+              consecutiveFailures: 0,
+            },
+            plan: {
+              phase: 'Frozen',
+              healthy: true,
+              fresh: true,
+              cadence: '1m',
+              recentSuccessAt: '2026-01-20T00:19:00Z',
+              consecutiveFailures: 0,
+            },
+            implement: {
+              phase: 'Frozen',
+              healthy: true,
+              fresh: true,
+              cadence: '1m',
+              recentSuccessAt: '2026-01-20T00:19:00Z',
+              consecutiveFailures: 0,
+            },
+            verify: {
+              phase: 'Frozen',
+              healthy: true,
+              fresh: true,
+              cadence: '1m',
+              recentSuccessAt: '2026-01-20T00:19:00Z',
+              consecutiveFailures: 0,
+            },
+          },
         }),
       ]),
     })
@@ -3078,6 +3112,7 @@ describe('control-plane status', () => {
         until: '2026-01-20T00:40:00Z',
       },
     })
+    expect(snapshot.stages.map((stage) => stage.phase)).toEqual(['Active', 'Active', 'Active', 'Active'])
   })
 
   it('buildExecutionTrust degrades when freeze expiry is unreconciled', async () => {
