@@ -271,6 +271,10 @@ Implementation status:
   with required output receipts.
 - Source-serving proof is a dispatch precondition for non-source freshness repairs; if source-serving proof is stale,
   only the source-serving repair SLO is dispatchable.
+- Phase 2 has started in `services/torghut/app/trading/zero_notional_repair_executor.py`: zero-notional execution
+  receipts now cite the matching `freshness_carry_ledger` dimension and `repair_proof_slo` for market-context,
+  empirical, and TCA freshness repairs. `execute=true` fails closed before runner invocation when that citation is
+  missing or the SLO is not dispatchable.
 
 Engineer milestone 2:
 

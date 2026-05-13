@@ -1813,6 +1813,10 @@ def trading_profit_freshness_zero_notional_repair(
         execute=execute,
         preferred_action=action,
         repair_lot_dispatch_ticket=repair_lot_dispatch_ticket,
+        freshness_carry_ledger=cast(
+            Mapping[str, Any],
+            status_payload.get("freshness_carry_ledger") or {},
+        ),
         runners={
             "recompute_route_tca_and_fill_quality": run_tca_recompute,
             "rerun_drift_checks_for_blocked_hypotheses": run_drift_check_replay,
