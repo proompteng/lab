@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { buildSnapshot, evaluateAgentRun, type ActorId, type ConnectorKind } from '~/server/gateway'
+import { buildSnapshot, evaluateAgentRun, isConnectorKind, resolveActorFromRequest } from '~/server/gateway'
 import { listLiveAgentRuns } from '~/server/kubernetes'
 import { loadGatewayState, saveGatewayState } from '~/server/persistence'
 
@@ -9,7 +9,7 @@ export const Route = createFileRoute('/api/agents/runs')({
       GET: async () => jsonResponse(buildSnapshot(await loadGatewayState())),
       POST: async ({ request }: SagServerRouteArgs) => {
         const payload = (await request.json().catch(() => null)) as AgentRunPayload | null
-        const actorId = isActorId(payload?.actorId) ? payload.actorId : 'greg'
+        const actor = resolveActorFromRequest(request)
         const state = await loadGatewayState()
         const requestedSecrets = payload?.requestedSecrets?.filter((item) => item.trim().length > 0)
         const requestedConnectors = payload?.requestedConnectors?.filter(isConnectorKind)
@@ -18,7 +18,7 @@ export const Route = createFileRoute('/api/agents/runs')({
           ? null
           : (await listLiveAgentRuns()).find((item) => Boolean(item?.requestedSecrets?.length))
         const evaluationInput = liveAgentRun ?? {
-          actorId,
+          actorId: actor.id,
           name: payload?.name,
           namespace: payload?.namespace,
           agent: payload?.agent,
@@ -33,7 +33,7 @@ export const Route = createFileRoute('/api/agents/runs')({
           )
         }
 
-        const agentRun = evaluateAgentRun(state, { ...evaluationInput, actorId })
+        const agentRun = evaluateAgentRun(state, { ...evaluationInput, actorId: actor.id })
         await saveGatewayState(state)
         return jsonResponse({ ok: true, agentRun, snapshot: buildSnapshot(state) })
       },
@@ -42,7 +42,6 @@ export const Route = createFileRoute('/api/agents/runs')({
 })
 
 type AgentRunPayload = {
-  actorId?: string
   name?: string
   namespace?: string
   agent?: string
@@ -50,11 +49,6 @@ type AgentRunPayload = {
   requestedConnectors?: string[]
   requestedTools?: string[]
 }
-
-const isActorId = (value: unknown): value is ActorId => value === 'greg' || value === 'ops' || value === 'audit'
-
-const isConnectorKind = (value: unknown): value is ConnectorKind =>
-  value === 'kubernetes' || value === 'postgres' || value === 'policy' || value === 'audit'
 
 const jsonResponse = (payload: unknown, status = 200) =>
   new Response(JSON.stringify(payload), {

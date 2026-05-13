@@ -49,11 +49,24 @@ spec:
               value: https://sag.proompteng.ai
             - name: SAG_PRODUCT_CONTEXT
               value: secure-action-gateway
+            - name: CODEX_HOME
+              value: /home/bun/.codex
+            - name: CODEX_AUTH
+              value: /home/bun/.codex/auth.json
+            - name: SAG_CODEX_BINARY
+              value: codex
+            - name: SAG_CODEX_CWD
+              value: /tmp
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: sag-db-app
                   key: uri
+          volumeMounts:
+            - name: codex-auth
+              mountPath: /home/bun/.codex/auth.json
+              subPath: auth.json
+              readOnly: true
           ports:
             - name: http
               containerPort: 3000
@@ -79,3 +92,8 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+      volumes:
+        - name: codex-auth
+          secret:
+            secretName: codex-auth
+            optional: true

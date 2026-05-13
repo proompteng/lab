@@ -1,59 +1,77 @@
-# Secure Action Gateway Market Research And Competitive Analysis
+# SAG Market Research And Competitive Analysis
 
-## Market Read
+## Read
 
-Enterprise agent adoption is blocked less by model quality than by operational trust. Buyers need to know what an agent can access, how a risky action is stopped, who can approve it, and what audit evidence remains after the run.
+The market is splitting into three layers:
 
-The opportunity is a secure action layer for internal agents: a product that sits between agent intent and enterprise authority.
+- Agent frameworks: help developers build tools and workflows.
+- Automation/iPaaS/RPA: provide connectors and workflow execution.
+- Gateways/security: govern traffic, policy, identity, logging, and isolation.
 
-## Buyer Pain
+The gap is the action boundary for internal agents: a product that sees the planned connector action before authority is used, enforces policy, and leaves action-level evidence.
 
-- Internal agents need secrets, service accounts, APIs, and databases to be useful.
-- Security teams do not want broad standing credentials inside agent runtimes.
-- Platform teams need a way to roll agents out without building one-off guardrails for every team.
-- Audit teams need evidence at the action level, not a transcript after the fact.
+## Signals
 
-## Competitive Landscape
+- OpenAI Agents SDK separates guardrails from agent execution and specifically calls out tool guardrails around custom function-tool calls. That validates pre/post tool-call control as the right enforcement point.
+- Cloudflare AI Gateway centers logs, observability, and DLP fields around AI requests, but it is model/API traffic oriented rather than internal system action oriented.
+- UiPath is bringing agents to Automation Suite/on-prem environments, which validates enterprise demand for agentic automation where data sovereignty and private deployment matter.
+- Workato connectors model authentication, triggers, and actions per app, validating connector breadth as a buyer expectation.
+- Kubernetes RuntimeClass and gVisor show the infrastructure path for sandboxing higher-risk workloads without redesigning the product around a VM-first abstraction.
 
-| Category                  | Examples                    | Strength                                    | Gap SAG Exploits                                                               |
-| ------------------------- | --------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------ |
-| RPA / workflow automation | UiPath, Automation Anywhere | mature workflow execution, enterprise sales | workflow-first; agent authority and model-era audit are not the core primitive |
-| iPaaS / automation        | Workato, Zapier, n8n        | broad connectors, fast setup                | often connector-first; less focused on behind-firewall agent action control    |
-| Agent frameworks          | LangGraph, CrewAI, AutoGen  | flexible agent orchestration                | developer frameworks, not enterprise security products                         |
-| API gateways              | Kong, Apigee, Envoy         | traffic control and policy                  | protect APIs, not agent decisions before authority is attached                 |
-| Cloud security / identity | Wiz, Okta, Teleport         | strong identity and access posture          | not purpose-built for natural-language agent action gating                     |
+Sources:
 
-## Wedge
+- https://openai.github.io/openai-agents-python/guardrails/
+- https://developers.cloudflare.com/ai-gateway/observability/logging/
+- https://docs.uipath.com/agents/automation-suite/2.2510/release-notes/2-2510-2
+- https://docs.workato.com/connectors
+- https://kubernetes.io/docs/concepts/containers/runtime-class/
+- https://gvisor.dev/docs/
 
-Start with AgentRun protection inside Kubernetes because it is concrete:
+## Competitive Map
 
-- the workload exists,
-- requested authority is inspectable,
-- policy decisions are visible,
-- approval is easy to explain,
-- audit evidence is immediate.
+| Category                  | Examples                    | Strength                         | Gap SAG Targets                                      |
+| ------------------------- | --------------------------- | -------------------------------- | ---------------------------------------------------- |
+| Agent frameworks          | OpenAI Agents SDK, LangGraph | developer control, orchestration | not an enterprise authority boundary by themselves   |
+| AI gateways               | Cloudflare AI Gateway        | model traffic logging, policies  | not focused on internal database/API action release   |
+| RPA / agentic automation  | UiPath                       | workflow execution, enterprise   | workflow-first, not action-authority-first           |
+| iPaaS                     | Workato                      | connector breadth                | connector execution, not agent-specific governance   |
+| API gateways              | Kong, Envoy, Apigee          | API traffic policy               | do not understand agent intent and approval context  |
+| IAM / privileged access   | Okta, Teleport, CyberArk     | identity and access              | do not plan and audit natural-language agent actions |
+| Sandboxing/runtime safety | gVisor, Kata, Firecracker    | workload isolation               | isolation layer, not product workflow or approval    |
 
-This wedge can expand into a secure action gateway for internal databases, REST APIs, GraphQL APIs, and legacy systems.
+## Product Positioning
 
-## Differentiation
+SAG should be described as:
 
-SAG is not trying to be the agent framework. It is the authority boundary around agents.
+> The policy and audit boundary between agent intent and enterprise authority.
 
-Key differences:
+Not:
 
-- Event log first.
-- Deterministic rules, even when created from natural language.
-- In-cluster deployment.
-- Redaction before persistence.
-- Human approval as a first-class security event.
-- Connector strategy based on least-privilege operations, not broad credentials.
+- a chatbot,
+- a generic workflow builder,
+- an API gateway clone,
+- an RPA suite,
+- or a prompt firewall.
 
-## Panel Risk And Mitigation
+## Best Wedge
 
-| Risk                             | Mitigation                                                              |
-| -------------------------------- | ----------------------------------------------------------------------- |
-| Looks like a generic AI app      | Root page is the event log, not chat                                    |
-| Security claims feel theoretical | Live AgentRun block and approval flow are visible                       |
-| Too much platform scope          | Keep primitives to AgentRun, Connector, Rule, Decision, Approval, Event |
-| Audit is hand-wavy               | JSONL export exposes the event trail                                    |
-| Natural language seems unsafe    | Natural language creates rules; deterministic policy enforces them      |
+Start with internal platform teams rolling out agents in Kubernetes. They already have:
+
+- service accounts,
+- jobs/pods,
+- secret references,
+- internal APIs,
+- audit needs,
+- and approval-sensitive operations.
+
+The panel demo should prove that SAG can run inside that environment, inspect live workloads, call real internal connectors, and show action-level audit evidence.
+
+## Why This Can Win
+
+The winning primitive is small enough to build and explain:
+
+```text
+Task -> Connector Action -> Policy -> Approval -> Audit
+```
+
+That primitive generalizes across SQL, REST, GraphQL, legacy systems, and Kubernetes without inventing a sprawling control plane.

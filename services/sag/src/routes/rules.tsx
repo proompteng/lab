@@ -28,7 +28,7 @@ function RulesRoute() {
   })
   const snapshot = snapshotQuery.data
   const mutation = useMutation({
-    mutationFn: (nextText: string) => createRule('greg', nextText),
+    mutationFn: (nextText: string) => createRule(nextText),
     onSuccess: (result) => {
       queryClient.setQueryData(['sag-snapshot'], result.snapshot)
       setText('')

@@ -18,8 +18,12 @@ FROM oven/bun:${BUN_VERSION}-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV CODEX_HOME=/home/bun/.codex
+ENV CODEX_AUTH=/home/bun/.codex/auth.json
 
 COPY --from=builder /workspace/services/sag/.output ./.output
+
+RUN mkdir -p /home/bun/.codex && chown -R bun:bun /home/bun/.codex && bun add -g @openai/codex@latest
 
 USER bun
 EXPOSE 3000

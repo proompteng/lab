@@ -1,4 +1,4 @@
-import type { ActorId, GatewayRule, GatewaySnapshot, ProtectedAgentRun } from '~/server/gateway'
+import type { GatewayRule, GatewaySnapshot, GatewayTask, ProtectedAgentRun } from '~/server/gateway'
 
 export type SnapshotCommandResponse = {
   ok: boolean
@@ -13,6 +13,10 @@ export type RuleResponse = SnapshotCommandResponse & {
 
 export type AgentRunResponse = SnapshotCommandResponse & {
   agentRun?: ProtectedAgentRun
+}
+
+export type TaskResponse = SnapshotCommandResponse & {
+  task?: GatewayTask
 }
 
 export const fetchJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
@@ -32,10 +36,10 @@ export const fetchJson = async <T>(path: string, init?: RequestInit): Promise<T>
 
 export const fetchSnapshot = () => fetchJson<GatewaySnapshot>('/api/snapshot')
 
-export const approveRun = (actorId: ActorId, approvalId: string) =>
+export const approveRun = (approvalId: string) =>
   fetchJson<SnapshotCommandResponse>('/api/approvals/approve', {
     method: 'POST',
-    body: JSON.stringify({ actorId, approvalId }),
+    body: JSON.stringify({ approvalId }),
   })
 
 export const clearRunState = () =>
@@ -44,14 +48,20 @@ export const clearRunState = () =>
     body: JSON.stringify({}),
   })
 
-export const createRule = (actorId: ActorId, text: string) =>
+export const createRule = (text: string) =>
   fetchJson<RuleResponse>('/api/rules', {
     method: 'POST',
-    body: JSON.stringify({ actorId, text }),
+    body: JSON.stringify({ text }),
   })
 
 export const evaluateAgentRun = () =>
   fetchJson<AgentRunResponse>('/api/agents/runs', {
     method: 'POST',
-    body: JSON.stringify({ actorId: 'greg' }),
+    body: JSON.stringify({}),
+  })
+
+export const submitTask = (text: string) =>
+  fetchJson<TaskResponse>('/api/tasks', {
+    method: 'POST',
+    body: JSON.stringify({ text }),
   })
