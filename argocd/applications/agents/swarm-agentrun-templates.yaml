@@ -201,7 +201,7 @@ spec:
       - name: verify
         retries: 0
         retryBackoffSeconds: 30
-        timeoutSeconds: 2700
+        timeoutSeconds: 7200
         parameters:
           stage: verify
   parameters:
@@ -446,7 +446,7 @@ spec:
       - name: verify
         retries: 0
         retryBackoffSeconds: 30
-        timeoutSeconds: 2700
+        timeoutSeconds: 7200
         parameters:
           stage: verify
   parameters:
