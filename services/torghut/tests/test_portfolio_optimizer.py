@@ -4,6 +4,7 @@ from decimal import Decimal
 from unittest import TestCase
 
 from app.trading.discovery.evidence_bundles import (
+    CandidateEvidenceBundle,
     evidence_bundle_blockers,
     evidence_bundle_from_frontier_candidate,
     evidence_bundle_from_payload,
@@ -524,3 +525,107 @@ class TestPortfolioOptimizer(TestCase):
             "executable_replay_passed_failed",
             portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
         )
+
+    def test_optimizer_searches_past_concentrated_greedy_sleeve(self) -> None:
+        def bundle(
+            *,
+            candidate_id: str,
+            net_pnl_per_day: str,
+            symbol: str,
+            cluster: str,
+        ) -> CandidateEvidenceBundle:
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "runtime_family": "microbar_cross_sectional_pairs",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "family_template_id": "microbar_cross_sectional_pairs_v1",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": net_pnl_per_day,
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "best_day_share": "0.2",
+                        "avg_filled_notional_per_day": "350000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "correlation_cluster": cluster,
+                        "symbol_contribution_shares": {symbol: "1.0"},
+                        **_executable_scorecard_fields(candidate_id),
+                    },
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": net_pnl_per_day,
+                            "2026-02-24": net_pnl_per_day,
+                            "2026-02-25": net_pnl_per_day,
+                            "2026-02-26": net_pnl_per_day,
+                            "2026-02-27": net_pnl_per_day,
+                        },
+                        "daily_filled_notional": {
+                            "2026-02-23": "350000",
+                            "2026-02-24": "350000",
+                            "2026-02-25": "350000",
+                            "2026-02-26": "350000",
+                            "2026-02-27": "350000",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-beam-search",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[
+                bundle(
+                    candidate_id="cand-concentrated",
+                    net_pnl_per_day="800",
+                    symbol="NVDA",
+                    cluster="concentrated-alpha",
+                ),
+                bundle(
+                    candidate_id="cand-diverse-a",
+                    net_pnl_per_day="200",
+                    symbol="AAPL",
+                    cluster="diverse-a",
+                ),
+                bundle(
+                    candidate_id="cand-diverse-b",
+                    net_pnl_per_day="200",
+                    symbol="AMZN",
+                    cluster="diverse-b",
+                ),
+                bundle(
+                    candidate_id="cand-diverse-c",
+                    net_pnl_per_day="200",
+                    symbol="GOOGL",
+                    cluster="diverse-c",
+                ),
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            portfolio_size_min=3,
+            portfolio_size_max=3,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertNotIn("cand-concentrated", portfolio.source_candidate_ids)
+        self.assertCountEqual(
+            portfolio.source_candidate_ids,
+            ("cand-diverse-a", "cand-diverse-b", "cand-diverse-c"),
+        )
+        self.assertTrue(portfolio.objective_scorecard["target_met"])
+        self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
+        self.assertLessEqual(
+            Decimal(
+                portfolio.objective_scorecard["max_single_symbol_contribution_share"]
+            ),
+            Decimal("0.35"),
+        )
+        self.assertEqual(
+            portfolio.optimizer_report["method"],
+            "deterministic_beam_oracle_search_v1",
+        )
+        self.assertGreater(portfolio.optimizer_report["finalist_state_count"], 1)
