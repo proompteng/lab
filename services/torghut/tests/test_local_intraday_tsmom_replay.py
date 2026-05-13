@@ -34,6 +34,7 @@ from scripts.local_intraday_tsmom_replay import (
     _parse_signal_row,
     _positions_payload,
     _quote_quality_status,
+    _record_capital_snapshot,
     _record_trace_for_funnel,
     _reconcile_pending_order_before_immediate_fill,
     _resolve_pending_fill_price,
@@ -147,6 +148,43 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(day_bucket["filled_count"], 1)
         self.assertEqual(day_bucket["filled_notional"], Decimal("5232.80"))
         self.assertLess(cash, Decimal("10000"))
+
+    def test_record_capital_snapshot_tracks_cash_and_exposure(self) -> None:
+        positions = {
+            ("META", _SHARED_POSITION_OWNER): PositionState(
+                strategy_id=_SHARED_POSITION_OWNER,
+                qty=Decimal("3"),
+                avg_entry_price=Decimal("100"),
+                opened_at=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+                entry_cost_total=Decimal("1.00"),
+                decision_at=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+            ),
+            ("NVDA", _SHARED_POSITION_OWNER): PositionState(
+                strategy_id=_SHARED_POSITION_OWNER,
+                qty=Decimal("-2"),
+                avg_entry_price=Decimal("50"),
+                opened_at=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+                entry_cost_total=Decimal("1.00"),
+                decision_at=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+            ),
+        }
+        bucket: dict[str, object] = {}
+
+        equity = _record_capital_snapshot(
+            bucket=bucket,
+            cash=Decimal("-25"),
+            positions=positions,
+            last_prices={"META": Decimal("110"), "NVDA": Decimal("45")},
+        )
+
+        self.assertEqual(equity, Decimal("215"))
+        self.assertEqual(bucket["min_cash"], Decimal("-25"))
+        self.assertEqual(bucket["min_equity"], Decimal("215"))
+        self.assertEqual(bucket["max_gross_exposure"], Decimal("420"))
+        self.assertEqual(bucket["max_net_exposure_abs"], Decimal("240"))
+        self.assertEqual(bucket["max_gross_exposure_pct_equity"], Decimal("420") / Decimal("215"))
+        self.assertEqual(bucket["negative_cash_observation_count"], 1)
+        self.assertEqual(bucket["capital_snapshot_count"], 1)
 
     def test_apply_filled_decision_backfills_missing_stats_bucket_fields(self) -> None:
         signal = self._signal(bid="523.22", ask="523.28", price="523.25")

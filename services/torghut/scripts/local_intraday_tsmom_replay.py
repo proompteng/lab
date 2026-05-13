@@ -633,6 +633,20 @@ def _position_equity(
     return equity
 
 
+def _position_exposure(
+    *,
+    positions: dict[tuple[str, str], PositionState],
+    last_prices: dict[str, Decimal],
+) -> tuple[Decimal, Decimal]:
+    gross_exposure = Decimal('0')
+    net_exposure = Decimal('0')
+    for (symbol, _owner_strategy_id), position in positions.items():
+        market_value = position.qty * last_prices.get(symbol, position.avg_entry_price)
+        gross_exposure += abs(market_value)
+        net_exposure += market_value
+    return gross_exposure, net_exposure
+
+
 def _extract_spread(signal: SignalEnvelope) -> Decimal | None:
     raw = signal.payload.get('spread')
     if isinstance(raw, Decimal):
@@ -801,6 +815,13 @@ def _init_day_stats() -> dict[str, Any]:
         'wins': 0,
         'losses': 0,
         'closed_trades': [],
+        'capital_snapshot_count': 0,
+        'min_cash': None,
+        'min_equity': None,
+        'max_gross_exposure': Decimal('0'),
+        'max_net_exposure_abs': Decimal('0'),
+        'max_gross_exposure_pct_equity': Decimal('0'),
+        'negative_cash_observation_count': 0,
     }
 
 
@@ -835,7 +856,51 @@ def _ensure_replay_stats_bucket(bucket: dict[str, Any]) -> dict[str, Any]:
     bucket.setdefault('losses', 0)
     bucket.setdefault('closed_trades', [])
     bucket.setdefault('closed_trade_count', 0)
+    bucket.setdefault('capital_snapshot_count', 0)
+    bucket.setdefault('min_cash', None)
+    bucket.setdefault('min_equity', None)
+    bucket.setdefault('max_gross_exposure', Decimal('0'))
+    bucket.setdefault('max_net_exposure_abs', Decimal('0'))
+    bucket.setdefault('max_gross_exposure_pct_equity', Decimal('0'))
+    bucket.setdefault('negative_cash_observation_count', 0)
     return bucket
+
+
+def _record_capital_snapshot(
+    *,
+    bucket: dict[str, Any],
+    cash: Decimal,
+    positions: dict[tuple[str, str], PositionState],
+    last_prices: dict[str, Decimal],
+) -> Decimal:
+    bucket = _ensure_replay_stats_bucket(bucket)
+    equity = _position_equity(cash=cash, positions=positions, last_prices=last_prices)
+    gross_exposure, net_exposure = _position_exposure(
+        positions=positions,
+        last_prices=last_prices,
+    )
+    gross_exposure_pct_equity = (
+        gross_exposure / equity
+        if equity > 0
+        else Decimal('999999999') if gross_exposure > 0 else Decimal('0')
+    )
+    min_cash = bucket.get('min_cash')
+    if not isinstance(min_cash, Decimal) or cash < min_cash:
+        bucket['min_cash'] = cash
+    min_equity = bucket.get('min_equity')
+    if not isinstance(min_equity, Decimal) or equity < min_equity:
+        bucket['min_equity'] = equity
+    if gross_exposure > bucket['max_gross_exposure']:
+        bucket['max_gross_exposure'] = gross_exposure
+    net_exposure_abs = abs(net_exposure)
+    if net_exposure_abs > bucket['max_net_exposure_abs']:
+        bucket['max_net_exposure_abs'] = net_exposure_abs
+    if gross_exposure_pct_equity > bucket['max_gross_exposure_pct_equity']:
+        bucket['max_gross_exposure_pct_equity'] = gross_exposure_pct_equity
+    bucket['capital_snapshot_count'] += 1
+    if cash < 0:
+        bucket['negative_cash_observation_count'] += 1
+    return equity
 
 
 def _record_trace_for_funnel(
@@ -1432,6 +1497,12 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             if current_day is None:
                 current_day = signal_day
                 logger.info('replay_day_start day=%s', current_day.isoformat())
+                _record_capital_snapshot(
+                    bucket=_active_day_stats(current_day),
+                    cash=cash,
+                    positions=positions,
+                    last_prices=last_prices,
+                )
             if current_day != signal_day:
                 if config.flatten_eod:
                     cash_ref = [cash]
@@ -1449,7 +1520,8 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     cash = cash_ref[0]
                 pending_orders.clear()
                 completed_day_stats = _active_day_stats(current_day)
-                completed_day_equity = _position_equity(
+                completed_day_equity = _record_capital_snapshot(
+                    bucket=completed_day_stats,
                     cash=cash,
                     positions=positions,
                     last_prices=last_prices,
@@ -1463,6 +1535,12 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 )
                 current_day = signal_day
                 logger.info('replay_day_start day=%s', current_day.isoformat())
+                _record_capital_snapshot(
+                    bucket=_active_day_stats(current_day),
+                    cash=cash,
+                    positions=positions,
+                    last_prices=last_prices,
+                )
 
             signals_seen += 1
             day_bucket = _active_day_stats(signal_day)
@@ -1486,6 +1564,12 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             symbol_bucket['quote_valid_rows'] += 1
             last_prices[signal.symbol] = price
             last_signals[signal.symbol] = signal
+            equity = _record_capital_snapshot(
+                bucket=day_bucket,
+                cash=cash,
+                positions=positions,
+                last_prices=last_prices,
+            )
 
             matching_pending_keys = [
                 pending_key
@@ -1514,8 +1598,19 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     cash=cash,
                     all_closed_trades=all_closed_trades,
                 )
+                equity = _record_capital_snapshot(
+                    bucket=day_bucket,
+                    cash=cash,
+                    positions=positions,
+                    last_prices=last_prices,
+                )
 
-            equity = _position_equity(cash=cash, positions=positions, last_prices=last_prices)
+            equity = _record_capital_snapshot(
+                bucket=day_bucket,
+                cash=cash,
+                positions=positions,
+                last_prices=last_prices,
+            )
             live_positions = _positions_payload(
                 positions,
                 last_prices,
@@ -1623,6 +1718,12 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                         cash=cash,
                         all_closed_trades=all_closed_trades,
                     )
+                    equity = _record_capital_snapshot(
+                        bucket=day_bucket,
+                        cash=cash,
+                        positions=positions,
+                        last_prices=last_prices,
+                    )
                     fill_status_by_strategy_id[decision.strategy_id] = 'filled'
                     continue
                 pending_key = _position_key(
@@ -1669,6 +1770,12 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                         )
                     )
 
+            equity = _record_capital_snapshot(
+                bucket=day_bucket,
+                cash=cash,
+                positions=positions,
+                last_prices=last_prices,
+            )
             now = time_mod.monotonic()
             if now - last_progress_at >= config.progress_log_interval_seconds:
                 _log_progress(
@@ -1699,7 +1806,12 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             cash = cash_ref[0]
         if current_day is not None:
             final_day_stats = _active_day_stats(current_day)
-            final_day_equity = _position_equity(cash=cash, positions=positions, last_prices=last_prices)
+            final_day_equity = _record_capital_snapshot(
+                bucket=final_day_stats,
+                cash=cash,
+                positions=positions,
+                last_prices=last_prices,
+            )
             _log_day_summary(
                 day=current_day,
                 stats=final_day_stats,
@@ -1717,6 +1829,56 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
     total_cost = sum((item['cost_total'] for item in day_stats.values()), Decimal('0'))
     wins = sum(item['wins'] for item in day_stats.values())
     losses = sum(item['losses'] for item in day_stats.values())
+    min_cash = min(
+        (
+            value
+            for item in day_stats.values()
+            for value in (item.get('min_cash'),)
+            if isinstance(value, Decimal)
+        ),
+        default=cash,
+    )
+    min_equity = min(
+        (
+            value
+            for item in day_stats.values()
+            for value in (item.get('min_equity'),)
+            if isinstance(value, Decimal)
+        ),
+        default=final_equity,
+    )
+    max_gross_exposure = max(
+        (
+            value
+            for item in day_stats.values()
+            for value in (item.get('max_gross_exposure'),)
+            if isinstance(value, Decimal)
+        ),
+        default=Decimal('0'),
+    )
+    max_net_exposure_abs = max(
+        (
+            value
+            for item in day_stats.values()
+            for value in (item.get('max_net_exposure_abs'),)
+            if isinstance(value, Decimal)
+        ),
+        default=Decimal('0'),
+    )
+    max_gross_exposure_pct_equity = max(
+        (
+            value
+            for item in day_stats.values()
+            for value in (item.get('max_gross_exposure_pct_equity'),)
+            if isinstance(value, Decimal)
+        ),
+        default=Decimal('0'),
+    )
+    capital_snapshot_count = sum(int(item.get('capital_snapshot_count') or 0) for item in day_stats.values())
+    negative_cash_observation_count = sum(
+        int(item.get('negative_cash_observation_count') or 0)
+        for item in day_stats.values()
+    )
     funnel_report = ReplayFunnelReport(
         start_date=config.start_date.isoformat(),
         end_date=config.end_date.isoformat(),
@@ -1769,6 +1931,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         'start_date': config.start_date.isoformat(),
         'end_date': config.end_date.isoformat(),
         'start_equity': str(config.start_equity),
+        'final_cash': str(cash),
         'final_equity': str(final_equity),
         'net_pnl': str(total_net),
         'gross_pnl': str(total_gross),
@@ -1778,6 +1941,13 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         'filled_notional': str(total_filled_notional),
         'wins': wins,
         'losses': losses,
+        'capital_snapshot_count': capital_snapshot_count,
+        'min_cash': str(min_cash),
+        'min_equity': str(min_equity),
+        'max_gross_exposure': str(max_gross_exposure),
+        'max_net_exposure_abs': str(max_net_exposure_abs),
+        'max_gross_exposure_pct_equity': str(max_gross_exposure_pct_equity),
+        'negative_cash_observation_count': negative_cash_observation_count,
         'open_positions': {
             f'{symbol}|{owner_strategy_id}': {
                 'strategy_id': position.strategy_id,
@@ -1797,6 +1967,17 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 'cost_total': str(value['cost_total']),
                 'wins': value['wins'],
                 'losses': value['losses'],
+                'capital_snapshot_count': int(value.get('capital_snapshot_count') or 0),
+                'min_cash': str(value['min_cash']) if isinstance(value.get('min_cash'), Decimal) else None,
+                'min_equity': str(value['min_equity']) if isinstance(value.get('min_equity'), Decimal) else None,
+                'max_gross_exposure': str(value.get('max_gross_exposure', Decimal('0'))),
+                'max_net_exposure_abs': str(value.get('max_net_exposure_abs', Decimal('0'))),
+                'max_gross_exposure_pct_equity': str(
+                    value.get('max_gross_exposure_pct_equity', Decimal('0'))
+                ),
+                'negative_cash_observation_count': int(
+                    value.get('negative_cash_observation_count') or 0
+                ),
             }
             for key, value in sorted(day_stats.items())
         },

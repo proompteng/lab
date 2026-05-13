@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import cast
 from unittest import TestCase
 from unittest.mock import patch
 from types import SimpleNamespace
@@ -681,6 +682,62 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(summary['positive_days'], 1)
         self.assertEqual(summary['best_day_share_of_total_pnl'], '1.104166666666666666666666667')
         self.assertEqual(summary['avg_filled_notional_per_day'], '18750')
+
+    def test_consistency_penalty_reports_and_penalizes_capital_realism(self) -> None:
+        payload = self._payload(
+            start_date='2026-03-24',
+            end_date='2026-03-26',
+            daily_net={
+                '2026-03-24': '600',
+                '2026-03-25': '550',
+                '2026-03-26': '650',
+            },
+            daily_filled_notional={
+                '2026-03-24': '250000',
+                '2026-03-25': '260000',
+                '2026-03-26': '270000',
+            },
+            decision_count=12,
+            filled_count=12,
+            wins=9,
+            losses=3,
+        )
+        daily = cast(dict[str, dict[str, object]], payload['daily'])
+        daily['2026-03-24']['min_cash'] = '12000'
+        daily['2026-03-24']['max_gross_exposure_pct_equity'] = '0.80'
+        daily['2026-03-24']['negative_cash_observation_count'] = 0
+        daily['2026-03-25']['min_cash'] = '-2500'
+        daily['2026-03-25']['max_gross_exposure_pct_equity'] = '2.40'
+        daily['2026-03-25']['negative_cash_observation_count'] = 3
+        daily['2026-03-26']['min_cash'] = '8000'
+        daily['2026-03-26']['max_gross_exposure_pct_equity'] = '1.10'
+        daily['2026-03-26']['negative_cash_observation_count'] = 0
+
+        penalties, summary = frontier._consistency_penalty(
+            full_window_payload=payload,
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=frontier.Decimal('500'),
+                min_daily_net_pnl=frontier.Decimal('0'),
+                min_active_days=3,
+                min_active_ratio=frontier.Decimal('1.0'),
+                min_positive_days=3,
+                max_worst_day_loss=frontier.Decimal('0'),
+                max_negative_days=0,
+                max_drawdown=frontier.Decimal('0'),
+                max_best_day_share_of_total_pnl=frontier.Decimal('0.60'),
+                min_avg_filled_notional_per_day=frontier.Decimal('200000'),
+                min_avg_filled_notional_per_active_day=frontier.Decimal('200000'),
+                require_every_day_active=True,
+                max_gross_exposure_pct_equity=frontier.Decimal('1.50'),
+                min_cash=frontier.Decimal('0'),
+            ),
+        )
+
+        self.assertGreater(penalties, frontier.Decimal('0'))
+        self.assertEqual(summary['max_gross_exposure_pct_equity'], '2.40')
+        self.assertEqual(summary['min_cash'], '-2500')
+        self.assertEqual(summary['negative_cash_observation_count'], 3)
+        self.assertEqual(summary['daily_min_cash']['2026-03-25'], '-2500')
 
     def test_main_prefers_consistent_candidate_over_prettier_holdout(self) -> None:
         with TemporaryDirectory() as tmpdir:

@@ -53,6 +53,8 @@ objective:
   max_drawdown: '900'
   require_every_day_active: true
   min_regime_slice_pass_rate: '0.45'
+  max_gross_exposure_pct_equity: '1.0'
+  min_cash: '0'
   stop_when_objective_met: true
 research_sources:
   - source_id: tradefm_market_microstructure_2026
