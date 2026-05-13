@@ -228,9 +228,16 @@ def run_zero_notional_repair(
     frontier = _mapping(profit_freshness_frontier)
     repair = _selected_repair(frontier)
     action = _text(repair.get("zero_notional_action"))
+    action_contract = _ALLOWLIST.get(action)
     action_result: Mapping[str, object] | None = None
 
-    if execute and action in (runners or {}):
+    if (
+        execute
+        and repair
+        and action_contract
+        and not _capital_safety_reasons(frontier, repair)
+        and action in (runners or {})
+    ):
         runner = cast(Mapping[str, RepairRunner], runners)[action]
         action_result = runner(repair)
 

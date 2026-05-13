@@ -117,6 +117,7 @@ def test_runner_required_action_reports_admission_block_when_executed_without_ru
 def test_nonzero_frontier_notional_blocks_repair_execution() -> None:
     frontier = _frontier("recompute_route_tca_and_fill_quality")
     frontier["capital_posture"]["paper_notional_limit"] = "5"
+    called: list[Mapping[str, Any]] = []
 
     receipt = run_zero_notional_repair(
         account_label="paper",
@@ -126,14 +127,18 @@ def test_nonzero_frontier_notional_blocks_repair_execution() -> None:
         profit_freshness_frontier=frontier,
         execute=True,
         runners={
-            "recompute_route_tca_and_fill_quality": lambda _repair: {
-                "execution_state": "executed",
-                "command_exit_code": 0,
-            }
+            "recompute_route_tca_and_fill_quality": lambda repair: (
+                called.append(repair)
+                or {
+                    "execution_state": "executed",
+                    "command_exit_code": 0,
+                }
+            ),
         },
         now=NOW,
     )
 
+    assert called == []
     assert receipt["execution_state"] == "capital_safety_blocked"
     assert receipt["command_exit_code"] == 78
     assert "frontier_paper_notional_nonzero" in receipt["blocked_reasons"]
@@ -246,6 +251,7 @@ def test_all_nonzero_notional_and_capital_change_markers_block_execution() -> No
     selected_repair = frontier["selected_zero_notional_repairs"][0]
     selected_repair["paper_notional_limit"] = "3"
     selected_repair["live_notional_limit"] = "4"
+    called: list[Mapping[str, Any]] = []
 
     receipt = run_zero_notional_repair(
         account_label="paper",
@@ -255,14 +261,18 @@ def test_all_nonzero_notional_and_capital_change_markers_block_execution() -> No
         profit_freshness_frontier=frontier,
         execute=True,
         runners={
-            "recompute_route_tca_and_fill_quality": lambda _repair: {
-                "execution_state": "executed",
-                "command_exit_code": 0,
-            }
+            "recompute_route_tca_and_fill_quality": lambda repair: (
+                called.append(repair)
+                or {
+                    "execution_state": "executed",
+                    "command_exit_code": 0,
+                }
+            ),
         },
         now=NOW,
     )
 
+    assert called == []
     assert receipt["execution_state"] == "capital_safety_blocked"
     assert receipt["command_exit_code"] == 78
     assert receipt["blocked_reasons"] == [
