@@ -121,6 +121,8 @@ describe('getQuantAccountWitnessHandler', () => {
   })
 
   it('keeps aggregate latest-store timeout advisory when scoped account evidence is current', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-13T15:00:00.000Z'))
     process.env.JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS = '3600'
     const { getQuantAccountWitnessHandler } = await import('./account-witness')
 
@@ -157,11 +159,13 @@ describe('getQuantAccountWitnessHandler', () => {
       },
     ])
 
-    const response = await getQuantAccountWitnessHandler(
+    const responsePromise = getQuantAccountWitnessHandler(
       new Request(
         'http://localhost/api/torghut/trading/control-plane/quant/account-witness?account=paper&window=15m&timeout_ms=1',
       ),
     )
+    await vi.advanceTimersByTimeAsync(1)
+    const response = await responsePromise
 
     expect(response.status).toBe(200)
     const body = await response.json()
