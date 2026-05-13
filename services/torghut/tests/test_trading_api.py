@@ -35,6 +35,7 @@ from app.main import (
     app,
 )
 from app.trading.scheduler import TradingScheduler
+from app.trading.feature_quality import FeatureQualityReport
 from app.trading.completion import (
     DOC29_SIMULATION_FULL_DAY_GATE,
     TRACE_STATUS_SATISFIED,
@@ -4275,6 +4276,349 @@ class TestTradingApi(TestCase):
             "latest_signal",
         )
         self.assertEqual(replayed, [["AAPL"]])
+        self.assertFalse(payload["order_submission_enabled"])
+
+    def test_zero_notional_repair_endpoint_rebuilds_feature_rows_from_latest_window(
+        self,
+    ) -> None:
+        status_payload = {
+            "active_revision": "torghut-00320",
+            "profit_freshness_frontier": {
+                "frontier_id": "profit-freshness-frontier:test",
+                "capital_posture": {
+                    "capital_state": "zero_notional",
+                    "paper_notional_limit": "0",
+                    "live_notional_limit": "0",
+                    "capital_behavior_changed": False,
+                },
+                "selected_zero_notional_repairs": [
+                    {
+                        "lot_id": "profit-freshness-repair-lot:features",
+                        "candidate_id": "candidate-a",
+                        "hypothesis_id": "H-AAPL",
+                        "blocked_dimension": "feature_coverage",
+                        "zero_notional_action": "rebuild_required_feature_rows",
+                        "before_refs": ["feature_coverage:AAPL:missing"],
+                        "symbol_set": ["AAPL"],
+                        "paper_notional_limit": "0",
+                        "live_notional_limit": "0",
+                        "state": "selected_zero_notional_repair",
+                    }
+                ],
+            },
+        }
+        fetched: list[dict[str, object]] = []
+        latest_signal_at = datetime(2026, 5, 12, 20, 57, tzinfo=timezone.utc)
+
+        def fetch_signals_with_reason(**kwargs: object) -> SimpleNamespace:
+            fetched.append(kwargs)
+            if len(fetched) == 1:
+                return SimpleNamespace(
+                    signals=[],
+                    no_signal_reason="cursor_ahead_of_stream",
+                    query_start=kwargs["start"],
+                    query_end=kwargs["end"],
+                )
+            return SimpleNamespace(
+                signals=[
+                    SimpleNamespace(symbol="AAPL"),
+                    SimpleNamespace(symbol="MSFT"),
+                ],
+                no_signal_reason=None,
+                query_start=kwargs["start"],
+                query_end=kwargs["end"],
+            )
+
+        metrics = SimpleNamespace(
+            feature_batch_rows_total=0,
+            feature_null_rate={},
+            feature_staleness_ms_p95=0,
+            feature_duplicate_ratio=0.0,
+            feature_schema_mismatch_total=0,
+            feature_quality_rejections_total=0,
+        )
+        scheduler = SimpleNamespace(
+            _pipeline=SimpleNamespace(
+                ingestor=SimpleNamespace(
+                    fetch_signals_with_reason=fetch_signals_with_reason,
+                    latest_signal_status=lambda: {"latest_signal_at": latest_signal_at},
+                ),
+            ),
+            state=SimpleNamespace(metrics=metrics),
+        )
+        app.state.trading_scheduler = scheduler
+        quality_report = FeatureQualityReport(
+            accepted=True,
+            rows_total=2,
+            null_rate_by_field={"macd": 0.0},
+            staleness_ms_p95=200,
+            duplicate_ratio=0.0,
+            schema_mismatch_total=0,
+            reasons=[],
+        )
+
+        with (
+            patch("app.main.trading_status", return_value=status_payload),
+            patch(
+                "app.main.evaluate_feature_batch_quality", return_value=quality_report
+            ),
+        ):
+            response = self.client.post(
+                "/trading/profit-freshness/zero-notional-repair"
+                "?action=rebuild_required_feature_rows&execute=true&feature_limit=25"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["execution_state"], "executed")
+        self.assertEqual(payload["command_exit_code"], 0)
+        self.assertEqual(payload["after_refs"], ["feature_coverage_rows"])
+        self.assertEqual(payload["runner_result"]["result"]["signals_evaluated"], 1)
+        self.assertEqual(payload["runner_result"]["result"]["rows_total"], 2)
+        self.assertEqual(
+            payload["runner_result"]["result"]["replay_window"],
+            "latest_signal",
+        )
+        self.assertEqual(metrics.feature_batch_rows_total, 2)
+        self.assertEqual(len(fetched), 2)
+        self.assertEqual(fetched[0]["limit"], 25)
+        self.assertEqual(fetched[1]["start"], latest_signal_at - timedelta(minutes=15))
+        self.assertEqual(fetched[1]["end"], latest_signal_at)
+        self.assertFalse(payload["order_submission_enabled"])
+
+    def test_zero_notional_repair_endpoint_fails_closed_without_feature_runner(
+        self,
+    ) -> None:
+        status_payload = {
+            "active_revision": "torghut-00320",
+            "profit_freshness_frontier": {
+                "frontier_id": "profit-freshness-frontier:test",
+                "capital_posture": {
+                    "capital_state": "zero_notional",
+                    "paper_notional_limit": "0",
+                    "live_notional_limit": "0",
+                    "capital_behavior_changed": False,
+                },
+                "selected_zero_notional_repairs": [
+                    {
+                        "lot_id": "profit-freshness-repair-lot:features",
+                        "candidate_id": "candidate-a",
+                        "hypothesis_id": "H-AAPL",
+                        "blocked_dimension": "feature_coverage",
+                        "zero_notional_action": "rebuild_required_feature_rows",
+                        "before_refs": ["feature_coverage:AAPL:missing"],
+                        "symbol_set": ["AAPL"],
+                        "paper_notional_limit": "0",
+                        "live_notional_limit": "0",
+                        "state": "selected_zero_notional_repair",
+                    }
+                ],
+            },
+        }
+        app.state.trading_scheduler = SimpleNamespace(
+            _pipeline=SimpleNamespace(ingestor=SimpleNamespace()),
+        )
+
+        with patch("app.main.trading_status", return_value=status_payload):
+            response = self.client.post(
+                "/trading/profit-freshness/zero-notional-repair"
+                "?action=rebuild_required_feature_rows&execute=true"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["execution_state"], "runner_failed")
+        self.assertEqual(payload["command_exit_code"], 78)
+        self.assertEqual(
+            payload["blocked_reasons"],
+            ["feature_coverage_runner_unavailable"],
+        )
+        self.assertEqual(payload["after_refs"], [])
+        self.assertFalse(payload["order_submission_enabled"])
+
+    def test_zero_notional_repair_endpoint_blocks_feature_replay_without_latest_window(
+        self,
+    ) -> None:
+        status_payload = {
+            "active_revision": "torghut-00320",
+            "profit_freshness_frontier": {
+                "frontier_id": "profit-freshness-frontier:test",
+                "capital_posture": {
+                    "capital_state": "zero_notional",
+                    "paper_notional_limit": "0",
+                    "live_notional_limit": "0",
+                    "capital_behavior_changed": False,
+                },
+                "selected_zero_notional_repairs": [
+                    {
+                        "lot_id": "profit-freshness-repair-lot:features",
+                        "candidate_id": "candidate-a",
+                        "hypothesis_id": "H-AAPL",
+                        "blocked_dimension": "feature_coverage",
+                        "zero_notional_action": "rebuild_required_feature_rows",
+                        "before_refs": ["feature_coverage:AAPL:missing"],
+                        "symbol_set": ["AAPL"],
+                        "paper_notional_limit": "0",
+                        "live_notional_limit": "0",
+                        "state": "selected_zero_notional_repair",
+                    }
+                ],
+            },
+        }
+
+        latest_status_variants = (
+            None,
+            lambda: [],
+            lambda: {"latest_signal_at": "not-a-datetime"},
+        )
+        for latest_status in latest_status_variants:
+            with self.subTest(latest_status=latest_status):
+                ingestor_attrs = {
+                    "fetch_signals_with_reason": lambda **kwargs: SimpleNamespace(
+                        signals=[],
+                        no_signal_reason="window_empty",
+                        query_start=kwargs["start"],
+                        query_end=kwargs["end"],
+                    ),
+                }
+                if latest_status is not None:
+                    ingestor_attrs["latest_signal_status"] = latest_status
+                app.state.trading_scheduler = SimpleNamespace(
+                    _pipeline=SimpleNamespace(
+                        ingestor=SimpleNamespace(**ingestor_attrs),
+                    ),
+                    state=SimpleNamespace(metrics=SimpleNamespace()),
+                )
+
+                with patch("app.main.trading_status", return_value=status_payload):
+                    response = self.client.post(
+                        "/trading/profit-freshness/zero-notional-repair"
+                        "?action=rebuild_required_feature_rows&execute=true"
+                    )
+
+                self.assertEqual(response.status_code, 200)
+                payload = response.json()
+                self.assertEqual(payload["execution_state"], "runner_blocked")
+                self.assertEqual(payload["command_exit_code"], 78)
+                self.assertEqual(
+                    payload["blocked_reasons"],
+                    ["feature_coverage_no_signals:window_empty"],
+                )
+                self.assertEqual(payload["after_refs"], [])
+                self.assertEqual(
+                    payload["runner_result"]["result"]["replay_window"],
+                    "current",
+                )
+                self.assertFalse(payload["order_submission_enabled"])
+
+    def test_zero_notional_repair_endpoint_records_feature_quality_rejection(
+        self,
+    ) -> None:
+        status_payload = {
+            "active_revision": "torghut-00320",
+            "profit_freshness_frontier": {
+                "frontier_id": "profit-freshness-frontier:test",
+                "capital_posture": {
+                    "capital_state": "zero_notional",
+                    "paper_notional_limit": "0",
+                    "live_notional_limit": "0",
+                    "capital_behavior_changed": False,
+                },
+                "selected_zero_notional_repairs": [
+                    {
+                        "lot_id": "profit-freshness-repair-lot:features",
+                        "candidate_id": "candidate-a",
+                        "hypothesis_id": "H-AAPL",
+                        "blocked_dimension": "feature_coverage",
+                        "zero_notional_action": "rebuild_required_feature_rows",
+                        "before_refs": ["feature_coverage:AAPL:missing"],
+                        "symbol_set": ["AAPL"],
+                        "paper_notional_limit": "0",
+                        "live_notional_limit": "0",
+                        "state": "selected_zero_notional_repair",
+                    }
+                ],
+            },
+        }
+        rejected_reasons: list[list[str]] = []
+        fetched: list[dict[str, object]] = []
+        naive_latest_signal_at = datetime(2026, 5, 12, 20, 57)
+
+        def fetch_signals_with_reason(**kwargs: object) -> SimpleNamespace:
+            fetched.append(kwargs)
+            if len(fetched) == 1:
+                return SimpleNamespace(
+                    signals=[],
+                    no_signal_reason="cursor_ahead_of_stream",
+                    query_start=kwargs["start"],
+                    query_end=kwargs["end"],
+                )
+            return SimpleNamespace(
+                signals=[SimpleNamespace(symbol="AAPL")],
+                no_signal_reason=None,
+                query_start=kwargs["start"],
+                query_end=kwargs["end"],
+            )
+
+        metrics = SimpleNamespace(
+            feature_batch_rows_total=0,
+            feature_null_rate={},
+            feature_staleness_ms_p95=0,
+            feature_duplicate_ratio=0.0,
+            feature_schema_mismatch_total=0,
+            feature_quality_rejections_total=0,
+            record_feature_quality_rejection=lambda reasons: rejected_reasons.append(
+                list(reasons),
+            ),
+        )
+        scheduler = SimpleNamespace(
+            _pipeline=SimpleNamespace(
+                ingestor=SimpleNamespace(
+                    fetch_signals_with_reason=fetch_signals_with_reason,
+                    latest_signal_status=lambda: {
+                        "latest_signal_at": naive_latest_signal_at,
+                    },
+                ),
+            ),
+            state=SimpleNamespace(metrics=metrics),
+        )
+        app.state.trading_scheduler = scheduler
+        quality_report = FeatureQualityReport(
+            accepted=False,
+            rows_total=1,
+            null_rate_by_field={"macd": 1.0},
+            staleness_ms_p95=200,
+            duplicate_ratio=0.0,
+            schema_mismatch_total=0,
+            reasons=["required_feature_null_rate_high"],
+        )
+
+        with (
+            patch("app.main.trading_status", return_value=status_payload),
+            patch(
+                "app.main.evaluate_feature_batch_quality", return_value=quality_report
+            ),
+        ):
+            response = self.client.post(
+                "/trading/profit-freshness/zero-notional-repair"
+                "?action=rebuild_required_feature_rows&execute=true"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["execution_state"], "executed")
+        self.assertFalse(payload["runner_result"]["result"]["accepted"])
+        self.assertEqual(
+            payload["runner_result"]["result"]["reason_codes"],
+            ["required_feature_null_rate_high"],
+        )
+        self.assertEqual(len(fetched), 2)
+        self.assertEqual(
+            fetched[1]["start"],
+            naive_latest_signal_at.replace(tzinfo=timezone.utc) - timedelta(minutes=15),
+        )
+        self.assertEqual(metrics.feature_quality_rejections_total, 1)
+        self.assertEqual(rejected_reasons, [["required_feature_null_rate_high"]])
         self.assertFalse(payload["order_submission_enabled"])
 
     def test_zero_notional_repair_endpoint_blocks_drift_replay_without_signals(

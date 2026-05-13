@@ -45,6 +45,13 @@ _ALLOWLIST: Mapping[str, Mapping[str, object]] = {
         "value_gate": "zero_notional_or_stale_evidence_rate",
         "rollback_path": "discard replayed drift receipt and keep the hypothesis repair lot queued",
     },
+    "rebuild_required_feature_rows": {
+        "executor": "hypothesis_feature_coverage_replay",
+        "runner_required": False,
+        "requires_torghut_admission": False,
+        "value_gate": "zero_notional_or_stale_evidence_rate",
+        "rollback_path": "discard replayed feature coverage receipt and keep the hypothesis repair lot queued",
+    },
 }
 
 
