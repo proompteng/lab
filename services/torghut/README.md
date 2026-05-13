@@ -209,6 +209,11 @@ Testing rules for the trading core:
   high-activity TCA repair, missing-TCA probes, forecast registry repair, and alpha-readiness repair into compact
   cohorts Jangar can cite in paper/live material-action evidence refs. Every cohort stays at `max_notional=0`; the
   ledger is an observe-mode settlement surface, not a submit authorization.
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/consumer-evidence` now include the
+  May 12 doc 189 `torghut.clock-settlement-receipt.v1` projection. It compares direct ClickHouse TA freshness, scoped
+  Jangar quant, TCA, empirical, promotion, and rollout witnesses against the published `evidence_clock_arbiter`; a fresh
+  direct ClickHouse witness with a missing or stale `clickhouse_ta` published clock emits a zero-notional
+  `clock_wiring_split` repair packet. The receipt is observe-mode only and keeps `max_notional=0`.
 - `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/consumer-evidence` now also surface
   the May 8 doc 184 `torghut.profit-repair-settlement-ledger.v1` projection. It joins the proof floor, consumer
   evidence receipt, capital reentry cohorts, quality frontier, route/TCA rows, scoped quant health, and Jangar
@@ -229,21 +234,35 @@ Testing rules for the trading core:
   falls back to the existing bps proxy. The frontier names one selected repair when proof is stale, but
   `paper_notional_limit=0`, `live_notional_limit=0`, and existing proof-floor/submission gates remain the only capital
   authority.
+- `POST /trading/profit-freshness/zero-notional-repair` returns the May 12 doc 188
+  `torghut.zero-notional-repair-execution-receipt.v1` executor receipt for the selected frontier repair. The default
+  mode is a dry run. With `execute=true`, the only local runner is bounded route/TCA recompute; empirical proof renewal
+  and market-context refresh remain admission-gated receipt plans until their external runners are wired. The receipt
+  always reports `order_submission_enabled=false`, `paper_notional_limit=0`, and `live_notional_limit=0`.
 - `GET /trading/status`, `GET /trading/health`, and `GET /readyz` also expose the May 8 doc 184
   `torghut.profit-signal-quorum.v1` shadow receipt. It evaluates each hypothesis against scoped quant latest metrics,
   quant pipeline stages, market-context route health, hypothesis lineage, promotion-decision evidence, route/TCA,
   rejection-drag evidence, and Jangar stage-clearance admission. The quorum names the required repair action per lane
   and keeps every candidate at `max_notional=0` until the scoped quorum and an independent capital gate both pass.
-- `GET /trading/status`, `GET /trading/health`, and `GET /readyz` also expose the May 12 doc 188
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/consumer-evidence` also expose the May
+  12 doc 188
   `torghut.evidence-clock-arbiter.v1` and `torghut.routeable-profit-candidate-exchange.v1` shadow payloads. The
   reducer compares ClickHouse TA, scoped Jangar quant, market context, Postgres TCA, empirical replay, hypothesis
   lineage, rollout, routeability acceptance, profit-signal quorum, and capital-gate clocks before any routeable
   candidate can be counted. Split or stale clocks become zero-notional repair lots with target value gates; emitted
-  candidates still carry `max_notional=0` until independent capital and Jangar custody receipts allow paper.
-- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/revenue-repair` also expose the May
-  12 doc 188 observe-mode `torghut.route-evidence-clearinghouse-packet.v1` packet. It never widens notional and keeps
-  stale TCA, missing image proof, missing options provider clocks, and zero-notional capital holds out of accepted
-  routeable counts.
+  candidates still carry `max_notional=0` until independent capital and Jangar custody receipts allow paper. The
+  consumer-evidence copy is the Jangar action boundary: missing or stale stage-custody evidence can hold normal
+  dispatch and deploy widening without blocking zero-notional repair dispatch.
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, `GET /trading/revenue-repair`, and
+  `GET /trading/consumer-evidence` also expose the May 12 doc 188 observe-mode
+  `torghut.route-evidence-clearinghouse-packet.v1` packet. It never widens notional and keeps stale TCA, missing image
+  proof, missing options provider clocks, and zero-notional capital holds out of accepted routeable counts.
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/consumer-evidence` now expose the
+  May 13 doc 190 observe-mode `torghut.route-warrant-exchange.v1` warrant. It reconciles consumer evidence, evidence
+  clocks, routeability acceptance, profit freshness, ingestion/materialization proof, active-session TCA, empirical
+  replay, market context, rollout image proof, and the live-submission gate before routeability can increase. The
+  warrant keeps `max_notional=0`; stale or split dependencies produce zero-notional repair packets mapped to one value
+  gate and one expected output receipt.
 - The simple direct-submit lane is no longer an authority bypass in live mode. Before submitting to Alpaca it evaluates
   the same live-submission gate as the scheduler path and persists the gate payload in decision metadata when a
   submission is blocked. Paper-mode simple execution remains unchanged.

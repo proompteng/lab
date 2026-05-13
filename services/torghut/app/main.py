@@ -18,7 +18,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 import inngest
 from inngest.fast_api import serve as inngest_fastapi_serve
-from sqlalchemy import func, select, text
+from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from urllib.parse import urlencode, urlsplit
@@ -60,6 +60,7 @@ from .trading.consumer_evidence import (
     build_route_proven_profit_receipt,
     build_torghut_consumer_evidence_receipt,
 )
+from .trading.clock_settlement import build_clock_settlement_receipt
 from .trading.empirical_jobs import build_empirical_jobs_status
 from .trading.evidence_clock_arbiter import (
     build_evidence_clock_arbiter_and_exchange,
@@ -108,6 +109,7 @@ from .trading.revenue_repair import build_revenue_repair_digest
 from .trading.route_evidence_clearinghouse import (
     build_route_evidence_clearinghouse_packet,
 )
+from .trading.route_warrant_exchange import build_route_warrant_exchange
 from .trading.routeability_repair_acceptance import (
     build_routeability_repair_acceptance_ledger,
 )
@@ -118,12 +120,14 @@ from .trading.submission_council import (
     load_quant_evidence_status,
     resolve_active_capital_stage,
 )
-from .trading.tca import build_tca_gate_inputs
+from .trading.ingest import ClickHouseSignalIngestor
+from .trading.tca import build_tca_gate_inputs, refresh_execution_tca_metrics
 from .trading.simulation_progress import (
     active_simulation_runtime_context,
     simulation_progress_snapshot,
 )
 from .trading.time_source import trading_time_status
+from .trading.zero_notional_repair_executor import run_zero_notional_repair
 from .whitepapers import (
     WhitepaperKafkaWorker,
     WhitepaperWorkflowService,
@@ -673,7 +677,6 @@ def _evaluate_trading_health_payload(
     try:
         with SessionLocal() as session:
             tca_summary = _load_tca_summary(session, scheduler=scheduler)
-            options_catalog_freshness = _load_options_catalog_freshness_summary(session)
         _hypothesis_payload, hypothesis_summary, _dependency_quorum = (
             _build_hypothesis_runtime_payload(
                 scheduler,
@@ -710,10 +713,6 @@ def _evaluate_trading_health_payload(
             message=str(exc),
         )
         hypothesis_summary = {}
-        options_catalog_freshness = {
-            "status": "unavailable",
-            "reason_codes": ["options_catalog_freshness_summary_unavailable"],
-        }
 
     llm_status = scheduler.llm_status()
     dspy_runtime = (
@@ -770,6 +769,11 @@ def _evaluate_trading_health_payload(
         route_reacquisition_board=route_reacquisition_board,
         live_submission_gate=live_submission_gate,
     )
+    with SessionLocal() as session:
+        options_catalog_freshness = _load_options_catalog_freshness_summary(
+            session,
+            route_symbols=_route_claim_symbols(profit_signal_quorum),
+        )
     capital_replay_projection = _build_capital_replay_projection_payload(
         torghut_revision=BUILD_COMMIT,
         dependency_quorum=_dependency_quorum.as_payload(),
@@ -851,6 +855,7 @@ def _evaluate_trading_health_payload(
         "image_digest": BUILD_IMAGE_DIGEST,
         "active_revision": _active_runtime_revision() or BUILD_COMMIT,
     }
+    clickhouse_ta_status = _load_clickhouse_ta_status(scheduler)
     evidence_clock_arbiter, routeable_profit_candidate_exchange = (
         _build_evidence_clock_payloads(
             torghut_revision=BUILD_COMMIT,
@@ -865,7 +870,24 @@ def _evaluate_trading_health_payload(
             profit_signal_quorum=profit_signal_quorum,
             live_submission_gate=live_submission_gate,
             build=build_payload,
+            clickhouse_ta_status=clickhouse_ta_status,
         )
+    )
+    clock_settlement_receipt = _build_clock_settlement_payload(
+        torghut_revision=BUILD_COMMIT,
+        source_commit=BUILD_COMMIT,
+        build=build_payload,
+        evidence_clock_arbiter=evidence_clock_arbiter,
+        routeable_profit_candidate_exchange=routeable_profit_candidate_exchange,
+        clickhouse_ta_status=clickhouse_ta_status,
+        quant_evidence=quant_evidence,
+        tca_summary=tca_summary,
+        empirical_jobs_status=empirical_jobs,
+        profit_signal_quorum=profit_signal_quorum,
+        rollout_status=_build_route_image_proof_summary(
+            build=build_payload,
+            dependency_quorum=_dependency_quorum.as_payload(),
+        ),
     )
     route_evidence_clearinghouse_packet = _build_route_evidence_clearinghouse_payload(
         torghut_revision=BUILD_COMMIT,
@@ -880,6 +902,21 @@ def _evaluate_trading_health_payload(
         live_submission_gate=live_submission_gate,
         tca_summary=tca_summary,
         options_catalog_freshness=options_catalog_freshness,
+    )
+    route_warrant_exchange = _build_route_warrant_exchange_payload(
+        torghut_revision=BUILD_COMMIT,
+        source_commit=BUILD_COMMIT,
+        build=build_payload,
+        consumer_evidence_receipt=consumer_evidence_receipt,
+        evidence_clock_arbiter=evidence_clock_arbiter,
+        routeable_profit_candidate_exchange=routeable_profit_candidate_exchange,
+        routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+        profit_freshness_frontier=profit_freshness_frontier,
+        live_submission_gate=live_submission_gate,
+        quant_evidence=quant_evidence,
+        tca_summary=tca_summary,
+        empirical_jobs_status=empirical_jobs,
+        market_context_status=market_context_status,
     )
     live_mode = settings.trading_mode == "live"
     empirical_jobs_required = (
@@ -978,7 +1015,9 @@ def _evaluate_trading_health_payload(
             "profit_signal_quorum": profit_signal_quorum,
             "evidence_clock_arbiter": evidence_clock_arbiter,
             "routeable_profit_candidate_exchange": routeable_profit_candidate_exchange,
+            "clock_settlement_receipt": clock_settlement_receipt,
             "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
+            "route_warrant_exchange": route_warrant_exchange,
             "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
             "route_reacquisition_board": route_reacquisition_board,
             "quant_evidence": quant_evidence,
@@ -1396,6 +1435,56 @@ def trading_revenue_repair() -> dict[str, object]:
             )
         ),
     )
+
+
+@app.post("/trading/profit-freshness/zero-notional-repair")
+def trading_profit_freshness_zero_notional_repair(
+    execute: bool = Query(default=False),
+    tca_limit: int = Query(default=250, ge=1, le=5000),
+) -> dict[str, object]:
+    """Plan or run an allowlisted zero-notional repair from the freshness frontier."""
+
+    status_payload = trading_status()
+    frontier = cast(
+        Mapping[str, Any],
+        status_payload.get("profit_freshness_frontier") or {},
+    )
+
+    def run_tca_recompute(_repair: Mapping[str, Any]) -> Mapping[str, object]:
+        try:
+            with SessionLocal() as session:
+                result = refresh_execution_tca_metrics(
+                    session,
+                    account_label=settings.trading_account_label,
+                    limit=tca_limit,
+                    dry_run=False,
+                )
+                session.commit()
+        except Exception as exc:  # pragma: no cover - fail-closed receipt path
+            logger.exception("Zero-notional route/TCA repair failed")
+            return {
+                "execution_state": "runner_failed",
+                "command_exit_code": 1,
+                "blocked_reasons": [f"route_tca_recompute_failed:{type(exc).__name__}"],
+                "after_refs": [],
+            }
+        return {
+            "execution_state": "executed",
+            "command_exit_code": 0,
+            "after_refs": ["execution_tca_metrics"],
+            "result": result,
+        }
+
+    receipt = run_zero_notional_repair(
+        account_label=settings.trading_account_label,
+        trading_mode=settings.trading_mode,
+        torghut_revision=cast(str | None, status_payload.get("active_revision")),
+        source_commit=BUILD_COMMIT,
+        profit_freshness_frontier=frontier,
+        execute=execute,
+        runners={"recompute_route_tca_and_fill_quality": run_tca_recompute},
+    )
+    return cast(dict[str, object], jsonable_encoder(receipt))
 
 
 @app.get("/")
@@ -2010,7 +2099,6 @@ def trading_status() -> dict[str, object]:
     with SessionLocal() as session:
         llm_evaluation = _load_llm_evaluation(session)
         tca_summary = _load_tca_summary(session, scheduler=scheduler)
-        options_catalog_freshness = _load_options_catalog_freshness_summary(session)
     market_context_status = scheduler.market_context_status()
     hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
         _build_hypothesis_runtime_payload(
@@ -2083,6 +2171,11 @@ def trading_status() -> dict[str, object]:
         route_reacquisition_board=route_reacquisition_board,
         live_submission_gate=live_submission_gate,
     )
+    with SessionLocal() as session:
+        options_catalog_freshness = _load_options_catalog_freshness_summary(
+            session,
+            route_symbols=_route_claim_symbols(profit_signal_quorum),
+        )
     capital_replay_projection = _build_capital_replay_projection_payload(
         torghut_revision=str(shadow_first_runtime["active_revision"]),
         dependency_quorum=hypothesis_dependency_quorum.as_payload(),
@@ -2151,6 +2244,7 @@ def trading_status() -> dict[str, object]:
         "image_digest": BUILD_IMAGE_DIGEST,
         "active_revision": shadow_first_runtime["active_revision"],
     }
+    clickhouse_ta_status = _load_clickhouse_ta_status(scheduler)
     profit_freshness_frontier = _build_profit_freshness_frontier_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
         dependency_quorum=hypothesis_dependency_quorum.as_payload(),
@@ -2178,7 +2272,24 @@ def trading_status() -> dict[str, object]:
             profit_signal_quorum=profit_signal_quorum,
             live_submission_gate=live_submission_gate,
             build=build_payload,
+            clickhouse_ta_status=clickhouse_ta_status,
         )
+    )
+    clock_settlement_receipt = _build_clock_settlement_payload(
+        torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        source_commit=BUILD_COMMIT,
+        build=build_payload,
+        evidence_clock_arbiter=evidence_clock_arbiter,
+        routeable_profit_candidate_exchange=routeable_profit_candidate_exchange,
+        clickhouse_ta_status=clickhouse_ta_status,
+        quant_evidence=quant_evidence,
+        tca_summary=tca_summary,
+        empirical_jobs_status=empirical_jobs,
+        profit_signal_quorum=profit_signal_quorum,
+        rollout_status=_build_route_image_proof_summary(
+            build=build_payload,
+            dependency_quorum=hypothesis_dependency_quorum.as_payload(),
+        ),
     )
     route_evidence_clearinghouse_packet = _build_route_evidence_clearinghouse_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
@@ -2193,6 +2304,21 @@ def trading_status() -> dict[str, object]:
         live_submission_gate=live_submission_gate,
         tca_summary=tca_summary,
         options_catalog_freshness=options_catalog_freshness,
+    )
+    route_warrant_exchange = _build_route_warrant_exchange_payload(
+        torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        source_commit=BUILD_COMMIT,
+        build=build_payload,
+        consumer_evidence_receipt=consumer_evidence_receipt,
+        evidence_clock_arbiter=evidence_clock_arbiter,
+        routeable_profit_candidate_exchange=routeable_profit_candidate_exchange,
+        routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+        profit_freshness_frontier=profit_freshness_frontier,
+        live_submission_gate=live_submission_gate,
+        quant_evidence=quant_evidence,
+        tca_summary=tca_summary,
+        empirical_jobs_status=empirical_jobs,
+        market_context_status=market_context_status,
     )
     return {
         "enabled": settings.trading_enabled,
@@ -2229,7 +2355,9 @@ def trading_status() -> dict[str, object]:
         "profit_signal_quorum": profit_signal_quorum,
         "evidence_clock_arbiter": evidence_clock_arbiter,
         "routeable_profit_candidate_exchange": routeable_profit_candidate_exchange,
+        "clock_settlement_receipt": clock_settlement_receipt,
         "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
+        "route_warrant_exchange": route_warrant_exchange,
         "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
         "route_reacquisition_board": route_reacquisition_board,
         "quant_evidence": quant_evidence,
@@ -2483,6 +2611,11 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         route_reacquisition_board=route_reacquisition_board,
         live_submission_gate=live_submission_gate,
     )
+    with SessionLocal() as session:
+        options_catalog_freshness = _load_options_catalog_freshness_summary(
+            session,
+            route_symbols=_route_claim_symbols(profit_signal_quorum),
+        )
     capital_reentry_cohort_ledger = _build_capital_reentry_cohort_ledger_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
         dependency_quorum=dependency_quorum.as_payload(),
@@ -2526,6 +2659,21 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
             market_context_status=market_context_status,
         )
     )
+    clickhouse_ta_status = _load_clickhouse_ta_status(scheduler)
+    route_evidence_clearinghouse_packet = _build_route_evidence_clearinghouse_payload(
+        torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        source_commit=BUILD_COMMIT,
+        dependency_quorum=dependency_quorum.as_payload(),
+        build=build_payload,
+        proof_floor=proof_floor,
+        profit_signal_quorum=profit_signal_quorum,
+        profit_repair_settlement_ledger=profit_repair_settlement_ledger,
+        route_reacquisition_board=route_reacquisition_board,
+        routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+        live_submission_gate=live_submission_gate,
+        tca_summary=tca_summary,
+        options_catalog_freshness=options_catalog_freshness,
+    )
     profit_freshness_frontier = _build_profit_freshness_frontier_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
         dependency_quorum=dependency_quorum.as_payload(),
@@ -2553,7 +2701,39 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
             profit_signal_quorum=profit_signal_quorum,
             live_submission_gate=live_submission_gate,
             build=build_payload,
+            clickhouse_ta_status=clickhouse_ta_status,
         )
+    )
+    clock_settlement_receipt = _build_clock_settlement_payload(
+        torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        source_commit=BUILD_COMMIT,
+        build=build_payload,
+        evidence_clock_arbiter=evidence_clock_arbiter,
+        routeable_profit_candidate_exchange=routeable_profit_candidate_exchange,
+        clickhouse_ta_status=clickhouse_ta_status,
+        quant_evidence=quant_evidence,
+        tca_summary=tca_summary,
+        empirical_jobs_status=empirical_jobs,
+        profit_signal_quorum=profit_signal_quorum,
+        rollout_status=_build_route_image_proof_summary(
+            build=build_payload,
+            dependency_quorum=dependency_quorum.as_payload(),
+        ),
+    )
+    route_warrant_exchange = _build_route_warrant_exchange_payload(
+        torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        source_commit=BUILD_COMMIT,
+        build=build_payload,
+        consumer_evidence_receipt=consumer_evidence_receipt,
+        evidence_clock_arbiter=evidence_clock_arbiter,
+        routeable_profit_candidate_exchange=routeable_profit_candidate_exchange,
+        routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+        profit_freshness_frontier=profit_freshness_frontier,
+        live_submission_gate=live_submission_gate,
+        quant_evidence=quant_evidence,
+        tca_summary=tca_summary,
+        empirical_jobs_status=empirical_jobs,
+        market_context_status=market_context_status,
     )
     return {
         "schema_version": "torghut.consumer-evidence-status.v1",
@@ -2579,8 +2759,12 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         "profit_repair_settlement_ledger": profit_repair_settlement_ledger,
         "routeability_repair_acceptance_ledger": routeability_repair_acceptance_ledger,
         "profit_freshness_frontier": profit_freshness_frontier,
+        "profit_signal_quorum": profit_signal_quorum,
         "evidence_clock_arbiter": evidence_clock_arbiter,
         "routeable_profit_candidate_exchange": routeable_profit_candidate_exchange,
+        "clock_settlement_receipt": clock_settlement_receipt,
+        "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
+        "route_warrant_exchange": route_warrant_exchange,
     }
 
 
@@ -3922,7 +4106,68 @@ def _load_tca_summary(
     )
 
 
-def _load_options_catalog_freshness_summary(session: Session) -> dict[str, object]:
+def _load_clickhouse_ta_status(
+    scheduler: TradingScheduler | None = None,
+) -> dict[str, object]:
+    pipeline = getattr(scheduler, "_pipeline", None) if scheduler is not None else None
+    ingestor = getattr(pipeline, "ingestor", None)
+    if isinstance(ingestor, ClickHouseSignalIngestor):
+        return ingestor.latest_signal_status()
+    return ClickHouseSignalIngestor(
+        account_label=settings.trading_account_label
+    ).latest_signal_status()
+
+
+def _route_claim_symbols(profit_signal_quorum: Mapping[str, Any]) -> tuple[str, ...]:
+    raw_quorums = profit_signal_quorum.get("quorums")
+    if not isinstance(raw_quorums, Sequence) or isinstance(
+        raw_quorums, (str, bytes, bytearray)
+    ):
+        return ()
+    symbols: set[str] = set()
+
+    def add_symbols(raw_symbols: object) -> None:
+        if not isinstance(raw_symbols, Sequence) or isinstance(
+            raw_symbols, (str, bytes, bytearray)
+        ):
+            return
+        for raw_symbol in cast(Sequence[object], raw_symbols):
+            symbol = str(raw_symbol or "").strip().upper()
+            if symbol:
+                symbols.add(symbol)
+
+    for raw_quorum_item in cast(Sequence[object], raw_quorums):
+        if not isinstance(raw_quorum_item, Mapping):
+            continue
+        raw_quorum = cast(Mapping[str, Any], raw_quorum_item)
+        add_symbols(raw_quorum.get("symbols"))
+        raw_signal = raw_quorum.get("route_tca_signal")
+        if not isinstance(raw_signal, Mapping):
+            continue
+        route_tca_signal = cast(Mapping[str, Any], raw_signal)
+        raw_details = route_tca_signal.get("details")
+        if not isinstance(raw_details, Mapping):
+            continue
+        details = cast(Mapping[str, Any], raw_details)
+        add_symbols(details.get("symbols"))
+        raw_nested_details = details.get("details")
+        if isinstance(raw_nested_details, Mapping):
+            add_symbols(cast(Mapping[str, Any], raw_nested_details).get("symbols"))
+    return tuple(sorted(symbols))
+
+
+def _load_options_catalog_freshness_summary(
+    session: Session, *, route_symbols: Sequence[str] | None = None
+) -> dict[str, object]:
+    scoped_symbols = tuple(
+        sorted(
+            {
+                str(symbol).strip().upper()
+                for symbol in route_symbols or ()
+                if str(symbol).strip()
+            }
+        )
+    )
     try:
         session.execute(text("SET LOCAL statement_timeout = 500"))
         row = (
@@ -3943,6 +4188,29 @@ FROM torghut_options_contract_catalog
             .mappings()
             .one()
         )
+        scoped_rows = []
+        if scoped_symbols:
+            scoped_query = text(
+                """
+SELECT
+  underlying_symbol,
+  COUNT(*) FILTER (WHERE status = 'active') AS active_contracts,
+  MAX(last_seen_ts) FILTER (WHERE status = 'active') AS newest_last_seen_ts,
+  COUNT(*) FILTER (WHERE status = 'active' AND provider_updated_ts IS NULL) AS missing_provider_updated_ts_count,
+  MAX(provider_updated_ts) FILTER (WHERE status = 'active') AS newest_provider_updated_ts,
+  COUNT(*) FILTER (WHERE status = 'active' AND close_price IS NULL) AS missing_close_price_count,
+  COUNT(*) FILTER (WHERE status = 'active' AND COALESCE(open_interest, 0) <= 0) AS zero_open_interest_count
+FROM torghut_options_contract_catalog
+WHERE underlying_symbol IN :route_symbols
+GROUP BY underlying_symbol
+"""
+            ).bindparams(bindparam("route_symbols", expanding=True))
+            scoped_rows = list(
+                session.execute(
+                    scoped_query,
+                    {"route_symbols": scoped_symbols},
+                ).mappings()
+            )
     except SQLAlchemyError as exc:
         logger.warning("Options catalog freshness summary unavailable: %s", exc)
         return {
@@ -3954,6 +4222,35 @@ FROM torghut_options_contract_catalog
     missing_provider_updated_ts_count = int(
         row["missing_provider_updated_ts_count"] or 0
     )
+    route_symbol_freshness = {
+        str(scoped_row["underlying_symbol"]).strip().upper(): {
+            "status": "current"
+            if int(scoped_row["active_contracts"] or 0) > 0
+            else "missing",
+            "active_contracts": int(scoped_row["active_contracts"] or 0),
+            "newest_last_seen_ts": _ensure_utc_datetime(
+                cast(datetime | None, scoped_row["newest_last_seen_ts"])
+            ),
+            "missing_provider_updated_ts_count": int(
+                scoped_row["missing_provider_updated_ts_count"] or 0
+            ),
+            "provider_updated_ts_present": int(
+                scoped_row["missing_provider_updated_ts_count"] or 0
+            )
+            == 0
+            and scoped_row["newest_provider_updated_ts"] is not None,
+            "newest_provider_updated_ts": _ensure_utc_datetime(
+                cast(datetime | None, scoped_row["newest_provider_updated_ts"])
+            ),
+            "missing_close_price_count": int(
+                scoped_row["missing_close_price_count"] or 0
+            ),
+            "zero_open_interest_count": int(
+                scoped_row["zero_open_interest_count"] or 0
+            ),
+        }
+        for scoped_row in scoped_rows
+    }
     return {
         "status": "current" if active_contracts > 0 else "missing",
         "active_contracts": active_contracts,
@@ -3968,6 +4265,8 @@ FROM torghut_options_contract_catalog
         ),
         "missing_close_price_count": int(row["missing_close_price_count"] or 0),
         "zero_open_interest_count": int(row["zero_open_interest_count"] or 0),
+        "route_symbols": list(scoped_symbols),
+        "route_symbol_freshness": route_symbol_freshness,
     }
 
 
@@ -4521,6 +4820,7 @@ def _build_evidence_clock_payloads(
     profit_signal_quorum: Mapping[str, Any],
     live_submission_gate: Mapping[str, Any],
     build: Mapping[str, Any],
+    clickhouse_ta_status: Mapping[str, Any],
 ) -> tuple[dict[str, object], dict[str, object]]:
     return build_evidence_clock_arbiter_and_exchange(
         account_label=settings.trading_account_label,
@@ -4538,6 +4838,39 @@ def _build_evidence_clock_payloads(
         profit_signal_quorum=profit_signal_quorum,
         live_submission_gate=live_submission_gate,
         jangar_custody_ref=_build_jangar_stage_clearance_packet_ref(dependency_quorum),
+        clickhouse_ta_status=clickhouse_ta_status,
+    )
+
+
+def _build_clock_settlement_payload(
+    *,
+    torghut_revision: str | None,
+    source_commit: str | None,
+    build: Mapping[str, Any],
+    evidence_clock_arbiter: Mapping[str, Any],
+    routeable_profit_candidate_exchange: Mapping[str, Any],
+    clickhouse_ta_status: Mapping[str, Any],
+    quant_evidence: Mapping[str, Any],
+    tca_summary: Mapping[str, Any],
+    empirical_jobs_status: Mapping[str, Any],
+    profit_signal_quorum: Mapping[str, Any],
+    rollout_status: Mapping[str, Any],
+) -> dict[str, object]:
+    return build_clock_settlement_receipt(
+        account_label=settings.trading_account_label,
+        window=settings.trading_jangar_quant_window,
+        trading_mode=settings.trading_mode,
+        torghut_revision=torghut_revision,
+        source_commit=source_commit,
+        build=build,
+        evidence_clock_arbiter=evidence_clock_arbiter,
+        routeable_profit_candidate_exchange=routeable_profit_candidate_exchange,
+        clickhouse_ta_status=clickhouse_ta_status,
+        quant_evidence=quant_evidence,
+        tca_summary=tca_summary,
+        empirical_jobs_status=empirical_jobs_status,
+        profit_signal_quorum=profit_signal_quorum,
+        rollout_status=rollout_status,
     )
 
 
@@ -4601,6 +4934,29 @@ def _build_route_evidence_clearinghouse_payload(*, torghut_revision: str | None,
         ),
         routeability_acceptance_ledger=routeability_repair_acceptance_ledger,
         live_submission_gate=live_submission_gate,
+    )
+
+
+# fmt: off
+def _build_route_warrant_exchange_payload(*, torghut_revision: str | None, source_commit: str | None, build: Mapping[str, Any], consumer_evidence_receipt: Mapping[str, Any], evidence_clock_arbiter: Mapping[str, Any], routeable_profit_candidate_exchange: Mapping[str, Any], routeability_repair_acceptance_ledger: Mapping[str, Any], profit_freshness_frontier: Mapping[str, Any], live_submission_gate: Mapping[str, Any], quant_evidence: Mapping[str, Any], tca_summary: Mapping[str, Any], empirical_jobs_status: Mapping[str, Any], market_context_status: Mapping[str, Any]) -> dict[str, object]:
+# fmt: on
+    return build_route_warrant_exchange(
+        account_label=settings.trading_account_label,
+        window=settings.trading_jangar_quant_window,
+        trading_mode=settings.trading_mode,
+        torghut_revision=torghut_revision,
+        source_commit=source_commit,
+        build=build,
+        consumer_evidence_receipt=consumer_evidence_receipt,
+        evidence_clock_arbiter=evidence_clock_arbiter,
+        routeable_profit_candidate_exchange=routeable_profit_candidate_exchange,
+        routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+        profit_freshness_frontier=profit_freshness_frontier,
+        live_submission_gate=live_submission_gate,
+        quant_evidence=quant_evidence,
+        tca_summary=tca_summary,
+        empirical_jobs_status=empirical_jobs_status,
+        market_context_status=market_context_status,
     )
 
 

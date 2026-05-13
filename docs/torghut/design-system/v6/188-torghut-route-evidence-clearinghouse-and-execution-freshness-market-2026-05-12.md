@@ -409,6 +409,9 @@ Implementation note (2026-05-12):
   observe-mode reducer and wires `route_evidence_clearinghouse_packet` into the four milestone response surfaces.
 - The reducer keeps `max_notional=0`, accepts only fully settled route claims, and emits zero-notional repair bids for
   stale source, execution, image, routeability, and capital evidence.
+- Options provider-clock holds are scoped to the candidate's supporting source evidence when present. Catalog-wide
+  provider timestamp gaps remain visible as source-book background defects, but unrelated stale contracts do not hold a
+  route claim with fresh scoped source proof.
 - Regression tests cover missing options provider clocks, historical TCA, unresolved image proof, and capital holds.
 
 Deployer:

@@ -327,3 +327,22 @@ clock-wiring split. The first revenue-adjacent gate is `routeable_candidate_coun
 data witnesses and published capital clocks agree. The smallest blocker preventing revenue impact is the unsettled
 proof path: fresh ClickHouse data is not reaching the arbiter as a current `clickhouse_ta` clock, while TCA, empirical,
 promotion, and rollout clocks are still stale or blocked.
+
+## Implementation Note
+
+The first implementation cut adds `services/torghut/app/trading/clock_settlement.py` as a pure observe-mode reducer and
+surfaces `torghut.clock-settlement-receipt.v1` on `/readyz`, `/trading/status`, `/trading/health`, and
+`/trading/consumer-evidence`. The reducer consumes the current `evidence_clock_arbiter`,
+`routeable_profit_candidate_exchange`, direct ClickHouse TA freshness from the existing ingestor, Jangar scoped quant
+health, TCA summary, empirical status, promotion quorum, and rollout image proof. It does not change live submission
+defaults, routeability decisions, or notional caps.
+
+The direct ClickHouse TA freshness witness is now also fed into the arbiter. If that witness is current and the
+published `clickhouse_ta` clock is still missing or stale, the settlement receipt emits a zero-notional
+`clock_wiring_split` repair packet with `paper_canary`, `live_micro_canary`, and `live_scale` listed as forbidden
+action classes. When the direct witness and published clock agree, the packet is absent.
+
+Validation for this cut covers the fresh-ClickHouse/missing-published-clock split, the settled no-packet path, API
+payload presence, unchanged `max_notional=0`, Ruff formatting/checking, and Pyright. Rollback remains field-level:
+remove or ignore `clock_settlement_receipt`, stop passing `clickhouse_ta_status` into the arbiter, and keep existing
+proof-floor, live-submission, and zero-notional capital gates in force.

@@ -1,0 +1,260 @@
+"""Zero-notional repair execution receipts for profit-freshness frontier lots."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime, timezone
+from hashlib import sha256
+import json
+from typing import Any, cast
+
+
+ZERO_NOTIONAL_REPAIR_EXECUTION_SCHEMA_VERSION = (
+    "torghut.zero-notional-repair-execution-receipt.v1"
+)
+
+_ZERO_VALUES = {"", "0", "0.0", "0.00", "0.0000"}
+_ALLOWLIST: Mapping[str, Mapping[str, object]] = {
+    "renew_empirical_proof_jobs": {
+        "executor": "empirical_proof_renewal",
+        "runner_required": True,
+        "requires_jangar_admission": True,
+        "value_gate": "zero_notional_or_stale_evidence_rate",
+        "rollback_path": "cancel empirical renewal run and keep stale proof lot queued at max_notional=0",
+    },
+    "refresh_stale_market_context_domains": {
+        "executor": "market_context_refresh",
+        "runner_required": True,
+        "requires_jangar_admission": True,
+        "value_gate": "zero_notional_or_stale_evidence_rate",
+        "rollback_path": "discard refreshed context receipt and keep prior last-good context decision",
+    },
+    "recompute_route_tca_and_fill_quality": {
+        "executor": "route_tca_recompute",
+        "runner_required": False,
+        "requires_jangar_admission": False,
+        "value_gate": "fill_tca_or_slippage_quality",
+        "rollback_path": "ignore recomputed TCA receipt and leave routeability lot unsettled",
+    },
+}
+
+
+RepairRunner = Callable[[Mapping[str, Any]], Mapping[str, object]]
+
+
+def _mapping(value: object) -> Mapping[str, Any]:
+    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
+
+
+def _sequence(value: object) -> Sequence[object]:
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return cast(Sequence[object], value)
+    return ()
+
+
+def _text(value: object, default: str = "") -> str:
+    if value is None:
+        return default
+    text = str(value).strip()
+    return text or default
+
+
+def _strings(value: object) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in _sequence(value):
+        text = _text(item)
+        if text and text not in seen:
+            result.append(text)
+            seen.add(text)
+    return result
+
+
+def _stable_ref(prefix: str, payload: Mapping[str, object]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return f"{prefix}:{sha256(encoded.encode()).hexdigest()[:20]}"
+
+
+def _selected_repair(frontier: Mapping[str, Any]) -> Mapping[str, Any]:
+    selected_repairs = [
+        _mapping(item)
+        for item in _sequence(frontier.get("selected_zero_notional_repairs"))
+        if _mapping(item)
+    ]
+    if selected_repairs:
+        return selected_repairs[0]
+    for raw_lot in _sequence(frontier.get("repair_lots")):
+        lot = _mapping(raw_lot)
+        if _text(lot.get("state")) == "selected_zero_notional_repair":
+            return lot
+    return {}
+
+
+def _is_zero(value: object) -> bool:
+    return _text(value, "0") in _ZERO_VALUES
+
+
+def _capital_safety_reasons(
+    frontier: Mapping[str, Any], repair: Mapping[str, Any]
+) -> list[str]:
+    posture = _mapping(frontier.get("capital_posture"))
+    reasons: list[str] = []
+    if not _is_zero(posture.get("paper_notional_limit")):
+        reasons.append("frontier_paper_notional_nonzero")
+    if not _is_zero(posture.get("live_notional_limit")):
+        reasons.append("frontier_live_notional_nonzero")
+    if not _is_zero(repair.get("paper_notional_limit")):
+        reasons.append("repair_paper_notional_nonzero")
+    if not _is_zero(repair.get("live_notional_limit")):
+        reasons.append("repair_live_notional_nonzero")
+    if _text(posture.get("capital_behavior_changed")).lower() == "true":
+        reasons.append("frontier_capital_behavior_changed")
+    return reasons
+
+
+def build_zero_notional_repair_execution_receipt(
+    *,
+    account_label: str | None,
+    trading_mode: str,
+    torghut_revision: str | None,
+    source_commit: str | None,
+    profit_freshness_frontier: Mapping[str, Any],
+    execute: bool = False,
+    action_result: Mapping[str, object] | None = None,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Build a receipt for the selected frontier repair without granting capital."""
+
+    generated_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    frontier = _mapping(profit_freshness_frontier)
+    repair = _selected_repair(frontier)
+    action = _text(repair.get("zero_notional_action"))
+    action_contract = _mapping(_ALLOWLIST.get(action))
+    result = _mapping(action_result)
+    blocked_reasons = _capital_safety_reasons(frontier, repair)
+    execution_state = "dry_run_ready"
+    command_exit_code: int | None = 0
+
+    if not repair:
+        execution_state = "no_selected_repair"
+        blocked_reasons.append("profit_freshness_frontier_selected_repair_missing")
+        command_exit_code = 78
+    elif not action_contract:
+        execution_state = "unsupported_action"
+        blocked_reasons.append(f"zero_notional_action_not_allowlisted:{action}")
+        command_exit_code = 78
+    elif blocked_reasons:
+        execution_state = "capital_safety_blocked"
+        command_exit_code = 78
+    elif execute and result:
+        execution_state = _text(result.get("execution_state"), "executed")
+        command_exit_code = int(cast(int, result.get("command_exit_code", 0)))
+        blocked_reasons.extend(_strings(result.get("blocked_reasons")))
+    elif execute and bool(action_contract.get("runner_required")):
+        execution_state = "runner_admission_required"
+        blocked_reasons.append("zero_notional_runner_admission_required")
+        command_exit_code = 78
+    elif execute:
+        execution_state = "runner_not_configured"
+        blocked_reasons.append("zero_notional_runner_not_configured")
+        command_exit_code = 78
+
+    receipt_payload = {
+        "frontier_id": frontier.get("frontier_id"),
+        "lot_id": repair.get("lot_id"),
+        "action": action,
+        "execute": execute,
+        "execution_state": execution_state,
+        "blocked_reasons": blocked_reasons,
+        "torghut_revision": torghut_revision,
+        "source_commit": source_commit,
+    }
+    return {
+        "schema_version": ZERO_NOTIONAL_REPAIR_EXECUTION_SCHEMA_VERSION,
+        "receipt_id": _stable_ref("zero-notional-repair-execution", receipt_payload),
+        "generated_at": generated_at.isoformat(),
+        "account_label": account_label,
+        "trading_mode": trading_mode,
+        "torghut_revision": torghut_revision,
+        "source_commit": source_commit,
+        "frontier_ref": frontier.get("frontier_id"),
+        "repair_lot_ref": repair.get("lot_id"),
+        "candidate_id": repair.get("candidate_id"),
+        "hypothesis_id": repair.get("hypothesis_id"),
+        "blocked_dimension": repair.get("blocked_dimension"),
+        "zero_notional_action": action or None,
+        "executor": action_contract.get("executor"),
+        "value_gate": action_contract.get("value_gate")
+        or repair.get("value_gate")
+        or "zero_notional_or_stale_evidence_rate",
+        "execution_state": execution_state,
+        "execution_mode": "execute" if execute else "dry_run",
+        "command_exit_code": command_exit_code,
+        "command_ref": f"torghut:{action or 'no_selected_repair'}",
+        "before_refs": _strings(repair.get("before_refs")),
+        "after_refs": _strings(result.get("after_refs")),
+        "runner_result": dict(result),
+        "blocked_reasons": blocked_reasons,
+        "requires_jangar_admission": bool(
+            action_contract.get("requires_jangar_admission", False)
+        ),
+        "paper_notional_limit": "0",
+        "live_notional_limit": "0",
+        "capital_behavior_changed": False,
+        "order_submission_enabled": False,
+        "rollback_path": action_contract.get("rollback_path")
+        or "keep proof floor as authority and leave capital zero-notional",
+        "safety_invariants": {
+            "max_notional": "0",
+            "paper_live_capital_unchanged": True,
+            "order_submission_disabled": True,
+        },
+    }
+
+
+def run_zero_notional_repair(
+    *,
+    account_label: str | None,
+    trading_mode: str,
+    torghut_revision: str | None,
+    source_commit: str | None,
+    profit_freshness_frontier: Mapping[str, Any],
+    execute: bool,
+    runners: Mapping[str, RepairRunner] | None = None,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Run or dry-run the selected allowlisted repair and return its receipt."""
+
+    frontier = _mapping(profit_freshness_frontier)
+    repair = _selected_repair(frontier)
+    action = _text(repair.get("zero_notional_action"))
+    action_contract = _ALLOWLIST.get(action)
+    action_result: Mapping[str, object] | None = None
+
+    if (
+        execute
+        and repair
+        and action_contract
+        and not _capital_safety_reasons(frontier, repair)
+        and action in (runners or {})
+    ):
+        runner = cast(Mapping[str, RepairRunner], runners)[action]
+        action_result = runner(repair)
+
+    return build_zero_notional_repair_execution_receipt(
+        account_label=account_label,
+        trading_mode=trading_mode,
+        torghut_revision=torghut_revision,
+        source_commit=source_commit,
+        profit_freshness_frontier=frontier,
+        execute=execute,
+        action_result=action_result,
+        now=now,
+    )
+
+
+__all__ = [
+    "ZERO_NOTIONAL_REPAIR_EXECUTION_SCHEMA_VERSION",
+    "build_zero_notional_repair_execution_receipt",
+    "run_zero_notional_repair",
+]
