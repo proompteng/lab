@@ -405,6 +405,10 @@ class TestLiveConfigManifestContract(TestCase):
         ws_config = _load_yaml_mapping("argocd/applications/torghut/ws/configmap.yaml")
         ws_data = ws_config.get("data")
         self.assertIsInstance(ws_data, Mapping)
+        ws_metadata = ws_config.get("metadata")
+        self.assertIsInstance(ws_metadata, Mapping)
+        ws_annotations = cast(Mapping[str, object], ws_metadata).get("annotations")
+        self.assertIsInstance(ws_annotations, Mapping)
 
         _assert_exact_live_execution_chip_universe(
             self,
@@ -437,6 +441,12 @@ class TestLiveConfigManifestContract(TestCase):
             context="torghut-ws subscription allowlist",
         )
         self.assertNotIn("JANGAR_SYMBOLS_URL", ws_data)
+        self.assertEqual(
+            cast(Mapping[str, object], ws_annotations).get(
+                "argocd.argoproj.io/sync-options"
+            ),
+            "Replace=true",
+        )
 
     def test_sim_manifest_runs_paper_live_signal_profile(self) -> None:
         sim_env = _load_knative_env(

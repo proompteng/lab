@@ -3,6 +3,8 @@ kind: ConfigMap
 metadata:
   name: torghut-ws-config
   namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true
 data:
   ALPACA_MARKET_TYPE: "equity"
   ALPACA_CRYPTO_LOCATION: "us"
