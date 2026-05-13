@@ -90,6 +90,42 @@ class TestCandidateSpecs(TestCase):
         reloaded = candidate_spec_from_payload(first[0].to_payload())
         self.assertEqual(reloaded.candidate_spec_id, first[0].candidate_spec_id)
 
+    def test_unpinned_hypotheses_expand_all_family_execution_profiles(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-profile-breadth",
+            claims=[
+                {
+                    "claim_id": "claim-flow-breadth",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": "Clustered order flow imbalance improves intraday LOB continuation signals.",
+                    "confidence": "0.82",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        continuation_profiles = sorted(
+            spec.feature_contract["execution_profile"]["profile_id"]
+            for spec in specs
+            if spec.family_template_id
+            == "microstructure_continuation_matched_filter_v1"
+        )
+        self.assertEqual(
+            continuation_profiles,
+            [
+                "microstructure_continuation_matched_filter_v1:profile-1",
+                "microstructure_continuation_matched_filter_v1:profile-2",
+                "microstructure_continuation_matched_filter_v1:profile-3",
+            ],
+        )
+        self.assertEqual(
+            len({spec.candidate_spec_id for spec in specs}),
+            len(specs),
+        )
+
     def test_same_family_whitepaper_hypotheses_get_distinct_execution_profiles(
         self,
     ) -> None:

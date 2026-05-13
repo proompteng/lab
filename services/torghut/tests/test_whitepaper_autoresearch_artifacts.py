@@ -53,7 +53,32 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         specs = compile_candidate_specs(
             hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
         )
-        self.assertEqual(len(specs), 3)
+        self.assertEqual(len(specs), 9)
+        family_profiles: dict[str, list[str]] = {}
+        for spec in specs:
+            family_profiles.setdefault(spec.family_template_id, []).append(
+                str(spec.feature_contract["execution_profile"]["profile_id"])
+            )
+        self.assertEqual(
+            family_profiles,
+            {
+                "microstructure_continuation_matched_filter_v1": [
+                    "microstructure_continuation_matched_filter_v1:profile-1",
+                    "microstructure_continuation_matched_filter_v1:profile-2",
+                    "microstructure_continuation_matched_filter_v1:profile-3",
+                ],
+                "microbar_cross_sectional_pairs_v1": [
+                    "microbar_cross_sectional_pairs_v1:profile-1",
+                    "microbar_cross_sectional_pairs_v1:profile-2",
+                    "microbar_cross_sectional_pairs_v1:profile-3",
+                ],
+                "intraday_tsmom_v2": [
+                    "intraday_tsmom_v2:profile-1",
+                    "intraday_tsmom_v2:profile-2",
+                    "intraday_tsmom_v2:profile-3",
+                ],
+            },
+        )
         self.assertIn(
             "microbar_cross_sectional_pairs_v1",
             {spec.family_template_id for spec in specs},

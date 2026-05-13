@@ -964,6 +964,26 @@ def _execution_profile_index(
     )
 
 
+def _execution_profile_indexes(
+    *,
+    card: HypothesisCard,
+    family_template_id: str,
+    family_rank: int,
+) -> tuple[int, ...]:
+    profiles = _FAMILY_EXECUTION_PROFILES.get(family_template_id)
+    profile_count = len(profiles) if profiles else _DEFAULT_PROFILE_COUNT
+    explicit_profile = card.implementation_constraints.get("execution_profile_index")
+    if explicit_profile is not None:
+        return (
+            _execution_profile_index(
+                card=card,
+                family_template_id=family_template_id,
+                family_rank=family_rank,
+            ),
+        )
+    return tuple(range(profile_count))
+
+
 def _execution_profile_id(*, family_template_id: str, profile_index: int) -> str:
     return f"{family_template_id}:profile-{profile_index + 1}"
 
@@ -1064,107 +1084,110 @@ def compile_candidate_specs(
             family_reasons,
         ) in enumerate(_families_for_hypothesis(card), start=1):
             runtime_family, runtime_strategy_name = _FAMILY_RUNTIME[family_template_id]
-            execution_profile_index = _execution_profile_index(
+            for execution_profile_index in _execution_profile_indexes(
                 card=card,
                 family_template_id=family_template_id,
                 family_rank=family_rank,
-            )
-            execution_profile_id = _execution_profile_id(
-                family_template_id=family_template_id,
-                profile_index=execution_profile_index,
-            )
-            strategy_overrides = _strategy_overrides_for_profile(
-                family_template_id=family_template_id,
-                profile_index=execution_profile_index,
-            )
-            if explicit_universe_symbols:
-                strategy_overrides = {
-                    **strategy_overrides,
-                    "universe_symbols": list(explicit_universe_symbols),
-                }
-            feature_contract: dict[str, Any] = {
-                "source_run_id": card.source_run_id,
-                "source_claim_ids": list(card.source_claim_ids),
-                "mechanism": card.mechanism,
-                "required_features": list(card.required_features),
-                "entry_motifs": list(card.entry_motifs),
-                "exit_motifs": list(card.exit_motifs),
-                "expected_regimes": list(card.expected_regimes),
-                "normalization_candidates": ["price_scaled", "trading_value_scaled"],
-                "family_selection": {
-                    "rank": family_rank,
-                    "score": family_score,
-                    "reasons": list(family_reasons),
-                },
-                "execution_profile": {
-                    "profile_id": execution_profile_id,
-                    "profile_index": execution_profile_index,
-                },
-            }
-            claim_relation_blockers = _list_of_mappings(
-                card.implementation_constraints.get("claim_relation_blockers")
-            )
-            if claim_relation_blockers:
-                feature_contract["claim_relation_blockers"] = [
-                    dict(item) for item in claim_relation_blockers
-                ]
-            objective = {
-                "target_net_pnl_per_day": str(target_net_pnl_per_day),
-                "require_positive_day_ratio": "0.60",
-            }
-            hard_vetoes = {
-                "required_min_active_day_ratio": "0.90",
-                "required_min_daily_notional": "300000",
-                "required_max_best_day_share": "0.25",
-                "required_max_worst_day_loss": "350",
-                "required_max_drawdown": "900",
-                "required_min_regime_slice_pass_rate": "0.45",
-            }
-            parameter_space = {
-                "mode": "bounded_grid",
-                "source": "whitepaper_autoresearch",
-                "family_selection_rank": family_rank,
-                "execution_profile_id": execution_profile_id,
-                "execution_profile_index": execution_profile_index,
-                "parameter_override_keys": sorted(
-                    str(key)
-                    for key in _mapping(strategy_overrides.get("params")).keys()
-                ),
-            }
-            promotion_contract = {
-                "source": "whitepaper_autoresearch_profit_target",
-                "target_net_pnl_per_day": str(target_net_pnl_per_day),
-                "requires_scheduler_v3_parity_replay": True,
-                "requires_scheduler_v3_approval_replay": True,
-                "requires_shadow_validation": True,
-                "promotion_policy": "research_only",
-            }
-            base_payload = {
-                "hypothesis_id": card.hypothesis_id,
-                "family_template_id": family_template_id,
-                "feature_contract": feature_contract,
-                "parameter_space": parameter_space,
-                "strategy_overrides": strategy_overrides,
-                "objective": objective,
-            }
-            specs.append(
-                CandidateSpec(
-                    schema_version=CANDIDATE_SPEC_SCHEMA_VERSION,
-                    candidate_spec_id=candidate_spec_id_for_payload(base_payload),
-                    hypothesis_id=card.hypothesis_id,
+            ):
+                execution_profile_id = _execution_profile_id(
                     family_template_id=family_template_id,
-                    candidate_kind="sleeve",
-                    runtime_family=runtime_family,
-                    runtime_strategy_name=runtime_strategy_name,
-                    feature_contract=feature_contract,
-                    parameter_space=parameter_space,
-                    strategy_overrides=strategy_overrides,
-                    objective=objective,
-                    hard_vetoes=hard_vetoes,
-                    expected_failure_modes=card.failure_modes,
-                    promotion_contract=promotion_contract,
+                    profile_index=execution_profile_index,
                 )
-            )
+                strategy_overrides = _strategy_overrides_for_profile(
+                    family_template_id=family_template_id,
+                    profile_index=execution_profile_index,
+                )
+                if explicit_universe_symbols:
+                    strategy_overrides = {
+                        **strategy_overrides,
+                        "universe_symbols": list(explicit_universe_symbols),
+                    }
+                feature_contract: dict[str, Any] = {
+                    "source_run_id": card.source_run_id,
+                    "source_claim_ids": list(card.source_claim_ids),
+                    "mechanism": card.mechanism,
+                    "required_features": list(card.required_features),
+                    "entry_motifs": list(card.entry_motifs),
+                    "exit_motifs": list(card.exit_motifs),
+                    "expected_regimes": list(card.expected_regimes),
+                    "normalization_candidates": [
+                        "price_scaled",
+                        "trading_value_scaled",
+                    ],
+                    "family_selection": {
+                        "rank": family_rank,
+                        "score": family_score,
+                        "reasons": list(family_reasons),
+                    },
+                    "execution_profile": {
+                        "profile_id": execution_profile_id,
+                        "profile_index": execution_profile_index,
+                    },
+                }
+                claim_relation_blockers = _list_of_mappings(
+                    card.implementation_constraints.get("claim_relation_blockers")
+                )
+                if claim_relation_blockers:
+                    feature_contract["claim_relation_blockers"] = [
+                        dict(item) for item in claim_relation_blockers
+                    ]
+                objective = {
+                    "target_net_pnl_per_day": str(target_net_pnl_per_day),
+                    "require_positive_day_ratio": "0.60",
+                }
+                hard_vetoes = {
+                    "required_min_active_day_ratio": "0.90",
+                    "required_min_daily_notional": "300000",
+                    "required_max_best_day_share": "0.25",
+                    "required_max_worst_day_loss": "350",
+                    "required_max_drawdown": "900",
+                    "required_min_regime_slice_pass_rate": "0.45",
+                }
+                parameter_space = {
+                    "mode": "bounded_grid",
+                    "source": "whitepaper_autoresearch",
+                    "family_selection_rank": family_rank,
+                    "execution_profile_id": execution_profile_id,
+                    "execution_profile_index": execution_profile_index,
+                    "parameter_override_keys": sorted(
+                        str(key)
+                        for key in _mapping(strategy_overrides.get("params")).keys()
+                    ),
+                }
+                promotion_contract = {
+                    "source": "whitepaper_autoresearch_profit_target",
+                    "target_net_pnl_per_day": str(target_net_pnl_per_day),
+                    "requires_scheduler_v3_parity_replay": True,
+                    "requires_scheduler_v3_approval_replay": True,
+                    "requires_shadow_validation": True,
+                    "promotion_policy": "research_only",
+                }
+                base_payload = {
+                    "hypothesis_id": card.hypothesis_id,
+                    "family_template_id": family_template_id,
+                    "feature_contract": feature_contract,
+                    "parameter_space": parameter_space,
+                    "strategy_overrides": strategy_overrides,
+                    "objective": objective,
+                }
+                specs.append(
+                    CandidateSpec(
+                        schema_version=CANDIDATE_SPEC_SCHEMA_VERSION,
+                        candidate_spec_id=candidate_spec_id_for_payload(base_payload),
+                        hypothesis_id=card.hypothesis_id,
+                        family_template_id=family_template_id,
+                        candidate_kind="sleeve",
+                        runtime_family=runtime_family,
+                        runtime_strategy_name=runtime_strategy_name,
+                        feature_contract=feature_contract,
+                        parameter_space=parameter_space,
+                        strategy_overrides=strategy_overrides,
+                        objective=objective,
+                        hard_vetoes=hard_vetoes,
+                        expected_failure_modes=card.failure_modes,
+                        promotion_contract=promotion_contract,
+                    )
+                )
     return specs
 
 
