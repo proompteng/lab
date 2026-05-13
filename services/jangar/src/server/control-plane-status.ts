@@ -32,6 +32,7 @@ import {
   type FailureDomainKubernetesEvidence,
   type FailureDomainRouteProbe,
 } from '~/server/control-plane-failure-domain-leases'
+import { buildControlPlaneLeaderElectionStatus } from '~/server/control-plane-leader-election-status'
 import { buildNegativeEvidenceRouterStatus } from '~/server/control-plane-negative-evidence-router'
 import {
   buildRolloutHealth,
@@ -67,7 +68,6 @@ import {
   type ControlPlaneWatchReliabilitySummary,
 } from '~/server/control-plane-watch-reliability'
 import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
-import { getLeaderElectionStatus } from '~/server/leader-election'
 import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
 import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
 import type { ExecutionTrustStatus, WorkflowsReliabilityStatus } from '~/data/agents-control-plane'
@@ -717,8 +717,6 @@ export const buildControlPlaneStatus = async (
     empiricalServices,
   })
 
-  const leaderElection = getLeaderElectionStatus()
-
   const degradedComponents = [
     ...effectiveControllers
       .filter(
@@ -749,18 +747,7 @@ export const buildControlPlaneStatus = async (
   return {
     service,
     generated_at: now.toISOString(),
-    leader_election: {
-      enabled: leaderElection.enabled,
-      required: leaderElection.required,
-      is_leader: leaderElection.isLeader,
-      lease_name: leaderElection.leaseName,
-      lease_namespace: leaderElection.leaseNamespace,
-      identity: leaderElection.identity,
-      last_transition_at: leaderElection.lastTransitionAt ?? '',
-      last_attempt_at: leaderElection.lastAttemptAt ?? '',
-      last_success_at: leaderElection.lastSuccessAt ?? '',
-      last_error: leaderElection.lastError ?? '',
-    },
+    leader_election: buildControlPlaneLeaderElectionStatus(),
     controllers: effectiveControllers,
     runtime_adapters: effectiveRuntimeAdapters,
     execution_trust: executionTrust.executionTrust,

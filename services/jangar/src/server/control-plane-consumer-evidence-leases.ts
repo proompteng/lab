@@ -9,7 +9,6 @@ import type {
   ConsumerEvidenceLeaseSet,
   ControlPlaneControllerWitnessQuorum,
   EmpiricalServicesStatus,
-  MaterialActionVerdict,
   MaterialActionVerdictDecision,
   MaterialActionVerdictEpoch,
 } from '~/data/agents-control-plane'
