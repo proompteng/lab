@@ -298,6 +298,8 @@ describe('ControlPlaneStatusPanel', () => {
     expect(normalizedHtml).toContain('Scope: agents')
     expect(normalizedHtml).toContain('Failure-domain leases')
     expect(normalizedHtml).toContain('Held actions: dispatch_normal')
+    expect(normalizedHtml).toContain('Evidence pressure')
+    expect(normalizedHtml).toContain('No active evidence pressure sources.')
     expect(normalizedHtml).toContain('workflow_artifact.configmap_missing')
     expect(normalizedHtml).toContain('Material action verdicts')
     expect(normalizedHtml).toContain('Blocking verdicts: dispatch_normal=hold')

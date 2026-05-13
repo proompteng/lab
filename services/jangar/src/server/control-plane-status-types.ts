@@ -10,6 +10,7 @@ import type {
   DatabaseMigrationConsistency,
   DependencyVerdictExchange,
   DependencyQuorumStatus,
+  EvidencePressureLedger,
   ExecutionTrustStage,
   ExecutionTrustStatus,
   ExecutionTrustSwarm,
@@ -191,6 +192,7 @@ export type ControlPlaneStatus = {
   stage_clearance_packets: StageClearancePacket[]
   stage_credit_ledger: StageCreditLedger | null
   ready_truth_arbiter: ReadyTruthArbiter
+  evidence_pressure_ledger: EvidencePressureLedger | null
   ready_action_exchange: ReadyActionExchange
   repair_bid_admission: RepairBidAdmissionState
   repair_warrant_exchange: RepairWarrantExchange

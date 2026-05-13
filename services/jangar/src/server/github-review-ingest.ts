@@ -129,6 +129,28 @@ const hasFreshWorktreeRefreshFailure = (key: string) => {
   return false
 }
 
+export const getGithubReviewIngestPressureSummary = () => {
+  const activeSuppressionKeys = [...worktreeRefreshFailures.keys()].filter((key) => hasFreshWorktreeRefreshFailure(key))
+
+  if (activeSuppressionKeys.length === 0) {
+    return {
+      status: 'healthy' as const,
+      active_missing_ref_suppressions: 0,
+      reason_codes: [] as string[],
+      message: 'GitHub review ingest has no active missing-ref suppressions',
+      evidence_refs: [] as string[],
+    }
+  }
+
+  return {
+    status: 'degraded' as const,
+    active_missing_ref_suppressions: activeSuppressionKeys.length,
+    reason_codes: ['github_missing_ref_suppressed'],
+    message: `${activeSuppressionKeys.length} GitHub worktree refresh failure(s) are suppressed after missing refs`,
+    evidence_refs: activeSuppressionKeys.map((key) => `github-worktree-refresh:${key}`),
+  }
+}
+
 const isMissingRefError = (error: unknown) => {
   if (error instanceof Error) {
     return REFRESH_WORKTREE_NOT_FOUND_ERROR.test(error.message)

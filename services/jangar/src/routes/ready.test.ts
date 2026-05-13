@@ -30,11 +30,26 @@ const memoryProviderHealthMocks = vi.hoisted(() => ({
   getMemoryProviderHealth: vi.fn(),
 }))
 
+const watchReliabilityMocks = vi.hoisted(() => ({
+  getWatchReliabilitySummary: vi.fn(),
+}))
+
+const metricsMocks = vi.hoisted(() => ({
+  getMetricsSinkPressureSummary: vi.fn(),
+}))
+
+const githubReviewIngestMocks = vi.hoisted(() => ({
+  getGithubReviewIngestPressureSummary: vi.fn(),
+}))
+
 vi.mock('~/server/agents-controller', () => agentsControllerMocks)
 vi.mock('~/server/leader-election', () => leaderElectionMocks)
 vi.mock('~/server/orchestration-controller', () => orchestrationControllerMocks)
 vi.mock('~/server/supporting-primitives-controller', () => supportingControllerMocks)
 vi.mock('~/server/memory-provider-health', () => memoryProviderHealthMocks)
+vi.mock('~/server/control-plane-watch-reliability', () => watchReliabilityMocks)
+vi.mock('~/server/metrics', () => metricsMocks)
+vi.mock('~/server/github-review-ingest', () => githubReviewIngestMocks)
 vi.mock('~/server/control-plane-status', async () => {
   const actual = await vi.importActual<typeof import('~/server/control-plane-status')>('~/server/control-plane-status')
   return {
@@ -225,6 +240,37 @@ describe('getReadyHandler', () => {
         hosted: false,
       },
     })
+    watchReliabilityMocks.getWatchReliabilitySummary.mockReturnValue({
+      status: 'healthy',
+      window_minutes: 15,
+      observed_streams: 1,
+      total_events: 8,
+      total_errors: 0,
+      total_restarts: 0,
+      streams: [
+        {
+          resource: 'agentruns.agents.proompteng.ai',
+          namespace: 'agents',
+          events: 8,
+          errors: 0,
+          restarts: 0,
+          last_seen_at: '2026-03-08T21:00:00Z',
+        },
+      ],
+    })
+    metricsMocks.getMetricsSinkPressureSummary.mockReturnValue({
+      status: 'healthy',
+      endpoint: 'http://mimir/otlp/v1/metrics',
+      message: 'metrics sink configured',
+      reason_codes: [],
+    })
+    githubReviewIngestMocks.getGithubReviewIngestPressureSummary.mockReturnValue({
+      status: 'healthy',
+      active_missing_ref_suppressions: 0,
+      reason_codes: [],
+      message: 'github review ingest healthy',
+      evidence_refs: [],
+    })
 
     agentsControllerMocks.getAgentsControllerHealth.mockReturnValue({
       enabled: true,
@@ -303,6 +349,16 @@ describe('getReadyHandler', () => {
         }),
       ]),
     )
+    expect(body.evidence_pressure_ledger).toMatchObject({
+      schema_version: 'jangar.evidence-pressure-ledger.v1',
+      evidence_mode: 'observe',
+      watch_backoff_policy: {
+        state: 'calm',
+      },
+      scheduler_handoff: {
+        status: 'allow',
+      },
+    })
     expect(body.serving_recovery_warrant_id).toBe('recovery-warrant:serving:1')
     expect(body.serving_runtime_proof_cells_healthy).toBe(true)
   })

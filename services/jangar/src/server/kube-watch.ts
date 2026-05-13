@@ -143,6 +143,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
     recordWatchReliabilityRestart({
       resource: normalizedResource,
       namespace: normalizedNamespace,
+      reason,
     })
     void onRestart?.(reason)
   }
@@ -158,6 +159,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
     recordWatchReliabilityError({
       resource: normalizedResource,
       namespace: normalizedNamespace,
+      reason: 'event_handler_error',
     })
     onError?.(new Error(`${logPrefix} ${resource} (${namespace}) event handler failed: ${normalizedError.message}`))
   }
@@ -226,6 +228,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
               recordWatchReliabilityError({
                 resource: normalizedResource,
                 namespace: normalizedNamespace,
+                reason,
               })
               onError?.(new Error(`${logPrefix} ${resource} (${namespace}) watch failed: ${error.message}`))
             }
@@ -247,6 +250,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
         recordWatchReliabilityError({
           resource: normalizedResource,
           namespace: normalizedNamespace,
+          reason,
         })
         onError?.(normalizedError)
         scheduleRestart(reason)

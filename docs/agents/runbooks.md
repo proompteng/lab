@@ -226,6 +226,13 @@ Expected outcomes:
   in `observe` or `shadow`, the runner records warnings and keeps the current non-enforcing behavior. Rollback is
   `JANGAR_STAGE_CREDIT_LEDGER_MODE=observe`, then `JANGAR_STAGE_CREDIT_LEDGER_ENABLED=false` only if the payload itself
   is breaking status generation.
+- `evidence_pressure_ledger` cites design doc 188 and prices the proof transport path before stage credit is spent.
+  It is observe-only by default and appears on both `/ready` and `/api/agents/control-plane/status`. Watch 429s,
+  controller replica splits, metrics-sink failures, GitHub missing-ref suppressions, database proof gaps, and Torghut
+  freshness debt become pressure sources with TTLs. Use `watch_backoff_policy.state`, `scheduler_handoff`, and
+  `deployer_handoff` to explain whether `dispatch_normal`, `deploy_widen`, or `merge_ready` is held by evidence
+  pressure. Rollback is `JANGAR_EVIDENCE_PRESSURE_LEDGER_MODE=observe`, then
+  `JANGAR_EVIDENCE_PRESSURE_LEDGER_ENABLED=false` only if the payload itself is malformed.
 - If collaboration is degraded or blocked because a runtime helper is missing, `/ready` stays `200` as
   long as the `serving` passport is still `allow` or `degrade`; the blocked `swarm_*` passport surfaces
   the missing component in `reason_codes`.

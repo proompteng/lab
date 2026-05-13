@@ -1638,6 +1638,90 @@ export type ReadyTruthArbiter = {
   rollback_target: string
 }
 
+export type EvidencePressureLedgerMode = 'observe' | 'shadow' | 'hold' | 'enforce'
+
+export type EvidencePressureSourceClass =
+  | 'kubernetes_watch'
+  | 'controller_replica'
+  | 'metrics_sink'
+  | 'github_ingest'
+  | 'db_access'
+  | 'torghut_freshness'
+
+export type EvidencePressureSeverity = 'info' | 'warning' | 'hold' | 'block'
+
+export type EvidencePressureWatchBackoffState = 'calm' | 'pressured' | 'brownout' | 'blind'
+
+export type EvidencePressureDecision = 'allow' | 'repair_only' | 'hold' | 'block'
+
+export type EvidencePressureSource = {
+  source_id: string
+  source_class: EvidencePressureSourceClass
+  severity: EvidencePressureSeverity
+  observed_at: string
+  expires_at: string
+  evidence_ref: string
+  message: string
+  retryable: boolean
+  terminal: boolean
+  suggested_backoff_seconds: number
+  value_gates: string[]
+  reason_codes: string[]
+}
+
+export type EvidencePressureWatchBackoffPolicy = {
+  state: EvidencePressureWatchBackoffState
+  max_new_list_requests_per_minute: number
+  max_new_agent_runs_per_stage: number
+  jitter_seconds: number
+  retry_after_seconds: number
+  stop_retry_reason_codes: string[]
+  open_repair_reason_codes: string[]
+}
+
+export type EvidencePressureActionBudget = {
+  action_class: ActionSloBudgetActionClass
+  decision: EvidencePressureDecision
+  pressure_tax: number
+  max_dispatches: number | null
+  max_runtime_seconds: number | null
+  max_notional: number
+  required_repair_receipts: string[]
+  reason_codes: string[]
+  rollback_target: string
+}
+
+export type EvidencePressureLedger = {
+  schema_version: 'jangar.evidence-pressure-ledger.v1'
+  ledger_id: string
+  namespace: string
+  generated_at: string
+  fresh_until: string
+  governing_design_refs: string[]
+  observed_revision: {
+    source_head_sha: string | null
+    gitops_revision: string | null
+  }
+  evidence_mode: EvidencePressureLedgerMode
+  pressure_sources: EvidencePressureSource[]
+  watch_backoff_policy: EvidencePressureWatchBackoffPolicy
+  action_pressure_budget: EvidencePressureActionBudget[]
+  scheduler_handoff: {
+    status: EvidencePressureDecision
+    ledger_ref: string
+    held_action_classes: ActionSloBudgetActionClass[]
+    repair_action_classes: ActionSloBudgetActionClass[]
+    reason_codes: string[]
+  }
+  deployer_handoff: {
+    status: EvidencePressureDecision
+    ledger_ref: string
+    held_action_classes: ActionSloBudgetActionClass[]
+    reason_codes: string[]
+  }
+  rollback_target: string
+}
+
 export type DeploymentRolloutStatus = {
   name: string
   namespace: string
@@ -1665,6 +1749,8 @@ export type ControlPlaneWatchReliabilityStream = {
   errors: number
   restarts: number
   last_seen_at: string
+  error_reasons?: Record<string, number>
+  restart_reasons?: Record<string, number>
 }
 
 export type ControlPlaneWatchReliability = {
@@ -1755,6 +1841,7 @@ export type ControlPlaneStatus = {
   stage_clearance_packets: StageClearancePacket[]
   stage_credit_ledger: StageCreditLedger | null
   ready_truth_arbiter: ReadyTruthArbiter
+  evidence_pressure_ledger: EvidencePressureLedger | null
   ready_action_exchange: ReadyActionExchange
   repair_bid_admission: RepairBidAdmissionState
   repair_warrant_exchange: RepairWarrantExchange

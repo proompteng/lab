@@ -152,6 +152,7 @@ describe('kube-watch', () => {
     expect(recordReliabilityErrorMock).toHaveBeenCalledWith({
       resource: 'agentruns',
       namespace: 'agents',
+      reason: 'event_handler_error',
     })
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -190,6 +191,7 @@ describe('kube-watch', () => {
     expect(recordReliabilityErrorMock).toHaveBeenCalledWith({
       resource: 'agentruns',
       namespace: 'agents',
+      reason: 'event_handler_error',
     })
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({
