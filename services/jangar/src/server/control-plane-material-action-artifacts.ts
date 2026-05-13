@@ -17,6 +17,11 @@ import { type FailureDomainRouteProbe } from '~/server/control-plane-failure-dom
 import { buildMaterialActionVerdictEpoch } from '~/server/control-plane-material-action-verdict'
 import { type NegativeEvidenceRouterResult } from '~/server/control-plane-negative-evidence-router'
 import {
+  buildProjectionForeclosureNotary,
+  isProjectionForeclosureNotaryEnabled,
+  type ProjectionForeclosureEvidence,
+} from '~/server/control-plane-projection-foreclosure-notary'
+import {
   buildRepairWarrantExchange,
   collectRepairScheduleAttempts,
   type RepairScheduleAttemptCollection,
@@ -61,6 +66,7 @@ export type ControlPlaneMaterialActionArtifactsInput = {
   executionTrust: ExecutionTrustSnapshot
   routeProbe: FailureDomainRouteProbe
   torghutConsumerEvidence: TorghutConsumerEvidenceStatus
+  projectionForeclosureEvidence: ProjectionForeclosureEvidence
   resolveRepairScheduleAttempts?: RepairScheduleAttemptResolver
 }
 
@@ -182,6 +188,18 @@ export const buildControlPlaneMaterialActionArtifacts = async (input: ControlPla
         torghutConsumerEvidence: input.torghutConsumerEvidence,
       })
     : null
+  const projectionForeclosureNotary = isProjectionForeclosureNotaryEnabled()
+    ? buildProjectionForeclosureNotary({
+        now: input.now,
+        namespace: input.namespace,
+        sourceHeadSha: input.sourceRolloutTruthExchange.source_head_sha,
+        gitopsRevision: input.sourceRolloutTruthExchange.gitops_revision,
+        sourceRolloutTruthExchange: input.sourceRolloutTruthExchange,
+        stageClearancePackets,
+        torghutConsumerEvidence: input.torghutConsumerEvidence,
+        ...input.projectionForeclosureEvidence,
+      })
+    : null
   const stageCreditLedger = isStageCreditLedgerEnabled()
     ? buildStageCreditLedger({
         now: input.now,
@@ -193,6 +211,7 @@ export const buildControlPlaneMaterialActionArtifacts = async (input: ControlPla
         stageClearancePackets,
         clearanceMarketLedger,
         torghutConsumerEvidence: input.torghutConsumerEvidence,
+        projectionForeclosureNotary,
       })
     : null
 
@@ -204,6 +223,7 @@ export const buildControlPlaneMaterialActionArtifacts = async (input: ControlPla
     stageClearancePackets,
     dependencyVerdictExchange,
     clearanceMarketLedger,
+    projectionForeclosureNotary,
     stageCreditLedger,
     ...actionCustodyProjection,
   }

@@ -291,6 +291,10 @@ const buildInput = (
     source_serving_verdict_ref: 'source-serving-contract:allow',
     torghut_repair_receipt_ref: 'torghut-consumer-evidence:zero-notional',
     retained_failure_debt_refs: [],
+    projection_foreclosure_notary_ref: null,
+    projection_authority_decision: null,
+    projection_claim_totals_by_state: null,
+    projection_required_repair_actions: [],
     ready_status_truth_reasons: [],
     allowed_action_classes: [
       'serve_readonly',

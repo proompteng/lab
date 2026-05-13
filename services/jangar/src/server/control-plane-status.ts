@@ -53,6 +53,11 @@ import {
 } from '~/server/control-plane-failure-domain-leases'
 import { buildControlPlaneLeaderElectionStatus } from '~/server/control-plane-leader-election-status'
 import { buildNegativeEvidenceRouterStatus } from '~/server/control-plane-negative-evidence-router'
+import {
+  collectProjectionForeclosureEvidence,
+  emptyProjectionForeclosureEvidence,
+  type ProjectionForeclosureEvidence,
+} from '~/server/control-plane-projection-foreclosure-notary'
 import { buildReadyTruthArbiter } from '~/server/control-plane-ready-truth-arbiter'
 import { buildDefaultRepairBidAdmissionState } from '~/server/control-plane-repair-bid-admission'
 import {
@@ -135,6 +140,10 @@ export type ControlPlaneStatusDeps = {
     namespace: string
     kube: KubeGateway
   }) => Promise<TerminalDebtCompactionEvidence>
+  resolveProjectionForeclosureEvidence?: (input: {
+    namespace: string
+    kube: KubeGateway
+  }) => Promise<ProjectionForeclosureEvidence>
   resolveRouteProbe?: (input: { now: Date; namespace: string; service: string }) => Promise<FailureDomainRouteProbe>
   resolveFailureDomainKubernetesEvidence?: (input: {
     now: Date
@@ -512,6 +521,17 @@ export const buildControlPlaneStatus = async (
     executionTrust: executionTrust.executionTrust,
   })
   const sourceRolloutTruthEnvironment = resolveSourceRolloutTruthEnvironment()
+  const projectionForeclosureEvidence = await (
+    deps.resolveProjectionForeclosureEvidence ?? collectProjectionForeclosureEvidence
+  )({
+    namespace: options.namespace,
+    kube: kubeGateway,
+  }).catch(
+    (error: unknown): ProjectionForeclosureEvidence => ({
+      ...emptyProjectionForeclosureEvidence(),
+      collectionErrors: [`projection foreclosure evidence collection failed: ${normalizeMessage(error)}`],
+    }),
+  )
   const buildMaterialStatus = async (torghutConsumerEvidence: TorghutConsumerEvidenceResolution) => {
     const negativeEvidenceRouter = buildNegativeEvidenceRouterStatus({
       now,
@@ -567,6 +587,7 @@ export const buildControlPlaneStatus = async (
       executionTrust,
       routeProbe,
       torghutConsumerEvidence: torghutConsumerEvidence.status,
+      projectionForeclosureEvidence,
       resolveRepairScheduleAttempts: deps.resolveRepairScheduleAttempts,
     })
 
@@ -600,6 +621,7 @@ export const buildControlPlaneStatus = async (
     readyActionExchange,
     dependencyVerdictExchange,
     clearanceMarketLedger,
+    projectionForeclosureNotary,
     stageCreditLedger,
   } = materialStatus.materialArtifacts
   const repairBidAdmission = buildDefaultRepairBidAdmissionState(now, options.namespace, torghutConsumerEvidence.status)
@@ -623,6 +645,7 @@ export const buildControlPlaneStatus = async (
     sourceServingContractVerdictExchange,
     repairBidAdmission,
     torghutConsumerEvidence: torghutConsumerEvidence.status,
+    projectionForeclosureNotary,
   })
   const authorityProvenanceSettlement = buildAuthorityProvenanceSettlement({
     now,
@@ -741,6 +764,7 @@ export const buildControlPlaneStatus = async (
     material_action_activation_receipts: materialActionActivationReceipts,
     action_custody_receipts: actionCustodyReceipts,
     stage_clearance_packets: stageClearancePackets,
+    projection_foreclosure_notary: projectionForeclosureNotary,
     stage_credit_ledger: stageCreditLedger,
     ready_truth_arbiter: readyTruthArbiter,
     authority_provenance_settlement: authorityProvenanceSettlement,

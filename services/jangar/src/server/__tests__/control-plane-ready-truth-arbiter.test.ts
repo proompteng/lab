@@ -5,6 +5,8 @@ import type {
   AdmissionPassportStatus,
   ControlPlaneControllerWitnessQuorum,
   ExecutionTrustStatus,
+  ProjectionForeclosureNotary,
+  ProjectionForeclosureAuthorityState,
   RepairBidAdmissionReceipt,
   RepairBidAdmissionState,
   SourceServingContractActionClass,
@@ -367,6 +369,55 @@ const buildInput = (
   ...overrides,
 })
 
+const projectionTotals = (
+  overrides: Partial<Record<ProjectionForeclosureAuthorityState, number>> = {},
+): Record<ProjectionForeclosureAuthorityState, number> => ({
+  authoritative: 0,
+  grace: 0,
+  stale_foreclosed: 0,
+  contradictory: 0,
+  missing_receipt: 0,
+  terminal_audit: 0,
+  unknown: 0,
+  ...overrides,
+})
+
+const projectionNotary = (overrides: Partial<ProjectionForeclosureNotary> = {}): ProjectionForeclosureNotary => {
+  const totals = projectionTotals({ missing_receipt: 1 })
+  return {
+    schema_version: 'jangar.projection-foreclosure-notary.v1',
+    generated_at: now.toISOString(),
+    fresh_until: '2026-05-13T12:02:00.000Z',
+    namespace: 'agents',
+    source_revision: {
+      source_head_sha: 'source-sha',
+      gitops_revision: 'gitops-sha',
+    },
+    decision: 'repair_only',
+    notary_id: 'projection-foreclosure-notary:agents:missing-receipt',
+    governing_design_refs: [
+      'docs/agents/designs/190-jangar-projection-foreclosure-notary-and-stage-custody-repair-2026-05-13.md',
+    ],
+    active_authority_summary: totals,
+    stale_projection_summary: projectionTotals(),
+    claim_totals_by_state: totals,
+    stage_custody_verdict: {
+      decision: 'repair_only',
+      evidence_clock_custody_status: 'missing',
+      evidence_clock_custody_ref: null,
+      max_notional: '0',
+      reason_codes: ['evidence_clock_custody_missing'],
+      evidence_refs: ['torghut-route-proven-profit:missing'],
+    },
+    claims: [],
+    foreclosure_receipts: [],
+    missing_receipts: [],
+    required_repair_actions: ['attach current Torghut market-context freshness receipt'],
+    rollback_target: 'JANGAR_PROJECTION_FORECLOSURE_NOTARY_ENABLED=false',
+    ...overrides,
+  }
+}
+
 describe('buildReadyTruthArbiter', () => {
   it('allows material readiness when launch, deploy, and merge evidence agree', () => {
     const arbiter = buildReadyTruthArbiter(buildInput(), 'shadow')
@@ -454,5 +505,36 @@ describe('buildReadyTruthArbiter', () => {
       expect.arrayContaining(['dispatch_normal', 'deploy_widen', 'merge_ready']),
     )
     expect(arbiter.deployer_receipt.decision).toBe('hold')
+  })
+
+  it('surfaces projection authority and holds material gates when notary consumption is enabled', () => {
+    const previous = process.env.JANGAR_PROJECTION_FORECLOSURE_CONSUME
+    process.env.JANGAR_PROJECTION_FORECLOSURE_CONSUME = 'true'
+    try {
+      const arbiter = buildReadyTruthArbiter(
+        buildInput({
+          projectionForeclosureNotary: projectionNotary(),
+        }),
+        'shadow',
+      )
+
+      expect(arbiter.projection_foreclosure_notary_ref).toBe('projection-foreclosure-notary:agents:missing-receipt')
+      expect(arbiter.projection_authority_decision).toBe('repair_only')
+      expect(arbiter.projection_claim_totals_by_state?.missing_receipt).toBe(1)
+      expect(arbiter.projection_required_repair_actions).toEqual([
+        'attach current Torghut market-context freshness receipt',
+      ])
+      expect(arbiter.material_readiness).toBe('repair_only')
+      expect(arbiter.ready_status_truth_reasons).toContain('projection_foreclosure_missing_receipt')
+      expect(arbiter.held_action_classes).toEqual(
+        expect.arrayContaining(['dispatch_normal', 'deploy_widen', 'merge_ready']),
+      )
+    } finally {
+      if (previous === undefined) {
+        delete process.env.JANGAR_PROJECTION_FORECLOSURE_CONSUME
+      } else {
+        process.env.JANGAR_PROJECTION_FORECLOSURE_CONSUME = previous
+      }
+    }
   })
 })
