@@ -1141,6 +1141,94 @@ describe('control-plane status', () => {
     expect(status.torghut_consumer_evidence.status).toBe('disabled')
   })
 
+  it('attaches Torghut stage-clearance custody before publishing material status', async () => {
+    process.env.JANGAR_SOURCE_HEAD_SHA = '99470fcfa0000000000000000000000000000000'
+    process.env.JANGAR_GITOPS_REVISION = '99470fcfa0000000000000000000000000000000'
+    setRolloutDeploymentList(
+      [healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment],
+      [healthyRuntimePod()],
+    )
+
+    const status = await buildStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-05-13T06:00:30.000Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+        resolveTorghutConsumerEvidence: async () => ({
+          status: {
+            status: 'current',
+            endpoint: 'http://torghut/trading/consumer-evidence',
+            receipt_id: 'torghut-route-proven-profit:clock-custody',
+            generated_at: '2026-05-13T06:00:00.000Z',
+            fresh_until: '2026-05-13T06:02:00.000Z',
+            candidate_id: null,
+            dataset_snapshot_ref: null,
+            max_notional: '0',
+            decision: 'repair_only',
+            reason_codes: [],
+            message: 'current',
+            evidence_clock_arbiter_id: 'evidence-clock-arbiter:clock-custody',
+            evidence_clock_state: 'current',
+            evidence_clock_custody_status: 'missing',
+            evidence_clock_custody_ref: null,
+            routeable_profit_candidate_exchange_id: 'routeable-profit-candidate-exchange:clock-custody',
+            routeable_exchange_routeable_candidate_count: 0,
+            routeable_exchange_zero_notional_repair_lot_ids: ['evidence-clock-repair-lot:stage-custody'],
+            routeable_exchange_rejected_candidate_count: 1,
+          },
+          negativeEvidence: {
+            readiness_status: 'degraded',
+            paper_settlement_clean: false,
+            consumer_evidence_receipt_id: 'torghut-route-proven-profit:clock-custody',
+            consumer_evidence_status: 'current',
+            consumer_evidence_fresh_until: '2026-05-13T06:02:00.000Z',
+            consumer_evidence_reason_codes: [],
+            evidence_clock_arbiter_id: 'evidence-clock-arbiter:clock-custody',
+            evidence_clock_status: 'current',
+            evidence_clock_custody_status: 'missing',
+            evidence_clock_custody_ref: null,
+            evidence_clock_custody_reason_codes: ['evidence_clock_custody_receipt_missing'],
+            routeable_profit_candidate_exchange_id: 'routeable-profit-candidate-exchange:clock-custody',
+            routeable_exchange_zero_notional_repair_lot_ids: ['evidence-clock-repair-lot:stage-custody'],
+            routeable_exchange_routeable_candidate_count: 0,
+            routeable_exchange_rejected_candidate_count: 1,
+          },
+        }),
+      },
+    )
+
+    const torghutPaperPacket = status.stage_clearance_packets.find(
+      (packet) => packet.stage === 'torghut' && packet.action_class === 'paper_canary',
+    )
+
+    expect(torghutPaperPacket).toMatchObject({
+      decision: 'hold',
+      max_notional: 0,
+    })
+    expect(status.torghut_consumer_evidence).toMatchObject({
+      evidence_clock_arbiter_id: 'evidence-clock-arbiter:clock-custody',
+      evidence_clock_custody_status: 'blocked',
+      evidence_clock_custody_ref: torghutPaperPacket?.packet_id,
+    })
+    expect(torghutPaperPacket?.reason_codes).not.toContain('evidence_clock_custody_missing')
+    expect(torghutPaperPacket?.reason_codes).toEqual(expect.arrayContaining(['evidence_clock_custody_blocked']))
+  })
+
   it('projects clearance market authority splits while holding normal dispatch', async () => {
     setRolloutDeploymentList(
       [unavailableAgentsRolloutDeployment, healthyAgentsControllersRolloutDeployment],

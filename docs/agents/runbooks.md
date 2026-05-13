@@ -135,6 +135,7 @@ curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.negative_evidence_router'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.action_slo_budgets'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.torghut_action_slo_budgets'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.torghut_consumer_evidence | {evidence_clock_arbiter_id,evidence_clock_custody_status,evidence_clock_custody_ref}'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.ready_action_exchange'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.action_custody_receipts[] | {action_class,decision,blocking_debt_classes,receipt_id}'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.dependency_verdict_exchange | {status,torghut_route_warrant_ref,repair_only_action_classes,held_action_classes,blocked_action_classes}'
@@ -171,6 +172,10 @@ Expected outcomes:
 - `torghut_action_slo_budgets` is the filtered consumer view for Torghut sizing decisions. Read-only
   `torghut_observe` can remain allowed while stale market context, open quant alerts, or readiness debt hold/block
   paper and live capital budgets.
+- `torghut_consumer_evidence.evidence_clock_custody_status` follows design doc 188. If the Torghut evidence-clock
+  arbiter omits a Jangar custody ref but Jangar has a fresh local Torghut stage-clearance packet, the status is
+  normalized to `blocked` or `stale` with `evidence_clock_custody_ref` set to that packet id. `missing` means no local
+  packet is available. Capital actions still require `allow` verdicts and non-zero Torghut notional before widening.
 - `repair_warrant_exchange.mode` is `observe`; active warrants are zero-notional repair permissions only and include
   `warrant_id`, `repair_code`, `admission_state`, `fresh_until`, validation refs, closure requirements, and rollback
   target. Paper/live gates must remain held or blocked until the matching repair warrant closes inside a fresh evidence

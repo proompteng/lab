@@ -466,7 +466,13 @@ const buildRequiredRepairs = (reasons: string[]) =>
     reasons.map((reason) => {
       if (reason.includes('market_context')) return 'refresh Torghut market-context snapshots'
       if (reason.includes('quant_alert')) return 'resolve or supersede open quant alerts'
-      if (reason.includes('evidence_clock_custody')) return 'attach fresh Torghut stage-custody evidence'
+      if (
+        reason.includes('evidence_clock_custody_missing') ||
+        reason.includes('evidence_clock_custody_receipt_missing')
+      )
+        return 'attach fresh Torghut stage-custody evidence'
+      if (reason.includes('evidence_clock_custody_stale')) return 'refresh Torghut stage-custody evidence'
+      if (reason.includes('evidence_clock_custody')) return 'settle Torghut stage-custody hold'
       if (reason.includes('evidence_clock')) return 'repair Torghut evidence-clock split before widening'
       if (reason.includes('torghut_readiness')) return 'restore Torghut readiness before capital action'
       if (reason.includes('watch_reliability')) return 'stabilize controller watch streams'
