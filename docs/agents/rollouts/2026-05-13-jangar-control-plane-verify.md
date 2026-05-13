@@ -6,153 +6,122 @@ Release engineer: Marco Silva
 
 ## Owner update message
 
-Rollout state is green for the selected Jangar control-plane release lane, with one runtime gate held for evidence.
-I moved or verified the Jangar lane through #6363, #6367, #6378, and #6373 after the earlier #6324, #6330, #6339,
-#6343, and #6349 batch. The latest deployed Jangar image is `45710e0b`: `deployment/jangar` and
-`deployment/agents-controllers` run digest `sha256:1348bdb0571ee61c3c3005186261a422f4bc754bc19380f842577a9e694950c8`,
-and `deployment/agents` runs control-plane digest
-`sha256:533c8be4f98731a49bcf50039559ff2b5eae712280ef074b84711a2824d89cdf`.
+Rollout state is green for the selected Jangar control-plane release slice. Source PR #6414,
+`feat(jangar): add evidence pressure ledger`, merged as `07da331d95ca0ef2779108a00a877c5e718b2656`,
+and promotion PR #6420, `chore(jangar): promote image 07da331d`, merged as
+`3dbaa6d63cd21e6e082be094ab2c8ea1cecc1d40`.
 
-The GitOps and workload rollout gate is green: Argo `jangar` and `agents` are Synced/Healthy, the three workloads are
-available, `jangar /health` returns 200, and the post-deploy verifier for #6378 passed. The business metric that
-improved is `ready_status_truth`, with supporting progress on `pr_to_rollout_latency` and
-`handoff_evidence_quality`. The remaining blocker is not a deployment failure: a pre-existing implement AgentRun on
-the older `5d89ac24` image was evicted for node ephemeral-storage pressure and froze the swarm until
-2026-05-13T09:20:50.975Z, so material actions remain held while `serve_readonly` and `torghut_observe` stay allowed.
+The GitOps and workload rollout gate is green: Argo `jangar`, `agents`, and `torghut` are Synced/Healthy at
+`3b7277516fd31a9d74916202c81d5610e56afc19`, which includes the #6420 promotion commit, and
+`jangar-post-deploy-verify` run `25800868616` passed. Live `jangar`, `agents`, and `agents-controllers` workloads are
+ready on image tag `07da331d`.
+
+`jangar /health`, `jangar /ready`, and `agents /ready` returned HTTP 200. `/ready` reported
+`execution_trust=healthy`, `torghut_consumer_evidence=current`, and a fresh `evidence_pressure_ledger` in observe mode
+with calm watch backoff. The control-plane metric improved is `ready_status_truth`: the runtime now exposes the
+evidence pressure ledger and watch-backoff posture directly on readiness/status, making merge and dispatch gates easier
+to verify without inferring pressure from unrelated symptoms. `pr_to_rollout_latency` was 15m24s from source merge
+(`2026-05-13T12:52:48Z`) to post-deploy verifier completion (`2026-05-13T13:08:12Z`).
 
 ## Governing requirements
 
+- `docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`: publish the
+  Jangar evidence pressure ledger, watch-backoff policy, and deployer handoff in observe mode.
 - `docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md`: verify stages must merge only green PRs and
   prove Argo sync, workload readiness, and service health after rollout.
-- `docs/agents/designs/129-jangar-consumer-evidence-leases-and-readiness-decoupling-2026-05-06.md`: governs #6324.
-- `docs/agents/designs/187-jangar-stage-credit-ledger-and-runner-slot-futures-2026-05-13.md`: governs #6330 and #6363.
-- `docs/agents/designs/187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`: governs #6339.
-- `docs/agents/designs/186-jangar-repair-bid-admission-and-settlement-custody-2026-05-13.md`: governs #6343.
-- `docs/agents/designs/116-jangar-controller-witness-quorum-and-capital-activation-receipts-2026-05-06.md` and
-  `docs/agents/designs/121-jangar-material-action-repair-clearing-lane-and-profit-proof-ledger-2026-05-06.md`:
-  govern #6349.
-- `docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`: governs #6373.
+- Runtime acceptance contract: selected PRs must advance failed AgentRun reduction, PR-to-rollout latency,
+  ready-status truth, manual-intervention reduction, or handoff evidence quality.
+- GitOps safety requirement: no direct production mutation from the local shell; promotion happens through PR merge and
+  Argo reconciliation.
 
 ## PRs touched
 
-- #6324 `feat(jangar): add consumer evidence leases`
-  - Fixed blockers: stale architecture inventory, rebase conflicts, and the Jangar module-size violation.
-  - Merge outcome: merged at 2026-05-13T04:51:12Z as `6596b581321ab05168ed663a506e10e3893043d7`.
-  - Promotion: #6335 `chore(jangar): promote image 6596b581`, post-deploy verifier `25779478472` passed.
-- #6330 `feat(jangar): add stage credit ledger read model`
-  - Fixed blockers: rebased onto #6324/main and preserved the consumer-evidence status helper imports.
-  - Merge outcome: merged at 2026-05-13T05:11:23Z as `97a20bc4f6d2b6d6198372870795ad8ddce54a74`.
-  - Promotion: #6342 `chore(jangar): promote image 97a20bc4`, post-deploy verifier `25780107631` passed.
-- #6339 `feat(jangar): add source-serving verdict status`
-  - Selected because it surfaced source-serving allow/hold/block readiness truth.
-  - Merge outcome: merged at 2026-05-13T05:41:19Z as `99063cb4c14e0c22633f6d2a63391ca59ee6a6b3`.
-  - Promotion: #6347 `chore(jangar): promote image 99063cb4`, post-deploy verifier `25781202876` passed.
-- #6343 `feat(jangar): admit settled torghut repair lots`
-  - Selected because source-serving verdicts named missing repair-bid settlement evidence.
-  - Merge outcome: merged at 2026-05-13T06:04:51Z as `f18b66fdbc4e55bc2ef7177fc17fd86ea8a491b2`.
-  - Promotion: #6350 `chore(jangar): promote image f18b66fd`, post-deploy verifier `25782031603` passed.
-- #6349 `fix(jangar): preserve controller heartbeat witnesses`
-  - Selected because live status still showed controller heartbeat truth as a runtime blocker.
-  - Merge outcome: merged at 2026-05-13T06:28:30Z as `5d89ac24819d84632873caf046cd0a1ff111db95`.
-  - Promotion: #6355 `chore(jangar): promote image 5d89ac24`, post-deploy verifier `25782868775` passed.
-- #6363 `fix(jangar): stamp stage credit launch evidence`
-  - Selected because the active controller `/ready` path was degraded by stale verify-stage evidence even though
-    workloads were serving.
-  - Checks before merge: `agents-ci / validate`, `agents-ci / integration`, `jangar-ci / lint-and-typecheck`,
-    `CI / check_changed_files`, semantic commits, and semantic PR title all passed.
-  - Merge outcome: merged at 2026-05-13T08:04:46Z as `fdc164d70ae04f1d7defc8496c1a233685a3d0c2`.
-  - Mainline build: `jangar-build-push` run `25786518304` passed and produced image tag `fdc164d7`.
-  - Promotion: #6365 `chore(jangar): promote image fdc164d7`, merged as
-    `1feb3fd8b727185dd014ec0f38481d1f2fb4be4b`; post-deploy verifier `25786999729` passed.
-- #6367 `fix(jangar): credit terminal swarm stage completions`
-  - Selected because terminal run freshness accounting directly affects failed-run and ready-status truth.
-  - PR checks before merge: `agents-ci / validate`, `agents-ci / integration`, `jangar-ci / lint-and-typecheck`,
-    `CI / check_changed_files`, semantic commits, and semantic PR title all passed.
-  - Merge outcome: merged at 2026-05-13T08:32:20Z as `45710e0bb070144dc8f7c25bd855221ca3c4e02a`.
-  - Mainline validation: `jangar-build-push` run `25787811627` passed and produced image tag `45710e0b`;
-    `agents-ci` run `25787811625` passed.
-  - Promotion: #6378 `chore(jangar): promote image 45710e0b`, merged as
-    `270bb6740ca9b38d0d38de1020c73719b78bbac0`; `jangar-ci / lint-and-typecheck`, `argo-lint`, `kubeconform`,
-    semantic checks, and post-deploy verifier `25788838577` all passed.
-- #6373 `docs(jangar): define evidence pressure ledger`
-  - Selected because it records the evidence-pressure and watch-backoff governance needed to reduce failed AgentRuns.
-  - Checks before merge: `agents-ci / validate`, `agents-ci / integration`, `jangar-ci / lint-and-typecheck`,
-    `CI / check_changed_files`, semantic commits, and semantic PR title all passed.
-  - Merge outcome: merged at 2026-05-13T09:00:24Z as `3394723b5f07dfc9ff807f5ff29d112eaf6f8c20`.
-- Current residual Jangar PR blocker: #6372 `fix(jangar): consume torghut typed evidence` remains open and not
-  selected for merge because it is conflict-blocked. `git merge-tree origin/main origin/pr-6372` reports a content
-  conflict in `docs/torghut/design-system/v6/index.md`.
+- #6414 `feat(jangar): add evidence pressure ledger`
+  - Purpose: add `evidence_pressure_ledger` to control-plane status and `/ready`, including watch reason-code aging,
+    pressure summaries, UI rendering, docs, and regressions.
+  - Merge gate: non-draft, no review threads, no requested changes, CLEAN/MERGEABLE, and all visible checks green or
+    intentionally skipped before merge.
+  - Checks before merge: `jangar-ci / lint-and-typecheck / run`, `agents-ci / validate`, `agents-ci / integration`,
+    `CI / check_changed_files`, semantic title, and semantic commits passed; unrelated matrix/deploy enable jobs were
+    skipped.
+  - Merge outcome: squash-merged at `2026-05-13T12:52:48Z` as
+    `07da331d95ca0ef2779108a00a877c5e718b2656`.
+  - Post-merge checks: `Docker Build and Push` run `25800308156`, `jangar-build-push` run `25800308052`,
+    `agents-ci` run `25800308019`, and `jangar-release` run `25800808195` passed.
+- #6420 `chore(jangar): promote image 07da331d`
+  - Purpose: promote the #6414 image through GitOps.
+  - Image tag: `07da331d`.
+  - Jangar image digest: `sha256:d0a61187c54f063d6f3f875a6760b3202ff8f7733b2f7977ff06a39d1a3e3c90`.
+  - Agents control-plane image digest:
+    `sha256:ee5c618919f28cdb3f62440f0ef8b280ec18e2fb42b4d784b067af74f3927110`.
+  - Promotion checks: `argo-lint / lint`, `kubeconform / validate`, `jangar-ci / lint-and-typecheck / run`, semantic
+    title, semantic commits, and Jangar deploy automerge enable check passed; unrelated deploy enable jobs skipped.
+  - Merge outcome: auto-merged at `2026-05-13T13:03:30Z` as
+    `3dbaa6d63cd21e6e082be094ab2c8ea1cecc1d40`.
+- #6399 `docs(jangar): record control-plane release gate`
+  - Purpose: durable handoff for this verify run.
+  - Change: replaced the earlier #6401/#6409 handoff with this bounded #6414/#6420 release record.
 
 ## Comments and conflicts
 
-- Progress comments were kept current with `services/jangar/scripts/codex/codex-progress-comment.ts` on selected PRs,
-  including #6363 and this audit PR.
-- #6324 and #6330 required real conflict/module-size fixes before merge.
-- #6363, #6367, and #6373 had no blocking review threads when selected and had green PR checks before merge.
-- #6365 and #6378 promotion PRs were generated by release automation. In both cases the deploy automerge path merged
-  before the non-required `jangar-ci / lint-and-typecheck` check completed; those checks later passed, and each
-  post-deploy verifier passed. This is a residual branch-protection risk to track separately.
-- No direct production mutation was made from this shell. Promotion was via merged PRs and GitOps reconciliation.
+- #6414 had no review threads, no requested changes, and no merge conflicts when selected.
+- #6420 had no review threads or requested changes. It auto-merged only after promotion checks were green.
+- Progress comments were kept current with `services/jangar/scripts/codex/codex-progress-comment.ts` after merge and
+  rollout state changed.
+- No direct production mutation was made from this shell. All production changes landed through PR merge and GitOps.
 
 ## Deployment evidence
 
-- Final Jangar promotion:
-  - #6378 merged at 2026-05-13T08:53:45Z as `270bb6740ca9b38d0d38de1020c73719b78bbac0`.
-  - #6378 `jangar-ci / lint-and-typecheck` passed at 2026-05-13T08:55:53Z.
-  - `jangar-post-deploy-verify` run `25788838577` passed from 2026-05-13T08:53:52Z to 08:56:35Z.
-- Argo state after the rollout:
-  - `agents`: Synced, Healthy, operation Succeeded.
-  - `jangar`: Synced, Healthy, operation Succeeded.
-- Workload state:
-  - `deployment/jangar -n jangar`: 1/1 available on
-    `registry.ide-newton.ts.net/lab/jangar:45710e0b@sha256:1348bdb0571ee61c3c3005186261a422f4bc754bc19380f842577a9e694950c8`.
-  - `deployment/agents -n agents`: 1/1 available on
-    `registry.ide-newton.ts.net/lab/jangar-control-plane:45710e0b@sha256:533c8be4f98731a49bcf50039559ff2b5eae712280ef074b84711a2824d89cdf`.
-  - `deployment/agents-controllers -n agents`: 2/2 available on
-    `registry.ide-newton.ts.net/lab/jangar:45710e0b@sha256:1348bdb0571ee61c3c3005186261a422f4bc754bc19380f842577a9e694950c8`.
+- Argo:
+  - `jangar sync=Synced health=Healthy rev=3b7277516fd31a9d74916202c81d5610e56afc19`
+  - `agents sync=Synced health=Healthy rev=3b7277516fd31a9d74916202c81d5610e56afc19`
+  - `torghut sync=Synced health=Healthy rev=3b7277516fd31a9d74916202c81d5610e56afc19`
+  - `symphony-jangar sync=Synced health=Healthy rev=07da331d95ca0ef2779108a00a877c5e718b2656`
+  - `symphony-torghut sync=Synced health=Healthy rev=07da331d95ca0ef2779108a00a877c5e718b2656`
+- Workloads:
+  - `deployment/jangar -n jangar`: 1/1 ready, 0 restarts, image
+    `registry.ide-newton.ts.net/lab/jangar:07da331d@sha256:d0a61187c54f063d6f3f875a6760b3202ff8f7733b2f7977ff06a39d1a3e3c90`.
+  - `deployment/agents -n agents`: 1/1 ready, 0 restarts, image
+    `registry.ide-newton.ts.net/lab/jangar-control-plane:07da331d@sha256:ee5c618919f28cdb3f62440f0ef8b280ec18e2fb42b4d784b067af74f3927110`.
+  - `deployment/agents-controllers -n agents`: 2/2 ready, 0 restarts, image
+    `registry.ide-newton.ts.net/lab/jangar:07da331d@sha256:d0a61187c54f063d6f3f875a6760b3202ff8f7733b2f7977ff06a39d1a3e3c90`.
 - Service health:
   - `http://jangar.jangar.svc.cluster.local/health`: HTTP 200, `status=ok`.
-  - `http://agents.agents.svc.cluster.local/ready`: HTTP 200, with runtime status `degraded` because execution trust
-    is blocked by the current swarm freeze.
-- Runtime status after rollout:
-  - Swarm phase: `Frozen`, `Ready=False`, frozen until `2026-05-13T09:20:50.975Z`.
-  - Freeze evidence: `jangar-control-plane-implement-sched-8b575` failed with `BackoffLimitExceeded`.
-  - Pod evidence: attempt 2 ran old image `5d89ac24` and was evicted because node ephemeral storage was low; the pod
-    used 3925420Ki ephemeral storage with no request.
-  - The failure is a runtime capacity/runner resource blocker, not a failed GitOps rollout of `45710e0b`.
-- Events:
-  - Recent warnings are rollout-time readiness probe failures on old or starting pods and the old implement-run
-    eviction. Current Jangar and agents deployments are available.
+  - `http://jangar.jangar.svc.cluster.local/ready`: HTTP 200, `status=ok`,
+    `execution_trust=healthy`, `torghut_consumer_evidence=current`, `serving_runtime_proof_cells_healthy=true`.
+  - `http://agents.agents.svc.cluster.local/ready`: HTTP 200, `status=ok`,
+    `execution_trust=healthy`, `torghut_consumer_evidence=current`.
+  - `evidence_pressure_ledger`: present on `/ready`, `schema_version=jangar.evidence-pressure-ledger.v1`,
+    `evidence_mode=observe`, `watch_backoff_policy.state=calm`, and
+    `observed_revision.source_head_sha=07da331d95ca0ef2779108a00a877c5e718b2656`.
+- Post-deploy verifier: `jangar-post-deploy-verify` run `25800868616` passed at `2026-05-13T13:08:12Z`.
+- Events: recent warning events were readiness probes during startup or replacement of old pods. Current Jangar and
+  Agents deployment pods are Running and ready with zero restarts.
 
 ## Metrics and value gates
 
-- `failed_agentrun_rate`: no Jangar AgentRun created after #6363 merged has failed. Counting by finish time, one
-  pre-existing implement run created at 2026-05-13T07:00:05Z failed at 2026-05-13T08:56:46.964Z because the old
-  runner pod was evicted for node ephemeral-storage pressure.
-- `pr_to_rollout_latency`: #6367 merged at 2026-05-13T08:32:20Z and #6378 post-deploy verification completed at
-  2026-05-13T08:56:35Z, for about 24m15s from source merge to verified rollout. #6363 took about 15m47s from merge
-  to post-deploy verification.
-- `ready_status_truth`: improved because stale terminal-stage accounting and stage-credit launch evidence are now
-  explicit. The runtime surface is not falsely green: it reports the swarm freeze and material-action holds.
-- `manual_intervention_count`: zero direct cluster mutations from the local shell.
-- `handoff_evidence_quality`: PR progress comments, this rollout doc, the mission ledger, the verify handoff, and NATS
-  updates carry the same merge/rollout/runtime blocker evidence.
+- `ready_status_truth`: improved. `/ready` now exposes an evidence pressure ledger bound to the merged source SHA, so
+  release and scheduler decisions can read observe-mode pressure directly.
+- `pr_to_rollout_latency`: 15m24s from #6414 source merge to post-deploy verifier completion; 4m42s from #6420
+  promotion merge to post-deploy verifier completion.
+- `failed_agentrun_rate`: expected improvement is fewer false verify-stage holds from missing pressure/watch-backoff
+  context; the smallest runtime proof in this run is the healthy `/ready` ledger in observe/calm mode after promotion.
+- `manual_intervention_count`: zero direct production mutations.
+- `handoff_evidence_quality`: progress comments, this rollout doc, NATS updates, and swarm handoff artifacts carry the
+  same merge, rollout, residual-risk, and rollback evidence.
 
-## Rollback path
+## Risks and rollback path
 
-- Roll back through GitOps by reverting the relevant feature PR and its promotion PR, not by mutating live workloads
-  directly.
-- Latest full Jangar image rollback target: revert #6378 or promote the prior known-good `fdc164d7` image from #6365.
-- Feature-level rollback options:
-  - Revert #6367 if terminal-run freshness accounting regresses swarm status.
-  - Revert #6363 if stage-credit launch evidence regresses controller readiness.
-  - Revert #6349, #6343, #6339, #6330, or #6324 in reverse order if their status surfaces regress.
-- Runtime safety fallback is already conservative: dispatch, paper, and live actions are held or blocked while Torghut
-  route/settlement evidence and source-serving receipts are missing or while the swarm is frozen.
+- Residual risk: #6420 auto-merged after its required promotion checks were green while post-deploy verification was
+  still running; final post-deploy verification passed before this handoff was recorded.
+- Runtime risk is limited by observe mode. The new pressure ledger reports and gates visibility; it does not widen
+  production mutation behavior by itself.
+- Roll back through GitOps by reverting #6420 to restore the previous `f5ed7394` image. Revert #6414 only if the
+  runtime regression follows the evidence-pressure-ledger implementation rather than the image promotion.
+- Do not patch live Deployments directly except under an explicit emergency procedure; Argo should remain the source of
+  truth.
 
 ## Next action
 
-Smallest blocker preventing full business-metric improvement: stop implement-run evictions by adding an evidence-backed
-runner ephemeral-storage request/limit or workspace cleanup path, then re-run the implement stage after the freeze
-expires. The next PR blocker is #6372, which needs a conflict resolution in
-`docs/torghut/design-system/v6/index.md` before its typed Torghut evidence intake can proceed.
+Monitor the next Jangar verify-stage windows for fewer pressure/watch-backoff ambiguity holds and confirm the ledger
+stays fresh while `evidence_mode=observe`.
