@@ -111,6 +111,30 @@ def _repair_only_status() -> dict[str, object]:
                         "promotion_eligible_total": 0,
                         "rollback_required_total": 3,
                         "state_totals": {"blocked": 1, "shadow": 2},
+                        "hypothesis_ids": ["H-AAPL-ROUTE-REHAB"],
+                        "blocked_hypothesis_ids": ["H-AAPL-ROUTE-REHAB"],
+                        "promotion_eligible_hypothesis_ids": [],
+                        "repair_target_count": 1,
+                        "blocked_repair_target_count": 1,
+                        "promotion_eligible_repair_target_count": 0,
+                        "repair_targets": [
+                            {
+                                "hypothesis_id": "H-AAPL-ROUTE-REHAB",
+                                "state": "shadow",
+                                "promotion_eligible": False,
+                                "reasons": [
+                                    "alpha_readiness_not_promotion_eligible",
+                                    "post_cost_expectancy_non_positive",
+                                ],
+                                "informational_reasons": [
+                                    "closed_session_market_context_hold"
+                                ],
+                                "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                                "strategy_id": "intraday_tsmom_v1@paper",
+                                "lane_id": "continuation",
+                                "strategy_family": "intraday_continuation",
+                            }
+                        ],
                     },
                 },
                 {
@@ -327,6 +351,23 @@ class TestBuildRevenueRepairDigest(TestCase):
         self.assertIsInstance(evidence, dict)
         alpha_readiness = evidence["alpha_readiness"]
         self.assertIsInstance(alpha_readiness, dict)
+        self.assertEqual(
+            alpha_readiness["hypothesis_ids"],
+            ["H-AAPL-ROUTE-REHAB"],
+        )
+        self.assertEqual(
+            alpha_readiness["blocked_hypothesis_ids"],
+            ["H-AAPL-ROUTE-REHAB"],
+        )
+        self.assertEqual(alpha_readiness["repair_target_count"], 1)
+        repair_targets = alpha_readiness["repair_targets"]
+        self.assertIsInstance(repair_targets, list)
+        self.assertEqual(repair_targets[0]["hypothesis_id"], "H-AAPL-ROUTE-REHAB")
+        self.assertEqual(
+            repair_targets[0]["candidate_id"],
+            "chip-paper-microbar-composite@execution-proof",
+        )
+        self.assertEqual(repair_targets[0]["strategy_id"], "intraday_tsmom_v1@paper")
         capital_replay_board = alpha_readiness["capital_replay_board"]
         self.assertIsInstance(capital_replay_board, dict)
         self.assertEqual(

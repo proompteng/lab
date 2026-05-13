@@ -100,13 +100,22 @@ def test_live_degraded_evidence_routes_to_repair_only() -> None:
             },
             "items": [
                 {
-                    "hypothesis_id": "chip-paper-microbar-composite",
+                    "hypothesis_id": "H-CONT-01",
+                    "state": "shadow",
+                    "promotion_eligible": False,
                     "reasons": [
                         "tca_evidence_stale",
                         "signal_lag_exceeded",
                         "feature_rows_missing",
                     ],
+                    "informational_reasons": ["closed_session_signal_hold"],
                     "promotion_contract": {"max_avg_abs_slippage_bps": "20"},
+                    "lineage_ref": {
+                        "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                        "strategy_id": "intraday_tsmom_v1@paper",
+                        "lane_id": "continuation",
+                        "strategy_family": "intraday_continuation",
+                    },
                 }
             ],
         },
@@ -156,6 +165,98 @@ def test_live_degraded_evidence_routes_to_repair_only() -> None:
     assert alpha_dimension["source_ref"]["informational_reason_totals"] == {
         "closed_session_signal_hold": 2
     }
+    assert alpha_dimension["source_ref"]["hypothesis_ids"] == ["H-CONT-01"]
+    assert alpha_dimension["source_ref"]["blocked_hypothesis_ids"] == ["H-CONT-01"]
+    assert alpha_dimension["source_ref"]["repair_target_count"] == 1
+    assert alpha_dimension["source_ref"]["blocked_repair_target_count"] == 1
+    repair_targets = cast(
+        list[Mapping[str, Any]], alpha_dimension["source_ref"]["repair_targets"]
+    )
+    assert repair_targets == [
+        {
+            "hypothesis_id": "H-CONT-01",
+            "state": "shadow",
+            "promotion_eligible": False,
+            "reasons": [
+                "feature_rows_missing",
+                "signal_lag_exceeded",
+                "tca_evidence_stale",
+            ],
+            "informational_reasons": ["closed_session_signal_hold"],
+            "candidate_id": "chip-paper-microbar-composite@execution-proof",
+            "strategy_id": "intraday_tsmom_v1@paper",
+            "lane_id": "continuation",
+            "strategy_family": "intraday_continuation",
+        }
+    ]
+
+
+def test_alpha_repair_targets_flow_to_route_reacquisition_records() -> None:
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="PA3SX7FYNUTF",
+        torghut_revision="torghut-00364",
+        trading_mode="live",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": False,
+            "reason": "simple_submit_disabled",
+            "blocked_reasons": ["simple_submit_disabled"],
+            "capital_stage": "shadow",
+        },
+        hypothesis_payload={
+            "summary": {
+                "hypotheses_total": 1,
+                "promotion_eligible_total": 0,
+                "rollback_required_total": 0,
+                "state_totals": {"shadow": 1},
+                "reason_totals": {"post_cost_expectancy_non_positive": 1},
+            },
+            "items": [
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "state": "shadow",
+                    "promotion_eligible": False,
+                    "reasons": ["post_cost_expectancy_non_positive"],
+                    "promotion_contract": {"max_avg_abs_slippage_bps": "12"},
+                    "lineage_ref": {
+                        "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                        "strategy_id": "intraday_tsmom_v1@paper",
+                    },
+                }
+            ],
+        },
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status=_healthy_market_context(),
+        tca_summary={
+            "order_count": 2033,
+            "filled_execution_count": 2033,
+            "unsettled_execution_count": 0,
+            "last_computed_at": NOW.isoformat(),
+            "latest_execution_created_at": NOW.isoformat(),
+            "avg_abs_slippage_bps": "9.25",
+            "scope_symbols": ["AAPL"],
+            "scope_symbol_count": 1,
+            "symbol_breakdown": [
+                {
+                    "symbol": "AAPL",
+                    "order_count": 2033,
+                    "avg_abs_slippage_bps": "9.25",
+                    "max_abs_slippage_bps": "112.77",
+                    "last_computed_at": NOW.isoformat(),
+                }
+            ],
+        },
+        simple_lane_status=_simple_lane_status(),
+        now=NOW,
+    )
+
+    route_book = cast(dict[str, Any], receipt["route_reacquisition_book"])
+    records = cast(list[Mapping[str, Any]], route_book["records"])
+    assert len(records) == 1
+    assert records[0]["symbol"] == "AAPL"
+    assert records[0]["state"] == "probing"
+    assert records[0]["hypothesis_ids"] == ["H-CONT-01"]
 
 
 def test_live_all_clear_routes_to_micro_candidate_with_configured_notional() -> None:
