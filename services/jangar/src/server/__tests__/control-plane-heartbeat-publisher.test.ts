@@ -104,10 +104,10 @@ describe('control-plane heartbeat publisher', () => {
     expect(upsertHeartbeat).not.toHaveBeenCalled()
   })
 
-  it('publishes disabled rows when the authoritative workload disables a component', async () => {
+  it('skips disabled rows so non-authoritative workloads do not overwrite controller witnesses', async () => {
     const upsertHeartbeat = vi.fn(async () => undefined)
 
-    await publishControlPlaneHeartbeatsOnce({
+    const published = await publishControlPlaneHeartbeatsOnce({
       now: () => new Date('2026-03-08T12:00:00Z'),
       getLeaderStatus: () => leaderStatus,
       getAgentsHealth: () => ({
@@ -125,21 +125,14 @@ describe('control-plane heartbeat publisher', () => {
       }),
     })
 
+    expect(published).toBe(2)
+    expect(upsertHeartbeat).not.toHaveBeenCalledWith(expect.objectContaining({ component: 'agents-controller' }))
+    expect(upsertHeartbeat).not.toHaveBeenCalledWith(expect.objectContaining({ component: 'workflow-runtime' }))
     expect(upsertHeartbeat).toHaveBeenCalledWith(
-      expect.objectContaining({
-        component: 'agents-controller',
-        enabled: false,
-        status: 'disabled',
-        message: 'agents controller disabled',
-      }),
+      expect.objectContaining({ component: 'supporting-controller', status: 'healthy' }),
     )
     expect(upsertHeartbeat).toHaveBeenCalledWith(
-      expect.objectContaining({
-        component: 'workflow-runtime',
-        enabled: false,
-        status: 'disabled',
-        message: 'workflow runtime disabled',
-      }),
+      expect.objectContaining({ component: 'orchestration-controller', status: 'healthy' }),
     )
   })
 

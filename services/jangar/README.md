@@ -407,7 +407,9 @@ controller-process heartbeats, `agents-controllers` rollout evidence, watch epoc
 When the serving process is not the controller, a healthy controller heartbeat can satisfy controller self-report. If
 only the controller deployment and watch epoch are current, Jangar records `controller_witness_split`, keeps bounded
 repair dispatch available, and downgrades normal dispatch to `repair_only` until a controller-process ingestion
-witness is current. A true AgentRun ingestion stall records `controller_ingestion_stalled` and holds normal dispatch.
+witness is current. Disabled component state from a non-authoritative process is not written as a heartbeat row, so it
+cannot overwrite a current controller-process witness for the same component. A true AgentRun ingestion stall records
+`controller_ingestion_stalled` and holds normal dispatch.
 
 `material_action_activation_receipts` mirror each action SLO budget with controller witness refs, negative evidence
 refs, max dispatch/runtime/notional limits, expiry, and rollback target. Rollback: keep the witness contract in shadow

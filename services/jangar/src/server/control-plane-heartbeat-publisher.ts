@@ -224,6 +224,9 @@ export const buildControlPlaneHeartbeatInputs = ({
 
   return componentStates.flatMap(({ component, health, namespaces }) => {
     const state = buildComponentState(component, health)
+    if (!state.enabled) {
+      return []
+    }
     return namespaces.map((namespace) => ({
       namespace,
       component,

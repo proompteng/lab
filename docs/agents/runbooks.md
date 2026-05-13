@@ -184,6 +184,9 @@ Expected outcomes:
   route-stability contracts, retained workflow failure debt, and Torghut consumer/profit-window evidence.
   `serve_readonly` may remain `allow` while `dispatch_normal`, `deploy_widen`, `merge_ready`, and capital actions are
   held or blocked.
+- Controller-process heartbeat rows are positive authority only when the component is enabled in that process. Disabled
+  rows are intentionally skipped so a serving or alternate controller process cannot overwrite the current
+  `agents-controllers` ingestion witness; missing or stale rows still keep normal dispatch in repair/hold.
 - `dependency_verdict_exchange` cites design doc 186 and exposes the Torghut route-warrant dispatch verdicts.
   Read-only service may stay `allow`; bounded repair is only `repair_only` when a fresh Torghut warrant names
   zero-notional repair packets and target value gates. `implement`, `deploy_widen`, `merge_ready`, paper, and live
