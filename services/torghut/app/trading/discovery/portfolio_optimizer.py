@@ -69,8 +69,24 @@ def _worst_day_loss(bundle: CandidateEvidenceBundle) -> Decimal:
     return _decimal(_scorecard(bundle).get("worst_day_loss"))
 
 
+def _hard_vetoes(bundle: CandidateEvidenceBundle) -> tuple[str, ...]:
+    raw_hard_vetoes = _scorecard(bundle).get("hard_vetoes")
+    if isinstance(raw_hard_vetoes, str):
+        return (raw_hard_vetoes,) if raw_hard_vetoes.strip() else ()
+    if not isinstance(raw_hard_vetoes, Sequence):
+        return ()
+    vetoes: list[str] = []
+    for raw_value in cast(Sequence[object], raw_hard_vetoes):
+        veto = _string(raw_value)
+        if veto:
+            vetoes.append(veto)
+    return tuple(vetoes)
+
+
 def _candidate_passes_minimums(bundle: CandidateEvidenceBundle) -> bool:
     if not evidence_bundle_is_valid(bundle):
+        return False
+    if _hard_vetoes(bundle):
         return False
     if bool(bundle.promotion_readiness.get("promotable")):
         return True
@@ -651,6 +667,15 @@ def optimize_portfolio_candidate(
         for bundle in evidence_bundles
         if not evidence_bundle_is_valid(bundle)
     ]
+    hard_veto_rejections = [
+        {
+            "candidate_id": bundle.candidate_id,
+            "reason": "frontier_hard_veto",
+            "hard_vetoes": list(_hard_vetoes(bundle)),
+        }
+        for bundle in evidence_bundles
+        if evidence_bundle_is_valid(bundle) and _hard_vetoes(bundle)
+    ]
     eligible = [
         bundle for bundle in evidence_bundles if _candidate_passes_minimums(bundle)
     ]
@@ -659,7 +684,10 @@ def optimize_portfolio_candidate(
         key=lambda item: (_sleeve_score(item), _net_per_day(item), item.candidate_id),
         reverse=True,
     )
-    rejected: list[dict[str, Any]] = list(invalid_evidence_rejections)
+    rejected: list[dict[str, Any]] = [
+        *invalid_evidence_rejections,
+        *hard_veto_rejections,
+    ]
     max_allowed_correlation = MAX_ALLOWED_PAIRWISE_CORRELATION
     selection_result = _select_portfolio_bundles(
         ordered=ordered,

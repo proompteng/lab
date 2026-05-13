@@ -461,6 +461,117 @@ class TestPortfolioOptimizer(TestCase):
         ]
         self.assertEqual(len(invalid_rejections), 2)
 
+    def test_frontier_hard_vetoes_are_not_admitted_to_portfolios(self) -> None:
+        def bundle(
+            *,
+            candidate_id: str,
+            net_pnl_per_day: str,
+            symbol: str,
+            cluster: str,
+            hard_vetoes: list[str] | None = None,
+        ) -> CandidateEvidenceBundle:
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "runtime_family": "microbar_cross_sectional_pairs",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "family_template_id": "microbar_cross_sectional_pairs_v1",
+                    "hard_vetoes": hard_vetoes or [],
+                    "objective_scorecard": {
+                        "net_pnl_per_day": net_pnl_per_day,
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "best_day_share": "0.2",
+                        "avg_filled_notional_per_day": "350000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "correlation_cluster": cluster,
+                        "symbol_contribution_shares": {symbol: "1.0"},
+                        **_executable_scorecard_fields(candidate_id),
+                    },
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": net_pnl_per_day,
+                            "2026-02-24": net_pnl_per_day,
+                            "2026-02-25": net_pnl_per_day,
+                            "2026-02-26": net_pnl_per_day,
+                            "2026-02-27": net_pnl_per_day,
+                        },
+                        "daily_filled_notional": {
+                            "2026-02-23": "350000",
+                            "2026-02-24": "350000",
+                            "2026-02-25": "350000",
+                            "2026-02-26": "350000",
+                            "2026-02-27": "350000",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-hard-veto",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        vetoed = bundle(
+            candidate_id="cand-vetoed-shock",
+            net_pnl_per_day="1200",
+            symbol="NVDA",
+            cluster="vetoed-shock",
+            hard_vetoes=["max_drawdown_above_max", "best_day_share_above_max"],
+        )
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[
+                vetoed,
+                bundle(
+                    candidate_id="cand-clean-a",
+                    net_pnl_per_day="200",
+                    symbol="AAPL",
+                    cluster="clean-a",
+                ),
+                bundle(
+                    candidate_id="cand-clean-b",
+                    net_pnl_per_day="200",
+                    symbol="AMZN",
+                    cluster="clean-b",
+                ),
+                bundle(
+                    candidate_id="cand-clean-c",
+                    net_pnl_per_day="200",
+                    symbol="GOOGL",
+                    cluster="clean-c",
+                ),
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            portfolio_size_min=3,
+            portfolio_size_max=3,
+        )
+
+        self.assertEqual(
+            vetoed.objective_scorecard["hard_vetoes"],
+            ["max_drawdown_above_max", "best_day_share_above_max"],
+        )
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertNotIn("cand-vetoed-shock", portfolio.source_candidate_ids)
+        self.assertCountEqual(
+            portfolio.source_candidate_ids,
+            ("cand-clean-a", "cand-clean-b", "cand-clean-c"),
+        )
+        self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
+        self.assertIn(
+            {
+                "candidate_id": "cand-vetoed-shock",
+                "reason": "frontier_hard_veto",
+                "hard_vetoes": [
+                    "max_drawdown_above_max",
+                    "best_day_share_above_max",
+                ],
+            },
+            portfolio.optimizer_report["rejections"],
+        )
+
     def test_portfolio_candidate_rejects_pnl_only_replay_without_executable_proof(
         self,
     ) -> None:
