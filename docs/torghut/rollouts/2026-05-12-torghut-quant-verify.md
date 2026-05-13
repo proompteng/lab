@@ -12,6 +12,301 @@
 - Value gates: `post_cost_daily_net_pnl`, `routeable_candidate_count`,
   `zero_notional_or_stale_evidence_rate`, `fill_tca_or_slippage_quality`, and `capital_gate_safety`.
 
+## 2026-05-13T01:59Z Release Gate Update
+
+Governing Torghut requirements:
+
+- `docs/torghut/design-system/v6/188-torghut-route-evidence-clearinghouse-and-execution-freshness-market-2026-05-12.md`
+  requires observe-mode route evidence clearinghouse packets, zero-notional repair bids, and no widening of live
+  submission defaults while source freshness, TCA, image proof, routeability, or capital evidence is unsettled.
+- `docs/torghut/design-system/v6/189-torghut-clock-settled-repair-execution-and-routeability-reentry-2026-05-12.md`
+  requires clock-settlement receipts to keep `max_notional=0` while ClickHouse, TCA, empirical, promotion, rollout,
+  custody, or capital clocks are stale, missing, split, or blocked.
+- `docs/torghut/design-system/v6/190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
+  keeps routeability repair settlement zero-notional until the proof floor, rollout image proof, route/TCA evidence,
+  and capital clocks are settled.
+
+Selected PRs:
+
+- `#6235` `feat(torghut): settle zero-notional route evidence repairs`
+  - URL: `https://github.com/proompteng/lab/pull/6235`
+  - Current head: `ad95e042866ba07b84026948b84c4180979fb2ae`
+  - Diff: 2,854 additions and 232 deletions across the PR, so the large-diff Codex review gate applies.
+  - Hosted checks remain green for current head, including Torghut bytecode/lint/migration guard, Pyright, pytest
+    shards `0` through `3`, aggregate bytecode/pytest/coverage, quality signals, Jangar lint/typecheck, agents
+    validate, and `agents-ci / integration`.
+- `#6262` `docs(torghut): record quant release review gate`
+  - URL: `https://github.com/proompteng/lab/pull/6262`
+  - Current head before this update: `b6c09295383423ff7a95042dcdee5a270a502e9f`
+  - Diff before this update: 191 additions and 0 deletions in this audit report, below the large-diff Codex review
+    threshold.
+  - Hosted checks are green and merge state is `CLEAN`.
+
+Comments, conflicts, and fixes:
+
+- `#6235` is conflict-free and non-draft, with hosted checks green.
+- A fresh latest-head Codex review request was posted at 2026-05-13T01:58Z using marker
+  `<!-- codex:review-request-ad95e042-20260513T0158Z -->`.
+- The connector again returned the usage-limit blocker: "You have reached your Codex usage limits for code reviews."
+  The latest posted Codex review remains for an older head, so it cannot satisfy the current-head large-diff gate.
+- No direct production mutation was made from the local shell.
+
+Merge decision:
+
+- `#6235`: no-go. Do not squash merge until a current-head Codex review posts and any threads are resolved, or repo
+  ownership explicitly records a waiver for the large-diff gate.
+- `#6262`: go after this audit update passes formatting/check validation and hosted checks. This PR is documentation
+  audit evidence only; it does not roll out Torghut runtime changes.
+
+Current GitOps and rollout evidence:
+
+- Argo CD:
+  - `torghut`: `Synced` / `Degraded` at revision `475f6ca3b1adf649682a49f4544f01cfa9196bfc`
+    (`chore(release/f87856c): automated release PR (#6292)`), operation `Succeeded`.
+  - `torghut-options`: `Synced` / `Healthy` at revision `1311851335e44e624f8512e3c2c9d1cd784f431c`, operation
+    `Succeeded`.
+  - `agents`, `agents-ci`, and `jangar`: `Synced` / `Healthy`.
+- Workload readiness:
+  - `deployment/torghut-00327-deployment`: rollout complete, pod `2/2 Running`, zero restarts, image digest
+    `sha256:d5d8052dcf4f0966be7abfaa9779d41f11179b52c28cee6c8865c53e6d643bfc`.
+  - `deployment/torghut-sim-00425-deployment`: rollout complete, pod `2/2 Running`, zero restarts, same image digest.
+  - Torghut options catalog/enricher, options TA, TA, TA sim, websocket, websocket-options, ClickHouse, Keeper,
+    Postgres, and exporters show running pods with zero restarts in the observed namespace snapshot.
+  - `kubectl get pods -n torghut --field-selector=status.phase!=Running` returned no resources, and the readiness
+    anomaly query over pod container statuses returned an empty list.
+- Recent event risk:
+  - New Torghut revisions had transient startup/readiness probe warnings before becoming ready.
+  - Recent warnings remain Flink status-update conflicts for `torghut-options-ta` and multiple-PDB selection warnings
+    for ClickHouse pods; observed pods remain ready.
+  - Service account RBAC still cannot list Knative services, configurations, revisions, or Flink deployments, so
+    rollout proof uses Argo status, Deployments, Pods, Services, Events, and runtime endpoints.
+
+Runtime and business-value evidence:
+
+- `GET /readyz`: `status=degraded`. Postgres, ClickHouse, Alpaca, schema/database, and static universe dependencies
+  are OK; live submission gate is closed with `simple_submit_disabled`, and profitability proof floor is
+  `repair_only` / `zero_notional`.
+- `GET /trading/status`: HTTP 200, `running=true`, `mode=live`, build `v0.569.1-66-g565d4f065`, commit
+  `565d4f0654c301e337bcd02bb5e9d26435d74ff0`, active revision `torghut-00327`.
+- Live submission remains disabled with blockers `alpha_readiness_not_promotion_eligible`,
+  `empirical_jobs_not_ready`, and `simple_submit_disabled`.
+- Routeability remains fail-closed: `accepted_routeable_candidate_count=0`, `routeable_candidate_count=0`,
+  `zero_notional_or_stale_evidence_rate=1.0`, `fill_tca_or_slippage_quality=hold`, `capital_decision=repair_only`,
+  and `max_notional=0`.
+- `GET /trading/revenue-repair`: `business_state=repair_only`, `revenue_ready=false`, with blockers
+  `alpha_readiness_not_promotion_eligible`, `degraded`, `simple_submit_disabled`, `empirical_jobs_not_ready`, and
+  `quant_pipeline_degraded`.
+- `GET /trading/consumer-evidence`: empirical jobs remain `degraded` with stale/ineligible jobs
+  `benchmark_parity`, `foundation_router_parity`, `janus_event_car`, and `janus_hgrm_reward`; market context alert is
+  active for `market_context_stale`; routeable exchange summary is `routeable_candidate_count=0`,
+  `zero_notional_repair_lot_count=9`, and `rejected_candidate_count=3`.
+- Revenue impact is still blocked. The smallest release blocker for `#6235` is the current-head Codex review
+  usage-limit failure; the smallest runtime blocker for revenue is zero routeable accepted candidates with stale or
+  degraded evidence while capital remains zero-notional.
+- Memory retrieve and save both failed with Jangar memory service HTTP 500 connectivity errors during this verification
+  pass.
+
+Rollback and next action:
+
+- If `#6235` later merges and rollout degrades, revert the squash commit through PR flow or disable downstream
+  consumption of `route_evidence_clearinghouse_packet`, `routeable_profit_candidate_exchange`,
+  `clock_settlement_receipt`, and `zero_notional_repair_execution_receipt`.
+- Do not loosen proof-floor, live-submission, source freshness, TCA/slippage, image proof, custody, clock, notional, or
+  capital gates as rollback.
+- Merge `#6262` after the audit update is green, then continue holding `#6235` until a latest-head Codex review posts
+  or ownership explicitly waives the large-diff gate.
+
+## 2026-05-13T01:30Z Release Gate Update
+
+Governing Torghut requirements:
+
+- `docs/torghut/design-system/v6/188-torghut-route-evidence-clearinghouse-and-execution-freshness-market-2026-05-12.md`
+  requires observe-mode route evidence clearinghouse packets, zero-notional repair bids, and no widening of live
+  submission defaults while source freshness, TCA, image proof, routeability, or capital evidence is unsettled.
+- `docs/torghut/design-system/v6/188-torghut-evidence-clock-arbiter-and-routeable-profit-candidate-exchange-2026-05-12.md`
+  requires evidence-clock arbitration and routeable candidate exchange evidence at the Jangar action boundary.
+- `docs/torghut/design-system/v6/189-torghut-clock-settled-repair-execution-and-routeability-reentry-2026-05-12.md`
+  requires clock-settlement receipts to keep `max_notional=0` while ClickHouse, TCA, empirical, promotion, rollout,
+  custody, or capital clocks are stale, missing, split, or blocked.
+- `docs/torghut/design-system/v6/190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
+  keeps routeability repair settlement zero-notional until the proof floor, rollout image proof, route/TCA evidence,
+  and capital clocks are settled.
+
+Selected PR:
+
+- `#6235` `feat(torghut): settle zero-notional route evidence repairs`
+  - URL: `https://github.com/proompteng/lab/pull/6235`
+  - Current head: `ad95e042866ba07b84026948b84c4180979fb2ae`
+  - Diff: 2,854 additions and 232 deletions across the PR, so the large-diff Codex review gate applies.
+  - Value gates: `routeable_candidate_count`, `zero_notional_or_stale_evidence_rate`,
+    `fill_tca_or_slippage_quality`, `capital_gate_safety`, and downstream `post_cost_daily_net_pnl` once accepted
+    route claims settle into paper or live receipts.
+
+Comments, conflicts, and fixes:
+
+- Merged current `main` into `codex/swarm-torghut-quant` after GitHub reported conflicts and preserved the branch's
+  stricter route-evidence, clock-settlement, and Jangar consumer-evidence surfaces.
+- Resolved conflicts in Torghut runtime/docs/tests and Jangar control-plane evidence routers without loosening the live
+  submission, proof-floor, source-freshness, routeability, TCA, or capital gates.
+- Fixed a capital-safety regression in `services/torghut/app/trading/zero_notional_repair_executor.py`: configured
+  zero-notional repair runners now run only after a selected repair is present, allowlisted, and free of capital-safety
+  blockers.
+- Added regression coverage in `services/torghut/tests/test_zero_notional_repair_executor.py` so capital-safety
+  blockers return a blocked receipt without invoking local runner side effects.
+- Requested latest-head Codex review for `ad95e042866ba07b84026948b84c4180979fb2ae`; the connector returned the Codex
+  usage-limit response instead of posting a review.
+
+Merge decision:
+
+- No-go at this checkpoint.
+- The PR is non-draft and current branch head is pushed.
+- Hosted checks completed green for Torghut changed-file plan, bytecode/lint/migration guard, Pyright, pytest shards
+  `0` through `3`, aggregate bytecode/pytest/coverage, quality signals, Jangar lint/typecheck, semantic title,
+  semantic commit lint, changed-files, agents validate, and `agents-ci / integration` (`13m24s`, run
+  `25772097902`, job `75697237497`).
+- Large-diff review gate remains blocked. The latest posted Codex review predates the current head; latest-head review
+  request `<!-- codex:review-request-ad95e0428 -->` returned: "You have reached your Codex usage limits for code
+  reviews." Because this PR exceeds 1,000 changed lines, do not squash merge until a latest-head Codex review posts and
+  any threads are resolved, or repo ownership explicitly waives the gate.
+
+Current cluster evidence before any `#6235` rollout:
+
+- Argo CD at revision `e0fd1d0dd90bce184f06fd15fe4895afcab5fc7b`:
+  - `torghut`: `Synced` / `Degraded`
+  - `torghut-options`: `Synced` / `Healthy`
+  - `agents`: `Synced` / `Healthy`
+  - `agents-ci`: `Synced` / `Healthy`
+  - `jangar`: `Synced` / `Healthy`
+- Workloads:
+  - Current live Knative deployment `torghut-00327-deployment`: deployment `1/1` available, pod `2/2 Running`, zero
+    restarts, serving image digest `sha256:d5d8052dcf4f0966be7abfaa9779d41f11179b52c28cee6c8865c53e6d643bfc`.
+  - Current sim Knative deployment `torghut-sim-00425-deployment`: deployment `1/1` available, pod `2/2 Running`,
+    zero restarts, serving the same digest.
+  - Options catalog, options enricher, options TA, TA, TA sim, websocket, and websocket-options deployments are
+    available with observed pods running.
+- Runtime endpoints:
+  - `GET /readyz`: HTTP 503 with `status=degraded`; scheduler, Postgres, ClickHouse, Alpaca, database schema, and
+    universe checks are OK, while live submission and profitability proof floor fail closed.
+  - `GET /trading/status`: HTTP 200, `running=true`, `mode=live`, build
+    `v0.569.1-66-g565d4f065`, commit `565d4f0654c301e337bcd02bb5e9d26435d74ff0`, active revision
+    `torghut-00327`, `live_submission_gate.allowed=false`, `reason=simple_submit_disabled`, and blockers
+    `alpha_readiness_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`.
+  - `GET /trading/status` routeability evidence: `accepted_routeable_candidate_count=0`,
+    `zero_notional_or_stale_evidence_rate=1.0`, routeable exchange `routeable_candidate_count=0`,
+    `zero_notional_repair_lot_count=9`, and `rejected_candidate_count=3`.
+  - `GET /trading/revenue-repair`: HTTP 200, `business_state=repair_only`, `revenue_ready=false`,
+    `capital_state=zero_notional`, `max_notional=0`, clearinghouse `source_state=current`, `execution_state=hold`,
+    `rollout_state=hold`, and `capital_state=hold`.
+  - `GET /trading/consumer-evidence`: HTTP 200, `empirical_jobs.ready=false`, empirical status `degraded`, forecast
+    status `degraded`, and market-context alert `market_context_stale`.
+
+Runtime and business-value judgment:
+
+- No `#6235` production rollout has occurred because the merge gate is closed.
+- `capital_gate_safety` is intact: live submission remains disabled, routeability acceptance is blocked, and max
+  notional remains `0`.
+- Revenue impact remains blocked. The smallest blocker preventing release is the latest-head Codex review usage-limit
+  failure for the large diff. Runtime evidence also shows `accepted_routeable_candidate_count=0` with
+  `zero_notional_or_stale_evidence_rate=1.0`, so the revenue metric is not yet routeable post-cost PnL.
+
+Rollback and next action:
+
+- If `#6235` later merges and rollout degrades, revert the squash commit through PR flow or disable downstream
+  consumption of `route_evidence_clearinghouse_packet`, `routeable_profit_candidate_exchange`,
+  `clock_settlement_receipt`, and `zero_notional_repair_execution_receipt`.
+- Do not loosen proof-floor, live-submission, source freshness, TCA/slippage, image proof, custody, clock, notional, or
+  capital gates as rollback.
+- Continue holding the merge until a latest-head Codex review posts or repo ownership explicitly waives the large-diff
+  gate.
+
+## 2026-05-12T23:10Z Release Gate Update
+
+Governing Torghut requirements:
+
+- `docs/torghut/design-system/v6/188-torghut-route-evidence-clearinghouse-and-execution-freshness-market-2026-05-12.md`
+  requires observe-mode route evidence clearinghouse packets, zero-notional repair bids, and no widening of live
+  submission defaults while source freshness, TCA, image proof, routeability, or capital evidence is unsettled.
+- `docs/torghut/design-system/v6/188-torghut-evidence-clock-arbiter-and-routeable-profit-candidate-exchange-2026-05-12.md`
+  requires evidence-clock arbitration and routeable candidate exchange evidence at the Jangar action boundary.
+- `docs/torghut/design-system/v6/189-torghut-clock-settled-repair-execution-and-routeability-reentry-2026-05-12.md`
+  requires clock-settlement receipts to keep `max_notional=0` while ClickHouse, TCA, empirical, promotion, rollout,
+  custody, or capital clocks are stale, missing, split, or blocked.
+
+Selected PR:
+
+- `#6235` `feat(torghut): settle route evidence clocks`
+  - URL: `https://github.com/proompteng/lab/pull/6235`
+  - Current head: `85b824f17a5cdfe03816fc366d2549103ecc5a56`
+  - Diff: 3,384 additions and 234 deletions across 18 files.
+  - Value gates: `routeable_candidate_count`, `zero_notional_or_stale_evidence_rate`,
+    `fill_tca_or_slippage_quality`, `capital_gate_safety`, and downstream `post_cost_daily_net_pnl` once accepted
+    route claims settle into paper or live receipts.
+
+Merge decision:
+
+- No-go.
+- The PR is non-draft and conflict-free, and GraphQL review-thread evidence shows five Codex review threads resolved.
+- All hosted checks are terminal green at this checkpoint: Torghut changed-file plan, bytecode/lint/migration guard,
+  Pyright, all pytest shards, aggregate bytecode/pytest/coverage, quality signals, Jangar lint/typecheck, semantic
+  title, semantic commit lint, changed-files, agents validate, and `agents-ci / integration` are passing.
+- Large-diff review gate remains blocked. The latest posted Codex review covered `f05f2a4922`; current-head review
+  requests for `85b824f17a5cdfe03816fc366d2549103ecc5a56`, including the green-CI request at 2026-05-12T23:09Z,
+  returned the Codex usage-limit response. Because this PR exceeds 1,000 changed lines, do not squash merge until a
+  latest-head Codex review posts or repo ownership explicitly waives that gate.
+
+Current cluster evidence before any `#6235` rollout:
+
+- Argo CD at revision `c42b993ef15282962218f4215a6b3e8dbeb9af4f`:
+  - `torghut`: `Synced` / `Degraded`, operation `Succeeded`
+  - `torghut-options`: `Synced` / `Healthy`
+  - `agents`: `Synced` / `Healthy`
+  - `agents-ci`: `Synced` / `Healthy`
+  - `jangar`: `Synced` / `Healthy`
+- Workloads:
+  - Current live Knative deployment `torghut-00325-deployment`: deployment `1/1` available, pod `2/2 Running`,
+    zero restarts, serving image digest `sha256:1068d291e94e78f12b149533021eff27f9ebb7ff81b8e7e5f540350405bec161`.
+  - Current sim Knative deployment `torghut-sim-00423-deployment`: deployment `1/1` available, pod `2/2 Running`,
+    zero restarts, serving the same digest.
+  - Options catalog, options enricher, options TA, TA, TA sim, websocket, and websocket-options deployments are
+    available with zero restarts on observed pods.
+  - Service account can list deployments, pods, services, and Argo applications, but cannot list Knative services or
+    routes and cannot `exec` into Torghut pods. Endpoint checks used the in-cluster revision service directly.
+- Runtime endpoints:
+  - `GET /readyz`: HTTP 503 with `status=degraded`.
+  - `GET /trading/status`: HTTP 200, `running=true`, `mode=live`, build
+    `v0.569.1-25-g767917346`, commit `767917346dbc3a76451b3b02fc83c9ca05127bc9`, active revision `torghut-00325`,
+    `live_submission_gate.allowed=false`, `reason=simple_submit_disabled`, and blockers
+    `alpha_readiness_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`.
+  - `GET /trading/status` routeable exchange summary: `routeable_candidate_count=0`,
+    `zero_notional_repair_lot_count=9`, `rejected_candidate_count=3`.
+  - `GET /trading/consumer-evidence`: HTTP 200, without current `#6235` consumer fields
+    `evidence_clock_arbiter`, `routeable_profit_candidate_exchange`, or `clock_settlement_receipt`.
+  - `GET /trading/revenue-repair`: HTTP 200, `business_state=repair_only`, `revenue_ready=false`,
+    `capital_state=zero_notional`, `max_notional=0`.
+  - Runtime evidence shows routeability acceptance blocked with `zero_notional_or_stale_evidence_rate=1.0`,
+    `accepted_routeable_candidate_count=0`, one probing symbol, four blocked symbols, and three missing symbols.
+- Events:
+  - Recent namespace warnings are Flink operator status update conflicts on `torghut-options-ta`; the Flink job remains
+    `RUNNING` and its observed pods are ready.
+
+Runtime and business-value judgment:
+
+- No `#6235` production rollout has occurred because the merge gate is closed.
+- `capital_gate_safety` is intact: live submission remains disabled and max notional remains `0`.
+- Revenue impact is blocked. The smallest blockers are the latest-head Codex review usage-limit failure for the large
+  diff and live runtime evidence showing `routeable_candidate_count=0` with repair-only zero-notional posture.
+
+Rollback and next action:
+
+- If `#6235` later merges and rollout degrades, revert the squash commit through PR flow or disable downstream
+  consumption of `route_evidence_clearinghouse_packet`, `routeable_profit_candidate_exchange`, and
+  `clock_settlement_receipt`.
+- Do not loosen proof-floor, live-submission, source freshness, TCA/slippage, image proof, custody, clock, notional, or
+  capital gates as rollback.
+- Continue holding the merge until a latest-head Codex review posts or repo ownership explicitly waives the large-diff
+  gate.
+- Memory retrieval/save remains blocked by Jangar memory service HTTP 500 connectivity errors.
+
 ## 2026-05-12T22:05Z Release Gate Update
 
 Governing Torghut requirements:
