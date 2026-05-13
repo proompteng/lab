@@ -5,6 +5,7 @@ import type {
   ActionSloBudget,
   AdmissionPassportStatus,
   ClearanceMarketLedger,
+  ConsumerEvidenceLeaseSet,
   ControlPlaneControllerWitnessQuorum,
   DatabaseMigrationConsistency,
   DependencyVerdictExchange,
@@ -185,6 +186,7 @@ export type ControlPlaneStatus = {
   stage_clearance_packets: StageClearancePacket[]
   ready_action_exchange: ReadyActionExchange
   repair_warrant_exchange: RepairWarrantExchange
+  consumer_evidence_leases: ConsumerEvidenceLeaseSet
   clearance_market_ledger: ClearanceMarketLedger | null
   source_rollout_truth_exchange: SourceRolloutTruthExchange
   route_stability_escrow: RouteStabilityEscrow

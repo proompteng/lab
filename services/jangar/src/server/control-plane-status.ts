@@ -4,6 +4,7 @@ import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/age
 import { buildReconciledActionClocks } from '~/server/control-plane-action-clock'
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
 import { buildControllerWitnessQuorum } from '~/server/control-plane-controller-witness'
+import { buildConsumerEvidenceLeaseSet } from '~/server/control-plane-consumer-evidence-leases'
 import {
   buildControlPlaneMaterialActionArtifacts,
   type RepairScheduleAttemptResolver,
@@ -705,6 +706,16 @@ export const buildControlPlaneStatus = async (
     torghutConsumerEvidence: torghutConsumerEvidence.status,
     resolveRepairScheduleAttempts: deps.resolveRepairScheduleAttempts,
   })
+  const consumerEvidenceLeases = buildConsumerEvidenceLeaseSet({
+    now,
+    namespace: options.namespace,
+    database,
+    rolloutHealth,
+    watchReliability: watchReliabilityStatus,
+    controllerWitness,
+    materialActionVerdictEpoch,
+    empiricalServices,
+  })
 
   const leaderElection = getLeaderElectionStatus()
 
@@ -782,6 +793,7 @@ export const buildControlPlaneStatus = async (
     stage_clearance_packets: stageClearancePackets,
     ready_action_exchange: readyActionExchange,
     repair_warrant_exchange: repairWarrantExchange,
+    consumer_evidence_leases: consumerEvidenceLeases,
     clearance_market_ledger: clearanceMarketLedger,
     source_rollout_truth_exchange: sourceRolloutTruthExchange,
     route_stability_escrow: routeStabilityEscrow,

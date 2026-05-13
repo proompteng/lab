@@ -6,6 +6,7 @@ import {
   type DatabaseStatus as ControlPlaneDatabaseStatus,
 } from '~/server/control-plane-status'
 import { CLEARANCE_MARKET_DESIGN_ARTIFACT } from '~/server/control-plane-clearance-market'
+import { CONSUMER_EVIDENCE_LEASES_DESIGN_ARTIFACT } from '~/server/control-plane-consumer-evidence-leases'
 import * as kubeGatewayModule from '~/server/kube-gateway'
 import type {
   ControlPlaneHeartbeatRow,
@@ -953,6 +954,31 @@ describe('control-plane status', () => {
       held_action_classes: expect.arrayContaining(['observe', 'repair', 'implement', 'paper']),
       blocked_action_classes: ['live'],
     })
+    expect(status.consumer_evidence_leases).toMatchObject({
+      schema_version: 'jangar.consumer-evidence-lease-set.v1',
+      mode: 'shadow',
+      design_artifact: CONSUMER_EVIDENCE_LEASES_DESIGN_ARTIFACT,
+      consumer: 'torghut',
+      namespace: 'agents',
+      controller_witness_ref: status.control_plane_controller_witness.quorum_id,
+    })
+    expect(status.consumer_evidence_leases.action_leases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'serve_readonly',
+          decision: 'allow',
+        }),
+        expect.objectContaining({
+          action_class: 'dispatch_normal',
+          decision: 'allow',
+        }),
+        expect.objectContaining({
+          action_class: 'live_scale',
+          decision: 'block',
+          reason_codes: expect.arrayContaining(['torghut_consumer_evidence_missing']),
+        }),
+      ]),
+    )
     expect(status.dependency_verdict_exchange.verdicts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
