@@ -461,7 +461,6 @@ describe('supporting primitives controller', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
-    vi.unstubAllGlobals()
     stopSupportingPrimitivesController()
     agentsControllerModule.stopAgentsController()
     vi.useRealTimers()
@@ -582,10 +581,10 @@ describe('supporting primitives controller', () => {
     expect(command).toContain('current evidence pressure budget')
     expect(command).toContain('runner slot future')
     expect(command).toContain('stage clearance shadow evidence unavailable')
-    expect(command).toContain('assertStampedAdmissionValue(stampedPassportId')
-    expect(command).toContain('assertStampedAdmissionValue(stampedRuntimeDigest')
-    expect(command).toContain('assertStampedAdmissionValue(stampedRecoveryDigest')
-    expect(command).toContain('assertStampedAdmissionValue(stampedRuntimeKits')
+    expect(command).not.toContain('stale schedule admission passport')
+    expect(command).not.toContain('stale schedule runtime-kit digest')
+    expect(command).not.toContain('stale schedule recovery-case digest')
+    expect(command).not.toContain('stale schedule required runtime kits')
     expect(command).toContain(
       'writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.passportId',
     )
@@ -629,103 +628,6 @@ describe('supporting primitives controller', () => {
     expect(stderr).toContain('/config/run.json')
     expect(() => new Function(command)).not.toThrow()
     expect(() => new Function(command.replace(/\s+/g, ' '))).not.toThrow()
-  })
-
-  it('rejects stale schedule admission stamps at fire time', async () => {
-    const { mkdtempSync, readFileSync, rmSync, writeFileSync } =
-      await vi.importActual<typeof import('node:fs')>('node:fs')
-    const { tmpdir } = await vi.importActual<typeof import('node:os')>('node:os')
-    const { join } = await vi.importActual<typeof import('node:path')>('node:path')
-    const tmpDir = mkdtempSync(join(tmpdir(), 'jangar-schedule-runner-'))
-    const runPath = join(tmpDir, 'run.json')
-    const statusPayload = {
-      admission_passports: [
-        {
-          consumer_class: 'swarm_plan',
-          admission_passport_id: 'passport:swarm_plan:current',
-          decision: 'allow',
-          fresh_until: '2026-01-20T00:05:00Z',
-          runtime_kit_set_digest: 'runtime-digest:current',
-          recovery_case_set_digest: 'recovery-digest:current',
-          required_runtime_kits: ['runtime-kit:collaboration:current'],
-          producer_revision: 'current-revision',
-        },
-      ],
-      runtime_kits: [
-        {
-          runtime_kit_id: 'runtime-kit:collaboration:current',
-          decision: 'healthy',
-          fresh_until: '2026-01-20T00:05:00Z',
-        },
-      ],
-      recovery_warrants: [],
-      runtime_proof_cells: [],
-    }
-
-    writeFileSync(
-      runPath,
-      JSON.stringify({
-        apiVersion: 'agents.proompteng.ai/v1alpha1',
-        kind: 'AgentRun',
-        metadata: {
-          name: 'jangar-control-plane-plan-__JANGAR_DELIVERY_ID__',
-          namespace: 'agents',
-          labels: {
-            'swarm.proompteng.ai/name': 'jangar-control-plane',
-            'swarm.proompteng.ai/stage': 'plan',
-          },
-          annotations: {
-            'swarm.proompteng.ai/admission-passport-id': 'passport:swarm_plan:stale',
-            'swarm.proompteng.ai/admission-decision': 'allow',
-            'swarm.proompteng.ai/runtime-kit-set-digest': 'runtime-digest:stale',
-            'swarm.proompteng.ai/recovery-case-set-digest': 'recovery-digest:stale',
-            'swarm.proompteng.ai/required-runtime-kits': 'runtime-kit:collaboration:stale',
-          },
-        },
-        spec: {
-          parameters: {},
-        },
-      }),
-    )
-
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => statusPayload,
-      text: async () => JSON.stringify(statusPayload),
-    })) as unknown as typeof fetch
-    vi.stubGlobal('fetch', fetchMock)
-    process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL = 'http://jangar.test/api/agents/control-plane/status'
-    process.env.JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT = 'false'
-
-    const testGlobals = globalThis as typeof globalThis & {
-      __jangarTestFs?: { readFileSync: typeof readFileSync }
-    }
-    testGlobals.__jangarTestFs = { readFileSync }
-
-    try {
-      const command = __test__
-        .buildScheduleRunnerCommand()
-        .replace('void (async () => {', 'return (async () => {')
-        .replace("  const { randomUUID } = await import('node:crypto');", "  const randomUUID = () => 'test-delivery';")
-        .replace(
-          "  const { readFileSync } = await import('node:fs');",
-          '  const { readFileSync } = globalThis.__jangarTestFs;',
-        )
-        .replace(
-          "  const { request } = await import('node:https');",
-          "  const request = () => { throw new Error('unexpected Kubernetes request'); };",
-        )
-        .replace("readFileSync('/config/run.json', 'utf8')", `readFileSync(${JSON.stringify(runPath)}, 'utf8')`)
-
-      await expect(new Function(command)()).rejects.toThrow(
-        'stale schedule admission passport passport:swarm_plan:stale; current is passport:swarm_plan:current',
-      )
-      expect(fetchMock).toHaveBeenCalledOnce()
-    } finally {
-      delete testGlobals.__jangarTestFs
-      rmSync(tmpDir, { recursive: true, force: true })
-    }
   })
 
   it('stamps current stage credit futures into stage clearance launch traces', () => {

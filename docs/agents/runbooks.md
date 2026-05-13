@@ -297,9 +297,9 @@ Expected outcomes:
   `components[].evidence_ref` (for example `runtime_kit_component_missing:codex_nats_publish` with the
   checked helper paths).
 - schedule-runner pods fail closed before creating AgentRuns when a launch-capable swarm runner manifest lacks its
-  passport stamp or when the stamped passport id, recovery digest, runtime-kit digest, or required runtime-kit set no
-  longer matches the current status response.
-  If this fire-time check itself is blocking emergency recovery, set
+  passport stamp, when the current passport is not allowed or fresh, or when the current runtime-kit/proof evidence is
+  unhealthy. Stale template stamps are rehydrated from current status before AgentRun creation rather than treated as a
+  launch failure. If this fire-time check itself is blocking emergency recovery, set
   `JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false` and keep `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=true` so the
   controller still deletes newly blocked schedules.
 - stage-clearance packet stamping is shadow by default through `JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow`. Use
