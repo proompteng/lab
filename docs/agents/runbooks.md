@@ -192,6 +192,12 @@ Expected outcomes:
   `swarm.proompteng.ai/stage-clearance-packet-id` and `swarmStageClearancePacketId`, and stamp
   `swarmDependencyVerdictId` when the packet cites a current dependency verdict. A launch without those fields is not
   acceptable green rollout evidence for Torghut-facing work.
+- `clearance_market_ledger.stage_admission` cites design doc 185 and is authoritative for scheduler hold mode. When a
+  stage admission is `hold`, `repair_only`, or `block`, the controller removes the schedule runner resources before
+  they can create a doomed AgentRun, and the held status must include the `clearanceMarketLedgerId`,
+  `clearanceMarketStageAdmissionId`, `clearanceMarketStageDecision`, and selected repair lot. Fire-time schedule
+  runners apply the same check before creating an AgentRun and stamp the corresponding
+  `swarmClearanceMarket*` parameters on launches that remain admitted.
 - If collaboration is degraded or blocked because a runtime helper is missing, `/ready` stays `200` as
   long as the `serving` passport is still `allow` or `degrade`; the blocked `swarm_*` passport surfaces
   the missing component in `reason_codes`.

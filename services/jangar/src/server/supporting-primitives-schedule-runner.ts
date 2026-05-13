@@ -34,6 +34,14 @@ export const SWARM_STAGE_CLEARANCE_ANNOTATION_REQUIRED_REPAIR_ACTION =
 export const SWARM_STAGE_CLEARANCE_ANNOTATION_DEPENDENCY_VERDICT_ID = 'swarm.proompteng.ai/dependency-verdict-id'
 export const SWARM_STAGE_CLEARANCE_ANNOTATION_DEPENDENCY_VERDICT_DECISION =
   'swarm.proompteng.ai/dependency-verdict-decision'
+export const SWARM_STAGE_CLEARANCE_ANNOTATION_CLEARANCE_MARKET_LEDGER_ID =
+  'swarm.proompteng.ai/clearance-market-ledger-id'
+export const SWARM_STAGE_CLEARANCE_ANNOTATION_CLEARANCE_MARKET_STAGE_ADMISSION_ID =
+  'swarm.proompteng.ai/clearance-market-stage-admission-id'
+export const SWARM_STAGE_CLEARANCE_ANNOTATION_CLEARANCE_MARKET_STAGE_DECISION =
+  'swarm.proompteng.ai/clearance-market-stage-decision'
+export const SWARM_STAGE_CLEARANCE_ANNOTATION_CLEARANCE_MARKET_SELECTED_REPAIR_LOT =
+  'swarm.proompteng.ai/clearance-market-selected-repair-lot'
 
 export const buildScheduleRunnerCommand = (): string =>
   [
@@ -62,6 +70,10 @@ export const buildScheduleRunnerCommand = (): string =>
       requiredRepairAction: SWARM_STAGE_CLEARANCE_ANNOTATION_REQUIRED_REPAIR_ACTION,
       dependencyVerdictId: SWARM_STAGE_CLEARANCE_ANNOTATION_DEPENDENCY_VERDICT_ID,
       dependencyVerdictDecision: SWARM_STAGE_CLEARANCE_ANNOTATION_DEPENDENCY_VERDICT_DECISION,
+      clearanceMarketLedgerId: SWARM_STAGE_CLEARANCE_ANNOTATION_CLEARANCE_MARKET_LEDGER_ID,
+      clearanceMarketStageAdmissionId: SWARM_STAGE_CLEARANCE_ANNOTATION_CLEARANCE_MARKET_STAGE_ADMISSION_ID,
+      clearanceMarketStageDecision: SWARM_STAGE_CLEARANCE_ANNOTATION_CLEARANCE_MARKET_STAGE_DECISION,
+      clearanceMarketSelectedRepairLot: SWARM_STAGE_CLEARANCE_ANNOTATION_CLEARANCE_MARKET_SELECTED_REPAIR_LOT,
     })};`,
     `  const swarmNameLabelName = ${JSON.stringify(SWARM_NAME_LABEL)};`,
     `  const stageLabelName = ${JSON.stringify(SWARM_STAGE_LABEL)};`,
@@ -251,6 +263,13 @@ export const buildScheduleRunnerCommand = (): string =>
     '    const requiredRepairAction = asString(packet.required_repair_action);',
     '    const dependencyVerdictId = asString(packet.dependency_verdict_ref);',
     '    const dependencyVerdictDecision = asString(packet.dependency_verdict_decision);',
+    '    const clearanceMarket = asRecord(status.clearance_market_ledger);',
+    '    const clearanceMarketLedgerId = asString(clearanceMarket?.ledger_id);',
+    '    const stageAdmissions = asArray(clearanceMarket?.stage_admission).map(asRecord).filter(Boolean);',
+    '    const stageAdmission = stageAdmissions.find((entry) => asString(entry?.stage) === stage && asString(entry?.action_class) === actionClass && (!asString(entry?.packet_ref) || asString(entry?.packet_ref) === packetId)) ?? stageAdmissions.find((entry) => asString(entry?.stage) === stage && asString(entry?.action_class) === actionClass);',
+    '    const clearanceMarketStageAdmissionId = asString(stageAdmission?.admission_id);',
+    '    const clearanceMarketStageDecision = asString(stageAdmission?.decision);',
+    '    const clearanceMarketSelectedRepairLot = asString(stageAdmission?.selected_repair_lot_ref);',
     '    const freshUntilMs = Date.parse(freshUntil);',
     '    if (!Number.isFinite(freshUntilMs) || freshUntilMs <= Date.now()) {',
     '      const message = `current stage clearance packet ${packetId} is stale`;',
@@ -259,6 +278,11 @@ export const buildScheduleRunnerCommand = (): string =>
     '    }',
     '    if (stageMode === "hold" && decision !== "allow") {',
     '      throw new Error(`current stage clearance packet ${packetId} is ${decision || "missing"}`);',
+    '    }',
+    '    if (stageMode === "hold" && clearanceMarketStageDecision && clearanceMarketStageDecision !== "allow") {',
+    '      const subject = clearanceMarketStageAdmissionId || clearanceMarketLedgerId || "missing";',
+    '      const lot = clearanceMarketSelectedRepairLot ? `; selected repair lot: ${clearanceMarketSelectedRepairLot}` : "";',
+    '      throw new Error(`current clearance market stage admission ${subject} is ${clearanceMarketStageDecision}${lot}`);',
     '    }',
     '    writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.packetId, packetId);',
     '    writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.decision, decision);',
@@ -269,6 +293,10 @@ export const buildScheduleRunnerCommand = (): string =>
     '    if (requiredRepairAction) writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.requiredRepairAction, requiredRepairAction);',
     '    if (dependencyVerdictId) writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.dependencyVerdictId, dependencyVerdictId);',
     '    if (dependencyVerdictDecision) writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.dependencyVerdictDecision, dependencyVerdictDecision);',
+    '    if (clearanceMarketLedgerId) writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.clearanceMarketLedgerId, clearanceMarketLedgerId);',
+    '    if (clearanceMarketStageAdmissionId) writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.clearanceMarketStageAdmissionId, clearanceMarketStageAdmissionId);',
+    '    if (clearanceMarketStageDecision) writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.clearanceMarketStageDecision, clearanceMarketStageDecision);',
+    '    if (clearanceMarketSelectedRepairLot) writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.clearanceMarketSelectedRepairLot, clearanceMarketSelectedRepairLot);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearancePacketId", packetId);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceDecision", decision);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceActionClass", actionClass);',
@@ -278,6 +306,10 @@ export const buildScheduleRunnerCommand = (): string =>
     '    if (requiredRepairAction) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceRequiredRepairAction", requiredRepairAction);',
     '    if (dependencyVerdictId) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmDependencyVerdictId", dependencyVerdictId);',
     '    if (dependencyVerdictDecision) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmDependencyVerdictDecision", dependencyVerdictDecision);',
+    '    if (clearanceMarketLedgerId) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmClearanceMarketLedgerId", clearanceMarketLedgerId);',
+    '    if (clearanceMarketStageAdmissionId) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmClearanceMarketStageAdmissionId", clearanceMarketStageAdmissionId);',
+    '    if (clearanceMarketStageDecision) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmClearanceMarketStageDecision", clearanceMarketStageDecision);',
+    '    if (clearanceMarketSelectedRepairLot) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmClearanceMarketSelectedRepairLotRef", clearanceMarketSelectedRepairLot);',
     '  };',
     '  const targetByKind = {',
     "  AgentRun: { group: 'agents.proompteng.ai', version: 'v1alpha1', plural: 'agentruns' },",

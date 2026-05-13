@@ -233,9 +233,32 @@ const buildStageClearancePacket = (stage: 'discover' | 'plan' | 'implement' | 'v
   rollback_target: 'set JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow',
 })
 
-const mockStageClearanceStatus = (packets: Array<Record<string, unknown>>) =>
+const buildClearanceMarketLedger = (
+  stage: 'discover' | 'plan' | 'implement' | 'verify',
+  decision = 'allow',
+  selectedRepairLotRef: string | null = null,
+) => ({
+  ledger_id: 'clearance-market:agents:test',
+  stage_admission: [
+    {
+      admission_id: `clearance-stage:${stage}:dispatch_normal:test`,
+      stage,
+      action_class: 'dispatch_normal',
+      decision,
+      packet_ref: `stage-clearance:${stage}:dispatch_normal:test`,
+      selected_repair_lot_ref: selectedRepairLotRef,
+      reason_codes: decision === 'allow' ? [] : ['rollout_degraded'],
+      evidence_refs: ['clearance-market:agents:test'],
+    },
+  ],
+})
+
+const mockStageClearanceStatus = (
+  packets: Array<Record<string, unknown>>,
+  clearanceMarketLedger?: Record<string, unknown>,
+) =>
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-    new Response(JSON.stringify({ stage_clearance_packets: packets }), {
+    new Response(JSON.stringify({ stage_clearance_packets: packets, clearance_market_ledger: clearanceMarketLedger }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     }),
@@ -414,7 +437,9 @@ describe('supporting primitives controller', () => {
     expect(command).toContain('JANGAR_STAGE_CLEARANCE_ENFORCEMENT')
     expect(command).toContain('missing schedule admission passport annotation for')
     expect(command).toContain('stage_clearance_packets')
+    expect(command).toContain('clearance_market_ledger')
     expect(command).toContain('current stage clearance packet')
+    expect(command).toContain('current clearance market stage admission')
     expect(command).toContain('stage clearance shadow evidence unavailable')
     expect(command).not.toContain('stale schedule admission passport')
     expect(command).not.toContain('stale schedule runtime-kit digest')
@@ -428,6 +453,10 @@ describe('supporting primitives controller', () => {
     )
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmAdmissionPassportId"')
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearancePacketId"')
+    expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmClearanceMarketLedgerId"')
+    expect(command).toContain(
+      'writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmClearanceMarketSelectedRepairLotRef"',
+    )
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRecoveryWarrantId"')
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRuntimeKitSetDigest"')
     expect(command).toContain('current schedule recovery warrant')
@@ -955,6 +984,63 @@ describe('supporting primitives controller', () => {
     )
     expect(ready?.reason).toBe('StageClearanceHeld')
     expect(String(ready?.message)).toContain('clear stage freshness debt')
+  })
+
+  it('blocks schedule runners before CronJob fire when clearance market admission is held', async () => {
+    process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT = 'hold'
+    process.env.JANGAR_STAGE_CLEARANCE_HOLD_STAGES = 'implement,verify'
+    mockStageClearanceStatus(
+      [buildStageClearancePacket('implement', 'allow')],
+      buildClearanceMarketLedger('implement', 'hold', 'clearance-repair-lot:rollout'),
+    )
+
+    const apply = vi.fn().mockResolvedValue({})
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue(null)
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { apply, applyStatus, get, delete: deleteFn } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-implement-sched',
+        namespace: 'agents',
+        generation: 7,
+        labels: {
+          'swarm.proompteng.ai/name': 'jangar-control-plane',
+          'swarm.proompteng.ai/stage': 'implement',
+        },
+      },
+      spec: {
+        cron: '*/10 * * * *',
+        targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template', namespace: 'agents' },
+      },
+    }
+
+    await __test__.reconcileSchedule(kube, schedule, 'agents')
+
+    expect(apply).not.toHaveBeenCalled()
+    expect(deleteFn).toHaveBeenCalledWith('configmap', 'jangar-control-plane-implement-sched-template', 'agents', {
+      wait: false,
+    })
+    expect(deleteFn).toHaveBeenCalledWith('cronjob', 'jangar-control-plane-implement-sched-cron', 'agents', {
+      wait: false,
+    })
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(status.phase).toBe('StageClearanceBlocked')
+    const ready = (Array.isArray(status.conditions) ? status.conditions : []).find(
+      (condition) => condition.type === 'Ready',
+    )
+    expect(ready?.reason).toBe('StageClearanceHeld')
+    expect(String(ready?.message)).toContain('clearance-market:agents:test')
+    expect(String(ready?.message)).toContain('clearance-repair-lot:rollout')
+    expect((status.stageClearance as Record<string, unknown> | undefined)?.clearanceMarketLedgerId).toBe(
+      'clearance-market:agents:test',
+    )
+    expect((status.stageClearance as Record<string, unknown> | undefined)?.clearanceMarketSelectedRepairLotRef).toBe(
+      'clearance-repair-lot:rollout',
+    )
   })
 
   it('disables schedule runner fire-time admission during runtime admission rollback', async () => {
@@ -2303,13 +2389,15 @@ describe('supporting primitives controller', () => {
     expect(planAdmission?.recoveryWarrantStatus).toBe('broken')
   })
 
-  it('holds implement and verify schedules plus requirement dispatch on stage clearance packets', async () => {
+  it('holds implement and verify schedules plus requirement dispatch on clearance market admissions', async () => {
     process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT = 'hold'
     process.env.JANGAR_STAGE_CLEARANCE_HOLD_STAGES = 'implement,verify'
-    mockStageClearanceStatus([
-      buildStageClearancePacket('implement', 'hold'),
-      buildStageClearancePacket('verify', 'hold'),
-    ])
+    const implementLedger = buildClearanceMarketLedger('implement', 'hold', 'clearance-repair-lot:implement-rollout')
+    const verifyLedger = buildClearanceMarketLedger('verify', 'hold', 'clearance-repair-lot:verify-rollout')
+    mockStageClearanceStatus([buildStageClearancePacket('implement'), buildStageClearancePacket('verify')], {
+      ledger_id: 'clearance-market:agents:test',
+      stage_admission: [...implementLedger.stage_admission, ...verifyLedger.stage_admission],
+    })
 
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
@@ -2412,6 +2500,13 @@ describe('supporting primitives controller', () => {
     expect((stageStates.implement?.stageClearance as Record<string, unknown> | undefined)?.packetId).toBe(
       'stage-clearance:implement:dispatch_normal:test',
     )
+    expect(
+      (stageStates.implement?.stageClearance as Record<string, unknown> | undefined)?.clearanceMarketLedgerId,
+    ).toBe('clearance-market:agents:test')
+    expect(
+      (stageStates.implement?.stageClearance as Record<string, unknown> | undefined)
+        ?.clearanceMarketSelectedRepairLotRef,
+    ).toBe('clearance-repair-lot:implement-rollout')
 
     const requirements = (status.requirements ?? {}) as Record<string, unknown>
     expect(requirements.pending).toBe(1)
@@ -2425,7 +2520,8 @@ describe('supporting primitives controller', () => {
       | Record<string, unknown>
       | undefined
     expect(bridge?.reason).toBe('StageClearanceHeld')
-    expect(String(bridge?.message)).toContain('clear stage freshness debt')
+    expect(String(bridge?.message)).toContain('clearance-market:agents:test')
+    expect(String(bridge?.message)).toContain('clearance-repair-lot:implement-rollout')
   })
 
   it('blocks requirement dispatch when the implement admission passport is not allowed', async () => {
