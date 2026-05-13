@@ -1165,6 +1165,13 @@ class TestTradingApi(TestCase):
             len(repair_bid_settlement["selected_lot_ids"]),
             repair_bid_settlement["summary"]["max_selected_lots"],
         )
+        executable_alpha_repair = payload["executable_alpha_repair_receipts"]
+        self.assertEqual(
+            executable_alpha_repair["schema_version"],
+            "torghut.executable-alpha-repair-receipts.v1",
+        )
+        self.assertEqual(executable_alpha_repair["status"], "inactive")
+        self.assertEqual(executable_alpha_repair["max_notional"], "0")
         warrant = payload["route_warrant_exchange"]
         self.assertEqual(
             warrant["schema_version"],
@@ -4175,6 +4182,15 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             payload["alpha_readiness_strike_ledger"]["strike_slots"][0]["lot_class"],
             "promotion_custody",
+        )
+        self.assertEqual(
+            payload["executable_alpha_repair_receipts"]["schema_version"],
+            "torghut.executable-alpha-repair-receipts.v1",
+        )
+        self.assertEqual(payload["executable_alpha_repair_receipts"]["status"], "held")
+        self.assertIn(
+            "alpha_readiness_repair_targets_missing",
+            payload["executable_alpha_repair_receipts"]["reason_codes"],
         )
         self.assertEqual(
             payload["evidence"]["repair_bid_settlement"]["dispatchable_lot_count"],

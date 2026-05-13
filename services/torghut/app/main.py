@@ -3117,6 +3117,9 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
             "capital_replay_board": capital_replay_projection.get(
                 "capital_replay_board"
             ),
+            "executable_alpha_receipts": capital_replay_projection.get(
+                "executable_alpha_receipts"
+            ),
         },
         generated_at=datetime.now(timezone.utc),
     )
@@ -3261,6 +3264,9 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
         "alpha_readiness_strike_ledger": revenue_repair_digest.get(
             "alpha_readiness_strike_ledger"
+        ),
+        "executable_alpha_repair_receipts": revenue_repair_digest.get(
+            "executable_alpha_repair_receipts"
         ),
         "route_warrant_exchange": route_warrant_exchange,
         "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,

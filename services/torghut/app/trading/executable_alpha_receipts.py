@@ -11,6 +11,20 @@ from typing import Any, Literal, cast
 
 CAPITAL_REPLAY_BOARD_SCHEMA_VERSION = "torghut.capital-replay-board.v1"
 EXECUTABLE_ALPHA_RECEIPTS_SCHEMA_VERSION = "torghut.executable-alpha-receipts.v1"
+EXECUTABLE_ALPHA_REPAIR_RECEIPT_SCHEMA_VERSION = (
+    "torghut.executable-alpha-repair-receipt.v1"
+)
+EXECUTABLE_ALPHA_REPAIR_RECEIPTS_SCHEMA_VERSION = (
+    "torghut.executable-alpha-repair-receipts.v1"
+)
+
+_EXECUTABLE_ALPHA_REPAIR_DESIGN_REF = (
+    "docs/torghut/design-system/v6/"
+    "197-torghut-executable-alpha-repair-receipts-and-zero-notional-reentry-2026-05-13.md"
+)
+_EXECUTABLE_ALPHA_REPAIR_ROLLBACK_TARGET = (
+    "stop emitting executable_alpha_repair_receipts and keep Torghut max_notional=0"
+)
 
 GraduationState = Literal[
     "candidate",
@@ -26,6 +40,80 @@ _DEFAULT_FRESHNESS_SECONDS = 15 * 60
 _LIVE_AAPL_HYPOTHESIS = "H-AAPL-ROUTE-REHAB"
 _SIM_NVDA_HYPOTHESIS = "H-NVDA-SIM-PROOF-REFILL"
 _BREADTH_HYPOTHESIS = "H-MEGACAP-BREADTH-PROBE"
+_REPAIR_REASON_CLASSES = (
+    (
+        "strategy_lineage_repair",
+        {
+            "strategy_hypothesis_missing",
+            "strategy_lineage_missing",
+            "schema_lineage_missing",
+        },
+    ),
+    (
+        "evidence_window_refresh",
+        {
+            "hypothesis_window_evidence_missing",
+            "hypothesis_window_evidence_stale",
+            "drift_checks_missing",
+            "feature_rows_missing",
+            "required_feature_set_unavailable",
+            "closed_session_market_context_hold",
+            "closed_session_signal_hold",
+            "closed_session_tca_evidence_hold",
+        },
+    ),
+    (
+        "autoresearch_portfolio_repair",
+        {
+            "autoresearch_portfolio_candidates_blocked",
+            "autoresearch_portfolio_ready_empty",
+        },
+    ),
+    ("equity_ta_refill", {"equity_ta_rows_missing"}),
+    ("rejection_drag_measurement", {"rejection_drag_unmeasured"}),
+    (
+        "promotion_decision_receipt",
+        {
+            "alpha_readiness_not_promotion_eligible",
+            "hypothesis_not_promotion_eligible",
+            "promotion_decision_missing",
+            "post_cost_expectancy_non_positive",
+        },
+    ),
+)
+_REPAIR_CLASS_RANK = {
+    "strategy_lineage_repair": 0,
+    "evidence_window_refresh": 1,
+    "autoresearch_portfolio_repair": 2,
+    "equity_ta_refill": 3,
+    "rejection_drag_measurement": 4,
+    "promotion_decision_receipt": 5,
+    "capital_replay_board_refresh": 6,
+}
+_VALIDATION_COMMANDS_BY_CLASS = {
+    "strategy_lineage_repair": [
+        "uv run --frozen pytest services/torghut/tests/test_profitability_proof_floor.py -k alpha",
+        "uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py -k lineage",
+    ],
+    "evidence_window_refresh": [
+        "uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py -k evidence_window",
+    ],
+    "autoresearch_portfolio_repair": [
+        "uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py -k autoresearch",
+    ],
+    "equity_ta_refill": [
+        "uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py -k equity_ta",
+    ],
+    "rejection_drag_measurement": [
+        "uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py -k rejection_drag",
+    ],
+    "promotion_decision_receipt": [
+        "uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py -k promotion",
+    ],
+    "capital_replay_board_refresh": [
+        "uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py",
+    ],
+}
 
 
 def _text(value: object, default: str = "") -> str:
@@ -139,6 +227,356 @@ def _proof_window(
         "fresh_until": fresh_until,
         "route_state": _text(proof_floor_receipt.get("route_state"), "unknown"),
         "capital_state": _text(proof_floor_receipt.get("capital_state"), "unknown"),
+    }
+
+
+def _reason_list_from_target(target: Mapping[str, Any]) -> list[str]:
+    return _string_list(target.get("reasons")) + _string_list(
+        target.get("informational_reasons")
+    )
+
+
+def _repair_class_for_target(
+    target: Mapping[str, Any],
+) -> tuple[str, list[str], str, str, str]:
+    reason_codes = _reason_list_from_target(target)
+    reason_set = set(reason_codes)
+    candidate_id = _text(target.get("candidate_id"))
+    strategy_id = _text(target.get("strategy_id"))
+
+    if not candidate_id or not strategy_id:
+        repair_class = "strategy_lineage_repair"
+    else:
+        repair_class = "capital_replay_board_refresh"
+        for candidate_class, reasons in _REPAIR_REASON_CLASSES:
+            if reason_set.intersection(reasons):
+                repair_class = candidate_class
+                break
+
+    lineage_status = "missing" if repair_class == "strategy_lineage_repair" else "ready"
+    if {"lineage_contradictory", "strategy_lineage_contradictory"}.intersection(
+        reason_set
+    ):
+        lineage_status = "contradictory"
+    elif "schema_lineage_missing" in reason_set:
+        lineage_status = "missing"
+
+    if {
+        "hypothesis_window_evidence_missing",
+        "feature_rows_missing",
+        "required_feature_set_unavailable",
+    }.intersection(reason_set):
+        evidence_window_status = "missing"
+    elif {
+        "hypothesis_window_evidence_stale",
+        "drift_checks_missing",
+        "closed_session_market_context_hold",
+        "closed_session_signal_hold",
+        "closed_session_tca_evidence_hold",
+    }.intersection(reason_set):
+        evidence_window_status = "stale"
+    else:
+        evidence_window_status = "current"
+
+    state = _text(target.get("state"), "repair_only")
+    alpha_readiness_state = (
+        "promotion_candidate"
+        if bool(target.get("promotion_eligible"))
+        else state or "repair_only"
+    )
+    if alpha_readiness_state == "shadow" and reason_codes:
+        alpha_readiness_state = "blocked"
+
+    return (
+        repair_class,
+        reason_codes,
+        lineage_status,
+        evidence_window_status,
+        alpha_readiness_state,
+    )
+
+
+def _top_alpha_repair(top_blocker: Mapping[str, Any]) -> bool:
+    return (
+        _text(top_blocker.get("code")) == "repair_alpha_readiness"
+        or _text(top_blocker.get("reason")) == "alpha_readiness_not_promotion_eligible"
+    )
+
+
+def _receipt_by_hypothesis(
+    executable_alpha_receipts: Mapping[str, Any],
+) -> dict[str, Mapping[str, Any]]:
+    by_hypothesis: dict[str, Mapping[str, Any]] = {}
+    for raw_receipt in [
+        *_sequence(executable_alpha_receipts.get("receipts")),
+        *_sequence(executable_alpha_receipts.get("candidate_receipts")),
+    ]:
+        receipt = _mapping(raw_receipt)
+        hypothesis_id = _text(receipt.get("hypothesis_id"))
+        if hypothesis_id and hypothesis_id not in by_hypothesis:
+            by_hypothesis[hypothesis_id] = receipt
+    return by_hypothesis
+
+
+def _targets_from_alpha_readiness(
+    alpha_readiness: Mapping[str, Any],
+) -> list[Mapping[str, Any]]:
+    targets: list[Mapping[str, Any]] = [
+        _mapping(item) for item in _sequence(alpha_readiness.get("repair_targets"))
+    ]
+    targets = [target for target in targets if target]
+    if targets:
+        return targets
+    targets = []
+    for raw_hypothesis_id in _sequence(alpha_readiness.get("blocked_hypothesis_ids")):
+        hypothesis_id = _text(raw_hypothesis_id)
+        if hypothesis_id:
+            targets.append(
+                {
+                    "hypothesis_id": hypothesis_id,
+                    "state": "blocked",
+                    "promotion_eligible": False,
+                    "reasons": ["alpha_readiness_not_promotion_eligible"],
+                }
+            )
+    return targets
+
+
+def _expected_gate_delta(reason_codes: Sequence[str]) -> str:
+    for reason in reason_codes:
+        if reason:
+            return f"retire_{reason}"
+    return "retire_alpha_readiness_not_promotion_eligible"
+
+
+def _required_input_refs(
+    *,
+    source_revenue_repair_ref: str,
+    repair_bid_settlement_ledger: Mapping[str, Any],
+    capital_replay_board: Mapping[str, Any],
+    executable_alpha_receipt: Mapping[str, Any],
+) -> list[str]:
+    refs = [source_revenue_repair_ref]
+    for value in (
+        repair_bid_settlement_ledger.get("ledger_id"),
+        capital_replay_board.get("board_id"),
+        executable_alpha_receipt.get("receipt_id"),
+    ):
+        text = _text(value)
+        if text:
+            refs.append(text)
+    return _string_list(refs)
+
+
+def _receipt_target_key(receipt: Mapping[str, Any]) -> tuple[int, str]:
+    return (
+        _REPAIR_CLASS_RANK.get(_text(receipt.get("repair_class")), 100),
+        _text(receipt.get("hypothesis_id")),
+    )
+
+
+def _executable_alpha_repair_receipt(
+    *,
+    generated_at: datetime,
+    fresh_until: datetime,
+    source_revenue_repair_ref: str,
+    top_blocker: Mapping[str, Any],
+    target: Mapping[str, Any],
+    repair_bid_settlement_ledger: Mapping[str, Any],
+    capital_replay_board: Mapping[str, Any],
+    executable_alpha_receipt: Mapping[str, Any],
+    routeable_candidate_count_before: int,
+) -> dict[str, object]:
+    (
+        repair_class,
+        reason_codes,
+        lineage_status,
+        evidence_window_status,
+        alpha_readiness_state,
+    ) = _repair_class_for_target(target)
+    hypothesis_id = _text(target.get("hypothesis_id"), "unknown")
+    candidate_id = _text(target.get("candidate_id")) or None
+    strategy_id = _text(target.get("strategy_id")) or None
+    target_value_gate = _text(
+        top_blocker.get("value_gate"), "routeable_candidate_count"
+    )
+    expected_unblock_value = _int(top_blocker.get("expected_unblock_value"), 1)
+    payload_for_id = {
+        "schema_version": EXECUTABLE_ALPHA_REPAIR_RECEIPT_SCHEMA_VERSION,
+        "source_revenue_repair_ref": source_revenue_repair_ref,
+        "hypothesis_id": hypothesis_id,
+        "repair_class": repair_class,
+        "target_value_gate": target_value_gate,
+        "reason_codes": reason_codes,
+    }
+    validation_commands = _VALIDATION_COMMANDS_BY_CLASS.get(
+        repair_class, _VALIDATION_COMMANDS_BY_CLASS["capital_replay_board_refresh"]
+    )
+    required_output_receipts = _string_list(
+        [
+            _text(
+                top_blocker.get("required_output_receipt"),
+                EXECUTABLE_ALPHA_RECEIPTS_SCHEMA_VERSION,
+            ),
+            *_string_list(top_blocker.get("required_receipts")),
+        ]
+    )
+    return {
+        **payload_for_id,
+        "receipt_id": "executable-alpha-repair-receipt:"
+        + _stable_hash("executable-alpha-repair-receipt", payload_for_id),
+        "generated_at": generated_at.isoformat(),
+        "fresh_until": fresh_until.isoformat(),
+        "account_id": _text(repair_bid_settlement_ledger.get("account_id"), "unknown"),
+        "window": _text(repair_bid_settlement_ledger.get("session_id"), "unknown"),
+        "trading_mode": _text(
+            repair_bid_settlement_ledger.get("trading_mode"), "unknown"
+        ),
+        "candidate_id": candidate_id,
+        "strategy_id": strategy_id,
+        "lineage_status": lineage_status,
+        "evidence_window_status": evidence_window_status,
+        "alpha_readiness_state": alpha_readiness_state,
+        "repair_class": repair_class,
+        "target_value_gate": target_value_gate,
+        "expected_unblock_value": expected_unblock_value,
+        "expected_gate_delta": _expected_gate_delta(reason_codes),
+        "required_input_refs": _required_input_refs(
+            source_revenue_repair_ref=source_revenue_repair_ref,
+            repair_bid_settlement_ledger=repair_bid_settlement_ledger,
+            capital_replay_board=capital_replay_board,
+            executable_alpha_receipt=executable_alpha_receipt,
+        ),
+        "required_output_receipts": required_output_receipts,
+        "validation_commands": validation_commands,
+        "max_notional": "0",
+        "capital_rule": "zero_notional_repair_only",
+        "no_delta_settlement_required": True,
+        "settlement": {
+            "state": "pending",
+            "allowed_outcomes": ["retired", "improved", "no_delta", "invalidated"],
+            "before_reason_codes": reason_codes,
+            "before_value_gate": {
+                "routeable_candidate_count": routeable_candidate_count_before
+            },
+        },
+        "jangar_reentry": {
+            "governing_design_ref": _EXECUTABLE_ALPHA_REPAIR_DESIGN_REF,
+            "required_material_reentry_receipt": "jangar.material-reentry-receipt.v1",
+            "action_class": "dispatch_repair",
+            "max_parallelism": 1,
+            "max_runtime_seconds": 1200,
+            "value_gates": [target_value_gate],
+            "rollback_target": "keep max_notional=0 and live submit disabled",
+        },
+        "rollback_target": _EXECUTABLE_ALPHA_REPAIR_ROLLBACK_TARGET,
+    }
+
+
+def build_executable_alpha_repair_receipts(
+    *,
+    generated_at: datetime,
+    business_state: str,
+    revenue_ready: bool,
+    repair_queue: Sequence[Mapping[str, Any]],
+    alpha_readiness: Mapping[str, Any],
+    capital: Mapping[str, Any],
+    repair_bid_settlement_ledger: Mapping[str, Any],
+) -> dict[str, object]:
+    """Build compact zero-notional receipts for the active alpha-readiness repair."""
+
+    generated = generated_at.astimezone(timezone.utc)
+    fresh_until = generated + timedelta(seconds=_DEFAULT_FRESHNESS_SECONDS)
+    top_blocker: Mapping[str, Any] = repair_queue[0] if repair_queue else {}
+    source_revenue_repair_ref = "torghut-revenue-repair-digest:" + _stable_hash(
+        "torghut-revenue-repair-digest",
+        {
+            "generated_at": generated.isoformat(),
+            "top_blocker": dict(top_blocker),
+            "business_state": business_state,
+            "repair_bid_settlement_ledger_id": repair_bid_settlement_ledger.get(
+                "ledger_id"
+            ),
+        },
+    )
+
+    reason_codes: list[str] = []
+    if revenue_ready:
+        reason_codes.append("revenue_already_ready")
+    if business_state != "repair_only":
+        reason_codes.append(f"business_state_{business_state or 'unknown'}")
+    if not _top_alpha_repair(top_blocker):
+        reason_codes.append("revenue_repair_top_item_not_alpha_readiness")
+    if _text(capital.get("max_notional"), "0") not in {"0", "0.0", "0.00"}:
+        reason_codes.append("capital_notional_nonzero")
+    if _text(repair_bid_settlement_ledger.get("max_notional"), "0") not in {
+        "0",
+        "0.0",
+        "0.00",
+    }:
+        reason_codes.append("repair_bid_settlement_notional_nonzero")
+
+    capital_replay_board = _mapping(alpha_readiness.get("capital_replay_board"))
+    executable_alpha_receipts = _mapping(
+        alpha_readiness.get("executable_alpha_receipts")
+    )
+    receipts_by_hypothesis = _receipt_by_hypothesis(executable_alpha_receipts)
+    routeable_candidate_count_before = _int(
+        repair_bid_settlement_ledger.get("routeable_candidate_count")
+    )
+
+    receipts: list[dict[str, object]] = []
+    if not reason_codes:
+        for target in _targets_from_alpha_readiness(alpha_readiness)[:5]:
+            hypothesis_id = _text(target.get("hypothesis_id"))
+            receipts.append(
+                _executable_alpha_repair_receipt(
+                    generated_at=generated,
+                    fresh_until=fresh_until,
+                    source_revenue_repair_ref=source_revenue_repair_ref,
+                    top_blocker=top_blocker,
+                    target=target,
+                    repair_bid_settlement_ledger=repair_bid_settlement_ledger,
+                    capital_replay_board=capital_replay_board,
+                    executable_alpha_receipt=receipts_by_hypothesis.get(
+                        hypothesis_id, {}
+                    ),
+                    routeable_candidate_count_before=routeable_candidate_count_before,
+                )
+            )
+        receipts.sort(key=_receipt_target_key)
+        if not receipts:
+            reason_codes.append("alpha_readiness_repair_targets_missing")
+
+    selected_receipt = receipts[0] if receipts and not reason_codes else None
+    if any(reason.endswith("_nonzero") for reason in reason_codes):
+        status = "blocked"
+    elif selected_receipt:
+        status = "selected"
+    elif _top_alpha_repair(top_blocker):
+        status = "held"
+    else:
+        status = "inactive"
+
+    return {
+        "schema_version": EXECUTABLE_ALPHA_REPAIR_RECEIPTS_SCHEMA_VERSION,
+        "generated_at": generated.isoformat(),
+        "fresh_until": fresh_until.isoformat(),
+        "source_revenue_repair_ref": source_revenue_repair_ref,
+        "status": status,
+        "governing_design_ref": _EXECUTABLE_ALPHA_REPAIR_DESIGN_REF,
+        "selected_receipt_id": selected_receipt.get("receipt_id")
+        if selected_receipt
+        else None,
+        "selected_receipt": selected_receipt,
+        "receipt_count": len(receipts),
+        "receipts": receipts,
+        "target_value_gate": _text(top_blocker.get("value_gate")),
+        "routeable_candidate_count_before": routeable_candidate_count_before,
+        "max_notional": "0",
+        "capital_rule": "zero_notional_repair_only",
+        "reason_codes": reason_codes,
+        "rollback_target": _EXECUTABLE_ALPHA_REPAIR_ROLLBACK_TARGET,
     }
 
 
@@ -701,5 +1139,8 @@ def build_capital_replay_projection(
 __all__ = [
     "CAPITAL_REPLAY_BOARD_SCHEMA_VERSION",
     "EXECUTABLE_ALPHA_RECEIPTS_SCHEMA_VERSION",
+    "EXECUTABLE_ALPHA_REPAIR_RECEIPT_SCHEMA_VERSION",
+    "EXECUTABLE_ALPHA_REPAIR_RECEIPTS_SCHEMA_VERSION",
     "build_capital_replay_projection",
+    "build_executable_alpha_repair_receipts",
 ]

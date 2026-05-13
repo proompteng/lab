@@ -389,6 +389,33 @@ class TestBuildRevenueRepairDigest(TestCase):
             {"paper_canary", "live_micro_canary", "live_scale"},
         )
         self.assertIn("max_notional=0", strike_ledger["rollback_target"])
+        repair_receipts = digest["executable_alpha_repair_receipts"]
+        self.assertIsInstance(repair_receipts, dict)
+        self.assertEqual(
+            repair_receipts["schema_version"],
+            "torghut.executable-alpha-repair-receipts.v1",
+        )
+        self.assertEqual(repair_receipts["status"], "selected")
+        self.assertEqual(
+            repair_receipts["target_value_gate"], "routeable_candidate_count"
+        )
+        self.assertEqual(repair_receipts["max_notional"], "0")
+        selected_repair_receipt = repair_receipts["selected_receipt"]
+        self.assertIsInstance(selected_repair_receipt, dict)
+        self.assertEqual(
+            selected_repair_receipt["schema_version"],
+            "torghut.executable-alpha-repair-receipt.v1",
+        )
+        self.assertEqual(
+            selected_repair_receipt["hypothesis_id"],
+            "H-AAPL-ROUTE-REHAB",
+        )
+        self.assertEqual(
+            selected_repair_receipt["target_value_gate"],
+            "routeable_candidate_count",
+        )
+        self.assertEqual(selected_repair_receipt["max_notional"], "0")
+        self.assertTrue(selected_repair_receipt["no_delta_settlement_required"])
         self.assertEqual(repair_queue[1]["code"], "repair_execution_tca")
         self.assertNotIn("repair_repair_only", [item["code"] for item in repair_queue])
         self.assertIn(

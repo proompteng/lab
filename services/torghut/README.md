@@ -199,6 +199,12 @@ Testing rules for the trading core:
   `required_output_receipt=torghut.executable-alpha-receipts.v1`, `max_notional=0`, the current capital replay board,
   and candidate executable-alpha receipts so the alpha-readiness repair is dispatchable as zero-notional evidence
   instead of a generic capital-unblock instruction.
+- `GET /trading/revenue-repair` also emits the May 13 doc 197
+  `torghut.executable-alpha-repair-receipts.v1` compact receipt collection. When the live queue is topped by
+  `repair_alpha_readiness`, it selects zero-notional `torghut.executable-alpha-repair-receipt.v1` work for the
+  concrete alpha repair target, maps target reason codes to a repair class, carries validation commands and
+  no-delta settlement requirements, and keeps `max_notional=0`. `/trading/consumer-evidence` mirrors the same compact
+  collection for Jangar without making `/readyz` green or enabling paper/live submission.
 - `GET /trading/status` and `GET /readyz` now include the May 8 doc 181
   `quality_adjusted_profit_frontier` shadow projection. The reducer ranks zero-notional repair packets from quant
   quality, market-context risk flags, route/TCA state, simulation-cache freshness, and Jangar evidence-quality refs
