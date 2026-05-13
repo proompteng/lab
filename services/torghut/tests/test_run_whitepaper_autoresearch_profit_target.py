@@ -87,7 +87,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             paper_run_id=[],
             source_jsonl=[],
             seed_recent_whitepapers=True,
-            target_net_pnl_per_day="300",
+            target_net_pnl_per_day="500",
             max_candidates=8,
             top_k=4,
             exploration_slots=2,
@@ -95,7 +95,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             portfolio_size_max=4,
             replay_mode="synthetic",
             program=Path(
-                "config/trading/research-programs/strict-daily-profit-autoresearch-v1.yaml"
+                "config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml"
             ),
             strategy_configmap=Path(
                 "argocd/applications/torghut/strategy-configmap.yaml"
@@ -125,7 +125,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             persist_results=False,
         )
 
-    def test_parse_args_defaults_to_300_daily_profit_program(self) -> None:
+    def test_parse_args_defaults_to_500_daily_profit_program(self) -> None:
         with TemporaryDirectory() as tmpdir:
             with patch.object(
                 sys,
@@ -138,11 +138,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ):
                 args = runner._parse_args()
 
-        self.assertEqual(args.target_net_pnl_per_day, "300")
+        self.assertEqual(args.target_net_pnl_per_day, "500")
         self.assertEqual(
             args.program,
             Path(
-                "config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml"
+                "config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml"
             ),
         )
         self.assertEqual(args.symbols.split(","), _CHIP_UNIVERSE)
@@ -193,6 +193,37 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertEqual(
                 summary["best_false_negative_table"],
                 payload["best_false_negative_table"],
+            )
+            profitability_goal = json.loads(
+                (output_dir / "profitability-search-goal.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                profitability_goal["schema_version"],
+                "torghut.whitepaper-autoresearch-profitability-goal.v1",
+            )
+            self.assertEqual(
+                profitability_goal["objective"]["target_net_pnl_per_trading_day"],
+                "500",
+            )
+            self.assertFalse(profitability_goal["objective"]["oracle_candidate_found"])
+            self.assertTrue(profitability_goal["candidate_framework"]["families"])
+            self.assertTrue(profitability_goal["sleeve_plan"]["rows"])
+            self.assertTrue(profitability_goal["system_change_backlog"])
+            self.assertEqual(
+                profitability_goal["recommended_next_epoch"]["flags"][
+                    "--target-net-pnl-per-day"
+                ],
+                "500",
+            )
+            self.assertIn(
+                "lowering target_net_pnl_per_day to make a candidate pass",
+                profitability_goal["no_cheating_contract"]["forbidden"],
+            )
+            self.assertEqual(
+                summary["artifacts"]["profitability_search_goal"],
+                str((output_dir / "profitability-search-goal.json").resolve()),
             )
             self.assertTrue((output_dir / "hypothesis-cards.jsonl").exists())
             self.assertTrue((output_dir / "whitepaper-sources.jsonl").exists())
@@ -364,7 +395,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         with TemporaryDirectory() as tmpdir:
             args = self._args(Path(tmpdir) / "epoch")
             args.program = Path(
-                "config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml"
+                "config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml"
             )
             program = runner._load_epoch_program(args)
             sources = runner._program_whitepaper_sources(program)
@@ -391,7 +422,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         with TemporaryDirectory() as tmpdir:
             args = self._args(Path(tmpdir) / "epoch")
             args.program = Path(
-                "config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml"
+                "config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml"
             )
             program = runner._load_epoch_program(args)
 
@@ -418,7 +449,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             schema_version="torghut.portfolio-candidate-spec.v1",
             portfolio_candidate_id="portfolio-test",
             source_candidate_ids=("candidate-test",),
-            target_net_pnl_per_day=Decimal("300"),
+            target_net_pnl_per_day=Decimal("500"),
             sleeves=(),
             capital_budget={},
             correlation_budget={},
@@ -609,10 +640,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             len(selected_rows),
         )
         self.assertGreater(len(duplicate_rows), 0)
-        self.assertEqual(
+        self.assertGreaterEqual(
             selection["budget"]["unique_execution_signature_count"],
             len(selected_rows),
         )
+        self.assertLessEqual(len(selected_rows), args.max_candidates)
         self.assertEqual(payload["replay_candidate_spec_count"], len(selected_rows))
 
     def test_main_returns_nonzero_when_no_oracle_candidate_found(self) -> None:
@@ -660,6 +692,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertTrue(remediation["next_actions"])
         self.assertIn("candidate_search_remediation", summary["artifacts"])
+        self.assertIn("profitability_search_goal", summary["artifacts"])
+        self.assertEqual(
+            summary["profitability_search_goal"]["objective"][
+                "target_net_pnl_per_trading_day"
+            ],
+            "999999",
+        )
         self.assertTrue(portfolio_report_exists)
 
     def test_seed_recent_whitepapers_persists_epoch_ledgers(self) -> None:

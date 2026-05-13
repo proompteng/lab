@@ -79,9 +79,9 @@ import scripts.run_strategy_factory_v2 as strategy_factory_runner
 
 
 _DEFAULT_CHIP_UNIVERSE_CSV = ",".join(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
-_DEFAULT_DAILY_PROFIT_TARGET = "300"
+_DEFAULT_DAILY_PROFIT_TARGET = "500"
 _DEFAULT_STRICT_DAILY_PROFIT_PROGRAM = Path(
-    "config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml"
+    "config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml"
 )
 _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC = 8
 _PROGRAM_SOURCE_DEFAULT_CONFIDENCE = "0.70"
@@ -1238,6 +1238,423 @@ def _candidate_search_remediation(
         "failure_reason_counts": dict(sorted(failure_counts.items())),
         "partial_scorecards": partial_scorecards,
         "next_actions": next_actions,
+    }
+
+
+def _string_list_from_value(value: Any) -> list[str]:
+    if not isinstance(value, Sequence) or isinstance(value, str):
+        return []
+    rows = cast(Sequence[Any], value)
+    return [text for item in rows if (text := _string(item))]
+
+
+def _selected_candidate_spec_ids(
+    candidate_selection: Mapping[str, Any],
+) -> set[str]:
+    explicit_ids = set(
+        _string_list_from_value(candidate_selection.get("selected_candidate_spec_ids"))
+    )
+    selected_rows = {
+        _string(row.get("candidate_spec_id"))
+        for row in _list_of_mappings(candidate_selection.get("rows"))
+        if bool(row.get("selected_for_replay"))
+        and _string(row.get("candidate_spec_id"))
+    }
+    return explicit_ids | selected_rows
+
+
+def _candidate_family_goal_rows(
+    *,
+    candidate_specs: Sequence[CandidateSpec],
+    candidate_selection: Mapping[str, Any],
+    evidence_bundles: Sequence[CandidateEvidenceBundle],
+) -> list[dict[str, Any]]:
+    selected_ids = _selected_candidate_spec_ids(candidate_selection)
+    evidence_by_spec = {bundle.candidate_spec_id: bundle for bundle in evidence_bundles}
+    rows_by_family: dict[str, dict[str, Any]] = {}
+    for spec in candidate_specs:
+        family_id = spec.family_template_id
+        row = rows_by_family.setdefault(
+            family_id,
+            {
+                "family_template_id": family_id,
+                "runtime_families": set(),
+                "runtime_strategy_names": set(),
+                "candidate_spec_count": 0,
+                "selected_for_replay_count": 0,
+                "evidence_bundle_count": 0,
+                "sample_candidate_spec_ids": [],
+                "sample_selected_candidate_spec_ids": [],
+            },
+        )
+        row["candidate_spec_count"] = int(row["candidate_spec_count"]) + 1
+        cast(set[str], row["runtime_families"]).add(spec.runtime_family)
+        cast(set[str], row["runtime_strategy_names"]).add(spec.runtime_strategy_name)
+        if len(cast(list[str], row["sample_candidate_spec_ids"])) < 3:
+            cast(list[str], row["sample_candidate_spec_ids"]).append(
+                spec.candidate_spec_id
+            )
+        if spec.candidate_spec_id in selected_ids:
+            row["selected_for_replay_count"] = int(row["selected_for_replay_count"]) + 1
+            if len(cast(list[str], row["sample_selected_candidate_spec_ids"])) < 3:
+                cast(list[str], row["sample_selected_candidate_spec_ids"]).append(
+                    spec.candidate_spec_id
+                )
+        if spec.candidate_spec_id in evidence_by_spec:
+            row["evidence_bundle_count"] = int(row["evidence_bundle_count"]) + 1
+
+    payload_rows: list[dict[str, Any]] = []
+    for row in rows_by_family.values():
+        payload_rows.append(
+            {
+                **row,
+                "runtime_families": sorted(cast(set[str], row["runtime_families"])),
+                "runtime_strategy_names": sorted(
+                    cast(set[str], row["runtime_strategy_names"])
+                ),
+            }
+        )
+    payload_rows.sort(
+        key=lambda row: (
+            -int(row.get("selected_for_replay_count") or 0),
+            -int(row.get("candidate_spec_count") or 0),
+            _string(row.get("family_template_id")),
+        )
+    )
+    return payload_rows
+
+
+def _candidate_sleeve_goal_rows(
+    *,
+    candidate_specs: Sequence[CandidateSpec],
+    candidate_selection: Mapping[str, Any],
+    evidence_bundles: Sequence[CandidateEvidenceBundle],
+    false_positive_table: Sequence[Mapping[str, Any]],
+    best_false_negative_table: Sequence[Mapping[str, Any]],
+    portfolio: PortfolioCandidateSpec | None,
+    limit: int = 16,
+) -> list[dict[str, Any]]:
+    if portfolio is not None:
+        return [dict(sleeve) for sleeve in portfolio.sleeves[:limit]]
+
+    spec_by_id = {spec.candidate_spec_id: spec for spec in candidate_specs}
+    evidence_by_spec = {bundle.candidate_spec_id: bundle for bundle in evidence_bundles}
+    failure_by_spec = {
+        _string(row.get("candidate_spec_id")): list(
+            cast(Sequence[Any], row.get("failure_reasons") or ())
+        )
+        for row in _list_of_mappings(list(false_positive_table))
+        if _string(row.get("candidate_spec_id"))
+    }
+    rows: list[dict[str, Any]] = []
+    for selection in _list_of_mappings(candidate_selection.get("rows")):
+        candidate_spec_id = _string(selection.get("candidate_spec_id"))
+        if not candidate_spec_id or not bool(selection.get("selected_for_replay")):
+            continue
+        spec = spec_by_id.get(candidate_spec_id)
+        evidence = evidence_by_spec.get(candidate_spec_id)
+        scorecard = evidence.objective_scorecard if evidence is not None else {}
+        rows.append(
+            {
+                "candidate_spec_id": candidate_spec_id,
+                "candidate_id": evidence.candidate_id if evidence is not None else None,
+                "family_template_id": spec.family_template_id
+                if spec is not None
+                else None,
+                "runtime_family": spec.runtime_family if spec is not None else None,
+                "runtime_strategy_name": spec.runtime_strategy_name
+                if spec is not None
+                else None,
+                "rank": _rank_sort_value(selection.get("rank")),
+                "pre_replay_score": _string(selection.get("pre_replay_score")),
+                "evidence_status": "replayed" if evidence is not None else "missing",
+                "net_pnl_per_day": _string(scorecard.get("net_pnl_per_day")),
+                "active_day_ratio": _string(scorecard.get("active_day_ratio")),
+                "positive_day_ratio": _string(scorecard.get("positive_day_ratio")),
+                "failure_reasons": [
+                    _string(item)
+                    for item in failure_by_spec.get(candidate_spec_id, ())
+                    if _string(item)
+                ],
+            }
+        )
+        if len(rows) >= limit:
+            break
+
+    if len(rows) < limit:
+        for row in _list_of_mappings(list(best_false_negative_table)):
+            candidate_spec_id = _string(row.get("candidate_spec_id"))
+            if not candidate_spec_id:
+                continue
+            spec = spec_by_id.get(candidate_spec_id)
+            rows.append(
+                {
+                    "candidate_spec_id": candidate_spec_id,
+                    "candidate_id": None,
+                    "family_template_id": spec.family_template_id
+                    if spec is not None
+                    else None,
+                    "runtime_family": spec.runtime_family if spec is not None else None,
+                    "runtime_strategy_name": spec.runtime_strategy_name
+                    if spec is not None
+                    else None,
+                    "rank": _rank_sort_value(row.get("rank")),
+                    "pre_replay_score": _string(row.get("pre_replay_score")),
+                    "evidence_status": "not_replayed",
+                    "reason": _string(row.get("reason")) or "not_replayed_budget",
+                    "failure_reasons": ["not_replayed_budget"],
+                }
+            )
+            if len(rows) >= limit:
+                break
+    return rows
+
+
+def _profitability_system_change_backlog(
+    *,
+    oracle_candidate_found: bool,
+    status_reason: str | None,
+    remediation: Mapping[str, Any] | None,
+    promotion_blockers: Sequence[str],
+    replay_mode: str,
+) -> list[dict[str, Any]]:
+    backlog: list[dict[str, Any]] = []
+    for action in _list_of_mappings(
+        remediation.get("next_actions") if remediation else []
+    ):
+        backlog.append(
+            {
+                "priority": int(action.get("priority") or len(backlog) + 1),
+                "scope": "autoresearch_pipeline",
+                "change": _string(action.get("action"))
+                or "inspect_autoresearch_artifacts",
+                "reason": _string(action.get("reason")),
+                "recommended_flags": dict(_mapping(action.get("recommended_flags"))),
+                "candidate_spec_ids": _string_list_from_value(
+                    action.get("candidate_spec_ids")
+                ),
+                "blocking_failure_counts": dict(
+                    _mapping(action.get("blocking_failure_counts"))
+                ),
+            }
+        )
+    if replay_mode != "real":
+        backlog.append(
+            {
+                "priority": len(backlog) + 1,
+                "scope": "replay_evidence",
+                "change": "rerun_with_real_replay_before_any_promotion",
+                "reason": "synthetic replay is only a pipeline smoke test and cannot establish standalone profitability",
+                "recommended_flags": {"--replay-mode": "real"},
+            }
+        )
+    if not oracle_candidate_found and status_reason:
+        backlog.append(
+            {
+                "priority": len(backlog) + 1,
+                "scope": "portfolio_oracle",
+                "change": "continue_search_until_portfolio_oracle_passes",
+                "reason": status_reason,
+                "required_result": "portfolio oracle passes the configured daily target without relaxing gates",
+            }
+        )
+    if promotion_blockers:
+        backlog.append(
+            {
+                "priority": len(backlog) + 1,
+                "scope": "runtime_closure",
+                "change": "produce_runtime_closure_and_shadow_promotion_evidence",
+                "reason": "candidate evidence is not enough for standalone trading",
+                "promotion_blockers": list(promotion_blockers),
+            }
+        )
+    backlog.append(
+        {
+            "priority": len(backlog) + 1,
+            "scope": "live_submission_controls",
+            "change": "keep_live_submission_disabled_until_profit_and_promotion_gates_pass",
+            "reason": "standalone money-making requires evidence first, then explicit deployer approval; no gate bypass",
+        }
+    )
+    backlog.sort(key=lambda row: int(row.get("priority") or 10**6))
+    return backlog
+
+
+def _profitability_next_epoch_flags(
+    *,
+    args: argparse.Namespace,
+    target: Decimal,
+    remediation: Mapping[str, Any] | None,
+) -> dict[str, str]:
+    flags: dict[str, str] = {
+        "--target-net-pnl-per-day": str(target),
+        "--program": str(
+            getattr(args, "program", _DEFAULT_STRICT_DAILY_PROFIT_PROGRAM)
+        ),
+        "--replay-mode": "real",
+        "--top-k": str(max(16, int(getattr(args, "top_k", 16) or 16))),
+        "--exploration-slots": str(
+            max(8, int(getattr(args, "exploration_slots", 8) or 8))
+        ),
+        "--portfolio-size-min": str(
+            max(2, int(getattr(args, "portfolio_size_min", 2) or 2))
+        ),
+        "--portfolio-size-max": str(
+            max(8, int(getattr(args, "portfolio_size_max", 8) or 8))
+        ),
+        "--max-frontier-candidates-per-spec": str(
+            max(
+                1,
+                int(
+                    getattr(
+                        args,
+                        "max_frontier_candidates_per_spec",
+                        _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
+                    )
+                    or _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC
+                ),
+            )
+        ),
+    }
+    if remediation is not None:
+        for action in _list_of_mappings(remediation.get("next_actions")):
+            for key, value in _mapping(action.get("recommended_flags")).items():
+                if key.startswith("--") and _string(value):
+                    flags[key] = _string(value)
+    return flags
+
+
+def _profitability_search_goal(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+    status: str,
+    status_reason: str | None,
+    target: Decimal,
+    program: StrategyAutoresearchProgram,
+    sources: Sequence[WhitepaperResearchSource],
+    hypothesis_cards: Sequence[HypothesisCard],
+    candidate_specs: Sequence[CandidateSpec],
+    candidate_selection: Mapping[str, Any],
+    pre_replay_model: Mapping[str, Any],
+    proposal_model: Mapping[str, Any] | None,
+    evidence_bundles: Sequence[CandidateEvidenceBundle],
+    false_positive_table: Sequence[Mapping[str, Any]],
+    best_false_negative_table: Sequence[Mapping[str, Any]],
+    portfolio: PortfolioCandidateSpec | None,
+    oracle_candidate_found: bool,
+    profit_target_oracle: Mapping[str, Any] | None,
+    promotion_blockers: Sequence[str],
+    remediation: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    replay_mode = _string(getattr(args, "replay_mode", "")) or "real"
+    next_epoch_flags = _profitability_next_epoch_flags(
+        args=args, target=target, remediation=remediation
+    )
+    return {
+        "schema_version": "torghut.whitepaper-autoresearch-profitability-goal.v1",
+        "objective": {
+            "target_net_pnl_per_trading_day": str(target),
+            "currency": "USD",
+            "standalone_system": True,
+            "status": status,
+            "status_reason": status_reason,
+            "oracle_candidate_found": oracle_candidate_found,
+            "definition_of_done": [
+                "portfolio oracle passes the target without lowering constraints",
+                "real replay evidence is complete for selected sleeves",
+                "runtime closure writes parity and approval replay evidence",
+                "shadow/promotion evidence is persisted before live submission",
+                "live submission gate remains blocked until evidence and explicit deployer controls allow it",
+            ],
+        },
+        "candidate_framework": {
+            "program_id": program.program_id,
+            "program_path": str(
+                getattr(args, "program", _DEFAULT_STRICT_DAILY_PROFIT_PROGRAM)
+            ),
+            "replay_mode": replay_mode,
+            "source_count": len(sources),
+            "claim_count": sum(len(source.claims) for source in sources),
+            "hypothesis_count": len(hypothesis_cards),
+            "candidate_spec_count": len(candidate_specs),
+            "selected_for_replay_count": len(
+                _selected_candidate_spec_ids(candidate_selection)
+            ),
+            "evidence_bundle_count": len(evidence_bundles),
+            "portfolio_candidate_count": 1 if portfolio is not None else 0,
+            "pre_replay_model": {
+                "schema_version": pre_replay_model.get("schema_version"),
+                "model_id": pre_replay_model.get("model_id"),
+                "backend": pre_replay_model.get("backend"),
+                "proposal_stage": pre_replay_model.get("proposal_stage"),
+            },
+            "post_replay_model": {
+                "schema_version": proposal_model.get("schema_version")
+                if proposal_model
+                else None,
+                "model_id": proposal_model.get("model_id") if proposal_model else None,
+                "backend": proposal_model.get("backend") if proposal_model else None,
+            },
+            "families": _candidate_family_goal_rows(
+                candidate_specs=candidate_specs,
+                candidate_selection=candidate_selection,
+                evidence_bundles=evidence_bundles,
+            ),
+        },
+        "sleeve_plan": {
+            "source": "portfolio_candidate"
+            if portfolio is not None
+            else "candidate_selection",
+            "rows": _candidate_sleeve_goal_rows(
+                candidate_specs=candidate_specs,
+                candidate_selection=candidate_selection,
+                evidence_bundles=evidence_bundles,
+                false_positive_table=false_positive_table,
+                best_false_negative_table=best_false_negative_table,
+                portfolio=portfolio,
+            ),
+        },
+        "system_change_backlog": _profitability_system_change_backlog(
+            oracle_candidate_found=oracle_candidate_found,
+            status_reason=status_reason,
+            remediation=remediation,
+            promotion_blockers=promotion_blockers,
+            replay_mode=replay_mode,
+        ),
+        "no_cheating_contract": {
+            "forbidden": [
+                "lowering target_net_pnl_per_day to make a candidate pass",
+                "relaxing oracle, replay, drawdown, contribution, or promotion gates without a separate reviewed code change",
+                "treating synthetic replay as production proof",
+                "editing live strategy configuration inside an autoresearch epoch",
+                "enabling live submission before promotion evidence and deployer approval exist",
+            ],
+            "program_forbidden_mutations": list(program.forbidden_mutations),
+            "promotion_policy": program.promotion_policy,
+        },
+        "recommended_next_epoch": {
+            "entrypoint": "services/torghut/scripts/run_whitepaper_autoresearch_profit_target.py",
+            "flags": next_epoch_flags,
+        },
+        "profit_target_oracle": dict(profit_target_oracle or {}),
+        "candidate_search_remediation": dict(remediation or {}),
+        "artifacts": {
+            "candidate_selection_manifest": str(
+                output_dir / "candidate-selection-manifest.json"
+            ),
+            "candidate_specs": str(output_dir / "candidate-specs.jsonl"),
+            "candidate_evidence_bundles": str(
+                output_dir / "candidate-evidence-bundles.jsonl"
+            ),
+            "portfolio_candidates": str(output_dir / "portfolio-candidates.jsonl"),
+            "candidate_search_remediation": str(
+                output_dir / "candidate-search-remediation.json"
+            )
+            if remediation is not None
+            else None,
+            "summary": str(output_dir / "summary.json"),
+        },
     }
 
 
@@ -2526,6 +2943,30 @@ def run_whitepaper_autoresearch_profit_target(
         )
         remediation_path = output_dir / "candidate-search-remediation.json"
         _write_json(remediation_path, remediation)
+        profitability_goal = _profitability_search_goal(
+            args=args,
+            output_dir=output_dir,
+            status="replay_failed",
+            status_reason=failure_reason,
+            target=target,
+            program=program,
+            sources=sources,
+            hypothesis_cards=hypothesis_cards,
+            candidate_specs=candidate_specs,
+            candidate_selection=candidate_selection,
+            pre_replay_model=pre_replay_model,
+            proposal_model=None,
+            evidence_bundles=partial_replay_result.evidence_bundles,
+            false_positive_table=false_positive_table,
+            best_false_negative_table=best_false_negative_table,
+            portfolio=None,
+            oracle_candidate_found=False,
+            profit_target_oracle=None,
+            promotion_blockers=["replay_failed", failure_reason],
+            remediation=remediation,
+        )
+        profitability_goal_path = output_dir / "profitability-search-goal.json"
+        _write_json(profitability_goal_path, profitability_goal)
         return _write_failure_summary(
             output_dir=output_dir,
             epoch_id=epoch_id,
@@ -2548,8 +2989,10 @@ def run_whitepaper_autoresearch_profit_target(
                 "false_positive_table": false_positive_table,
                 "best_false_negative_table": best_false_negative_table,
                 "candidate_search_remediation": remediation,
+                "profitability_search_goal": profitability_goal,
                 "artifacts": {
                     "candidate_search_remediation": str(remediation_path),
+                    "profitability_search_goal": str(profitability_goal_path),
                     "candidate_selection_manifest": str(
                         output_dir / "candidate-selection-manifest.json"
                     ),
@@ -2685,6 +3128,32 @@ def run_whitepaper_autoresearch_profit_target(
             ),
         )
         _write_json(remediation_path, candidate_search_remediation)
+    profitability_goal = _profitability_search_goal(
+        args=args,
+        output_dir=output_dir,
+        status=status,
+        status_reason=status_reason,
+        target=target,
+        program=program,
+        sources=sources,
+        hypothesis_cards=hypothesis_cards,
+        candidate_specs=candidate_specs,
+        candidate_selection=candidate_selection,
+        pre_replay_model=pre_replay_model,
+        proposal_model=proposal_model,
+        evidence_bundles=replay_result.evidence_bundles,
+        false_positive_table=false_positive_table,
+        best_false_negative_table=best_false_negative_table,
+        portfolio=portfolio,
+        oracle_candidate_found=oracle_candidate_found,
+        profit_target_oracle=cast(Mapping[str, Any], profit_target_oracle)
+        if isinstance(profit_target_oracle, Mapping)
+        else None,
+        promotion_blockers=promotion_blockers,
+        remediation=candidate_search_remediation,
+    )
+    profitability_goal_path = output_dir / "profitability-search-goal.json"
+    _write_json(profitability_goal_path, profitability_goal)
     summary = {
         "status": status,
         "status_reason": status_reason,
@@ -2708,6 +3177,7 @@ def run_whitepaper_autoresearch_profit_target(
         "false_positive_table": false_positive_table,
         "best_false_negative_table": best_false_negative_table,
         "candidate_search_remediation": candidate_search_remediation,
+        "profitability_search_goal": profitability_goal,
         "best_portfolio_candidate": portfolio.to_payload()
         if portfolio is not None
         else None,
@@ -2749,6 +3219,7 @@ def run_whitepaper_autoresearch_profit_target(
             "candidate_search_remediation": str(remediation_path)
             if candidate_search_remediation is not None
             else None,
+            "profitability_search_goal": str(profitability_goal_path),
             "summary": str(output_dir / "summary.json"),
             "diagnostics_notebook": str(
                 output_dir / "whitepaper-autoresearch-diagnostics.ipynb"
