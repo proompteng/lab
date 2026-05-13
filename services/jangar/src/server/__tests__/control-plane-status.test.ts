@@ -7,6 +7,7 @@ import {
 } from '~/server/control-plane-status'
 import { CLEARANCE_MARKET_DESIGN_ARTIFACT } from '~/server/control-plane-clearance-market'
 import { CONSUMER_EVIDENCE_LEASES_DESIGN_ARTIFACT } from '~/server/control-plane-consumer-evidence-leases'
+import { EVIDENCE_PRESSURE_LEDGER_DESIGN_ARTIFACT } from '~/server/control-plane-evidence-pressure-ledger'
 import { READY_TRUTH_ARBITER_DESIGN_ARTIFACT } from '~/server/control-plane-ready-truth-arbiter'
 import { SOURCE_SERVING_CONTRACT_VERDICT_DESIGN_ARTIFACT } from '~/server/control-plane-source-serving-contract-verdict'
 import { STAGE_CREDIT_LEDGER_DESIGN_ARTIFACT } from '~/server/control-plane-stage-credit-ledger'
@@ -380,6 +381,8 @@ describe('control-plane status', () => {
     delete process.env.JANGAR_FAILURE_DOMAIN_EVIDENCE_NAMESPACES
     delete process.env.JANGAR_CLEARANCE_MARKET_ENABLED
     delete process.env.JANGAR_READY_TRUTH_ARBITER_MODE
+    delete process.env.JANGAR_EVIDENCE_PRESSURE_LEDGER_ENABLED
+    delete process.env.JANGAR_EVIDENCE_PRESSURE_LEDGER_MODE
     delete process.env.JANGAR_SOURCE_HEAD_SHA
     delete process.env.JANGAR_GITOPS_REVISION
   })
@@ -1105,6 +1108,17 @@ describe('control-plane status', () => {
       allowed_action_classes: expect.arrayContaining(['serve_readonly', 'torghut_observe']),
       held_action_classes: expect.arrayContaining(['dispatch_normal', 'deploy_widen', 'merge_ready']),
     })
+    expect(status.evidence_pressure_ledger).toMatchObject({
+      schema_version: 'jangar.evidence-pressure-ledger.v1',
+      evidence_mode: 'observe',
+      governing_design_refs: expect.arrayContaining([EVIDENCE_PRESSURE_LEDGER_DESIGN_ARTIFACT]),
+      watch_backoff_policy: {
+        state: 'calm',
+      },
+      scheduler_handoff: {
+        status: 'allow',
+      },
+    })
     expect(status.torghut_action_slo_budgets).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1428,6 +1442,106 @@ describe('control-plane status', () => {
       decision: 'hold',
     })
     expect(status.namespaces[0]?.status).toBe('degraded')
+  })
+
+  it('exposes evidence pressure ledger when watch rate limits should hold normal dispatch', async () => {
+    setRolloutDeploymentList(
+      [healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment],
+      [healthyRuntimePod()],
+    )
+
+    const rateLimitedWatch: ControlPlaneWatchReliability = {
+      status: 'degraded',
+      window_minutes: 15,
+      observed_streams: 1,
+      total_events: 2,
+      total_errors: 4,
+      total_restarts: 2,
+      streams: [
+        {
+          resource: 'agentruns.agents.proompteng.ai',
+          namespace: 'agents',
+          events: 2,
+          errors: 4,
+          restarts: 2,
+          last_seen_at: '2026-01-20T00:00:00Z',
+          error_reasons: {
+            watch_rate_limited: 4,
+          },
+          restart_reasons: {
+            watch_rate_limited: 2,
+          },
+        },
+      ],
+    }
+
+    const status = await buildStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => rateLimitedWatch,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+        resolveTorghutConsumerEvidence: async () => ({
+          status: {
+            status: 'current',
+            endpoint: 'http://torghut/trading/consumer-evidence',
+            receipt_id: 'torghut-consumer-evidence:pressure',
+            generated_at: '2026-01-20T00:00:00Z',
+            fresh_until: '2026-01-20T00:05:00Z',
+            candidate_id: null,
+            dataset_snapshot_ref: null,
+            max_notional: '0',
+            repair_bid_settlement_ledger_id: 'repair-bid-settlement:pressure',
+            repair_bid_settlement_dispatchable_lot_ids: ['repair-lot:watch-pressure'],
+            reason_codes: [],
+            message: 'current zero-notional repair evidence',
+          },
+        }),
+      },
+    )
+
+    expect(status.evidence_pressure_ledger).toMatchObject({
+      watch_backoff_policy: {
+        state: 'brownout',
+        max_new_agent_runs_per_stage: 0,
+      },
+      scheduler_handoff: {
+        status: 'hold',
+        held_action_classes: expect.arrayContaining(['dispatch_normal']),
+        repair_action_classes: expect.arrayContaining(['dispatch_repair']),
+      },
+    })
+    expect(status.evidence_pressure_ledger?.pressure_sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source_class: 'kubernetes_watch',
+          severity: 'hold',
+          reason_codes: expect.arrayContaining(['kubernetes_watch_rate_limited']),
+        }),
+      ]),
+    )
+    expect(status.evidence_pressure_ledger?.action_pressure_budget).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action_class: 'serve_readonly', decision: 'allow' }),
+        expect.objectContaining({ action_class: 'dispatch_repair', decision: 'repair_only' }),
+        expect.objectContaining({ action_class: 'dispatch_normal', decision: 'hold' }),
+        expect.objectContaining({ action_class: 'merge_ready', decision: 'hold' }),
+      ]),
+    )
   })
 
   it('exposes repair-bid admission receipts from current Torghut settlement lots', async () => {

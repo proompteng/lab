@@ -22,6 +22,7 @@ describe('control-plane watch reliability', () => {
     recordWatchReliabilityRestart({
       resource: 'toolruns.tools.proompteng.ai',
       namespace: 'agents',
+      reason: 'watch_rate_limited',
     })
 
     const summary = getWatchReliabilitySummary()
@@ -30,6 +31,7 @@ describe('control-plane watch reliability', () => {
     expect(summary.observed_streams).toBe(1)
     expect(summary.total_restarts).toBe(1)
     expect(summary.total_errors).toBe(0)
+    expect(summary.streams[0]?.restart_reasons).toEqual({ watch_rate_limited: 1 })
   })
 
   it('degrades once restarts cross the configured threshold', () => {
@@ -79,11 +81,13 @@ describe('control-plane watch reliability', () => {
     recordWatchReliabilityError({
       resource: 'toolruns.tools.proompteng.ai',
       namespace: 'agents',
+      reason: 'watch_rate_limited',
     })
 
     const summary = getWatchReliabilitySummary()
 
     expect(summary.status).toBe('degraded')
     expect(summary.total_errors).toBe(1)
+    expect(summary.streams[0]?.error_reasons).toEqual({ watch_rate_limited: 1 })
   })
 })

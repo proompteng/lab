@@ -55,6 +55,9 @@ type MetricsState = {
   prometheusEnabled?: boolean
   prometheusPath?: string
   meterProvider?: MeterProvider
+  otlpEnabled?: boolean
+  otlpEndpoint?: string | null
+  initError?: string | null
 }
 
 type SseStream = 'chat' | 'agent-events' | 'control-plane' | 'torghut-quant' | 'torghut-decision'
@@ -440,7 +443,7 @@ const serializeResourceMetricsToPrometheus = (resourceMetrics: ResourceMetrics |
 const createMetricsState = (): MetricsState => {
   const config = resolveMetricsConfig()
   if (config.disabledForTest) {
-    return { enabled: false }
+    return { enabled: false, otlpEnabled: false, otlpEndpoint: null }
   }
 
   if (!config.enabled) {
@@ -448,6 +451,8 @@ const createMetricsState = (): MetricsState => {
       enabled: false,
       prometheusEnabled: config.prometheusEnabled,
       prometheusPath: config.prometheusPath,
+      otlpEnabled: false,
+      otlpEndpoint: config.metricsEndpoint,
     }
   }
 
@@ -626,10 +631,17 @@ const createMetricsState = (): MetricsState => {
       prometheusEnabled: config.prometheusEnabled,
       prometheusPath: config.prometheusPath,
       meterProvider,
+      otlpEnabled: config.otlpEnabled,
+      otlpEndpoint: config.metricsEndpoint,
     }
   } catch (error) {
     diag.error('failed to initialize metrics', error)
-    return { enabled: false }
+    return {
+      enabled: false,
+      otlpEnabled: config.otlpEnabled,
+      otlpEndpoint: config.metricsEndpoint,
+      initError: error instanceof Error ? error.message : String(error),
+    }
   }
 }
 
@@ -641,6 +653,42 @@ if (!globalState.__jangarMetrics) {
 export const isPrometheusMetricsEnabled = () => Boolean(metricsState.prometheusEnabled)
 
 export const getPrometheusMetricsPath = () => metricsState.prometheusPath ?? '/metrics'
+
+export const getMetricsSinkPressureSummary = () => {
+  if (metricsState.initError) {
+    return {
+      status: 'degraded' as const,
+      endpoint: metricsState.otlpEndpoint ?? null,
+      message: `metrics initialization failed: ${metricsState.initError}`,
+      reason_codes: ['metrics_sink_initialization_failed'],
+    }
+  }
+
+  if (!metricsState.enabled || !metricsState.otlpEnabled) {
+    return {
+      status: 'disabled' as const,
+      endpoint: metricsState.otlpEndpoint ?? null,
+      message: 'OTLP metrics sink disabled',
+      reason_codes: ['metrics_sink_disabled'],
+    }
+  }
+
+  if (!metricsState.otlpEndpoint) {
+    return {
+      status: 'unknown' as const,
+      endpoint: null,
+      message: 'OTLP metrics sink endpoint is not configured',
+      reason_codes: ['metrics_sink_endpoint_missing'],
+    }
+  }
+
+  return {
+    status: 'healthy' as const,
+    endpoint: metricsState.otlpEndpoint,
+    message: 'OTLP metrics sink configured',
+    reason_codes: [],
+  }
+}
 
 export const renderPrometheusMetrics = async (): Promise<
   { ok: true; body: string } | { ok: false; message: string }

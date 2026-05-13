@@ -392,13 +392,16 @@ why a green PR or healthy pod is not yet materially safe to widen. Rollback is
 `JANGAR_READY_TRUTH_ARBITER_MODE=observe`; if the read model itself is wrong, ignore the field and continue relying on
 stage credit, clearance market, source-serving verdicts, runtime-admission passports, and repair-bid admission.
 
-The next architecture contract is the evidence-pressure ledger in
-`docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`. It adds a
-proof-transport budget below stage credit: Kubernetes watch 429s, controller replica splits, metrics-sink failures,
-GitHub review-ingest missing refs, database evidence authority, and Torghut freshness debt become typed pressure
-sources with TTLs and action-class decisions. The first implementation must be observe-only. Scheduler hold mode comes
-later, after tests prove `dispatch_normal`, `deploy_widen`, and `merge_ready` are held during evidence pressure while
-`serve_readonly`, `torghut_observe`, and bounded zero-notional repairs remain open.
+Control-plane status and `/ready` also emit `evidence_pressure_ledger` from
+`docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`. The ledger is an
+observe-mode proof-transport budget below stage credit: Kubernetes watch 429s, controller replica splits, metrics-sink
+failures, GitHub review-ingest missing refs, database evidence authority, and Torghut freshness debt become typed
+pressure sources with TTLs, reason codes, and action-class decisions. In observe mode it does not block schedule
+runners, but it already names when `dispatch_normal`, `deploy_widen`, and `merge_ready` would be held while
+`serve_readonly`, `torghut_observe`, and bounded zero-notional repairs remain open. Rollback is
+`JANGAR_EVIDENCE_PRESSURE_LEDGER_MODE=observe`; if the payload itself regresses status generation, set
+`JANGAR_EVIDENCE_PRESSURE_LEDGER_ENABLED=false` and continue relying on stage credit, ready-truth, clearance market,
+source-serving verdicts, and runtime-admission passports.
 
 ## Lease reconciliation action clocks
 

@@ -11,6 +11,12 @@ import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
 import { buildControllerWitnessQuorum } from '~/server/control-plane-controller-witness'
 import { buildConsumerEvidenceLeaseSet } from '~/server/control-plane-consumer-evidence-leases'
 import {
+  buildEvidencePressureLedger,
+  isEvidencePressureLedgerEnabled,
+  type EvidencePressureGithubIngestStatus,
+  type EvidencePressureMetricsSinkStatus,
+} from '~/server/control-plane-evidence-pressure-ledger'
+import {
   buildControlPlaneMaterialActionArtifacts,
   type RepairScheduleAttemptResolver,
 } from '~/server/control-plane-material-action-artifacts'
@@ -82,6 +88,8 @@ import {
 import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
 import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
 import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
+import { getGithubReviewIngestPressureSummary } from '~/server/github-review-ingest'
+import { getMetricsSinkPressureSummary } from '~/server/metrics'
 import type { ExecutionTrustStatus, WorkflowsReliabilityStatus } from '~/data/agents-control-plane'
 
 export type { ControlPlaneStatus, DatabaseStatus, GrpcStatus } from './control-plane-status-types'
@@ -113,6 +121,8 @@ export type ControlPlaneStatusDeps = {
   resolveExecutionTrust?: (input: ExecutionTrustInput) => Promise<ExecutionTrustSnapshot>
   resolveRuntimeAdmission?: (input: { now: Date; executionTrust: ExecutionTrustStatus }) => RuntimeAdmissionSnapshot
   resolveRepairScheduleAttempts?: RepairScheduleAttemptResolver
+  resolveMetricsSinkPressure?: () => EvidencePressureMetricsSinkStatus
+  resolveGithubIngestPressure?: () => EvidencePressureGithubIngestStatus
   resolveRouteProbe?: (input: { now: Date; namespace: string; service: string }) => Promise<FailureDomainRouteProbe>
   resolveFailureDomainKubernetesEvidence?: (input: {
     now: Date
@@ -602,6 +612,21 @@ export const buildControlPlaneStatus = async (
     repairBidAdmission,
     torghutConsumerEvidence: torghutConsumerEvidence.status,
   })
+  const evidencePressureLedger = isEvidencePressureLedgerEnabled()
+    ? buildEvidencePressureLedger({
+        now,
+        namespace: options.namespace,
+        sourceHeadSha: sourceRolloutTruthEnvironment.sourceHeadSha,
+        gitopsRevision: sourceRolloutTruthEnvironment.gitopsRevision,
+        watchReliability: watchReliabilityStatus,
+        controllerWitness,
+        rolloutHealth,
+        database,
+        metricsSink: (deps.resolveMetricsSinkPressure ?? getMetricsSinkPressureSummary)(),
+        githubIngest: (deps.resolveGithubIngestPressure ?? getGithubReviewIngestPressureSummary)(),
+        torghutConsumerEvidence: torghutConsumerEvidence.status,
+      })
+    : null
   const consumerEvidenceLeases = buildConsumerEvidenceLeaseSet({
     now,
     namespace: options.namespace,
@@ -665,6 +690,7 @@ export const buildControlPlaneStatus = async (
     stage_clearance_packets: stageClearancePackets,
     stage_credit_ledger: stageCreditLedger,
     ready_truth_arbiter: readyTruthArbiter,
+    evidence_pressure_ledger: evidencePressureLedger,
     ready_action_exchange: readyActionExchange,
     repair_bid_admission: repairBidAdmission,
     repair_warrant_exchange: repairWarrantExchange,

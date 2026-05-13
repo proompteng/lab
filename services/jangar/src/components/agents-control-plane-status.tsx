@@ -93,6 +93,14 @@ const formatMaterialVerdicts = (status: ControlPlaneStatus) => {
   return blocking.map((verdict) => `${verdict.action_class}=${verdict.decision}`).join(', ')
 }
 
+const formatPressureActions = (status: ControlPlaneStatus) => {
+  const ledger = status.evidence_pressure_ledger
+  if (!ledger) return 'Not emitted'
+  const held = ledger.action_pressure_budget.filter((budget) => budget.decision !== 'allow')
+  if (held.length === 0) return 'None'
+  return held.map((budget) => `${budget.action_class}=${budget.decision}`).join(', ')
+}
+
 const formatAuthority = (authority: {
   mode: string
   source_deployment: string
@@ -207,6 +215,35 @@ export const ControlPlaneStatusPanel = ({
                 ))}
               </ul>
             ) : null}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Evidence pressure
+          </div>
+          <div className="rounded-none border p-2 border-border/60 bg-muted/30 space-y-1">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-medium text-foreground">Watch backoff governor</span>
+              <StatusBadge label={status.evidence_pressure_ledger?.watch_backoff_policy.state ?? 'missing'} />
+            </div>
+            <div className="text-muted-foreground">
+              Mode: {status.evidence_pressure_ledger?.evidence_mode ?? '—'} · Sources:{' '}
+              {status.evidence_pressure_ledger?.pressure_sources.length ?? 0}
+            </div>
+            <div className="text-muted-foreground">Pressure actions: {formatPressureActions(status)}</div>
+            {status.evidence_pressure_ledger?.pressure_sources.length ? (
+              <ul className="space-y-1 pt-1 text-muted-foreground">
+                {status.evidence_pressure_ledger.pressure_sources.slice(0, 5).map((source) => (
+                  <li key={source.source_id} className="text-[11px]">
+                    <span className="font-medium text-foreground">{source.source_class}</span> · {source.severity}
+                    {source.reason_codes.length > 0 ? ` (${source.reason_codes.join(', ')})` : ''}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-[11px] text-muted-foreground">No active evidence pressure sources.</div>
+            )}
           </div>
         </div>
 

@@ -3,13 +3,21 @@ import { createFileRoute } from '@tanstack/react-router'
 import type { ExecutionTrustStatus } from '~/data/agents-control-plane'
 import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/agents-controller'
 import { buildRuntimeAdmissionSnapshot, findAdmissionPassport } from '~/server/control-plane-runtime-admission'
+import {
+  buildEvidencePressureLedger,
+  isEvidencePressureLedgerEnabled,
+  type EvidencePressureControllerReadiness,
+} from '~/server/control-plane-evidence-pressure-ledger'
 import { buildRepairBidAdmissionState } from '~/server/control-plane-repair-bid-admission'
+import { getGithubReviewIngestPressureSummary } from '~/server/github-review-ingest'
 import { getLeaderElectionStatus } from '~/server/leader-election'
 import { getMemoryProviderHealth } from '~/server/memory-provider-health'
+import { getMetricsSinkPressureSummary } from '~/server/metrics'
 import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
 import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
 import { buildExecutionTrust } from '~/server/control-plane-status'
 import { resolveTorghutConsumerEvidence } from '~/server/control-plane-torghut-consumer-evidence'
+import { getWatchReliabilitySummary } from '~/server/control-plane-watch-reliability'
 
 const isControllerHealthReady = (health: ReturnType<typeof getAgentsControllerHealth>) =>
   !health.enabled || health.crdsReady !== false
@@ -25,6 +33,22 @@ const isStandbyLeaderElectionReady = (leaderElection: ReturnType<typeof getLeade
   leaderElection.lastAttemptAt !== null && leaderElection.lastError === null
 
 const uniqueStrings = (values: string[]) => [...new Set(values.filter((value) => value.length > 0))]
+
+const buildReadyControllerReadiness = (
+  name: string,
+  health: ReturnType<typeof getAgentsControllerHealth>,
+): EvidencePressureControllerReadiness => ({
+  name,
+  enabled: health.enabled,
+  started: health.started,
+  crdsReady: health.crdsReady ?? null,
+  message:
+    !health.enabled || (health.started && health.crdsReady !== false)
+      ? `${name} ready`
+      : health.crdsReady === false
+        ? `${name} CRDs are not ready`
+        : `${name} is not started`,
+})
 
 const EXECUTION_TRUST_STATUS_PRIORITY: Record<ExecutionTrustStatus['status'], number> = {
   healthy: 0,
@@ -141,6 +165,21 @@ export const getReadyHandler = async () => {
     now,
     executionTrust: trust,
   })
+  const evidencePressureLedger = isEvidencePressureLedgerEnabled()
+    ? buildEvidencePressureLedger({
+        now,
+        namespace: namespaces[0] ?? 'agents',
+        watchReliability: getWatchReliabilitySummary(),
+        controllerReadiness: [
+          buildReadyControllerReadiness('agents-controller', agentsController),
+          buildReadyControllerReadiness('orchestration-controller', orchestrationController),
+          buildReadyControllerReadiness('supporting-controller', supportingController),
+        ],
+        metricsSink: getMetricsSinkPressureSummary(),
+        githubIngest: getGithubReviewIngestPressureSummary(),
+        torghutConsumerEvidence: torghutConsumerEvidence.status,
+      })
+    : null
   const servingPassport = findAdmissionPassport({
     admissionPassports: runtimeAdmission.admissionPassports,
     consumerClass: 'serving',
@@ -185,6 +224,7 @@ export const getReadyHandler = async () => {
     execution_trust: trust,
     torghut_consumer_evidence: torghutConsumerEvidence.status,
     repair_bid_admission: repairBidAdmission,
+    evidence_pressure_ledger: evidencePressureLedger,
     memory_provider: memoryProvider,
     runtime_kits: runtimeAdmission.runtimeKits,
     admission_passports: runtimeAdmission.admissionPassports,
