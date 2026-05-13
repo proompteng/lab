@@ -124,12 +124,14 @@ describe('getQuantAccountWitnessHandler', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-13T15:00:00.000Z'))
     process.env.JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS = '3600'
+    const currentAt = new Date(Date.now() - 1000).toISOString()
+    const recentAt = new Date(Date.now() - 2000).toISOString()
     const { getQuantAccountWitnessHandler } = await import('./account-witness')
 
     getQuantLatestStoreStatus
       .mockImplementationOnce(() => new Promise(() => {}))
       .mockResolvedValueOnce({
-        updatedAt: '2026-05-13T14:59:59.000Z',
+        updatedAt: currentAt,
         count: 24,
       })
     listLatestQuantPipelineHealth.mockResolvedValueOnce([
@@ -139,7 +141,7 @@ describe('getQuantAccountWitnessHandler', () => {
         stage: 'ingestion',
         ok: true,
         lagSeconds: 1,
-        asOf: '2026-05-13T14:59:59.000Z',
+        asOf: currentAt,
       },
       {
         strategyId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -147,7 +149,7 @@ describe('getQuantAccountWitnessHandler', () => {
         stage: 'compute',
         ok: true,
         lagSeconds: 2,
-        asOf: '2026-05-13T14:59:58.000Z',
+        asOf: recentAt,
       },
       {
         strategyId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -155,7 +157,7 @@ describe('getQuantAccountWitnessHandler', () => {
         stage: 'materialization',
         ok: true,
         lagSeconds: 1,
-        asOf: '2026-05-13T14:59:59.000Z',
+        asOf: currentAt,
       },
     ])
 

@@ -4921,7 +4921,7 @@ describe('supporting primitives controller', () => {
     })
   })
 
-  it('freezes with provider-capacity reason for consecutive provider exhaustion failures', async () => {
+  it('keeps swarm cadence active for provider-capacity exhaustion failures', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
     const get = vi.fn().mockResolvedValue(null)
@@ -5005,40 +5005,44 @@ describe('supporting primitives controller', () => {
 
     await __test__.reconcileSwarm(kube, swarm, 'agents')
 
+    expect(apply).toHaveBeenCalledTimes(4)
+    expect(deleteFn).not.toHaveBeenCalled()
     const firstStatusCall = applyStatus.mock.calls[0]
     const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     expect(status.freeze).toMatchObject({
-      reason: 'ProviderCapacityExhausted',
+      reason: 'NotFrozen',
+      consecutiveFailures: 2,
+      threshold: 2,
       evidence: {
         triggeringRuns: expect.arrayContaining([
           expect.objectContaining({ reason: expect.stringContaining('provider capacity exhausted') }),
         ]),
+        stageStaleness: [],
+        triggers: [],
       },
     })
   })
 
-  it('freezes immediately on provider-capacity exhaustion below the general failure threshold', async () => {
+  it('releases an active provider-capacity freeze so cadence can recover', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
-    const get = vi.fn().mockResolvedValue(null)
+    const get = vi.fn().mockResolvedValue({
+      status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' },
+    })
     const list = vi.fn(async (resource: string) => {
       if (resource === RESOURCE_MAP.AgentRun) {
         return {
           items: [
             {
               metadata: {
-                name: 'run-1',
+                name: 'run-success',
                 creationTimestamp: '2026-01-20T00:00:00Z',
                 labels: {
                   'swarm.proompteng.ai/name': 'jangar-control-plane',
                   'swarm.proompteng.ai/stage': 'implement',
                 },
               },
-              status: {
-                phase: 'Failed',
-                reason: 'ProviderCapacityExhausted',
-                message: 'workflow step implement: provider capacity exhausted: usage limit',
-              },
+              status: { phase: 'Succeeded', startedAt: '2026-01-20T00:00:00Z' },
             },
           ],
         }
@@ -5076,21 +5080,27 @@ describe('supporting primitives controller', () => {
           verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
         },
       },
+      status: {
+        freeze: {
+          reason: 'ProviderCapacityExhausted',
+          until: '2026-01-20T00:40:00Z',
+          enteredAt: '2026-01-19T23:40:00Z',
+        },
+      },
     }
 
     await __test__.reconcileSwarm(kube, swarm, 'agents')
 
+    expect(apply).toHaveBeenCalledTimes(4)
+    expect(deleteFn).not.toHaveBeenCalled()
     const firstStatusCall = applyStatus.mock.calls[0]
     const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(status.phase).toBe('Active')
     expect(status.freeze).toMatchObject({
-      reason: 'ProviderCapacityExhausted',
-      consecutiveFailures: 1,
+      reason: 'NotFrozen',
+      consecutiveFailures: 0,
       threshold: 3,
-      evidence: {
-        triggeringRuns: expect.arrayContaining([
-          expect.objectContaining({ reason: expect.stringContaining('provider capacity exhausted') }),
-        ]),
-      },
+      evidence: { triggeringRuns: [], stageStaleness: [], triggers: [] },
     })
   })
 
