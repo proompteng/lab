@@ -32,7 +32,7 @@ import {
 } from '~/server/supporting-primitives-schedule-runner'
 import {
   effectiveStageClearanceMode,
-  fetchStageClearancePackets,
+  fetchStageClearanceStatusSnapshot,
   normalizeStageClearanceHoldStages,
   resolveStageClearanceAdmissionFromPackets,
   resolveStageClearanceForStage,
@@ -41,6 +41,7 @@ import {
   stageClearanceStatusForStage,
   type StageClearanceLaunchAdmission,
   type StageClearanceMode,
+  type StageClearanceStatusSnapshot,
 } from '~/server/supporting-primitives-stage-clearance'
 import { makeName } from '~/server/supporting-primitives-naming'
 import {
@@ -1475,7 +1476,7 @@ const deleteStageScheduleAndRunnerResources = async (
 const setScheduleBlockedStatus = async (
   kube: ReturnType<typeof createKubernetesClient>,
   schedule: Record<string, unknown>,
-  block: { reason: string; message: string; phase?: string },
+  block: { reason: string; message: string; phase?: string; extraStatus?: Record<string, unknown> },
 ) => {
   const status = asRecord(schedule.status) ?? {}
   const conditions = upsertCondition(
@@ -1486,6 +1487,7 @@ const setScheduleBlockedStatus = async (
     observedGeneration: asRecord(schedule.metadata)?.generation ?? 0,
     phase: block.phase ?? 'AdmissionBlocked',
     lastRunTime: asString(status.lastRunTime) ?? undefined,
+    ...block.extraStatus,
     conditions,
   })
 }
@@ -1500,7 +1502,12 @@ const setScheduleStageClearanceBlockedStatus = async (
   kube: ReturnType<typeof createKubernetesClient>,
   schedule: Record<string, unknown>,
   admission: StageClearanceLaunchAdmission,
-) => setScheduleBlockedStatus(kube, schedule, { ...admission, phase: 'StageClearanceBlocked' })
+) =>
+  setScheduleBlockedStatus(kube, schedule, {
+    ...admission,
+    phase: 'StageClearanceBlocked',
+    extraStatus: { stageClearance: stageClearanceStatusForStage(admission) },
+  })
 
 const reconcileScheduleRunnerStatus = async (
   kube: ReturnType<typeof createKubernetesClient>,
@@ -1977,10 +1984,17 @@ const reconcileSwarm = async (
     ]),
   ) as Record<StageName, StageClearanceMode>
   let stageClearancePackets: StageClearancePacket[] = []
+  let stageClearanceMarket: Pick<StageClearanceStatusSnapshot, 'clearanceMarketLedgerId' | 'stageAdmissions'> | null =
+    null
   let stageClearanceUnavailableMessage: string | null = null
   if (STAGE_NAMES.some((stage) => stageClearanceModes[stage] === 'hold')) {
     try {
-      stageClearancePackets = await fetchStageClearancePackets(swarmNamespace, supportingConfig)
+      const stageClearanceSnapshot = await fetchStageClearanceStatusSnapshot(swarmNamespace, supportingConfig)
+      stageClearancePackets = stageClearanceSnapshot.packets
+      stageClearanceMarket = {
+        clearanceMarketLedgerId: stageClearanceSnapshot.clearanceMarketLedgerId,
+        stageAdmissions: stageClearanceSnapshot.stageAdmissions,
+      }
     } catch (error) {
       stageClearanceUnavailableMessage = summarizeRuntimeAdmissionError(error)
       console.warn('[jangar] stage clearance snapshot unavailable for swarm launchers', {
@@ -2013,6 +2027,7 @@ const reconcileSwarm = async (
           stage,
           mode,
           packets: stageClearancePackets,
+          clearanceMarket: stageClearanceMarket,
           nowMs,
         }),
       ]

@@ -353,9 +353,17 @@ repair-only when the selected repair lot is zero-notional and cites a live warra
 and deployer handoffs one `ledger_id` plus evidence refs instead of requiring operators to reconcile status sections by
 hand.
 
+When stage-clearance enforcement is in hold mode, scheduler reconciliation and fire-time schedule-runner admission also
+consume `clearance_market_ledger.stage_admission`. A non-`allow` stage admission blocks the launch even when the lower
+level stage-clearance packet is `allow`, deletes the stale schedule runner resources, and reports the clearance ledger
+id plus selected repair lot in `Schedule.status.stageClearance`. Launched AgentRuns are stamped with
+`swarmClearanceMarketLedgerId`, `swarmClearanceMarketStageAdmissionId`, `swarmClearanceMarketStageDecision`, and
+`swarmClearanceMarketSelectedRepairLotRef` so deployer handoffs can trace the exact market admission used.
+
 Rollback: set `JANGAR_CLEARANCE_MARKET_ENABLED=false` to remove the ledger from the status payload. Existing
 stage-clearance packets, material-action verdicts, runtime-admission passports, repair warrants, and source-rollout
-truth remain the fallback authority.
+truth remain the fallback authority. For scheduler admission only, set `JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow` to
+stop blocking launches while preserving the stamped evidence.
 
 ## Lease reconciliation action clocks
 
