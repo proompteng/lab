@@ -405,6 +405,7 @@ describe('control-plane stage clearance', () => {
     expect(discover).toMatchObject({
       decision: 'hold',
       max_launches: 0,
+      dependency_verdict_ref: null,
       governing_requirement_refs: expect.arrayContaining([STAGE_CLEARANCE_DESIGN_ARTIFACT]),
       reason_codes: expect.arrayContaining(['swarm_freeze_active', 'stage_discover_stale']),
       required_repair_action: 'clear stage freshness debt',

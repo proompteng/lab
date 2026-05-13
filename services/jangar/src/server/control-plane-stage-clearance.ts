@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import type {
   ActionSloBudgetActionClass,
   ControlPlaneControllerWitnessQuorum,
+  DependencyVerdictExchange,
   ExecutionTrustStage,
   ExecutionTrustStatus,
   ExecutionTrustSwarm,
@@ -17,6 +18,7 @@ import type {
   StageClearanceStage,
   WorkflowsReliabilityStatus,
 } from '~/data/agents-control-plane'
+import { dependencyVerdictForActionSloClass } from '~/server/control-plane-dependency-verdict'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
 
 export const STAGE_CLEARANCE_DESIGN_ARTIFACT =
@@ -68,6 +70,7 @@ export type StageClearanceInput = {
   materialActionVerdictEpoch: MaterialActionVerdictEpoch
   failureDomainLeases: FailureDomainLeaseSet
   torghutConsumerEvidence: TorghutConsumerEvidenceStatus
+  dependencyVerdictExchange?: DependencyVerdictExchange
 }
 
 type PacketDebt = {
@@ -389,6 +392,12 @@ const torghutEvidenceRef = (status: TorghutConsumerEvidenceStatus) => {
   return `torghut-consumer-evidence:${status.status}`
 }
 
+const dependencyVerdictForPacket = (input: StageClearanceInput, actionClass: ActionSloBudgetActionClass) => {
+  const dependencyAction = dependencyVerdictForActionSloClass(actionClass)
+  if (!dependencyAction) return null
+  return input.dependencyVerdictExchange?.verdicts.find((verdict) => verdict.action_class === dependencyAction) ?? null
+}
+
 const packetDecision = (input: {
   actionClass: ActionSloBudgetActionClass
   materialDecision: StageClearanceDecision
@@ -503,6 +512,7 @@ const buildPacket = (
     fallbackFreshUntil,
   )
   const torghutRef = torghutEvidenceRef(input.torghutConsumerEvidence)
+  const dependencyVerdict = dependencyVerdictForPacket(input, spec.actionClass)
   const packetId = `stage-clearance:${spec.stage}:${spec.actionClass}:${hashJson({
     producer_revision: PRODUCER_REVISION,
     namespace: input.namespace,
@@ -534,6 +544,8 @@ const buildPacket = (
       ? `route-stability-contract:${routeContract.action_class}:${hashJson(routeContract)}`
       : input.routeStabilityEscrow.escrow_id,
     torghut_consumer_evidence_ref: torghutRef,
+    dependency_verdict_ref: dependencyVerdict?.verdict_id ?? null,
+    dependency_verdict_decision: dependencyVerdict?.decision ?? null,
     failure_domain_leases: failureLeaseRefs,
     provider_capacity_ref: providerRef,
     decision,

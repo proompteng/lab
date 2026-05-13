@@ -23,6 +23,14 @@ Cloud-init should ensure:
 - in-VM Kubernetes access is bootstrapped by mounting the `serviceAccount` disk
   (`K8S_SA_DISK`) and writing `/home/ubuntu/.kube/config`.
 
+## Scheduling notes
+
+- The root disk is an existing `local-path` PVC. Kubernetes must schedule the VM
+  launcher on the node that owns the bound local PV.
+- Keep the VM memory request small enough to fit on that disk-owning node. If the
+  scheduler reports `Insufficient memory`, check the PVC's selected node and that
+  node's allocated memory before changing storage or recreating the disk.
+
 ## VM access model
 
 - ServiceAccount: `openclaw-vm` (namespace `openclaw`)

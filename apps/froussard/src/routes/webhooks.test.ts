@@ -879,7 +879,7 @@ describe('createWebhookHandler', () => {
     expect(publishedMessages.some((message) => message.topic === baseConfig.topics.codexJudge)).toBe(true)
   })
 
-  it('posts a codex review request comment for large pull requests', async () => {
+  it('does not post a codex review request comment for large pull requests', async () => {
     githubServiceMock.fetchPullRequest.mockReturnValueOnce(
       Effect.succeed({
         ok: true as const,
@@ -903,10 +903,6 @@ describe('createWebhookHandler', () => {
       }),
     )
     githubServiceMock.issueHasReaction.mockReturnValueOnce(Effect.succeed({ ok: true as const, hasReaction: false }))
-    githubServiceMock.findLatestPlanComment.mockReturnValueOnce(
-      Effect.succeed({ ok: false as const, reason: 'not-found' as const }),
-    )
-
     const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
     const payload = {
       action: 'edited',
@@ -924,20 +920,8 @@ describe('createWebhookHandler', () => {
 
     expect(response.status).toBe(202)
     await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: null })
-    expect(githubServiceMock.findLatestPlanComment).toHaveBeenCalledWith(
-      expect.objectContaining({
-        repositoryFullName: 'owner/repo',
-        issueNumber: 14,
-        marker: expect.stringContaining('codex:review-request'),
-      }),
-    )
-    expect(githubServiceMock.createPullRequestComment).toHaveBeenCalledWith(
-      expect.objectContaining({
-        repositoryFullName: 'owner/repo',
-        pullNumber: 14,
-        body: expect.stringContaining('@codex review'),
-      }),
-    )
+    expect(githubServiceMock.findLatestPlanComment).not.toHaveBeenCalled()
+    expect(githubServiceMock.createPullRequestComment).not.toHaveBeenCalled()
   })
 
   it('does not post a ready comment when thumbs up reaction is absent', async () => {

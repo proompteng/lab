@@ -8,6 +8,8 @@ import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitive
 import {
   SWARM_STAGE_CLEARANCE_ANNOTATION_ACTION_CLASS,
   SWARM_STAGE_CLEARANCE_ANNOTATION_DECISION,
+  SWARM_STAGE_CLEARANCE_ANNOTATION_DEPENDENCY_VERDICT_DECISION,
+  SWARM_STAGE_CLEARANCE_ANNOTATION_DEPENDENCY_VERDICT_ID,
   SWARM_STAGE_CLEARANCE_ANNOTATION_FRESH_UNTIL,
   SWARM_STAGE_CLEARANCE_ANNOTATION_MODE,
   SWARM_STAGE_CLEARANCE_ANNOTATION_PACKET_ID,
@@ -99,6 +101,8 @@ const readStageClearancePacket = (value: unknown): StageClearancePacket | null =
     material_action_verdict_ref: asString(record.material_action_verdict_ref) ?? '',
     route_stability_ref: asString(record.route_stability_ref) ?? '',
     torghut_consumer_evidence_ref: asString(record.torghut_consumer_evidence_ref),
+    dependency_verdict_ref: asString(record.dependency_verdict_ref),
+    dependency_verdict_decision: parseStageClearanceDecision(record.dependency_verdict_decision),
     failure_domain_leases: compactStrings(asArray(record.failure_domain_leases)),
     provider_capacity_ref: asString(record.provider_capacity_ref),
     decision,
@@ -158,6 +162,14 @@ const buildStageClearanceTrace = (
   if (packet.required_repair_action) {
     annotations[SWARM_STAGE_CLEARANCE_ANNOTATION_REQUIRED_REPAIR_ACTION] = packet.required_repair_action
     parameters.swarmStageClearanceRequiredRepairAction = packet.required_repair_action
+  }
+  if (packet.dependency_verdict_ref) {
+    annotations[SWARM_STAGE_CLEARANCE_ANNOTATION_DEPENDENCY_VERDICT_ID] = packet.dependency_verdict_ref
+    parameters.swarmDependencyVerdictId = packet.dependency_verdict_ref
+  }
+  if (packet.dependency_verdict_decision) {
+    annotations[SWARM_STAGE_CLEARANCE_ANNOTATION_DEPENDENCY_VERDICT_DECISION] = packet.dependency_verdict_decision
+    parameters.swarmDependencyVerdictDecision = packet.dependency_verdict_decision
   }
   return { annotations, parameters }
 }

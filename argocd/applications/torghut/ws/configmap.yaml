@@ -13,9 +13,7 @@ data:
   # Full market-data mode (quotes enabled) must stay within account subscription constraints.
   # Keep universe size capped at 12 to preserve headroom and avoid 405 symbol-limit failures.
   ALPACA_MARKET_DATA_CHANNELS: "trades,quotes,bars,updatedBars"
-  # Dynamic desired-symbol feed sourced from Jangar universe manager.
-  JANGAR_SYMBOLS_URL: "http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity&format=compact"
-  # Startup fallback if Jangar is temporarily unavailable.
+  # Static executable universe; the live trading loop must not depend on Jangar.
   SYMBOLS: "NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC"
   SYMBOLS_ALLOWLIST: "NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC"
   SYMBOLS_POLL_INTERVAL_MS: "30000"

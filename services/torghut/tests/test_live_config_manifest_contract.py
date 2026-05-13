@@ -246,17 +246,11 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(settings.trading_universe_max_stale_seconds, 900)
         self.assertIsNone(settings.trading_jangar_symbols_url)
         self.assertIsNone(settings.trading_jangar_control_plane_status_url)
+        self.assertIsNone(settings.trading_jangar_quant_health_url)
+        self.assertIsNone(settings.trading_market_context_url)
         self.assertEqual(
             set(settings.trading_static_symbols),
             _LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS,
-        )
-        self.assertEqual(
-            settings.trading_jangar_quant_health_url,
-            "http://jangar.jangar.svc.cluster.local/api/torghut/trading/control-plane/quant/health",
-        )
-        self.assertEqual(
-            settings.trading_market_context_url,
-            "http://jangar.jangar.svc.cluster.local/api/torghut/market-context",
         )
         self.assertFalse(settings.trading_market_context_required)
         self.assertEqual(settings.trading_market_context_fail_mode, "shadow_only")
@@ -267,27 +261,32 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertNotIn("TRADING_FEATURE_FLAGS_URL", env)
         self.assertNotIn("TRADING_FORECAST_SERVICE_URL", env)
         self.assertNotIn("TRADING_LEAN_RUNNER_URL", env)
-        self.assertEqual(
-            env.get("TRADING_MARKET_CONTEXT_URL"),
-            "http://jangar.jangar.svc.cluster.local/api/torghut/market-context/",
-        )
         self.assertNotIn("JANGAR_SYMBOLS_URL", env)
         self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_STATUS_URL", env)
         self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS", env)
         self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS", env)
+        self.assertNotIn("TRADING_JANGAR_QUANT_HEALTH_REQUIRED", env)
+        self.assertNotIn("TRADING_JANGAR_QUANT_HEALTH_URL", env)
+        self.assertNotIn("TRADING_MARKET_CONTEXT_URL", env)
+        self.assertFalse(
+            any(key.startswith("TRADING_MARKET_CONTEXT_") for key in env),
+            "live trading service must not import external market-context wiring",
+        )
         self.assertNotIn("JANGAR_BASE_URL", env)
 
-    def test_live_manifest_sets_typed_quant_health_route(self) -> None:
+    def test_live_manifest_has_no_jangar_trading_loop_urls(self) -> None:
         env = _load_torghut_knative_env()
 
-        self.assertEqual(
-            env.get("TRADING_JANGAR_QUANT_HEALTH_URL"),
-            "http://jangar.jangar.svc.cluster.local/api/torghut/trading/control-plane/quant/health",
-        )
-        self.assertNotIn(
-            "/api/agents/control-plane/status",
-            str(env.get("TRADING_JANGAR_QUANT_HEALTH_URL")),
-        )
+        blocked_env = {
+            "JANGAR_SYMBOLS_URL",
+            "TRADING_JANGAR_CONTROL_PLANE_STATUS_URL",
+            "TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS",
+            "TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS",
+            "TRADING_JANGAR_QUANT_HEALTH_REQUIRED",
+            "TRADING_JANGAR_QUANT_HEALTH_URL",
+            "TRADING_MARKET_CONTEXT_URL",
+        }
+        self.assertTrue(blocked_env.isdisjoint(env))
 
     def test_strategy_catalog_universes_are_chip_only(self) -> None:
         for strategy in _load_torghut_strategy_catalog():
@@ -437,6 +436,7 @@ class TestLiveConfigManifestContract(TestCase):
             _csv_symbols(cast(Mapping[str, object], ws_data).get("SYMBOLS_ALLOWLIST")),
             context="torghut-ws subscription allowlist",
         )
+        self.assertNotIn("JANGAR_SYMBOLS_URL", ws_data)
 
     def test_sim_manifest_runs_paper_live_signal_profile(self) -> None:
         sim_env = _load_knative_env(
@@ -448,6 +448,17 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(sim_env.get("TRADING_PIPELINE_MODE"), "simple")
         self.assertTrue(_manifest_bool(sim_env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
         self.assertFalse(_manifest_bool(sim_env, "TRADING_SIMULATION_ENABLED"))
+        self.assertEqual(sim_env.get("TRADING_UNIVERSE_SOURCE"), "static")
+        self.assertEqual(
+            sim_env.get("TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR"), "false"
+        )
+        self.assertEqual(
+            sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED"), "false"
+        )
+        self.assertEqual(
+            sim_env.get("TRADING_STATIC_SYMBOLS"),
+            "NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC",
+        )
         self.assertEqual(sim_env.get("CLICKHOUSE_DATABASE"), "torghut")
         self.assertEqual(sim_env.get("TRADING_SIGNAL_TABLE"), "torghut.ta_signals")
         self.assertEqual(sim_env.get("TRADING_PRICE_TABLE"), "torghut.ta_microbars")
@@ -456,12 +467,25 @@ class TestLiveConfigManifestContract(TestCase):
             "300",
         )
         self.assertEqual(
-            _load_torghut_knative_env().get("TRADING_EXECUTABLE_QUOTE_LOOKBACK_SECONDS"),
+            _load_torghut_knative_env().get(
+                "TRADING_EXECUTABLE_QUOTE_LOOKBACK_SECONDS"
+            ),
             "60",
         )
         self.assertEqual(
             sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS"),
             "NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC",
+        )
+        self.assertNotIn("JANGAR_SYMBOLS_URL", sim_env)
+        self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_STATUS_URL", sim_env)
+        self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS", sim_env)
+        self.assertNotIn("TRADING_JANGAR_QUANT_HEALTH_URL", sim_env)
+        self.assertNotIn("TRADING_MARKET_CONTEXT_URL", sim_env)
+        self.assertNotIn("JANGAR_BASE_URL", sim_env)
+        self.assertNotIn("JANGAR_API_KEY", sim_env)
+        self.assertFalse(
+            any(key.startswith("TRADING_MARKET_CONTEXT_") for key in sim_env),
+            "paper live-signal service must not import external market-context wiring",
         )
         self.assertEqual(
             _csv_values(sim_env.get("TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS")),

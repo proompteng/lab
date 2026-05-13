@@ -246,6 +246,21 @@ The next engineer milestone is bounded:
    verdict id.
 5. Keep every repair launch at `max_notional=0` until Torghut publishes an accepted route warrant.
 
+## Implementation Notes
+
+The first Jangar implementation ships the dependency verdict in observe mode:
+
+- `control-plane-torghut-consumer-evidence.ts` extracts route-warrant id, state, freshness, blocker dependencies,
+  repair packet ids, target value gates, and value-gate states from Torghut consumer-evidence payloads.
+- `control-plane-dependency-verdict.ts` emits per-action `dependency_verdict_v1` records and a
+  `dependency_verdict_exchange` status envelope.
+- `/api/agents/control-plane/status` exposes the exchange, while stage-clearance packets and schedule-runner stamps
+  carry the dependency verdict id in shadow mode.
+
+This does not grant capital authority in Jangar. Paper and live actions remain held or blocked unless Torghut publishes
+an accepted, fresh route warrant with positive routeable candidates, explicit capital-gate pass evidence, and positive
+max notional for live support.
+
 ## Validation Gates
 
 - `capital_gate_safety`: a degraded or missing Torghut warrant must produce `hold` or `block`; no route may increase

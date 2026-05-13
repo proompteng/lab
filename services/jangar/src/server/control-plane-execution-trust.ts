@@ -145,10 +145,13 @@ const buildExecutionTrustStage = (input: {
   const configuredEveryMs = parseDurationToMs(configuredEveryRaw)
   const lastRunAt = asString(input.stageState['lastRunTime'])
   const lastRunMs = parseDateMs(lastRunAt)
+  const recentActiveMs = parseDateMs(input.stageState['recentActiveAt'])
   const recentSuccessMs = parseDateMs(input.stageState['recentSuccessAt'])
-  const effectiveLastRunMs = latestDateMs(lastRunMs, recentSuccessMs)
+  const effectiveLastRunMs = latestDateMs(lastRunMs, recentActiveMs, recentSuccessMs)
   const ageMs = effectiveLastRunMs === null ? null : input.nowMs - effectiveLastRunMs
   const staleAfterMs = configuredEveryMs === null ? null : configuredEveryMs * 2
+  const recentActiveFresh =
+    recentActiveMs !== null && (staleAfterMs === null || input.nowMs - recentActiveMs <= staleAfterMs)
   const recentSuccessFresh =
     recentSuccessMs !== null && (staleAfterMs === null || input.nowMs - recentSuccessMs <= staleAfterMs)
   const explicitFresh = readBooleanValue(input.stageState['fresh'])
@@ -160,12 +163,14 @@ const buildExecutionTrustStage = (input: {
         : ageMs !== null && ageMs <= staleAfterMs
   const stale =
     staleAfterMs !== null &&
+    !recentActiveFresh &&
     !recentSuccessFresh &&
     (explicitFresh === false || (inferredFresh !== null && !inferredFresh))
   const latestFailureCount = readConsecutiveFailures(input.stageState['consecutiveFailures'])
   const healthy = readBooleanValue(input.stageState['healthy'])
-  const staleScheduleButRecentlySucceeded = healthy === false && recentSuccessFresh && latestFailureCount === 0
-  const stageUnhealthy = healthy === false && !staleScheduleButRecentlySucceeded
+  const staleScheduleButRecentlyActiveOrSucceeded =
+    healthy === false && (recentActiveFresh || recentSuccessFresh) && latestFailureCount === 0
+  const stageUnhealthy = healthy === false && !staleScheduleButRecentlyActiveOrSucceeded
   const dataConfidence: ExecutionTrustStage['data_confidence'] =
     latestFailureCount > 0 || stale || stageUnhealthy
       ? 'degraded'
@@ -310,7 +315,11 @@ export const buildExecutionTrust = async ({
     const latestStageActivityMs = latestDateMs(
       ...SWARM_STAGE_NAMES.flatMap((stage) => {
         const stageState = asRecord(stageStates[stage]) ?? {}
-        return [parseDateMs(stageState.lastRunTime), parseDateMs(stageState.recentSuccessAt)]
+        return [
+          parseDateMs(stageState.lastRunTime),
+          parseDateMs(stageState.recentActiveAt),
+          parseDateMs(stageState.recentSuccessAt),
+        ]
       }),
     )
     const latestRequirementTimestampMs = latestDateMs(

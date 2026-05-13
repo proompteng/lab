@@ -31,6 +31,9 @@ export const SWARM_STAGE_CLEARANCE_ANNOTATION_REASON_CODES = 'swarm.proompteng.a
 export const SWARM_STAGE_CLEARANCE_ANNOTATION_MODE = 'swarm.proompteng.ai/stage-clearance-mode'
 export const SWARM_STAGE_CLEARANCE_ANNOTATION_REQUIRED_REPAIR_ACTION =
   'swarm.proompteng.ai/stage-clearance-required-repair-action'
+export const SWARM_STAGE_CLEARANCE_ANNOTATION_DEPENDENCY_VERDICT_ID = 'swarm.proompteng.ai/dependency-verdict-id'
+export const SWARM_STAGE_CLEARANCE_ANNOTATION_DEPENDENCY_VERDICT_DECISION =
+  'swarm.proompteng.ai/dependency-verdict-decision'
 
 export const buildScheduleRunnerCommand = (): string =>
   [
@@ -57,6 +60,8 @@ export const buildScheduleRunnerCommand = (): string =>
       reasonCodes: SWARM_STAGE_CLEARANCE_ANNOTATION_REASON_CODES,
       mode: SWARM_STAGE_CLEARANCE_ANNOTATION_MODE,
       requiredRepairAction: SWARM_STAGE_CLEARANCE_ANNOTATION_REQUIRED_REPAIR_ACTION,
+      dependencyVerdictId: SWARM_STAGE_CLEARANCE_ANNOTATION_DEPENDENCY_VERDICT_ID,
+      dependencyVerdictDecision: SWARM_STAGE_CLEARANCE_ANNOTATION_DEPENDENCY_VERDICT_DECISION,
     })};`,
     `  const swarmNameLabelName = ${JSON.stringify(SWARM_NAME_LABEL)};`,
     `  const stageLabelName = ${JSON.stringify(SWARM_STAGE_LABEL)};`,
@@ -244,6 +249,8 @@ export const buildScheduleRunnerCommand = (): string =>
     '    const freshUntil = asString(packet.fresh_until);',
     '    const reasonCodes = normalizeRuntimeKits(asArray(packet.reason_codes).map(asString).filter(Boolean));',
     '    const requiredRepairAction = asString(packet.required_repair_action);',
+    '    const dependencyVerdictId = asString(packet.dependency_verdict_ref);',
+    '    const dependencyVerdictDecision = asString(packet.dependency_verdict_decision);',
     '    const freshUntilMs = Date.parse(freshUntil);',
     '    if (!Number.isFinite(freshUntilMs) || freshUntilMs <= Date.now()) {',
     '      const message = `current stage clearance packet ${packetId} is stale`;',
@@ -260,6 +267,8 @@ export const buildScheduleRunnerCommand = (): string =>
     '    writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.reasonCodes, reasonCodes);',
     '    writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.mode, stageMode);',
     '    if (requiredRepairAction) writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.requiredRepairAction, requiredRepairAction);',
+    '    if (dependencyVerdictId) writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.dependencyVerdictId, dependencyVerdictId);',
+    '    if (dependencyVerdictDecision) writeNestedRecordValue(manifest, ["metadata", "annotations"], stageClearanceAnnotations.dependencyVerdictDecision, dependencyVerdictDecision);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearancePacketId", packetId);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceDecision", decision);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceActionClass", actionClass);',
@@ -267,6 +276,8 @@ export const buildScheduleRunnerCommand = (): string =>
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceReasonCodes", reasonCodes);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceEnforcement", stageMode);',
     '    if (requiredRepairAction) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceRequiredRepairAction", requiredRepairAction);',
+    '    if (dependencyVerdictId) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmDependencyVerdictId", dependencyVerdictId);',
+    '    if (dependencyVerdictDecision) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmDependencyVerdictDecision", dependencyVerdictDecision);',
     '  };',
     '  const targetByKind = {',
     "  AgentRun: { group: 'agents.proompteng.ai', version: 'v1alpha1', plural: 'agentruns' },",

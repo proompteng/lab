@@ -42,6 +42,11 @@ export type TorghutNegativeEvidenceInput = {
   routeable_exchange_zero_notional_repair_lot_ids?: string[]
   routeable_exchange_routeable_candidate_count?: number | null
   routeable_exchange_rejected_candidate_count?: number | null
+  route_warrant_id?: string | null
+  route_warrant_state?: string | null
+  route_warrant_repair_packet_ids?: string[]
+  route_warrant_blocking_dependency_names?: string[]
+  route_warrant_blocking_reason_codes?: string[]
 }
 
 type AddEvidence = (kind: NegativeEvidenceKind, reason: string, refs?: string[]) => void

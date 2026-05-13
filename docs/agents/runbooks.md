@@ -137,6 +137,7 @@ curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.torghut_action_slo_budgets'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.ready_action_exchange'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.action_custody_receipts[] | {action_class,decision,blocking_debt_classes,receipt_id}'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.dependency_verdict_exchange | {status,torghut_route_warrant_ref,repair_only_action_classes,held_action_classes,blocked_action_classes}'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.stage_clearance_packets[] | {stage,action_class,decision,packet_id,fresh_until}'
 curl -fsS http://localhost:8080/ready | jq '{status, serving_passport_id, runtime_kits, admission_passports}'
 kubectl api-resources --api-group=argoproj.io --no-headers || true
@@ -181,11 +182,16 @@ Expected outcomes:
   route-stability contracts, retained workflow failure debt, and Torghut consumer/profit-window evidence.
   `serve_readonly` may remain `allow` while `dispatch_normal`, `deploy_widen`, `merge_ready`, and capital actions are
   held or blocked.
+- `dependency_verdict_exchange` cites design doc 186 and exposes the Torghut route-warrant dispatch verdicts.
+  Read-only service may stay `allow`; bounded repair is only `repair_only` when a fresh Torghut warrant names
+  zero-notional repair packets and target value gates. `implement`, `deploy_widen`, `merge_ready`, paper, and live
+  support remain held or blocked while the warrant is missing, stale, repair-only, zero-candidate, or capital-unsafe.
 - `stage_clearance_packets` cite design doc 184 and include `packet_id`, `decision`, `fresh_until`, and reason codes
   for scheduled `discover`, `plan`, `implement`, and `verify` launches. During the shadow rollout, schedule-runner pods
   stamp the current packet ID and decision onto launched AgentRuns via
-  `swarm.proompteng.ai/stage-clearance-packet-id` and `swarmStageClearancePacketId`; a launch without those fields is
-  not acceptable green rollout evidence.
+  `swarm.proompteng.ai/stage-clearance-packet-id` and `swarmStageClearancePacketId`, and stamp
+  `swarmDependencyVerdictId` when the packet cites a current dependency verdict. A launch without those fields is not
+  acceptable green rollout evidence for Torghut-facing work.
 - If collaboration is degraded or blocked because a runtime helper is missing, `/ready` stays `200` as
   long as the `serving` passport is still `allow` or `degrade`; the blocked `swarm_*` passport surfaces
   the missing component in `reason_codes`.

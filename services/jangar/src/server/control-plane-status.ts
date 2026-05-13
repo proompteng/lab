@@ -680,6 +680,7 @@ export const buildControlPlaneStatus = async (
     actionCustodyReceipts,
     stageClearancePackets,
     readyActionExchange,
+    dependencyVerdictExchange,
     clearanceMarketLedger,
   } = await buildControlPlaneMaterialActionArtifacts({
     now,
@@ -772,6 +773,7 @@ export const buildControlPlaneStatus = async (
     negative_evidence_router: negativeEvidenceRouter.router,
     action_slo_budgets: negativeEvidenceRouter.budgets,
     torghut_action_slo_budgets: negativeEvidenceRouter.torghutBudgets,
+    dependency_verdict_exchange: dependencyVerdictExchange,
     control_plane_controller_witness: controllerWitness,
     material_action_verdict_epoch: materialActionVerdictEpoch,
     material_action_verdicts: materialActionVerdictEpoch.final_verdicts,
