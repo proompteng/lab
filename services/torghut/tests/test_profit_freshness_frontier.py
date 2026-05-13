@@ -656,6 +656,13 @@ def test_fresh_execution_tca_does_not_inherit_routeability_blockers() -> None:
             ],
             "lots": [
                 {
+                    "lot_id": "routeability-repair-lot:alpha",
+                    "lot_type": "alpha_readiness_repair",
+                    "current_state": "blocked",
+                    "blocking_reason_codes": ["alpha_readiness_fail"],
+                    "hypothesis_ids": ["H-AAPL"],
+                },
+                {
                     "lot_id": "routeability-repair-lot:tca",
                     "lot_type": "route_universe_tca_repair",
                     "current_state": "blocked",
@@ -664,7 +671,7 @@ def test_fresh_execution_tca_does_not_inherit_routeability_blockers() -> None:
                         "execution_tca_symbol_missing",
                     ],
                     "hypothesis_ids": ["H-AAPL", "H-AMD", "H-AMZN"],
-                }
+                },
             ],
         },
         route_reacquisition_board={
@@ -741,6 +748,104 @@ def test_fresh_execution_tca_does_not_inherit_routeability_blockers() -> None:
         in route_dimension["reason_codes"]
     )
     assert (
-        frontier["next_zero_notional_action"] == "settle_routeability_acceptance_lots"
+        frontier["next_zero_notional_action"] == "recompute_route_tca_and_fill_quality"
+    )
+    assert (
+        frontier["selected_zero_notional_repairs"][0]["zero_notional_action"]
+        == "recompute_route_tca_and_fill_quality"
     )
     assert frontier["capital_posture"]["paper_replay_candidate_count"] == 0
+
+
+def test_route_readiness_uses_settlement_action_without_unsettled_tca_lot() -> None:
+    frontier = _frontier(
+        proof_floor_receipt={
+            "schema_version": "torghut.profitability-proof-floor.v1",
+            "account_label": "PA3SX7FYNUTF",
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "blocking_reasons": [],
+            "proof_dimensions": [
+                {
+                    "dimension": "execution_tca",
+                    "state": "pass",
+                    "reason": "route_tca_passed",
+                    "freshness_seconds": 71,
+                    "source_ref": {
+                        "last_computed_at": "2026-05-12T15:08:49+00:00",
+                    },
+                }
+            ],
+        },
+        routeability_repair_acceptance_ledger={
+            "schema_version": "torghut.routeability-repair-acceptance-ledger.v1",
+            "ledger_id": "routeability-acceptance-ledger:route-alpha-blocked",
+            "aggregate_state": "blocked",
+            "accepted_routeable_candidate_count": 0,
+            "aggregate_blocking_reason_codes": ["alpha_readiness_fail"],
+            "lots": [
+                {
+                    "lot_id": "routeability-repair-lot:tca",
+                    "lot_type": "route_universe_tca_repair",
+                    "current_state": "accepted",
+                    "blocking_reason_codes": [],
+                },
+                {
+                    "lot_id": "routeability-repair-lot:alpha",
+                    "lot_type": "alpha_readiness_repair",
+                    "current_state": "blocked",
+                    "blocking_reason_codes": ["alpha_readiness_fail"],
+                    "hypothesis_ids": ["H-AAPL"],
+                },
+            ],
+        },
+        route_reacquisition_board={
+            "summary": {"capital_eligible_symbol_count": 0},
+            "rows": [
+                {
+                    "symbol": "AAPL",
+                    "state": "routeable",
+                    "current_blocker": "",
+                    "hypothesis_ids": ["H-AAPL"],
+                }
+            ],
+        },
+        quant_evidence={
+            "ok": True,
+            "status": "healthy",
+            "latest_metrics_count": 144,
+            "stage_count": 4,
+        },
+        market_context_status={"status": "healthy", "last_domain_states": {}},
+        empirical_jobs_status={
+            "ready": True,
+            "status": "healthy",
+            "eligible_jobs": [
+                "benchmark_parity",
+                "foundation_router_parity",
+                "janus_event_car",
+                "janus_hgrm_reward",
+            ],
+            "candidate_ids": ["candidate-aapl"],
+            "dataset_snapshot_refs": ["dataset-aapl"],
+        },
+        hypothesis_payload={
+            "summary": {"promotion_eligible_total": 0, "reason_totals": {}},
+            "items": [{"hypothesis_id": "H-AAPL", "reasons": []}],
+        },
+        jangar_reliability_settlement_ref={
+            "settlement_ref": "jangar-reliability-settlement:ready",
+            "decision": "allow",
+            "state": "current",
+            "reason_codes": [],
+        },
+    )
+
+    route_dimension = _dimension(frontier, "route_readiness")
+
+    assert route_dimension["state"] == "blocked"
+    assert "alpha_readiness_fail" in route_dimension["reason_codes"]
+    assert (
+        frontier["next_zero_notional_action"] == "settle_routeability_acceptance_lots"
+    )
