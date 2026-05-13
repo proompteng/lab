@@ -12,4 +12,5 @@ Documents:
 - [Submission PRD](./prd-submission.md)
 - [Submission TDD](./tdd-submission.md)
 - [Submission Evidence](./submission-evidence.md)
+- [Panel Presentation](./panel-presentation.md)
 - [Product Requirements Document](./prd.md)

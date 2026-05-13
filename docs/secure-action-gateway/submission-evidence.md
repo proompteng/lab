@@ -85,22 +85,24 @@ curl -fsS -X POST https://sag.proompteng.ai/api/rules \
 curl -fsS https://sag.proompteng.ai/api/events/export
 ```
 
-Expected live result:
+Verified live result on 2026-05-13:
 
-- The read task succeeds and records SQL, REST, GraphQL, and legacy connector calls.
-- The guarded mutation task enters `waiting_approval` before executing the risky step.
-- Approving the generated approval records an `approval:approved` event and completes the held decision.
-- The JSONL export contains task, plan, connector, policy, approval, and audit events without raw secret values.
+- Read task `task-00066` succeeded and recorded SQL, REST, GraphQL, and legacy connector calls.
+- Guarded mutation task `task-00081` entered `waiting_approval` before executing `guarded_action.execute`.
+- Approval `appr-00097` moved to `approved` and task `task-00081` completed with decision `approved`.
+- Natural-language rule `rule-00062` was created by translator `codex-app-server`.
+- JSONL export contained task, plan, connector, policy, approval, and audit events without raw secret values.
+- CNPG row counts after smoke: `tasks=5`, `calls=20`, `events=39`, `approvals=2`, `rules=5`.
 
 ## Deliverable Map
 
 | Requirement                              | Evidence                                                 |
 | ---------------------------------------- | -------------------------------------------------------- |
 | Working product URL or runnable artifact | `https://sag.proompteng.ai`; `services/sag`              |
-| Source code                              | `services/sag`, `argocd/sag`, `packages/scripts/src/sag`; PRs `#6452`, `#6453`, `#6454`, `#6455` |
+| Source code                              | `services/sag`, `argocd/sag`, `packages/scripts/src/sag`; PRs `#6452`, `#6453`, `#6454`, `#6455`, `#6456` |
 | PRD, 1-2 pages                           | `docs/secure-action-gateway/prd-submission.md`           |
 | TDD, 1-2 pages                           | `docs/secure-action-gateway/tdd-submission.md`           |
-| 2-5 minute walkthrough                   | Record the workflow above against the live URL           |
+| 2-5 minute walkthrough                   | `docs/secure-action-gateway/panel-presentation.md`       |
 | Authorship/build note                    | See below                                                |
 
 ## Authorship / Build Note
