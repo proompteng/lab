@@ -10,6 +10,17 @@ KUBE_VERSION_FOR_HELM="${KUBE_VERSION_FOR_HELM:-${HELM_KUBE_VERSION:-1.35.0}}"
 DUMMY_IMAGE_DIGEST="sha256:0000000000000000000000000000000000000000000000000000000000000000"
 TEST_IMAGE_DIGEST="sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69"
 
+curl_with_retry() {
+  curl \
+    --connect-timeout 20 \
+    --max-time 120 \
+    --retry 5 \
+    --retry-all-errors \
+    --retry-delay 5 \
+    -fsSL \
+    "$@"
+}
+
 run_with_helm3() {
   # kustomize --enable-helm is not compatible with Helm v4 yet; prefer Helm v3.
   #
@@ -366,7 +377,7 @@ CRD_SCHEMA_VERSION="${KUBECONFORM_K8S_VERSION:-1.27.0}"
 crd_schema_dir="$(mktemp -d)"
 trap 'rm -rf "${crd_schema_dir}"' EXIT
 crd_schema_base="https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v${CRD_SCHEMA_VERSION}-standalone-strict"
-curl -fsSL -o "${crd_schema_dir}/_definitions.json" "${crd_schema_base}/_definitions.json"
+curl_with_retry -o "${crd_schema_dir}/_definitions.json" "${crd_schema_base}/_definitions.json"
 python3 - "${crd_schema_dir}" <<'PY'
 import json
 import pathlib
