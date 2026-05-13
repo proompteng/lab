@@ -909,8 +909,51 @@ class TestLocalIntradayTsmomReplay(TestCase):
 
         self.assertEqual(funnel["strategy_evaluations"], 1)
         self.assertEqual(
+            dict(funnel["first_failed_gate_counts"]),
+            {"breakout_continuation_long:feed_quality": 1},
+        )
+        self.assertEqual(
+            dict(funnel["failing_threshold_counts"]),
+            {"breakout_continuation_long:feed_quality:recent_quote_invalid_ratio": 1},
+        )
+        self.assertEqual(funnel["passed_trace_count"], 0)
+        self.assertEqual(
             dict(funnel["gate_pass_counts"]),
             {"breakout_continuation_long:structure": 1},
+        )
+
+    def test_record_trace_for_funnel_handles_missing_failed_gate(self) -> None:
+        funnel = _init_funnel_stats()
+        trace = StrategyTrace(
+            strategy_id="short@prod",
+            strategy_type="mean_reversion_short",
+            symbol="META",
+            event_ts="2026-03-27T17:30:24+00:00",
+            timeframe="1Sec",
+            passed=False,
+            action=None,
+            first_failed_gate="confirmation",
+            gates=(
+                GateTrace(
+                    gate="structure",
+                    category="structure",
+                    passed=True,
+                    thresholds=(),
+                ),
+            ),
+        )
+
+        _record_trace_for_funnel(funnel, trace)
+
+        self.assertEqual(funnel["strategy_evaluations"], 1)
+        self.assertEqual(
+            dict(funnel["first_failed_gate_counts"]),
+            {"mean_reversion_short:confirmation": 1},
+        )
+        self.assertEqual(dict(funnel["failing_threshold_counts"]), {})
+        self.assertEqual(
+            dict(funnel["gate_pass_counts"]),
+            {"mean_reversion_short:structure": 1},
         )
 
     def test_build_near_miss_uses_failed_gate_thresholds(self) -> None:

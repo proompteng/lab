@@ -224,6 +224,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-last-trading-day", default="")
     parser.add_argument("--allow-stale-tape", action="store_true")
     parser.add_argument("--prefetch-full-window-rows", action="store_true")
+    parser.add_argument(
+        "--collect-train-gate-diagnostics",
+        dest="collect_train_gate_diagnostics",
+        action="store_true",
+        help="Persist aggregate train-window gate diagnostics for real replay candidates.",
+    )
+    parser.add_argument(
+        "--no-collect-train-gate-diagnostics",
+        dest="collect_train_gate_diagnostics",
+        action="store_false",
+        help="Disable aggregate train-window gate diagnostics.",
+    )
     parser.add_argument("--min-active-day-ratio", default="0.90")
     parser.add_argument("--min-positive-day-ratio", default="0.60")
     parser.add_argument("--min-daily-net-pnl", default="0")
@@ -245,7 +257,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-persist-results", dest="persist_results", action="store_false"
     )
-    parser.set_defaults(persist_results=True)
+    parser.set_defaults(
+        persist_results=True,
+        collect_train_gate_diagnostics=True,
+    )
     return parser.parse_args()
 
 
@@ -2428,6 +2443,9 @@ def _run_real_replay(
         expected_last_trading_day=args.expected_last_trading_day,
         allow_stale_tape=args.allow_stale_tape,
         prefetch_full_window_rows=args.prefetch_full_window_rows,
+        collect_train_gate_diagnostics=bool(
+            getattr(args, "collect_train_gate_diagnostics", True)
+        ),
         top_n=args.top_k,
         max_candidates_to_evaluate=getattr(
             args,

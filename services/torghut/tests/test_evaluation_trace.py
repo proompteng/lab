@@ -131,6 +131,9 @@ class TestEvaluationTrace(TestCase):
             quote_valid_rows=9,
             strategy_evaluations=5,
             gate_pass_counts={'b:confirmation': 2, 'a:eligibility': 4},
+            first_failed_gate_counts={'b:feed_quality': 3},
+            failing_threshold_counts={'b:feed_quality:spread_bps': 3},
+            passed_trace_count=2,
             decision_count=2,
             filled_count=1,
             filled_notional=Decimal('451.25'),
@@ -150,6 +153,11 @@ class TestEvaluationTrace(TestCase):
             report_payload['buckets'][0]['gate_pass_counts'],
             {'a:eligibility': 4, 'b:confirmation': 2},
         )
+        self.assertEqual(
+            report_payload['buckets'][0]['first_failed_gate_counts'],
+            {'b:feed_quality': 3},
+        )
+        self.assertEqual(report_payload['buckets'][0]['passed_trace_count'], 2)
 
         near_miss = NearMissRecord(
             trading_day='2026-03-27',
