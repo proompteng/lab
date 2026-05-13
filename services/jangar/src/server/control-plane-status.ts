@@ -684,6 +684,7 @@ export const buildControlPlaneStatus = async (
     readyActionExchange,
     dependencyVerdictExchange,
     clearanceMarketLedger,
+    stageCreditLedger,
   } = await buildControlPlaneMaterialActionArtifacts({
     now,
     namespace: options.namespace,
@@ -767,6 +768,7 @@ export const buildControlPlaneStatus = async (
     material_action_activation_receipts: materialActionActivationReceipts,
     action_custody_receipts: actionCustodyReceipts,
     stage_clearance_packets: stageClearancePackets,
+    stage_credit_ledger: stageCreditLedger,
     ready_action_exchange: readyActionExchange,
     repair_warrant_exchange: repairWarrantExchange,
     consumer_evidence_leases: consumerEvidenceLeases,

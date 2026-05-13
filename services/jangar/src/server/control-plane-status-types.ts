@@ -28,6 +28,7 @@ import type {
   RuntimeKitStatus,
   SourceRolloutTruthExchange,
   StageClearancePacket,
+  StageCreditLedger,
   WorkflowsReliabilityStatus,
 } from '~/data/agents-control-plane'
 
@@ -184,6 +185,7 @@ export type ControlPlaneStatus = {
   material_action_activation_receipts: MaterialActionActivationReceipt[]
   action_custody_receipts: ActionCustodyReceipt[]
   stage_clearance_packets: StageClearancePacket[]
+  stage_credit_ledger: StageCreditLedger | null
   ready_action_exchange: ReadyActionExchange
   repair_warrant_exchange: RepairWarrantExchange
   consumer_evidence_leases: ConsumerEvidenceLeaseSet

@@ -370,7 +370,7 @@ The first bounded implementation milestone is a read-model PR:
   workflow reliability, AgentRun ingestion, controller witness, source-rollout truth, stage-clearance packets,
   clearance-market ledger, rollout health, failure-domain leases, and Torghut consumer evidence.
 - Add the ledger to `services/jangar/src/server/control-plane-status.ts` and the API payload while keeping
-  `evidence_mode=shadow`.
+  `evidence_mode=observe`.
 - Add targeted tests in `services/jangar/src/server/__tests__/control-plane-stage-credit-ledger.test.ts` and extend the
   status test so held normal stages have zero spendable credit and repair-only stages expose one bounded future.
 - Update the UI only if the existing control-plane status component cannot display the new payload without breaking.
@@ -389,6 +389,17 @@ The third milestone is settlement:
   burned, converted, or infrastructure-owned.
 - Add a small persisted settlement table only when the shadow reducer proves the in-memory status model is useful. The
   initial reducer can compute from current AgentRun resources and avoid a migration.
+
+Read-model implementation binding:
+
+- `services/jangar/src/server/control-plane-stage-credit-ledger.ts` is the first implementation owner for this design.
+- `JANGAR_STAGE_CREDIT_LEDGER_ENABLED=false` removes the payload; otherwise the read model is emitted by default.
+- `JANGAR_STAGE_CREDIT_LEDGER_MODE` accepts `observe`, `shadow`, `hold`, or `enforce`; unset values resolve to
+  `observe`.
+- The read model consumes the existing clearance-market ledger and stage-clearance packets. It does not create,
+  delete, or mutate schedules, AgentRuns, Kubernetes resources, database rows, or Torghut orders.
+- Scheduler shadow stamping remains the next bounded implementation milestone and must cite this document plus the
+  emitted `stage_credit_ledger.handoff_contract.next_implementation_milestone`.
 
 ## Validation Gates
 

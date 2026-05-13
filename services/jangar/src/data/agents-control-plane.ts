@@ -1335,6 +1335,83 @@ export type ClearanceMarketLedger = {
   }
 }
 
+export type StageCreditEvidenceMode = 'observe' | 'shadow' | 'hold' | 'enforce'
+
+export type StageCreditDecision = ClearanceMarketDecision
+
+export type StageCreditAccount = {
+  account_id: string
+  stage: StageClearanceStage
+  action_class: ActionSloBudgetActionClass
+  opening_credit: number
+  base_credit: number
+  evidence_freshness_bonus: number
+  torghut_repair_value_credit: number
+  rollout_truth_deposit: number
+  failure_debt_tax: number
+  controller_witness_tax: number
+  source_rollout_tax: number
+  capital_safety_tax: number
+  available_credit: number
+  minimum_spend: number
+  max_concurrent_runs: number
+  max_runtime_seconds: number | null
+  max_notional: number
+  decision: StageCreditDecision
+  reason_codes: string[]
+  required_repair_actions: string[]
+  evidence_refs: string[]
+  selected_repair_lot_ref: string | null
+  rollback_target: string
+}
+
+export type RunnerSlotFuture = {
+  future_id: string
+  account_id: string
+  stage: StageClearanceStage
+  action_class: ActionSloBudgetActionClass
+  reserved_credit: number
+  expires_at: string
+  max_dispatches: number
+  max_runtime_seconds: number | null
+  max_notional: number
+  spend_reason: string
+  required_receipts: string[]
+  settlement_state: 'open' | 'refunded' | 'burned' | 'converted' | 'expired'
+  settlement_ref: string | null
+}
+
+export type StageCreditLedger = {
+  schema_version: 'jangar.stage-credit-ledger.v1'
+  ledger_id: string
+  namespace: string
+  generated_at: string
+  fresh_until: string
+  governing_design_refs: string[]
+  observed_revision: {
+    source_head_sha: string | null
+    gitops_revision: string | null
+  }
+  evidence_mode: StageCreditEvidenceMode
+  credit_epoch_id: string
+  stage_accounts: StageCreditAccount[]
+  runner_slot_futures: RunnerSlotFuture[]
+  retained_failure_debt_refs: string[]
+  settlement_policy: {
+    mode: 'read_model_only'
+    refund_condition: string
+    burn_condition: string
+    conversion_condition: string
+    rollback_target: string
+  }
+  handoff_contract: {
+    value_gates: string[]
+    status: StageCreditDecision
+    next_implementation_milestone: string
+    rollback_target: string
+  }
+}
+
 export type DeploymentRolloutStatus = {
   name: string
   namespace: string

@@ -23,6 +23,7 @@ import {
 } from '~/server/control-plane-repair-warrant-exchange'
 import { buildRouteStabilityEscrow } from '~/server/control-plane-route-stability-escrow'
 import { buildStageClearancePackets } from '~/server/control-plane-stage-clearance'
+import { buildStageCreditLedger, isStageCreditLedgerEnabled } from '~/server/control-plane-stage-credit-ledger'
 import type {
   AgentRunIngestionStatus,
   ControlPlaneRolloutHealth,
@@ -181,6 +182,19 @@ export const buildControlPlaneMaterialActionArtifacts = async (input: ControlPla
         torghutConsumerEvidence: input.torghutConsumerEvidence,
       })
     : null
+  const stageCreditLedger = isStageCreditLedgerEnabled()
+    ? buildStageCreditLedger({
+        now: input.now,
+        namespace: input.namespace,
+        database: input.database,
+        workflows: input.workflows,
+        agentRunIngestion: input.agentRunIngestion,
+        controllerWitness: input.controllerWitness,
+        stageClearancePackets,
+        clearanceMarketLedger,
+        torghutConsumerEvidence: input.torghutConsumerEvidence,
+      })
+    : null
 
   return {
     repairWarrantExchange,
@@ -190,6 +204,7 @@ export const buildControlPlaneMaterialActionArtifacts = async (input: ControlPla
     stageClearancePackets,
     dependencyVerdictExchange,
     clearanceMarketLedger,
+    stageCreditLedger,
     ...actionCustodyProjection,
   }
 }
