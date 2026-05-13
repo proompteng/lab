@@ -183,6 +183,9 @@ spec:
 
     Requirements:
     - Work only on `${head}` based on `${base}` in `${repository}`.
+    - Start from current `${base}` and the configured `${head}` branch. If the remote `${head}` branch is absent or only
+      has merged/closed historical PRs, create a fresh local `${head}` from `${base}` and open one new PR; do not spend
+      the run auditing old all-state PR history for that branch.
     - Identify and cite the governing design document and runtime requirement signal (path/PR/issue doc/payload) before coding.
     - If `${swarmBusinessEvidenceUrl}` is available but cannot be read, fail with the exact command/error and the smallest unblocker instead of choosing speculative work.
     - For Torghut, `/trading/revenue-repair` is the source of truth for revenue blocker priority. Pick the top actionable `repair_queue` item that maps to `${swarmValueGates}`; do not enable live submission while `business_state=repair_only`, `revenue_ready=false`, or `repair_queue` is non-empty.
@@ -382,6 +385,8 @@ spec:
     Requirements:
     - Work only on `${head}` based on `${base}` in `${repository}`.
     - Enumerate open PRs only enough to select one release slice; do not audit the full backlog in a verify run.
+    - Ignore or close superseded release/promotion PRs when their source commit, image digest, or base is older than the
+      live rollout already reported by `${swarmBusinessEvidenceUrl}` or Argo; do not repair stale promotion branches.
     - Prioritize unblock-first/high-impact, and move at most one selected PR to mergeable state per run.
     - Own selected PRs end-to-end: resolve blocking comments/conflicts and fix code/tests/CI until all required checks are green.
     - Treat `${swarmValidationContract}` as the release acceptance contract; do not count a PR as useful unless it advances `${swarmBusinessMetric}` or records the exact blocker.
