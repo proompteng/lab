@@ -498,10 +498,20 @@ spec:
             for token in ('unauthorized', 'forbidden', 'token', 'auth', 'api key', 'bootstrap', 'transport', 'connection refused')
           ):
             return 'provider_bootstrap_failure'
+          if any(
+            token in normalized
+            for token in (
+              'syntaxerror',
+              'indentationerror',
+              'traceback',
+              'command exited with status 1',
+            )
+          ):
+            return 'payload_validation_failure'
           return 'provider_turn_failed'
 
         def _can_retry_with_next_provider(failure_category: str) -> bool:
-          return failure_category in {'provider_attempt_timeout', 'provider_fallback_eligible'}
+          return failure_category in {'provider_attempt_timeout', 'provider_fallback_eligible', 'payload_validation_failure'}
 
         def _write_process_output(stream, output) -> None:
           if not output:
@@ -533,7 +543,7 @@ spec:
               _write_process_output(sys.stderr, result.stderr)
             message = (result.stderr or result.stdout or '').strip()
             last_line = message.splitlines()[-1] if message else ''
-            return result.returncode, _classify_attempt_failure(result.returncode, last_line), last_line
+            return result.returncode, _classify_attempt_failure(result.returncode, message), last_line
           except subprocess.TimeoutExpired as error:
             if error.stdout:
               _write_process_output(sys.stdout, error.stdout)

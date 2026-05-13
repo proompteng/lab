@@ -243,4 +243,50 @@ assert message == 'provider_attempt_timeout', message
     expect(stdout).toContain('out')
     expect(stderr).toContain('err')
   })
+
+  it('classifies generated script syntax failures as provider-fallback eligible payload failures', async () => {
+    const manifest = await readFile(
+      resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
+      'utf8',
+    )
+    const runner = extractInputFileContent(manifest, '/root/.codex/market-context-provider-runner.py')
+    const tempDir = await mkdtemp(resolve(tmpdir(), 'market-context-runner-'))
+    const runnerPath = resolve(tempDir, 'market-context-provider-runner.py')
+    const probePath = resolve(tempDir, 'probe.py')
+    await writeFile(runnerPath, runner)
+    await writeFile(
+      probePath,
+      `
+import importlib.util
+import subprocess
+import sys
+from pathlib import Path
+
+runner_path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location('runner', runner_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+def fake_run(*args, **kwargs):
+  return subprocess.CompletedProcess(
+    args=args[0],
+    returncode=1,
+    stdout='',
+    stderr='  File "<stdin>", line 689\\nSyntaxError: ( was never closed\\nCommand exited with status 1\\n',
+  )
+
+module.subprocess.run = fake_run
+exit_code, failure_category, message = module._run_attempt(Path('/tmp/event.json'), 'codex', 'gpt-5.5', 1)
+assert exit_code == 1, exit_code
+assert failure_category == 'payload_validation_failure', failure_category
+assert module._can_retry_with_next_provider(failure_category) is True
+assert message == 'Command exited with status 1', message
+`,
+    )
+
+    const { stderr } = await execFileAsync('python3', [probePath, runnerPath], { timeout: 10_000 })
+
+    expect(stderr).toContain('SyntaxError')
+  })
 })
