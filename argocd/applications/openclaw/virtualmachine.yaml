@@ -44,7 +44,7 @@ spec:
           type: q35
         resources:
           requests:
-            memory: 12Gi
+            memory: 6Gi
         devices:
           disks:
             - name: rootdisk
