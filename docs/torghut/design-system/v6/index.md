@@ -11,7 +11,9 @@
   `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-13T12:25Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-13T12:25Z`):
+- Evidence (current next-work priority, refreshed `2026-05-13T12:27Z`):
+  - `193-torghut-route-repair-yield-board-and-hypothesis-reentry-guardrails-2026-05-13.md`
+  - `docs/agents/designs/189-jangar-authority-provenance-settlement-and-rollout-reentry-windows-2026-05-13.md`
   - `194-torghut-quant-plan-closeout-and-repair-only-handoff-2026-05-13.md`
   - `193-torghut-account-scoped-quant-witness-bridge-and-route-reentry-2026-05-13.md`
   - `docs/agents/designs/189-jangar-account-scoped-quant-witness-custody-and-route-reentry-2026-05-13.md`
