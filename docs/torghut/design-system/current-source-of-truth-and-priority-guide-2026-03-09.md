@@ -135,7 +135,19 @@ If the question is "what should I trust right now?", start here:
 
 The current highest-priority work is:
 
-The May 13 freshness-carry handoff is the current top priority after the source-serving proof ledger landed:
+The May 13 repair-outcome dividend ledger is the current top priority after freshness-carry and repair-bid settlement
+landed:
+
+- make Torghut publish `repair_outcome_dividend_ledger` from status, health, readyz, and consumer-evidence surfaces so
+  dispatchable zero-notional repair lots have a typed outcome receipt or open escrow in
+  `docs/torghut/design-system/v6/193-torghut-repair-outcome-dividend-ledger-and-capital-reentry-frontier-2026-05-13.md`;
+- make Jangar consume repair outcome escrows in terminal debt compaction before widening additional repair dispatch in
+  `docs/agents/designs/189-jangar-terminal-debt-compaction-and-repair-outcome-escrow-2026-05-13.md`;
+- preserve `max_notional=0`, shadow capital, and live-submit holds while measuring retired, preserved, or no-delta
+  repair reason codes against `zero_notional_or_stale_evidence_rate`, `routeable_candidate_count`,
+  `fill_tca_or_slippage_quality`, and `capital_gate_safety`.
+
+The May 13 freshness-carry handoff remains an active supporting priority:
 
 - make Torghut publish `freshness_carry_ledger` from status, health, readyz, and consumer-evidence surfaces so TA
   signal, TCA, empirical, market-context, quant-evidence, and source-serving freshness are priced as explicit repair

@@ -112,6 +112,9 @@ from .trading.quality_adjusted_profit_frontier import (
 from .trading.renewal_bond_profit_escrow import build_renewal_bond_profit_escrow
 from .trading.revenue_repair import build_revenue_repair_digest
 from .trading.repair_bid_settlement import build_repair_bid_settlement_ledger
+from .trading.repair_outcome_dividend import (
+    build_repair_outcome_dividend_ledger,
+)
 from .trading.repair_receipt_frontier import build_repair_receipt_frontier
 from .trading.route_evidence_clearinghouse import (
     build_route_evidence_clearinghouse_packet,
@@ -974,6 +977,13 @@ def _evaluate_trading_health_payload(
         live_submission_gate=live_submission_gate,
         proof_floor=proof_floor,
     )
+    repair_outcome_dividend_ledger = _build_repair_outcome_dividend_ledger_payload(
+        repair_bid_settlement_ledger=repair_bid_settlement_ledger,
+        repair_receipt_frontier=repair_receipt_frontier,
+        freshness_carry_ledger=freshness_carry_ledger,
+        route_warrant_exchange=route_warrant_exchange,
+        live_submission_gate=live_submission_gate,
+    )
     live_mode = settings.trading_mode == "live"
     empirical_jobs_required = (
         live_mode and settings.trading_empirical_jobs_health_required
@@ -1078,6 +1088,7 @@ def _evaluate_trading_health_payload(
             "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
             "freshness_carry_ledger": freshness_carry_ledger,
             "repair_receipt_frontier": repair_receipt_frontier,
+            "repair_outcome_dividend_ledger": repair_outcome_dividend_ledger,
             "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
             "route_reacquisition_board": route_reacquisition_board,
             "quant_evidence": quant_evidence,
@@ -2697,6 +2708,13 @@ def trading_status() -> dict[str, object]:
         live_submission_gate=live_submission_gate,
         proof_floor=proof_floor,
     )
+    repair_outcome_dividend_ledger = _build_repair_outcome_dividend_ledger_payload(
+        repair_bid_settlement_ledger=repair_bid_settlement_ledger,
+        repair_receipt_frontier=repair_receipt_frontier,
+        freshness_carry_ledger=freshness_carry_ledger,
+        route_warrant_exchange=route_warrant_exchange,
+        live_submission_gate=live_submission_gate,
+    )
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -2739,6 +2757,7 @@ def trading_status() -> dict[str, object]:
         "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
         "freshness_carry_ledger": freshness_carry_ledger,
         "repair_receipt_frontier": repair_receipt_frontier,
+        "repair_outcome_dividend_ledger": repair_outcome_dividend_ledger,
         "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
         "route_reacquisition_board": route_reacquisition_board,
         "quant_evidence": quant_evidence,
@@ -3154,6 +3173,13 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         live_submission_gate=live_submission_gate,
         proof_floor=proof_floor,
     )
+    repair_outcome_dividend_ledger = _build_repair_outcome_dividend_ledger_payload(
+        repair_bid_settlement_ledger=repair_bid_settlement_ledger,
+        repair_receipt_frontier=repair_receipt_frontier,
+        freshness_carry_ledger=freshness_carry_ledger,
+        route_warrant_exchange=route_warrant_exchange,
+        live_submission_gate=live_submission_gate,
+    )
     return {
         "schema_version": "torghut.consumer-evidence-status.v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -3188,6 +3214,7 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
         "freshness_carry_ledger": freshness_carry_ledger,
         "repair_receipt_frontier": repair_receipt_frontier,
+        "repair_outcome_dividend_ledger": repair_outcome_dividend_ledger,
     }
 
 
@@ -5495,6 +5522,26 @@ def _build_repair_receipt_frontier_payload(
         route_warrant_exchange=route_warrant_exchange,
         live_submission_gate=live_submission_gate,
         proof_floor_receipt=proof_floor,
+    )
+
+
+def _build_repair_outcome_dividend_ledger_payload(
+    *,
+    repair_bid_settlement_ledger: Mapping[str, Any],
+    repair_receipt_frontier: Mapping[str, Any],
+    freshness_carry_ledger: Mapping[str, Any],
+    route_warrant_exchange: Mapping[str, Any],
+    live_submission_gate: Mapping[str, Any],
+) -> dict[str, object]:
+    return build_repair_outcome_dividend_ledger(
+        account_label=settings.trading_account_label,
+        window=settings.trading_jangar_quant_window,
+        trading_mode=settings.trading_mode,
+        repair_bid_settlement_ledger=repair_bid_settlement_ledger,
+        repair_receipt_frontier=repair_receipt_frontier,
+        freshness_carry_ledger=freshness_carry_ledger,
+        route_warrant_exchange=route_warrant_exchange,
+        live_submission_gate=live_submission_gate,
     )
 
 

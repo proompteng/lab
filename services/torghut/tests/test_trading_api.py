@@ -1226,6 +1226,46 @@ class TestTradingApi(TestCase):
             repair_receipt_frontier["frontier_state"],
             {"repair_only", "paper_blocked", "paper_candidate", "live_candidate"},
         )
+        repair_outcome = payload["repair_outcome_dividend_ledger"]
+        self.assertEqual(
+            repair_outcome["schema_version"],
+            "torghut.repair-outcome-dividend-ledger.v1",
+        )
+        self.assertEqual(repair_outcome["max_notional"], "0")
+        self.assertFalse(repair_outcome["live_submit_enabled"])
+        self.assertEqual(
+            repair_outcome["source_repair_bid_settlement_ledger_id"],
+            repair_bid_settlement["ledger_id"],
+        )
+        self.assertEqual(
+            repair_outcome["repair_receipt_frontier_ref"],
+            repair_receipt_frontier["frontier_id"],
+        )
+        self.assertEqual(
+            repair_outcome["summary"]["repair_receipt_binding_count"],
+            len(repair_outcome["outcome_receipts"]),
+        )
+        self.assertEqual(
+            repair_outcome["summary"]["open_escrow_count"],
+            len(repair_outcome["open_escrows"]),
+        )
+        self.assertEqual(
+            {
+                receipt["repair_lot_id"]
+                for receipt in repair_outcome["outcome_receipts"]
+            },
+            set(repair_bid_settlement["dispatchable_lot_ids"]),
+        )
+        self.assertTrue(
+            all(
+                escrow["max_notional"] == "0"
+                for escrow in repair_outcome["open_escrows"]
+            )
+        )
+        self.assertEqual(
+            repair_outcome["summary"]["routeable_candidate_count"],
+            0,
+        )
         frontier = payload["profit_freshness_frontier"]
         self.assertEqual(
             frontier["schema_version"],
@@ -1780,6 +1820,26 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             health_repair_receipt_frontier["schema_version"],
             status_repair_receipt_frontier["schema_version"],
+        )
+        status_repair_outcome = status_response.json()["repair_outcome_dividend_ledger"]
+        health_repair_outcome = health_response.json()["repair_outcome_dividend_ledger"]
+        self.assertEqual(
+            status_repair_outcome["schema_version"],
+            "torghut.repair-outcome-dividend-ledger.v1",
+        )
+        self.assertEqual(status_repair_outcome["max_notional"], "0")
+        self.assertFalse(status_repair_outcome["live_submit_enabled"])
+        self.assertEqual(
+            status_repair_outcome["source_repair_bid_settlement_ledger_id"],
+            status_repair_bid_settlement["ledger_id"],
+        )
+        self.assertEqual(
+            status_repair_outcome["repair_receipt_frontier_ref"],
+            status_repair_receipt_frontier["frontier_id"],
+        )
+        self.assertEqual(
+            health_repair_outcome["schema_version"],
+            status_repair_outcome["schema_version"],
         )
         status_frontier = status_response.json()["profit_freshness_frontier"]
         health_frontier = health_response.json()["profit_freshness_frontier"]
@@ -3892,6 +3952,16 @@ class TestTradingApi(TestCase):
             )
             self.assertEqual(
                 ready_response.json()["repair_receipt_frontier"]["max_notional"],
+                "0",
+            )
+            self.assertEqual(
+                ready_response.json()["repair_outcome_dividend_ledger"][
+                    "schema_version"
+                ],
+                "torghut.repair-outcome-dividend-ledger.v1",
+            )
+            self.assertEqual(
+                ready_response.json()["repair_outcome_dividend_ledger"]["max_notional"],
                 "0",
             )
         finally:

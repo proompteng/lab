@@ -240,6 +240,11 @@ Testing rules for the trading core:
   and live cutover requirements. Non-source repairs are held until source-serving proof converges, every frontier lot
   reports `max_notional=0`, and rollback is to ignore the projection while consuming the existing source-serving,
   repair-bid, and profit-freshness payloads.
+- `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/consumer-evidence` now surface the
+  May 13 doc 193 `torghut.repair-outcome-dividend-ledger.v1` projection. It binds dispatchable repair-bid lots to
+  pending outcome receipts or current terminal receipts, exposes open repair outcome escrows for Jangar terminal-debt
+  compaction, and records retired, preserved, or no-delta reason codes. The ledger is observe-mode only:
+  `capital_stage=shadow`, `max_notional=0`, and live submit remains disabled while repair results are measured.
 - `POST /trading/profit-freshness/zero-notional-repair` returns the May 12 doc 188
   `torghut.zero-notional-repair-execution-receipt.v1` executor receipt for the selected frontier repair. The default
   mode is a dry run. With `execute=true`, the only local runner is bounded route/TCA recompute; empirical proof renewal

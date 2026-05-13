@@ -4,6 +4,10 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/193-torghut-repair-outcome-dividend-ledger-and-capital-reentry-frontier-2026-05-13.md`
+  (current repair outcome dividend ledger and capital reentry frontier contract)
+- `docs/agents/designs/189-jangar-terminal-debt-compaction-and-repair-outcome-escrow-2026-05-13.md`
+  (current Jangar terminal debt compaction and repair outcome escrow contract)
 - `docs/torghut/design-system/v6/191-torghut-source-serving-proof-and-repair-receipt-promotion-2026-05-13.md`
   (current source-serving proof and repair-receipt promotion contract)
 - `docs/agents/designs/187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`
@@ -173,6 +177,11 @@ Start here:
   freshness must agree before routeable candidates can move toward paper capital. Non-current freshness SLOs also emit
   deterministic `jangar_pressure_refs` with value gate, output receipt, TTL, dedupe key, and `max_notional=0` so the
   Jangar pressure ledger can price Torghut freshness debt directly.
+- Current implementation contract: doc 193 adds `repair_outcome_dividend_ledger` to status, health, readyz, and
+  `/trading/consumer-evidence`. The ledger binds each dispatchable zero-notional repair lot to an open outcome escrow
+  or terminal outcome receipt, records retired and preserved reason codes, and carries Jangar-visible escrow ids into
+  terminal debt compaction. It does not authorize capital: `capital_stage=shadow`, `max_notional=0`, and live submit
+  remains disabled until separate proof-floor and capital-gate contracts agree.
 - Current implementation contract: doc 189 adds `clock_settlement_receipt` beside the evidence-clock arbiter on
   status, health, readyz, and `/trading/consumer-evidence`. The receipt compares direct ClickHouse TA freshness, Jangar
   scoped quant, TCA, empirical, promotion, and rollout witnesses against the published clocks, emits zero-notional
