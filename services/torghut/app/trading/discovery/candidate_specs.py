@@ -98,6 +98,16 @@ _LIQUID_TECH_PLATFORM_UNIVERSE_PROFILE: tuple[str, ...] = (
 _BROAD_SEMICONDUCTOR_UNIVERSE_PROFILE: tuple[str, ...] = (
     _RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE
 )
+_PORTFOLIO_COVERAGE_UNIVERSE_PROFILE: tuple[str, ...] = (
+    "NVDA",
+    "AAPL",
+    "AMD",
+    "AVGO",
+    "INTC",
+    "ORCL",
+    "AMZN",
+    "GOOGL",
+)
 
 _LARGE_CAP_UNIVERSE_PROFILES: tuple[tuple[str, ...], ...] = (
     _AI_ACCELERATOR_UNIVERSE_PROFILE,
@@ -939,6 +949,240 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
     ),
 }
 
+_BASE_FAMILY_EXECUTION_PROFILES = _FAMILY_EXECUTION_PROFILES
+
+# These profiles broaden the portfolio-oracle research surface. They keep
+# notional and stop/session-loss controls tight while lowering entry thresholds
+# enough to test whether diversified sleeves can cover more trading days.
+_PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
+    "microbar_cross_sectional_pairs_v1": (
+        {
+            "universe_symbols": list(_PORTFOLIO_COVERAGE_UNIVERSE_PROFILE),
+            "normalization_regime": "market_neutral_gross_scaled",
+            "max_position_pct_equity": "3.0",
+            "max_notional_per_trade": "94770",
+            "params": {
+                "entry_minute_after_open": "45",
+                "exit_minute_after_open": "close",
+                "signal_motif": "open_window_continuation",
+                "rank_feature": "cross_section_session_open_rank",
+                "selection_mode": "continuation",
+                "top_n": "3",
+                "min_cross_section_continuation_rank": "0.50",
+                "max_pair_legs": "4",
+                "max_entries_per_session": "4",
+                "entry_cooldown_seconds": "300",
+                "long_stop_loss_bps": "4",
+                "long_trailing_stop_activation_profit_bps": "4",
+                "long_trailing_stop_drawdown_bps": "2",
+                "max_hold_seconds": "5400",
+                "max_session_negative_exit_bps": "3",
+                "max_stop_loss_exits_per_session": "1",
+                "stop_loss_lockout_seconds": "1200",
+            },
+        },
+    ),
+    "microstructure_continuation_matched_filter_v1": (
+        {
+            "universe_symbols": list(_PORTFOLIO_COVERAGE_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "3.0",
+            "max_notional_per_trade": "94770",
+            "params": {
+                "min_cross_section_continuation_rank": "0.48",
+                "min_cross_section_opening_window_return_rank": "0.40",
+                "max_gross_exposure_pct_equity": "5.0",
+                "entry_notional_max_multiplier": "0.70",
+                "max_entries_per_session": "4",
+                "entry_cooldown_seconds": "300",
+                "leader_reclaim_start_minutes_since_open": "20",
+                "leader_reclaim_min_recent_imbalance_pressure": "0.04",
+                "leader_reclaim_min_recent_microprice_bias_bps": "0.08",
+                "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.50",
+                "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.50",
+                "max_session_negative_exit_bps": "4",
+                "long_stop_loss_bps": "6",
+                "long_trailing_stop_activation_profit_bps": "5",
+                "long_trailing_stop_drawdown_bps": "2",
+            },
+        },
+    ),
+    "intraday_tsmom_v2": (
+        {
+            "universe_symbols": list(_PORTFOLIO_COVERAGE_UNIVERSE_PROFILE),
+            "max_notional_per_trade": "94770",
+            "max_position_pct_equity": "3.0",
+            "params": {
+                "long_stop_loss_bps": "6",
+                "long_trailing_stop_activation_profit_bps": "5",
+                "long_trailing_stop_drawdown_bps": "2",
+                "max_session_negative_exit_bps": "4",
+                "min_cross_section_continuation_rank": "0.50",
+                "max_entries_per_session": "4",
+                "entry_cooldown_seconds": "300",
+            },
+        },
+    ),
+    "mean_reversion_rebound_v1": (
+        {
+            "universe_symbols": list(_PORTFOLIO_COVERAGE_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "3.0",
+            "max_notional_per_trade": "94770",
+            "params": {
+                "min_bull_rsi": "36",
+                "max_bull_rsi": "52",
+                "min_price_below_vwap_bps": "6",
+                "max_price_below_vwap_bps": "65",
+                "max_price_vs_session_open_bps": "-12",
+                "max_opening_window_return_bps": "0",
+                "max_cross_section_continuation_rank": "0.58",
+                "min_cross_section_reversal_rank": "0.58",
+                "min_recent_imbalance_pressure": "0.00",
+                "entry_start_minute_utc": "810",
+                "entry_end_minute_utc": "1140",
+                "max_gross_exposure_pct_equity": "4.0",
+                "entry_cooldown_seconds": "450",
+                "long_stop_loss_bps": "8",
+                "long_trailing_stop_activation_profit_bps": "6",
+                "long_trailing_stop_drawdown_bps": "3",
+                "max_session_negative_exit_bps": "5",
+                "max_hold_seconds": "3600",
+            },
+        },
+    ),
+    "breakout_reclaim_v2": (
+        {
+            "universe_symbols": list(_PORTFOLIO_COVERAGE_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "4.0",
+            "max_notional_per_trade": "126360",
+            "params": {
+                "min_cross_section_continuation_rank": "0.50",
+                "min_cross_section_opening_window_return_rank": "0.45",
+                "max_gross_exposure_pct_equity": "6.0",
+                "entry_notional_max_multiplier": "0.80",
+                "max_entries_per_session": "4",
+                "entry_cooldown_seconds": "300",
+                "max_session_negative_exit_bps": "5",
+                "leader_reclaim_start_minutes_since_open": "25",
+                "leader_reclaim_min_recent_imbalance_pressure": "0.05",
+                "leader_reclaim_min_recent_microprice_bias_bps": "0.12",
+                "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.54",
+                "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.52",
+                "long_stop_loss_bps": "6",
+                "long_trailing_stop_activation_profit_bps": "6",
+                "long_trailing_stop_drawdown_bps": "2",
+            },
+        },
+    ),
+    "washout_rebound_v2": (
+        {
+            "universe_symbols": list(_PORTFOLIO_COVERAGE_UNIVERSE_PROFILE),
+            "max_notional_per_trade": "94770",
+            "max_position_pct_equity": "3.0",
+            "params": {
+                "min_session_open_selloff_bps": "12",
+                "max_price_vs_session_low_bps": "48",
+                "min_recent_microprice_bias_bps": "0.00",
+                "min_cross_section_reversal_rank": "0.55",
+            },
+        },
+    ),
+    "momentum_pullback_v1": (
+        {
+            "universe_symbols": list(_PORTFOLIO_COVERAGE_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "3.0",
+            "max_notional_per_trade": "94770",
+            "params": {
+                "bullish_hist_min": "0.002",
+                "min_bull_rsi": "46",
+                "max_bull_rsi": "70",
+                "min_price_below_ema12_bps": "-2",
+                "max_price_below_ema12_bps": "16",
+                "max_spread_bps": "8",
+                "min_imbalance_pressure": "-0.08",
+                "min_recent_microprice_bias_bps": "-0.10",
+                "min_cross_section_continuation_rank": "0.30",
+                "entry_start_minute_utc": "840",
+                "entry_end_minute_utc": "1110",
+                "exit_macd_hist_max": "-0.002",
+                "exit_rsi_max": "52",
+                "max_hold_seconds": "1200",
+                "long_stop_loss_bps": "8",
+                "long_trailing_stop_activation_profit_bps": "6",
+                "long_trailing_stop_drawdown_bps": "3",
+                "max_session_negative_exit_bps": "5",
+            },
+        },
+    ),
+    "late_day_continuation_v1": (
+        {
+            "universe_symbols": list(_PORTFOLIO_COVERAGE_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "3.0",
+            "max_notional_per_trade": "94770",
+            "params": {
+                "bullish_hist_min": "0.002",
+                "bullish_hist_cap": "0.075",
+                "min_bull_rsi": "50",
+                "max_bull_rsi": "78",
+                "vol_floor": "0.00003",
+                "vol_ceil": "0.00045",
+                "min_price_above_ema12_bps": "-10",
+                "max_price_above_ema12_bps": "24",
+                "min_price_vs_vwap_w5m_bps": "-8",
+                "max_price_vs_vwap_w5m_bps": "24",
+                "min_session_open_drive_bps": "16",
+                "min_opening_window_return_bps": "6",
+                "min_session_range_position": "0.52",
+                "min_cross_section_continuation_breadth": "0.28",
+                "min_cross_section_opening_window_return_rank": "0.48",
+                "min_cross_section_continuation_rank": "0.52",
+                "min_imbalance_pressure": "-0.06",
+                "min_recent_imbalance_pressure": "-0.04",
+                "min_recent_microprice_bias_bps": "-0.25",
+                "max_spread_bps": "12",
+                "max_recent_spread_bps": "12",
+                "max_recent_quote_invalid_ratio": "0.25",
+                "max_recent_quote_jump_bps": "80",
+                "min_recent_above_opening_window_close_ratio": "0.42",
+                "min_recent_above_vwap_w5m_ratio": "0.42",
+                "entry_start_minute_utc": "1020",
+                "entry_end_minute_utc": "1170",
+                "session_flatten_start_minute_utc": "1170",
+                "min_entry_minutes_before_flatten": "8",
+                "long_stop_loss_bps": "12",
+                "long_trailing_stop_activation_profit_bps": "8",
+                "long_trailing_stop_drawdown_bps": "4",
+                "entry_cooldown_seconds": "450",
+                "max_entries_per_session": "4",
+                "max_concurrent_positions": "4",
+                "require_positive_price_for_signal_exit": "true",
+            },
+        },
+    ),
+    "end_of_day_reversal_v1": (
+        {
+            "universe_symbols": list(_PORTFOLIO_COVERAGE_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "3.0",
+            "max_notional_per_trade": "94770",
+            "params": {
+                "min_bull_rsi": "32",
+                "max_bull_rsi": "52",
+                "min_macd_hist": "-0.014",
+                "max_macd_hist": "0.014",
+                "max_price_vs_session_open_bps": "-18",
+                "max_opening_window_return_bps": "0",
+                "max_cross_section_continuation_rank": "0.55",
+                "min_cross_section_reversal_rank": "0.55",
+                "entry_start_minute_utc": "1120",
+                "entry_end_minute_utc": "1188",
+                "max_gross_exposure_pct_equity": "4.0",
+                "entry_cooldown_seconds": "1800",
+                "min_hold_seconds": "60",
+                "max_hold_seconds": "600",
+            },
+        },
+    ),
+}
+
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
@@ -1197,8 +1441,12 @@ def _execution_profile_index(
     card: HypothesisCard,
     family_template_id: str,
     family_rank: int,
+    target_net_pnl_per_day: Decimal = Decimal("300"),
 ) -> int:
-    profiles = _FAMILY_EXECUTION_PROFILES.get(family_template_id)
+    profiles = _execution_profiles_for_target(
+        family_template_id=family_template_id,
+        target_net_pnl_per_day=target_net_pnl_per_day,
+    )
     profile_count = len(profiles) if profiles else _DEFAULT_PROFILE_COUNT
     explicit_profile = card.implementation_constraints.get("execution_profile_index")
     if explicit_profile is not None:
@@ -1224,8 +1472,12 @@ def _execution_profile_indexes(
     card: HypothesisCard,
     family_template_id: str,
     family_rank: int,
+    target_net_pnl_per_day: Decimal = Decimal("300"),
 ) -> tuple[int, ...]:
-    profiles = _FAMILY_EXECUTION_PROFILES.get(family_template_id)
+    profiles = _execution_profiles_for_target(
+        family_template_id=family_template_id,
+        target_net_pnl_per_day=target_net_pnl_per_day,
+    )
     profile_count = len(profiles) if profiles else _DEFAULT_PROFILE_COUNT
     explicit_profile = card.implementation_constraints.get("execution_profile_index")
     if explicit_profile is not None:
@@ -1234,6 +1486,7 @@ def _execution_profile_indexes(
                 card=card,
                 family_template_id=family_template_id,
                 family_rank=family_rank,
+                target_net_pnl_per_day=target_net_pnl_per_day,
             ),
         )
     return tuple(range(profile_count))
@@ -1243,10 +1496,30 @@ def _execution_profile_id(*, family_template_id: str, profile_index: int) -> str
     return f"{family_template_id}:profile-{profile_index + 1}"
 
 
+def _execution_profiles_for_target(
+    *,
+    family_template_id: str,
+    target_net_pnl_per_day: Decimal = Decimal("300"),
+) -> tuple[dict[str, Any], ...]:
+    base_profiles = _BASE_FAMILY_EXECUTION_PROFILES.get(family_template_id, ())
+    if target_net_pnl_per_day < _PORTFOLIO_TARGET_NET_PNL_PER_DAY:
+        return base_profiles
+    return (
+        *base_profiles,
+        *_PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES.get(family_template_id, ()),
+    )
+
+
 def _strategy_overrides_for_profile(
-    *, family_template_id: str, profile_index: int
+    *,
+    family_template_id: str,
+    profile_index: int,
+    target_net_pnl_per_day: Decimal = Decimal("300"),
 ) -> dict[str, Any]:
-    profiles = _FAMILY_EXECUTION_PROFILES.get(family_template_id)
+    profiles = _execution_profiles_for_target(
+        family_template_id=family_template_id,
+        target_net_pnl_per_day=target_net_pnl_per_day,
+    )
     if not profiles:
         return {"max_notional_per_trade": "50000"}
     selected = profiles[profile_index % len(profiles)]
@@ -1348,6 +1621,7 @@ def compile_candidate_specs(
                 card=card,
                 family_template_id=family_template_id,
                 family_rank=family_rank,
+                target_net_pnl_per_day=target_net_pnl_per_day,
             ):
                 execution_profile_id = _execution_profile_id(
                     family_template_id=family_template_id,
@@ -1356,6 +1630,7 @@ def compile_candidate_specs(
                 strategy_overrides = _strategy_overrides_for_profile(
                     family_template_id=family_template_id,
                     profile_index=execution_profile_index,
+                    target_net_pnl_per_day=target_net_pnl_per_day,
                 )
                 if explicit_universe_symbols:
                     strategy_overrides = {

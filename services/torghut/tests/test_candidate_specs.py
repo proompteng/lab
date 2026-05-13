@@ -117,9 +117,10 @@ class TestCandidateSpecs(TestCase):
             f"microstructure_continuation_matched_filter_v1:profile-{index + 1}"
             for index in range(
                 len(
-                    candidate_specs_module._FAMILY_EXECUTION_PROFILES[
-                        "microstructure_continuation_matched_filter_v1"
-                    ]
+                    candidate_specs_module._execution_profiles_for_target(
+                        family_template_id="microstructure_continuation_matched_filter_v1",
+                        target_net_pnl_per_day=Decimal("500"),
+                    )
                 )
             )
         ]
@@ -164,6 +165,19 @@ class TestCandidateSpecs(TestCase):
             {spec.family_template_id for spec in portfolio_specs},
             set(candidate_specs_module._FAMILY_EXECUTION_PROFILES),
         )
+        self.assertEqual(
+            len(portfolio_specs),
+            sum(
+                len(
+                    candidate_specs_module._execution_profiles_for_target(
+                        family_template_id=family_template_id,
+                        target_net_pnl_per_day=Decimal("500"),
+                    )
+                )
+                for family_template_id in candidate_specs_module._FAMILY_EXECUTION_PROFILES
+            ),
+        )
+        self.assertGreater(len(portfolio_specs), 36)
         self.assertGreater(len(portfolio_specs), len(baseline_specs))
         complementary_spec = next(
             spec
@@ -174,6 +188,29 @@ class TestCandidateSpecs(TestCase):
             complementary_spec.feature_contract["family_selection"]["reasons"],
             ["portfolio_sleeve_diversification"],
         )
+
+    def test_portfolio_profit_target_profiles_include_oracle_coverage_sleeves(
+        self,
+    ) -> None:
+        coverage_profiles = (
+            candidate_specs_module._PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES
+        )
+
+        self.assertEqual(
+            set(coverage_profiles), set(candidate_specs_module._FAMILY_RUNTIME)
+        )
+        for family_template_id, profiles in coverage_profiles.items():
+            self.assertEqual(len(profiles), 1)
+            profile = profiles[0]
+            self.assertLessEqual(
+                Decimal(str(profile["max_position_pct_equity"])),
+                Decimal("4.0"),
+                family_template_id,
+            )
+            self.assertEqual(
+                list(profile["universe_symbols"]),
+                list(candidate_specs_module._PORTFOLIO_COVERAGE_UNIVERSE_PROFILE),
+            )
 
     def test_same_family_whitepaper_hypotheses_get_distinct_execution_profiles(
         self,

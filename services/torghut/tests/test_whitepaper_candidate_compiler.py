@@ -16,16 +16,38 @@ from app.trading.discovery.whitepaper_candidate_compiler import (
 _PORTFOLIO_TARGET_FAMILIES = set(candidate_specs_module._FAMILY_EXECUTION_PROFILES)
 
 
-def _profile_count_for_family(family_template_id: str) -> int:
-    return len(candidate_specs_module._FAMILY_EXECUTION_PROFILES[family_template_id])
+def _profile_count_for_family(
+    family_template_id: str,
+    *,
+    target_net_pnl_per_day: Decimal = Decimal("300"),
+) -> int:
+    return len(
+        candidate_specs_module._execution_profiles_for_target(
+            family_template_id=family_template_id,
+            target_net_pnl_per_day=target_net_pnl_per_day,
+        )
+    )
 
 
-def _expected_candidate_count(family_ids: set[str]) -> int:
-    return sum(_profile_count_for_family(family_id) for family_id in family_ids)
+def _expected_candidate_count(
+    family_ids: set[str],
+    *,
+    target_net_pnl_per_day: Decimal = Decimal("300"),
+) -> int:
+    return sum(
+        _profile_count_for_family(
+            family_id,
+            target_net_pnl_per_day=target_net_pnl_per_day,
+        )
+        for family_id in family_ids
+    )
 
 
 def _expected_portfolio_target_candidate_count() -> int:
-    return _expected_candidate_count(_PORTFOLIO_TARGET_FAMILIES)
+    return _expected_candidate_count(
+        _PORTFOLIO_TARGET_FAMILIES,
+        target_net_pnl_per_day=Decimal("500"),
+    )
 
 
 class TestWhitepaperCandidateCompiler(TestCase):
@@ -66,7 +88,10 @@ class TestWhitepaperCandidateCompiler(TestCase):
                 for family_id in family_ids
             },
             {
-                family_id: _profile_count_for_family(family_id)
+                family_id: _profile_count_for_family(
+                    family_id,
+                    target_net_pnl_per_day=Decimal("500"),
+                )
                 for family_id in _PORTFOLIO_TARGET_FAMILIES
             },
         )
