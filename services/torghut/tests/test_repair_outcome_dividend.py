@@ -66,11 +66,38 @@ def _build(
     *,
     repair_outcome_receipts: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
+    return _build_with_lots(
+        _repair_bid_settlement()["compacted_lots"],
+        repair_outcome_receipts=repair_outcome_receipts,
+    )
+
+
+def _build_with_lots(
+    lots: list[dict[str, object]],
+    *,
+    repair_outcome_receipts: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    settlement = _repair_bid_settlement()
+    settlement["compacted_lots"] = lots
+    settlement["selected_lot_ids"] = [
+        str(lot.get("lot_id")) for lot in lots if lot.get("lot_id")
+    ]
+    settlement["dispatchable_lot_ids"] = [
+        str(lot.get("lot_id"))
+        for lot in lots
+        if lot.get("lot_id")
+        and lot.get("dispatchable") not in {False, "false", "blocked"}
+    ]
+    settlement["held_lot_ids"] = [
+        str(lot.get("lot_id"))
+        for lot in lots
+        if lot.get("lot_id") and lot.get("dispatchable") in {False, "false", "blocked"}
+    ]
     return build_repair_outcome_dividend_ledger(
         account_label="PA3SX7FYNUTF",
         window="15m",
         trading_mode="live",
-        repair_bid_settlement_ledger=_repair_bid_settlement(),
+        repair_bid_settlement_ledger=settlement,
         repair_receipt_frontier={
             "schema_version": "torghut.repair-receipt-frontier.v1",
             "frontier_id": "repair-receipt-frontier:test",
@@ -191,3 +218,94 @@ def test_positive_outcome_releases_one_zero_notional_repair_credit() -> None:
     ]
     assert ledger["summary"]["positive_dividend_count"] == 1
     assert ledger["summary"]["routeable_candidate_count"] == 0
+
+
+def test_invalid_failed_and_pending_existing_receipts_price_outcome_credit() -> None:
+    ledger = _build(
+        repair_outcome_receipts=[
+            {
+                "repair_lot_id": "compacted-repair-lot:quant_pipeline:quant_health_not_configured",
+                "schema_version": "torghut.wrong-receipt.v1",
+                "terminal_state": "success",
+            },
+            {
+                "repair_lot_id": "compacted-repair-lot:feature_lineage:market_context_evidence_missing",
+                "schema_version": "torghut.feature-lineage-current-receipt.v1",
+                "terminal_state": "timeout",
+                "preserved_reason_codes": ["market_context_evidence_missing"],
+            },
+            {
+                "repair_lot_id": "compacted-repair-lot:execution_tca:execution_tca_stale",
+                "schema_version": "torghut.execution-tca-current-receipt.v1",
+                "terminal_state": "pending",
+            },
+        ]
+    )
+
+    receipts = {
+        str(receipt["repair_lot_id"]): receipt for receipt in ledger["outcome_receipts"]
+    }
+    invalid = receipts[
+        "compacted-repair-lot:quant_pipeline:quant_health_not_configured"
+    ]
+    negative = receipts[
+        "compacted-repair-lot:feature_lineage:market_context_evidence_missing"
+    ]
+    pending = receipts["compacted-repair-lot:execution_tca:execution_tca_stale"]
+
+    assert invalid["outcome"] == "invalid_receipt"
+    assert invalid["dividend"] == "invalid"
+    assert invalid["next_action"] == "burn_credit"
+    assert negative["terminal_state"] == "timed_out"
+    assert negative["outcome"] == "degraded"
+    assert negative["dividend"] == "negative"
+    assert negative["next_action"] == "burn_credit"
+    assert pending["outcome"] == "pending"
+    assert pending["dividend"] == "pending"
+    assert pending["next_action"] == "hold"
+    assert ledger["summary"]["negative_dividend_count"] == 1
+    assert len(ledger["open_escrows"]) == 1
+
+
+def test_expected_gate_delta_and_string_dispatch_flags_drive_pending_escrows() -> None:
+    dispatchable = {
+        "lot_id": "compacted-repair-lot:feature_lineage:fallback-delta",
+        "lot_class": "feature_lineage",
+        "target_value_gate": "zero_notional_or_stale_evidence_rate",
+        "expected_gate_delta": "retire_market_context_evidence_missing",
+        "raw_reason_codes": [],
+        "required_output_receipt": "torghut.feature-lineage-current-receipt.v1",
+        "state": "selected",
+        "dispatchable": "yes",
+        "max_notional": "0",
+    }
+    held = {
+        "lot_id": "compacted-repair-lot:quant_pipeline:held",
+        "lot_class": "quant_pipeline",
+        "target_value_gate": "zero_notional_or_stale_evidence_rate",
+        "expected_gate_delta": "retire_quant_health_not_configured",
+        "raw_reason_codes": [],
+        "required_output_receipt": "torghut.quant-pipeline-current-receipt.v1",
+        "state": "selected",
+        "dispatchable": "blocked",
+        "max_notional": "0",
+    }
+    malformed = {
+        "lot_class": "execution_tca",
+        "target_value_gate": "fill_tca_or_slippage_quality",
+        "expected_gate_delta": "retire_execution_tca_stale",
+        "raw_reason_codes": [],
+        "required_output_receipt": "torghut.execution-tca-current-receipt.v1",
+        "state": "selected",
+        "dispatchable": "yes",
+        "max_notional": "0",
+    }
+
+    ledger = _build_with_lots([dispatchable, held, malformed])
+
+    assert len(ledger["outcome_receipts"]) == 1
+    receipt = ledger["outcome_receipts"][0]
+    assert receipt["repair_lot_id"] == dispatchable["lot_id"]
+    assert receipt["expected_reason_code_delta"] == ["market_context_evidence_missing"]
+    assert receipt["preserved_reason_codes"] == ["market_context_evidence_missing"]
+    assert ledger["summary"]["open_escrow_count"] == 1
