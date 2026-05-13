@@ -4,6 +4,7 @@ import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/age
 import { buildReconciledActionClocks } from '~/server/control-plane-action-clock'
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
 import { buildControllerWitnessQuorum } from '~/server/control-plane-controller-witness'
+import { buildConsumerEvidenceLeaseSet } from '~/server/control-plane-consumer-evidence-leases'
 import {
   buildControlPlaneMaterialActionArtifacts,
   type RepairScheduleAttemptResolver,
@@ -16,6 +17,7 @@ import {
 } from '~/server/control-plane-heartbeat-store'
 import { buildRuntimeAdmissionSnapshot, type RuntimeAdmissionSnapshot } from '~/server/control-plane-runtime-admission'
 import { checkDatabase } from '~/server/control-plane-db-status'
+import { buildControlPlaneDegradedComponents } from '~/server/control-plane-status-degraded-components'
 import {
   buildExecutionTrust,
   resolveExecutionTrustSummaryLimit,
@@ -31,6 +33,7 @@ import {
   type FailureDomainKubernetesEvidence,
   type FailureDomainRouteProbe,
 } from '~/server/control-plane-failure-domain-leases'
+import { buildControlPlaneLeaderElectionStatus } from '~/server/control-plane-leader-election-status'
 import { buildNegativeEvidenceRouterStatus } from '~/server/control-plane-negative-evidence-router'
 import {
   buildRolloutHealth,
@@ -66,7 +69,6 @@ import {
   type ControlPlaneWatchReliabilitySummary,
 } from '~/server/control-plane-watch-reliability'
 import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
-import { getLeaderElectionStatus } from '~/server/leader-election'
 import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
 import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
 import type { ExecutionTrustStatus, WorkflowsReliabilityStatus } from '~/data/agents-control-plane'
@@ -705,51 +707,36 @@ export const buildControlPlaneStatus = async (
     torghutConsumerEvidence: torghutConsumerEvidence.status,
     resolveRepairScheduleAttempts: deps.resolveRepairScheduleAttempts,
   })
+  const consumerEvidenceLeases = buildConsumerEvidenceLeaseSet({
+    now,
+    namespace: options.namespace,
+    database,
+    rolloutHealth,
+    watchReliability: watchReliabilityStatus,
+    controllerWitness,
+    materialActionVerdictEpoch,
+    empiricalServices,
+  })
 
-  const leaderElection = getLeaderElectionStatus()
-
-  const degradedComponents = [
-    ...effectiveControllers
-      .filter(
-        (controller) =>
-          controller.status === 'degraded' || controller.status === 'disabled' || controller.status === 'unknown',
-      )
-      .map((controller) => controller.name),
-    ...effectiveRuntimeAdapters
-      .filter((adapter) => adapter.name !== 'custom' && (adapter.status === 'degraded' || adapter.status === 'unknown'))
-      .map((adapter) => `runtime:${adapter.name}`),
-    ...(database.status === 'healthy' ? [] : ['database']),
-    ...(grpcStatus.enabled && grpcStatus.status !== 'healthy' ? ['grpc'] : []),
-    ...(watchReliability.status === 'degraded' ? ['watch_reliability'] : []),
-    ...(agentRunIngestion.status === 'degraded' ? ['agentrun_ingestion'] : []),
-    ...(isWorkflowsDataUnavailable || isWorkflowsWarning || isWorkflowsDegraded ? ['workflows'] : []),
-    ...(isWorkflowsDataUnknown || isWorkflowsDegraded ? ['runtime:workflows'] : []),
-    ...(rolloutHealth.status === 'degraded' ? ['rollout_health'] : []),
-    ...(empiricalServices.forecast.status === 'degraded' ? ['empirical:forecast'] : []),
-    ...(empiricalServices.lean.status === 'degraded' ? ['empirical:lean'] : []),
-    ...(empiricalServices.jobs.status === 'degraded' ? ['empirical:jobs'] : []),
-    ...(torghutConsumerEvidence.status.status === 'unavailable' ? ['torghut_consumer_evidence'] : []),
-    ...(executionTrust.executionTrust.status !== 'healthy' ? ['execution_trust'] : []),
-    ...runtimeAdmission.runtimeKits
-      .filter((kit) => kit.decision !== 'healthy')
-      .map((kit) => `runtime_kit:${kit.kit_class}`),
-  ]
+  const degradedComponents = buildControlPlaneDegradedComponents({
+    agentRunIngestion,
+    database,
+    effectiveControllers,
+    effectiveRuntimeAdapters,
+    empiricalServices,
+    executionTrust,
+    grpcStatus,
+    rolloutHealth,
+    runtimeKits: runtimeAdmission.runtimeKits,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+    watchReliabilityStatus,
+    workflowFlags: [isWorkflowsDataUnavailable, isWorkflowsWarning, isWorkflowsDegraded, isWorkflowsDataUnknown],
+  })
 
   return {
     service,
     generated_at: now.toISOString(),
-    leader_election: {
-      enabled: leaderElection.enabled,
-      required: leaderElection.required,
-      is_leader: leaderElection.isLeader,
-      lease_name: leaderElection.leaseName,
-      lease_namespace: leaderElection.leaseNamespace,
-      identity: leaderElection.identity,
-      last_transition_at: leaderElection.lastTransitionAt ?? '',
-      last_attempt_at: leaderElection.lastAttemptAt ?? '',
-      last_success_at: leaderElection.lastSuccessAt ?? '',
-      last_error: leaderElection.lastError ?? '',
-    },
+    leader_election: buildControlPlaneLeaderElectionStatus(),
     controllers: effectiveControllers,
     runtime_adapters: effectiveRuntimeAdapters,
     execution_trust: executionTrust.executionTrust,
@@ -782,6 +769,7 @@ export const buildControlPlaneStatus = async (
     stage_clearance_packets: stageClearancePackets,
     ready_action_exchange: readyActionExchange,
     repair_warrant_exchange: repairWarrantExchange,
+    consumer_evidence_leases: consumerEvidenceLeases,
     clearance_market_ledger: clearanceMarketLedger,
     source_rollout_truth_exchange: sourceRolloutTruthExchange,
     route_stability_escrow: routeStabilityEscrow,

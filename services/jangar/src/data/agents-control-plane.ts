@@ -1169,6 +1169,55 @@ export type ReadyActionExchange = {
   rollback_target: string
 }
 
+export type ConsumerEvidenceLeaseDecision = 'allow' | 'allow_grace' | 'repair_only' | 'hold' | 'block' | 'unknown'
+
+export type ConsumerEvidenceLeaseConfidence = 'high' | 'medium' | 'low' | 'unknown'
+
+export type ConsumerEvidenceLeaseContradiction = {
+  contradiction_id: string
+  action_class: ActionSloBudgetActionClass
+  message: string
+  reason_codes: string[]
+  evidence_refs: string[]
+}
+
+export type ConsumerEvidenceActionLease = {
+  lease_id: string
+  action_class: ActionSloBudgetActionClass
+  decision: ConsumerEvidenceLeaseDecision
+  confidence: ConsumerEvidenceLeaseConfidence
+  fresh_until: string
+  grace_until: string
+  max_dispatches: number | null
+  max_runtime_seconds: number | null
+  max_notional: number | null
+  required_repairs: string[]
+  reason_codes: string[]
+  evidence_refs: string[]
+  rollback_target: string | null
+}
+
+export type ConsumerEvidenceLeaseSet = {
+  schema_version: 'jangar.consumer-evidence-lease-set.v1'
+  mode: 'shadow'
+  design_artifact: string
+  lease_set_id: string
+  generated_at: string
+  expires_at: string
+  producer_revision: string
+  consumer: 'torghut'
+  namespace: string
+  source_status_ref: string
+  database_ref: string
+  rollout_ref: string
+  watch_ref: string
+  controller_witness_ref: string
+  empirical_services_ref: string
+  action_leases: ConsumerEvidenceActionLease[]
+  contradictions: ConsumerEvidenceLeaseContradiction[]
+  rollback_target: string
+}
+
 export type ClearanceMarketDecision = 'allow' | 'repair_only' | 'hold' | 'block'
 
 export type ClearanceMarketAuthoritySplit = {
@@ -1402,6 +1451,7 @@ export type ControlPlaneStatus = {
   stage_clearance_packets: StageClearancePacket[]
   ready_action_exchange: ReadyActionExchange
   repair_warrant_exchange: RepairWarrantExchange
+  consumer_evidence_leases: ConsumerEvidenceLeaseSet
   clearance_market_ledger: ClearanceMarketLedger | null
   source_rollout_truth_exchange: SourceRolloutTruthExchange
   route_stability_escrow: RouteStabilityEscrow

@@ -139,6 +139,7 @@ curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.action_custody_receipts[] | {action_class,decision,blocking_debt_classes,receipt_id}'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.dependency_verdict_exchange | {status,torghut_route_warrant_ref,repair_only_action_classes,held_action_classes,blocked_action_classes}'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.stage_clearance_packets[] | {stage,action_class,decision,packet_id,fresh_until}'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.consumer_evidence_leases.action_leases[] | {action_class,decision,fresh_until,grace_until,reason_codes}'
 curl -fsS http://localhost:8080/ready | jq '{status, serving_passport_id, runtime_kits, admission_passports}'
 kubectl api-resources --api-group=argoproj.io --no-headers || true
 kubectl -n agents get workflows.argoproj.io 2>/dev/null || true
@@ -192,6 +193,10 @@ Expected outcomes:
   `swarm.proompteng.ai/stage-clearance-packet-id` and `swarmStageClearancePacketId`, and stamp
   `swarmDependencyVerdictId` when the packet cites a current dependency verdict. A launch without those fields is not
   acceptable green rollout evidence for Torghut-facing work.
+- `consumer_evidence_leases` cites design doc 129 and exposes compact Torghut-facing action leases. `serve_readonly`
+  and `torghut_observe` may remain allowed while `dispatch_normal` is `repair_only` for controller witness debt, and
+  `paper_canary`, `live_micro_canary`, and `live_scale` must stay held or blocked when forecast, schema, rollout, or
+  Jangar evidence is stale. `allow_grace` is operational-only; it is never capital approval.
 - `clearance_market_ledger.stage_admission` cites design doc 185 and is authoritative for scheduler hold mode. When a
   stage admission is `hold`, `repair_only`, or `block`, the controller removes the schedule runner resources before
   they can create a doomed AgentRun, and the held status must include the `clearanceMarketLedgerId`,
