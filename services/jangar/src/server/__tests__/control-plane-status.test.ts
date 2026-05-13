@@ -2758,6 +2758,71 @@ describe('control-plane status', () => {
     expect(snapshot.stages.every((stage) => stage.stale === false)).toBe(true)
   })
 
+  it('buildExecutionTrust uses recent active runs when schedule lastRunTime is stale', async () => {
+    const recentActiveAt = '2026-01-20T02:30:00Z'
+    const staleRunAt = '2026-01-20T00:00:00Z'
+    const kubeGateway = createTestKubeGateway({
+      listSwarms: vi.fn(async () => [
+        buildExecutionTrustSwarmResource({
+          phase: 'Active',
+          requirementsPending: 0,
+          requirementsLastSeen: staleRunAt,
+          stageStates: {
+            discover: {
+              phase: 'Active',
+              healthy: false,
+              fresh: false,
+              cadence: '1h',
+              lastRunTime: staleRunAt,
+              recentActiveAt,
+              consecutiveFailures: 0,
+            },
+            plan: {
+              phase: 'Active',
+              healthy: false,
+              fresh: false,
+              cadence: '1h',
+              lastRunTime: staleRunAt,
+              recentActiveAt,
+              consecutiveFailures: 0,
+            },
+            implement: {
+              phase: 'Active',
+              healthy: false,
+              fresh: false,
+              cadence: '1h',
+              lastRunTime: staleRunAt,
+              recentActiveAt,
+              consecutiveFailures: 0,
+            },
+            verify: {
+              phase: 'Active',
+              healthy: false,
+              fresh: false,
+              cadence: '1h',
+              lastRunTime: staleRunAt,
+              recentActiveAt,
+              consecutiveFailures: 0,
+            },
+          },
+        }),
+      ]),
+    })
+
+    const snapshot = await buildExecutionTrust({
+      namespace: 'agents',
+      now: new Date('2026-01-20T03:00:00Z'),
+      swarms: ['jangar-control-plane'],
+      kube: kubeGateway,
+      summaryLimit: 20,
+    })
+
+    expect(snapshot.executionTrust.status).toBe('healthy')
+    expect(snapshot.executionTrust.blocking_windows).toHaveLength(0)
+    expect(snapshot.stages.every((stage) => stage.last_run_at === new Date(recentActiveAt).toISOString())).toBe(true)
+    expect(snapshot.stages.every((stage) => stage.stale === false)).toBe(true)
+  })
+
   it('buildExecutionTrust prefers status observed generation over metadata generation', async () => {
     const kubeGateway = createTestKubeGateway({
       listSwarms: vi.fn(async () => [
