@@ -1241,6 +1241,116 @@ describe('control-plane status', () => {
     })
   })
 
+  it('exposes repair-bid admission receipts from current Torghut settlement lots', async () => {
+    setRolloutDeploymentList(
+      [healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment],
+      [healthyRuntimePod()],
+    )
+
+    const status = await buildStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-05-13T05:20:00.000Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+        resolveTorghutConsumerEvidence: async () => ({
+          status: {
+            status: 'current',
+            endpoint: 'http://torghut/trading/consumer-evidence',
+            receipt_id: 'torghut-route-proven-profit:test',
+            generated_at: '2026-05-13T05:20:00.000Z',
+            fresh_until: '2026-05-13T05:21:00.000Z',
+            candidate_id: null,
+            dataset_snapshot_ref: null,
+            max_notional: '0',
+            reason_codes: [],
+            message: 'current',
+            repair_bid_settlement_ledger_id: 'repair-bid-settlement-ledger:test',
+            repair_bid_settlement_status: 'current',
+            repair_bid_settlement_fresh_until: '2026-05-13T05:21:00.000Z',
+            repair_bid_settlement_capital_decision: 'repair_only',
+            repair_bid_settlement_max_notional: '0',
+            repair_bid_settlement_selected_lot_ids: ['compacted-repair-lot:quant'],
+            repair_bid_settlement_dispatchable_lot_ids: ['compacted-repair-lot:quant'],
+            repair_bid_settlement_held_lot_ids: [],
+            repair_bid_settlement_active_dedupe_keys: [],
+            repair_bid_settlement_compacted_lots: [
+              {
+                lot_id: 'compacted-repair-lot:quant',
+                lot_class: 'quant_pipeline',
+                target_value_gate: 'zero_notional_or_stale_evidence_rate',
+                priority: 100,
+                expected_gate_delta: 'retire_jangar_quant_ingestion_degraded',
+                raw_reason_codes: ['jangar_quant_ingestion_degraded'],
+                root_cause_hypothesis: 'scoped quant ingestion proof is degraded',
+                required_input_refs: ['route-evidence-clearinghouse:test'],
+                required_output_receipt: 'torghut.quant-pipeline-current-receipt.v1',
+                required_output_receipt_count: 1,
+                validation_commands: ['pytest services/torghut/tests/test_repair_bid_settlement.py -k quant_pipeline'],
+                dedupe_key: 'PA3SX7FYNUTF:15m:quant_pipeline',
+                ttl_seconds: 900,
+                max_runtime_seconds: 1200,
+                max_parallelism: 1,
+                max_notional: '0',
+                state: 'selected',
+                dispatchable: true,
+                hold_reason_codes: [],
+                source_bid_ids: ['route-evidence-repair-bid:quant'],
+              },
+            ],
+            repair_bid_settlement_reason_codes: ['jangar_quant_ingestion_degraded'],
+          },
+        }),
+      },
+    )
+
+    expect(status.repair_bid_admission).toMatchObject({
+      mode: 'observe',
+      design_artifact: 'docs/agents/designs/186-jangar-repair-bid-admission-and-settlement-custody-2026-05-13.md',
+      torghut_settlement_ledger_ref: 'repair-bid-settlement-ledger:test',
+      admitted_lot_ids: ['compacted-repair-lot:quant'],
+    })
+    expect(status.repair_bid_admission.receipts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_repair',
+          decision: 'allow',
+          max_notional: 0,
+        }),
+        expect.objectContaining({
+          action_class: 'dispatch_normal',
+          decision: 'hold',
+          denied_reason_codes: expect.arrayContaining(['torghut_repair_lots_unsettled']),
+        }),
+        expect.objectContaining({
+          action_class: 'live_scale',
+          decision: 'block',
+        }),
+      ]),
+    )
+    expect(status.repair_bid_admission.dispatch_tickets).toEqual([
+      expect.objectContaining({
+        torghut_lot_id: 'compacted-repair-lot:quant',
+        launch_allowed: true,
+        max_notional: 0,
+      }),
+    ])
+  })
+
   it('projects source rollout truth and keeps normal dispatch repair-only when GitOps lags source', async () => {
     process.env.JANGAR_SOURCE_HEAD_SHA = '99470fcfa0000000000000000000000000000000'
     process.env.JANGAR_GITOPS_REVISION = '4c44179970000000000000000000000000000000'

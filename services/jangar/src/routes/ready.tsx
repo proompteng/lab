@@ -3,11 +3,13 @@ import { createFileRoute } from '@tanstack/react-router'
 import type { ExecutionTrustStatus } from '~/data/agents-control-plane'
 import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/agents-controller'
 import { buildRuntimeAdmissionSnapshot, findAdmissionPassport } from '~/server/control-plane-runtime-admission'
+import { buildRepairBidAdmissionState } from '~/server/control-plane-repair-bid-admission'
 import { getLeaderElectionStatus } from '~/server/leader-election'
 import { getMemoryProviderHealth } from '~/server/memory-provider-health'
 import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
 import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
 import { buildExecutionTrust } from '~/server/control-plane-status'
+import { resolveTorghutConsumerEvidence } from '~/server/control-plane-torghut-consumer-evidence'
 
 const isControllerHealthReady = (health: ReturnType<typeof getAgentsControllerHealth>) =>
   !health.enabled || health.crdsReady !== false
@@ -117,15 +119,26 @@ export const Route = createFileRoute('/ready')({
 })
 
 export const getReadyHandler = async () => {
+  const now = new Date()
   const leaderElection = getLeaderElectionStatus()
   const agentsController = getAgentsControllerHealth()
   const orchestrationController = getOrchestrationControllerHealth()
   const supportingController = getSupportingControllerHealth()
   const namespaces = agentsController.namespaces?.length ? agentsController.namespaces : ['agents']
   const trust = await executionTrustStatus(namespaces)
+  const torghutConsumerEvidence = await resolveTorghutConsumerEvidence(now)
+  const repairBidAdmission = buildRepairBidAdmissionState({
+    now,
+    namespace: namespaces[0] ?? 'agents',
+    repository: process.env.CODEX_REPOSITORY ?? process.env.CODEX_REPO_SLUG,
+    branch: process.env.CODEX_BRANCH,
+    swarmName: process.env.SWARM_NAME,
+    stage: process.env.SWARM_STAGE ?? process.env.CODEX_STAGE,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+  })
   const memoryProvider = getMemoryProviderHealth()
   const runtimeAdmission = buildRuntimeAdmissionSnapshot({
-    now: new Date(),
+    now,
     executionTrust: trust,
   })
   const servingPassport = findAdmissionPassport({
@@ -170,6 +183,8 @@ export const getReadyHandler = async () => {
     orchestrationController,
     supportingController,
     execution_trust: trust,
+    torghut_consumer_evidence: torghutConsumerEvidence.status,
+    repair_bid_admission: repairBidAdmission,
     memory_provider: memoryProvider,
     runtime_kits: runtimeAdmission.runtimeKits,
     admission_passports: runtimeAdmission.admissionPassports,

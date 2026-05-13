@@ -35,6 +35,7 @@ import {
 } from '~/server/control-plane-failure-domain-leases'
 import { buildControlPlaneLeaderElectionStatus } from '~/server/control-plane-leader-election-status'
 import { buildNegativeEvidenceRouterStatus } from '~/server/control-plane-negative-evidence-router'
+import { buildDefaultRepairBidAdmissionState } from '~/server/control-plane-repair-bid-admission'
 import {
   buildRolloutHealth,
   maybeUseSplitTopologyControllerRollout,
@@ -80,7 +81,6 @@ export { buildExecutionTrust } from './control-plane-execution-trust'
 const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
 const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
-
 type ControllerHealth = ReturnType<typeof getAgentsControllerHealth>
 
 export type ControlPlaneStatusOptions = {
@@ -362,11 +362,7 @@ const buildRuntimeAdapterStatusFromSource = ({
 const resolveTemporalAdapter = async (): Promise<RuntimeAdapterStatus> => {
   try {
     const config = await loadTemporalConfig({
-      defaults: {
-        host: DEFAULT_TEMPORAL_HOST,
-        port: DEFAULT_TEMPORAL_PORT,
-        address: DEFAULT_TEMPORAL_ADDRESS,
-      },
+      defaults: { host: DEFAULT_TEMPORAL_HOST, port: DEFAULT_TEMPORAL_PORT, address: DEFAULT_TEMPORAL_ADDRESS },
     })
     return {
       name: 'temporal',
@@ -641,6 +637,7 @@ export const buildControlPlaneStatus = async (
     executionTrust: executionTrust.executionTrust,
   })
   const torghutConsumerEvidence = await (deps.resolveTorghutConsumerEvidence ?? resolveTorghutConsumerEvidence)(now)
+  const repairBidAdmission = buildDefaultRepairBidAdmissionState(now, options.namespace, torghutConsumerEvidence.status)
   const negativeEvidenceRouter = buildNegativeEvidenceRouterStatus({
     now,
     namespace: options.namespace,
@@ -779,6 +776,7 @@ export const buildControlPlaneStatus = async (
     stage_clearance_packets: stageClearancePackets,
     stage_credit_ledger: stageCreditLedger,
     ready_action_exchange: readyActionExchange,
+    repair_bid_admission: repairBidAdmission,
     repair_warrant_exchange: repairWarrantExchange,
     consumer_evidence_leases: consumerEvidenceLeases,
     clearance_market_ledger: clearanceMarketLedger,

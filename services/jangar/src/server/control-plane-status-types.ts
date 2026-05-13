@@ -22,6 +22,7 @@ import type {
   ReadyActionExchange,
   ReconciledActionClock,
   RecoveryWarrantStatus,
+  RepairBidAdmissionState,
   RepairWarrantExchange,
   RouteStabilityEscrow,
   RuntimeProofCellStatus,
@@ -189,6 +190,7 @@ export type ControlPlaneStatus = {
   stage_clearance_packets: StageClearancePacket[]
   stage_credit_ledger: StageCreditLedger | null
   ready_action_exchange: ReadyActionExchange
+  repair_bid_admission: RepairBidAdmissionState
   repair_warrant_exchange: RepairWarrantExchange
   consumer_evidence_leases: ConsumerEvidenceLeaseSet
   clearance_market_ledger: ClearanceMarketLedger | null

@@ -286,6 +286,23 @@ describe('getReadyHandler', () => {
     expect(body.memory_provider).toMatchObject({
       status: 'healthy',
     })
+    expect(body.repair_bid_admission).toMatchObject({
+      schema_version: 'jangar.repair-bid-admission-state.v1',
+      mode: 'observe',
+      torghut_settlement_ledger_ref: null,
+    })
+    expect(body.repair_bid_admission.receipts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'serve_readonly',
+          decision: 'allow',
+        }),
+        expect.objectContaining({
+          action_class: 'dispatch_normal',
+          decision: 'hold',
+        }),
+      ]),
+    )
     expect(body.serving_recovery_warrant_id).toBe('recovery-warrant:serving:1')
     expect(body.serving_runtime_proof_cells_healthy).toBe(true)
   })

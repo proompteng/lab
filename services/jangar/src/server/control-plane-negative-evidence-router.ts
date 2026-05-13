@@ -210,6 +210,9 @@ const buildPositiveRefs = (input: NegativeEvidenceRouterInput) => {
   if (input.torghut?.evidence_clock_status === 'current' && input.torghut.routeable_profit_candidate_exchange_id) {
     refs.push(input.torghut.routeable_profit_candidate_exchange_id)
   }
+  if (input.torghut?.repair_bid_settlement_status === 'current' && input.torghut.repair_bid_settlement_ledger_id) {
+    refs.push(input.torghut.repair_bid_settlement_ledger_id)
+  }
   if (
     input.controllerWitness &&
     (input.controllerWitness.decision === 'allow' || input.controllerWitness.decision === 'allow_with_split')
