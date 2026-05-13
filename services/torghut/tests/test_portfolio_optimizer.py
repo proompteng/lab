@@ -111,6 +111,55 @@ class TestPortfolioOptimizer(TestCase):
             reloaded.objective_scorecard["profit_target_oracle"]["blockers"], []
         )
 
+    def test_optimizer_rejects_undersized_portfolio_candidate(self) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-single-sleeve",
+            candidate={
+                "candidate_id": "cand-single-sleeve",
+                "runtime_family": "microbar_cross_sectional_pairs",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "family_template_id": "microbar_cross_sectional_pairs_v1",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "2100",
+                    "active_day_ratio": "1.0",
+                    "positive_day_ratio": "0.33",
+                    "worst_day_loss": "447",
+                    "max_drawdown": "548",
+                    "best_day_share": "1.0",
+                    "avg_filled_notional_per_day": "318444",
+                    "regime_slice_pass_rate": "0.55",
+                    "posterior_edge_lower": "0.01",
+                    "shadow_parity_status": "within_budget",
+                    "correlation_cluster": "single-sleeve-cluster",
+                    "symbol_contribution_shares": {"NVDA": "1.0"},
+                    **_executable_scorecard_fields("single-sleeve"),
+                },
+                "full_window": {
+                    "daily_net": {
+                        "2026-04-29": "-100.37",
+                        "2026-04-30": "-447.41",
+                        "2026-05-01": "6835.18",
+                    },
+                    "daily_filled_notional": {
+                        "2026-04-29": "318444",
+                        "2026-04-30": "318444",
+                        "2026-05-01": "318444",
+                    },
+                },
+            },
+            dataset_snapshot_id="snapshot-single-sleeve",
+            result_path="/tmp/single-sleeve.json",
+        )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[bundle],
+            target_net_pnl_per_day=Decimal("500"),
+            portfolio_size_min=3,
+            portfolio_size_max=3,
+        )
+
+        self.assertIsNone(portfolio)
+
     def test_invalid_portfolio_candidate_payload_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "portfolio_candidate_schema_invalid"):
             portfolio_candidate_from_payload({"schema_version": "bad"})
