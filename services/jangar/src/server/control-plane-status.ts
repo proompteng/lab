@@ -39,7 +39,10 @@ import {
   buildAgentRunIngestionStatus,
   buildServingProcessControllerStatus,
 } from '~/server/control-plane-serving-process-status'
-import { buildControlPlaneDegradedComponents } from '~/server/control-plane-status-degraded-components'
+import {
+  buildControlPlaneDegradedComponents,
+  buildControlPlaneNamespaces,
+} from '~/server/control-plane-status-degraded-components'
 import {
   buildExecutionTrust,
   resolveExecutionTrustSummaryLimit,
@@ -64,11 +67,7 @@ import {
 } from '~/server/control-plane-projection-foreclosure-notary'
 import { buildReadyTruthArbiter } from '~/server/control-plane-ready-truth-arbiter'
 import { buildDefaultRepairBidAdmissionState } from '~/server/control-plane-repair-bid-admission'
-import {
-  buildRolloutProofPassport,
-  buildRunnerCapacityFutures,
-  buildStageLaunchTickets,
-} from '~/server/control-plane-rollout-proof-passport'
+import { buildRolloutProofStatusFields } from '~/server/control-plane-rollout-proof-passport'
 import {
   buildRolloutHealth,
   maybeUseSplitTopologyControllerRollout,
@@ -228,7 +227,6 @@ export const buildControlPlaneStatus = async (
   const agentsHealth = (deps.getAgentsControllerHealth ?? getAgentsControllerHealth)()
   const supportingHealth = (deps.getSupportingControllerHealth ?? getSupportingControllerHealth)()
   const orchestrationHealth = (deps.getOrchestrationControllerHealth ?? getOrchestrationControllerHealth)()
-
   const [agentsHeartbeat, supportingHeartbeat, orchestrationHeartbeat, workflowRuntimeHeartbeat] = await Promise.all([
     heartbeatResolver({ namespace: options.namespace, component: 'agents-controller', workloadRole: 'controllers' }),
     heartbeatResolver({
@@ -243,7 +241,6 @@ export const buildControlPlaneStatus = async (
     }),
     heartbeatResolver({ namespace: options.namespace, component: 'workflow-runtime', workloadRole: 'controllers' }),
   ])
-
   const agentsController = buildControllerStatusFromHeartbeat({
     name: 'agents-controller',
     health: agentsHealth,
@@ -294,7 +291,6 @@ export const buildControlPlaneStatus = async (
       authority: buildLocalControlPlaneAuthority('agents'),
     },
   ]
-
   const database = await (deps.checkDatabase ?? checkDatabase)()
   const grpcStatus = options.grpc
   const watchReliability = (deps.getWatchReliabilitySummary ?? getWatchReliabilitySummary)()
@@ -436,7 +432,6 @@ export const buildControlPlaneStatus = async (
     watchReliability: watchReliabilityStatus,
     empiricalServices,
   })
-
   const isWorkflowsDataUnknown = workflows.data_confidence === 'unknown'
   const isWorkflowsDataDegraded = workflows.data_confidence === 'degraded'
   const isWorkflowsDataUnavailable = isWorkflowsDataUnknown || isWorkflowsDataDegraded
@@ -597,7 +592,7 @@ export const buildControlPlaneStatus = async (
     torghutConsumerEvidence: torghutConsumerEvidence.status,
     projectionForeclosureNotary,
   })
-  const rolloutProofPassport = buildRolloutProofPassport({
+  const rolloutProofStatusFields = buildRolloutProofStatusFields({
     now,
     namespace: options.namespace,
     sourceRolloutTruthExchange,
@@ -606,21 +601,10 @@ export const buildControlPlaneStatus = async (
     rolloutHealth,
     controllerWitness,
     readyTruthArbiter,
-  })
-  const runnerCapacityFutures = buildRunnerCapacityFutures({
-    now,
-    namespace: options.namespace,
-    rolloutProofPassport,
     workflows,
     runtimeAdapters: effectiveRuntimeAdapters,
     kubernetesEvidence: failureDomainKubernetesEvidence,
     stageCreditLedger,
-  })
-  const stageLaunchTickets = buildStageLaunchTickets({
-    now,
-    namespace: options.namespace,
-    rolloutProofPassport,
-    runnerCapacityFutures,
   })
   const authorityProvenanceSettlement = buildAuthorityProvenanceSettlement({
     now,
@@ -742,9 +726,7 @@ export const buildControlPlaneStatus = async (
     projection_foreclosure_notary: projectionForeclosureNotary,
     stage_credit_ledger: stageCreditLedger,
     ready_truth_arbiter: readyTruthArbiter,
-    rollout_proof_passport: rolloutProofPassport,
-    runner_capacity_futures: runnerCapacityFutures,
-    stage_launch_tickets: stageLaunchTickets,
+    ...rolloutProofStatusFields,
     authority_provenance_settlement: authorityProvenanceSettlement,
     evidence_pressure_ledger: evidencePressureLedger,
     terminal_debt_compaction_ledger: terminalDebtCompactionLedger,
@@ -757,12 +739,6 @@ export const buildControlPlaneStatus = async (
     route_stability_escrow: routeStabilityEscrow,
     empirical_services: empiricalServices,
     torghut_consumer_evidence: torghutConsumerEvidence.status,
-    namespaces: [
-      {
-        namespace: options.namespace,
-        status: degradedComponents.length === 0 ? 'healthy' : 'degraded',
-        degraded_components: degradedComponents,
-      },
-    ],
+    namespaces: buildControlPlaneNamespaces(options.namespace, degradedComponents),
   }
 }

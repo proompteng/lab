@@ -61,6 +61,21 @@ type RunnerCapacityFutureInput = {
   stageCreditLedger: StageCreditLedger | null
 }
 
+type RolloutProofStatusFieldsInput = {
+  now: Date
+  namespace: string
+  sourceRolloutTruthExchange: SourceRolloutTruthExchange
+  sourceServingContractVerdictExchange: SourceServingContractVerdictExchange
+  database: DatabaseStatus
+  rolloutHealth: ControlPlaneRolloutHealth
+  controllerWitness: ControlPlaneControllerWitnessQuorum
+  readyTruthArbiter: ReadyTruthArbiter
+  workflows: WorkflowsReliabilityStatus
+  runtimeAdapters: RuntimeAdapterStatus[]
+  kubernetesEvidence: FailureDomainKubernetesEvidence
+  stageCreditLedger: StageCreditLedger | null
+}
+
 const hashJson = (value: unknown, length = 16) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, length)
 
@@ -462,3 +477,18 @@ export const buildStageLaunchTickets = ({
       rollback_target: ROLLBACK_TARGET,
     }
   })
+
+export const buildRolloutProofStatusFields = (input: RolloutProofStatusFieldsInput) => {
+  const rolloutProofPassport = buildRolloutProofPassport(input)
+  const runnerCapacityFutures = buildRunnerCapacityFutures({ ...input, rolloutProofPassport })
+  return {
+    rollout_proof_passport: rolloutProofPassport,
+    runner_capacity_futures: runnerCapacityFutures,
+    stage_launch_tickets: buildStageLaunchTickets({
+      now: input.now,
+      namespace: input.namespace,
+      rolloutProofPassport,
+      runnerCapacityFutures,
+    }),
+  }
+}
