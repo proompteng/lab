@@ -274,6 +274,11 @@ class TestSearchProfitabilityFrontier(TestCase):
                 "min_cross_section_continuation_rank": "0.65",
                 "min_recent_above_opening_window_close_ratio": "0.75",
             },
+            strategy_overrides={
+                "universe_symbols": ["NVDA", "AVGO"],
+                "max_notional_per_trade": "6000",
+                "normalization_regime": "local_only_research_feature",
+            },
             disable_other_strategies=True,
         )
 
@@ -292,7 +297,58 @@ class TestSearchProfitabilityFrontier(TestCase):
             ],
             "0.75",
         )
+        self.assertEqual(
+            strategies["breakout-continuation-long-v1"]["params"][
+                "position_isolation_mode"
+            ],
+            "per_strategy",
+        )
+        self.assertEqual(
+            strategies["breakout-continuation-long-v1"]["universe_symbols"],
+            ["NVDA", "AVGO"],
+        )
+        self.assertEqual(
+            strategies["breakout-continuation-long-v1"]["max_notional_per_trade"],
+            "6000",
+        )
+        self.assertNotIn(
+            "normalization_regime",
+            strategies["breakout-continuation-long-v1"],
+        )
         self.assertFalse(strategies["late-day-continuation-long-v1"]["enabled"])
+
+    def test_apply_candidate_to_configmap_rejects_reserved_params_override(
+        self,
+    ) -> None:
+        configmap_payload = {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "data": {
+                "strategies.yaml": yaml.safe_dump(
+                    {
+                        "strategies": [
+                            {
+                                "name": "breakout-continuation-long-v1",
+                                "enabled": False,
+                                "params": {},
+                            }
+                        ]
+                    },
+                    sort_keys=False,
+                )
+            },
+        }
+
+        with self.assertRaisesRegex(
+            ValueError, "strategy_override_key_reserved:params"
+        ):
+            apply_candidate_to_configmap(
+                configmap_payload=configmap_payload,
+                strategy_name="breakout-continuation-long-v1",
+                candidate_params={},
+                strategy_overrides={"params": {"long_stop_loss_bps": "12"}},
+                disable_other_strategies=False,
+            )
 
     def test_apply_candidate_to_configmap_accepts_mounted_strategy_catalog(
         self,

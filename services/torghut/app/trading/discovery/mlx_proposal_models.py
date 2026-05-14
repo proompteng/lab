@@ -23,6 +23,13 @@ def _float(value: Any) -> float:
 def _candidate_target(row: Mapping[str, Any]) -> float:
     net = _float(row.get("net_pnl_per_day"))
     activity = _float(row.get("active_day_ratio"))
+    positive_day_ratio = _float(row.get("positive_day_ratio"))
+    has_filled_notional = "avg_filled_notional_per_day" in row
+    avg_filled_notional_per_day = _float(row.get("avg_filled_notional_per_day"))
+    required_min_daily_notional = _float(
+        row.get("required_min_daily_notional")
+        or row.get("min_avg_filled_notional_per_day")
+    )
     concentration_penalty = _float(row.get("best_day_share"))
     veto_penalty = 1.0 if row.get("hard_vetoes") else 0.0
     gross_overage_penalty = max(
@@ -30,11 +37,32 @@ def _candidate_target(row: Mapping[str, Any]) -> float:
     )
     cash_deficit_penalty = max(0.0, -_float(row.get("min_cash"))) / 100.0
     negative_cash_penalty = _float(row.get("negative_cash_observation_count")) * 20.0
+    notional_shortfall_penalty = 0.0
+    if required_min_daily_notional > 0.0 and has_filled_notional:
+        notional_shortfall_penalty = (
+            max(
+                0.0,
+                required_min_daily_notional - avg_filled_notional_per_day,
+            )
+            / required_min_daily_notional
+        )
+    no_activity_penalty = (
+        1.0
+        if activity <= 0.0
+        and has_filled_notional
+        and avg_filled_notional_per_day <= 0.0
+        else 0.0
+    )
     return (
         net
         + (activity * 100.0)
+        + (positive_day_ratio * 100.0)
         - (concentration_penalty * 100.0)
         - (veto_penalty * 250.0)
+        - (max(0.0, 1.0 - activity) * 400.0)
+        - (max(0.0, 1.0 - positive_day_ratio) * 300.0)
+        - (notional_shortfall_penalty * 350.0)
+        - (no_activity_penalty * 500.0)
         - (gross_overage_penalty * 500.0)
         - cash_deficit_penalty
         - negative_cash_penalty

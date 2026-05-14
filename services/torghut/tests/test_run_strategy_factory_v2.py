@@ -339,6 +339,45 @@ class TestRunStrategyFactoryV2(TestCase):
                     holdout_days=3,
                 )
 
+    def test_whitepaper_profit_target_experiments_force_standalone_replay(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            family_template_dir = self._write_family_template(root)
+            seed_sweep_dir = self._write_seed_sweep(root)
+            seed_path = (
+                seed_sweep_dir / "profitability-frontier-consistent-breakout.yaml"
+            )
+            seed_payload = yaml.safe_load(seed_path.read_text(encoding="utf-8"))
+            seed_payload["disable_other_strategies"] = False
+            seed_path.write_text(
+                yaml.safe_dump(seed_payload, sort_keys=False),
+                encoding="utf-8",
+            )
+            experiment_row = VNextExperimentSpec(
+                run_id="paper-run-standalone",
+                candidate_id=None,
+                experiment_id="exp-standalone",
+                payload_json={
+                    "family_template_id": "breakout_reclaim_v2",
+                    "selection_objectives": {"target_net_pnl_per_day": "500"},
+                    "promotion_contract": {
+                        "source": "whitepaper_autoresearch_profit_target",
+                    },
+                },
+            )
+
+            compiled = runner._compile_sweep_config(
+                experiment_row=experiment_row,
+                family_dir=family_template_dir,
+                seed_dir=seed_sweep_dir,
+                train_days=6,
+                holdout_days=3,
+            )
+
+            self.assertTrue(compiled.sweep_config["disable_other_strategies"])
+
     def test_run_strategy_factory_v2_compiles_executes_and_persists(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -452,6 +491,9 @@ class TestRunStrategyFactoryV2(TestCase):
                 compiled["strategy_overrides"]["max_notional_per_trade"], ["50000"]
             )
             self.assertEqual(compiled["parameters"]["long_stop_loss_bps"], ["12"])
+            self.assertEqual(
+                compiled["parameters"]["position_isolation_mode"], ["per_strategy"]
+            )
             self.assertEqual(
                 compiled["experiment_spec"]["paper_claim_links"], ["claim-1"]
             )

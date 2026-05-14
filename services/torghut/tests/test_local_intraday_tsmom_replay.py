@@ -28,17 +28,24 @@ from scripts.local_intraday_tsmom_replay import (
     _apply_filled_decision,
     _apply_order_preferences,
     _build_near_miss,
+    _decision_exit_reason,
+    _decision_position_owner,
+    _fetch_chunk,
     _flatten_positions,
     _init_funnel_stats,
     _insert_near_miss,
+    _load_strategies,
     _parse_signal_row,
     _positions_payload,
     _quote_quality_status,
     _record_capital_snapshot,
     _record_trace_for_funnel,
     _reconcile_pending_order_before_immediate_fill,
+    _resolve_passed_trace_block_reason,
     _resolve_pending_fill_price,
     _should_replace_pending_order,
+    _signal_mid_jump_bps,
+    _signal_spread_bps,
     main as replay_main,
     run_replay,
 )
@@ -58,6 +65,102 @@ class TestLocalIntradayTsmomReplay(TestCase):
                 "spread": Decimal(ask) - Decimal(bid),
             },
         )
+
+    def test_force_position_isolation_owns_decision_by_strategy_id(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="candidate-strategy-1",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={},
+        )
+
+        self.assertEqual(_decision_position_owner(decision), _SHARED_POSITION_OWNER)
+        self.assertEqual(
+            _decision_position_owner(decision, force_position_isolation=True),
+            "candidate-strategy-1",
+        )
+
+    def test_load_strategies_rejects_invalid_configmap_shapes(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            not_mapping = root / "not-mapping.yaml"
+            missing_data = root / "missing-data.yaml"
+            missing_strategies = root / "missing-strategies.yaml"
+            not_mapping.write_text("- bad\n", encoding="utf-8")
+            missing_data.write_text("apiVersion: v1\n", encoding="utf-8")
+            missing_strategies.write_text(
+                "data:\n  other.yaml: '{}'\n", encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "strategy_configmap_not_mapping"):
+                _load_strategies(not_mapping)
+            with self.assertRaisesRegex(
+                RuntimeError, "strategy_configmap_missing_data"
+            ):
+                _load_strategies(missing_data)
+            with self.assertRaisesRegex(
+                RuntimeError, "strategy_configmap_missing_strategies_yaml"
+            ):
+                _load_strategies(missing_strategies)
+
+    def test_fetch_chunk_filters_symbols_and_parses_rows(self) -> None:
+        captured_queries: list[str] = []
+
+        def fake_http_query(
+            *,
+            url: str,
+            username: str | None,
+            password: str | None,
+            query: str,
+        ) -> str:
+            self.assertEqual(url, "http://clickhouse")
+            self.assertEqual(username, "reader")
+            self.assertEqual(password, "secret")
+            captured_queries.append(query)
+            return "\t".join(
+                [
+                    "META",
+                    "2026-03-27 17:30:24.000",
+                    "12",
+                    "0.031",
+                    "0.019",
+                    "523.10",
+                    "522.80",
+                    "57",
+                    "523.25",
+                    "523.22",
+                    "523.28",
+                    "0.06",
+                    "1200",
+                    "800",
+                    "0.06",
+                    "522.95",
+                    "523.05",
+                    "0.00018",
+                    "18200",
+                ]
+            )
+
+        with patch(
+            "scripts.local_intraday_tsmom_replay._http_query",
+            side_effect=fake_http_query,
+        ):
+            rows = _fetch_chunk(
+                http_url="http://clickhouse",
+                username="reader",
+                password="secret",
+                chunk_start=datetime(2026, 3, 27, 17, 0, tzinfo=timezone.utc),
+                chunk_end=datetime(2026, 3, 27, 18, 0, tzinfo=timezone.utc),
+                symbols=("META", "NVDA"),
+            )
+
+        self.assertEqual([row.symbol for row in rows], ["META"])
+        self.assertIn("s.symbol IN ('META', 'NVDA')", captured_queries[0])
 
     def _decision(
         self,
@@ -109,6 +212,83 @@ class TestLocalIntradayTsmomReplay(TestCase):
         fill_price = _resolve_pending_fill_price(decision, signal)
 
         self.assertEqual(fill_price, Decimal("593.80"))
+
+    def test_market_buy_uses_ask_without_limit_price(self) -> None:
+        decision = self._decision(action="buy", order_type="market")
+        signal = self._signal(bid="593.70", ask="593.80", price="593.75")
+
+        fill_price = _resolve_pending_fill_price(decision, signal)
+
+        self.assertEqual(fill_price, Decimal("593.80"))
+
+    def test_quote_metric_helpers_return_positive_bps(self) -> None:
+        signal = self._signal(bid="593.70", ask="593.80", price="593.75")
+
+        self.assertEqual(
+            _signal_spread_bps(signal=signal, price=Decimal("593.75")),
+            Decimal("1.684210526315789473684210526"),
+        )
+        self.assertEqual(
+            _signal_mid_jump_bps(
+                price=Decimal("593.75"),
+                reference_price=Decimal("590.00"),
+            ),
+            Decimal("63.55932203389830508474576271"),
+        )
+
+    def test_decision_exit_reason_prefers_runtime_exit_then_rationale(self) -> None:
+        stop_loss = StrategyDecision(
+            strategy_id="intraday_tsmom_v1@prod",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 19, 11, 0, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="sell",
+            qty=Decimal("10"),
+            order_type="market",
+            time_in_force="day",
+            rationale="signal_exit",
+            params={"position_exit": {"type": "long_stop_loss_bps"}},
+        )
+        rationale_exit = StrategyDecision(
+            strategy_id="intraday_tsmom_v1@prod",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 19, 12, 0, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="sell",
+            qty=Decimal("10"),
+            order_type="market",
+            time_in_force="day",
+            rationale="microbar_exit,score=0.2",
+            params={},
+        )
+        fallback_exit = StrategyDecision(
+            strategy_id="intraday_tsmom_v1@prod",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 19, 13, 0, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="sell",
+            qty=Decimal("10"),
+            order_type="market",
+            time_in_force="day",
+            params={},
+        )
+
+        self.assertEqual(_decision_exit_reason(stop_loss), "long_stop_loss_bps")
+        self.assertEqual(_decision_exit_reason(rationale_exit), "microbar_exit")
+        self.assertEqual(_decision_exit_reason(fallback_exit), "signal_exit")
+
+    def test_resolve_passed_trace_block_reason_reports_post_runtime_filter(
+        self,
+    ) -> None:
+        reason = _resolve_passed_trace_block_reason(
+            strategy_id="candidate-a",
+            raw_decision_strategy_ids={"candidate-a"},
+            allocation_reject_reason_by_strategy_id={},
+            sizing_reject_reason_by_strategy_id={},
+            emitted_strategy_ids=set(),
+        )
+
+        self.assertEqual(reason, "post_runtime_filter_rejected")
 
     def test_apply_filled_decision_opens_position_on_same_signal(self) -> None:
         signal = self._signal(bid="523.22", ask="523.28", price="523.25")
@@ -182,7 +362,9 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(bucket["min_equity"], Decimal("215"))
         self.assertEqual(bucket["max_gross_exposure"], Decimal("420"))
         self.assertEqual(bucket["max_net_exposure_abs"], Decimal("240"))
-        self.assertEqual(bucket["max_gross_exposure_pct_equity"], Decimal("420") / Decimal("215"))
+        self.assertEqual(
+            bucket["max_gross_exposure_pct_equity"], Decimal("420") / Decimal("215")
+        )
         self.assertEqual(bucket["negative_cash_observation_count"], 1)
         self.assertEqual(bucket["capital_snapshot_count"], 1)
 
@@ -502,6 +684,40 @@ class TestLocalIntradayTsmomReplay(TestCase):
 
         self.assertTrue(should_replace)
 
+    def test_buy_market_replaces_same_priority_resting_buy_limit(self) -> None:
+        existing = StrategyDecision(
+            strategy_id="intraday_tsmom_v1@prod",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 19, 11, 0, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("10"),
+            order_type="limit",
+            time_in_force="day",
+            limit_price=Decimal("523.80"),
+            rationale="entry",
+            params={},
+        )
+        replacement = StrategyDecision(
+            strategy_id="intraday_tsmom_v1@prod",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 19, 12, 0, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("10"),
+            order_type="market",
+            time_in_force="day",
+            rationale="entry",
+            params={},
+        )
+
+        should_replace = _should_replace_pending_order(
+            existing=existing,
+            replacement=replacement,
+        )
+
+        self.assertTrue(should_replace)
+
     def test_immediate_fill_clears_existing_pending_order_for_same_position_owner(
         self,
     ) -> None:
@@ -708,7 +924,9 @@ class TestLocalIntradayTsmomReplay(TestCase):
             ],
         )
 
-    def test_positions_payload_projects_pending_sell_against_existing_short(self) -> None:
+    def test_positions_payload_projects_pending_sell_against_existing_short(
+        self,
+    ) -> None:
         positions = {
             ("META", _SHARED_POSITION_OWNER): PositionState(
                 strategy_id=_SHARED_POSITION_OWNER,
@@ -1277,7 +1495,9 @@ class TestLocalIntradayTsmomReplay(TestCase):
             all_closed_trades=[],
         )
 
-        self.assertEqual(positions[("META", _SHARED_POSITION_OWNER)].qty, Decimal("-15"))
+        self.assertEqual(
+            positions[("META", _SHARED_POSITION_OWNER)].qty, Decimal("-15")
+        )
         self.assertEqual(
             positions[("META", _SHARED_POSITION_OWNER)].avg_entry_price,
             Decimal("523.4466666666666666666666667"),
@@ -2072,7 +2292,9 @@ class TestLocalIntradayTsmomReplay(TestCase):
             payload["trace"][0]["block_reason"], "allocator_reject_symbol_capacity"
         )
 
-    def test_run_replay_marks_passed_trace_with_engine_runtime_filter_reason(self) -> None:
+    def test_run_replay_marks_passed_trace_with_engine_runtime_filter_reason(
+        self,
+    ) -> None:
         strategy = Strategy(
             name="breakout-continuation-long-v1",
             description=None,

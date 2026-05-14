@@ -259,6 +259,51 @@ def observed_capital_penalty(scorecard: Mapping[str, Any]) -> float:
     )
 
 
+def _observed_replay_viability_penalty(
+    scorecard: Mapping[str, Any],
+    *,
+    required_min_daily_notional: float,
+    target_net_pnl_per_day: float,
+) -> float:
+    if not scorecard:
+        return 0.0
+
+    active_day_ratio = _float(scorecard.get("active_day_ratio"))
+    positive_day_ratio = _float(scorecard.get("positive_day_ratio"))
+    has_filled_notional = "avg_filled_notional_per_day" in scorecard
+    avg_filled_notional_per_day = _float(scorecard.get("avg_filled_notional_per_day"))
+    net_pnl_per_day = _float(scorecard.get("net_pnl_per_day"))
+    no_activity_penalty = (
+        500.0
+        if active_day_ratio <= 0.0
+        and has_filled_notional
+        and avg_filled_notional_per_day <= 0.0
+        else 0.0
+    )
+    notional_shortfall_ratio = 0.0
+    if required_min_daily_notional > 0.0 and has_filled_notional:
+        notional_shortfall_ratio = max(
+            0.0,
+            (required_min_daily_notional - avg_filled_notional_per_day)
+            / required_min_daily_notional,
+        )
+    elif (
+        active_day_ratio <= 0.0
+        and has_filled_notional
+        and avg_filled_notional_per_day <= 0.0
+    ):
+        notional_shortfall_ratio = 1.0
+
+    return (
+        no_activity_penalty
+        + max(0.0, 1.0 - active_day_ratio) * 600.0
+        + max(0.0, 1.0 - positive_day_ratio) * 450.0
+        + notional_shortfall_ratio * 500.0
+        + _float(scorecard.get("negative_day_count")) * 125.0
+        + max(0.0, target_net_pnl_per_day - net_pnl_per_day) * 0.20
+    )
+
+
 def _format_float(value: float) -> str:
     return format(value, ".12g")
 
@@ -318,6 +363,7 @@ def build_mlx_training_rows(
             "required_feature_count",
             "failure_mode_count",
             "target_net_pnl_per_day",
+            "required_min_daily_notional",
             "entry_minute_after_open",
             "exit_minute_after_open",
             "max_hold_seconds",
@@ -354,12 +400,31 @@ def build_mlx_training_rows(
             "history_worst_day_loss",
             "history_max_drawdown",
             "history_avg_filled_notional_per_day",
+            "history_avg_filled_notional_required_ratio",
             "history_hard_veto_count",
             "history_daily_target_shortfall",
+            "history_observed_replay_viability_penalty",
         )
         capital_features = candidate_spec_capital_features(spec)
         params = _params(spec)
         target_net_pnl_per_day = _float(spec.objective.get("target_net_pnl_per_day"))
+        required_min_daily_notional = _float(
+            spec.hard_vetoes.get("required_min_daily_notional")
+            or spec.objective.get("min_avg_filled_notional_per_day")
+        )
+        avg_filled_notional_per_day = _float(
+            scorecard.get("avg_filled_notional_per_day")
+        )
+        avg_filled_notional_required_ratio = (
+            avg_filled_notional_per_day / required_min_daily_notional
+            if required_min_daily_notional > 0.0
+            else 0.0
+        )
+        observed_replay_penalty = _observed_replay_viability_penalty(
+            scorecard,
+            required_min_daily_notional=required_min_daily_notional,
+            target_net_pnl_per_day=target_net_pnl_per_day,
+        )
         selection_mode = params.get("selection_mode")
         signal_motif = params.get("signal_motif")
         stop_loss_bps = _float(
@@ -372,6 +437,7 @@ def build_mlx_training_rows(
             float(len(spec.feature_contract.get("required_features") or [])),
             float(len(spec.expected_failure_modes)),
             target_net_pnl_per_day,
+            required_min_daily_notional,
             _float(params.get("entry_minute_after_open")),
             _float(params.get("exit_minute_after_open")),
             _float(params.get("max_hold_seconds")),
@@ -416,11 +482,13 @@ def build_mlx_training_rows(
             _float(scorecard.get("best_day_share")),
             _float(scorecard.get("worst_day_loss")),
             _float(scorecard.get("max_drawdown")),
-            _float(scorecard.get("avg_filled_notional_per_day")),
+            avg_filled_notional_per_day,
+            avg_filled_notional_required_ratio,
             _hard_veto_count(scorecard),
             _daily_target_shortfall(
                 scorecard, target_net_pnl_per_day=target_net_pnl_per_day
             ),
+            observed_replay_penalty,
         )
         target = (
             _float(scorecard.get("net_pnl_per_day"))
@@ -437,6 +505,7 @@ def build_mlx_training_rows(
                 )
                 * 0.10
             )
+            - observed_replay_penalty
             - capital_budget_penalty(capital_features)
             - observed_capital_penalty(scorecard)
         )
