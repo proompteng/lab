@@ -801,6 +801,31 @@ def _summarize_repair_bid_settlement(
     }
 
 
+def _summarize_repair_outcome_dividend(
+    repair_outcome_dividend_ledger: Mapping[str, Any],
+) -> dict[str, object]:
+    if not repair_outcome_dividend_ledger:
+        return {
+            "ledger_id": None,
+            "schema_version": None,
+            "open_escrow_count": 0,
+            "no_delta_lot_count": 0,
+            "routeable_candidate_count": 0,
+            "max_notional": "0",
+        }
+    summary = _mapping(repair_outcome_dividend_ledger.get("summary"))
+    return {
+        "ledger_id": repair_outcome_dividend_ledger.get("ledger_id"),
+        "schema_version": repair_outcome_dividend_ledger.get("schema_version"),
+        "open_escrow_count": _int(summary.get("open_escrow_count")),
+        "no_delta_lot_count": _int(summary.get("no_delta_lot_count")),
+        "positive_dividend_count": _int(summary.get("positive_dividend_count")),
+        "negative_dividend_count": _int(summary.get("negative_dividend_count")),
+        "routeable_candidate_count": _int(summary.get("routeable_candidate_count")),
+        "max_notional": _text(summary.get("max_notional"), "0"),
+    }
+
+
 def _business_state(
     *,
     revenue_ready: bool,
@@ -851,6 +876,10 @@ def build_revenue_repair_digest(
     repair_bid_settlement = _choose_mapping(
         status_payload.get("repair_bid_settlement_ledger"),
         readyz_payload.get("repair_bid_settlement_ledger"),
+    )
+    repair_outcome_dividend = _choose_mapping(
+        status_payload.get("repair_outcome_dividend_ledger"),
+        readyz_payload.get("repair_outcome_dividend_ledger"),
     )
     db_check = _choose_mapping(
         status_payload.get("db_check"),
@@ -913,6 +942,9 @@ def build_revenue_repair_digest(
         ),
         "repair_bid_settlement": _summarize_repair_bid_settlement(
             repair_bid_settlement
+        ),
+        "repair_outcome_dividend": _summarize_repair_outcome_dividend(
+            repair_outcome_dividend
         ),
         "simple_lane_reject_reason_totals": _collect_reason_counts(status_payload),
     }

@@ -211,6 +211,11 @@ Testing rules for the trading core:
   no-delta debt when candidate count does not move, and keeps the rollback target at `max_notional=0`.
   `/readyz` and `/trading/consumer-evidence` mirror only the compact
   `torghut.alpha-repair-closure-board-ref.v1` fields for Jangar admission.
+- The same board now carries the May 14 doc 201 `torghut.alpha-closure-settlement-market.v1` read-model. While
+  `repair_alpha_readiness` is the live top queue item, the market reserves the first zero-notional closure slot for
+  lineage-ready `H-MICRO-01` feature replay when drift checks, feature rows, or required feature-set evidence remain
+  missing. The compact board ref exposes the market id, selected hypothesis, settlement receipt requirement, active
+  dedupe key, and no-delta budget state without enabling paper or live notional.
 - `GET /trading/status` and `GET /readyz` now include the May 8 doc 181
   `quality_adjusted_profit_frontier` shadow projection. The reducer ranks zero-notional repair packets from quant
   quality, market-context risk flags, route/TCA state, simulation-cache freshness, and Jangar evidence-quality refs

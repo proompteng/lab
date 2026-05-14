@@ -8,11 +8,15 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
-ALPHA_REPAIR_CLOSURE_BOARD_SCHEMA_VERSION = (
-    "torghut.alpha-repair-closure-board.v1"
-)
+ALPHA_REPAIR_CLOSURE_BOARD_SCHEMA_VERSION = "torghut.alpha-repair-closure-board.v1"
 ALPHA_REPAIR_CLOSURE_BOARD_REF_SCHEMA_VERSION = (
     "torghut.alpha-repair-closure-board-ref.v1"
+)
+ALPHA_CLOSURE_SETTLEMENT_MARKET_SCHEMA_VERSION = (
+    "torghut.alpha-closure-settlement-market.v1"
+)
+ALPHA_CLOSURE_SETTLEMENT_RECEIPT_SCHEMA_VERSION = (
+    "torghut.alpha-closure-settlement-receipt.v1"
 )
 
 _DESIGN_REF = (
@@ -23,10 +27,23 @@ _COMPANION_JANGAR_DESIGN_REF = (
     "docs/agents/designs/"
     "193-jangar-cross-plane-closure-board-and-revenue-repair-admission-2026-05-14.md"
 )
+_SETTLEMENT_MARKET_DESIGN_REF = (
+    "docs/torghut/design-system/v6/"
+    "201-torghut-alpha-closure-settlement-and-feature-replay-market-2026-05-14.md"
+)
 _DEFAULT_FRESHNESS_SECONDS = 15 * 60
 _ROLLBACK_TARGET = (
     "disable alpha_repair_closure_board emission and keep Torghut max_notional=0"
 )
+_SETTLEMENT_ROLLBACK_TARGET = (
+    "disable alpha_closure_settlement_market and keep Torghut max_notional=0"
+)
+_FEATURE_REPLAY_HYPOTHESIS_ID = "H-MICRO-01"
+_FEATURE_REPLAY_BLOCKERS = {
+    "drift_checks_missing",
+    "feature_rows_missing",
+    "required_feature_set_unavailable",
+}
 _NO_DELTA_RELEASE_CONDITIONS = [
     "evidence_window_changes",
     "blocker_set_changes",
@@ -93,6 +110,17 @@ def _string_list(value: object) -> list[str]:
     return items
 
 
+def _append_unique(items: list[str], *values: object) -> list[str]:
+    seen = set(items)
+    for value in values:
+        for candidate in _string_list(value) if _sequence(value) else [_text(value)]:
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            items.append(candidate)
+    return items
+
+
 def _stable_hash(prefix: str, payload: Mapping[str, object]) -> str:
     encoded = json.dumps(
         {"prefix": prefix, **dict(payload)},
@@ -134,7 +162,9 @@ def _account_window(
     evidence: Mapping[str, Any],
     executable_alpha_repair_receipts: Mapping[str, Any],
 ) -> tuple[str, str, str]:
-    selected_receipt = _mapping(executable_alpha_repair_receipts.get("selected_receipt"))
+    selected_receipt = _mapping(
+        executable_alpha_repair_receipts.get("selected_receipt")
+    )
     repair_bid_settlement = _mapping(evidence.get("repair_bid_settlement"))
     account = (
         _text(selected_receipt.get("account_id"))
@@ -154,12 +184,16 @@ def _account_window(
     return account, window, trading_mode
 
 
-def _source_serving_refs(source_serving_metadata: Mapping[str, Any]) -> dict[str, object]:
+def _source_serving_refs(
+    source_serving_metadata: Mapping[str, Any],
+) -> dict[str, object]:
     build = _mapping(source_serving_metadata.get("build"))
     source_serving = _mapping(
         source_serving_metadata.get("source_serving_repair_receipt_ledger")
     )
-    route_packet = _mapping(source_serving_metadata.get("route_evidence_clearinghouse_packet"))
+    route_packet = _mapping(
+        source_serving_metadata.get("route_evidence_clearinghouse_packet")
+    )
     source_commit = (
         _text(source_serving.get("source_commit"))
         or _text(route_packet.get("source_commit"))
@@ -193,17 +227,81 @@ def _source_serving_refs(source_serving_metadata: Mapping[str, Any]) -> dict[str
     return refs
 
 
-def _selected_repair_receipt(
+def _all_repair_receipts(
+    executable_alpha_repair_receipts: Mapping[str, Any],
+) -> list[Mapping[str, Any]]:
+    receipts: list[Mapping[str, Any]] = []
+    seen: set[str] = set()
+    for raw_receipt in [
+        executable_alpha_repair_receipts.get("selected_receipt"),
+        *_sequence(executable_alpha_repair_receipts.get("receipts")),
+    ]:
+        receipt = _mapping(raw_receipt)
+        if not receipt:
+            continue
+        receipt_key = _text(receipt.get("receipt_id")) or _text(
+            receipt.get("hypothesis_id")
+        )
+        if receipt_key and receipt_key in seen:
+            continue
+        if receipt_key:
+            seen.add(receipt_key)
+        receipts.append(receipt)
+    return receipts
+
+
+def _receipt_reason_codes(receipt: Mapping[str, Any]) -> list[str]:
+    reason_codes = _string_list(receipt.get("reason_codes"))
+    settlement = _mapping(receipt.get("settlement"))
+    if not reason_codes:
+        reason_codes = _string_list(settlement.get("before_reason_codes"))
+    return reason_codes
+
+
+def _is_zero_notional_receipt(receipt: Mapping[str, Any]) -> bool:
+    return _text(receipt.get("max_notional"), "0") in {"0", "0.0", "0.00"}
+
+
+def _is_feature_replay_receipt(receipt: Mapping[str, Any]) -> bool:
+    return bool(
+        set(_receipt_reason_codes(receipt)).intersection(_FEATURE_REPLAY_BLOCKERS)
+    )
+
+
+def _closure_receipt_rank(
+    receipt: Mapping[str, Any], selected_receipt_id: str
+) -> tuple[int, str]:
+    hypothesis_id = _text(receipt.get("hypothesis_id"))
+    reason_codes = set(_receipt_reason_codes(receipt))
+    lineage_ready = _text(receipt.get("lineage_status"), "ready") == "ready"
+    feature_replay = bool(reason_codes.intersection(_FEATURE_REPLAY_BLOCKERS))
+    if (
+        hypothesis_id == _FEATURE_REPLAY_HYPOTHESIS_ID
+        and lineage_ready
+        and feature_replay
+        and _is_zero_notional_receipt(receipt)
+    ):
+        return (0, hypothesis_id)
+    if lineage_ready and feature_replay and _is_zero_notional_receipt(receipt):
+        return (10, hypothesis_id)
+    if _text(receipt.get("receipt_id")) == selected_receipt_id:
+        return (20, hypothesis_id)
+    return (50, hypothesis_id)
+
+
+def _select_closure_receipt(
     executable_alpha_repair_receipts: Mapping[str, Any],
 ) -> Mapping[str, Any]:
-    selected = _mapping(executable_alpha_repair_receipts.get("selected_receipt"))
-    if selected:
-        return selected
-    for raw_receipt in _sequence(executable_alpha_repair_receipts.get("receipts")):
-        receipt = _mapping(raw_receipt)
-        if receipt:
-            return receipt
-    return {}
+    receipts = _all_repair_receipts(executable_alpha_repair_receipts)
+    if not receipts:
+        return {}
+    selected_receipt_id = _text(
+        executable_alpha_repair_receipts.get("selected_receipt_id")
+    )
+    return sorted(
+        receipts,
+        key=lambda receipt: _closure_receipt_rank(receipt, selected_receipt_id),
+    )[0]
 
 
 def _build_repair_closure(
@@ -224,7 +322,9 @@ def _build_repair_closure(
         or "torghut-revenue-repair-digest:unknown"
     )
     receipt_id = _text(selected_receipt.get("receipt_id"))
-    capital_replay_board = _mapping(_mapping(evidence.get("alpha_readiness")).get("capital_replay_board"))
+    capital_replay_board = _mapping(
+        _mapping(evidence.get("alpha_readiness")).get("capital_replay_board")
+    )
     repair_bid_settlement = _mapping(evidence.get("repair_bid_settlement"))
     before_refs = [
         source_revenue_repair_ref,
@@ -269,9 +369,7 @@ def _build_repair_closure(
         required_receipts.append(required_output)
     validation_commands = _string_list(selected_receipt.get("validation_commands"))
     no_delta_reason = (
-        "routeable_candidate_count_unchanged"
-        if measured_delta <= 0
-        else ""
+        "routeable_candidate_count_unchanged" if measured_delta <= 0 else ""
     )
     return {
         "closure_id": closure_id,
@@ -280,7 +378,9 @@ def _build_repair_closure(
             top_queue_item.get("reason"), "alpha_readiness_not_promotion_eligible"
         ),
         "hypothesis_id": _text(selected_receipt.get("hypothesis_id")),
-        "value_gate": _text(top_queue_item.get("value_gate"), "routeable_candidate_count"),
+        "value_gate": _text(
+            top_queue_item.get("value_gate"), "routeable_candidate_count"
+        ),
         "priority": _int(top_queue_item.get("priority"), 70),
         "expected_unblock_value": _int(top_queue_item.get("expected_unblock_value"), 1),
         "required_output_receipt": required_output,
@@ -306,7 +406,8 @@ def _no_delta_debt_from_closure(closure: Mapping[str, Any]) -> dict[str, object]
     if _int(closure.get("measured_delta")) > 0:
         return None
     return {
-        "debt_id": "alpha-repair-no-delta:" + _stable_hash(
+        "debt_id": "alpha-repair-no-delta:"
+        + _stable_hash(
             "alpha-repair-no-delta",
             {
                 "closure_id": _text(closure.get("closure_id")),
@@ -324,6 +425,201 @@ def _no_delta_debt_from_closure(closure: Mapping[str, Any]) -> dict[str, object]
         "measured_delta": closure.get("measured_delta"),
         "no_delta_reason": closure.get("no_delta_reason"),
         "release_conditions": list(_NO_DELTA_RELEASE_CONDITIONS),
+    }
+
+
+def _selected_lot_class(selected_receipt: Mapping[str, Any]) -> str:
+    if _is_feature_replay_receipt(selected_receipt):
+        return "feature_lineage"
+    return "promotion_custody"
+
+
+def _required_after_receipts(
+    top_queue_item: Mapping[str, Any], selected_receipt: Mapping[str, Any]
+) -> list[str]:
+    receipts = _string_list(selected_receipt.get("required_output_receipts"))
+    receipts = _append_unique(
+        receipts,
+        top_queue_item.get("required_receipts"),
+        top_queue_item.get("required_output_receipt"),
+    )
+    if _is_feature_replay_receipt(selected_receipt):
+        receipts = _append_unique(
+            receipts,
+            "feature_replay_receipt",
+            "drift_check_receipt",
+            "required_feature_set_receipt",
+        )
+    return receipts
+
+
+def _promotion_eligible_count(evidence: Mapping[str, Any]) -> int:
+    return _int(
+        _mapping(evidence.get("alpha_readiness")).get("promotion_eligible_total")
+    )
+
+
+def _settlement_status(
+    *,
+    board_status: str,
+    selected_receipt: Mapping[str, Any],
+    no_delta_used: int,
+) -> str:
+    if board_status in {"blocked", "held", "inactive"}:
+        return board_status
+    if not selected_receipt:
+        return "blocked"
+    if no_delta_used > 0:
+        return "pending_no_delta"
+    return "pending"
+
+
+def _build_pending_settlement_receipt(
+    *,
+    market_id: str,
+    closure: Mapping[str, Any],
+    selected_receipt: Mapping[str, Any],
+    evidence: Mapping[str, Any],
+    fresh_until: datetime,
+) -> dict[str, object]:
+    reason_codes = _receipt_reason_codes(selected_receipt)
+    routeable_before = _int(closure.get("routeable_candidate_count_before"))
+    measured_delta = _int(closure.get("measured_delta"))
+    routeable_after = max(0, routeable_before + measured_delta)
+    no_delta_reason = _text(closure.get("no_delta_reason"))
+    receipt_id = "alpha-closure-settlement-receipt:" + _stable_hash(
+        "alpha-closure-settlement-receipt",
+        {
+            "market_id": market_id,
+            "hypothesis_id": _text(selected_receipt.get("hypothesis_id")),
+            "dedupe_key": _text(closure.get("dedupe_key")),
+            "reason_codes": reason_codes,
+        },
+    )
+    return {
+        "schema_version": ALPHA_CLOSURE_SETTLEMENT_RECEIPT_SCHEMA_VERSION,
+        "receipt_id": receipt_id,
+        "market_id": market_id,
+        "hypothesis_id": _text(selected_receipt.get("hypothesis_id")),
+        "candidate_id": _text(selected_receipt.get("candidate_id")) or None,
+        "strategy_id": _text(selected_receipt.get("strategy_id")) or None,
+        "repair_class": "feature_replay_closure"
+        if _is_feature_replay_receipt(selected_receipt)
+        else _text(selected_receipt.get("repair_class"), "alpha_repair_closure"),
+        "before_refs": _string_list(closure.get("before_refs")),
+        "after_refs": [],
+        "retired_reason_codes": [],
+        "preserved_reason_codes": reason_codes,
+        "introduced_reason_codes": [],
+        "measured_delta": measured_delta,
+        "routeable_candidate_count_before": routeable_before,
+        "routeable_candidate_count_after": routeable_after,
+        "promotion_eligible_before": _promotion_eligible_count(evidence),
+        "promotion_eligible_after": _promotion_eligible_count(evidence),
+        "no_delta_reason": no_delta_reason,
+        "next_allowed_attempt_after": fresh_until.isoformat()
+        if no_delta_reason
+        else None,
+        "validation_commands": _string_list(closure.get("validation_commands")),
+        "max_notional": _text(closure.get("max_notional"), "0"),
+        "capital_rule": _text(closure.get("capital_rule"), "zero_notional_repair_only"),
+    }
+
+
+def _build_settlement_market(
+    *,
+    generated: datetime,
+    fresh_until: datetime,
+    status: str,
+    reason_codes: Sequence[str],
+    top_queue_item: Mapping[str, Any],
+    selected_receipt: Mapping[str, Any],
+    executable_alpha_repair_receipts: Mapping[str, Any],
+    evidence: Mapping[str, Any],
+    capital: Mapping[str, Any],
+    source_refs: Mapping[str, object],
+    closure: Mapping[str, Any] | None,
+    account: str,
+    window: str,
+) -> dict[str, object]:
+    source_revenue_repair_ref = (
+        _text(selected_receipt.get("source_revenue_repair_ref"))
+        or _text(executable_alpha_repair_receipts.get("source_revenue_repair_ref"))
+        or "torghut-revenue-repair-digest:unknown"
+    )
+    repair_bid_settlement = _mapping(evidence.get("repair_bid_settlement"))
+    repair_outcome_dividend = _mapping(evidence.get("repair_outcome_dividend"))
+    hypothesis_id = _text(selected_receipt.get("hypothesis_id"))
+    active_dedupe_key = _text(_mapping(closure).get("dedupe_key"))
+    market_id = "alpha-closure-settlement-market:" + _stable_hash(
+        "alpha-closure-settlement-market",
+        {
+            "account": account,
+            "window": window,
+            "queue_code": _text(top_queue_item.get("code")),
+            "hypothesis_id": hypothesis_id,
+            "reason_codes": _receipt_reason_codes(selected_receipt),
+            "source_commit": _text(source_refs.get("source_commit")),
+        },
+    )
+    pending_receipt = (
+        _build_pending_settlement_receipt(
+            market_id=market_id,
+            closure=closure,
+            selected_receipt=selected_receipt,
+            evidence=evidence,
+            fresh_until=fresh_until,
+        )
+        if closure is not None and selected_receipt
+        else None
+    )
+    no_delta_used = (
+        1 if pending_receipt and pending_receipt.get("no_delta_reason") else 0
+    )
+    return {
+        "schema_version": ALPHA_CLOSURE_SETTLEMENT_MARKET_SCHEMA_VERSION,
+        "market_id": market_id,
+        "generated_at": generated.isoformat(),
+        "fresh_until": fresh_until.isoformat(),
+        "governing_design_ref": _SETTLEMENT_MARKET_DESIGN_REF,
+        "status": _settlement_status(
+            board_status=status,
+            selected_receipt=selected_receipt,
+            no_delta_used=no_delta_used,
+        ),
+        "reason_codes": list(reason_codes),
+        "source_revenue_repair_ref": source_revenue_repair_ref,
+        "source_repair_bid_settlement_ref": repair_bid_settlement.get("ledger_id"),
+        "source_repair_outcome_dividend_ref": repair_outcome_dividend.get("ledger_id"),
+        "account_id": account,
+        "window": window,
+        "selected_value_gate": _text(
+            top_queue_item.get("value_gate"), "routeable_candidate_count"
+        ),
+        "selected_hypothesis_id": hypothesis_id,
+        "selected_repair_class": "feature_replay_closure"
+        if _is_feature_replay_receipt(selected_receipt)
+        else _text(selected_receipt.get("repair_class"), "alpha_repair_closure"),
+        "selected_lot_class": _selected_lot_class(selected_receipt),
+        "required_output_receipt": ALPHA_CLOSURE_SETTLEMENT_RECEIPT_SCHEMA_VERSION,
+        "required_after_receipts": _required_after_receipts(
+            top_queue_item, selected_receipt
+        ),
+        "before_blocker_codes": _receipt_reason_codes(selected_receipt),
+        "no_delta_budget": {
+            "max_attempts_per_dedupe_key": 1,
+            "used_attempts": no_delta_used,
+            "remaining_attempts": max(0, 1 - no_delta_used),
+            "state": "consumed" if no_delta_used else "available",
+            "release_conditions": list(_NO_DELTA_RELEASE_CONDITIONS),
+        },
+        "active_dedupe_key": active_dedupe_key,
+        "pending_settlement_receipt": pending_receipt,
+        "max_notional": _text(capital.get("max_notional"), "0"),
+        "capital_rule": _text(
+            top_queue_item.get("capital_rule"), "zero_notional_repair_only"
+        ),
+        "rollback_target": _SETTLEMENT_ROLLBACK_TARGET,
     }
 
 
@@ -355,7 +651,7 @@ def build_alpha_repair_closure_board(
     generated = generated_at.astimezone(timezone.utc)
     fresh_until = generated + timedelta(seconds=_DEFAULT_FRESHNESS_SECONDS)
     top_item = _top_queue_item(repair_queue)
-    selected_receipt = _selected_repair_receipt(executable_alpha_repair_receipts)
+    selected_receipt = _select_closure_receipt(executable_alpha_repair_receipts)
     source_refs = _source_serving_refs(source_serving_metadata or {})
     account, window, trading_mode = _account_window(
         evidence=evidence,
@@ -401,6 +697,22 @@ def build_alpha_repair_closure_board(
     elif not db_current:
         status = "held"
 
+    alpha_closure_settlement_market = _build_settlement_market(
+        generated=generated,
+        fresh_until=fresh_until,
+        status=status,
+        reason_codes=reason_codes,
+        top_queue_item=top_item,
+        selected_receipt=selected_receipt,
+        executable_alpha_repair_receipts=executable_alpha_repair_receipts,
+        evidence=evidence,
+        capital=capital,
+        source_refs=source_refs,
+        closure=closure,
+        account=account,
+        window=window,
+    )
+
     board_id = "alpha-repair-closure-board:" + _stable_hash(
         "alpha-repair-closure-board",
         {
@@ -445,6 +757,7 @@ def build_alpha_repair_closure_board(
         "db_schema_current": db_current,
         "repair_closures": [closure] if closure is not None else [],
         "no_delta_debt": no_delta_debt,
+        "alpha_closure_settlement_market": alpha_closure_settlement_market,
         "rollback_target": _ROLLBACK_TARGET,
     }
 
@@ -467,6 +780,8 @@ def compact_alpha_repair_closure_board(
     empty_closure: Mapping[str, Any] = {}
     top_closure = closures[0] if closures else empty_closure
     no_delta_debt = _sequence(payload.get("no_delta_debt"))
+    settlement_market = _mapping(payload.get("alpha_closure_settlement_market"))
+    no_delta_budget = _mapping(settlement_market.get("no_delta_budget"))
     return {
         "schema_version": ALPHA_REPAIR_CLOSURE_BOARD_REF_SCHEMA_VERSION,
         "board_schema_version": payload.get("schema_version"),
@@ -479,6 +794,15 @@ def compact_alpha_repair_closure_board(
         "selected_value_gate": payload.get("selected_value_gate"),
         "required_output_receipt": top_closure.get("required_output_receipt")
         or _mapping(payload.get("top_queue_item_ref")).get("required_output_receipt"),
+        "settlement_market_id": settlement_market.get("market_id"),
+        "settlement_market_status": settlement_market.get("status"),
+        "selected_hypothesis_id": settlement_market.get("selected_hypothesis_id")
+        or top_closure.get("hypothesis_id"),
+        "selected_repair_class": settlement_market.get("selected_repair_class"),
+        "required_settlement_receipt": settlement_market.get("required_output_receipt"),
+        "active_dedupe_key": settlement_market.get("active_dedupe_key")
+        or top_closure.get("dedupe_key"),
+        "no_delta_budget_state": no_delta_budget.get("state"),
         "no_delta_debt_count": len(no_delta_debt),
         "max_notional": payload.get("max_notional"),
         "capital_rule": payload.get("capital_rule"),
@@ -487,6 +811,8 @@ def compact_alpha_repair_closure_board(
 
 
 __all__ = [
+    "ALPHA_CLOSURE_SETTLEMENT_MARKET_SCHEMA_VERSION",
+    "ALPHA_CLOSURE_SETTLEMENT_RECEIPT_SCHEMA_VERSION",
     "ALPHA_REPAIR_CLOSURE_BOARD_REF_SCHEMA_VERSION",
     "ALPHA_REPAIR_CLOSURE_BOARD_SCHEMA_VERSION",
     "build_alpha_repair_closure_board",
