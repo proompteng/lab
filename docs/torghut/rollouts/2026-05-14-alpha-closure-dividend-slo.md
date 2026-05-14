@@ -47,12 +47,17 @@ Before implementation, live Torghut returned:
 - `max_notional=0`
 - `/trading/consumer-evidence` did not expose `alpha_closure_dividend_slo`
 
-After local validation, live Torghut is still pre-deploy and unchanged:
+After local validation, live Torghut is still pre-deploy and unchanged. Sample from
+`/trading/revenue-repair` at `2026-05-14T22:06:23.559628+00:00`:
 
 - `business_state=repair_only`
 - `revenue_ready=false`
 - top queue item `repair_alpha_readiness`
+- reason `alpha_readiness_not_promotion_eligible`
 - value gate `routeable_candidate_count`
+- `capital.live_submission_allowed=false`
+- `routeability_acceptance.accepted_routeable_candidate_count=0`
+- `routeability_acceptance.zero_notional_or_stale_evidence_rate=1.0`
 - `max_notional=0`
 - `/trading/consumer-evidence` still reports `alpha_closure_dividend_slo` absent until this PR is deployed
 
@@ -62,22 +67,25 @@ hold reason for duplicate no-delta dispatch.
 
 ## Validation
 
-- `uv run --frozen pytest tests/test_alpha_closure_dividend_slo.py tests/test_trading_api.py -k 'alpha_closure_dividend_slo or trading_consumer_evidence_avoids_recursive_jangar_status_fetch'`
-- `uv run --frozen pytest tests/test_alpha_closure_dividend_slo.py tests/test_alpha_repair_closure_board.py tests/test_build_revenue_repair_digest.py tests/test_trading_api.py -k 'alpha_closure_dividend_slo or alpha or revenue_repair or consumer_evidence'`
-- `uv run --frozen pytest --cov --cov-branch --cov-fail-under=0 --cov-report=xml:coverage.xml tests/test_alpha_closure_dividend_slo.py tests/test_trading_api.py -k 'alpha_closure_dividend_slo or trading_consumer_evidence_avoids_recursive_jangar_status_fetch'`
-- `GITHUB_BASE_REF=main uv run --frozen python scripts/check_diff_coverage.py --coverage-xml coverage.xml --threshold 90`
+- `uv sync --frozen --extra dev`
+- `uv lock --check`
+- `uv run --frozen pytest --cov --cov-branch --cov-fail-under=0 --cov-report=xml:coverage.xml tests/test_alpha_closure_dividend_slo.py tests/test_alpha_repair_closure_board.py tests/test_build_revenue_repair_digest.py tests/test_trading_api.py -k 'alpha_closure_dividend_slo or alpha or revenue_repair or consumer_evidence or trading_consumer_evidence_avoids_recursive_jangar_status_fetch'`
+- `uv run --frozen python scripts/check_diff_coverage.py --coverage-xml coverage.xml --threshold 90 --base-ref origin/main`
+- `uv run --frozen python -m compileall app`
+- `uv run --frozen ruff check app tests scripts migrations`
 - `uv run --frozen ruff format --check app/trading/alpha_closure_dividend_slo.py app/main.py tests/test_alpha_closure_dividend_slo.py tests/test_trading_api.py`
-- `uv run --frozen ruff check app/trading/alpha_closure_dividend_slo.py app/main.py tests/test_alpha_closure_dividend_slo.py tests/test_trading_api.py`
+- `uv run --frozen python scripts/check_migration_graph.py`
 - `uv run --frozen pyright --project pyrightconfig.json`
 - `uv run --frozen pyright --project pyrightconfig.alpha.json`
 - `uv run --frozen pyright --project pyrightconfig.scripts.json`
 - `bunx vitest run --config vitest.config.ts src/server/__tests__/control-plane-torghut-consumer-evidence.test.ts src/server/__tests__/control-plane-material-gate-digest.test.ts`
 - `bunx oxfmt --check src/data/agents-control-plane.ts src/server/control-plane-torghut-alpha-closure-dividend-slo.ts src/server/control-plane-torghut-consumer-evidence.ts src/server/control-plane-material-gate-digest.ts src/server/__tests__/control-plane-torghut-consumer-evidence.test.ts src/server/__tests__/control-plane-material-gate-digest.test.ts`
 - `bunx oxlint --config ../../.oxlintrc.json src/data/agents-control-plane.ts src/server/control-plane-torghut-alpha-closure-dividend-slo.ts src/server/control-plane-torghut-consumer-evidence.ts src/server/control-plane-material-gate-digest.ts src/server/__tests__/control-plane-torghut-consumer-evidence.test.ts src/server/__tests__/control-plane-material-gate-digest.test.ts`
-- `bunx tsc --noEmit -p tsconfig.app.json`
+- `bunx tsc --noEmit --project tsconfig.paths.json`
 - `bun run --cwd services/jangar docs:inventory:check`
-- `bunx oxfmt --check docs/jangar/architecture-inventory.md`
+- `bunx oxfmt --check docs/jangar/architecture-inventory.md docs/torghut/rollouts/2026-05-14-alpha-closure-dividend-slo.md`
 - `uv run --frozen python -c 'from pathlib import Path; import yaml; yaml.safe_load(Path("../../.github/workflows/torghut-ci.yml").read_text()); print("torghut-ci.yml parses")'`
+- `git diff --check`
 - CI evidence from PR #6687: `Pytest autoresearch runner 9` passed 5 tests in 573.96s, then the 10-minute job window
   canceled before upload; the workflow timeout is now 15 minutes.
 
