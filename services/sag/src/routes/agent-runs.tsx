@@ -23,12 +23,10 @@ export const Route = createFileRoute('/agent-runs')({
   loader: loadInitialSnapshot,
 })
 
-const defaultTask = 'Inspect the lab repository and report current SAG service health. Do not modify files.'
-
 function AgentRunsRoute() {
   const initialSnapshot = Route.useLoaderData()
   const queryClient = useQueryClient()
-  const [task, setTask] = useState(defaultTask)
+  const [task, setTask] = useState('')
   const [agent, setAgent] = useState('codex-agent')
   const [repository, setRepository] = useState('proompteng/lab')
   const [selectedRunKey, setSelectedRunKey] = useState('')
@@ -66,6 +64,7 @@ function AgentRunsRoute() {
   const createMutation = useMutation({
     mutationFn: createLiveAgentRun,
     onSuccess: async (result) => {
+      setTask('')
       setSelectedRunKey(runKey(result.run))
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['live-agent-runs'] }),
@@ -97,7 +96,7 @@ function AgentRunsRoute() {
         <section className="flex min-h-0 flex-col gap-4 overflow-hidden">
           <Card className="shrink-0 rounded-lg" size="sm">
             <CardHeader>
-              <CardTitle>Create AgentRun</CardTitle>
+              <CardTitle>Create Run</CardTitle>
               <CardAction>
                 <Button
                   size="sm"
@@ -118,7 +117,7 @@ function AgentRunsRoute() {
                     value={task}
                     onChange={(event) => setTask(event.target.value)}
                     rows={3}
-                    placeholder="Ask the agent to do real work."
+                    placeholder="Describe the work."
                   />
                 </Field>
                 <div className="grid gap-4 md:grid-cols-2">
