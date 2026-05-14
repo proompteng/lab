@@ -533,10 +533,18 @@ class TestLiveConfigManifestContract(TestCase):
             "300",
         )
         self.assertEqual(
+            sim_env.get("TRADING_EXECUTABLE_QUOTE_FORWARD_SECONDS"),
+            "60",
+        )
+        self.assertEqual(
             _load_torghut_knative_env().get(
                 "TRADING_EXECUTABLE_QUOTE_LOOKBACK_SECONDS"
             ),
             "60",
+        )
+        self.assertEqual(
+            _load_torghut_knative_env().get("TRADING_EXECUTABLE_QUOTE_FORWARD_SECONDS"),
+            "0",
         )
         self.assertEqual(
             sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS"),
