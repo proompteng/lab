@@ -759,6 +759,7 @@ def compile_hypothesis_runtime_statuses(
     tca_summary: Mapping[str, Any],
     market_context_status: Mapping[str, Any],
     jangar_dependency_quorum: JangarDependencyQuorumStatus,
+    feature_readiness: Mapping[str, Any] | None = None,
     now: datetime | None = None,
     market_session_open: bool | None = None,
     route_symbol_filter_enabled: bool = False,
@@ -772,6 +773,21 @@ def compile_hypothesis_runtime_statuses(
         0,
         _optional_int(getattr(metrics, "feature_batch_rows_total", 0)) or 0,
     )
+    readiness = (
+        dict(feature_readiness) if isinstance(feature_readiness, Mapping) else {}
+    )
+    persisted_feature_rows = max(
+        0,
+        _optional_int(
+            readiness.get("equity_ta_rows")
+            or readiness.get("signal_rows")
+            or readiness.get("row_count")
+            or readiness.get("rows")
+            or 0
+        )
+        or 0,
+    )
+    feature_batch_rows_total = max(feature_batch_rows_total, persisted_feature_rows)
     drift_detection_checks_total = max(
         0,
         _optional_int(getattr(metrics, "drift_detection_checks_total", 0)) or 0,

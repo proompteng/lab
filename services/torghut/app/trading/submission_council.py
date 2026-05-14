@@ -984,16 +984,76 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, int]:
     }
 
 
-def _build_profit_data_readiness_summary(state: object) -> dict[str, object]:
+def _coerce_aware_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        normalized = value.strip()
+        if normalized.endswith("Z"):
+            normalized = f"{normalized[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _build_profit_data_readiness_summary(
+    state: object,
+    *,
+    clickhouse_ta_status: Mapping[str, Any] | None = None,
+) -> dict[str, object]:
     metrics = getattr(state, "metrics", None)
     rows = _safe_int(getattr(metrics, "feature_batch_rows_total", 0))
+    symbols = 0
+    source_ref = "scheduler.metrics.feature_batch_rows_total"
+    observed_at = None
+    fresh_until = None
+    clickhouse_status = (
+        dict(clickhouse_ta_status) if isinstance(clickhouse_ta_status, Mapping) else {}
+    )
+    clickhouse_rows = _safe_int(
+        clickhouse_status.get("signal_rows")
+        or clickhouse_status.get("equity_ta_rows")
+        or clickhouse_status.get("row_count")
+        or clickhouse_status.get("rows")
+        or 0
+    )
+    clickhouse_symbols = _safe_int(
+        clickhouse_status.get("symbol_count")
+        or clickhouse_status.get("equity_ta_symbols")
+        or clickhouse_status.get("symbols")
+        or 0
+    )
+    if rows <= 0 and clickhouse_rows > 0:
+        rows = clickhouse_rows
+        symbols = clickhouse_symbols
+        source_ref = (
+            _safe_text(clickhouse_status.get("source_ref")) or "clickhouse:ta_signals"
+        )
+        observed_at = _coerce_aware_datetime(
+            clickhouse_status.get("latest_signal_at")
+            or clickhouse_status.get("readiness_window_end")
+            or clickhouse_status.get("as_of")
+        )
+        fresh_until = _coerce_aware_datetime(clickhouse_status.get("fresh_until"))
+        if fresh_until is None and observed_at is not None:
+            fresh_until = observed_at + timedelta(
+                milliseconds=max(1, settings.trading_feature_max_staleness_ms)
+            )
     null_rate = getattr(metrics, "feature_null_rate", {}) if metrics else {}
     staleness_ms_p95 = _safe_int(getattr(metrics, "feature_staleness_ms_p95", 0))
     duplicate_ratio = getattr(metrics, "feature_duplicate_ratio", None)
     return {
         "equity_ta_rows": rows,
-        "equity_ta_symbols": 0,
-        "equity_ta_source_ref": "scheduler.metrics.feature_batch_rows_total",
+        "equity_ta_symbols": symbols,
+        "equity_ta_source_ref": source_ref,
+        "observed_at": observed_at,
+        "fresh_until": fresh_until,
         "feature_null_rate": dict(cast(Mapping[str, float], null_rate))
         if isinstance(null_rate, Mapping)
         else {},
@@ -1109,6 +1169,7 @@ def build_live_submission_gate_payload(
     quant_account_label: str | None = None,
     session: Session | None = None,
     promotion_certificate_evidence: Sequence[Mapping[str, object]] | None = None,
+    clickhouse_ta_status: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     summary: Mapping[str, Any] = hypothesis_summary or {}
     summary, runtime_items = _extract_runtime_summary(hypothesis_summary)
@@ -1198,7 +1259,10 @@ def build_live_submission_gate_payload(
             now=now,
         ),
         promotion_table_counts=promotion_table_counts,
-        data_readiness=_build_profit_data_readiness_summary(state),
+        data_readiness=_build_profit_data_readiness_summary(
+            state,
+            clickhouse_ta_status=clickhouse_ta_status,
+        ),
         live_controls=_build_profit_live_controls(state),
         account=_safe_text(quant_evidence.get("account")),
         window=_safe_text(quant_evidence.get("window")),

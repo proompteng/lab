@@ -4890,16 +4890,21 @@ def _build_hypothesis_runtime_payload(
     tca_summary: Mapping[str, Any],
     market_context_status: Mapping[str, Any],
     dependency_quorum: JangarDependencyQuorumStatus | None = None,
+    feature_readiness: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, object], dict[str, object], JangarDependencyQuorumStatus]:
     registry = load_hypothesis_registry()
     if dependency_quorum is None:
         dependency_quorum = resolve_hypothesis_dependency_quorum(registry)
+    resolved_feature_readiness = feature_readiness or _load_clickhouse_ta_status(
+        scheduler
+    )
     items = compile_hypothesis_runtime_statuses(
         registry=registry,
         state=scheduler.state,
         tca_summary=tca_summary,
         market_context_status=market_context_status,
         jangar_dependency_quorum=dependency_quorum,
+        feature_readiness=resolved_feature_readiness,
         market_session_open=cast(
             bool | None,
             getattr(scheduler.state, "market_session_open", None),
@@ -4933,7 +4938,13 @@ def _build_live_submission_gate_payload(
     empirical_jobs_status: Mapping[str, Any] | None = None,
     dspy_runtime_status: Mapping[str, Any] | None = None,
     quant_health_status: Mapping[str, Any] | None = None,
+    clickhouse_ta_status: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
+    resolved_clickhouse_ta_status = clickhouse_ta_status
+    if resolved_clickhouse_ta_status is None:
+        resolved_clickhouse_ta_status = _load_clickhouse_ta_status(
+            cast(TradingScheduler | None, getattr(app.state, "trading_scheduler", None))
+        )
     if settings.trading_pipeline_mode == "simple":
         if settings.trading_mode != "live":
             return {
@@ -4972,6 +4983,7 @@ def _build_live_submission_gate_payload(
             empirical_jobs_status=empirical_jobs_status,
             dspy_runtime_status=dspy_runtime_status,
             quant_health_status=quant_health_status,
+            clickhouse_ta_status=resolved_clickhouse_ta_status,
         )
         merged_blocked_reasons = list(
             dict.fromkeys(
@@ -5008,6 +5020,7 @@ def _build_live_submission_gate_payload(
         empirical_jobs_status=empirical_jobs_status,
         dspy_runtime_status=dspy_runtime_status,
         quant_health_status=quant_health_status,
+        clickhouse_ta_status=resolved_clickhouse_ta_status,
     )
 
 
