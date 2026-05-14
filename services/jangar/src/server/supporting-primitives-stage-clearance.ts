@@ -2,9 +2,6 @@ import type {
   ActionSloBudgetActionClass,
   ClearanceMarketDecision,
   ClearanceMarketStageAdmission,
-  MaterialEvidenceRepairTicketClass,
-  MaterialEvidenceSettlementDecision,
-  MaterialEvidenceSettlementMode,
   StageClearanceDecision,
   StageClearancePacket,
 } from '~/data/agents-control-plane'
@@ -13,6 +10,11 @@ import {
   readMaterialReentryRequirementSignals,
   type MaterialReentryRequirementSignal,
 } from '~/server/supporting-primitives-material-reentry-requirements'
+import {
+  applyMaterialEvidenceTrace,
+  readMaterialEvidenceSettlementTrace,
+  type MaterialEvidenceSettlementTrace,
+} from '~/server/supporting-primitives-material-evidence-trace'
 import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
 import {
   applyEvidencePressureTrace,
@@ -23,17 +25,6 @@ import {
   type EvidencePressureTrace,
 } from '~/server/supporting-primitives-evidence-pressure'
 import {
-  SWARM_MATERIAL_EVIDENCE_ANNOTATION_BUSINESS_STATE,
-  SWARM_MATERIAL_EVIDENCE_ANNOTATION_DECISION,
-  SWARM_MATERIAL_EVIDENCE_ANNOTATION_DESIGN_REFS,
-  SWARM_MATERIAL_EVIDENCE_ANNOTATION_FRESH_UNTIL,
-  SWARM_MATERIAL_EVIDENCE_ANNOTATION_MAX_NOTIONAL,
-  SWARM_MATERIAL_EVIDENCE_ANNOTATION_MODE,
-  SWARM_MATERIAL_EVIDENCE_ANNOTATION_REASON_CODES,
-  SWARM_MATERIAL_EVIDENCE_ANNOTATION_REPAIR_TICKET_CLASS,
-  SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_TICKET,
-  SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_VALUE_GATE,
-  SWARM_MATERIAL_EVIDENCE_ANNOTATION_SETTLEMENT_ID,
   SWARM_STAGE_CLEARANCE_ANNOTATION_ACTION_CLASS,
   SWARM_STAGE_CLEARANCE_ANNOTATION_CLEARANCE_MARKET_LEDGER_ID,
   SWARM_STAGE_CLEARANCE_ANNOTATION_CLEARANCE_MARKET_SELECTED_REPAIR_LOT,
@@ -59,6 +50,8 @@ import {
 } from '~/server/supporting-primitives-schedule-runner'
 import type { StageName } from '~/server/supporting-primitives-swarm-config'
 
+export { stageClearanceStatusForStage } from '~/server/supporting-primitives-stage-clearance-status'
+
 export type StageClearanceMode = ReturnType<typeof resolveSupportingPrimitivesConfig>['stageClearanceEnforcement']
 
 export type StageClearanceMarketTrace = {
@@ -80,20 +73,6 @@ export type StageCreditTrace = {
   runnerSlotFutureId: string | null
   runnerSlotFutureExpiresAt: string | null
   selectedRepairLotRef: string | null
-}
-
-export type MaterialEvidenceSettlementTrace = {
-  settlementId: string
-  decision: MaterialEvidenceSettlementDecision | null
-  mode: MaterialEvidenceSettlementMode | null
-  freshUntil: string | null
-  reasonCodes: string[]
-  repairTicketClass: MaterialEvidenceRepairTicketClass | null
-  selectedTicketRef: string | null
-  selectedValueGate: string | null
-  businessState: string | null
-  maxNotional: string | null
-  governingDesignRefs: string[]
 }
 
 export type StageClearanceLaunchAdmission = {
@@ -167,29 +146,6 @@ const asArray = (value: unknown) => (Array.isArray(value) ? value : [])
 const isPresent = <T>(value: T | null | undefined): value is T => value != null
 
 const compactStrings = (values: unknown[]) => values.map(asString).filter(isPresent)
-
-const parseMaterialEvidenceDecision = (value: unknown): MaterialEvidenceSettlementDecision | null => {
-  const decision = asString(value)
-  return decision === 'allow' || decision === 'repair_only' || decision === 'hold' || decision === 'block'
-    ? decision
-    : null
-}
-
-const parseMaterialEvidenceMode = (value: unknown): MaterialEvidenceSettlementMode | null => {
-  const mode = asString(value)
-  return mode === 'observe' || mode === 'shadow' || mode === 'enforce' ? mode : null
-}
-
-const parseMaterialEvidenceRepairTicketClass = (value: unknown): MaterialEvidenceRepairTicketClass | null => {
-  const ticketClass = asString(value)
-  return ticketClass === 'none' ||
-    ticketClass === 'controller_ingestion' ||
-    ticketClass === 'verification_carry_rollout' ||
-    ticketClass === 'alpha_readiness' ||
-    ticketClass === 'consumer_evidence_projection_refresh'
-    ? ticketClass
-    : null
-}
 
 export const normalizeStageClearanceHoldStages = (values: string[]) =>
   new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean))
@@ -333,29 +289,6 @@ const readStageCreditStatusSnapshot = (value: unknown): StageCreditStatusSnapsho
     freshUntil: asString(record.fresh_until),
     accounts: asArray(record.stage_accounts).map(readStageCreditAccountSnapshot).filter(isPresent),
     futures: asArray(record.runner_slot_futures).map(readRunnerSlotFutureSnapshot).filter(isPresent),
-  }
-}
-
-const readMaterialEvidenceSettlementTrace = (value: unknown): MaterialEvidenceSettlementTrace | null => {
-  const record = asRecord(value)
-  if (!record) return null
-  const settlementId = asString(record.settlement_id)
-  if (!settlementId) return null
-
-  const budget = asRecord(record.repair_dispatch_budget)
-  const businessTruth = asRecord(record.business_truth)
-  return {
-    settlementId,
-    decision: parseMaterialEvidenceDecision(record.decision),
-    mode: parseMaterialEvidenceMode(record.mode),
-    freshUntil: asString(record.fresh_until),
-    reasonCodes: compactStrings(asArray(record.reason_codes)),
-    repairTicketClass: parseMaterialEvidenceRepairTicketClass(budget?.ticket_class),
-    selectedTicketRef: asString(budget?.selected_ticket_ref),
-    selectedValueGate: asString(businessTruth?.selected_value_gate),
-    businessState: asString(businessTruth?.business_state),
-    maxNotional: asString(businessTruth?.max_notional),
-    governingDesignRefs: compactStrings(asArray(record.governing_design_refs)),
   }
 }
 
@@ -559,52 +492,7 @@ const buildStageClearanceTrace = (
     parameters.swarmCreditSelectedRepairLotRef = stageCredit.selectedRepairLotRef
   }
   applyEvidencePressureTrace(annotations, parameters, evidencePressure)
-  if (materialEvidence) {
-    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_SETTLEMENT_ID] = materialEvidence.settlementId
-    parameters.swarmMaterialEvidenceSettlementId = materialEvidence.settlementId
-  }
-  if (materialEvidence?.decision) {
-    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_DECISION] = materialEvidence.decision
-    parameters.swarmMaterialEvidenceDecision = materialEvidence.decision
-  }
-  if (materialEvidence?.mode) {
-    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_MODE] = materialEvidence.mode
-    parameters.swarmMaterialEvidenceMode = materialEvidence.mode
-  }
-  if (materialEvidence?.freshUntil) {
-    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_FRESH_UNTIL] = materialEvidence.freshUntil
-    parameters.swarmMaterialEvidenceFreshUntil = materialEvidence.freshUntil
-  }
-  if (materialEvidence && materialEvidence.reasonCodes.length > 0) {
-    const materialEvidenceReasonCodes = materialEvidence.reasonCodes.join(',')
-    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_REASON_CODES] = materialEvidenceReasonCodes
-    parameters.swarmMaterialEvidenceReasonCodes = materialEvidenceReasonCodes
-  }
-  if (materialEvidence?.repairTicketClass) {
-    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_REPAIR_TICKET_CLASS] = materialEvidence.repairTicketClass
-    parameters.swarmMaterialEvidenceRepairTicketClass = materialEvidence.repairTicketClass
-  }
-  if (materialEvidence?.selectedTicketRef) {
-    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_TICKET] = materialEvidence.selectedTicketRef
-    parameters.swarmMaterialEvidenceSelectedTicketRef = materialEvidence.selectedTicketRef
-  }
-  if (materialEvidence?.selectedValueGate) {
-    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_VALUE_GATE] = materialEvidence.selectedValueGate
-    parameters.swarmMaterialEvidenceSelectedValueGate = materialEvidence.selectedValueGate
-  }
-  if (materialEvidence?.businessState) {
-    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_BUSINESS_STATE] = materialEvidence.businessState
-    parameters.swarmMaterialEvidenceBusinessState = materialEvidence.businessState
-  }
-  if (materialEvidence?.maxNotional) {
-    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_MAX_NOTIONAL] = materialEvidence.maxNotional
-    parameters.swarmMaterialEvidenceMaxNotional = materialEvidence.maxNotional
-  }
-  if (materialEvidence && materialEvidence.governingDesignRefs.length > 0) {
-    const materialEvidenceDesignRefs = materialEvidence.governingDesignRefs.join(',')
-    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_DESIGN_REFS] = materialEvidenceDesignRefs
-    parameters.swarmMaterialEvidenceDesignRefs = materialEvidenceDesignRefs
-  }
+  applyMaterialEvidenceTrace(annotations, parameters, materialEvidence)
   return { annotations, parameters }
 }
 
@@ -889,49 +777,3 @@ export const resolveStageClearanceForStage = async (input: {
     return resolveStageClearanceUnavailable(input.stage, actionClass, mode, message)
   }
 }
-
-export const stageClearanceStatusForStage = (admission: StageClearanceLaunchAdmission) => ({
-  mode: admission.mode,
-  admitted: admission.admitted,
-  stage: admission.stage,
-  actionClass: admission.actionClass,
-  packetId: admission.packet?.packet_id ?? null,
-  decision: admission.packet?.decision ?? null,
-  freshUntil: admission.packet?.fresh_until ?? null,
-  maxLaunches: admission.packet?.max_launches ?? null,
-  reasonCodes: admission.packet?.reason_codes ?? [],
-  requiredRepairAction: admission.packet?.required_repair_action ?? null,
-  rollbackTarget: admission.packet?.rollback_target ?? null,
-  clearanceMarketLedgerId: admission.clearanceMarket?.ledgerId ?? null,
-  clearanceMarketStageAdmissionId: admission.clearanceMarket?.stageAdmissionId ?? null,
-  clearanceMarketStageDecision: admission.clearanceMarket?.decision ?? null,
-  clearanceMarketSelectedRepairLotRef: admission.clearanceMarket?.selectedRepairLotRef ?? null,
-  stageCreditLedgerId: admission.stageCredit?.ledgerId ?? null,
-  stageCreditAccountId: admission.stageCredit?.accountId ?? null,
-  stageCreditDecision: admission.stageCredit?.decision ?? null,
-  stageCreditMode: admission.stageCredit?.mode ?? null,
-  stageCreditFreshUntil: admission.stageCredit?.freshUntil ?? null,
-  stageCreditReasonCodes: admission.stageCredit?.reasonCodes ?? [],
-  runnerSlotFutureId: admission.stageCredit?.runnerSlotFutureId ?? null,
-  runnerSlotFutureExpiresAt: admission.stageCredit?.runnerSlotFutureExpiresAt ?? null,
-  stageCreditSelectedRepairLotRef: admission.stageCredit?.selectedRepairLotRef ?? null,
-  evidencePressureLedgerId: admission.evidencePressure?.ledgerId ?? null,
-  evidencePressureDecision: admission.evidencePressure?.decision ?? null,
-  evidencePressureMode: admission.evidencePressure?.mode ?? null,
-  evidencePressureFreshUntil: admission.evidencePressure?.freshUntil ?? null,
-  evidencePressureReasonCodes: admission.evidencePressure?.reasonCodes ?? [],
-  evidencePressureWatchBackoffState: admission.evidencePressure?.watchBackoffState ?? null,
-  evidencePressureRequiredRepairReceipts: admission.evidencePressure?.requiredRepairReceipts ?? [],
-  materialEvidenceSettlementId: admission.materialEvidence?.settlementId ?? null,
-  materialEvidenceDecision: admission.materialEvidence?.decision ?? null,
-  materialEvidenceMode: admission.materialEvidence?.mode ?? null,
-  materialEvidenceFreshUntil: admission.materialEvidence?.freshUntil ?? null,
-  materialEvidenceReasonCodes: admission.materialEvidence?.reasonCodes ?? [],
-  materialEvidenceRepairTicketClass: admission.materialEvidence?.repairTicketClass ?? null,
-  materialEvidenceSelectedTicketRef: admission.materialEvidence?.selectedTicketRef ?? null,
-  materialEvidenceSelectedValueGate: admission.materialEvidence?.selectedValueGate ?? null,
-  materialEvidenceBusinessState: admission.materialEvidence?.businessState ?? null,
-  materialEvidenceMaxNotional: admission.materialEvidence?.maxNotional ?? null,
-  reason: admission.reason,
-  message: admission.message,
-})

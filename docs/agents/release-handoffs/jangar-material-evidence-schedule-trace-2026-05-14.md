@@ -41,6 +41,8 @@ launch traces consume it once the image rolls out.
   annotations and `spec.parameters`.
 - `supporting-primitives-stage-clearance` reads material-evidence settlement snapshots and includes them in launch
   admission status.
+- The material-evidence parser/stamper and status projection live in small helper modules so the stage-clearance
+  module remains under the Jangar 800-line module-size cap.
 - Regression coverage verifies schedule-runner command generation and stage-clearance trace stamping.
 - Design 206 now records the scheduler trace follow-up and its observe-mode rollback posture.
 
@@ -50,7 +52,8 @@ Required local validation for this source change:
 
 - `bun run --cwd services/jangar test -- src/server/__tests__/supporting-primitives-controller.test.ts -t "material evidence"`
 - `bun run --cwd services/jangar test -- src/server/__tests__/supporting-primitives-controller.test.ts -t "builds schedule runner command"`
-- `bunx oxfmt --check services/jangar/src/server/supporting-primitives-schedule-runner.ts services/jangar/src/server/supporting-primitives-stage-clearance.ts services/jangar/src/server/__tests__/supporting-primitives-controller.test.ts docs/agents/designs/206-jangar-material-evidence-settlement-spine-and-repair-dispatch-budget-2026-05-14.md docs/agents/release-handoffs/jangar-material-evidence-schedule-trace-2026-05-14.md`
+- `bun run --cwd services/jangar check:module-sizes`
+- `bunx oxfmt --check services/jangar/src/server/supporting-primitives-schedule-runner.ts services/jangar/src/server/supporting-primitives-stage-clearance.ts services/jangar/src/server/supporting-primitives-material-evidence-trace.ts services/jangar/src/server/supporting-primitives-stage-clearance-status.ts services/jangar/src/server/__tests__/supporting-primitives-controller.test.ts docs/agents/designs/206-jangar-material-evidence-settlement-spine-and-repair-dispatch-budget-2026-05-14.md docs/agents/release-handoffs/jangar-material-evidence-schedule-trace-2026-05-14.md`
 
 ## Risks and rollback
 
