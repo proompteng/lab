@@ -439,6 +439,34 @@ class TestBuildRevenueRepairDigest(TestCase):
             "routeable_candidate_count_unchanged",
         )
         self.assertEqual(len(closure_board["no_delta_debt"]), 1)
+        alpha_foundry = digest["alpha_evidence_foundry"]
+        self.assertIsInstance(alpha_foundry, dict)
+        self.assertEqual(
+            alpha_foundry["schema_version"],
+            "torghut.alpha-evidence-foundry.v1",
+        )
+        self.assertEqual(alpha_foundry["status"], "selected")
+        self.assertEqual(alpha_foundry["selected_queue_code"], "repair_alpha_readiness")
+        self.assertEqual(
+            alpha_foundry["selected_value_gate"], "routeable_candidate_count"
+        )
+        self.assertEqual(
+            alpha_foundry["required_output_receipt"],
+            "torghut.alpha-evidence-window-receipt.v1",
+        )
+        self.assertEqual(alpha_foundry["routeable_candidate_count_before"], 0)
+        self.assertEqual(alpha_foundry["max_notional"], "0")
+        alpha_window_receipts = alpha_foundry["receipts"]
+        self.assertIsInstance(alpha_window_receipts, list)
+        self.assertEqual(
+            alpha_window_receipts[0]["hypothesis_id"],
+            "H-AAPL-ROUTE-REHAB",
+        )
+        self.assertEqual(
+            alpha_window_receipts[0]["post_cost_expectancy_state"],
+            "blocked",
+        )
+        self.assertEqual(len(alpha_foundry["no_delta_debt"]), 1)
         self.assertEqual(repair_queue[1]["code"], "repair_execution_tca")
         self.assertNotIn("repair_repair_only", [item["code"] for item in repair_queue])
         self.assertIn(

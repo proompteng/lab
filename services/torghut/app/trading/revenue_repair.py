@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
 
 from .alpha_readiness_strike_ledger import build_alpha_readiness_strike_ledger
+from .alpha_evidence_foundry import build_alpha_evidence_foundry
 from .alpha_repair_closure_board import build_alpha_repair_closure_board
 from .executable_alpha_receipts import build_executable_alpha_repair_receipts
 
@@ -988,6 +989,22 @@ def build_revenue_repair_digest(
         },
         db_check=db_check,
     )
+    alpha_evidence_foundry = build_alpha_evidence_foundry(
+        generated_at=generated,
+        business_state=business_state,
+        revenue_ready=revenue_ready,
+        repair_queue=cast(Sequence[Mapping[str, Any]], repair_queue),
+        capital=capital,
+        evidence=evidence,
+        executable_alpha_repair_receipts=executable_alpha_repair_receipts,
+        source_serving_metadata={
+            "build": build,
+            "source_serving_repair_receipt_ledger": status_payload.get(
+                "source_serving_repair_receipt_ledger"
+            ),
+            "route_evidence_clearinghouse_packet": route_evidence_clearinghouse,
+        },
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated.isoformat(),
@@ -999,6 +1016,7 @@ def build_revenue_repair_digest(
         "alpha_readiness_strike_ledger": alpha_readiness_strike_ledger,
         "executable_alpha_repair_receipts": executable_alpha_repair_receipts,
         "alpha_repair_closure_board": alpha_repair_closure_board,
+        "alpha_evidence_foundry": alpha_evidence_foundry,
         "business_state": business_state,
         "revenue_ready": revenue_ready,
         "health": {

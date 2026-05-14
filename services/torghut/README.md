@@ -216,6 +216,11 @@ Testing rules for the trading core:
   lineage-ready `H-MICRO-01` feature replay when drift checks, feature rows, or required feature-set evidence remain
   missing. The compact board ref exposes the market id, selected hypothesis, settlement receipt requirement, active
   dedupe key, and no-delta budget state without enabling paper or live notional.
+- `GET /trading/revenue-repair` also emits the May 14 doc 200 `torghut.alpha-evidence-foundry.v1` read-model. The
+  foundry turns the current `repair_alpha_readiness` queue item into hypothesis-scoped
+  `torghut.alpha-evidence-window-receipt.v1` receipts with feature, drift, post-cost, market-context, TCA,
+  route-universe, no-delta, and zero-notional fields. `/readyz` and `/trading/consumer-evidence` mirror only the
+  compact `torghut.alpha-evidence-foundry-ref.v1` fields for Jangar admission.
 - `GET /trading/status` and `GET /readyz` now include the May 8 doc 181
   `quality_adjusted_profit_frontier` shadow projection. The reducer ranks zero-notional repair packets from quant
   quality, market-context risk flags, route/TCA state, simulation-cache freshness, and Jangar evidence-quality refs

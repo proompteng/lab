@@ -1179,6 +1179,13 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(alpha_repair_closure["status"], "inactive")
         self.assertEqual(alpha_repair_closure["max_notional"], "0")
+        alpha_foundry = payload["alpha_evidence_foundry"]
+        self.assertEqual(
+            alpha_foundry["schema_version"],
+            "torghut.alpha-evidence-foundry-ref.v1",
+        )
+        self.assertEqual(alpha_foundry["status"], "inactive")
+        self.assertEqual(alpha_foundry["max_notional"], "0")
         warrant = payload["route_warrant_exchange"]
         self.assertEqual(
             warrant["schema_version"],
@@ -2919,6 +2926,14 @@ class TestTradingApi(TestCase):
                 payload["alpha_repair_closure_board"]["max_notional"],
                 "0",
             )
+            self.assertEqual(
+                payload["alpha_evidence_foundry"]["schema_version"],
+                "torghut.alpha-evidence-foundry-ref.v1",
+            )
+            self.assertEqual(
+                payload["alpha_evidence_foundry"]["max_notional"],
+                "0",
+            )
         finally:
             settings.trading_enabled = original
             settings.trading_universe_source = original_source
@@ -4213,9 +4228,30 @@ class TestTradingApi(TestCase):
             "torghut.alpha-repair-closure-board.v1",
         )
         self.assertEqual(closure_board["status"], "blocked")
-        self.assertEqual(closure_board["selected_value_gate"], "routeable_candidate_count")
+        self.assertEqual(
+            closure_board["selected_value_gate"], "routeable_candidate_count"
+        )
         self.assertEqual(closure_board["max_notional"], "0")
         self.assertIn("alpha_repair_receipt_missing", closure_board["reason_codes"])
+        alpha_foundry = payload["alpha_evidence_foundry"]
+        self.assertEqual(
+            alpha_foundry["schema_version"],
+            "torghut.alpha-evidence-foundry.v1",
+        )
+        self.assertEqual(alpha_foundry["status"], "held")
+        self.assertEqual(alpha_foundry["selected_queue_code"], "repair_alpha_readiness")
+        self.assertEqual(
+            alpha_foundry["selected_value_gate"], "routeable_candidate_count"
+        )
+        self.assertEqual(
+            alpha_foundry["required_output_receipt"],
+            "torghut.alpha-evidence-window-receipt.v1",
+        )
+        self.assertEqual(alpha_foundry["max_notional"], "0")
+        self.assertIn(
+            "alpha_evidence_window_receipts_missing",
+            alpha_foundry["reason_codes"],
+        )
         self.assertEqual(
             payload["evidence"]["repair_bid_settlement"]["dispatchable_lot_count"],
             1,
