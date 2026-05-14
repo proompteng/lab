@@ -111,6 +111,9 @@ from .trading.hypotheses import (
     validate_hypothesis_registry_from_settings,
 )
 from .trading.jangar_continuity import load_jangar_route_continuity_packet
+from .trading.jangar_controller_ingestion_carry import (
+    compact_jangar_controller_ingestion_carry,
+)
 from .trading.lean_lanes import LeanLaneManager
 from .trading.lean_runtime import lean_authority_status
 from .trading.llm.evaluation import build_llm_evaluation_metrics
@@ -1078,6 +1081,7 @@ def _evaluate_trading_health_payload(
             "mode": settings.trading_mode,
             "pipeline_mode": settings.trading_pipeline_mode,
             "build": build_payload,
+            "dependency_quorum": _dependency_quorum.as_payload(),
             "live_submission_gate": live_submission_gate,
             "proof_floor": proof_floor,
             "quant_evidence": quant_evidence,
@@ -1089,6 +1093,12 @@ def _evaluate_trading_health_payload(
             ),
             "executable_alpha_receipts": capital_replay_projection.get(
                 "executable_alpha_receipts"
+            ),
+            "controller_ingestion_settlement": _dependency_quorum.as_payload().get(
+                "controller_ingestion_settlement"
+            ),
+            "verify_trust_foreclosure_board": _dependency_quorum.as_payload().get(
+                "verify_trust_foreclosure_board"
             ),
             "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
         },
@@ -1164,6 +1174,12 @@ def _evaluate_trading_health_payload(
                 cast(
                     Mapping[str, Any],
                     revenue_repair_digest.get("alpha_repair_dividend_ledger"),
+                )
+            ),
+            "jangar_controller_ingestion_carry": compact_jangar_controller_ingestion_carry(
+                cast(
+                    Mapping[str, Any],
+                    revenue_repair_digest.get("jangar_controller_ingestion_carry"),
                 )
             ),
             "no_delta_repair_reentry_auction": compact_no_delta_repair_reentry_auction(
@@ -1571,11 +1587,20 @@ def readyz() -> JSONResponse:
     )
 
 
-def _load_jangar_verify_trust_foreclosure_board() -> dict[str, object] | None:
-    """Fetch cached Jangar verify-trust carry for revenue-repair reentry only."""
+def _load_jangar_dependency_quorum_payload() -> dict[str, object]:
+    """Fetch cached Jangar dependency carry for revenue-repair reentry only."""
 
     dependency_quorum = load_jangar_dependency_quorum()
-    board = dependency_quorum.as_payload().get("verify_trust_foreclosure_board")
+    return dependency_quorum.as_payload()
+
+
+def _load_jangar_verify_trust_foreclosure_board(
+    dependency_quorum_payload: Mapping[str, object] | None = None,
+) -> dict[str, object] | None:
+    """Fetch cached Jangar verify-trust board for legacy revenue-repair callers."""
+
+    payload = dependency_quorum_payload or _load_jangar_dependency_quorum_payload()
+    board = payload.get("verify_trust_foreclosure_board")
     if not isinstance(board, Mapping):
         return None
     return dict(cast(Mapping[str, object], board))
@@ -1590,8 +1615,21 @@ def trading_revenue_repair() -> dict[str, object]:
         allow_stale_dependency_cache=True,
     )
     status_payload = trading_status()
-    verify_trust_foreclosure_board = _load_jangar_verify_trust_foreclosure_board()
-    if verify_trust_foreclosure_board is not None:
+    dependency_quorum_payload = _load_jangar_dependency_quorum_payload()
+    verify_trust_foreclosure_board = _load_jangar_verify_trust_foreclosure_board(
+        dependency_quorum_payload
+    )
+    if dependency_quorum_payload:
+        status_payload = {
+            **status_payload,
+            "dependency_quorum": dependency_quorum_payload,
+            "controller_ingestion_settlement": dependency_quorum_payload.get(
+                "controller_ingestion_settlement"
+            ),
+            "verify_trust_foreclosure_board": verify_trust_foreclosure_board
+            or dependency_quorum_payload.get("verify_trust_foreclosure_board"),
+        }
+    elif verify_trust_foreclosure_board is not None:
         status_payload = {
             **status_payload,
             "verify_trust_foreclosure_board": verify_trust_foreclosure_board,
@@ -3228,6 +3266,7 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
             "mode": settings.trading_mode,
             "pipeline_mode": "simple",
             "build": build_payload,
+            "dependency_quorum": dependency_quorum.as_payload(),
             "live_submission_gate": live_submission_gate,
             "proof_floor": proof_floor,
             "quant_evidence": quant_evidence,
@@ -3239,6 +3278,12 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
             ),
             "executable_alpha_receipts": capital_replay_projection.get(
                 "executable_alpha_receipts"
+            ),
+            "controller_ingestion_settlement": dependency_quorum.as_payload().get(
+                "controller_ingestion_settlement"
+            ),
+            "verify_trust_foreclosure_board": dependency_quorum.as_payload().get(
+                "verify_trust_foreclosure_board"
             ),
         },
         generated_at=datetime.now(timezone.utc),
@@ -3403,6 +3448,12 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
             cast(
                 Mapping[str, Any],
                 revenue_repair_digest.get("alpha_repair_dividend_ledger"),
+            )
+        ),
+        "jangar_controller_ingestion_carry": compact_jangar_controller_ingestion_carry(
+            cast(
+                Mapping[str, Any],
+                revenue_repair_digest.get("jangar_controller_ingestion_carry"),
             )
         ),
         "no_delta_repair_reentry_auction": compact_no_delta_repair_reentry_auction(

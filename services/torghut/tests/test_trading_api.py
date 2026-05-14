@@ -1287,10 +1287,21 @@ class TestTradingApi(TestCase):
             alpha_dividend["required_recorder_schema"],
             "jangar.material-action-custody-flight-recorder.v1",
         )
+        controller_carry = payload["jangar_controller_ingestion_carry"]
+        self.assertEqual(
+            controller_carry["schema_version"],
+            "torghut.jangar-controller-ingestion-carry-ref.v1",
+        )
+        self.assertEqual(controller_carry["carry_state"], "unavailable")
+        self.assertEqual(controller_carry["max_notional"], "0")
         no_delta_auction = payload["no_delta_repair_reentry_auction"]
         self.assertEqual(
             no_delta_auction["schema_version"],
             "torghut.no-delta-repair-reentry-auction-ref.v1",
+        )
+        self.assertEqual(
+            no_delta_auction["jangar_controller_ingestion_carry_state"],
+            "unavailable",
         )
         self.assertIn(
             no_delta_auction["reentry_decision"],
