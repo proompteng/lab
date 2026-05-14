@@ -334,7 +334,7 @@ const repairAdmission = (overrides: Partial<RepairBidAdmissionState> = {}): Repa
   ...overrides,
 })
 
-const torghutEvidence = (): TorghutConsumerEvidenceStatus => ({
+const torghutEvidence = (overrides: Partial<TorghutConsumerEvidenceStatus> = {}): TorghutConsumerEvidenceStatus => ({
   status: 'current',
   endpoint: 'http://torghut/trading/consumer-evidence',
   receipt_id: 'torghut-route-proven-profit:test',
@@ -381,7 +381,69 @@ const torghutEvidence = (): TorghutConsumerEvidenceStatus => ({
     reason_codes: [],
     rollback_target: 'disable alpha-readiness strike ledger and keep Torghut max_notional=0',
   },
+  ...overrides,
 })
+
+const torghutEvidenceWithExecutableAlphaRepair = (): TorghutConsumerEvidenceStatus => {
+  const selectedReceipt = {
+    schema_version: 'torghut.executable-alpha-repair-receipt.v1' as const,
+    receipt_id: 'executable-alpha-repair-receipt:current',
+    generated_at: now.toISOString(),
+    fresh_until: '2026-05-14T00:11:00.000Z',
+    source_revenue_repair_ref: 'torghut-revenue-repair-digest:test',
+    hypothesis_id: 'H-CONT-01',
+    repair_class: 'alpha_readiness',
+    target_value_gate: 'routeable_candidate_count',
+    reason_codes: ['alpha_readiness_not_promotion_eligible'],
+    account_id: 'PA3SX7FYNUTF',
+    window: '15m',
+    trading_mode: 'live',
+    candidate_id: 'chip-paper-microbar-composite@execution-proof',
+    strategy_id: 'intraday_tsmom_v1@paper',
+    lineage_status: 'ready',
+    evidence_window_status: 'stale',
+    alpha_readiness_state: 'blocked',
+    expected_unblock_value: 4,
+    expected_gate_delta: 'retire_post_cost_expectancy_non_positive',
+    required_input_refs: ['capital-replay:current'],
+    required_output_receipts: ['alpha_readiness_receipt', 'torghut.executable-alpha-receipts.v1'],
+    validation_commands: ['uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py'],
+    max_notional: '0',
+    capital_rule: 'zero_notional_repair_only',
+    no_delta_settlement_required: true,
+    jangar_reentry: {
+      required_material_reentry_receipt: 'jangar.material-reentry-receipt.v1',
+      action_class: 'torghut_observe',
+      max_parallelism: 1,
+      max_runtime_seconds: 1200,
+      value_gates: ['routeable_candidate_count'],
+      rollback_target: 'keep max_notional=0 and live submit disabled',
+    },
+    rollback_target: 'stop emitting executable alpha repair receipts',
+  }
+
+  return torghutEvidence({
+    executable_alpha_repair_receipts: {
+      schema_version: 'torghut.executable-alpha-repair-receipts.v1',
+      generated_at: now.toISOString(),
+      fresh_until: '2026-05-14T00:11:00.000Z',
+      source_revenue_repair_ref: 'torghut-revenue-repair-digest:test',
+      status: 'selected',
+      governing_design_ref:
+        'docs/torghut/design-system/v6/197-torghut-executable-alpha-repair-receipts-and-zero-notional-reentry-2026-05-13.md',
+      selected_receipt_id: selectedReceipt.receipt_id,
+      selected_receipt: selectedReceipt,
+      receipt_count: 1,
+      receipts: [selectedReceipt],
+      target_value_gate: 'routeable_candidate_count',
+      routeable_candidate_count_before: 0,
+      max_notional: '0',
+      capital_rule: 'zero_notional_repair_only',
+      reason_codes: ['alpha_readiness_not_promotion_eligible'],
+      rollback_target: 'stop emitting executable alpha repair receipts',
+    },
+  })
+}
 
 const receiptFor = (receipts: MaterialReentryReceipt[], actionClass: ActionSloBudgetActionClass) => {
   const receipt = receipts.find((entry) => entry.action_class === actionClass)
@@ -469,7 +531,7 @@ describe('control-plane material reentry clearinghouse', () => {
 
     expect(observe).toMatchObject({
       decision: 'repair_only',
-      status: 'open',
+      status: 'repair_required',
       receipt_class: 'torghut_executable_alpha_repair',
       required_output_receipt: 'torghut.promotion-custody-decision-receipt.v1',
       value_gates: ['routeable_candidate_count'],
@@ -484,5 +546,46 @@ describe('control-plane material reentry clearinghouse', () => {
     })
     expect(clearinghouse.blocked_action_classes).toContain('live_scale')
     expect(clearinghouse.top_repair_receipt_id).toBe(observe.receipt_id)
+  })
+
+  it('uses Torghut executable-alpha repair receipts for zero-notional reentry', () => {
+    const clearinghouse = buildMaterialReentryClearinghouse({
+      now,
+      namespace: 'agents',
+      database: healthyDatabase(),
+      watchReliability: watchReliability(),
+      readyTruthArbiter: readyTruth({
+        material_readiness: 'hold',
+        allowed_action_classes: ['serve_readonly', 'torghut_observe'],
+        held_action_classes: [],
+        blocked_action_classes: ['paper_canary'],
+      }),
+      sourceServingContractVerdictExchange: sourceExchange([sourceVerdict('paper_support')]),
+      stageCreditLedger: null,
+      repairBidAdmission: repairAdmission({ receipts: [], dispatch_tickets: [] }),
+      torghutConsumerEvidence: torghutEvidenceWithExecutableAlphaRepair(),
+    })
+
+    const observe = receiptFor(clearinghouse.action_receipts, 'torghut_observe')
+    const paperCanary = receiptFor(clearinghouse.action_receipts, 'paper_canary')
+
+    expect(observe).toMatchObject({
+      decision: 'repair_only',
+      status: 'repair_required',
+      receipt_class: 'torghut_executable_alpha_repair',
+      required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+      value_gates: ['routeable_candidate_count'],
+      max_parallelism: 1,
+      max_runtime_seconds: 1200,
+      max_notional: 0,
+    })
+    expect(observe.source_hold_refs).toContain('executable-alpha-repair-receipt:current')
+    expect(paperCanary).toMatchObject({
+      decision: 'block',
+      status: 'blocked',
+      receipt_class: 'torghut_executable_alpha_repair',
+      max_notional: 0,
+    })
+    expect(paperCanary.reason_codes).toContain('torghut_alpha_repair_blocks_capital_reentry')
   })
 })

@@ -415,6 +415,107 @@ describe('control-plane Torghut consumer evidence', () => {
     })
   })
 
+  it('hydrates executable alpha repair receipts from revenue-repair for material reentry', async () => {
+    process.env = {
+      ...originalEnv,
+      JANGAR_TORGHUT_STATUS_URL: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
+    }
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        buildJsonResponse({
+          schema_version: 'torghut.consumer-evidence-status.v1',
+          route_proven_profit_receipt: {
+            schema_version: 'torghut.route-proven-profit-receipt.v1',
+            receipt_id: 'torghut-route-proven-profit:repair',
+            generated_at: '2026-05-14T00:23:00.000Z',
+            fresh_until: '2026-05-14T00:38:00.000Z',
+            paper_readiness_state: 'blocked',
+            live_readiness_state: 'blocked',
+            max_notional: '0',
+            reason_codes: [],
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        buildJsonResponse({
+          schema_version: 'torghut.revenue-repair-digest.v1',
+          executable_alpha_repair_receipts: {
+            schema_version: 'torghut.executable-alpha-repair-receipts.v1',
+            generated_at: '2026-05-14T00:23:00.000Z',
+            fresh_until: '2026-05-14T00:38:00.000Z',
+            source_revenue_repair_ref: 'torghut-revenue-repair-digest:current',
+            status: 'selected',
+            selected_receipt_id: 'executable-alpha-repair-receipt:current',
+            receipt_count: 1,
+            target_value_gate: 'routeable_candidate_count',
+            routeable_candidate_count_before: 0,
+            max_notional: '0',
+            capital_rule: 'zero_notional_repair_only',
+            selected_receipt: {
+              schema_version: 'torghut.executable-alpha-repair-receipt.v1',
+              receipt_id: 'executable-alpha-repair-receipt:current',
+              generated_at: '2026-05-14T00:23:00.000Z',
+              fresh_until: '2026-05-14T00:38:00.000Z',
+              source_revenue_repair_ref: 'torghut-revenue-repair-digest:current',
+              hypothesis_id: 'H-CONT-01',
+              repair_class: 'evidence_window_refresh',
+              target_value_gate: 'routeable_candidate_count',
+              reason_codes: ['post_cost_expectancy_non_positive'],
+              account_id: 'PA3SX7FYNUTF',
+              window: '15m',
+              trading_mode: 'live',
+              candidate_id: 'chip-paper-microbar-composite@execution-proof',
+              strategy_id: 'intraday_tsmom_v1@paper',
+              lineage_status: 'ready',
+              evidence_window_status: 'stale',
+              alpha_readiness_state: 'blocked',
+              expected_unblock_value: 4,
+              expected_gate_delta: 'retire_post_cost_expectancy_non_positive',
+              required_input_refs: ['capital-replay:current'],
+              required_output_receipts: ['alpha_readiness_receipt', 'torghut.executable-alpha-receipts.v1'],
+              validation_commands: [
+                'uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py',
+              ],
+              max_notional: '0',
+              capital_rule: 'zero_notional_repair_only',
+              no_delta_settlement_required: true,
+              jangar_reentry: {
+                required_material_reentry_receipt: 'jangar.material-reentry-receipt.v1',
+                action_class: 'dispatch_repair',
+                max_parallelism: 1,
+                max_runtime_seconds: 1200,
+                value_gates: ['routeable_candidate_count'],
+                rollback_target: 'keep max_notional=0 and live submit disabled',
+              },
+              rollback_target: 'stop emitting executable alpha repair receipts',
+            },
+            receipts: [],
+          },
+        }),
+      ) as unknown as typeof globalThis.fetch
+
+    const result = await resolveTorghutConsumerEvidence(new Date('2026-05-14T00:23:10.000Z'))
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+    expect(result.status.executable_alpha_repair_receipts).toMatchObject({
+      schema_version: 'torghut.executable-alpha-repair-receipts.v1',
+      selected_receipt_id: 'executable-alpha-repair-receipt:current',
+      receipt_count: 1,
+      target_value_gate: 'routeable_candidate_count',
+      routeable_candidate_count_before: 0,
+      selected_receipt: expect.objectContaining({
+        receipt_id: 'executable-alpha-repair-receipt:current',
+        repair_class: 'evidence_window_refresh',
+        required_output_receipts: ['alpha_readiness_receipt', 'torghut.executable-alpha-receipts.v1'],
+        jangar_reentry: expect.objectContaining({
+          required_material_reentry_receipt: 'jangar.material-reentry-receipt.v1',
+          action_class: 'dispatch_repair',
+        }),
+      }),
+    })
+  })
+
   it('maps Torghut evidence-clock splits and missing custody into action-boundary evidence', async () => {
     process.env = {
       ...originalEnv,

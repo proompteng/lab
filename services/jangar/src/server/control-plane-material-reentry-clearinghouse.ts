@@ -16,6 +16,7 @@ import type {
   SourceServingContractVerdictExchange,
   StageCreditLedger,
   TorghutConsumerEvidenceStatus,
+  TorghutExecutableAlphaRepairReceipt,
 } from '~/data/agents-control-plane'
 import type { ControlPlaneWatchReliability, DatabaseStatus } from '~/server/control-plane-status-types'
 
@@ -120,6 +121,20 @@ const topTorghutValueGate = (torghut: TorghutConsumerEvidenceStatus) =>
 const topTorghutRequiredOutput = (torghut: TorghutConsumerEvidenceStatus) =>
   torghut.alpha_readiness_strike_ledger?.selected_business_blocker?.required_output_receipt ?? null
 
+const selectedExecutableAlphaReceipt = (torghut: TorghutConsumerEvidenceStatus) =>
+  torghut.executable_alpha_repair_receipts?.selected_receipt ?? null
+
+const executableAlphaReceiptIsFresh = (receipt: TorghutExecutableAlphaRepairReceipt | null, now: Date) => {
+  const freshUntilMs = parseFutureTime(receipt?.fresh_until, now.getTime())
+  return Boolean(receipt && freshUntilMs)
+}
+
+const isTorghutRepairAction = (actionClass: ActionSloBudgetActionClass) =>
+  actionClass === 'dispatch_repair' || actionClass === 'torghut_observe'
+
+const isCapitalAction = (actionClass: ActionSloBudgetActionClass) =>
+  actionClass === 'paper_canary' || actionClass === 'live_micro_canary' || actionClass === 'live_scale'
+
 type ReceiptPlan = {
   receiptClass: MaterialReentryReceiptClass
   requiredOutputReceipt: string | null
@@ -203,11 +218,66 @@ const buildTorghutRepairPlan = (input: {
     ],
     rollbackTarget:
       input.torghutConsumerEvidence.alpha_readiness_strike_ledger?.rollback_target ??
-      input.repairBidAdmission.rollback_target,
+    input.repairBidAdmission.rollback_target,
+  })
+}
+
+const buildTorghutExecutableAlphaRepairPlan = (input: {
+  torghutConsumerEvidence: TorghutConsumerEvidenceStatus
+  actionClass: ActionSloBudgetActionClass
+  selectedReceipt: TorghutExecutableAlphaRepairReceipt
+}): ReceiptPlan => {
+  const set = input.torghutConsumerEvidence.executable_alpha_repair_receipts
+  const jangarReentry = input.selectedReceipt.jangar_reentry
+  const allowsRepairAction = isTorghutRepairAction(input.actionClass)
+  const requiredOutputReceipt =
+    input.selectedReceipt.required_output_receipts.find((receipt) => receipt === 'torghut.executable-alpha-receipts.v1') ??
+    input.selectedReceipt.required_output_receipts[0] ??
+    topTorghutRequiredOutput(input.torghutConsumerEvidence) ??
+    null
+
+  return basePlan({
+    receiptClass: 'torghut_executable_alpha_repair',
+    requiredOutputReceipt,
+    validationCommands: [
+      ...input.selectedReceipt.validation_commands,
+      "curl -fsS http://torghut.torghut.svc.cluster.local/trading/revenue-repair | jq '.executable_alpha_repair_receipts.selected_receipt'",
+      'uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py',
+    ],
+    valueGates: [
+      ...(jangarReentry?.value_gates ?? []),
+      input.selectedReceipt.target_value_gate,
+      set?.target_value_gate,
+    ],
+    expectedGateDelta: input.selectedReceipt.expected_gate_delta,
+    maxParallelism: allowsRepairAction ? (jangarReentry?.max_parallelism ?? 1) : 0,
+    maxRuntimeSeconds: allowsRepairAction ? (jangarReentry?.max_runtime_seconds ?? DEFAULT_MAX_RUNTIME_SECONDS) : 0,
+    maxNotional: 0,
+    sourceHoldRefs: [
+      set?.source_revenue_repair_ref,
+      set?.selected_receipt_id,
+      input.selectedReceipt.receipt_id,
+      input.torghutConsumerEvidence.alpha_readiness_strike_ledger?.ledger_id,
+    ],
+    evidenceRefs: [
+      input.torghutConsumerEvidence.receipt_id,
+      input.selectedReceipt.receipt_id,
+      set?.source_revenue_repair_ref,
+      input.torghutConsumerEvidence.alpha_readiness_strike_ledger?.revenue_repair_digest_ref,
+    ],
+    reasonCodes: [
+      ...input.selectedReceipt.reason_codes,
+      ...(allowsRepairAction ? [] : ['torghut_alpha_repair_blocks_capital_reentry']),
+    ],
+    rollbackTarget:
+      jangarReentry?.rollback_target ??
+      input.selectedReceipt.rollback_target ??
+      'keep Torghut max_notional=0 and live submit disabled',
   })
 }
 
 const chooseReceiptPlan = (input: {
+  now: Date
   actionClass: ActionSloBudgetActionClass
   decision: ReadyTruthMaterialReadiness
   database: DatabaseStatus
@@ -222,6 +292,19 @@ const chooseReceiptPlan = (input: {
   const stageCreditAccount = stageCreditAccountFor(input.stageCreditLedger, input.actionClass)
   const repairReceipt = repairReceiptFor(input.repairBidAdmission, input.actionClass)
   const alphaTicket = topAlphaDispatchTicket(input.repairBidAdmission)
+  const selectedAlphaReceipt = selectedExecutableAlphaReceipt(input.torghutConsumerEvidence)
+
+  if (
+    selectedAlphaReceipt &&
+    executableAlphaReceiptIsFresh(selectedAlphaReceipt, input.now) &&
+    (isTorghutRepairAction(input.actionClass) || isCapitalAction(input.actionClass))
+  ) {
+    return buildTorghutExecutableAlphaRepairPlan({
+      torghutConsumerEvidence: input.torghutConsumerEvidence,
+      actionClass: input.actionClass,
+      selectedReceipt: selectedAlphaReceipt,
+    })
+  }
 
   if (input.actionClass === 'torghut_observe' && alphaTicket) {
     return buildTorghutRepairPlan({
@@ -351,9 +434,9 @@ const buildReceipt = (input: {
   decision: ReadyTruthMaterialReadiness
   plan: ReceiptPlan
 }): MaterialReentryReceipt => {
-  const status = statusForDecision(input.decision)
   const receiptDecision =
     input.actionClass === 'torghut_observe' && input.plan.requiredOutputReceipt ? 'repair_only' : input.decision
+  const status = statusForDecision(receiptDecision)
   const receiptId = `material-reentry-receipt:${hashJson({
     namespace: input.namespace,
     actionClass: input.actionClass,
@@ -420,6 +503,7 @@ export const buildMaterialReentryClearinghouse = (input: {
       plan: chooseReceiptPlan({
         actionClass,
         decision,
+        now: input.now,
         database: input.database,
         watchReliability: input.watchReliability,
         readyTruthArbiter: input.readyTruthArbiter,
@@ -463,6 +547,7 @@ export const buildMaterialReentryClearinghouse = (input: {
       input.stageCreditLedger?.fresh_until,
       input.sourceServingContractVerdictExchange.fresh_until,
       input.torghutConsumerEvidence.fresh_until,
+      input.torghutConsumerEvidence.executable_alpha_repair_receipts?.fresh_until,
     ]),
     namespace: input.namespace,
     status,
