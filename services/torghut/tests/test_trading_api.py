@@ -1172,6 +1172,13 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(executable_alpha_repair["status"], "inactive")
         self.assertEqual(executable_alpha_repair["max_notional"], "0")
+        executable_alpha_settlement = payload["executable_alpha_settlement_slots"]
+        self.assertEqual(
+            executable_alpha_settlement["schema_version"],
+            "torghut.executable-alpha-settlement-slots-ref.v1",
+        )
+        self.assertEqual(executable_alpha_settlement["status"], "inactive")
+        self.assertEqual(executable_alpha_settlement["max_notional"], "0")
         alpha_repair_closure = payload["alpha_repair_closure_board"]
         self.assertEqual(
             alpha_repair_closure["schema_version"],
@@ -2927,6 +2934,14 @@ class TestTradingApi(TestCase):
                 "0",
             )
             self.assertEqual(
+                payload["executable_alpha_settlement_slots"]["schema_version"],
+                "torghut.executable-alpha-settlement-slots-ref.v1",
+            )
+            self.assertEqual(
+                payload["executable_alpha_settlement_slots"]["max_notional"],
+                "0",
+            )
+            self.assertEqual(
                 payload["alpha_evidence_foundry"]["schema_version"],
                 "torghut.alpha-evidence-foundry-ref.v1",
             )
@@ -4221,6 +4236,18 @@ class TestTradingApi(TestCase):
         self.assertIn(
             "alpha_readiness_repair_targets_missing",
             payload["executable_alpha_repair_receipts"]["reason_codes"],
+        )
+        settlement_slots = payload["executable_alpha_settlement_slots"]
+        self.assertEqual(
+            settlement_slots["schema_version"],
+            "torghut.executable-alpha-settlement-slots.v1",
+        )
+        self.assertEqual(settlement_slots["status"], "held")
+        self.assertEqual(settlement_slots["selected_slot"], None)
+        self.assertEqual(settlement_slots["max_notional"], "0")
+        self.assertIn(
+            "selected_executable_alpha_repair_receipt_missing",
+            settlement_slots["reason_codes"],
         )
         closure_board = payload["alpha_repair_closure_board"]
         self.assertEqual(

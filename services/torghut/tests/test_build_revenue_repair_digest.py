@@ -416,6 +416,30 @@ class TestBuildRevenueRepairDigest(TestCase):
         )
         self.assertEqual(selected_repair_receipt["max_notional"], "0")
         self.assertTrue(selected_repair_receipt["no_delta_settlement_required"])
+        settlement_slots = digest["executable_alpha_settlement_slots"]
+        self.assertIsInstance(settlement_slots, dict)
+        self.assertEqual(
+            settlement_slots["schema_version"],
+            "torghut.executable-alpha-settlement-slots.v1",
+        )
+        self.assertEqual(settlement_slots["status"], "settled")
+        self.assertEqual(settlement_slots["max_notional"], "0")
+        selected_slot = settlement_slots["selected_slot"]
+        self.assertIsInstance(selected_slot, dict)
+        self.assertEqual(
+            selected_slot["schema_version"],
+            "torghut.executable-alpha-settlement-slot.v1",
+        )
+        self.assertEqual(
+            selected_slot["selected_receipt_id"],
+            selected_repair_receipt["receipt_id"],
+        )
+        self.assertEqual(selected_slot["settlement_state"], "no_delta")
+        self.assertEqual(
+            selected_slot["no_delta_reason"],
+            "routeable_candidate_count_unchanged",
+        )
+        self.assertEqual(len(settlement_slots["no_delta_debt"]), 1)
         closure_board = digest["alpha_repair_closure_board"]
         self.assertIsInstance(closure_board, dict)
         self.assertEqual(

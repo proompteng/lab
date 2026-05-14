@@ -6,6 +6,8 @@ from typing import Any, cast
 
 from app.trading.executable_alpha_receipts import (
     build_executable_alpha_repair_receipts,
+    build_executable_alpha_settlement_slots,
+    compact_executable_alpha_settlement_slots,
 )
 
 
@@ -106,6 +108,63 @@ def _alpha_readiness() -> dict[str, object]:
     }
 
 
+def _h_cont_alpha_readiness() -> dict[str, object]:
+    return {
+        "promotion_eligible_total": 0,
+        "repair_target_count": 1,
+        "capital_replay_board": {
+            "schema_version": "torghut.capital-replay-board.v1",
+            "board_id": "capital-replay:cont",
+        },
+        "executable_alpha_receipts": {
+            "schema_version": "torghut.executable-alpha-receipts.v1",
+            "candidate_receipts": [
+                {
+                    "receipt_id": "receipt:cont",
+                    "hypothesis_id": "H-CONT-01",
+                    "max_notional": "0",
+                }
+            ],
+        },
+        "repair_targets": [
+            {
+                "hypothesis_id": "H-CONT-01",
+                "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                "strategy_id": "intraday_tsmom_v1@paper",
+                "state": "shadow",
+                "promotion_eligible": False,
+                "reasons": ["post_cost_expectancy_non_positive"],
+                "informational_reasons": [
+                    "closed_session_signal_hold",
+                    "closed_session_tca_evidence_hold",
+                ],
+            }
+        ],
+    }
+
+
+def _settlement_evidence(
+    alpha_readiness: Mapping[str, Any] | None = None,
+    *,
+    routeable_candidate_count: int = 0,
+) -> dict[str, object]:
+    return {
+        "alpha_readiness": alpha_readiness or _h_cont_alpha_readiness(),
+        "repair_bid_settlement": {
+            "ledger_id": "repair-bid-settlement-ledger:test",
+            "routeable_candidate_count": routeable_candidate_count,
+        },
+        "routeability_acceptance": {
+            "ledger_id": "routeability-acceptance-ledger:test",
+            "accepted_routeable_candidate_count": routeable_candidate_count,
+        },
+        "route_evidence_clearinghouse": {
+            "packet_id": "route-evidence-clearinghouse:test",
+            "accepted_routeable_candidate_count": routeable_candidate_count,
+        },
+    }
+
+
 def _build(
     *,
     alpha_readiness: Mapping[str, Any] | None = None,
@@ -120,6 +179,29 @@ def _build(
         alpha_readiness=alpha_readiness or _alpha_readiness(),
         capital=capital or {"max_notional": "0"},
         repair_bid_settlement_ledger=_settlement_ledger(),
+    )
+
+
+def _build_settlement_slots(
+    *,
+    alpha_readiness: Mapping[str, Any] | None = None,
+    repair_queue: list[dict[str, object]] | None = None,
+    capital: Mapping[str, Any] | None = None,
+    routeable_candidate_count: int = 0,
+    generated_at: datetime = NOW,
+) -> dict[str, object]:
+    alpha = alpha_readiness or _h_cont_alpha_readiness()
+    repair_receipts = _build(alpha_readiness=alpha, repair_queue=repair_queue)
+    return build_executable_alpha_settlement_slots(
+        generated_at=generated_at,
+        business_state="repair_only",
+        revenue_ready=False,
+        repair_queue=repair_queue or _top_alpha_queue(),
+        capital=capital or {"max_notional": "0", "live_submission_allowed": False},
+        evidence=_settlement_evidence(
+            alpha, routeable_candidate_count=routeable_candidate_count
+        ),
+        executable_alpha_repair_receipts=repair_receipts,
     )
 
 
@@ -199,3 +281,108 @@ def test_receipts_block_nonzero_notional() -> None:
     assert payload["selected_receipt"] is None
     assert payload["receipts"] == []
     assert payload["reason_codes"] == ["capital_notional_nonzero"]
+
+
+def test_evidence_window_selected_repair_receipt_settles_no_delta_for_unchanged_routeable_count() -> (
+    None
+):
+    payload = _build_settlement_slots()
+
+    assert payload["schema_version"] == "torghut.executable-alpha-settlement-slots.v1"
+    assert payload["status"] == "settled"
+    assert payload["max_notional"] == "0"
+    assert payload["capital_rule"] == "zero_notional_repair_only"
+    selected_slot = cast(Mapping[str, Any], payload["selected_slot"])
+    assert (
+        selected_slot["schema_version"] == "torghut.executable-alpha-settlement-slot.v1"
+    )
+    assert selected_slot["hypothesis_id"] == "H-CONT-01"
+    assert selected_slot["target_value_gate"] == "routeable_candidate_count"
+    assert selected_slot["settlement_state"] == "no_delta"
+    assert selected_slot["routeable_candidate_count_before"] == 0
+    assert selected_slot["routeable_candidate_count_after"] == 0
+    assert selected_slot["measured_delta"] == 0
+    assert selected_slot["no_delta_reason"] == "routeable_candidate_count_unchanged"
+    assert selected_slot["material_reentry_receipt_id"].startswith(
+        "material-reentry-receipt:"
+    )
+    assert selected_slot["required_material_reentry_receipt"] == (
+        "jangar.material-reentry-receipt.v1"
+    )
+    assert selected_slot["max_notional"] == "0"
+    no_delta_debt = cast(list[Mapping[str, Any]], payload["no_delta_debt"])
+    assert len(no_delta_debt) == 1
+    assert no_delta_debt[0]["selected_receipt_id"] == payload["selected_receipt_id"]
+    assert no_delta_debt[0]["remaining_blocker"] == (
+        "post_cost_expectancy_non_positive"
+    )
+    assert "blocker_set_changes" in no_delta_debt[0]["release_conditions"]
+
+
+def test_settlement_slots_inactive_when_alpha_readiness_is_not_top_queue_item() -> None:
+    payload = _build_settlement_slots(
+        repair_queue=[
+            {
+                "code": "repair_execution_tca",
+                "reason": "execution_tca_stale",
+                "value_gate": "fill_tca_or_slippage_quality",
+            }
+        ]
+    )
+
+    assert payload["status"] == "inactive"
+    assert payload["selected_slot"] is None
+    assert payload["slots"] == []
+    assert payload["no_delta_debt"] == []
+    assert payload["reason_codes"] == ["revenue_repair_top_item_not_alpha_readiness"]
+
+
+def test_settlement_slots_block_when_capital_safety_is_not_zero_notional() -> None:
+    payload = _build_settlement_slots(
+        capital={"max_notional": "25", "live_submission_allowed": True}
+    )
+
+    assert payload["status"] == "blocked"
+    assert payload["selected_slot"] is None
+    assert payload["slots"] == []
+    assert payload["reason_codes"] == [
+        "capital_notional_nonzero",
+        "live_submission_enabled",
+    ]
+
+
+def test_settlement_slots_block_stale_selected_repair_receipt() -> None:
+    alpha = _h_cont_alpha_readiness()
+    repair_receipts = _build(alpha_readiness=alpha)
+    selected = cast(dict[str, object], repair_receipts["selected_receipt"])
+    selected["fresh_until"] = "2026-05-13T22:54:00+00:00"
+
+    payload = build_executable_alpha_settlement_slots(
+        generated_at=NOW,
+        business_state="repair_only",
+        revenue_ready=False,
+        repair_queue=_top_alpha_queue(),
+        capital={"max_notional": "0", "live_submission_allowed": False},
+        evidence=_settlement_evidence(alpha),
+        executable_alpha_repair_receipts=repair_receipts,
+    )
+
+    assert payload["status"] == "blocked"
+    assert payload["selected_slot"] is None
+    assert payload["reason_codes"] == ["selected_executable_alpha_repair_receipt_stale"]
+
+
+def test_compact_settlement_slots_exposes_no_delta_receipt_ref() -> None:
+    payload = _build_settlement_slots()
+    compact = compact_executable_alpha_settlement_slots(payload)
+
+    assert compact["schema_version"] == (
+        "torghut.executable-alpha-settlement-slots-ref.v1"
+    )
+    assert compact["status"] == "settled"
+    assert compact["selected_hypothesis_id"] == "H-CONT-01"
+    assert compact["settlement_state"] == "no_delta"
+    assert compact["target_value_gate"] == "routeable_candidate_count"
+    assert compact["no_delta_debt_count"] == 1
+    assert compact["remaining_blocker"] == "post_cost_expectancy_non_positive"
+    assert compact["max_notional"] == "0"
