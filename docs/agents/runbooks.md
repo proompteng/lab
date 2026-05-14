@@ -183,6 +183,9 @@ Expected outcomes:
 - `repair_warrant_exchange.schedule_debt_window` nets a failed schedule attempt only when a later success has the same
   lane, source ref, image ref, and objective ref. Unmatched failures stay open; if open errors outnumber successes by
   more than two, new repair warrants move to `observe_only`.
+- `/ready.revenue_repair_settlement_custody` is the bounded hot-path custody object for design doc 200. It must cite
+  the current Torghut alpha-readiness conveyor when available, deny active no-delta or nonzero-notional repair repeats,
+  and conservatively report missing stage/source proof as hold reasons because `/ready` does not collect full status.
 - `ready_action_exchange.mode` is `observe`; it points to the current `action_custody_receipts` and summarizes which
   action classes are `allow`, `repair_only`, `hold`, or `block`.
 - `action_custody_receipts` cite design doc 183 and wrap material verdicts, controller witness, source rollout truth,

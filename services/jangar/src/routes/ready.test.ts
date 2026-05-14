@@ -391,6 +391,30 @@ describe('getReadyHandler', () => {
             max_notional: '0',
             reason_codes: [],
           },
+          alpha_readiness_settlement_conveyor: {
+            schema_version: 'torghut.alpha-readiness-settlement-conveyor-ref.v1',
+            conveyor_schema_version: 'torghut.alpha-readiness-settlement-conveyor.v1',
+            conveyor_id: 'alpha-readiness-settlement-conveyor:ready-test',
+            generated_at: '2026-05-14T00:23:00.000Z',
+            fresh_until: '2026-05-14T00:38:00.000Z',
+            status: 'no_delta',
+            settlement_state: 'no_delta',
+            reason_codes: ['active_no_delta_lease'],
+            selected_hypothesis_id: 'H-MICRO-01',
+            selected_value_gate: 'routeable_candidate_count',
+            routeable_candidate_count_before: 0,
+            routeable_candidate_count_after: 0,
+            measured_routeable_candidate_delta: 0,
+            active_no_delta_lease_count: 1,
+            required_receipt: 'torghut.alpha-readiness-settlement-receipt.v1',
+            validation_command:
+              'uv run --frozen pytest services/torghut/tests/test_alpha_readiness_settlement_conveyor.py',
+            no_delta_release_key: 'alpha-readiness-no-delta:ready-test',
+            repeat_launch_decision: 'deny',
+            max_notional: '0',
+            capital_rule: 'zero_notional_repair_only',
+            rollback_target: 'stop emitting alpha_readiness_settlement_conveyor and keep Torghut max_notional=0',
+          },
         }),
       )
       .mockResolvedValueOnce(
@@ -460,6 +484,39 @@ describe('getReadyHandler', () => {
     expect(body.torghut_consumer_evidence).toMatchObject({
       revenue_repair_business_state: 'repair_only',
       revenue_repair_ready: false,
+    })
+    expect(body.revenue_repair_settlement_custody).toMatchObject({
+      schema_version: 'jangar.revenue-repair-settlement-custody.v1',
+      mode: 'observe',
+      torghut_conveyor_ref: 'alpha-readiness-settlement-conveyor:ready-test',
+      selected_hypothesis_id: 'H-MICRO-01',
+      selected_value_gate: 'routeable_candidate_count',
+      action_class: 'dispatch_repair',
+      decision: 'deny',
+      reason_codes: expect.arrayContaining([
+        'active_no_delta_lease',
+        'stage_credit_ledger_missing',
+        'source_serving_dispatch_repair_verdict_missing',
+        'rollout_health_unknown',
+      ]),
+      no_delta_release_key: 'alpha-readiness-no-delta:ready-test',
+      no_delta_release_state: 'active',
+      stage_health: {
+        stage_credit_ledger_ref: null,
+        dispatch_repair_decision: null,
+        reason_codes: ['stage_credit_ledger_missing'],
+      },
+      rollout_proof: {
+        source_serving_verdict_ref: null,
+        source_serving_decision: null,
+        rollout_health: 'unknown',
+        reason_codes: expect.arrayContaining([
+          'rollout_health_unknown',
+          'source_serving_dispatch_repair_verdict_missing',
+        ]),
+      },
+      validation_command: 'uv run --frozen pytest services/torghut/tests/test_alpha_readiness_settlement_conveyor.py',
+      rollback_target: 'stop emitting alpha_readiness_settlement_conveyor and keep Torghut max_notional=0',
     })
     expect(body.material_gate_digest).toMatchObject({
       schema_version: 'jangar.material-gate-digest.v1',
