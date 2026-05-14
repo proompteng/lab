@@ -104,6 +104,7 @@ from .trading.hypotheses import (
     JangarDependencyQuorumStatus,
     compile_hypothesis_runtime_statuses,
     hypothesis_registry_requires_dependency_capability,
+    load_jangar_dependency_quorum,
     load_hypothesis_registry,
     resolve_hypothesis_dependency_quorum,
     summarize_hypothesis_runtime_statuses,
@@ -1569,6 +1570,16 @@ def readyz() -> JSONResponse:
     )
 
 
+def _load_jangar_verify_trust_foreclosure_board() -> dict[str, object] | None:
+    """Fetch cached Jangar verify-trust carry for revenue-repair reentry only."""
+
+    dependency_quorum = load_jangar_dependency_quorum()
+    board = dependency_quorum.as_payload().get("verify_trust_foreclosure_board")
+    if not isinstance(board, Mapping):
+        return None
+    return dict(cast(Mapping[str, object], board))
+
+
 @app.get("/trading/revenue-repair")
 def trading_revenue_repair() -> dict[str, object]:
     """Return business-state and repair-priority evidence for revenue readiness."""
@@ -1578,6 +1589,12 @@ def trading_revenue_repair() -> dict[str, object]:
         allow_stale_dependency_cache=True,
     )
     status_payload = trading_status()
+    verify_trust_foreclosure_board = _load_jangar_verify_trust_foreclosure_board()
+    if verify_trust_foreclosure_board is not None:
+        status_payload = {
+            **status_payload,
+            "verify_trust_foreclosure_board": verify_trust_foreclosure_board,
+        }
     return cast(
         dict[str, object],
         jsonable_encoder(

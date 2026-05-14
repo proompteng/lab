@@ -941,6 +941,51 @@ class TestHypothesisReadiness(TestCase):
         self.assertEqual(status.controller_ingestion_settlement["decision"], "current")
         self.assertEqual(status.as_payload()["generated_at"], "2026-05-07T12:00:00Z")
 
+    def test_load_jangar_dependency_quorum_preserves_verify_foreclosure_board(
+        self,
+    ) -> None:
+        settings.trading_jangar_control_plane_status_url = (
+            "https://jangar.example/status"
+        )
+        settings.trading_jangar_control_plane_cache_ttl_seconds = 0
+        settings.trading_jangar_control_plane_timeout_seconds = 1.0
+        board = {
+            "schema_version": "jangar.verify-trust-foreclosure-board.v1",
+            "board_id": "verify-trust-foreclosure-board:agents:test",
+            "fresh_until": "2026-05-14T16:30:00Z",
+            "execution_trust_status": "degraded",
+            "source_rollout_truth_state": "converged",
+            "foreclosure_tickets": [
+                {
+                    "ticket_id": "verify-trust-foreclosure-ticket:test",
+                    "state": "open",
+                    "required_output_receipt": (
+                        "jangar.verify-trust-foreclosure-ticket.v1"
+                    ),
+                }
+            ],
+        }
+        with patch(
+            "app.trading.hypotheses.urlopen",
+            return_value=_FakeHttpResponse(
+                {
+                    "generated_at": "2026-05-14T16:10:00Z",
+                    "dependency_quorum": {
+                        "decision": "allow",
+                        "reasons": [],
+                        "message": "ok",
+                    },
+                    "verify_trust_foreclosure_board": board,
+                }
+            ),
+        ):
+            status = load_jangar_dependency_quorum()
+
+        self.assertEqual(status.decision, "allow")
+        self.assertEqual(status.message, "ok")
+        payload = status.as_payload()
+        self.assertEqual(payload["verify_trust_foreclosure_board"], board)
+
     def test_load_jangar_dependency_quorum_falls_back_to_legacy_status_when_needed(
         self,
     ) -> None:
