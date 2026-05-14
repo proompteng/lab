@@ -7,8 +7,10 @@ import type {
   SourceServingContractVerdictExchange,
   StageCreditAccount,
   StageCreditLedger,
+  TorghutAlphaRepairClosureBoardRef,
   TorghutAlphaReadinessSettlementConveyorRef,
   TorghutConsumerEvidenceStatus,
+  TorghutExecutableAlphaRepairReceiptSet,
 } from '~/data/agents-control-plane'
 import {
   buildRevenueRepairSettlementCustody,
@@ -184,6 +186,93 @@ const settlementConveyor = (
   ...overrides,
 })
 
+const closureBoard = (
+  overrides: Partial<TorghutAlphaRepairClosureBoardRef> = {},
+): TorghutAlphaRepairClosureBoardRef => ({
+  schema_version: 'torghut.alpha-repair-closure-board-ref.v1',
+  board_id: 'alpha-repair-closure-board:current',
+  generated_at: now.toISOString(),
+  fresh_until: '2026-05-14T09:30:00.000Z',
+  status: 'selected',
+  reason_codes: [],
+  top_closure_id: 'alpha-repair-closure:current',
+  selected_value_gate: 'routeable_candidate_count',
+  required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+  settlement_market_id: 'alpha-closure-settlement-market:current',
+  settlement_market_status: 'pending_no_delta',
+  selected_hypothesis_id: 'H-MICRO-01',
+  selected_repair_class: 'evidence_window_refresh',
+  required_settlement_receipt: 'torghut.alpha-closure-settlement-receipt.v1',
+  active_dedupe_key: 'alpha-closure-dedupe:H-MICRO-01:window-a',
+  no_delta_budget_state: 'consumed',
+  no_delta_debt_count: 1,
+  next_allowed_attempt_after: null,
+  max_notional: '0',
+  capital_rule: 'zero_notional_repair_only',
+  release_conditions: ['evidence_window_changes', 'blocker_set_changes'],
+  validation_commands: ['uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py'],
+  rollback_target: 'disable alpha_repair_closure_board emission and keep Torghut max_notional=0',
+  ...overrides,
+})
+
+const executableAlphaReceipts = (
+  overrides: Partial<TorghutExecutableAlphaRepairReceiptSet> = {},
+): TorghutExecutableAlphaRepairReceiptSet => ({
+  schema_version: 'torghut.executable-alpha-repair-receipts.v1',
+  generated_at: now.toISOString(),
+  fresh_until: '2026-05-14T09:30:00.000Z',
+  source_revenue_repair_ref: 'torghut-revenue-repair-digest:current',
+  status: 'selected',
+  governing_design_ref:
+    'docs/torghut/design-system/v6/197-torghut-executable-alpha-repair-receipts-and-zero-notional-reentry-2026-05-13.md',
+  selected_receipt_id: 'executable-alpha-repair-receipt:current',
+  selected_receipt: {
+    schema_version: 'torghut.executable-alpha-repair-receipt.v1',
+    receipt_id: 'executable-alpha-repair-receipt:current',
+    generated_at: now.toISOString(),
+    fresh_until: '2026-05-14T09:30:00.000Z',
+    source_revenue_repair_ref: 'torghut-revenue-repair-digest:current',
+    hypothesis_id: 'H-MICRO-01',
+    repair_class: 'evidence_window_refresh',
+    target_value_gate: 'routeable_candidate_count',
+    reason_codes: ['alpha_readiness_not_promotion_eligible'],
+    account_id: 'PA3SX7FYNUTF',
+    window: '15m',
+    trading_mode: 'paper',
+    candidate_id: 'chip-paper-microbar-composite@execution-proof',
+    strategy_id: 'microbar_volume_continuation_long_top2_chip_v1@paper',
+    lineage_status: 'ready',
+    evidence_window_status: 'stale',
+    alpha_readiness_state: 'blocked',
+    expected_unblock_value: 2,
+    expected_gate_delta: 'retire_alpha_readiness_not_promotion_eligible',
+    required_input_refs: ['capital-replay:current'],
+    required_output_receipts: ['alpha_readiness_receipt', 'hypothesis_promotion_receipt'],
+    validation_commands: ['uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py'],
+    max_notional: '0',
+    capital_rule: 'zero_notional_repair_only',
+    no_delta_settlement_required: true,
+    jangar_reentry: {
+      required_material_reentry_receipt: 'jangar.material-reentry-receipt.v1',
+      action_class: 'dispatch_repair',
+      max_parallelism: 1,
+      max_runtime_seconds: 1200,
+      value_gates: ['routeable_candidate_count'],
+      rollback_target: 'keep max_notional=0 and live submit disabled',
+    },
+    rollback_target: 'stop emitting executable_alpha_repair_receipts and keep Torghut max_notional=0',
+  },
+  receipt_count: 1,
+  receipts: [],
+  target_value_gate: 'routeable_candidate_count',
+  routeable_candidate_count_before: 0,
+  max_notional: '0',
+  capital_rule: 'zero_notional_repair_only',
+  reason_codes: [],
+  rollback_target: 'stop emitting executable_alpha_repair_receipts and keep Torghut max_notional=0',
+  ...overrides,
+})
+
 const torghutEvidence = (overrides: Partial<TorghutConsumerEvidenceStatus> = {}): TorghutConsumerEvidenceStatus => ({
   status: 'current',
   endpoint: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
@@ -258,6 +347,56 @@ describe('buildRevenueRepairSettlementCustody', () => {
     expect(custody.decision).toBe('hold')
     expect(custody.reason_codes).toContain('alpha_readiness_settlement_conveyor_missing')
     expect(custody.no_delta_release_state).toBe('missing')
+  })
+
+  it('uses executable alpha receipts when revenue repair topline is queue-only', () => {
+    const custody = build({
+      torghut: {
+        revenue_repair_business_state: null,
+        revenue_repair_ready: null,
+        alpha_readiness_settlement_conveyor: null,
+        executable_alpha_repair_receipts: executableAlphaReceipts(),
+      },
+    })
+
+    expect(custody.decision).toBe('allow')
+    expect(custody.torghut_conveyor_ref).toBe('executable-alpha-repair-receipt:current')
+    expect(custody.selected_hypothesis_id).toBe('H-MICRO-01')
+    expect(custody.selected_value_gate).toBe('routeable_candidate_count')
+    expect(custody.validation_command).toBe(
+      'uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py',
+    )
+    expect(custody.reason_codes).not.toContain('business_state_missing')
+    expect(custody.reason_codes).not.toContain('alpha_readiness_settlement_conveyor_missing')
+    expect(custody.governing_design_refs).toContain(
+      'docs/agents/designs/206-jangar-material-evidence-settlement-spine-and-repair-dispatch-budget-2026-05-14.md',
+    )
+  })
+
+  it('denies active no-delta closure boards without reporting the alpha evidence missing', () => {
+    const custody = build({
+      torghut: {
+        revenue_repair_business_state: null,
+        revenue_repair_ready: null,
+        alpha_readiness_settlement_conveyor: null,
+        alpha_repair_closure_board: closureBoard(),
+      },
+    })
+
+    expect(custody.decision).toBe('deny')
+    expect(custody.torghut_conveyor_ref).toBe('alpha-repair-closure-board:current')
+    expect(custody.no_delta_release_key).toBe('alpha-closure-dedupe:H-MICRO-01:window-a')
+    expect(custody.no_delta_release_state).toBe('active')
+    expect(custody.reason_codes).toEqual(
+      expect.arrayContaining([
+        'active_no_delta_lease',
+        'alpha_closure_no_delta_budget_consumed',
+        'alpha_closure_settlement_market_pending_no_delta',
+        'alpha_closure_no_delta_debt_active',
+      ]),
+    )
+    expect(custody.reason_codes).not.toContain('business_state_missing')
+    expect(custody.reason_codes).not.toContain('alpha_readiness_settlement_conveyor_missing')
   })
 
   it('denies stale conveyor refs', () => {

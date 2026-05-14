@@ -367,6 +367,18 @@ Implement this only after or alongside Torghut's compact conveyor ref. The first
 the compact ref, emit a custody decision, and keep it in shadow unless the Torghut producer is live. Acceptance is a
 testable status object that denies unchanged no-delta repair and nonzero notional while preserving observe access.
 
+2026-05-14 alpha-evidence compatibility follow-up:
+
+- Revenue-repair custody now accepts the later alpha closure-board and executable-alpha receipt surfaces as settlement
+  evidence when the older compact conveyor ref is absent.
+- Queue-head evidence from Torghut consumer evidence is enough to infer `business_state=repair_only` for custody; the
+  reducer should not emit `business_state_missing` or `revenue_repair_top_item_missing` when a current
+  `repair_alpha_readiness` queue item is already present.
+- Active closure-board no-delta evidence remains a denial, not an allow. The denial must cite the closure board,
+  active release key, no-delta budget state, validation command, and rollback target.
+- This keeps `ready_status_truth` aligned with `/ready.material_evidence_settlement_spine.business_truth` while still
+  reducing duplicate repair launches that would worsen `failed_agentrun_rate`.
+
 ## Deployer Handoff
 
 Do not call the Jangar side ready just because `/ready` is HTTP 200. The deployer must prove Argo, workloads, service

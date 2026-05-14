@@ -86,6 +86,108 @@ export const deriveRevenueRepairReadiness = (status: TorghutConsumerEvidenceStat
 const isTopAlphaRepair = (item: TorghutRevenueRepairQueueItem | null) =>
   item?.code === 'repair_alpha_readiness' || item?.reason === 'alpha_readiness_not_promotion_eligible'
 
+type AlphaSettlementEvidence = {
+  source: 'alpha_readiness_settlement_conveyor' | 'alpha_repair_closure_board' | 'executable_alpha_repair_receipt'
+  ref: string | null
+  freshUntil: string | null
+  status: string | null
+  selectedHypothesisId: string | null
+  selectedValueGate: string | null
+  validationCommand: string | null
+  noDeltaReleaseKey: string | null
+  noDeltaReleaseState: RevenueRepairSettlementCustody['no_delta_release_state']
+  maxNotional: string | null
+  capitalRule: string | null
+  reasonCodes: string[]
+  rollbackTarget: string | null
+}
+
+const closureBoardNoDeltaActive = (board: NonNullable<TorghutConsumerEvidenceStatus['alpha_repair_closure_board']>) => {
+  const noDeltaState = normalizeReason(board.no_delta_budget_state)
+  const marketStatus = normalizeReason(board.settlement_market_status)
+  return (
+    noDeltaState === 'consumed' ||
+    marketStatus === 'pending_no_delta' ||
+    marketStatus === 'no_delta' ||
+    (board.no_delta_debt_count ?? 0) > 0
+  )
+}
+
+const alphaSettlementEvidence = (status: TorghutConsumerEvidenceStatus): AlphaSettlementEvidence | null => {
+  const conveyor = status.alpha_readiness_settlement_conveyor ?? null
+  if (conveyor) {
+    const noDeltaActive = (conveyor.active_no_delta_lease_count ?? 0) > 0 || conveyor.repeat_launch_decision === 'deny'
+    return {
+      source: 'alpha_readiness_settlement_conveyor',
+      ref: conveyor.conveyor_id,
+      freshUntil: conveyor.fresh_until,
+      status: conveyor.status,
+      selectedHypothesisId: conveyor.selected_hypothesis_id,
+      selectedValueGate: conveyor.selected_value_gate,
+      validationCommand: conveyor.validation_command,
+      noDeltaReleaseKey: conveyor.no_delta_release_key,
+      noDeltaReleaseState: noDeltaActive ? 'active' : conveyor.no_delta_release_key ? 'clear' : 'missing',
+      maxNotional: conveyor.max_notional,
+      capitalRule: conveyor.capital_rule,
+      reasonCodes: conveyor.reason_codes,
+      rollbackTarget: conveyor.rollback_target,
+    }
+  }
+
+  const closureBoard = status.alpha_repair_closure_board ?? null
+  if (closureBoard) {
+    const noDeltaActive = closureBoardNoDeltaActive(closureBoard)
+    const noDeltaState = normalizeReason(closureBoard.no_delta_budget_state)
+    const marketStatus = normalizeReason(closureBoard.settlement_market_status)
+    const releaseKey = closureBoard.active_dedupe_key ?? closureBoard.settlement_market_id ?? closureBoard.board_id
+    return {
+      source: 'alpha_repair_closure_board',
+      ref: closureBoard.board_id,
+      freshUntil: closureBoard.fresh_until,
+      status: closureBoard.status,
+      selectedHypothesisId: closureBoard.selected_hypothesis_id,
+      selectedValueGate: closureBoard.selected_value_gate,
+      validationCommand:
+        closureBoard.validation_commands[0] ?? `curl -fsS ${status.endpoint} | jq '.alpha_repair_closure_board'`,
+      noDeltaReleaseKey: noDeltaActive ? releaseKey : closureBoard.active_dedupe_key,
+      noDeltaReleaseState: noDeltaActive ? 'active' : closureBoard.active_dedupe_key ? 'clear' : 'missing',
+      maxNotional: closureBoard.max_notional,
+      capitalRule: closureBoard.capital_rule,
+      reasonCodes: uniqueStrings([
+        ...closureBoard.reason_codes,
+        noDeltaActive ? 'active_no_delta_lease' : null,
+        noDeltaState === 'consumed' ? 'alpha_closure_no_delta_budget_consumed' : null,
+        marketStatus === 'pending_no_delta' || marketStatus === 'no_delta'
+          ? `alpha_closure_settlement_market_${marketStatus}`
+          : null,
+        (closureBoard.no_delta_debt_count ?? 0) > 0 ? 'alpha_closure_no_delta_debt_active' : null,
+      ]),
+      rollbackTarget: closureBoard.rollback_target,
+    }
+  }
+
+  const executableReceipts = status.executable_alpha_repair_receipts ?? null
+  const selectedReceipt = executableReceipts?.selected_receipt ?? null
+  if (!executableReceipts && !selectedReceipt) return null
+  return {
+    source: 'executable_alpha_repair_receipt',
+    ref: selectedReceipt?.receipt_id ?? executableReceipts?.selected_receipt_id ?? null,
+    freshUntil: selectedReceipt?.fresh_until ?? executableReceipts?.fresh_until ?? null,
+    status: executableReceipts?.status ?? null,
+    selectedHypothesisId: selectedReceipt?.hypothesis_id ?? null,
+    selectedValueGate: selectedReceipt?.target_value_gate ?? executableReceipts?.target_value_gate ?? null,
+    validationCommand:
+      selectedReceipt?.validation_commands[0] ??
+      `curl -fsS ${status.endpoint} | jq '.executable_alpha_repair_receipts.selected_receipt'`,
+    noDeltaReleaseKey: null,
+    noDeltaReleaseState: 'missing',
+    maxNotional: selectedReceipt?.max_notional ?? executableReceipts?.max_notional ?? null,
+    capitalRule: selectedReceipt?.capital_rule ?? executableReceipts?.capital_rule ?? null,
+    reasonCodes: [],
+    rollbackTarget: selectedReceipt?.rollback_target ?? executableReceipts?.rollback_target ?? null,
+  }
+}
+
 const stageAccountFor = (
   stageCreditLedger: StageCreditLedger | null,
   actionClass: ActionSloBudgetActionClass,
@@ -107,9 +209,10 @@ const normalizeDecision = (value: string | null | undefined): ReadyTruthActionDe
 }
 
 const freshUntilFor = (input: BuildRevenueRepairSettlementCustodyInput) => {
+  const settlementEvidence = alphaSettlementEvidence(input.torghutConsumerEvidence)
   const times = [
     input.torghutConsumerEvidence.fresh_until,
-    input.torghutConsumerEvidence.alpha_readiness_settlement_conveyor?.fresh_until,
+    settlementEvidence?.freshUntil,
     input.stageCreditLedger?.fresh_until,
     input.sourceServingContractVerdictExchange.fresh_until,
   ]
@@ -165,44 +268,51 @@ const rolloutProof = (input: BuildRevenueRepairSettlementCustodyInput) => {
 
 const conveyorReasons = (input: BuildRevenueRepairSettlementCustodyInput) => {
   const torghut = input.torghutConsumerEvidence
-  const conveyor = torghut.alpha_readiness_settlement_conveyor ?? null
+  const settlementEvidence = alphaSettlementEvidence(torghut)
   const topItem = topRepairQueueItem(torghut)
+  const { businessState } = deriveRevenueRepairReadiness(torghut)
   const reasons: string[] = []
 
   if (torghut.status !== 'current') reasons.push(`torghut_consumer_evidence_${torghut.status}`)
-  if (torghut.revenue_repair_business_state !== 'repair_only') {
-    reasons.push(`business_state_${torghut.revenue_repair_business_state ?? 'missing'}`)
+  if (businessState !== 'repair_only') {
+    reasons.push(`business_state_${businessState ?? 'missing'}`)
   }
   if (!topItem) {
     reasons.push('revenue_repair_top_item_missing')
   } else if (!isTopAlphaRepair(topItem)) {
     reasons.push('revenue_repair_top_item_not_alpha_readiness')
   }
-  if (!conveyor) {
+  if (!settlementEvidence) {
     reasons.push('alpha_readiness_settlement_conveyor_missing')
     return uniqueStrings(reasons)
   }
-  if (!conveyor.conveyor_id) reasons.push('alpha_readiness_settlement_conveyor_ref_missing')
-  if (!isFresh(conveyor.fresh_until, input.now)) reasons.push('alpha_readiness_settlement_conveyor_stale')
-  if (conveyor.selected_value_gate !== 'routeable_candidate_count') {
-    reasons.push(`selected_value_gate_${conveyor.selected_value_gate ?? 'missing'}`)
+  if (!settlementEvidence.ref) reasons.push(`${settlementEvidence.source}_ref_missing`)
+  if (!isFresh(settlementEvidence.freshUntil, input.now)) reasons.push(`${settlementEvidence.source}_stale`)
+  if (settlementEvidence.selectedValueGate !== 'routeable_candidate_count') {
+    reasons.push(`selected_value_gate_${settlementEvidence.selectedValueGate ?? 'missing'}`)
   }
-  if (!isZeroNotional(conveyor.max_notional)) reasons.push('capital_notional_nonzero')
-  if (conveyor.capital_rule && conveyor.capital_rule !== 'zero_notional_repair_only') {
+  if (!isZeroNotional(settlementEvidence.maxNotional)) reasons.push('capital_notional_nonzero')
+  if (settlementEvidence.capitalRule && settlementEvidence.capitalRule !== 'zero_notional_repair_only') {
     reasons.push('capital_rule_not_zero_notional_repair_only')
   }
-  if ((conveyor.active_no_delta_lease_count ?? 0) > 0 || conveyor.repeat_launch_decision === 'deny') {
+  if (settlementEvidence.noDeltaReleaseState === 'active') {
     reasons.push('active_no_delta_lease')
   }
 
-  const conveyorStatus = conveyor.status ?? 'missing'
-  if (CONVEYOR_HOLD_STATUSES.has(conveyorStatus)) {
+  const conveyorStatus = settlementEvidence.status ?? 'missing'
+  if (
+    settlementEvidence.source === 'alpha_readiness_settlement_conveyor' &&
+    CONVEYOR_HOLD_STATUSES.has(conveyorStatus)
+  ) {
     reasons.push(`alpha_readiness_settlement_conveyor_${conveyorStatus}`)
-  } else if (!CONVEYOR_ALLOW_STATUSES.has(conveyorStatus)) {
+  } else if (
+    settlementEvidence.source === 'alpha_readiness_settlement_conveyor' &&
+    !CONVEYOR_ALLOW_STATUSES.has(conveyorStatus)
+  ) {
     reasons.push(`alpha_readiness_settlement_conveyor_${conveyorStatus}`)
   }
 
-  return uniqueStrings([...reasons, ...conveyor.reason_codes])
+  return uniqueStrings([...reasons, ...settlementEvidence.reasonCodes])
 }
 
 const decisionFor = (reasons: string[]): RevenueRepairSettlementCustodyDecision => {
@@ -236,29 +346,24 @@ export const buildRevenueRepairSettlementCustody = (
   input: BuildRevenueRepairSettlementCustodyInput,
   mode: ReadyTruthArbiterMode = 'shadow',
 ): RevenueRepairSettlementCustody => {
-  const conveyor = input.torghutConsumerEvidence.alpha_readiness_settlement_conveyor ?? null
+  const settlementEvidence = alphaSettlementEvidence(input.torghutConsumerEvidence)
   const stage = stageHealth(input)
   const rollout = rolloutProof(input)
   const reasonCodes = uniqueStrings([...conveyorReasons(input), ...stage.reasonCodes, ...rollout.reasonCodes]).map(
     (reason) => normalizeReason(reason) ?? reason,
   )
   const decision = decisionFor(reasonCodes)
-  const noDeltaReleaseState =
-    conveyor && ((conveyor.active_no_delta_lease_count ?? 0) > 0 || conveyor.repeat_launch_decision === 'deny')
-      ? 'active'
-      : conveyor?.no_delta_release_key
-        ? 'clear'
-        : 'missing'
+  const noDeltaReleaseState = settlementEvidence?.noDeltaReleaseState ?? 'missing'
   const evidenceRefs = uniqueStrings([
     input.torghutConsumerEvidence.receipt_id,
-    conveyor?.conveyor_id,
+    settlementEvidence?.ref,
     ...stage.evidenceRefs,
     ...rollout.evidenceRefs,
   ])
   const custodyId = `revenue-repair-settlement-custody:${input.namespace}:${hashJson({
     consumer_ref: input.torghutConsumerEvidence.receipt_id,
-    conveyor_ref: conveyor?.conveyor_id ?? null,
-    selected_value_gate: conveyor?.selected_value_gate ?? null,
+    alpha_settlement_ref: settlementEvidence?.ref ?? null,
+    selected_value_gate: settlementEvidence?.selectedValueGate ?? null,
     decision,
     reasonCodes,
   })}`
@@ -273,13 +378,14 @@ export const buildRevenueRepairSettlementCustody = (
     governing_design_refs: [
       REVENUE_REPAIR_SETTLEMENT_CUSTODY_DESIGN_ARTIFACT,
       'docs/torghut/design-system/v6/205-torghut-alpha-readiness-settlement-conveyor-and-routeable-profit-runway-2026-05-14.md',
+      'docs/agents/designs/206-jangar-material-evidence-settlement-spine-and-repair-dispatch-budget-2026-05-14.md',
       'swarm-validation-contract:every-run-cites-governing-requirement',
     ],
     torghut_consumer_evidence_ref: input.torghutConsumerEvidence.receipt_id,
-    torghut_conveyor_ref: conveyor?.conveyor_id ?? null,
-    selected_hypothesis_id: conveyor?.selected_hypothesis_id ?? null,
+    torghut_conveyor_ref: settlementEvidence?.ref ?? null,
+    selected_hypothesis_id: settlementEvidence?.selectedHypothesisId ?? null,
     selected_value_gate:
-      conveyor?.selected_value_gate ?? topRepairQueueItem(input.torghutConsumerEvidence)?.value_gate ?? null,
+      settlementEvidence?.selectedValueGate ?? topRepairQueueItem(input.torghutConsumerEvidence)?.value_gate ?? null,
     action_class: 'dispatch_repair',
     decision,
     reason_codes: reasonCodes,
@@ -290,7 +396,7 @@ export const buildRevenueRepairSettlementCustody = (
       retained_failure_debt_refs: input.stageCreditLedger?.retained_failure_debt_refs ?? [],
       reason_codes: stage.reasonCodes,
     },
-    no_delta_release_key: conveyor?.no_delta_release_key ?? null,
+    no_delta_release_key: settlementEvidence?.noDeltaReleaseKey ?? null,
     no_delta_release_state: noDeltaReleaseState,
     rollout_proof: {
       source_serving_verdict_ref: rollout.sourceServingVerdictRef,
@@ -299,8 +405,8 @@ export const buildRevenueRepairSettlementCustody = (
       reason_codes: rollout.reasonCodes,
     },
     validation_command:
-      conveyor?.validation_command ??
+      settlementEvidence?.validationCommand ??
       `curl -fsS ${input.torghutConsumerEvidence.endpoint} | jq '.alpha_readiness_settlement_conveyor'`,
-    rollback_target: conveyor?.rollback_target ?? ROLLBACK_TARGET,
+    rollback_target: settlementEvidence?.rollbackTarget ?? ROLLBACK_TARGET,
   }
 }
