@@ -16,6 +16,7 @@ import {
 
 export const SCHEDULE_RUNNER_NAMESPACE_ENV = 'JANGAR_POD_NAMESPACE'
 export const SCHEDULE_RUNNER_SCHEDULE_NAMESPACE_ENV = 'JANGAR_SCHEDULE_NAMESPACE'
+export const SCHEDULE_RUNNER_RUNTIME_ADMISSION_ENFORCEMENT_ENV = 'JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT'
 export const SCHEDULE_RUNNER_ADMISSION_CHECK_ENV = 'JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK'
 export const SCHEDULE_RUNNER_RUNTIME_PROOF_CHECK_ENV = 'JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT'
 export const SCHEDULE_RUNNER_ADMISSION_STATUS_URL_ENV = 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL'
@@ -126,6 +127,7 @@ export const buildScheduleRunnerCommand = (): string =>
     `  const swarmNameLabelName = ${JSON.stringify(SWARM_NAME_LABEL)};`,
     `  const stageLabelName = ${JSON.stringify(SWARM_STAGE_LABEL)};`,
     `  const scheduleNamespaceEnv = ${JSON.stringify(SCHEDULE_RUNNER_SCHEDULE_NAMESPACE_ENV)};`,
+    `  const runtimeAdmissionEnforcementEnv = ${JSON.stringify(SCHEDULE_RUNNER_RUNTIME_ADMISSION_ENFORCEMENT_ENV)};`,
     `  const admissionCheckEnv = ${JSON.stringify(SCHEDULE_RUNNER_ADMISSION_CHECK_ENV)};`,
     `  const runtimeProofCheckEnv = ${JSON.stringify(SCHEDULE_RUNNER_RUNTIME_PROOF_CHECK_ENV)};`,
     `  const admissionStatusUrlEnv = ${JSON.stringify(SCHEDULE_RUNNER_ADMISSION_STATUS_URL_ENV)};`,
@@ -527,7 +529,9 @@ export const buildScheduleRunnerCommand = (): string =>
     `  const namespace = String((manifest?.metadata?.namespace ?? readEnv(${JSON.stringify(SCHEDULE_RUNNER_NAMESPACE_ENV)})) || 'agents');`,
     '  const scheduleNamespace = readEnv(scheduleNamespaceEnv) || namespace;',
     '  let controlPlaneStatus = null;',
-    '  if (parseBoolean(readEnv(admissionCheckEnv), true)) {',
+    '  const runtimeAdmissionEnforced = parseBoolean(readEnv(runtimeAdmissionEnforcementEnv), true);',
+    '  const scheduleAdmissionCheckEnabled = runtimeAdmissionEnforced && parseBoolean(readEnv(admissionCheckEnv), true);',
+    '  if (scheduleAdmissionCheckEnabled) {',
     '    controlPlaneStatus = await fetchControlPlaneStatus(scheduleNamespace);',
     '    assertCurrentAdmission(controlPlaneStatus);',
     '  }',

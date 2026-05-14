@@ -32,6 +32,7 @@ import {
   SCHEDULE_RUNNER_ADMISSION_CHECK_ENV,
   SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS_ENV,
   SCHEDULE_RUNNER_ADMISSION_STATUS_URL_ENV,
+  SCHEDULE_RUNNER_RUNTIME_ADMISSION_ENFORCEMENT_ENV,
   SCHEDULE_RUNNER_RUNTIME_PROOF_CHECK_ENV,
   SCHEDULE_RUNNER_SCHEDULE_NAMESPACE_ENV,
   SCHEDULE_RUNNER_STAGE_CLEARANCE_ENFORCEMENT_ENV,
@@ -1563,8 +1564,9 @@ const reconcileSchedule = async (
     await applyResourceIfChanged(kube, configMap)
 
     const supportingConfig = resolveSupportingPrimitivesConfig(process.env)
+    const scheduleRunnerRuntimeAdmissionEnforced = shouldEnforceSwarmRuntimeAdmission()
     const scheduleRunnerAdmissionCheck =
-      shouldEnforceSwarmRuntimeAdmission() && supportingConfig.scheduleRunnerAdmissionCheck
+      scheduleRunnerRuntimeAdmissionEnforced && supportingConfig.scheduleRunnerAdmissionCheck
     const scheduleRunnerRuntimeProofCheck = scheduleRunnerAdmissionCheck && shouldEnforceSwarmRuntimeProof()
     const stageClearanceEnforcement = supportingConfig.stageClearanceEnforcement
     const image = supportingConfig.scheduleRunnerImage
@@ -1609,6 +1611,10 @@ const reconcileSchedule = async (
                     command: ['bun', '-e', buildScheduleRunnerCommand()],
                     env: [
                       { name: SCHEDULE_RUNNER_SCHEDULE_NAMESPACE_ENV, value: namespace },
+                      {
+                        name: SCHEDULE_RUNNER_RUNTIME_ADMISSION_ENFORCEMENT_ENV,
+                        value: scheduleRunnerRuntimeAdmissionEnforced ? 'true' : 'false',
+                      },
                       {
                         name: SCHEDULE_RUNNER_ADMISSION_CHECK_ENV,
                         value: scheduleRunnerAdmissionCheck ? 'true' : 'false',
