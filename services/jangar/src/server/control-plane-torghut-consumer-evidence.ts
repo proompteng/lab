@@ -1,15 +1,9 @@
 import { createHash } from 'node:crypto'
 
 import type {
-  TorghutAlphaReadinessStrikeLedger,
-  TorghutAlphaRepairClosureBoardRef,
-  TorghutAlphaEvidenceFoundryRef,
-  TorghutAlphaReadinessSettlementConveyorRef,
-  TorghutExecutableAlphaRepairReceiptSet,
+  TorghutConsumerEvidenceStatus,
   TorghutRepairBidSettlementLot,
   TorghutRepairBidSettlementStatus,
-  TorghutRepairOutcomeEscrow,
-  TorghutRevenueRepairQueueItem,
 } from '~/data/agents-control-plane'
 import {
   deriveRevenueRepairEndpoint,
@@ -46,105 +40,7 @@ import {
 import { normalizeRepairBidSettlementLot } from '~/server/control-plane-torghut-repair-bid-settlement'
 import { asRecord } from '~/server/primitives-http'
 
-export type TorghutConsumerEvidenceStatus = {
-  status: 'disabled' | 'current' | 'stale' | 'missing' | 'unavailable' | 'route_missing' | 'schema_mismatch'
-  endpoint: string
-  receipt_id: string | null
-  generated_at: string | null
-  fresh_until: string | null
-  candidate_id: string | null
-  dataset_snapshot_ref: string | null
-  max_notional: string | null
-  revenue_repair_business_state?: string | null
-  revenue_repair_ready?: boolean | null
-  revenue_repair_queue?: TorghutRevenueRepairQueueItem[]
-  route_canary_id?: string | null
-  jangar_parity_escrow_ref?: string | null
-  serving_revision?: string | null
-  image_digest?: string | null
-  build_commit?: string | null
-  build_version?: string | null
-  serving_image_digest?: string | null
-  observed_contracts?: string[]
-  contract_schema_mismatches?: string[]
-  route_repair_value?: number | null
-  decision?: string | null
-  capital_reentry_cohort_ledger_id?: string | null
-  capital_reentry_aggregate_state?: string | null
-  capital_reentry_cohort_ids?: string[]
-  profit_repair_settlement_ledger_id?: string | null
-  profit_repair_aggregate_state?: string | null
-  profit_repair_lot_ids?: string[]
-  routeability_repair_acceptance_ledger_id?: string | null
-  routeability_aggregate_state?: string | null
-  routeability_lot_ids?: string[]
-  accepted_routeable_candidate_count?: number | null
-  profit_freshness_frontier_id?: string | null
-  profit_freshness_state?: string | null
-  profit_freshness_repair_lot_ids?: string[]
-  profit_freshness_selected_repair_ids?: string[]
-  evidence_clock_arbiter_id?: string | null
-  evidence_clock_state?: string | null
-  evidence_clock_split_clock_names?: string[]
-  evidence_clock_blocking_reason_codes?: string[]
-  evidence_clock_custody_status?: string | null
-  evidence_clock_custody_ref?: string | null
-  routeable_profit_candidate_exchange_id?: string | null
-  routeable_exchange_routeable_candidate_count?: number | null
-  routeable_exchange_zero_notional_repair_lot_ids?: string[]
-  routeable_exchange_rejected_candidate_count?: number | null
-  route_warrant_id?: string | null
-  route_warrant_state?: string | null
-  route_warrant_fresh_until?: string | null
-  route_warrant_repair_packet_ids?: string[]
-  route_warrant_repair_target_value_gates?: string[]
-  route_warrant_blocking_dependency_names?: string[]
-  route_warrant_blocking_reason_codes?: string[]
-  route_warrant_zero_notional_or_stale_evidence_rate?: number | null
-  route_warrant_fill_tca_or_slippage_quality?: string | null
-  route_warrant_capital_gate_safety?: string | null
-  route_warrant_post_cost_daily_net_pnl_state?: string | null
-  repair_bid_settlement_ledger_id?: string | null
-  repair_bid_settlement_status?: TorghutRepairBidSettlementStatus
-  repair_bid_settlement_generated_at?: string | null
-  repair_bid_settlement_fresh_until?: string | null
-  repair_bid_settlement_capital_decision?: string | null
-  repair_bid_settlement_max_notional?: string | null
-  repair_bid_settlement_routeable_candidate_count?: number | null
-  repair_bid_settlement_selected_lot_ids?: string[]
-  repair_bid_settlement_dispatchable_lot_ids?: string[]
-  repair_bid_settlement_held_lot_ids?: string[]
-  repair_bid_settlement_active_dedupe_keys?: string[]
-  repair_bid_settlement_compacted_lots?: TorghutRepairBidSettlementLot[]
-  repair_bid_settlement_reason_codes?: string[]
-  alpha_readiness_strike_ledger?: TorghutAlphaReadinessStrikeLedger | null
-  executable_alpha_repair_receipts?: TorghutExecutableAlphaRepairReceiptSet | null
-  alpha_repair_closure_board?: TorghutAlphaRepairClosureBoardRef | null
-  alpha_evidence_foundry?: TorghutAlphaEvidenceFoundryRef | null
-  alpha_readiness_settlement_conveyor?: TorghutAlphaReadinessSettlementConveyorRef | null
-  repair_outcome_dividend_ledger_id?: string | null
-  repair_outcome_receipt_ids?: string[]
-  repair_outcome_open_escrow_ids?: string[]
-  repair_outcome_no_delta_lot_ids?: string[]
-  repair_outcome_retired_reason_codes?: string[]
-  repair_outcome_preserved_reason_codes?: string[]
-  repair_outcome_escrows?: TorghutRepairOutcomeEscrow[]
-  freshness_carry_ledger_id?: string | null
-  freshness_carry_state?: string | null
-  freshness_carry_pressure_ref_ids?: string[]
-  freshness_carry_dispatchable_pressure_ref_ids?: string[]
-  freshness_carry_required_output_receipts?: string[]
-  freshness_carry_target_value_gates?: string[]
-  freshness_carry_reason_codes?: string[]
-  operator_summary?: {
-    top_clock_split: string | null
-    selected_repair_lot_id: string | null
-    expected_value_gate: string | null
-    next_validation_command: string
-  } | null
-  reason_codes: string[]
-  message: string
-}
+export type { TorghutConsumerEvidenceStatus } from '~/data/agents-control-plane'
 
 export type TorghutConsumerEvidenceResolution = {
   status: TorghutConsumerEvidenceStatus

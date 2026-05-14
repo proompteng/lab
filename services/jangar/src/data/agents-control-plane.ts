@@ -1598,6 +1598,12 @@ export type TorghutConsumerEvidenceStatus = {
   freshness_carry_required_output_receipts?: string[]
   freshness_carry_target_value_gates?: string[]
   freshness_carry_reason_codes?: string[]
+  operator_summary?: {
+    top_clock_split: string | null
+    selected_repair_lot_id: string | null
+    expected_value_gate: string | null
+    next_validation_command: string
+  } | null
   reason_codes: string[]
   message: string
 }

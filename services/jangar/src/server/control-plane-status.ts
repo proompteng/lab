@@ -68,7 +68,10 @@ import {
   type ProjectionForeclosureEvidence,
 } from '~/server/control-plane-projection-foreclosure-notary'
 import { buildReadyTruthArbiter } from '~/server/control-plane-ready-truth-arbiter'
-import { buildRevenueRepairSettlementCustody } from '~/server/control-plane-revenue-repair-settlement-custody'
+import {
+  buildRevenueRepairSettlementCustody,
+  deriveRevenueRepairReadiness,
+} from '~/server/control-plane-revenue-repair-settlement-custody'
 import { buildDefaultRepairBidAdmissionState } from '~/server/control-plane-repair-bid-admission'
 import { buildRolloutProofStatusFields } from '~/server/control-plane-rollout-proof-passport'
 import {
@@ -695,18 +698,9 @@ export const buildControlPlaneStatus = async (
     materialActionVerdictEpoch,
     empiricalServices,
   })
-  const topRepairQueueItem = torghutConsumerEvidence.status.revenue_repair_queue?.[0] ?? null
-  const businessState =
-    torghutConsumerEvidence.status.revenue_repair_business_state ??
-    (topRepairQueueItem || torghutConsumerEvidence.status.max_notional === '0' ? 'repair_only' : null)
-  let revenueReady = torghutConsumerEvidence.status.revenue_repair_ready ?? null
-  if (revenueReady === null) {
-    if (businessState === 'ready' || businessState === 'revenue_ready' || businessState === 'live_ready') {
-      revenueReady = true
-    } else if (businessState === 'repair_only' || businessState === 'repair' || businessState === 'hold') {
-      revenueReady = false
-    }
-  }
+  const { topRepairQueueItem, businessState, revenueReady } = deriveRevenueRepairReadiness(
+    torghutConsumerEvidence.status,
+  )
   const materialGateDigest = buildMaterialGateDigest({
     now,
     namespace: options.namespace,

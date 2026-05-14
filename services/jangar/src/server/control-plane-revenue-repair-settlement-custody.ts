@@ -68,6 +68,21 @@ const isZeroNotional = (value: string | null | undefined) => {
 const topRepairQueueItem = (status: TorghutConsumerEvidenceStatus): TorghutRevenueRepairQueueItem | null =>
   status.revenue_repair_queue?.[0] ?? null
 
+export const deriveRevenueRepairReadiness = (status: TorghutConsumerEvidenceStatus) => {
+  const topItem = status.revenue_repair_queue?.[0] ?? null
+  const businessState =
+    status.revenue_repair_business_state ?? (topItem || status.max_notional === '0' ? 'repair_only' : null)
+  let revenueReady = status.revenue_repair_ready ?? null
+  if (revenueReady === null) {
+    revenueReady = ['ready', 'revenue_ready', 'live_ready'].includes(businessState ?? '')
+      ? true
+      : ['repair_only', 'repair', 'hold'].includes(businessState ?? '')
+        ? false
+        : null
+  }
+  return { topRepairQueueItem: topItem, businessState, revenueReady }
+}
+
 const isTopAlphaRepair = (item: TorghutRevenueRepairQueueItem | null) =>
   item?.code === 'repair_alpha_readiness' || item?.reason === 'alpha_readiness_not_promotion_eligible'
 
