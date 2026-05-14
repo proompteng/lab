@@ -51,6 +51,22 @@ describe('verify-deployment', () => {
         required_runtime_kits: ['runtime-kit:collaboration:1'],
         fresh_until: futureFreshUntil,
       },
+      {
+        admission_passport_id: 'passport:swarm_implement:1',
+        consumer_class: 'swarm_implement',
+        decision: 'allow',
+        runtime_kit_set_digest: 'runtime-implement',
+        required_runtime_kits: ['runtime-kit:collaboration:1'],
+        fresh_until: futureFreshUntil,
+      },
+      {
+        admission_passport_id: 'passport:swarm_verify:1',
+        consumer_class: 'swarm_verify',
+        decision: 'allow',
+        runtime_kit_set_digest: 'runtime-verify',
+        required_runtime_kits: ['runtime-kit:collaboration:1'],
+        fresh_until: futureFreshUntil,
+      },
     ],
     recovery_warrants: [
       {
@@ -77,6 +93,30 @@ describe('verify-deployment', () => {
         active_backlog_seat_count: 0,
         reason_codes: [],
       },
+      {
+        recovery_warrant_id: 'recovery-warrant:implement:1',
+        execution_class: 'implement',
+        admission_passport_id: 'passport:swarm_implement:1',
+        runtime_kit_digest: 'runtime-implement',
+        admitted_image_digest: expectedDigest,
+        required_proof_cell_ids: ['runtime-proof-cell:implement:image'],
+        projection_watermark_ids: ['projection-watermark:implement:deploy'],
+        status: 'sealed',
+        active_backlog_seat_count: 0,
+        reason_codes: [],
+      },
+      {
+        recovery_warrant_id: 'recovery-warrant:verify:1',
+        execution_class: 'verify',
+        admission_passport_id: 'passport:swarm_verify:1',
+        runtime_kit_digest: 'runtime-verify',
+        admitted_image_digest: expectedDigest,
+        required_proof_cell_ids: ['runtime-proof-cell:verify:image'],
+        projection_watermark_ids: ['projection-watermark:verify:deploy'],
+        status: 'sealed',
+        active_backlog_seat_count: 0,
+        reason_codes: [],
+      },
     ],
     runtime_proof_cells: [
       {
@@ -89,6 +129,20 @@ describe('verify-deployment', () => {
       {
         runtime_proof_cell_id: 'runtime-proof-cell:plan:image',
         recovery_warrant_id: 'recovery-warrant:plan:1',
+        status: 'healthy',
+        required: true,
+        expires_at: futureFreshUntil,
+      },
+      {
+        runtime_proof_cell_id: 'runtime-proof-cell:implement:image',
+        recovery_warrant_id: 'recovery-warrant:implement:1',
+        status: 'healthy',
+        required: true,
+        expires_at: futureFreshUntil,
+      },
+      {
+        runtime_proof_cell_id: 'runtime-proof-cell:verify:image',
+        recovery_warrant_id: 'recovery-warrant:verify:1',
         status: 'healthy',
         required: true,
         expires_at: futureFreshUntil,
@@ -112,6 +166,24 @@ describe('verify-deployment', () => {
         status: 'fresh',
         expires_at: futureFreshUntil,
         projection_digest: 'projection-plan',
+      },
+      {
+        projection_watermark_id: 'projection-watermark:implement:deploy',
+        consumer_key: 'deploy_verification',
+        recovery_warrant_id: 'recovery-warrant:implement:1',
+        source_ref: 'admission-passport:passport:swarm_implement:1',
+        status: 'fresh',
+        expires_at: futureFreshUntil,
+        projection_digest: 'projection-implement',
+      },
+      {
+        projection_watermark_id: 'projection-watermark:verify:deploy',
+        consumer_key: 'deploy_verification',
+        recovery_warrant_id: 'recovery-warrant:verify:1',
+        source_ref: 'admission-passport:passport:swarm_verify:1',
+        status: 'fresh',
+        expires_at: futureFreshUntil,
+        projection_digest: 'projection-verify',
       },
     ],
     ...overrides,
@@ -344,6 +416,45 @@ describe('verify-deployment', () => {
       'projection-watermark:serving:deploy',
       'projection-watermark:plan:deploy',
     ])
+  })
+
+  it('includes verify warrants in the default deploy proof gate', () => {
+    const evidence = __private.verifyRuntimeProofSurfaceParity({
+      status: buildRuntimeProofStatus(),
+      expectedDigest,
+      consumers: __private.defaultAdmissionPassportConsumers,
+      now: new Date('2026-05-07T00:00:00.000Z'),
+    })
+
+    expect(__private.defaultAdmissionPassportConsumers).toEqual([
+      'serving',
+      'swarm_plan',
+      'swarm_implement',
+      'swarm_verify',
+    ])
+    expect(evidence.warrantIds).toEqual([
+      'recovery-warrant:serving:1',
+      'recovery-warrant:plan:1',
+      'recovery-warrant:implement:1',
+      'recovery-warrant:verify:1',
+    ])
+    expect(evidence.projectionWatermarkIds).toContain('projection-watermark:verify:deploy')
+  })
+
+  it('fails the default deploy proof gate when verify warrant parity is missing', () => {
+    const status = buildRuntimeProofStatus()
+    const recoveryWarrants = (status.recovery_warrants as Record<string, unknown>[]).filter(
+      (warrant) => warrant.recovery_warrant_id !== 'recovery-warrant:verify:1',
+    )
+
+    expect(() =>
+      __private.verifyRuntimeProofSurfaceParity({
+        status: { ...status, recovery_warrants: recoveryWarrants },
+        expectedDigest,
+        consumers: __private.defaultAdmissionPassportConsumers,
+        now: new Date('2026-05-07T00:00:00.000Z'),
+      }),
+    ).toThrow('Missing verify recovery warrant for admission passport passport:swarm_verify:1')
   })
 
   it('fails runtime proof verification when the deploy watermark is missing', () => {

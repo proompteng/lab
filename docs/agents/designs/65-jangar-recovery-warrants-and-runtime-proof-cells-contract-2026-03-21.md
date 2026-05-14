@@ -379,7 +379,8 @@ Implementation note: deploy-verification proof gate (2026-05-07).
 - `packages/scripts/src/jangar/verify-deployment.ts` now validates the recovery-warrant proof surface after rollout
   image and admission passport parity pass.
 - the verifier maps configured passport consumers to the deploy-relevant warrant classes: `serving`, `plan`,
-  `implement`, and `verify`.
+  `implement`, and `verify`; the default configured consumer set includes `swarm_verify` so verify-stage parity is not
+  an opt-in rollout check.
 - each required warrant must be `sealed`, cite the same admission passport and runtime-kit digest, and report an
   admitted image digest matching the promoted rollout digest.
 - each required proof cell must be present, required, `healthy`, and fresh.
