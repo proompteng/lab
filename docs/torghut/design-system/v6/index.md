@@ -8,10 +8,11 @@
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM
   reasoning, contamination-safe evaluation, and production rollout controls
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-14T12:11Z`)
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-14T12:30Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-14T12:11Z`):
+- Evidence (current next-work priority, refreshed `2026-05-14T12:30Z`):
+  - `207-torghut-quant-plan-closeout-and-alpha-repair-reentry-handoff-2026-05-14.md`
   - `206-torghut-no-delta-repair-reentry-auction-and-verification-carry-2026-05-14.md`
   - `docs/agents/designs/201-jangar-verify-trust-foreclosure-and-alpha-repair-reentry-2026-05-14.md`
   - `205-torghut-alpha-readiness-settlement-conveyor-and-routeable-profit-runway-2026-05-14.md`
