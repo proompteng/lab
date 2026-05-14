@@ -991,6 +991,67 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "synthetic_prior",
         )
 
+    def test_candidate_selection_blocks_nonpositive_family_feedback(self) -> None:
+        source_spec = self._candidate_spec("spec-family-negative-source")
+        mutated_family_spec = self._candidate_spec(
+            "spec-family-negative-mutated",
+            entry_minute_after_open="60",
+        )
+        family_feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=source_spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-family-negative-source",
+                "family_template_id": source_spec.family_template_id,
+                "runtime_family": source_spec.runtime_family,
+                "runtime_strategy_name": source_spec.runtime_strategy_name,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "-250",
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "0",
+                    "negative_day_count": 4,
+                    "daily_net": {
+                        "2026-05-01": "-150",
+                        "2026-05-04": "-350",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-family-negative-feedback",
+            result_path="feedback://family-negative",
+        )
+
+        _model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(mutated_family_spec,),
+            feedback_evidence_bundles=(family_feedback_bundle,),
+        )
+
+        self.assertEqual(rows[0]["training_source"], "feedback_family_replay")
+        self.assertEqual(
+            rows[0]["selection_reason"], "pre_replay_mlx_family_feedback_blocked"
+        )
+        self.assertLessEqual(
+            Decimal(str(rows[0]["proposal_score"])), Decimal("-999999")
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(mutated_family_spec,),
+            proposal_rows=rows,
+            top_k=1,
+            exploration_slots=0,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(selection["budget"]["selected_count"], 0)
+        self.assertEqual(selection["budget"]["eligible_candidate_count"], 0)
+        self.assertEqual(
+            selection["budget"]["pre_replay_feedback_blocked_candidate_count"], 1
+        )
+        self.assertEqual(
+            selection["rows"][0]["selection_reason"],
+            "pre_replay_mlx_family_feedback_blocked",
+        )
+
     def test_candidate_selection_blocks_synthetic_nonpositive_expected_value(
         self,
     ) -> None:
