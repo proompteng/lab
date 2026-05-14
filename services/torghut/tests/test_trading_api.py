@@ -1252,6 +1252,16 @@ class TestTradingApi(TestCase):
         self.assertEqual(payload["control_plane_dependency_mode"], "caller_evaluated")
         self.assertEqual(payload["dependency_quorum"]["decision"], "allow")
         self.assertEqual(payload["proof_floor"], proof_floor)
+        self.assertEqual(
+            payload["revenue_repair_digest_ref"], "/trading/revenue-repair"
+        )
+        self.assertEqual(
+            payload["top_repair_queue_item"]["code"], "live_submit_gate_closed"
+        )
+        self.assertEqual(payload["selected_value_gate"], "capital_gate_safety")
+        self.assertEqual(payload["max_notional"], "0")
+        self.assertEqual(payload["accepted_routeable_candidate_count"], 0)
+        self.assertEqual(payload["routeable_candidate_delta"], 0)
         self.assertNotIn("route_reacquisition_board", payload)
         summary_payload = summary_response.json()
         self.assertEqual(summary_payload["schema_version"], payload["schema_version"])
@@ -4547,6 +4557,39 @@ class TestTradingApi(TestCase):
             {item["reason"] for item in payload["blockers"]},
         )
         self.assertEqual(payload["repair_queue"][0]["code"], "repair_alpha_readiness")
+        self.assertEqual(payload["top_repair_queue_item"], payload["repair_queue"][0])
+        self.assertEqual(payload["selected_value_gate"], "routeable_candidate_count")
+        self.assertEqual(
+            payload["required_output_receipt"],
+            "torghut.executable-alpha-receipts.v1",
+        )
+        self.assertEqual(payload["capital_state"], "zero_notional")
+        self.assertEqual(payload["capital_stage"], "shadow")
+        self.assertFalse(payload["live_submission_allowed"])
+        self.assertEqual(payload["max_notional"], "0")
+        self.assertEqual(payload["accepted_routeable_candidate_count"], 0)
+        self.assertEqual(payload["routeable_candidate_delta"], 0)
+        self.assertEqual(payload["repair_bid_settlement_status"], "repair_only")
+        self.assertEqual(
+            payload["repair_bid_settlement_selected_lot_ids"],
+            ["compacted-repair-lot:test"],
+        )
+        self.assertEqual(
+            payload["repair_bid_settlement_dispatchable_lot_ids"],
+            ["compacted-repair-lot:test"],
+        )
+        self.assertEqual(
+            payload["repair_bid_settlement_held_lot_ids"],
+            ["compacted-repair-lot:promotion"],
+        )
+        self.assertIn(
+            "jangar_material_evidence_settlement_ref_unavailable",
+            payload["field_unavailable_reason_codes"],
+        )
+        self.assertEqual(
+            payload["expected_repair_action"],
+            "clear_hypothesis_blockers_before_capital",
+        )
         self.assertEqual(
             payload["evidence"]["execution_tca"]["last_computed_at"],
             "2026-04-02T20:59:45.136640+00:00",
