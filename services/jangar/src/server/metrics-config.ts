@@ -20,7 +20,7 @@ export type MetricsConfig = {
   timeoutMillis?: number
 }
 
-const DEFAULT_METRICS_ENDPOINT = 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
+const DEFAULT_METRICS_ENDPOINT = 'http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics'
 
 diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR)
 

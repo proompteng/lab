@@ -26,9 +26,11 @@ type MaterialReentryRequirementSignalPublisherInput = {
   namespace: string
   swarmName: string
   existingSignalNames: Set<string>
+  existingDedupeKeys?: Set<string>
 }
 
 const asArray = (value: unknown) => (Array.isArray(value) ? value : [])
+export const MATERIAL_REENTRY_DISPATCH_ANNOTATION = 'swarm.proompteng.ai/material-reentry-dispatch'
 
 const readMaterialReentryRequirementSignal = (value: unknown): MaterialReentryRequirementSignal | null => {
   const record = asRecord(value)
@@ -102,7 +104,7 @@ const materialReentrySignalResource = (
         priority: normalizeLabelValue(dispatch.priority),
       },
       annotations: {
-        'swarm.proompteng.ai/material-reentry-dispatch': dispatch.dedupeKey,
+        [MATERIAL_REENTRY_DISPATCH_ANNOTATION]: dispatch.dedupeKey,
         'swarm.proompteng.ai/material-reentry-source-signal': dispatch.signalName,
       },
     },
@@ -128,15 +130,18 @@ export const publishMaterialReentryRequirementSignals = async (
 ) => {
   const publishedSignals: Record<string, unknown>[] = []
   let publishErrors = 0
+  const dedupeKeys = new Set(input.existingDedupeKeys ?? [])
   for (const dispatch of input.materialReentryRequirementSignals) {
     if (dispatch.targetSwarm !== input.swarmName || dispatch.targetStage !== 'implement') continue
     const signalName = materialReentrySignalName(dispatch)
     if (input.existingSignalNames.has(signalName)) continue
+    if (dedupeKeys.has(dispatch.dedupeKey)) continue
     const signal = materialReentrySignalResource(dispatch, input.namespace)
     try {
       await input.kube.apply(signal)
       publishedSignals.push(signal)
       input.existingSignalNames.add(signalName)
+      dedupeKeys.add(dispatch.dedupeKey)
     } catch (error) {
       publishErrors += 1
       console.warn('[jangar] failed to publish material reentry requirement signal', {

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const originalEnv = { ...process.env }
+delete originalEnv.JANGAR_TORGHUT_STATUS_URL
+delete originalEnv.JANGAR_TORGHUT_STATUS_TIMEOUT_MS
 const originalFetch = globalThis.fetch
 
 const buildJsonResponse = (payload: unknown, status = 200) =>

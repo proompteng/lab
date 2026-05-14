@@ -47,4 +47,14 @@ describe('metrics-config', () => {
     expect(config.prometheusEnabled).toBe(false)
     expect(config.enabled).toBe(false)
   })
+
+  it('defaults OTLP metrics to the live Mimir gateway service', () => {
+    const config = resolveMetricsConfig({
+      OTEL_METRICS_EXPORTER: 'otlp',
+    })
+
+    expect(config.metricsEndpoint).toBe(
+      'http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics',
+    )
+  })
 })

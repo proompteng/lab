@@ -60,6 +60,7 @@ const parseJsonRecord = (value: string | undefined) => {
 
 export type SupportingPrimitivesConfig = {
   swarmRequirementMaxDispatchPerReconcile: number
+  swarmRequirementMaxActivePerSwarm: number
   swarmRequirementMaxPayloadBytes: number
   swarmRequirementMaxAttempts: number
   materialReentryRequirementSignals: boolean
@@ -84,6 +85,7 @@ export type SupportingPrimitivesConfig = {
 
 export const resolveSupportingPrimitivesConfig = (env: EnvSource = process.env): SupportingPrimitivesConfig => ({
   swarmRequirementMaxDispatchPerReconcile: parsePositiveInt(env.JANGAR_SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE, 5),
+  swarmRequirementMaxActivePerSwarm: parsePositiveInt(env.JANGAR_SWARM_REQUIREMENT_MAX_ACTIVE_PER_SWARM, 10),
   swarmRequirementMaxPayloadBytes: parsePositiveInt(env.JANGAR_SWARM_REQUIREMENT_MAX_PAYLOAD_BYTES, 16_384),
   swarmRequirementMaxAttempts: parsePositiveInt(env.JANGAR_SWARM_REQUIREMENT_MAX_ATTEMPTS, 3),
   materialReentryRequirementSignals: parseBoolean(env.JANGAR_MATERIAL_REENTRY_REQUIREMENT_SIGNALS, false),
@@ -95,7 +97,7 @@ export const resolveSupportingPrimitivesConfig = (env: EnvSource = process.env):
   scheduleRunnerAdmissionCheck: parseBoolean(env.JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK, true),
   scheduleRunnerAdmissionStatusUrl:
     normalizeNonEmpty(env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL) ??
-    'http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status',
+    'http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?view=schedule-runner',
   scheduleRunnerAdmissionStatusTimeoutMs: parsePositiveInt(
     env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS,
     15_000,

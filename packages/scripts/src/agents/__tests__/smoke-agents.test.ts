@@ -224,19 +224,21 @@ describe('scheduled AgentRun templates', () => {
     const limits = objectAt(resources, 'limits')
 
     expect(objectAt(requests, 'cpu')).toBe('1')
-    expect(objectAt(requests, 'memory')).toBe('2Gi')
+    expect(objectAt(requests, 'memory')).toBe('4Gi')
     expect(objectAt(requests, 'ephemeral-storage')).toBe('8Gi')
-    expect(objectAt(limits, 'memory')).toBe('8Gi')
+    expect(objectAt(limits, 'memory')).toBe('16Gi')
     expect(objectAt(limits, 'ephemeral-storage')).toBe('16Gi')
   })
 
-  it('keeps material reentry status reads within the live controller budget', () => {
+  it('keeps material reentry status reads bounded while requirement signal floods are disabled', () => {
     const values = readYamlObjects('argocd/applications/agents/values.yaml')[0]
     const controllers = objectAt(values, 'controllers')
     const env = objectAt(objectAt(controllers, 'env'), 'vars')
     const timeoutMs = Number(objectAt(env, 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS'))
 
-    expect(objectAt(env, 'JANGAR_MATERIAL_REENTRY_REQUIREMENT_SIGNALS')).toBe('true')
+    expect(objectAt(env, 'JANGAR_MATERIAL_REENTRY_REQUIREMENT_SIGNALS')).toBe('false')
+    expect(objectAt(env, 'JANGAR_SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE')).toBe('1')
+    expect(objectAt(env, 'JANGAR_SWARM_REQUIREMENT_MAX_ACTIVE_PER_SWARM')).toBe('2')
     expect(timeoutMs).toBeGreaterThanOrEqual(10_000)
   })
 

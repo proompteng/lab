@@ -4,6 +4,7 @@ import { AUTHORITY_PROVENANCE_SETTLEMENT_DESIGN_ARTIFACT } from '~/server/contro
 import {
   buildControlPlaneStatus,
   buildExecutionTrust,
+  projectControlPlaneStatus,
   type DatabaseStatus as ControlPlaneDatabaseStatus,
 } from '~/server/control-plane-status'
 import { CLEARANCE_MARKET_DESIGN_ARTIFACT } from '~/server/control-plane-clearance-market'
@@ -1250,6 +1251,39 @@ describe('control-plane status', () => {
     expect(status.empirical_services.lean.authoritative).toBe(true)
     expect(status.empirical_services.jobs.authoritative).toBe(true)
     expect(status.torghut_consumer_evidence.status).toBe('disabled')
+  })
+
+  it('projects a compact schedule-runner status payload', async () => {
+    const status = await buildStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+      },
+    )
+
+    const projection = projectControlPlaneStatus(status, 'schedule-runner') as Record<string, unknown>
+
+    expect(projection.admission_passports).toEqual(status.admission_passports)
+    expect(projection.stage_clearance_packets).toEqual(status.stage_clearance_packets)
+    expect(projection.material_reentry_clearinghouse).toEqual(status.material_reentry_clearinghouse)
+    expect(projection.workflows).toBeUndefined()
+    expect(projection.swarms).toBeUndefined()
   })
 
   it('attaches Torghut stage-clearance custody before publishing material status', async () => {
