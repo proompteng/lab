@@ -767,6 +767,62 @@ export type TorghutAlphaReadinessStrikeLedger = {
   rollback_target: string | null
 }
 
+export type TorghutExecutableAlphaRepairReceipt = {
+  schema_version: 'torghut.executable-alpha-repair-receipt.v1'
+  receipt_id: string
+  generated_at: string | null
+  fresh_until: string | null
+  source_revenue_repair_ref: string | null
+  hypothesis_id: string | null
+  repair_class: string | null
+  target_value_gate: string | null
+  reason_codes: string[]
+  account_id: string | null
+  window: string | null
+  trading_mode: string | null
+  candidate_id: string | null
+  strategy_id: string | null
+  lineage_status: string | null
+  evidence_window_status: string | null
+  alpha_readiness_state: string | null
+  expected_unblock_value: number | null
+  expected_gate_delta: string | null
+  required_input_refs: string[]
+  required_output_receipts: string[]
+  validation_commands: string[]
+  max_notional: string | null
+  capital_rule: string | null
+  no_delta_settlement_required: boolean
+  jangar_reentry: {
+    required_material_reentry_receipt: string | null
+    action_class: string | null
+    max_parallelism: number | null
+    max_runtime_seconds: number | null
+    value_gates: string[]
+    rollback_target: string | null
+  } | null
+  rollback_target: string | null
+}
+
+export type TorghutExecutableAlphaRepairReceiptSet = {
+  schema_version: 'torghut.executable-alpha-repair-receipts.v1'
+  generated_at: string | null
+  fresh_until: string | null
+  source_revenue_repair_ref: string | null
+  status: string | null
+  governing_design_ref: string | null
+  selected_receipt_id: string | null
+  selected_receipt: TorghutExecutableAlphaRepairReceipt | null
+  receipt_count: number | null
+  receipts: TorghutExecutableAlphaRepairReceipt[]
+  target_value_gate: string | null
+  routeable_candidate_count_before: number | null
+  max_notional: string | null
+  capital_rule: string | null
+  reason_codes: string[]
+  rollback_target: string | null
+}
+
 export type TorghutRepairOutcomeEscrow = {
   escrow_id: string
   dispatch_ticket_id: string | null
@@ -1355,6 +1411,7 @@ export type TorghutConsumerEvidenceStatus = {
   repair_bid_settlement_compacted_lots?: TorghutRepairBidSettlementLot[]
   repair_bid_settlement_reason_codes?: string[]
   alpha_readiness_strike_ledger?: TorghutAlphaReadinessStrikeLedger | null
+  executable_alpha_repair_receipts?: TorghutExecutableAlphaRepairReceiptSet | null
   repair_outcome_dividend_ledger_id?: string | null
   repair_outcome_receipt_ids?: string[]
   repair_outcome_open_escrow_ids?: string[]

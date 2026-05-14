@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 
 import type {
   TorghutAlphaReadinessStrikeLedger,
+  TorghutExecutableAlphaRepairReceiptSet,
   TorghutRepairBidSettlementLot,
   TorghutRepairBidSettlementStatus,
   TorghutRepairOutcomeEscrow,
@@ -13,6 +14,7 @@ import {
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
 import { readTorghutFreshnessCarryEvidence } from '~/server/control-plane-torghut-freshness-carry'
 import { readTorghutRepairOutcomeEvidence } from '~/server/control-plane-torghut-repair-outcome'
+import { readExecutableAlphaRepairReceipts } from '~/server/control-plane-torghut-executable-alpha-repair'
 import type { TorghutNegativeEvidenceInput } from '~/server/control-plane-negative-evidence-router-torghut'
 import {
   normalizeNonEmpty,
@@ -96,6 +98,7 @@ export type TorghutConsumerEvidenceStatus = {
   repair_bid_settlement_compacted_lots?: TorghutRepairBidSettlementLot[]
   repair_bid_settlement_reason_codes?: string[]
   alpha_readiness_strike_ledger?: TorghutAlphaReadinessStrikeLedger | null
+  executable_alpha_repair_receipts?: TorghutExecutableAlphaRepairReceiptSet | null
   repair_outcome_dividend_ledger_id?: string | null
   repair_outcome_receipt_ids?: string[]
   repair_outcome_open_escrow_ids?: string[]
@@ -246,13 +249,18 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
 
   const payload = routeResult.payload ?? {}
   const inlineAlphaReadinessStrikeLedger = readAlphaReadinessStrikeLedger(payload)
+  const inlineExecutableAlphaRepairReceipts = readExecutableAlphaRepairReceipts(payload)
   const revenueRepairEndpoint = deriveRevenueRepairEndpoint(endpoint)
   const revenueRepairResult =
-    !inlineAlphaReadinessStrikeLedger && revenueRepairEndpoint && revenueRepairEndpoint !== endpoint
+    (!inlineAlphaReadinessStrikeLedger || !inlineExecutableAlphaRepairReceipts) &&
+    revenueRepairEndpoint &&
+    revenueRepairEndpoint !== endpoint
       ? await requestJson(revenueRepairEndpoint, config.torghutStatusTimeoutMs)
       : null
   const alphaReadinessStrikeLedger =
     inlineAlphaReadinessStrikeLedger ?? readAlphaReadinessStrikeLedger(revenueRepairResult?.payload ?? null)
+  const executableAlphaRepairReceipts =
+    inlineExecutableAlphaRepairReceipts ?? readExecutableAlphaRepairReceipts(revenueRepairResult?.payload ?? null)
   const payloadSchema = normalizeNonEmpty(payload.schema_version)
   if (payloadSchema && payloadSchema !== CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION) {
     return {
@@ -507,6 +515,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     profitRepairLedger ? 'profit_repair_settlement_ledger' : null,
     routeableExchange ? 'routeable_profit_candidate_exchange' : null,
     alphaReadinessStrikeLedger ? 'alpha_readiness_strike_ledger' : null,
+    executableAlphaRepairReceipts ? 'executable_alpha_repair_receipts' : null,
   ])
   const contractSchemaMismatches = uniqueStrings([
     routeWarrant &&
@@ -678,6 +687,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       repair_bid_settlement_compacted_lots: repairBidSettlementLots,
       repair_bid_settlement_reason_codes: repairBidSettlementReasonCodes,
       alpha_readiness_strike_ledger: alphaReadinessStrikeLedger,
+      executable_alpha_repair_receipts: executableAlphaRepairReceipts,
       repair_outcome_dividend_ledger_id: repairOutcome.ledgerId,
       repair_outcome_receipt_ids: repairOutcome.receiptIds,
       repair_outcome_open_escrow_ids: repairOutcome.openEscrowIds,
