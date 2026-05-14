@@ -14,6 +14,7 @@ import type {
   ReadyTruthMaterialReadiness,
   ReadyTruthServingReadiness,
   RepairBidAdmissionState,
+  RevenueRepairSettlementCustody,
   RepairBidAdmissionReceipt,
   SourceServingContractActionClass,
   SourceServingContractVerdict,
@@ -79,6 +80,7 @@ export type ReadyTruthArbiterInput = {
   repairBidAdmission: RepairBidAdmissionState
   torghutConsumerEvidence: TorghutConsumerEvidenceStatus
   projectionForeclosureNotary?: ProjectionForeclosureNotary | null
+  revenueRepairSettlementCustody?: RevenueRepairSettlementCustody | null
 }
 
 type ActionAssessment = {
@@ -280,6 +282,20 @@ const projectionAuthorityReasons = (
   return { reasons, evidenceRefs: [notary.notary_id] }
 }
 
+const revenueRepairCustodyReasons = (input: ReadyTruthArbiterInput, actionClass: ActionSloBudgetActionClass) => {
+  const custody = input.revenueRepairSettlementCustody
+  if (!custody || actionClass !== 'dispatch_repair') {
+    return { reasons: [] as string[], evidenceRefs: [] as string[] }
+  }
+  if (custody.decision === 'allow') {
+    return { reasons: [] as string[], evidenceRefs: [custody.custody_id] }
+  }
+  return {
+    reasons: uniqueStrings([`revenue_repair_settlement_custody_${custody.decision}`, ...custody.reason_codes]),
+    evidenceRefs: uniqueStrings([custody.custody_id, ...custody.evidence_refs]),
+  }
+}
+
 const assessServeReadonly = (
   input: ReadyTruthArbiterInput,
   servingReadiness: ReadyTruthServingReadiness,
@@ -305,12 +321,15 @@ const actionDecision = (input: {
   reasons: string[]
   stageDecision: ReadyTruthActionDecision
   repairAvailable: boolean
+  revenueRepairCustodyDecision?: RevenueRepairSettlementCustody['decision'] | null
 }) => {
   if (input.reasons.includes('execution_trust_blocked') || input.reasons.includes('database_disabled')) return 'block'
   if (input.actionClass === 'live_micro_canary' || input.actionClass === 'live_scale') {
     return input.reasons.length > 0 ? 'block' : ('allow' as ReadyTruthActionDecision)
   }
   if (input.actionClass === 'dispatch_repair') {
+    if (input.revenueRepairCustodyDecision === 'deny') return 'block'
+    if (input.revenueRepairCustodyDecision === 'hold') return 'hold'
     return input.repairAvailable && input.reasons.length === 0 ? 'repair_only' : ('hold' as ReadyTruthActionDecision)
   }
   if (input.stageDecision === 'block') return 'block'
@@ -327,11 +346,13 @@ const assessMaterialAction = (
   const repairBid = repairBidReasons(input, actionClass, allowRepairOnly)
   const stageCredit = stageCreditDecisionFor(input.stageCreditLedger, actionClass)
   const projectionAuthority = projectionAuthorityReasons(input, actionClass, allowRepairOnly)
+  const revenueRepairCustody = revenueRepairCustodyReasons(input, actionClass)
   const reasons = uniqueStrings([
     ...core.reasons,
     ...source.reasons,
     ...repairBid.reasons,
     ...projectionAuthority.reasons,
+    ...revenueRepairCustody.reasons,
     ...(stageCredit.decision === 'allow' || (allowRepairOnly && stageCredit.decision === 'repair_only')
       ? []
       : [`stage_credit_${stageCredit.decision}`, ...stageCredit.reasonCodes]),
@@ -348,6 +369,8 @@ const assessMaterialAction = (
       reasons,
       stageDecision: stageCredit.decision,
       repairAvailable,
+      revenueRepairCustodyDecision:
+        actionClass === 'dispatch_repair' ? input.revenueRepairSettlementCustody?.decision : null,
     }),
     reasonCodes: reasons,
     evidenceRefs: uniqueStrings([
@@ -355,6 +378,7 @@ const assessMaterialAction = (
       ...source.evidenceRefs,
       ...repairBid.evidenceRefs,
       ...projectionAuthority.evidenceRefs,
+      ...revenueRepairCustody.evidenceRefs,
       ...stageCredit.evidenceRefs,
     ]),
   }
@@ -431,6 +455,7 @@ export const buildReadyTruthArbiter = (
     source_serving_verdict_ref: input.sourceServingContractVerdictExchange.exchange_id,
     repair_bid_ref: input.repairBidAdmission.torghut_settlement_ledger_ref,
     projection_foreclosure_notary_ref: input.projectionForeclosureNotary?.notary_id ?? null,
+    revenue_repair_settlement_custody_ref: input.revenueRepairSettlementCustody?.custody_id ?? null,
   })}`
 
   return {
@@ -456,6 +481,9 @@ export const buildReadyTruthArbiter = (
     projection_authority_decision: input.projectionForeclosureNotary?.decision ?? null,
     projection_claim_totals_by_state: input.projectionForeclosureNotary?.claim_totals_by_state ?? null,
     projection_required_repair_actions: input.projectionForeclosureNotary?.required_repair_actions ?? [],
+    revenue_repair_settlement_custody_ref: input.revenueRepairSettlementCustody?.custody_id ?? null,
+    revenue_repair_settlement_custody_decision: input.revenueRepairSettlementCustody?.decision ?? null,
+    revenue_repair_settlement_custody_reasons: input.revenueRepairSettlementCustody?.reason_codes ?? [],
     ready_status_truth_reasons: reasons,
     allowed_action_classes: byDecision('allow'),
     repair_only_action_classes: byDecision('repair_only'),

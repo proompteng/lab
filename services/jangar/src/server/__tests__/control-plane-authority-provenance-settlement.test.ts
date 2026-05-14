@@ -295,6 +295,9 @@ const buildInput = (
     projection_authority_decision: null,
     projection_claim_totals_by_state: null,
     projection_required_repair_actions: [],
+    revenue_repair_settlement_custody_ref: null,
+    revenue_repair_settlement_custody_decision: null,
+    revenue_repair_settlement_custody_reasons: [],
     ready_status_truth_reasons: [],
     allowed_action_classes: [
       'serve_readonly',
