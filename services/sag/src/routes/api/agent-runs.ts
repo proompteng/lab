@@ -21,6 +21,9 @@ export const Route = createFileRoute('/api/agent-runs')({
           repository: payload?.repository,
           base: payload?.base,
           head: payload?.head,
+          issueNumber: payload?.issueNumber,
+          issueTitle: payload?.issueTitle,
+          issueUrl: payload?.issueUrl,
         })
 
         const state = await loadGatewayState()
