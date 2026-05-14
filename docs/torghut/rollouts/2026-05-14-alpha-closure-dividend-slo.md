@@ -71,6 +71,8 @@ hold reason for duplicate no-delta dispatch.
 - `bunx oxfmt --check src/data/agents-control-plane.ts src/server/control-plane-torghut-alpha-closure-dividend-slo.ts src/server/control-plane-torghut-consumer-evidence.ts src/server/control-plane-material-gate-digest.ts src/server/__tests__/control-plane-torghut-consumer-evidence.test.ts src/server/__tests__/control-plane-material-gate-digest.test.ts`
 - `bunx oxlint --config ../../.oxlintrc.json src/data/agents-control-plane.ts src/server/control-plane-torghut-alpha-closure-dividend-slo.ts src/server/control-plane-torghut-consumer-evidence.ts src/server/control-plane-material-gate-digest.ts src/server/__tests__/control-plane-torghut-consumer-evidence.test.ts src/server/__tests__/control-plane-material-gate-digest.test.ts`
 - `bunx tsc --noEmit -p tsconfig.app.json`
+- `bun run --cwd services/jangar docs:inventory:check`
+- `bunx oxfmt --check docs/jangar/architecture-inventory.md`
 
 ## Risk And Rollback
 
