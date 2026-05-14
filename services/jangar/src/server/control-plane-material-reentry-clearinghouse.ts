@@ -38,6 +38,11 @@ const uniqueStrings = (values: Array<string | null | undefined>) => [
 
 const uniqueActionClasses = (values: ActionSloBudgetActionClass[]) => [...new Set(values)]
 
+const stableKeyPart = (value: string | null | undefined, fallback = 'unknown') => {
+  const trimmed = value?.trim()
+  return trimmed && trimmed.length > 0 ? trimmed : fallback
+}
+
 const parseFutureTime = (value: string | null | undefined, nowMs: number) => {
   if (!value) return null
   const parsed = Date.parse(value)
@@ -182,6 +187,23 @@ const basePlan = (input: {
   implementerDispatch: input.implementerDispatch ?? null,
 })
 
+const torghutExecutableAlphaRepairLane = (input: {
+  actionClass: ActionSloBudgetActionClass
+  selectedReceipt: TorghutExecutableAlphaRepairReceipt
+  requiredOutputReceipt: string | null
+  valueGate: string
+}) => ({
+  source: 'torghut.executable-alpha-repair',
+  actionClass: input.actionClass,
+  repairClass: stableKeyPart(input.selectedReceipt.repair_class),
+  hypothesisId: stableKeyPart(input.selectedReceipt.hypothesis_id),
+  accountId: stableKeyPart(input.selectedReceipt.account_id),
+  window: stableKeyPart(input.selectedReceipt.window),
+  tradingMode: stableKeyPart(input.selectedReceipt.trading_mode),
+  valueGate: stableKeyPart(input.valueGate),
+  requiredOutputReceipt: stableKeyPart(input.requiredOutputReceipt),
+})
+
 const buildTorghutExecutableAlphaImplementerDispatch = (input: {
   actionClass: ActionSloBudgetActionClass
   selectedReceipt: TorghutExecutableAlphaRepairReceipt
@@ -195,15 +217,17 @@ const buildTorghutExecutableAlphaImplementerDispatch = (input: {
   if (!isTorghutRepairAction(input.actionClass)) return null
 
   const valueGate = input.selectedReceipt.target_value_gate || input.valueGates[0] || 'routeable_candidate_count'
-  const signalName = `material-reentry-torghut-alpha-${hashJson(
-    {
+  const laneHash = hashJson(
+    torghutExecutableAlphaRepairLane({
       actionClass: input.actionClass,
-      selectedReceipt: input.selectedReceipt.receipt_id,
-      valueGate,
+      selectedReceipt: input.selectedReceipt,
       requiredOutputReceipt: input.requiredOutputReceipt,
-    },
+      valueGate,
+    }),
     12,
-  )}`
+  )
+  const signalName = `material-reentry-torghut-alpha-${laneHash}`
+  const dedupeKey = `material-reentry:torghut-executable-alpha:${laneHash}:${valueGate}`
   const description =
     `Implement Torghut zero-notional executable-alpha repair for ${valueGate}; ` +
     'produce the required receipt and keep live capital disabled.'
@@ -219,7 +243,7 @@ const buildTorghutExecutableAlphaImplementerDispatch = (input: {
     channel: 'workflow.general.requirement',
     description,
     priority: 'critical',
-    dedupe_key: `material-reentry:${input.selectedReceipt.receipt_id}:${valueGate}`,
+    dedupe_key: dedupeKey,
     payload: {
       type: 'material_reentry_requirement',
       source: 'jangar.material_reentry_clearinghouse',
