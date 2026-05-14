@@ -1,30 +1,10 @@
-import { Link } from '@tanstack/react-router'
-import { Bot, GitBranch, SquareTerminal } from 'lucide-react'
 import type { ReactNode } from 'react'
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarHeader,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarProvider,
-  SidebarRail,
-  SidebarTrigger,
-} from '~/components/ui/sidebar'
+import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage } from '~/components/ui/breadcrumb'
+import { Separator } from '~/components/ui/separator'
+import { SidebarInset, SidebarProvider, SidebarTrigger } from '~/components/ui/sidebar'
+import { AppSidebar } from '~/components/app-sidebar'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import type { GatewaySnapshot } from '~/server/gateway'
-import { cn } from '~/lib/utils'
-
-const navItems = [
-  { label: 'Agents', href: '/agents', icon: Bot },
-  { label: 'Agent Runs', href: '/agent-runs', icon: SquareTerminal },
-] as const
-
-type NavHref = (typeof navItems)[number]['href']
 
 export function GatewayFrame({
   active,
@@ -38,83 +18,43 @@ export function GatewayFrame({
   return (
     <TooltipProvider>
       <SidebarProvider
-        className="min-h-screen bg-zinc-950 text-zinc-100"
         style={
           {
-            '--sidebar-width': '14rem',
-            '--sidebar-width-icon': '3rem',
+            '--sidebar-width': 'calc(var(--spacing) * 56)',
+            '--header-height': 'calc(var(--spacing) * 14)',
           } as React.CSSProperties
         }
       >
-        <GatewaySidebar active={active} />
-        <SidebarInset id="main-content" className="min-w-0 bg-zinc-950">
-          <div className="flex h-screen min-h-[720px] min-w-0 flex-col">{children}</div>
+        <AppSidebar active={active} />
+        <SidebarInset id="main-content">
+          <div className="flex h-svh min-h-[720px] min-w-0 flex-col">{children}</div>
         </SidebarInset>
       </SidebarProvider>
     </TooltipProvider>
   )
 }
 
-function GatewaySidebar({ active }: { active: string }) {
+export function GatewayPageHeader({ title, detail, action }: { title: string; detail?: string; action?: ReactNode }) {
   return (
-    <Sidebar collapsible="icon" className="border-zinc-900 bg-zinc-950">
-      <SidebarHeader className="border-b border-zinc-900 p-2">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton render={<Link to="/agent-runs" />} size="lg" tooltip="Action Gateway">
-              <div className="flex size-8 items-center justify-center rounded-md border border-zinc-800 bg-zinc-950">
-                <GitBranch aria-hidden="true" />
-              </div>
-              <div className="grid min-w-0 flex-1 text-left leading-tight">
-                <span className="truncate font-semibold text-zinc-50">Action Gateway</span>
-                <span className="truncate text-xs text-zinc-400">Agent authority</span>
-              </div>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarHeader>
-
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {navItems.map((item) => (
-                <SidebarNavItem key={item.href} active={active === item.href} href={item.href} icon={<item.icon />}>
-                  {item.label}
-                </SidebarNavItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
-      <SidebarRail />
-    </Sidebar>
-  )
-}
-
-export function SidebarNavItem({
-  active,
-  href,
-  icon,
-  children,
-}: {
-  active: boolean
-  href: NavHref
-  icon: ReactNode
-  children: ReactNode
-}) {
-  return (
-    <SidebarMenuItem>
-      <SidebarMenuButton
-        render={<Link to={href} />}
-        isActive={active}
-        tooltip={String(children)}
-        className={cn('text-zinc-400 hover:bg-zinc-900 hover:text-zinc-50', active && 'bg-zinc-900 text-zinc-50')}
-      >
-        {icon}
-        <span>{children}</span>
-      </SidebarMenuButton>
-    </SidebarMenuItem>
+    <header className="flex h-(--header-height) shrink-0 items-center justify-between gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+      <div className="flex min-w-0 items-center gap-2 px-4">
+        <SidebarTrigger className="-ml-1" />
+        <Separator orientation="vertical" className="mr-2 data-vertical:h-4 data-vertical:self-auto" />
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbPage>
+                <span className="flex min-w-0 flex-col leading-tight">
+                  <span className="truncate text-sm font-medium">{title}</span>
+                  {detail ? <span className="truncate text-xs text-muted-foreground">{detail}</span> : null}
+                </span>
+              </BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
+      </div>
+      {action ? <div className="flex shrink-0 items-center gap-2 px-4">{action}</div> : null}
+    </header>
   )
 }
 

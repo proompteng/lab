@@ -9,7 +9,7 @@ import { Card, CardAction, CardContent, CardHeader, CardTitle } from '~/componen
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '~/components/ui/empty'
 import { Field, FieldGroup, FieldLabel } from '~/components/ui/field'
 import { Input } from '~/components/ui/input'
-import { SidebarTrigger, GatewayFrame } from '~/components/gateway-shell'
+import { GatewayFrame, GatewayPageHeader } from '~/components/gateway-shell'
 import { Spinner } from '~/components/ui/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { Textarea } from '~/components/ui/textarea'
@@ -78,19 +78,16 @@ function AgentRunsRoute() {
 
   return (
     <GatewayFrame active="/agent-runs" snapshot={snapshot}>
-      <header className="flex h-14 shrink-0 items-center justify-between border-b px-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <SidebarTrigger />
-          <div className="min-w-0">
-            <h1 className="truncate text-sm font-medium">Agent Runs</h1>
-            <p className="truncate text-xs text-muted-foreground">Create, inspect, follow logs.</p>
-          </div>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => runsQuery.refetch()} disabled={runsQuery.isFetching}>
-          {runsQuery.isFetching ? <Spinner data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
-          Refresh
-        </Button>
-      </header>
+      <GatewayPageHeader
+        title="Agent Runs"
+        detail="Create, inspect, follow logs."
+        action={
+          <Button variant="outline" size="sm" onClick={() => runsQuery.refetch()} disabled={runsQuery.isFetching}>
+            {runsQuery.isFetching ? <Spinner data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
+            Refresh
+          </Button>
+        }
+      />
 
       <main className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.45fr)]">
         <section className="flex min-h-0 flex-col gap-4 overflow-hidden">
