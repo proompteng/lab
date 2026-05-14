@@ -62,6 +62,8 @@ hold reason for duplicate no-delta dispatch.
 
 - `uv run --frozen pytest tests/test_alpha_closure_dividend_slo.py tests/test_trading_api.py -k 'alpha_closure_dividend_slo or trading_consumer_evidence_avoids_recursive_jangar_status_fetch'`
 - `uv run --frozen pytest tests/test_alpha_closure_dividend_slo.py tests/test_alpha_repair_closure_board.py tests/test_build_revenue_repair_digest.py tests/test_trading_api.py -k 'alpha_closure_dividend_slo or alpha or revenue_repair or consumer_evidence'`
+- `uv run --frozen pytest --cov --cov-branch --cov-fail-under=0 --cov-report=xml:coverage.xml tests/test_alpha_closure_dividend_slo.py tests/test_trading_api.py -k 'alpha_closure_dividend_slo or trading_consumer_evidence_avoids_recursive_jangar_status_fetch'`
+- `GITHUB_BASE_REF=main uv run --frozen python scripts/check_diff_coverage.py --coverage-xml coverage.xml --threshold 90`
 - `uv run --frozen ruff format --check app/trading/alpha_closure_dividend_slo.py app/main.py tests/test_alpha_closure_dividend_slo.py tests/test_trading_api.py`
 - `uv run --frozen ruff check app/trading/alpha_closure_dividend_slo.py app/main.py tests/test_alpha_closure_dividend_slo.py tests/test_trading_api.py`
 - `uv run --frozen pyright --project pyrightconfig.json`
