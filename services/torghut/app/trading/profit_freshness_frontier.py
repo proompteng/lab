@@ -108,6 +108,12 @@ _ALPHA_FEATURE_REPLAY_REASON_CODES = {
     "required_feature_set_unavailable",
 }
 _ALPHA_FEATURE_REPLAY_PRIORITY_BONUS = Decimal("3")
+_ALPHA_FEATURE_ROUTEABILITY_PRIORITY_BONUS = Decimal("3")
+_ALPHA_READINESS_ROUTEABILITY_REASON_CODES = {
+    "alpha_readiness_fail",
+    "alpha_readiness_not_promotion_eligible",
+    "hypothesis_not_promotion_eligible",
+}
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -984,6 +990,14 @@ def _repair_lot(
     ):
         priority_adjustments.append("alpha_feature_replay_closure")
         priority_bonus += _ALPHA_FEATURE_REPLAY_PRIORITY_BONUS
+        routeability_reasons = set(
+            _strings(routeability_ledger.get("aggregate_blocking_reason_codes"))
+        )
+        if routeability_reasons.intersection(
+            _ALPHA_READINESS_ROUTEABILITY_REASON_CODES
+        ):
+            priority_adjustments.append("alpha_readiness_routeability_closure")
+            priority_bonus += _ALPHA_FEATURE_ROUTEABILITY_PRIORITY_BONUS
     blocking_hypotheses = _strings(dimension.get("blocking_hypotheses"))
     candidate_ids = _strings(empirical_jobs_status.get("candidate_ids"))
     symbol_set = _route_symbols(route_reacquisition_board)

@@ -307,6 +307,126 @@ def test_feature_replay_closure_outranks_drift_for_micro_alpha_blocker() -> None
     assert selected[0]["live_notional_limit"] == "0"
 
 
+def test_feature_replay_closure_outranks_stale_empirical_when_alpha_readiness_blocks_routeability() -> (
+    None
+):
+    frontier = _frontier(
+        proof_floor_receipt={
+            "schema_version": "torghut.profitability-proof-floor.v1",
+            "account_label": "PA3SX7FYNUTF",
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "proof_dimensions": [
+                {
+                    "dimension": "execution_tca",
+                    "state": "pass",
+                    "reason": "route_tca_passed",
+                    "freshness_seconds": 71,
+                    "source_ref": {
+                        "last_computed_at": "2026-05-12T15:08:49+00:00",
+                    },
+                }
+            ],
+        },
+        routeability_repair_acceptance_ledger={
+            "schema_version": "torghut.routeability-repair-acceptance-ledger.v1",
+            "ledger_id": "routeability-acceptance-ledger:alpha-readiness-blocked",
+            "aggregate_state": "blocked",
+            "accepted_routeable_candidate_count": 0,
+            "aggregate_blocking_reason_codes": [
+                "alpha_readiness_not_promotion_eligible",
+                "alpha_readiness_fail",
+                "empirical_jobs_not_ready",
+            ],
+            "lots": [],
+        },
+        route_reacquisition_board={
+            "summary": {"capital_eligible_symbol_count": 0},
+            "rows": [
+                {
+                    "symbol": "AAPL",
+                    "state": "blocked",
+                    "current_blocker": "alpha_readiness_not_promotion_eligible",
+                    "hypothesis_ids": ["H-MICRO-01"],
+                }
+            ],
+        },
+        quant_evidence={
+            "required": False,
+            "ok": True,
+            "status": "not_required",
+            "reason": "quant_health_not_configured",
+            "informational_reasons": ["quant_health_not_configured"],
+            "source_url": None,
+        },
+        market_context_status={"status": "healthy", "last_domain_states": {}},
+        empirical_jobs_status={
+            "ready": False,
+            "status": "degraded",
+            "stale_jobs": [
+                "benchmark_parity",
+                "foundation_router_parity",
+                "janus_event_car",
+                "janus_hgrm_reward",
+            ],
+            "ineligible_jobs": [
+                "benchmark_parity",
+                "foundation_router_parity",
+                "janus_event_car",
+                "janus_hgrm_reward",
+            ],
+            "candidate_ids": ["chip-paper-microbar-composite@execution-proof"],
+            "dataset_snapshot_refs": ["torghut-chip-full-day-20260505-4c330ce9-r1"],
+        },
+        hypothesis_payload={
+            "summary": {
+                "promotion_eligible_total": 0,
+                "reason_totals": {
+                    "feature_rows_missing": 1,
+                    "required_feature_set_unavailable": 1,
+                    "drift_checks_missing": 1,
+                },
+            },
+            "items": [
+                {
+                    "hypothesis_id": "H-MICRO-01",
+                    "reasons": [
+                        "feature_rows_missing",
+                        "required_feature_set_unavailable",
+                        "drift_checks_missing",
+                    ],
+                }
+            ],
+        },
+        jangar_reliability_settlement_ref={
+            "settlement_ref": (
+                "jangar-reliability-settlement:"
+                "dependency-quorum:allow:torghut_dependency_quorum_not_required"
+            ),
+            "decision": "allow",
+            "state": "current",
+            "reason_codes": ["torghut_dependency_quorum_not_required"],
+            "source": "dependency_quorum_proxy",
+        },
+    )
+
+    selected = cast(list[Mapping[str, Any]], frontier["selected_zero_notional_repairs"])
+    repair_lots = cast(list[Mapping[str, Any]], frontier["repair_lots"])
+
+    assert frontier["next_zero_notional_action"] == "rebuild_required_feature_rows"
+    assert selected[0]["blocked_dimension"] == "feature_coverage"
+    assert selected[0]["hypothesis_id"] == "H-MICRO-01"
+    assert selected[0]["priority_adjustments"] == [
+        "alpha_feature_replay_closure",
+        "alpha_readiness_routeability_closure",
+    ]
+    assert selected[0]["paper_notional_limit"] == "0"
+    assert selected[0]["live_notional_limit"] == "0"
+    assert repair_lots[1]["blocked_dimension"] == "empirical_proof"
+
+
 def test_stale_market_context_and_empirical_jobs_are_explicit_dimensions() -> None:
     frontier = _frontier()
     market = _dimension(frontier, "market_context")
