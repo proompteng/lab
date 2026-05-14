@@ -369,6 +369,110 @@ def _evidence_bundle_payloads_for_epoch_summary(
     ]
 
 
+def _candidate_spec_from_payload(payload: Mapping[str, Any]) -> CandidateSpec:
+    return CandidateSpec(
+        schema_version="torghut.candidate-spec.v1",
+        candidate_spec_id=_string(payload.get("candidate_spec_id")),
+        hypothesis_id=_string(payload.get("hypothesis_id")),
+        family_template_id=_string(payload.get("family_template_id")),
+        candidate_kind=cast(Any, _string(payload.get("candidate_kind")) or "sleeve"),
+        runtime_family=_string(payload.get("runtime_family")),
+        runtime_strategy_name=_string(payload.get("runtime_strategy_name")),
+        feature_contract=_mapping(payload.get("feature_contract")),
+        parameter_space=_mapping(payload.get("parameter_space")),
+        strategy_overrides=_mapping(payload.get("strategy_overrides")),
+        objective=_mapping(payload.get("objective")),
+        hard_vetoes=_mapping(payload.get("hard_vetoes")),
+        expected_failure_modes=tuple(
+            str(item)
+            for item in cast(Sequence[Any], payload.get("expected_failure_modes") or ())
+            if str(item).strip()
+        ),
+        promotion_contract=_mapping(payload.get("promotion_contract")),
+    )
+
+
+def _summary_scorecard_feedback_bundles_for_epoch(
+    epoch: AutoresearchEpoch,
+    candidate_specs: Sequence[CandidateSpec],
+) -> tuple[tuple[CandidateEvidenceBundle, ...], dict[str, int]]:
+    stats = {
+        "scorecard_count": 0,
+        "matched_scorecard_count": 0,
+        "unmatched_scorecard_count": 0,
+        "bundle_count": 0,
+    }
+    summary = _mapping(epoch.summary_json)
+    remediation = _mapping(summary.get("candidate_search_remediation"))
+    scorecards = _list_of_mappings(remediation.get("partial_scorecards"))
+    stats["scorecard_count"] = len(scorecards)
+    if not scorecards or not candidate_specs:
+        return (), stats
+
+    spec_by_id = {spec.candidate_spec_id: spec for spec in candidate_specs}
+    spec_by_signature = {
+        _candidate_spec_execution_signature(spec): spec for spec in candidate_specs
+    }
+    build = _mapping(summary.get("build"))
+    code_commit = _string(build.get("commit")) or "unknown"
+    bundles: list[CandidateEvidenceBundle] = []
+    for index, scorecard in enumerate(scorecards, start=1):
+        candidate_spec_id = _string(scorecard.get("candidate_spec_id"))
+        execution_signature = _string(scorecard.get("execution_signature"))
+        spec = spec_by_id.get(candidate_spec_id) or spec_by_signature.get(
+            execution_signature
+        )
+        if spec is None:
+            stats["unmatched_scorecard_count"] += 1
+            continue
+        stats["matched_scorecard_count"] += 1
+        candidate_id = _string(scorecard.get("candidate_id")) or spec.candidate_spec_id
+        candidate = {
+            "candidate_id": candidate_id,
+            "family_template_id": _string(scorecard.get("family_template_id"))
+            or spec.family_template_id,
+            "runtime_family": _string(scorecard.get("runtime_family"))
+            or spec.runtime_family,
+            "runtime_strategy_name": _string(scorecard.get("runtime_strategy_name"))
+            or spec.runtime_strategy_name,
+            "execution_signature": execution_signature
+            or _candidate_spec_execution_signature(spec),
+            "objective_scorecard": scorecard,
+            "hard_vetoes": scorecard.get("hard_vetoes")
+            or scorecard.get("veto_reasons")
+            or (),
+            "promotion_readiness": {
+                "stage": "research_candidate",
+                "status": "blocked_by_prior_replay_scorecard",
+                "promotable": False,
+                "blockers": list(
+                    str(item)
+                    for item in cast(
+                        Sequence[Any],
+                        scorecard.get("hard_vetoes")
+                        or scorecard.get("veto_reasons")
+                        or (),
+                    )
+                    if str(item).strip()
+                ),
+            },
+        }
+        bundles.append(
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=spec.candidate_spec_id,
+                candidate=candidate,
+                dataset_snapshot_id=f"autoresearch-epoch:{epoch.epoch_id}:summary-scorecards",
+                result_path=(
+                    f"db://autoresearch_epochs/{epoch.epoch_id}/"
+                    f"candidate_search_remediation/partial_scorecards/{index}"
+                ),
+                code_commit=code_commit,
+            )
+        )
+    stats["bundle_count"] = len(bundles)
+    return tuple(bundles), stats
+
+
 def _load_recent_persisted_feedback_evidence_bundles(
     *,
     limit: int = _MAX_PERSISTED_FEEDBACK_EVIDENCE_BUNDLES,
@@ -381,6 +485,11 @@ def _load_recent_persisted_feedback_evidence_bundles(
         "scanned_epoch_count": 0,
         "loaded_bundle_count": 0,
         "invalid_payload_count": 0,
+        "legacy_summary_scorecard_count": 0,
+        "legacy_summary_matched_scorecard_count": 0,
+        "legacy_summary_unmatched_scorecard_count": 0,
+        "legacy_summary_bundle_count": 0,
+        "legacy_summary_invalid_spec_count": 0,
     }
     try:
         with SessionLocal() as session:
@@ -396,6 +505,18 @@ def _load_recent_persisted_feedback_evidence_bundles(
                 .scalars()
                 .all()
             )
+            epoch_ids = [epoch.epoch_id for epoch in epochs]
+            spec_rows = (
+                session.execute(
+                    select(AutoresearchCandidateSpec).where(
+                        AutoresearchCandidateSpec.epoch_id.in_(epoch_ids)
+                    )
+                )
+                .scalars()
+                .all()
+                if epoch_ids
+                else []
+            )
     except Exception as exc:
         manifest["status"] = "unavailable"
         manifest["error"] = str(exc)
@@ -405,27 +526,66 @@ def _load_recent_persisted_feedback_evidence_bundles(
     bundles: list[CandidateEvidenceBundle] = []
     invalid_payload_count = 0
     source_epoch_ids: list[str] = []
+    legacy_source_epoch_ids: list[str] = []
+    candidate_specs_by_epoch: dict[str, list[CandidateSpec]] = {}
+    invalid_spec_count = 0
+    for row in spec_rows:
+        try:
+            spec = _candidate_spec_from_payload(_mapping(row.payload_json))
+        except Exception:
+            invalid_spec_count += 1
+            continue
+        if not spec.candidate_spec_id:
+            invalid_spec_count += 1
+            continue
+        candidate_specs_by_epoch.setdefault(row.epoch_id, []).append(spec)
     for epoch in epochs:
         if len(bundles) >= limit:
             break
         summary = _mapping(epoch.summary_json)
         payloads = _list_of_mappings(summary.get("candidate_evidence_bundle_payloads"))
-        if not payloads:
-            continue
-        source_epoch_ids.append(epoch.epoch_id)
-        for payload in payloads:
-            if len(bundles) >= limit:
-                break
-            try:
-                bundles.append(evidence_bundle_from_payload(payload))
-            except Exception:
-                invalid_payload_count += 1
+        if payloads:
+            source_epoch_ids.append(epoch.epoch_id)
+            for payload in payloads:
+                if len(bundles) >= limit:
+                    break
+                try:
+                    bundles.append(evidence_bundle_from_payload(payload))
+                except Exception:
+                    invalid_payload_count += 1
+        if len(bundles) >= limit:
+            break
+        legacy_bundles, legacy_stats = _summary_scorecard_feedback_bundles_for_epoch(
+            epoch, candidate_specs_by_epoch.get(epoch.epoch_id, ())
+        )
+        manifest["legacy_summary_scorecard_count"] += legacy_stats["scorecard_count"]
+        manifest["legacy_summary_matched_scorecard_count"] += legacy_stats[
+            "matched_scorecard_count"
+        ]
+        manifest["legacy_summary_unmatched_scorecard_count"] += legacy_stats[
+            "unmatched_scorecard_count"
+        ]
+        if legacy_bundles:
+            legacy_source_epoch_ids.append(epoch.epoch_id)
+            remaining = limit - len(bundles)
+            bundles.extend(legacy_bundles[:remaining])
 
     deduped = _dedupe_feedback_evidence_bundles(bundles)
     manifest["status"] = "loaded" if deduped else "empty"
     manifest["source_epoch_ids"] = source_epoch_ids
+    manifest["legacy_summary_source_epoch_ids"] = legacy_source_epoch_ids
     manifest["loaded_bundle_count"] = len(deduped)
     manifest["invalid_payload_count"] = invalid_payload_count
+    manifest["legacy_summary_bundle_count"] = len(
+        _dedupe_feedback_evidence_bundles(
+            tuple(
+                bundle
+                for bundle in bundles
+                if bundle.dataset_snapshot_id.endswith(":summary-scorecards")
+            )
+        )
+    )
+    manifest["legacy_summary_invalid_spec_count"] = invalid_spec_count
     return deduped, manifest
 
 
