@@ -10,6 +10,7 @@ import type {
   TorghutAlphaReadinessSettlementConveyorRef,
   TorghutAlphaRepairDividendLedgerRef,
   TorghutConsumerEvidenceStatus,
+  TorghutNoDeltaRepairReentryAuctionRef,
 } from '~/data/agents-control-plane'
 import {
   buildVerifyTrustForeclosureBoard,
@@ -227,6 +228,39 @@ const closureBoard = (
   ...overrides,
 })
 
+const noDeltaAuction = (
+  overrides: Partial<TorghutNoDeltaRepairReentryAuctionRef> = {},
+): TorghutNoDeltaRepairReentryAuctionRef => ({
+  schema_version: 'torghut.no-delta-repair-reentry-auction-ref.v1',
+  auction_schema_version: 'torghut.no-delta-repair-reentry-auction.v1',
+  auction_id: 'no-delta-repair-reentry-auction:current',
+  generated_at: now.toISOString(),
+  fresh_until: '2026-05-14T12:30:00.000Z',
+  reentry_decision: 'deny',
+  reason_codes: [
+    'active_no_delta_release_key',
+    'no_release_condition_changed',
+    'zero_notional_reentry_ticket_not_selected',
+    'duplicate_no_delta_reentry_denied',
+  ],
+  active_no_delta_release_key: 'alpha-auction-no-delta:H-MICRO-01:window-b',
+  selected_hypothesis_id: 'H-MICRO-01',
+  selected_value_gate: 'routeable_candidate_count',
+  routeable_candidate_count_before: 0,
+  routeable_candidate_count_after: 0,
+  selected_ticket_id: null,
+  selected_ticket_class: null,
+  selected_release_condition: null,
+  required_output_receipt: null,
+  validation_command: null,
+  enforcement_mode: 'observe',
+  max_notional: '0',
+  capital_rule: 'zero_notional_repair_only',
+  rollback_target:
+    'stop emitting no_delta_repair_reentry_auction, keep alpha settlement and dividend evidence, and keep Torghut max_notional=0',
+  ...overrides,
+})
+
 const torghutEvidence = (overrides: Partial<TorghutConsumerEvidenceStatus> = {}): TorghutConsumerEvidenceStatus => ({
   status: 'current',
   endpoint: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
@@ -392,6 +426,114 @@ describe('buildVerifyTrustForeclosureBoard', () => {
       torghut_business_state: 'repair_only',
       revenue_ready: false,
       top_repair_queue_item_code: 'repair_alpha_readiness',
+    })
+  })
+
+  it('uses the no-delta reentry auction as the primary alpha reentry authority', () => {
+    const board = buildVerifyTrustForeclosureBoard(
+      {
+        now,
+        namespace: 'agents',
+        executionTrust: executionTrust(),
+        sourceServingContractVerdictExchange: sourceExchange(),
+        torghutConsumerEvidence: torghutEvidence({
+          no_delta_repair_reentry_auction: noDeltaAuction(),
+          alpha_repair_closure_board: closureBoard({
+            selected_hypothesis_id: 'H-CONT-01',
+            active_dedupe_key: 'alpha-closure-dedupe:H-CONT-01:window-a',
+          }),
+          alpha_readiness_settlement_conveyor: conveyor({
+            active_no_delta_lease_count: 0,
+            repeat_launch_decision: 'allow',
+            no_delta_release_key: 'alpha-readiness-no-delta:H-MICRO-01:window-a',
+          }),
+          alpha_repair_dividend_ledger: null,
+        }),
+        revenueRepairSettlementCustody: custody('allow'),
+        rolloutHealth: rolloutHealth(),
+        controllerWitness: controllerWitness(),
+        database: database(),
+        serviceHealth: 'ok',
+      },
+      'observe',
+    )
+
+    expect(board.torghut_no_delta_repair_reentry_auction_ref).toBe('no-delta-repair-reentry-auction:current')
+    expect(board.active_no_delta_release_key).toBe('alpha-auction-no-delta:H-MICRO-01:window-b')
+    expect(board.alpha_repair_reentry_admission).toMatchObject({
+      release_key_state: 'active',
+      decision: 'deny',
+      selected_hypothesis_id: 'H-MICRO-01',
+      selected_value_gate: 'routeable_candidate_count',
+      validation_command:
+        "curl -fsS http://torghut.torghut.svc.cluster.local/trading/consumer-evidence | jq '.no_delta_repair_reentry_auction'",
+      reason_codes: expect.arrayContaining([
+        'no_delta_reentry_auction_denied',
+        'duplicate_no_delta_reentry_denied',
+        'active_no_delta_release_key',
+        'zero_notional_reentry_ticket_not_selected',
+      ]),
+    })
+    expect(board.foreclosure_tickets).toContainEqual(
+      expect.objectContaining({
+        debt_class: 'torghut_no_delta_active',
+        source_ref: 'no-delta-repair-reentry-auction:current',
+        state: 'denied',
+      }),
+    )
+    expect(board.action_decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_repair',
+          decision: 'block',
+          evidence_refs: expect.arrayContaining(['no-delta-repair-reentry-auction:current']),
+        }),
+      ]),
+    )
+  })
+
+  it('admits a changed zero-notional reentry auction ticket', () => {
+    const board = buildVerifyTrustForeclosureBoard(
+      {
+        now,
+        namespace: 'agents',
+        executionTrust: executionTrust(),
+        sourceServingContractVerdictExchange: sourceExchange(),
+        torghutConsumerEvidence: torghutEvidence({
+          no_delta_repair_reentry_auction: noDeltaAuction({
+            reentry_decision: 'allow',
+            reason_codes: [],
+            selected_ticket_id: 'no-delta-reentry-ticket:changed',
+            selected_ticket_class: 'empirical_receipt',
+            selected_release_condition: 'empirical_receipt_current',
+            required_output_receipt: 'torghut.empirical-job-receipt.v1',
+            validation_command:
+              'uv run --frozen pytest services/torghut/tests/test_build_revenue_repair_digest.py -k revenue_repair',
+          }),
+          alpha_repair_closure_board: null,
+          alpha_readiness_settlement_conveyor: conveyor({
+            active_no_delta_lease_count: 0,
+            repeat_launch_decision: 'allow',
+          }),
+          alpha_repair_dividend_ledger: null,
+        }),
+        revenueRepairSettlementCustody: custody('allow'),
+        rolloutHealth: rolloutHealth(),
+        controllerWitness: controllerWitness(),
+        database: database(),
+        serviceHealth: 'ok',
+      },
+      'observe',
+    )
+
+    expect(board.active_no_delta_release_key).toBeNull()
+    expect(board.alpha_repair_reentry_admission).toMatchObject({
+      release_key_state: 'changed',
+      decision: 'allow',
+      required_output_receipt: 'torghut.empirical-job-receipt.v1',
+      validation_command:
+        'uv run --frozen pytest services/torghut/tests/test_build_revenue_repair_digest.py -k revenue_repair',
+      reason_codes: [],
     })
   })
 
