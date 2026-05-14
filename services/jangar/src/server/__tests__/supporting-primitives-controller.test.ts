@@ -382,6 +382,7 @@ const mockStageClearanceStatus = (
   clearanceMarketLedger?: Record<string, unknown>,
   stageCreditLedger?: Record<string, unknown>,
   evidencePressureLedger?: Record<string, unknown>,
+  materialReentryClearinghouse?: Record<string, unknown>,
 ) =>
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(
     new Response(
@@ -390,6 +391,7 @@ const mockStageClearanceStatus = (
         clearance_market_ledger: clearanceMarketLedger,
         stage_credit_ledger: stageCreditLedger,
         evidence_pressure_ledger: evidencePressureLedger,
+        material_reentry_clearinghouse: materialReentryClearinghouse,
       }),
       {
         status: 200,
@@ -2542,6 +2544,144 @@ describe('supporting primitives controller', () => {
     const conditions = Array.isArray(status.conditions) ? status.conditions : []
     const bridge = conditions.find((condition) => condition.type === 'RequirementsBridge')
     expect(bridge?.status).toBe('True')
+  })
+
+  it('publishes material reentry repair dispatches as implementer requirement runs', async () => {
+    process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT = 'hold'
+    process.env.JANGAR_STAGE_CLEARANCE_HOLD_STAGES = 'implement'
+    mockStageClearanceStatus(
+      [{ ...buildStageClearancePacket('implement', 'allow'), swarm_name: 'torghut-quant' }],
+      buildClearanceMarketLedger('implement', 'allow'),
+      undefined,
+      undefined,
+      {
+        action_receipts: [
+          {
+            receipt_id: 'material-reentry-receipt:alpha',
+            implementer_dispatch: {
+              schema_version: 'jangar.material-reentry-implementer-dispatch.v1',
+              dispatch_kind: 'swarm_requirement_signal',
+              source_swarm: 'jangar-control-plane',
+              target_swarm: 'torghut-quant',
+              target_stage: 'implement',
+              target_role: 'engineer',
+              signal_name: 'material-reentry-torghut-alpha-test',
+              channel: 'workflow.general.requirement',
+              description: 'Implement Torghut zero-notional executable-alpha repair for routeable_candidate_count',
+              priority: 'critical',
+              dedupe_key: 'material-reentry:alpha:routeable_candidate_count',
+              payload: {
+                type: 'material_reentry_requirement',
+                business_metric: 'routeable_candidate_count',
+                target_value_gate: 'routeable_candidate_count',
+                required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+                max_notional: 0,
+                no_codex_review: true,
+                review_policy: 'no_automatic_codex_review',
+                acceptance: [
+                  'retire routeable_candidate_count blocker',
+                  'keep Torghut max_notional=0 and live submit disabled during repair',
+                ],
+              },
+            },
+          },
+        ],
+      },
+    )
+
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Schedule) {
+        return { status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' } }
+      }
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-implement-template', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+          },
+        }
+      }
+      return null
+    })
+    const list = vi.fn(async () => ({ items: [] }))
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'torghut-quant', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        mode: 'lights-out',
+        timezone: 'UTC',
+        mission: {
+          ledgerRef: '/workspace/.agentrun/swarm/torghut-quant-mission-ledger.md',
+          businessMetric: 'routeable_candidate_count',
+          validationContract: ['produce receipts that unblock revenue repair before capital exposure'],
+          valueGates: ['routeable_candidate_count'],
+        },
+        cadence: {
+          discoverEvery: '4h',
+          planEvery: '4h',
+          implementEvery: '30m',
+          verifyEvery: '1h',
+        },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const signalPayload = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((payload) => payload.kind === 'Signal') as
+      | { metadata: Record<string, unknown>; spec: Record<string, unknown> }
+      | undefined
+    expect(signalPayload).toBeDefined()
+    expect(signalPayload?.metadata.name).toBe('material-reentry-torghut-alpha-test')
+    const signalLabels = (signalPayload?.metadata.labels ?? {}) as Record<string, string>
+    expect(signalLabels['swarm.proompteng.ai/from']).toBe('jangar-control-plane')
+    expect(signalLabels['swarm.proompteng.ai/to']).toBe('torghut-quant')
+    expect(signalPayload?.spec.channel).toBe('workflow.general.requirement')
+
+    const requirementRun = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((payload) => {
+        const metadata = payload.metadata as Record<string, unknown> | undefined
+        return payload.kind === 'AgentRun' && String(metadata?.generateName).includes('req')
+      }) as { metadata: Record<string, unknown>; spec: Record<string, unknown> } | undefined
+    expect(requirementRun).toBeDefined()
+    const parameters = (requirementRun?.spec.parameters ?? {}) as Record<string, string>
+    expect(parameters.swarmRequirementSignal).toBe('material-reentry-torghut-alpha-test')
+    expect(parameters.swarmRequirementSource).toBe('jangar-control-plane')
+    expect(parameters.swarmRequirementTarget).toBe('torghut-quant')
+    expect(parameters.swarmBusinessMetric).toBe('routeable_candidate_count')
+    const payload = JSON.parse(parameters.swarmRequirementPayload)
+    expect(payload).toMatchObject({
+      business_metric: 'routeable_candidate_count',
+      target_value_gate: 'routeable_candidate_count',
+      required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+      max_notional: 0,
+      no_codex_review: true,
+      review_policy: 'no_automatic_codex_review',
+      material_reentry_dispatch_dedupe_key: 'material-reentry:alpha:routeable_candidate_count',
+    })
+
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    const requirements = (status.requirements ?? {}) as Record<string, unknown>
+    expect(requirements.materialReentryGenerated).toBe(1)
+    expect(requirements.dispatched).toBe(1)
   })
 
   it('pauses requirement dispatch when AgentRun ingestion is degraded', async () => {

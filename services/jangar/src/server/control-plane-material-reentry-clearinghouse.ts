@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import type {
   ActionSloBudgetActionClass,
   MaterialReentryClearinghouse,
+  MaterialReentryImplementerDispatch,
   MaterialReentryReceipt,
   MaterialReentryReceiptClass,
   MaterialReentryReceiptStatus,
@@ -148,6 +149,7 @@ type ReceiptPlan = {
   evidenceRefs: string[]
   reasonCodes: string[]
   rollbackTarget: string
+  implementerDispatch: MaterialReentryImplementerDispatch | null
 }
 
 const basePlan = (input: {
@@ -163,6 +165,7 @@ const basePlan = (input: {
   evidenceRefs?: Array<string | null | undefined>
   reasonCodes?: Array<string | null | undefined>
   rollbackTarget: string
+  implementerDispatch?: MaterialReentryImplementerDispatch | null
 }): ReceiptPlan => ({
   receiptClass: input.receiptClass,
   requiredOutputReceipt: input.requiredOutputReceipt,
@@ -176,7 +179,80 @@ const basePlan = (input: {
   evidenceRefs: uniqueStrings(input.evidenceRefs ?? []),
   reasonCodes: uniqueStrings(input.reasonCodes ?? []),
   rollbackTarget: input.rollbackTarget,
+  implementerDispatch: input.implementerDispatch ?? null,
 })
+
+const buildTorghutExecutableAlphaImplementerDispatch = (input: {
+  actionClass: ActionSloBudgetActionClass
+  selectedReceipt: TorghutExecutableAlphaRepairReceipt
+  requiredOutputReceipt: string | null
+  validationCommands: string[]
+  valueGates: string[]
+  expectedGateDelta: string | null
+  maxRuntimeSeconds: number
+  rollbackTarget: string
+}): MaterialReentryImplementerDispatch | null => {
+  if (!isTorghutRepairAction(input.actionClass)) return null
+
+  const valueGate = input.selectedReceipt.target_value_gate || input.valueGates[0] || 'routeable_candidate_count'
+  const signalName = `material-reentry-torghut-alpha-${hashJson(
+    {
+      actionClass: input.actionClass,
+      selectedReceipt: input.selectedReceipt.receipt_id,
+      valueGate,
+      requiredOutputReceipt: input.requiredOutputReceipt,
+    },
+    12,
+  )}`
+  const description =
+    `Implement Torghut zero-notional executable-alpha repair for ${valueGate}; ` +
+    'produce the required receipt and keep live capital disabled.'
+
+  return {
+    schema_version: 'jangar.material-reentry-implementer-dispatch.v1',
+    dispatch_kind: 'swarm_requirement_signal',
+    source_swarm: 'jangar-control-plane',
+    target_swarm: 'torghut-quant',
+    target_stage: 'implement',
+    target_role: 'engineer',
+    signal_name: signalName,
+    channel: 'workflow.general.requirement',
+    description,
+    priority: 'critical',
+    dedupe_key: `material-reentry:${input.selectedReceipt.receipt_id}:${valueGate}`,
+    payload: {
+      type: 'material_reentry_requirement',
+      source: 'jangar.material_reentry_clearinghouse',
+      source_receipt_id: input.selectedReceipt.receipt_id,
+      repair_class: input.selectedReceipt.repair_class,
+      target_value_gate: valueGate,
+      value_gates: input.valueGates,
+      expected_gate_delta: input.expectedGateDelta,
+      expected_unblock_value: input.selectedReceipt.expected_unblock_value,
+      required_output_receipt: input.requiredOutputReceipt,
+      required_output_receipts: input.selectedReceipt.required_output_receipts,
+      validation_commands: input.validationCommands,
+      hypothesis_id: input.selectedReceipt.hypothesis_id,
+      candidate_id: input.selectedReceipt.candidate_id,
+      strategy_id: input.selectedReceipt.strategy_id,
+      account_id: input.selectedReceipt.account_id,
+      window: input.selectedReceipt.window,
+      trading_mode: input.selectedReceipt.trading_mode,
+      reason_codes: input.selectedReceipt.reason_codes,
+      max_notional: 0,
+      max_runtime_seconds: input.maxRuntimeSeconds,
+      business_metric: valueGate,
+      acceptance: [
+        `retire ${valueGate} blocker or emit a no-delta receipt explaining the remaining blocker`,
+        'keep Torghut max_notional=0 and live submit disabled during repair',
+        'do not request automatic Codex review or post @codex review',
+      ],
+      review_policy: 'no_automatic_codex_review',
+      no_codex_review: true,
+      rollback_target: input.rollbackTarget,
+    },
+  }
+}
 
 const buildTorghutRepairPlan = (input: {
   repairBidAdmission: RepairBidAdmissionState
@@ -237,23 +313,30 @@ const buildTorghutExecutableAlphaRepairPlan = (input: {
     input.selectedReceipt.required_output_receipts[0] ??
     topTorghutRequiredOutput(input.torghutConsumerEvidence) ??
     null
+  const validationCommands = uniqueStrings([
+    ...input.selectedReceipt.validation_commands,
+    "curl -fsS http://torghut.torghut.svc.cluster.local/trading/revenue-repair | jq '.executable_alpha_repair_receipts.selected_receipt'",
+    'uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py',
+  ])
+  const valueGates = uniqueStrings([
+    ...(jangarReentry?.value_gates ?? []),
+    input.selectedReceipt.target_value_gate,
+    set?.target_value_gate,
+  ])
+  const maxRuntimeSeconds = allowsRepairAction ? (jangarReentry?.max_runtime_seconds ?? DEFAULT_MAX_RUNTIME_SECONDS) : 0
+  const rollbackTarget =
+    jangarReentry?.rollback_target ??
+    input.selectedReceipt.rollback_target ??
+    'keep Torghut max_notional=0 and live submit disabled'
 
   return basePlan({
     receiptClass: 'torghut_executable_alpha_repair',
     requiredOutputReceipt,
-    validationCommands: [
-      ...input.selectedReceipt.validation_commands,
-      "curl -fsS http://torghut.torghut.svc.cluster.local/trading/revenue-repair | jq '.executable_alpha_repair_receipts.selected_receipt'",
-      'uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py',
-    ],
-    valueGates: uniqueStrings([
-      ...(jangarReentry?.value_gates ?? []),
-      input.selectedReceipt.target_value_gate,
-      set?.target_value_gate,
-    ]),
+    validationCommands,
+    valueGates,
     expectedGateDelta: input.selectedReceipt.expected_gate_delta,
     maxParallelism: allowsRepairAction ? (jangarReentry?.max_parallelism ?? 1) : 0,
-    maxRuntimeSeconds: allowsRepairAction ? (jangarReentry?.max_runtime_seconds ?? DEFAULT_MAX_RUNTIME_SECONDS) : 0,
+    maxRuntimeSeconds,
     maxNotional: 0,
     sourceHoldRefs: [
       set?.source_revenue_repair_ref,
@@ -271,10 +354,17 @@ const buildTorghutExecutableAlphaRepairPlan = (input: {
       ...input.selectedReceipt.reason_codes,
       ...(allowsRepairAction ? [] : ['torghut_alpha_repair_blocks_capital_reentry']),
     ],
-    rollbackTarget:
-      jangarReentry?.rollback_target ??
-      input.selectedReceipt.rollback_target ??
-      'keep Torghut max_notional=0 and live submit disabled',
+    rollbackTarget,
+    implementerDispatch: buildTorghutExecutableAlphaImplementerDispatch({
+      actionClass: input.actionClass,
+      selectedReceipt: input.selectedReceipt,
+      requiredOutputReceipt,
+      validationCommands,
+      valueGates,
+      expectedGateDelta: input.selectedReceipt.expected_gate_delta,
+      maxRuntimeSeconds,
+      rollbackTarget,
+    }),
   })
 }
 
@@ -447,6 +537,15 @@ const buildReceipt = (input: {
     requiredOutputReceipt: input.plan.requiredOutputReceipt,
     sourceHoldRefs: input.plan.sourceHoldRefs,
   })}`
+  const implementerDispatch = input.plan.implementerDispatch
+    ? {
+        ...input.plan.implementerDispatch,
+        payload: {
+          ...input.plan.implementerDispatch.payload,
+          material_reentry_receipt_id: receiptId,
+        },
+      }
+    : null
 
   return {
     schema_version: RECEIPT_SCHEMA_VERSION,
@@ -475,6 +574,7 @@ const buildReceipt = (input: {
     evidence_refs: input.plan.evidenceRefs,
     reason_codes: input.plan.reasonCodes,
     rollback_target: input.plan.rollbackTarget,
+    implementer_dispatch: implementerDispatch,
   }
 }
 
@@ -531,6 +631,9 @@ export const buildMaterialReentryClearinghouse = (input: {
         receipt.receipt_class === 'torghut_executable_alpha_repair' &&
         receipt.value_gates.includes('routeable_candidate_count'),
     ) ?? null
+  const implementerDispatches = actionReceipts
+    .map((receipt) => receipt.implementer_dispatch)
+    .filter((dispatch): dispatch is MaterialReentryImplementerDispatch => dispatch !== null)
   const status = statusForDecision(input.readyTruthArbiter.material_readiness)
 
   return {
@@ -562,6 +665,8 @@ export const buildMaterialReentryClearinghouse = (input: {
       .filter((receipt) => receipt.status !== 'open')
       .map((receipt) => receipt.receipt_id),
     top_repair_receipt_id: topRepairReceipt?.receipt_id ?? null,
+    implementer_dispatches: implementerDispatches,
+    top_implementer_dispatch: topRepairReceipt?.implementer_dispatch ?? implementerDispatches[0] ?? null,
     rollback_target: 'disable material reentry clearinghouse emission and use ready truth plus repair-bid admission',
   }
 }

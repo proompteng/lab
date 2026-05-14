@@ -927,6 +927,21 @@ export type MaterialReentryReceiptClass =
   | 'deployer_rollout_proof'
   | 'merge_ready_source_receipt'
 
+export type MaterialReentryImplementerDispatch = {
+  schema_version: 'jangar.material-reentry-implementer-dispatch.v1'
+  dispatch_kind: 'swarm_requirement_signal'
+  source_swarm: string
+  target_swarm: string
+  target_stage: 'implement'
+  target_role: 'engineer'
+  signal_name: string
+  channel: string
+  description: string
+  priority: 'critical' | 'high' | 'normal'
+  dedupe_key: string
+  payload: Record<string, unknown>
+}
+
 export type MaterialReentryReceipt = {
   schema_version: 'jangar.material-reentry-receipt.v1'
   receipt_id: string
@@ -949,6 +964,7 @@ export type MaterialReentryReceipt = {
   evidence_refs: string[]
   reason_codes: string[]
   rollback_target: string
+  implementer_dispatch: MaterialReentryImplementerDispatch | null
 }
 
 export type MaterialReentryClearinghouse = {
@@ -967,6 +983,8 @@ export type MaterialReentryClearinghouse = {
   blocked_action_classes: ActionSloBudgetActionClass[]
   primary_reentry_receipt_refs: string[]
   top_repair_receipt_id: string | null
+  implementer_dispatches: MaterialReentryImplementerDispatch[]
+  top_implementer_dispatch: MaterialReentryImplementerDispatch | null
   rollback_target: string
 }
 

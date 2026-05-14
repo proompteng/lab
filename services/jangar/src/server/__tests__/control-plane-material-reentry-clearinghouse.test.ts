@@ -579,13 +579,37 @@ describe('control-plane material reentry clearinghouse', () => {
       max_runtime_seconds: 1200,
       max_notional: 0,
     })
+    expect(observe.implementer_dispatch).toMatchObject({
+      dispatch_kind: 'swarm_requirement_signal',
+      source_swarm: 'jangar-control-plane',
+      target_swarm: 'torghut-quant',
+      target_stage: 'implement',
+      target_role: 'engineer',
+      channel: 'workflow.general.requirement',
+      priority: 'critical',
+      payload: expect.objectContaining({
+        business_metric: 'routeable_candidate_count',
+        target_value_gate: 'routeable_candidate_count',
+        required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+        max_notional: 0,
+        no_codex_review: true,
+        review_policy: 'no_automatic_codex_review',
+        material_reentry_receipt_id: observe.receipt_id,
+      }),
+    })
+    expect(observe.implementer_dispatch?.payload.acceptance).toEqual(
+      expect.arrayContaining(['do not request automatic Codex review or post @codex review']),
+    )
     expect(observe.source_hold_refs).toContain('executable-alpha-repair-receipt:current')
     expect(paperCanary).toMatchObject({
       decision: 'block',
       status: 'blocked',
       receipt_class: 'torghut_executable_alpha_repair',
       max_notional: 0,
+      implementer_dispatch: null,
     })
     expect(paperCanary.reason_codes).toContain('torghut_alpha_repair_blocks_capital_reentry')
+    expect(clearinghouse.top_implementer_dispatch?.signal_name).toBe(observe.implementer_dispatch?.signal_name)
+    expect(clearinghouse.implementer_dispatches).toHaveLength(1)
   })
 })
