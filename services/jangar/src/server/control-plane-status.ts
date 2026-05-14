@@ -26,6 +26,7 @@ import {
 import { resolveTemporalAdapter } from '~/server/control-plane-temporal-adapter'
 import type { RepairScheduleAttemptResolver } from '~/server/control-plane-material-action-artifacts'
 import { buildMaterialGateDigest } from '~/server/control-plane-material-gate-digest'
+import { buildMaterialEvidenceSettlementSpine } from '~/server/control-plane-material-evidence-settlement'
 import { buildMaterialReentryClearinghouse } from '~/server/control-plane-material-reentry-clearinghouse'
 import { buildControlPlaneMaterialStatus } from '~/server/control-plane-material-status'
 import {
@@ -695,6 +696,25 @@ export const buildControlPlaneStatus = async (
     repairSlotEscrow,
     torghutConsumerEvidence: torghutConsumerEvidence.status,
   })
+  const materialEvidenceSettlementSpine = buildMaterialEvidenceSettlementSpine({
+    now,
+    namespace: options.namespace,
+    servingReadiness: readyTruthArbiter.serving_readiness,
+    executionTrust: executionTrust.executionTrust,
+    projectionWatermarks: runtimeAdmission.projectionWatermarks,
+    readyTruthArbiter,
+    stageCreditLedger,
+    controllerIngestionSettlement,
+    sourceServingContractVerdictExchange,
+    rolloutProofPassport: rolloutProofStatusFields.rollout_proof_passport,
+    materialGateDigest,
+    database,
+    rolloutHealth,
+    workflows,
+    terminalDebtCompactionLedger,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+    repairBidAdmission,
+  })
 
   const degradedComponents = buildControlPlaneDegradedComponents({
     agentRunIngestion,
@@ -759,6 +779,7 @@ export const buildControlPlaneStatus = async (
     ready_action_exchange: readyActionExchange,
     repair_bid_admission: repairBidAdmission,
     material_gate_digest: materialGateDigest,
+    material_evidence_settlement_spine: materialEvidenceSettlementSpine,
     material_reentry_clearinghouse: materialReentryClearinghouse,
     repair_slot_escrow: repairSlotEscrow,
     repair_warrant_exchange: repairWarrantExchange,

@@ -20,6 +20,7 @@ import type {
   MaterialActionVerdict,
   MaterialActionVerdictEpoch,
   MaterialActionActivationReceipt,
+  MaterialEvidenceSettlementSpine,
   MaterialGateDigest,
   MaterialReentryClearinghouse,
   NegativeEvidenceRouterStatus,
@@ -217,6 +218,7 @@ export type ControlPlaneStatus = {
   ready_action_exchange: ReadyActionExchange
   repair_bid_admission: RepairBidAdmissionState
   material_gate_digest: MaterialGateDigest
+  material_evidence_settlement_spine: MaterialEvidenceSettlementSpine
   material_reentry_clearinghouse: MaterialReentryClearinghouse
   repair_slot_escrow: RepairSlotEscrow | null
   repair_warrant_exchange: RepairWarrantExchange

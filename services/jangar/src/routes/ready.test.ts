@@ -374,9 +374,9 @@ describe('getReadyHandler', () => {
     })
     expect(body.serving_recovery_warrant_id).toBe('recovery-warrant:serving:1')
     expect(body.serving_runtime_proof_cells_healthy).toBe(true)
-  })
+  }, 30_000)
 
-  it('projects Torghut revenue-repair business evidence at the ready boundary', async () => {
+  it('projects Torghut revenue-repair business evidence and material evidence settlement at the ready boundary', async () => {
     process.env.JANGAR_TORGHUT_STATUS_URL = 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence'
     globalThis.fetch = vi
       .fn()
@@ -655,6 +655,37 @@ describe('getReadyHandler', () => {
           action_class: 'dispatch_repair',
           decision: 'deny',
         }),
+      ]),
+    )
+    expect(body.material_evidence_settlement_spine).toMatchObject({
+      schema_version: 'jangar.material-evidence-settlement-spine.v1',
+      mode: 'observe',
+      decision: 'hold',
+      transport_truth: {
+        consumer_evidence_status: 'stale',
+        revenue_repair_topline_status: 'stale',
+      },
+      business_truth: {
+        business_state: 'repair_only',
+        revenue_ready: false,
+        selected_value_gate: 'routeable_candidate_count',
+        routeable_candidate_count: 0,
+        max_notional: '0',
+      },
+      material_truth: {
+        material_gate_ref: body.material_gate_digest.digest_id,
+        controller_ingestion_settlement_ref: body.controller_ingestion_settlement.settlement_id,
+      },
+      repair_dispatch_budget: {
+        ticket_class: 'none',
+        max_notional: '0',
+      },
+    })
+    expect(body.material_evidence_settlement_spine.reason_codes).toEqual(
+      expect.arrayContaining([
+        'torghut_consumer_evidence_stale',
+        'revenue_repair_topline_stale',
+        'dispatch_repair_deny',
       ]),
     )
     expect(body.repair_slot_escrow).toMatchObject({

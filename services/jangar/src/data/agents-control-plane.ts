@@ -1093,6 +1093,104 @@ export type MaterialGateDigest = {
   rollback_target: string
 }
 
+export type MaterialEvidenceSettlementMode = 'observe' | 'shadow' | 'enforce'
+
+export type MaterialEvidenceSettlementDecision = 'allow' | 'repair_only' | 'hold' | 'block'
+
+export type MaterialEvidenceToplineStatus =
+  | 'current'
+  | 'queue_head_inferred'
+  | 'summary_only'
+  | 'missing'
+  | 'stale'
+  | 'unavailable'
+  | 'schema_mismatch'
+
+export type MaterialEvidenceRepairTicketClass =
+  | 'none'
+  | 'controller_ingestion'
+  | 'verification_carry_rollout'
+  | 'alpha_readiness'
+  | 'consumer_evidence_projection_refresh'
+
+export type MaterialEvidenceSettlementSpine = {
+  schema_version: 'jangar.material-evidence-settlement-spine.v1'
+  settlement_id: string
+  mode: MaterialEvidenceSettlementMode
+  namespace: string
+  generated_at: string
+  fresh_until: string
+  governing_design_refs: string[]
+  decision: MaterialEvidenceSettlementDecision
+  serving_truth: {
+    serving_readiness: ReadyTruthServingReadiness
+    execution_trust_status: ExecutionTrustStatus['status']
+    rollout_health: ControlPlaneRolloutHealth['status']
+    projection_watermark_statuses: Record<string, ProjectionWatermarkStatus['status']>
+  }
+  material_truth: {
+    ready_truth_ref: string | null
+    ready_truth_decision: ReadyTruthMaterialReadiness | null
+    material_gate_ref: string
+    material_gate_decision: MaterialGateDigestReadiness
+    controller_ingestion_settlement_ref: string
+    controller_ingestion_decision: ControllerIngestionSettlementDecision
+    source_serving_verdict_ref: string | null
+    source_serving_status: SourceServingContractDecision | null
+    stage_credit_ledger_ref: string | null
+    rollout_proof_passport_ref: string | null
+    dispatch_repair_decision: MaterialGateDigestDecision | null
+  }
+  transport_truth: {
+    consumer_evidence_status: TorghutConsumerEvidenceStatus['status']
+    consumer_evidence_ref: string | null
+    consumer_evidence_endpoint: string
+    revenue_repair_topline_status: MaterialEvidenceToplineStatus
+    revenue_repair_topline_source: 'torghut_consumer_evidence' | 'revenue_repair_queue_head' | 'unavailable'
+    revenue_repair_transport_reason_codes: string[]
+  }
+  business_truth: {
+    business_state: string | null
+    revenue_ready: boolean | null
+    top_repair_queue_item: TorghutRevenueRepairQueueItem | null
+    selected_value_gate: string | null
+    required_output_receipt: string | null
+    routeable_candidate_count: number | null
+    max_notional: string | null
+    capital_rule: string | null
+  }
+  database_truth: {
+    jangar_database_status: DatabaseStatus['status']
+    migration_consistency_status: DatabaseMigrationConsistency['status']
+    direct_sql_access: 'not_required_for_runtime' | 'unknown'
+    torghut_schema_witness_ref: string | null
+  }
+  failure_debt_truth: {
+    active_job_runs: number | null
+    recent_failed_jobs: number | null
+    backoff_limit_exceeded_jobs: number | null
+    workflow_data_confidence: WorkflowsReliabilityStatus['data_confidence'] | null
+    terminal_active_debt_count: number | null
+    terminal_retained_audit_count: number | null
+    reason_codes: string[]
+  }
+  repair_dispatch_budget: {
+    action_class: ActionSloBudgetActionClass | null
+    ticket_class: MaterialEvidenceRepairTicketClass
+    selected_ticket_ref: string | null
+    decision: MaterialEvidenceSettlementDecision
+    max_parallelism: number
+    max_runtime_seconds: number | null
+    max_notional: string
+    validation_commands: string[]
+    reason_codes: string[]
+  }
+  reason_codes: string[]
+  evidence_refs: string[]
+  validation_commands: string[]
+  rollback_target: string
+}
+
 export type MaterialReentryReceiptStatus = 'open' | 'repair_required' | 'blocked'
 
 export type MaterialReentryReceiptClass =
@@ -2923,6 +3021,7 @@ export type ControlPlaneStatus = {
   ready_action_exchange: ReadyActionExchange
   repair_bid_admission: RepairBidAdmissionState
   material_gate_digest: MaterialGateDigest
+  material_evidence_settlement_spine: MaterialEvidenceSettlementSpine
   material_reentry_clearinghouse: MaterialReentryClearinghouse
   repair_slot_escrow: RepairSlotEscrow | null
   repair_warrant_exchange: RepairWarrantExchange

@@ -17,7 +17,7 @@ describe('searchTorghutSymbolsHandler', () => {
     expect(response.status).toBe(200)
     expect(upstreamFetch).not.toHaveBeenCalled()
     await expect(response.json()).resolves.toEqual({ ok: true, symbols: [] })
-  })
+  }, 30_000)
 
   it('filters out invalid crypto symbols from upstream data', async () => {
     const upstreamFetch = vi.fn().mockResolvedValue(

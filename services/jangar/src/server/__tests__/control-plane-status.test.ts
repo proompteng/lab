@@ -11,6 +11,7 @@ import { CLEARANCE_MARKET_DESIGN_ARTIFACT } from '~/server/control-plane-clearan
 import { CONTROLLER_INGESTION_SETTLEMENT_DESIGN_ARTIFACT } from '~/server/control-plane-controller-ingestion-settlement'
 import { CONSUMER_EVIDENCE_LEASES_DESIGN_ARTIFACT } from '~/server/control-plane-consumer-evidence-leases'
 import { EVIDENCE_PRESSURE_LEDGER_DESIGN_ARTIFACT } from '~/server/control-plane-evidence-pressure-ledger'
+import { MATERIAL_EVIDENCE_SETTLEMENT_DESIGN_ARTIFACT } from '~/server/control-plane-material-evidence-settlement'
 import { MATERIAL_REENTRY_CLEARINGHOUSE_DESIGN_ARTIFACT } from '~/server/control-plane-material-reentry-clearinghouse'
 import { READY_TRUTH_ARBITER_DESIGN_ARTIFACT } from '~/server/control-plane-ready-truth-arbiter'
 import { ROLLOUT_PROOF_PASSPORT_DESIGN_ARTIFACT } from '~/server/control-plane-rollout-proof-passport'
@@ -1217,6 +1218,15 @@ describe('control-plane status', () => {
         would_hold_action_classes: [],
       },
     })
+    expect(status.material_evidence_settlement_spine).toMatchObject({
+      schema_version: 'jangar.material-evidence-settlement-spine.v1',
+      mode: 'observe',
+      governing_design_refs: expect.arrayContaining([MATERIAL_EVIDENCE_SETTLEMENT_DESIGN_ARTIFACT]),
+      material_truth: {
+        material_gate_ref: status.material_gate_digest.digest_id,
+        controller_ingestion_settlement_ref: status.controller_ingestion_settlement.settlement_id,
+      },
+    })
     expect(status.torghut_action_slo_budgets).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1251,6 +1261,95 @@ describe('control-plane status', () => {
     expect(status.empirical_services.lean.authoritative).toBe(true)
     expect(status.empirical_services.jobs.authoritative).toBe(true)
     expect(status.torghut_consumer_evidence.status).toBe('disabled')
+  })
+
+  it('projects material evidence settlement from Torghut queue-head topline evidence', async () => {
+    setRolloutDeploymentList(
+      [healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment],
+      [healthyRuntimePod()],
+    )
+
+    const status = await buildStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+        resolveTorghutConsumerEvidence: async () => ({
+          status: {
+            status: 'current',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
+            receipt_id: 'torghut-route-proven-profit:status-test',
+            generated_at: '2026-01-20T00:00:00Z',
+            fresh_until: '2026-01-20T00:05:00Z',
+            candidate_id: 'chip-paper-microbar-composite@execution-proof',
+            dataset_snapshot_ref: 'torghut-chip-full-day-20260505-4c330ce9-r1',
+            max_notional: '0',
+            revenue_repair_business_state: 'repair_only',
+            revenue_repair_ready: false,
+            revenue_repair_queue: [
+              {
+                code: 'repair_alpha_readiness',
+                reason: 'alpha_readiness_not_promotion_eligible',
+                dimension: 'alpha_readiness',
+                action: 'clear_hypothesis_blockers_before_capital',
+                priority: 70,
+                expected_unblock_value: 2,
+                source: 'proof_floor.repair_ladder',
+                value_gate: 'routeable_candidate_count',
+                required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+                required_receipts: ['alpha_readiness_receipt', 'hypothesis_promotion_receipt', 'capital_replay_board'],
+                max_notional: '0',
+                capital_rule: 'zero_notional_repair_only',
+                observed_count: 1,
+              },
+            ],
+            accepted_routeable_candidate_count: 0,
+            reason_codes: [],
+            message: 'consumer evidence current',
+          },
+        }),
+      },
+    )
+
+    expect(status.material_evidence_settlement_spine).toMatchObject({
+      schema_version: 'jangar.material-evidence-settlement-spine.v1',
+      mode: 'observe',
+      decision: 'hold',
+      transport_truth: {
+        consumer_evidence_status: 'current',
+        revenue_repair_topline_status: 'queue_head_inferred',
+        revenue_repair_topline_source: 'revenue_repair_queue_head',
+      },
+      business_truth: {
+        business_state: 'repair_only',
+        revenue_ready: false,
+        selected_value_gate: 'routeable_candidate_count',
+        routeable_candidate_count: 0,
+        max_notional: '0',
+      },
+      repair_dispatch_budget: {
+        ticket_class: 'none',
+        max_notional: '0',
+      },
+    })
+    expect(status.material_evidence_settlement_spine.reason_codes).toEqual(
+      expect.arrayContaining(['topline_inferred_from_queue_head', 'dispatch_repair_hold']),
+    )
   })
 
   it('projects a compact schedule-runner status payload', async () => {
