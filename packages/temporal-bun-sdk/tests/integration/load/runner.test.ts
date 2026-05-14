@@ -33,6 +33,20 @@ test('worker load completion budget includes metrics flush window', () => {
   ).toBe(330_000)
 })
 
+test('worker load completion budget covers activity timeout envelope and describe drain', () => {
+  expect(
+    __workerLoadTestHooks.calculateLoadCompletionBudgetMs({
+      workflowDurationBudgetMs: 100_000,
+      activityScheduleToStartTimeoutMs: 90_000,
+      activityStartToCloseTimeoutMs: 60_000,
+      activityScheduleToCloseTimeoutMs: 150_000,
+      workflowCount: 16,
+      workflowDescribeConcurrency: 32,
+      metricsFlushTimeoutMs: 5_000,
+    }),
+  ).toBe(160_000)
+})
+
 test('worker load update termination treats already-completed races as terminal success', () => {
   expect(
     __workerLoadTestHooks.isWorkflowAlreadyCompletedForTermination(
