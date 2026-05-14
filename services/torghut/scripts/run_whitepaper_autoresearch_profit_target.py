@@ -2579,9 +2579,17 @@ def _pre_replay_proposal_model_and_rows(
             bundle.objective_scorecard
         )
         if source == "feedback_real_replay" and is_blocked:
-            return "pre_replay_mlx_feedback_blocked"
+            if bundle is not None and _feedback_has_nonpositive_expected_value(
+                bundle.objective_scorecard
+            ):
+                return "pre_replay_mlx_feedback_blocked"
+            return "pre_replay_mlx_feedback_penalized"
         if source == "feedback_execution_signature_replay" and is_blocked:
-            return "pre_replay_mlx_signature_feedback_blocked"
+            if bundle is not None and _feedback_has_nonpositive_expected_value(
+                bundle.objective_scorecard
+            ):
+                return "pre_replay_mlx_signature_feedback_blocked"
+            return "pre_replay_mlx_signature_feedback_penalized"
         if (
             source == "feedback_family_replay"
             and bundle is not None
@@ -2598,7 +2606,7 @@ def _pre_replay_proposal_model_and_rows(
         if (
             source in {"feedback_real_replay", "feedback_execution_signature_replay"}
             and bundle is not None
-            and _feedback_is_blocked(bundle.objective_scorecard)
+            and _feedback_has_nonpositive_expected_value(bundle.objective_scorecard)
         ):
             return min(-1_000_000.0, target_by_spec.get(candidate_spec_id, raw_score))
         if (
