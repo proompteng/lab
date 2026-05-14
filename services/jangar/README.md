@@ -692,6 +692,28 @@ Rollback: ignore `controller_ingestion_settlement` consumers and keep ready trut
 source-serving verdicts, verify-trust foreclosure, and Torghut no-delta/max-notional guards as the active safety
 boundary. No database migration or scheduler enforcement is introduced by this projection.
 
+## Material evidence settlement spine
+
+`/ready` and `/api/agents/control-plane/status` should next emit the observe-mode
+`material_evidence_settlement_spine` from
+`docs/agents/designs/206-jangar-material-evidence-settlement-spine-and-repair-dispatch-budget-2026-05-14.md`. The
+spine is the compact settlement layer over serving readiness, material readiness, Torghut revenue-repair topline
+evidence, database witnesses, source-to-serving rollout facts, controller-ingestion settlement, and active versus
+retained failure debt. It exists to distinguish transport gaps from business repair-only truth, then budget at most one
+zero-notional repair lane while broad dispatch, deploy widening, merge-ready claims, and live capital remain held.
+
+Validation:
+
+```bash
+curl -fsS http://localhost:8080/ready | jq '.material_evidence_settlement_spine'
+curl -fsS 'http://localhost:8080/api/agents/control-plane/status?namespace=agents' | jq '.material_evidence_settlement_spine'
+curl -fsS http://torghut.torghut.svc.cluster.local/trading/revenue-repair | jq '{business_state,top_repair_queue_item,repair_queue}'
+```
+
+Rollback: set `JANGAR_MATERIAL_EVIDENCE_SETTLEMENT_MODE=observe` or ignore
+`material_evidence_settlement_spine` consumers and continue using ready truth, stage credit,
+controller-ingestion settlement, terminal debt compaction, and Torghut max_notional=0 as authorities.
+
 ## Torghut stage-custody evidence
 
 Design doc `docs/agents/designs/188-jangar-typed-torghut-evidence-admission-and-repair-dispatch-2026-05-13.md`
