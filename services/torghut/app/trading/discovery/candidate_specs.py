@@ -1937,7 +1937,7 @@ def _capital_constrained_execution_profiles(
         max_notional, max_position = _capital_limited_profile_values(next_profile)
         next_profile["max_notional_per_trade"] = max_notional
         next_profile["max_position_pct_equity"] = max_position
-        next_profile["capital_profile"] = "initial_equity_cash_constrained_1x"
+        params["capital_profile"] = "initial_equity_cash_constrained_1x"
         params["max_gross_exposure_pct_equity"] = "1.0"
         next_profile["params"] = params
         constrained.append(next_profile)
