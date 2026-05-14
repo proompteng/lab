@@ -16,6 +16,11 @@ import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
 import { readTorghutFreshnessCarryEvidence } from '~/server/control-plane-torghut-freshness-carry'
 import { readTorghutRepairOutcomeEvidence } from '~/server/control-plane-torghut-repair-outcome'
 import { readExecutableAlphaRepairReceipts } from '~/server/control-plane-torghut-executable-alpha-repair'
+import {
+  hasRevenueRepairSummary,
+  normalizeRevenueRepairBoolean,
+  readRevenueRepairQueue,
+} from '~/server/control-plane-torghut-revenue-repair'
 import type { TorghutNegativeEvidenceInput } from '~/server/control-plane-negative-evidence-router-torghut'
 import {
   normalizeNonEmpty,
@@ -170,51 +175,6 @@ const requestJson = async (url: string, timeoutMs: number): Promise<JsonRouteRes
   }
 }
 
-const normalizeBoolean = (value: unknown): boolean | null => {
-  if (typeof value === 'boolean') return value
-  const normalized = normalizeReason(value)
-  if (!normalized) return null
-  if (['1', 'true', 'yes', 'ready', 'allow'].includes(normalized)) return true
-  if (['0', 'false', 'no', 'blocked', 'hold', 'repair_only'].includes(normalized)) return false
-  return null
-}
-
-const hasRevenueRepairSummary = (payload: Record<string, unknown>) =>
-  normalizeNonEmpty(payload.business_state) !== null ||
-  normalizeBoolean(payload.revenue_ready) !== null ||
-  Array.isArray(payload.repair_queue)
-
-const readRevenueRepairQueueItem = (rawItem: unknown): TorghutRevenueRepairQueueItem | null => {
-  const item = asRecord(rawItem)
-  if (!item) return null
-  const code = normalizeReason(item.code)
-  const reason = normalizeReason(item.reason)
-  const valueGate = normalizeReason(item.value_gate)
-  if (!code && !reason && !valueGate) return null
-  return {
-    code,
-    reason,
-    dimension: normalizeReason(item.dimension),
-    action: normalizeReason(item.action),
-    priority: normalizeNumber(item.priority),
-    expected_unblock_value: normalizeNumber(item.expected_unblock_value),
-    source: normalizeReason(item.source),
-    value_gate: valueGate,
-    required_output_receipt: normalizeNonEmpty(item.required_output_receipt),
-    required_receipts: stringValues(item.required_receipts),
-    max_notional: normalizeNonEmpty(item.max_notional),
-    capital_rule: normalizeReason(item.capital_rule),
-    observed_count: normalizeNumber(item.observed_count),
-  }
-}
-
-const readRevenueRepairQueue = (payload: Record<string, unknown> | null): TorghutRevenueRepairQueueItem[] => {
-  if (!payload || !Array.isArray(payload.repair_queue)) return []
-  return payload.repair_queue
-    .map(readRevenueRepairQueueItem)
-    .filter((item): item is TorghutRevenueRepairQueueItem => Boolean(item))
-}
-
 const readMarketContext = (
   payload: Record<string, unknown>,
 ): Pick<TorghutNegativeEvidenceInput, 'market_context_status' | 'market_context_stale_domains'> => {
@@ -312,7 +272,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     inlineExecutableAlphaRepairReceipts ?? readExecutableAlphaRepairReceipts(revenueRepairResult?.payload ?? null)
   const revenueRepairPayload = hasRevenueRepairSummary(payload) ? payload : (revenueRepairResult?.payload ?? null)
   const revenueRepairBusinessState = normalizeReason(revenueRepairPayload?.business_state)
-  const revenueRepairReady = normalizeBoolean(revenueRepairPayload?.revenue_ready)
+  const revenueRepairReady = normalizeRevenueRepairBoolean(revenueRepairPayload?.revenue_ready)
   const revenueRepairQueue = readRevenueRepairQueue(revenueRepairPayload)
   const payloadSchema = normalizeNonEmpty(payload.schema_version)
   if (payloadSchema && payloadSchema !== CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION) {
