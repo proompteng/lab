@@ -4,6 +4,14 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/206-torghut-no-delta-repair-reentry-auction-and-verification-carry-2026-05-14.md`
+  (current no-delta repair reentry auction and verification carry contract)
+- `docs/agents/designs/201-jangar-verify-trust-foreclosure-and-alpha-repair-reentry-2026-05-14.md`
+  (current Jangar verify-trust foreclosure and alpha-repair reentry contract)
+- `docs/torghut/design-system/v6/205-torghut-alpha-readiness-settlement-conveyor-and-routeable-profit-runway-2026-05-14.md`
+  (current alpha-readiness settlement conveyor and routeable profit runway contract)
+- `docs/agents/designs/200-jangar-revenue-repair-settlement-conveyor-and-stage-health-custody-2026-05-14.md`
+  (current Jangar revenue-repair settlement conveyor and stage-health custody contract)
 - `docs/torghut/design-system/v6/193-torghut-repair-outcome-dividend-ledger-and-capital-reentry-frontier-2026-05-13.md`
   (current repair outcome dividend ledger and capital reentry frontier contract)
 - `docs/agents/designs/189-jangar-terminal-debt-compaction-and-repair-outcome-escrow-2026-05-13.md`
