@@ -64,14 +64,14 @@ Local validation used `/tmp/codex-uv-bootstrap/bin/uv` because `uv` was not inst
 - `/tmp/codex-uv-bootstrap/bin/uv sync --frozen --extra dev`: pass
 - `/tmp/codex-uv-bootstrap/bin/uv run --frozen ruff format --check app/trading/no_delta_repair_reentry_auction.py app/trading/revenue_repair.py app/main.py tests/test_no_delta_repair_reentry_auction.py tests/test_build_revenue_repair_digest.py tests/test_trading_api.py`: pass
 - `/tmp/codex-uv-bootstrap/bin/uv run --frozen ruff check app/trading/no_delta_repair_reentry_auction.py app/trading/revenue_repair.py app/main.py tests/test_no_delta_repair_reentry_auction.py tests/test_build_revenue_repair_digest.py tests/test_trading_api.py`: pass
-- `/tmp/codex-uv-bootstrap/bin/uv run --frozen pytest tests/test_no_delta_repair_reentry_auction.py`: pass, 9 tests
+- `/tmp/codex-uv-bootstrap/bin/uv run --frozen pytest tests/test_no_delta_repair_reentry_auction.py`: pass, 13 tests
 - `/tmp/codex-uv-bootstrap/bin/uv run --frozen pytest tests/test_alpha_readiness_settlement_conveyor.py`: pass, 7 tests
 - `/tmp/codex-uv-bootstrap/bin/uv run --frozen pytest tests/test_alpha_repair_dividend_ledger.py`: pass, 10 tests
 - `/tmp/codex-uv-bootstrap/bin/uv run --frozen pytest tests/test_build_revenue_repair_digest.py -k revenue_repair`: pass, 15 tests
 - `/tmp/codex-uv-bootstrap/bin/uv run --frozen pytest tests/test_trading_api.py -k "consumer_evidence or revenue_repair"`: pass, 2 tests
 - `/tmp/codex-uv-bootstrap/bin/uv run --frozen pytest tests/test_consumer_evidence.py`: pass, 2 tests
-- `/tmp/codex-uv-bootstrap/bin/uv run --frozen pytest tests/test_no_delta_repair_reentry_auction.py tests/test_alpha_readiness_settlement_conveyor.py tests/test_alpha_repair_dividend_ledger.py tests/test_build_revenue_repair_digest.py tests/test_trading_api.py tests/test_consumer_evidence.py -k "no_delta or alpha or revenue_repair or consumer_evidence" --cov --cov-branch --cov-fail-under=0 --cov-report=xml --cov-report=`: pass, 46 tests
-- `/tmp/codex-uv-bootstrap/bin/uv run --frozen python scripts/check_diff_coverage.py --coverage-xml coverage.xml --threshold 90`: pass, changed-line coverage 94.77%
+- `/tmp/codex-uv-bootstrap/bin/uv run --frozen pytest tests/test_no_delta_repair_reentry_auction.py tests/test_alpha_readiness_settlement_conveyor.py tests/test_alpha_repair_dividend_ledger.py tests/test_build_revenue_repair_digest.py tests/test_trading_api.py tests/test_consumer_evidence.py -k "no_delta or alpha or revenue_repair or consumer_evidence" --cov --cov-branch --cov-fail-under=0 --cov-report=xml --cov-report=`: pass, 50 tests
+- `/tmp/codex-uv-bootstrap/bin/uv run --frozen python scripts/check_diff_coverage.py --coverage-xml coverage.xml --threshold 90`: pass, changed-line coverage 99.65%
 - `/tmp/codex-uv-bootstrap/bin/uv run --frozen pyright --project pyrightconfig.json`: pass
 - `/tmp/codex-uv-bootstrap/bin/uv run --frozen pyright --project pyrightconfig.alpha.json`: pass
 - `/tmp/codex-uv-bootstrap/bin/uv run --frozen pyright --project pyrightconfig.scripts.json`: pass
