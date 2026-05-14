@@ -107,7 +107,11 @@ export const resolveRuntimeAdmissionConfig = (env: EnvSource = process.env): Run
   worktree: normalizeNonEmpty(env.WORKTREE) ?? (process.cwd().trim() || DEFAULT_WORKTREE),
   natsUrl: normalizeNonEmpty(env.NATS_URL) ?? normalizeNonEmpty(env.natsUrl) ?? '',
   pythonBin: normalizeNonEmpty(env.PYTHON_BIN) ?? normalizeNonEmpty(env.PYTHON) ?? DEFAULT_PYTHON_BIN,
-  runtimeImage: normalizeNonEmpty(env.JANGAR_RUNTIME_IMAGE) ?? normalizeNonEmpty(env.IMAGE_REF) ?? 'runtime:local',
+  runtimeImage:
+    normalizeNonEmpty(env.JANGAR_RUNTIME_IMAGE) ??
+    normalizeNonEmpty(env.JANGAR_IMAGE) ??
+    normalizeNonEmpty(env.IMAGE_REF) ??
+    'runtime:local',
   pathEntries: (env.PATH ?? '').split(':').filter((entry) => entry.length > 0),
 })
 

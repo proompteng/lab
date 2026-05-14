@@ -208,6 +208,14 @@ spec:
             {{- end }}
             - name: JANGAR_IMAGE
               value: "{{ $imageRepo }}:{{ $imageTag }}{{- if $imageDigest }}@{{ $imageDigest }}{{ end }}"
+            {{- if not (hasKey $envVars "JANGAR_RUNTIME_IMAGE") }}
+            - name: JANGAR_RUNTIME_IMAGE
+              value: "{{ $imageRepo }}:{{ $imageTag }}{{- if $imageDigest }}@{{ $imageDigest }}{{ end }}"
+            {{- end }}
+            {{- if and $imageTag (not (hasKey $envVars "JANGAR_GITOPS_REVISION")) }}
+            - name: JANGAR_GITOPS_REVISION
+              value: {{ $imageTag | quote }}
+            {{- end }}
             {{- if hasKey .Values.controller "jobTtlSecondsAfterFinished" }}
             - name: JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS
               value: {{ .Values.controller.jobTtlSecondsAfterFinished | quote }}
