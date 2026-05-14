@@ -41,6 +41,7 @@ from app.trading.discovery.candidate_specs import candidate_spec_id_for_payload
 from app.trading.discovery.evidence_bundles import (
     CandidateEvidenceBundle,
     evidence_bundle_from_frontier_candidate,
+    evidence_bundle_from_payload,
 )
 from app.trading.discovery.hypothesis_cards import HypothesisCard
 from app.trading.discovery.mlx_snapshot import build_mlx_snapshot_manifest
@@ -123,6 +124,16 @@ def _parse_args() -> argparse.Namespace:
         default=[],
         type=Path,
         help="JSONL file of normalized WhitepaperResearchSource payloads.",
+    )
+    parser.add_argument(
+        "--feedback-evidence-jsonl",
+        action="append",
+        default=[],
+        type=Path,
+        help=(
+            "Prior real-replay candidate evidence bundles to feed back into the "
+            "pre-replay MLX ranker for the next autoresearch epoch."
+        ),
     )
     parser.add_argument(
         "--target-net-pnl-per-day", default=_DEFAULT_DAILY_PROFIT_TARGET
@@ -305,6 +316,32 @@ def _write_jsonl(path: Path, rows: Sequence[Mapping[str, Any]]) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _load_feedback_evidence_bundles(
+    paths: Sequence[Path],
+) -> tuple[CandidateEvidenceBundle, ...]:
+    bundles: list[CandidateEvidenceBundle] = []
+    for raw_path in paths:
+        path = _resolve_existing_path(raw_path)
+        if not path.exists():
+            raise ValueError(f"feedback_evidence_jsonl_missing:{raw_path}")
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            text = line.strip()
+            if not text:
+                continue
+            try:
+                payload = json.loads(text)
+                if not isinstance(payload, Mapping):
+                    raise ValueError("payload_not_object")
+                bundles.append(evidence_bundle_from_payload(payload))
+            except Exception as exc:
+                raise ValueError(
+                    f"feedback_evidence_jsonl_invalid:{raw_path}:{line_number}:{exc}"
+                ) from exc
+    return tuple(bundles)
 
 
 def _program_claim_type(claim: ResearchClaim) -> str:
@@ -906,6 +943,18 @@ def _candidate_quality_gate_failures(
         > oracle_policy.max_drawdown
     ):
         failures.append("max_drawdown_above_oracle")
+    if (
+        _decimal(scorecard.get("max_gross_exposure_pct_equity"))
+        > oracle_policy.max_gross_exposure_pct_equity
+    ):
+        failures.append("max_gross_exposure_above_oracle")
+    if _decimal(scorecard.get("min_cash")) < oracle_policy.min_cash:
+        failures.append("min_cash_below_oracle")
+    if (
+        int(_decimal(scorecard.get("negative_cash_observation_count")))
+        > oracle_policy.max_negative_cash_observation_count
+    ):
+        failures.append("negative_cash_observed")
     if (
         _decimal(scorecard.get("avg_filled_notional_per_day"))
         < oracle_policy.min_avg_filled_notional_per_day
@@ -1977,34 +2026,105 @@ def _pre_replay_prior_bundle(spec: CandidateSpec) -> CandidateEvidenceBundle:
 def _pre_replay_proposal_model_and_rows(
     *,
     specs: Sequence[CandidateSpec],
+    feedback_evidence_bundles: Sequence[CandidateEvidenceBundle] = (),
 ) -> tuple[Mapping[str, Any], list[dict[str, Any]]]:
+    spec_ids = {spec.candidate_spec_id for spec in specs}
+    matched_feedback = [
+        bundle
+        for bundle in feedback_evidence_bundles
+        if bundle.candidate_spec_id in spec_ids
+    ]
+    feedback_by_spec: dict[str, CandidateEvidenceBundle] = {}
+    for bundle in matched_feedback:
+        current = feedback_by_spec.get(bundle.candidate_spec_id)
+        if current is None:
+            feedback_by_spec[bundle.candidate_spec_id] = bundle
+            continue
+        current_score = _decimal(current.objective_scorecard.get("net_pnl_per_day"))
+        bundle_score = _decimal(bundle.objective_scorecard.get("net_pnl_per_day"))
+        if bundle_score > current_score:
+            feedback_by_spec[bundle.candidate_spec_id] = bundle
     prior_bundles = [_pre_replay_prior_bundle(spec) for spec in specs]
+    training_bundles = [
+        feedback_by_spec.get(spec.candidate_spec_id) or prior_bundle
+        for spec, prior_bundle in zip(specs, prior_bundles, strict=True)
+    ]
     training_rows = build_mlx_training_rows(
-        candidate_specs=specs, evidence_bundles=prior_bundles
+        candidate_specs=specs, evidence_bundles=training_bundles
     )
     model = train_mlx_ranker(training_rows, backend_preference="mlx")
     ranked_rows = rank_training_rows(model=model, rows=training_rows)
     feature_by_spec = {
         row.candidate_spec_id: row.to_payload()["features"] for row in training_rows
     }
-    rows = [
+    target_by_spec = {row.candidate_spec_id: row.target for row in training_rows}
+    feedback_spec_ids = set(feedback_by_spec)
+
+    def feedback_is_blocked(bundle: CandidateEvidenceBundle) -> bool:
+        scorecard = bundle.objective_scorecard
+        hard_vetoes = scorecard.get("hard_vetoes") or scorecard.get("veto_reasons")
+        if isinstance(hard_vetoes, str) and hard_vetoes.strip():
+            return True
+        if isinstance(hard_vetoes, Sequence) and not isinstance(hard_vetoes, str):
+            if any(_string(item) for item in hard_vetoes):
+                return True
+        if _decimal(scorecard.get("max_gross_exposure_pct_equity")) > Decimal("1.0"):
+            return True
+        if _decimal(scorecard.get("min_cash")) < Decimal("0"):
+            return True
+        if _decimal(scorecard.get("negative_cash_observation_count")) > Decimal("0"):
+            return True
+        return _decimal(scorecard.get("net_pnl_per_day")) <= Decimal("0") or _decimal(
+            scorecard.get("negative_day_count")
+        ) > Decimal("0")
+
+    rows_unranked = [
         {
             "candidate_spec_id": item.candidate_spec_id,
-            "proposal_score": item.score,
-            "rank": item.rank,
+            "proposal_score": (
+                min(
+                    -1_000_000.0, target_by_spec.get(item.candidate_spec_id, item.score)
+                )
+                if item.candidate_spec_id in feedback_spec_ids
+                and feedback_is_blocked(feedback_by_spec[item.candidate_spec_id])
+                else item.score
+            ),
+            "raw_mlx_proposal_score": item.score,
+            "feedback_replay_target": target_by_spec.get(item.candidate_spec_id)
+            if item.candidate_spec_id in feedback_spec_ids
+            else None,
             "backend": item.backend,
             "model_id": item.model_id,
-            "selection_reason": "pre_replay_mlx_rank",
+            "selection_reason": "pre_replay_mlx_feedback_blocked"
+            if item.candidate_spec_id in feedback_spec_ids
+            and feedback_is_blocked(feedback_by_spec[item.candidate_spec_id])
+            else "pre_replay_mlx_rank",
+            "training_source": "feedback_real_replay"
+            if item.candidate_spec_id in feedback_spec_ids
+            else "synthetic_prior",
             "feature_hash": item.feature_hash,
             "features": feature_by_spec.get(item.candidate_spec_id, {}),
         }
         for item in ranked_rows
     ]
+    rows_unranked.sort(
+        key=lambda row: (
+            -float(row.get("proposal_score") or 0.0),
+            _string(row.get("candidate_spec_id")),
+        )
+    )
+    rows = [{**row, "rank": index} for index, row in enumerate(rows_unranked, start=1)]
     return {
         **model.to_payload(),
         "proposal_stage": "pre_replay",
         "model_status": "active",
         "rank_bucket_lift": {"status": "pending_replay_evidence"},
+        "feedback_evidence_bundle_count": len(feedback_evidence_bundles),
+        "feedback_matched_spec_count": len(feedback_by_spec),
+        "training_source_counts": {
+            "feedback_real_replay": len(feedback_by_spec),
+            "synthetic_prior": max(0, len(specs) - len(feedback_by_spec)),
+        },
     }, rows
 
 
@@ -2075,6 +2195,11 @@ def _select_candidate_specs_for_replay(
         spec.candidate_spec_id: dict(candidate_spec_capital_features(spec))
         for spec in specs
     }
+    proposal_by_spec = {
+        _string(row.get("candidate_spec_id")): row
+        for row in _list_of_mappings(list(proposal_rows))
+        if _string(row.get("candidate_spec_id"))
+    }
 
     def capital_sort_key(candidate_spec_id: str) -> tuple[int, Decimal, str]:
         features = capital_features_by_spec.get(candidate_spec_id, {})
@@ -2111,9 +2236,7 @@ def _select_candidate_specs_for_replay(
         spec.candidate_spec_id
         for spec in sorted(
             specs,
-            key=lambda item: (
-                *capital_sort_key(item.candidate_spec_id),
-            ),
+            key=lambda item: (*capital_sort_key(item.candidate_spec_id),),
         )
         if spec.candidate_spec_id not in set(ranked_ids)
     )
@@ -2135,14 +2258,43 @@ def _select_candidate_specs_for_replay(
     def spec_source_run_id(spec: CandidateSpec) -> str:
         return _string(spec.feature_contract.get("source_run_id")) or spec.hypothesis_id
 
+    def spec_universe_key(spec: CandidateSpec) -> str:
+        universe = spec.strategy_overrides.get("universe_symbols")
+        if not isinstance(universe, Sequence) or isinstance(universe, str):
+            return ""
+        return ",".join(
+            sorted(_string(item).upper() for item in universe if _string(item))
+        )
+
+    def spec_signal_key(spec: CandidateSpec) -> str:
+        params = _mapping(spec.strategy_overrides.get("params"))
+        return "|".join(
+            part
+            for part in (
+                _string(params.get("signal_motif")),
+                _string(params.get("selection_mode")),
+                _string(params.get("rank_feature")),
+            )
+            if part
+        )
+
     def diversity_key(
         spec: CandidateSpec, selected_so_far: Sequence[CandidateSpec]
-    ) -> tuple[bool, bool, int, str]:
+    ) -> tuple[bool, bool, bool, bool, bool, int, int, str]:
         selected_families = {item.family_template_id for item in selected_so_far}
+        selected_runtime_strategies = {
+            item.runtime_strategy_name for item in selected_so_far
+        }
+        selected_universes = {spec_universe_key(item) for item in selected_so_far}
+        selected_signals = {spec_signal_key(item) for item in selected_so_far}
         selected_sources = {spec_source_run_id(item) for item in selected_so_far}
         family_selection = _mapping(spec.feature_contract.get("family_selection"))
         return (
             spec.family_template_id in selected_families,
+            spec.runtime_strategy_name in selected_runtime_strategies,
+            bool(spec_universe_key(spec))
+            and spec_universe_key(spec) in selected_universes,
+            bool(spec_signal_key(spec)) and spec_signal_key(spec) in selected_signals,
             spec_source_run_id(spec) in selected_sources,
             rank_position_by_spec.get(spec.candidate_spec_id, 10**6),
             int(family_selection.get("rank") or 10**6),
@@ -2231,6 +2383,10 @@ def _select_candidate_specs_for_replay(
         {
             "candidate_spec_id": spec.candidate_spec_id,
             "family_template_id": spec.family_template_id,
+            "runtime_family": spec.runtime_family,
+            "runtime_strategy_name": spec.runtime_strategy_name,
+            "universe_key": spec_universe_key(spec),
+            "signal_key": spec_signal_key(spec),
             "execution_signature": execution_signature_by_spec[spec.candidate_spec_id],
             "duplicate_of_candidate_spec_id": representative_by_signature[
                 execution_signature_by_spec[spec.candidate_spec_id]
@@ -2241,6 +2397,13 @@ def _select_candidate_specs_for_replay(
             != spec.candidate_spec_id
             else None,
             "pre_replay_score": str(_pre_replay_candidate_score(spec)),
+            "proposal_score": proposal_by_spec.get(spec.candidate_spec_id, {}).get(
+                "proposal_score"
+            ),
+            "proposal_training_source": _string(
+                proposal_by_spec.get(spec.candidate_spec_id, {}).get("training_source")
+            )
+            or "unknown",
             "capital_budget": {
                 "max_notional_per_trade": str(
                     capital_features_by_spec[spec.candidate_spec_id][
@@ -3395,8 +3558,21 @@ def run_whitepaper_autoresearch_profit_target(
             reason="candidate_compiler_produced_no_executable_specs",
             started_at=started_at,
         )
+    try:
+        feedback_evidence_bundles = _load_feedback_evidence_bundles(
+            cast(Sequence[Path], getattr(args, "feedback_evidence_jsonl", ()) or ())
+        )
+    except ValueError as exc:
+        return _write_failure_summary(
+            output_dir=output_dir,
+            epoch_id=epoch_id,
+            status="invalid_feedback_evidence",
+            reason=str(exc),
+            started_at=started_at,
+        )
     pre_replay_model, pre_replay_proposal_rows = _pre_replay_proposal_model_and_rows(
-        specs=candidate_specs
+        specs=candidate_specs,
+        feedback_evidence_bundles=feedback_evidence_bundles,
     )
     _write_json(output_dir / "pre-replay-mlx-ranker-model.json", pre_replay_model)
     _write_jsonl(

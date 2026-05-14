@@ -3,7 +3,10 @@ from __future__ import annotations
 from decimal import Decimal
 from unittest import TestCase
 
-from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy, evaluate_profit_target_oracle
+from app.trading.discovery.profit_target_oracle import (
+    ProfitTargetOraclePolicy,
+    evaluate_profit_target_oracle,
+)
 
 
 def _executable_scorecard_fields() -> dict[str, object]:
@@ -173,3 +176,32 @@ class TestProfitTargetOracle(TestCase):
         self.assertIn("executable_replay_passed_failed", result["blockers"])
         self.assertIn("executable_replay_artifact_present_failed", result["blockers"])
         self.assertIn("executable_replay_order_count_failed", result["blockers"])
+
+    def test_profit_target_oracle_rejects_capital_unsafe_replay(self) -> None:
+        result = evaluate_profit_target_oracle(
+            {
+                "net_pnl_per_day": "900",
+                "active_day_ratio": "1",
+                "positive_day_ratio": "1",
+                "best_day_share": "0.20",
+                "max_single_day_contribution_share": "0.20",
+                "max_cluster_contribution_share": "0.34",
+                "max_single_symbol_contribution_share": "0.25",
+                "worst_day_loss": "0",
+                "max_drawdown": "0",
+                "max_gross_exposure_pct_equity": "1.25",
+                "min_cash": "-1",
+                "negative_cash_observation_count": 2,
+                "avg_filled_notional_per_day": "700000",
+                "regime_slice_pass_rate": "0.55",
+                "posterior_edge_lower": "0.01",
+                "shadow_parity_status": "within_budget",
+                **_executable_scorecard_fields(),
+            },
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("max_gross_exposure_pct_equity_failed", result["blockers"])
+        self.assertIn("min_cash_failed", result["blockers"])
+        self.assertIn("negative_cash_observation_count_failed", result["blockers"])

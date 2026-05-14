@@ -20,6 +20,9 @@ class ProfitTargetOraclePolicy:
     max_single_symbol_contribution_share: Decimal = Decimal("0.35")
     max_worst_day_loss: Decimal = Decimal("350")
     max_drawdown: Decimal = Decimal("900")
+    max_gross_exposure_pct_equity: Decimal = Decimal("1.0")
+    min_cash: Decimal = Decimal("0")
+    max_negative_cash_observation_count: int = 0
     min_avg_filled_notional_per_day: Decimal = Decimal("300000")
     min_regime_slice_pass_rate: Decimal = Decimal("0.45")
     min_posterior_edge_lower: Decimal = Decimal("0")
@@ -40,6 +43,9 @@ class ProfitTargetOraclePolicy:
             ),
             "max_worst_day_loss": str(self.max_worst_day_loss),
             "max_drawdown": str(self.max_drawdown),
+            "max_gross_exposure_pct_equity": str(self.max_gross_exposure_pct_equity),
+            "min_cash": str(self.min_cash),
+            "max_negative_cash_observation_count": self.max_negative_cash_observation_count,
             "min_avg_filled_notional_per_day": str(
                 self.min_avg_filled_notional_per_day
             ),
@@ -129,7 +135,10 @@ def evaluate_profit_target_oracle(
     )
     if trading_day_count < daily_net_observed_day_count:
         trading_day_count = daily_net_observed_day_count
-    if policy.min_daily_net_pnl > 0 and daily_net_observed_day_count < trading_day_count:
+    if (
+        policy.min_daily_net_pnl > 0
+        and daily_net_observed_day_count < trading_day_count
+    ):
         min_daily_net_pnl = min(min_daily_net_pnl, Decimal("0"))
     checks = [
         _numeric_check(
@@ -206,6 +215,26 @@ def evaluate_profit_target_oracle(
             threshold=policy.max_drawdown,
         ),
         _numeric_check(
+            metric="max_gross_exposure_pct_equity",
+            observed=_decimal(scorecard.get("max_gross_exposure_pct_equity")),
+            operator="lte",
+            threshold=policy.max_gross_exposure_pct_equity,
+        ),
+        _numeric_check(
+            metric="min_cash",
+            observed=_decimal(scorecard.get("min_cash"), default=str(policy.min_cash)),
+            operator="gte",
+            threshold=policy.min_cash,
+        ),
+        _numeric_check(
+            metric="negative_cash_observation_count",
+            observed=Decimal(
+                _nonnegative_int(scorecard.get("negative_cash_observation_count"))
+            ),
+            operator="lte",
+            threshold=Decimal(max(0, policy.max_negative_cash_observation_count)),
+        ),
+        _numeric_check(
             metric="avg_filled_notional_per_day",
             observed=_decimal(scorecard.get("avg_filled_notional_per_day")),
             operator="gte",
@@ -246,7 +275,9 @@ def evaluate_profit_target_oracle(
     executable_artifact_ref = str(
         scorecard.get("executable_replay_artifact_ref") or ""
     ).strip()
-    executable_artifact_present = bool(executable_artifact_ref or executable_artifact_refs)
+    executable_artifact_present = bool(
+        executable_artifact_ref or executable_artifact_refs
+    )
     executable_passed = _boolish(scorecard.get("executable_replay_passed"))
     executable_order_count = _nonnegative_int(
         scorecard.get("executable_replay_order_count")

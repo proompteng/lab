@@ -158,17 +158,88 @@ def _positive_or_default(value: float, default: float) -> float:
     return value if value > 0.0 else default
 
 
+def _sequence_length(value: Any) -> float:
+    if isinstance(value, Sequence) and not isinstance(value, str):
+        return float(len(cast(Sequence[Any], value)))
+    return 0.0
+
+
+def _params(spec: CandidateSpec) -> Mapping[str, Any]:
+    overrides = _mapping(spec.strategy_overrides)
+    return _mapping(overrides.get("params"))
+
+
+def _strategy_universe_size(spec: CandidateSpec) -> float:
+    overrides = _mapping(spec.strategy_overrides)
+    return _sequence_length(overrides.get("universe_symbols"))
+
+
+def _bool_feature(value: Any, expected: str) -> float:
+    return 1.0 if str(value or "").strip().lower() == expected else 0.0
+
+
+def _hard_veto_count(scorecard: Mapping[str, Any]) -> float:
+    raw_vetoes = scorecard.get("hard_vetoes") or scorecard.get("veto_reasons")
+    if isinstance(raw_vetoes, str):
+        return 1.0 if raw_vetoes.strip() else 0.0
+    return _sequence_length(raw_vetoes)
+
+
+def _daily_target_shortfall(
+    scorecard: Mapping[str, Any], *, target_net_pnl_per_day: float
+) -> float:
+    raw_daily = scorecard.get("daily_net")
+    if not isinstance(raw_daily, Mapping):
+        return max(
+            0.0, target_net_pnl_per_day - _float(scorecard.get("net_pnl_per_day"))
+        )
+    shortfalls = [
+        max(0.0, target_net_pnl_per_day - _float(value))
+        for value in cast(Mapping[Any, Any], raw_daily).values()
+    ]
+    return _mean(shortfalls)
+
+
+def _sequence_strings(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return ()
+    return tuple(
+        str(item).strip() for item in cast(Sequence[Any], value) if str(item).strip()
+    )
+
+
+def _capital_rank_count_floor(
+    *, strategy_overrides: Mapping[str, Any], params: Mapping[str, Any]
+) -> int:
+    for key in (
+        "max_entries_per_session",
+        "max_concurrent_positions",
+        "max_pair_legs",
+        "top_n",
+        "rank_count",
+    ):
+        if _float(params.get(key)) > 0:
+            return 1
+    return max(1, len(_sequence_strings(strategy_overrides.get("universe_symbols"))))
+
+
 def candidate_spec_capital_features(spec: CandidateSpec) -> Mapping[str, float]:
     overrides = _mapping(spec.strategy_overrides)
     params = _mapping(overrides.get("params"))
+    rank_count_floor = _capital_rank_count_floor(
+        strategy_overrides=overrides,
+        params=params,
+    )
     features = estimate_capital_budget(
         strategy_overrides=overrides,
         params=params,
+        rank_count_floor=rank_count_floor,
     ).to_feature_payload()
     features["max_entries_per_session"] = _positive_or_default(
         _float(params.get("max_entries_per_session")),
         1.0,
     )
+    features["inferred_universe_slot_floor"] = float(rank_count_floor)
     return features
 
 
@@ -176,15 +247,13 @@ def capital_budget_penalty(features: Mapping[str, float]) -> float:
     return (
         _float(features.get("capital_budget_overage_ratio")) * 125.0
         + max(0.0, _float(features.get("max_position_pct_equity")) - 1.0) * 35.0
-        + max(0.0, _float(features.get("max_notional_pct_start_equity")) - 1.0)
-        * 35.0
+        + max(0.0, _float(features.get("max_notional_pct_start_equity")) - 1.0) * 35.0
     )
 
 
 def observed_capital_penalty(scorecard: Mapping[str, Any]) -> float:
     return (
-        max(0.0, _float(scorecard.get("max_gross_exposure_pct_equity")) - 1.0)
-        * 500.0
+        max(0.0, _float(scorecard.get("max_gross_exposure_pct_equity")) - 1.0) * 500.0
         + max(0.0, -_float(scorecard.get("min_cash"))) / 100.0
         + _float(scorecard.get("negative_cash_observation_count")) * 20.0
     )
@@ -249,6 +318,23 @@ def build_mlx_training_rows(
             "required_feature_count",
             "failure_mode_count",
             "target_net_pnl_per_day",
+            "entry_minute_after_open",
+            "exit_minute_after_open",
+            "max_hold_seconds",
+            "entry_cooldown_seconds",
+            "stop_loss_bps",
+            "trailing_activation_profit_bps",
+            "trailing_drawdown_bps",
+            "rank_count",
+            "universe_size",
+            "selection_mode_reversal",
+            "selection_mode_continuation",
+            "selection_mode_momentum",
+            "selection_mode_pullback",
+            "signal_motif_open_window_reversal",
+            "signal_motif_open_window_continuation",
+            "signal_motif_late_day",
+            "signal_motif_washout",
             "max_notional_per_trade",
             "max_notional_pct_start_equity",
             "max_position_pct_equity",
@@ -263,13 +349,55 @@ def build_mlx_training_rows(
             "history_max_gross_exposure_pct_equity",
             "history_min_cash",
             "history_negative_cash_observation_count",
+            "history_negative_day_count",
+            "history_best_day_share",
+            "history_worst_day_loss",
+            "history_max_drawdown",
+            "history_avg_filled_notional_per_day",
+            "history_hard_veto_count",
+            "history_daily_target_shortfall",
         )
         capital_features = candidate_spec_capital_features(spec)
+        params = _params(spec)
+        target_net_pnl_per_day = _float(spec.objective.get("target_net_pnl_per_day"))
+        selection_mode = params.get("selection_mode")
+        signal_motif = params.get("signal_motif")
+        stop_loss_bps = _float(
+            params.get("long_stop_loss_bps")
+            or params.get("short_stop_loss_bps")
+            or params.get("stop_loss_bps")
+        )
         feature_values = (
             _family_code(spec.family_template_id),
             float(len(spec.feature_contract.get("required_features") or [])),
             float(len(spec.expected_failure_modes)),
-            _float(spec.objective.get("target_net_pnl_per_day")),
+            target_net_pnl_per_day,
+            _float(params.get("entry_minute_after_open")),
+            _float(params.get("exit_minute_after_open")),
+            _float(params.get("max_hold_seconds")),
+            _float(params.get("entry_cooldown_seconds")),
+            stop_loss_bps,
+            _float(
+                params.get("long_trailing_stop_activation_profit_bps")
+                or params.get("short_trailing_stop_activation_profit_bps")
+            ),
+            _float(
+                params.get("long_trailing_stop_drawdown_bps")
+                or params.get("short_trailing_stop_drawdown_bps")
+            ),
+            _positive_or_default(
+                _float(params.get("top_n") or params.get("rank_count")),
+                _positive_or_default(_float(params.get("max_pair_legs")), 1.0),
+            ),
+            _strategy_universe_size(spec),
+            _bool_feature(selection_mode, "reversal"),
+            _bool_feature(selection_mode, "continuation"),
+            _bool_feature(selection_mode, "momentum"),
+            _bool_feature(selection_mode, "pullback"),
+            _bool_feature(signal_motif, "open_window_reversal"),
+            _bool_feature(signal_motif, "open_window_continuation"),
+            _bool_feature(signal_motif, "late_day_continuation"),
+            _bool_feature(signal_motif, "washout_rebound"),
             _float(capital_features.get("max_notional_per_trade")),
             _float(capital_features.get("max_notional_pct_start_equity")),
             _float(capital_features.get("max_position_pct_equity")),
@@ -284,11 +412,31 @@ def build_mlx_training_rows(
             _float(scorecard.get("max_gross_exposure_pct_equity")),
             _float(scorecard.get("min_cash")),
             _float(scorecard.get("negative_cash_observation_count")),
+            _float(scorecard.get("negative_day_count")),
+            _float(scorecard.get("best_day_share")),
+            _float(scorecard.get("worst_day_loss")),
+            _float(scorecard.get("max_drawdown")),
+            _float(scorecard.get("avg_filled_notional_per_day")),
+            _hard_veto_count(scorecard),
+            _daily_target_shortfall(
+                scorecard, target_net_pnl_per_day=target_net_pnl_per_day
+            ),
         )
         target = (
             _float(scorecard.get("net_pnl_per_day"))
             + (_float(scorecard.get("active_day_ratio")) * 100.0)
-            + (_float(scorecard.get("positive_day_ratio")) * 50.0)
+            + (_float(scorecard.get("positive_day_ratio")) * 100.0)
+            - (_float(scorecard.get("negative_day_count")) * 100.0)
+            - (_float(scorecard.get("best_day_share")) * 200.0)
+            - (_float(scorecard.get("worst_day_loss")) * 0.50)
+            - (_float(scorecard.get("max_drawdown")) * 0.10)
+            - (_hard_veto_count(scorecard) * 250.0)
+            - (
+                _daily_target_shortfall(
+                    scorecard, target_net_pnl_per_day=target_net_pnl_per_day
+                )
+                * 0.10
+            )
             - capital_budget_penalty(capital_features)
             - observed_capital_penalty(scorecard)
         )

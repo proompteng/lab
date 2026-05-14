@@ -156,7 +156,7 @@ families:
     max_iterations: 2
     keep_top_candidates: 2
     frontier_top_n: 5
-    force_keep_top_candidate_if_all_vetoed: true
+    force_keep_top_candidate_if_all_vetoed: false
     symbol_prune_iterations: 1
     symbol_prune_candidates: 2
     symbol_prune_min_universe_size: 4
@@ -185,7 +185,7 @@ families:
     max_iterations: 2
     keep_top_candidates: 2
     frontier_top_n: 5
-    force_keep_top_candidate_if_all_vetoed: true
+    force_keep_top_candidate_if_all_vetoed: false
     symbol_prune_iterations: 1
     symbol_prune_candidates: 2
     symbol_prune_min_universe_size: 4
@@ -214,7 +214,7 @@ families:
     max_iterations: 2
     keep_top_candidates: 2
     frontier_top_n: 5
-    force_keep_top_candidate_if_all_vetoed: true
+    force_keep_top_candidate_if_all_vetoed: false
     symbol_prune_iterations: 1
     symbol_prune_candidates: 2
     symbol_prune_min_universe_size: 3
@@ -243,7 +243,7 @@ families:
     max_iterations: 2
     keep_top_candidates: 2
     frontier_top_n: 5
-    force_keep_top_candidate_if_all_vetoed: true
+    force_keep_top_candidate_if_all_vetoed: false
     symbol_prune_iterations: 1
     symbol_prune_candidates: 2
     symbol_prune_min_universe_size: 5
@@ -273,7 +273,7 @@ families:
     max_iterations: 2
     keep_top_candidates: 2
     frontier_top_n: 5
-    force_keep_top_candidate_if_all_vetoed: true
+    force_keep_top_candidate_if_all_vetoed: false
     symbol_prune_iterations: 1
     symbol_prune_candidates: 2
     symbol_prune_min_universe_size: 5
@@ -308,7 +308,7 @@ families:
     max_iterations: 2
     keep_top_candidates: 2
     frontier_top_n: 5
-    force_keep_top_candidate_if_all_vetoed: true
+    force_keep_top_candidate_if_all_vetoed: false
     symbol_prune_iterations: 1
     symbol_prune_candidates: 2
     symbol_prune_min_universe_size: 5
@@ -343,7 +343,7 @@ families:
     max_iterations: 2
     keep_top_candidates: 1
     frontier_top_n: 4
-    force_keep_top_candidate_if_all_vetoed: true
+    force_keep_top_candidate_if_all_vetoed: false
     symbol_prune_iterations: 1
     symbol_prune_candidates: 1
     symbol_prune_min_universe_size: 5
@@ -375,7 +375,7 @@ families:
     max_iterations: 2
     keep_top_candidates: 2
     frontier_top_n: 5
-    force_keep_top_candidate_if_all_vetoed: true
+    force_keep_top_candidate_if_all_vetoed: false
     symbol_prune_iterations: 1
     symbol_prune_candidates: 2
     symbol_prune_min_universe_size: 5
@@ -405,7 +405,7 @@ families:
     max_iterations: 2
     keep_top_candidates: 2
     frontier_top_n: 5
-    force_keep_top_candidate_if_all_vetoed: true
+    force_keep_top_candidate_if_all_vetoed: false
     symbol_prune_iterations: 1
     symbol_prune_candidates: 2
     symbol_prune_min_universe_size: 3
