@@ -455,6 +455,7 @@ describe('supporting primitives controller', () => {
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS
     delete process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT
     delete process.env.JANGAR_STAGE_CLEARANCE_HOLD_STAGES
+    delete process.env.JANGAR_MATERIAL_REENTRY_REQUIREMENT_SIGNALS
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY
     delete process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT
@@ -474,6 +475,7 @@ describe('supporting primitives controller', () => {
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS
     delete process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT
     delete process.env.JANGAR_STAGE_CLEARANCE_HOLD_STAGES
+    delete process.env.JANGAR_MATERIAL_REENTRY_REQUIREMENT_SIGNALS
     delete process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT
     delete process.env.JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT
   })
@@ -2546,9 +2548,9 @@ describe('supporting primitives controller', () => {
     expect(bridge?.status).toBe('True')
   })
 
-  it('publishes material reentry repair dispatches as implementer requirement runs', async () => {
-    process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT = 'hold'
-    process.env.JANGAR_STAGE_CLEARANCE_HOLD_STAGES = 'implement'
+  it('publishes material reentry repair dispatches as implementer requirement runs in shadow mode', async () => {
+    process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT = 'shadow'
+    process.env.JANGAR_MATERIAL_REENTRY_REQUIREMENT_SIGNALS = 'true'
     mockStageClearanceStatus(
       [{ ...buildStageClearancePacket('implement', 'allow'), swarm_name: 'torghut-quant' }],
       buildClearanceMarketLedger('implement', 'allow'),
