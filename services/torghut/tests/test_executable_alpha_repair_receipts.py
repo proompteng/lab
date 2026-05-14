@@ -145,6 +145,70 @@ def _h_cont_alpha_readiness() -> dict[str, object]:
     }
 
 
+def _alpha_readiness_with_micro_drift_lane() -> dict[str, object]:
+    return {
+        "promotion_eligible_total": 0,
+        "repair_target_count": 3,
+        "capital_replay_board": {
+            "schema_version": "torghut.capital-replay-board.v1",
+            "board_id": "capital-replay:micro",
+        },
+        "executable_alpha_receipts": {
+            "schema_version": "torghut.executable-alpha-receipts.v1",
+            "candidate_receipts": [
+                {
+                    "receipt_id": "receipt:cont",
+                    "hypothesis_id": "H-CONT-01",
+                    "max_notional": "0",
+                },
+                {
+                    "receipt_id": "receipt:micro",
+                    "hypothesis_id": "H-MICRO-01",
+                    "max_notional": "0",
+                },
+                {
+                    "receipt_id": "receipt:rev",
+                    "hypothesis_id": "H-REV-01",
+                    "max_notional": "0",
+                },
+            ],
+        },
+        "repair_targets": [
+            {
+                "hypothesis_id": "H-CONT-01",
+                "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                "strategy_id": "intraday_tsmom_v1@paper",
+                "state": "shadow",
+                "promotion_eligible": False,
+                "reasons": ["post_cost_expectancy_non_positive"],
+                "informational_reasons": ["closed_session_tca_evidence_hold"],
+            },
+            {
+                "hypothesis_id": "H-MICRO-01",
+                "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                "strategy_id": ("microbar_volume_continuation_long_top2_chip_v1@paper"),
+                "state": "shadow",
+                "promotion_eligible": False,
+                "reasons": ["drift_checks_missing"],
+            },
+            {
+                "hypothesis_id": "H-REV-01",
+                "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                "strategy_id": (
+                    "microbar_prev_day_open45_reversal_long_top1_chip_v1@paper"
+                ),
+                "state": "shadow",
+                "promotion_eligible": False,
+                "reasons": ["post_cost_expectancy_non_positive"],
+                "informational_reasons": [
+                    "closed_session_market_context_hold",
+                    "closed_session_tca_evidence_hold",
+                ],
+            },
+        ],
+    }
+
+
 def _h_cont_repair_receipts() -> tuple[dict[str, object], dict[str, object]]:
     alpha = _h_cont_alpha_readiness()
     return alpha, _build(alpha_readiness=alpha)
@@ -261,6 +325,22 @@ def test_reason_codes_map_to_executable_alpha_repair_classes() -> None:
         "improved",
         "no_delta",
         "invalidated",
+    ]
+
+
+def test_feature_drift_lane_is_selected_before_post_cost_window_receipts() -> None:
+    payload = _build(alpha_readiness=_alpha_readiness_with_micro_drift_lane())
+
+    selected = cast(Mapping[str, Any], payload["selected_receipt"])
+    assert selected["hypothesis_id"] == "H-MICRO-01"
+    assert selected["repair_class"] == "evidence_window_refresh"
+    assert selected["expected_gate_delta"] == "retire_drift_checks_missing"
+    assert selected["max_notional"] == "0"
+    receipts = cast(list[Mapping[str, Any]], payload["receipts"])
+    assert [receipt["hypothesis_id"] for receipt in receipts] == [
+        "H-MICRO-01",
+        "H-CONT-01",
+        "H-REV-01",
     ]
 
 
