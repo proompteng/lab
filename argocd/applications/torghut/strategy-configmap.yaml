@@ -14,11 +14,11 @@ data:
         strategy_id: microbar_volume_continuation_long_top2_chip_v1@paper
         strategy_type: microbar_cross_sectional_long_v1
         version: 1.0.0
-        description: Paper-only top-12 semiconductor volume continuation long top2 sleeve; live promotion blocked pending durable $300/day evidence, version=1.0.0
+        description: Paper-only quote-covered chip-core volume continuation long top2 sleeve; live promotion blocked pending durable $300/day evidence, version=1.0.0
         enabled: true
         base_timeframe: "1Sec"
         universe_type: microbar_cross_sectional_long_v1
-        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
+        universe_symbols: ["AAPL", "AMZN", "INTC", "NVDA"]
         max_notional_per_trade: 50000
         max_position_pct_equity: 2.0
         params:
@@ -36,11 +36,11 @@ data:
         strategy_id: microbar_prev_day_open45_reversal_long_top1_chip_v1@paper
         strategy_type: microbar_cross_sectional_long_v1
         version: 1.0.0
-        description: Paper-only top-12 semiconductor prior-session opening-window reversal long sleeve; live promotion blocked pending durable $300/day evidence, version=1.0.0
+        description: Paper-only quote-covered chip-core prior-session opening-window reversal long sleeve; live promotion blocked pending durable $300/day evidence, version=1.0.0
         enabled: true
         base_timeframe: "1Sec"
         universe_type: microbar_cross_sectional_long_v1
-        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
+        universe_symbols: ["AAPL", "AMZN", "INTC", "NVDA"]
         max_notional_per_trade: 50000
         max_position_pct_equity: 2.0
         params:
@@ -58,11 +58,11 @@ data:
         strategy_id: intraday_tsmom_v1@paper
         strategy_type: intraday_tsmom_v1
         version: 1.1.0
-        description: Paper-only intraday momentum sleeve on the live executable chip core; production approval blocked pending $300/day executable proof, version=1.1.0
+        description: Paper-only intraday momentum sleeve on the quote-covered executable chip core; production approval blocked pending $300/day executable proof, version=1.1.0
         enabled: true
         base_timeframe: "1Sec"
         universe_type: intraday_tsmom_v1
-        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
+        universe_symbols: ["AAPL", "AMZN", "INTC", "NVDA"]
         max_notional_per_trade: 50000
         max_position_pct_equity: 3.0
         params:
@@ -138,11 +138,11 @@ data:
         strategy_id: breakout_continuation_long_v1@research
         strategy_type: breakout_continuation_long_v1
         version: 1.0.0
-        description: Paper-only breakout continuation sleeve on the live executable chip core; production approval blocked pending $300/day executable proof, version=1.0.0
+        description: Paper-only breakout continuation sleeve on the quote-covered executable chip core; production approval blocked pending $300/day executable proof, version=1.0.0
         enabled: true
         base_timeframe: "1Sec"
         universe_type: breakout_continuation_long_v1
-        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
+        universe_symbols: ["AAPL", "AMZN", "INTC", "NVDA"]
         max_notional_per_trade: 50000
         max_position_pct_equity: 3.0
         params:
@@ -219,11 +219,11 @@ data:
         strategy_id: mean_reversion_rebound_long_v1@research
         strategy_type: mean_reversion_rebound_long_v1
         version: 1.0.0
-        description: Paper-only intraday rebound sleeve after controlled downside dislocation; production approval blocked pending $300/day executable proof, version=1.0.0
+        description: Paper-only intraday rebound sleeve after controlled downside dislocation on the quote-covered chip core; production approval blocked pending $300/day executable proof, version=1.0.0
         enabled: true
         base_timeframe: "1Sec"
         universe_type: mean_reversion_rebound_long_v1
-        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
+        universe_symbols: ["AAPL", "AMZN", "INTC", "NVDA"]
         max_notional_per_trade: 31590
         max_position_pct_equity: 1.0
         params:
@@ -273,11 +273,11 @@ data:
         strategy_id: mean_reversion_exhaustion_short_v1@research
         strategy_type: mean_reversion_exhaustion_short_v1
         version: 1.0.0
-        description: Paper-only intraday short fade after controlled upside exhaustion; production approval blocked pending $300/day executable proof, version=1.0.0
+        description: Paper-only intraday short fade after controlled upside exhaustion on the quote-covered chip core; production approval blocked pending $300/day executable proof, version=1.0.0
         enabled: true
         base_timeframe: "1Sec"
         universe_type: mean_reversion_exhaustion_short_v1
-        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
+        universe_symbols: ["AAPL", "AMZN", "INTC", "NVDA"]
         max_notional_per_trade: 30000
         max_position_pct_equity: 1.0
         params:
@@ -341,11 +341,11 @@ data:
         strategy_id: washout_rebound_long_v1@research
         strategy_type: washout_rebound_long_v1
         version: 1.0.0
-        description: Promoted washout rebound sleeve paired with the March 24, 2026 through April 2, 2026 replay composite winner, version=1.0.0
-        enabled: false
+        description: Paper-only washout rebound sleeve paired with the March 24, 2026 through April 2, 2026 replay composite winner on the quote-covered chip core; production approval blocked pending $300/day executable proof, version=1.0.0
+        enabled: true
         base_timeframe: "1Sec"
         universe_type: washout_rebound_long_v1
-        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
+        universe_symbols: ["AAPL", "AMZN", "INTC", "NVDA"]
         max_notional_per_trade: 63180
         max_position_pct_equity: 2.0
         params:
@@ -504,11 +504,11 @@ data:
         strategy_id: late_day_continuation_long_v1@research
         strategy_type: late_day_continuation_long_v1
         version: 1.0.0
-        description: Paper-only late-day continuation sleeve on the live executable chip core; production approval blocked pending $300/day executable proof, version=1.0.0
+        description: Paper-only late-day continuation sleeve on the quote-covered executable chip core; production approval blocked pending $300/day executable proof, version=1.0.0
         enabled: true
         base_timeframe: "1Sec"
         universe_type: late_day_continuation_long_v1
-        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
+        universe_symbols: ["AAPL", "AMZN", "INTC", "NVDA"]
         max_notional_per_trade: 94770
         max_position_pct_equity: 3.0
         params:

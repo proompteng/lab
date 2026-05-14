@@ -24,6 +24,7 @@ _RESEARCHED_CHIP_TECH_UNIVERSE = (
     "INTC",
 )
 _LIVE_EXECUTION_CHIP_TECH_UNIVERSE = _RESEARCHED_CHIP_TECH_UNIVERSE
+_QUOTE_COVERED_PAPER_STRATEGY_UNIVERSE = ("AAPL", "AMZN", "INTC", "NVDA")
 _CHIP_UNIVERSE_SYMBOLS = set(_RESEARCHED_CHIP_TECH_UNIVERSE)
 _LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS = set(_LIVE_EXECUTION_CHIP_TECH_UNIVERSE)
 
@@ -219,6 +220,20 @@ def _assert_exact_live_execution_chip_universe(
     )
 
 
+def _assert_exact_quote_covered_paper_strategy_universe(
+    test_case: TestCase, symbols: Iterable[object], *, context: str
+) -> None:
+    normalized = [
+        str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
+    ]
+    _assert_chip_universe(test_case, normalized, context=context)
+    test_case.assertEqual(
+        tuple(normalized),
+        _QUOTE_COVERED_PAPER_STRATEGY_UNIVERSE,
+        f"{context} does not match the quote-covered paper strategy core",
+    )
+
+
 class TestLiveConfigManifestContract(TestCase):
     def test_knative_env_wiring_is_safe_live_defaults(self) -> None:
         env = _load_torghut_knative_env()
@@ -303,7 +318,7 @@ class TestLiveConfigManifestContract(TestCase):
                 list,
                 f"{strategy.get('name')} missing explicit universe_symbols",
             )
-            _assert_exact_live_execution_chip_universe(
+            _assert_chip_universe(
                 self,
                 cast(list[object], raw_symbols),
                 context=f"strategy {strategy.get('name')}",
@@ -325,6 +340,7 @@ class TestLiveConfigManifestContract(TestCase):
                 "breakout-continuation-long-v1",
                 "mean-reversion-rebound-long-v1",
                 "mean-reversion-exhaustion-short-v1",
+                "washout-rebound-long-v1",
                 "late-day-continuation-long-v1",
             },
         )
@@ -337,7 +353,7 @@ class TestLiveConfigManifestContract(TestCase):
             self.assertIn("paper-only", description)
             self.assertIn("$300/day", description)
             self.assertIsInstance(raw_symbols, list)
-            _assert_exact_live_execution_chip_universe(
+            _assert_exact_quote_covered_paper_strategy_universe(
                 self,
                 cast(list[object], raw_symbols),
                 context=f"{name} universe",
@@ -394,6 +410,22 @@ class TestLiveConfigManifestContract(TestCase):
                 self.assertEqual(
                     _strategy_decimal(strategy, "max_position_pct_equity"),
                     Decimal("1.0"),
+                )
+                self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
+                self.assertLessEqual(
+                    Decimal(str(params.get("max_spread_bps") or "0")),
+                    Decimal("20"),
+                )
+            elif str(strategy.get("strategy_type")) == "washout_rebound_long_v1":
+                self.assertEqual(name, "washout-rebound-long-v1")
+                self.assertLessEqual(
+                    _strategy_decimal(strategy, "max_notional_per_trade")
+                    or Decimal("0"),
+                    Decimal("63180"),
+                )
+                self.assertEqual(
+                    _strategy_decimal(strategy, "max_position_pct_equity"),
+                    Decimal("2.0"),
                 )
                 self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
                 self.assertLessEqual(
