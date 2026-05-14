@@ -273,7 +273,7 @@ export const readAgentRunLogs = async (
   const logs = await requestText(
     client,
     `/api/v1/namespaces/${safeNamespace}/pods/${podName}/log?tailLines=${Math.max(20, Math.min(1000, tailLines))}&timestamps=true`,
-  ).catch((error) => `Logs unavailable: ${error instanceof Error ? error.message : String(error)}`)
+  ).catch(() => 'Logs unavailable.')
 
   return { logs: logs || 'No log lines yet.', jobName, podName, phase }
 }
@@ -539,7 +539,7 @@ const requestText = (client: KubernetesClient, path: string) =>
         ca: client.ca,
         headers: {
           authorization: `Bearer ${client.token}`,
-          accept: 'text/plain',
+          accept: 'application/json',
         },
       },
       (res) => {
