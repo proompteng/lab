@@ -78,6 +78,61 @@ def _repair_receipts() -> dict[str, object]:
     }
 
 
+def _feature_repair_receipts() -> dict[str, object]:
+    payload = _repair_receipts()
+    payload["selected_receipt_id"] = "executable-alpha-repair-receipt:cont"
+    payload["selected_receipt"] = {
+        "receipt_id": "executable-alpha-repair-receipt:cont",
+        "source_revenue_repair_ref": "torghut-revenue-repair-digest:test",
+        "hypothesis_id": "H-CONT-01",
+        "candidate_id": "candidate-cont",
+        "strategy_id": "strategy-cont",
+        "lineage_status": "ready",
+        "repair_class": "evidence_window_refresh",
+        "reason_codes": ["post_cost_expectancy_non_positive"],
+        "validation_commands": [
+            "uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py -k evidence_window"
+        ],
+        "required_output_receipts": [
+            "alpha_readiness_receipt",
+            "hypothesis_promotion_receipt",
+            "capital_replay_board",
+            "torghut.executable-alpha-receipts.v1",
+        ],
+        "max_notional": "0",
+        "capital_rule": "zero_notional_repair_only",
+    }
+    payload["receipts"] = [
+        payload["selected_receipt"],
+        {
+            "receipt_id": "executable-alpha-repair-receipt:micro",
+            "source_revenue_repair_ref": "torghut-revenue-repair-digest:test",
+            "hypothesis_id": "H-MICRO-01",
+            "candidate_id": "chip-paper-microbar-composite@execution-proof",
+            "strategy_id": "microbar_volume_continuation_long_top2_chip_v1@paper",
+            "lineage_status": "ready",
+            "repair_class": "evidence_window_refresh",
+            "reason_codes": [
+                "drift_checks_missing",
+                "feature_rows_missing",
+                "required_feature_set_unavailable",
+            ],
+            "validation_commands": [
+                "uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py -k evidence_window"
+            ],
+            "required_output_receipts": [
+                "alpha_readiness_receipt",
+                "hypothesis_promotion_receipt",
+                "capital_replay_board",
+                "torghut.executable-alpha-receipts.v1",
+            ],
+            "max_notional": "0",
+            "capital_rule": "zero_notional_repair_only",
+        },
+    ]
+    return payload
+
+
 def _build(
     *,
     generated_at: datetime = NOW,
@@ -124,9 +179,55 @@ def test_alpha_repair_closure_board_selects_zero_notional_top_alpha_repair() -> 
     assert closure["no_delta_reason"] == "routeable_candidate_count_unchanged"
     assert closure["max_notional"] == "0"
     assert closure["validation_commands"]
+    market = cast(Mapping[str, Any], board["alpha_closure_settlement_market"])
+    assert market["schema_version"] == "torghut.alpha-closure-settlement-market.v1"
+    assert (
+        market["required_output_receipt"]
+        == "torghut.alpha-closure-settlement-receipt.v1"
+    )
+    assert market["active_dedupe_key"] == closure["dedupe_key"]
+    assert market["no_delta_budget"]["state"] == "consumed"
     no_delta_debt = cast(list[Mapping[str, Any]], board["no_delta_debt"])
     assert no_delta_debt[0]["dedupe_key"] == closure["dedupe_key"]
     assert "blocker_set_changes" in no_delta_debt[0]["release_conditions"]
+
+
+def test_alpha_repair_closure_board_selects_micro_feature_replay_market_first() -> None:
+    board = _build(repair_receipts=_feature_repair_receipts())
+
+    closure = cast(list[Mapping[str, Any]], board["repair_closures"])[0]
+    assert closure["hypothesis_id"] == "H-MICRO-01"
+    assert closure["reason_code"] == "alpha_readiness_not_promotion_eligible"
+    assert closure["max_notional"] == "0"
+    market = cast(Mapping[str, Any], board["alpha_closure_settlement_market"])
+    assert market["selected_hypothesis_id"] == "H-MICRO-01"
+    assert market["selected_repair_class"] == "feature_replay_closure"
+    assert market["selected_lot_class"] == "feature_lineage"
+    assert market["selected_value_gate"] == "routeable_candidate_count"
+    assert (
+        market["required_output_receipt"]
+        == "torghut.alpha-closure-settlement-receipt.v1"
+    )
+    assert market["required_after_receipts"][-3:] == [
+        "feature_replay_receipt",
+        "drift_check_receipt",
+        "required_feature_set_receipt",
+    ]
+    assert market["before_blocker_codes"] == [
+        "drift_checks_missing",
+        "feature_rows_missing",
+        "required_feature_set_unavailable",
+    ]
+    pending_receipt = cast(Mapping[str, Any], market["pending_settlement_receipt"])
+    assert (
+        pending_receipt["schema_version"]
+        == "torghut.alpha-closure-settlement-receipt.v1"
+    )
+    assert pending_receipt["hypothesis_id"] == "H-MICRO-01"
+    assert pending_receipt["repair_class"] == "feature_replay_closure"
+    assert pending_receipt["routeable_candidate_count_before"] == 0
+    assert pending_receipt["routeable_candidate_count_after"] == 0
+    assert pending_receipt["max_notional"] == "0"
 
 
 def test_alpha_repair_closure_board_accepts_string_db_schema_flags() -> None:
@@ -142,7 +243,7 @@ def test_alpha_repair_closure_board_accepts_string_db_schema_flags() -> None:
     assert "db_check_schema_not_current" in default_held["reason_codes"]
 
 
-def test_alpha_repair_closure_board_uses_receipt_list_fallback_and_positive_delta() -> None:
+def test_alpha_repair_closure_board_uses_receipt_fallback_and_positive_delta() -> None:
     repair_receipts = _repair_receipts()
     selected_receipt = cast(dict[str, object], repair_receipts.pop("selected_receipt"))
     selected_receipt["measured_delta"] = "2.0"
@@ -154,7 +255,9 @@ def test_alpha_repair_closure_board_uses_receipt_list_fallback_and_positive_delt
     repair_receipts["receipts"] = [selected_receipt]
     evidence = _evidence()
     repair_bid_settlement = cast(dict[str, object], evidence["repair_bid_settlement"])
-    routeability_acceptance = cast(dict[str, object], evidence["routeability_acceptance"])
+    routeability_acceptance = cast(
+        dict[str, object], evidence["routeability_acceptance"]
+    )
     repair_bid_settlement["routeable_candidate_count"] = True
     routeability_acceptance["accepted_routeable_candidate_count"] = 4.7
     evidence["route_evidence_clearinghouse"] = {
@@ -169,7 +272,9 @@ def test_alpha_repair_closure_board_uses_receipt_list_fallback_and_positive_delt
     assert closure["no_delta_reason"] == ""
     assert board["no_delta_debt"] == []
     assert closure["before_refs"][-1] == "executable-alpha-repair-receipt:test"
-    assert closure["required_receipts"].count("torghut.executable-alpha-receipts.v1") == 1
+    assert (
+        closure["required_receipts"].count("torghut.executable-alpha-receipts.v1") == 1
+    )
 
 
 def test_alpha_repair_closure_board_rejects_naive_generated_at() -> None:
@@ -220,6 +325,13 @@ def test_compact_alpha_repair_closure_board_returns_jangar_facing_ref() -> None:
     assert compact["status"] == "selected"
     assert compact["selected_value_gate"] == "routeable_candidate_count"
     assert compact["required_output_receipt"] == "torghut.executable-alpha-receipts.v1"
+    assert (
+        compact["required_settlement_receipt"]
+        == "torghut.alpha-closure-settlement-receipt.v1"
+    )
+    assert compact["selected_hypothesis_id"] == "H-AAPL-ROUTE-REHAB"
+    assert compact["active_dedupe_key"]
+    assert compact["no_delta_budget_state"] == "consumed"
     assert compact["no_delta_debt_count"] == 1
     assert compact["max_notional"] == "0"
 
