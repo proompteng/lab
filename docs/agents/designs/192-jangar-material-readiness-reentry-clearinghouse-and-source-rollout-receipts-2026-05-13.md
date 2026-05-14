@@ -371,6 +371,20 @@ Suggested commands:
 - `bun run --filter jangar test -- services/jangar/src/routes/ready.test.ts`
 - `bun run --filter jangar test -- services/jangar/src/server/__tests__/control-plane-ready-truth-arbiter.test.ts`
 
+Implementation note, 2026-05-14:
+
+- Jangar now emits an observe-mode `material_reentry_clearinghouse` from
+  `services/jangar/src/server/control-plane-material-reentry-clearinghouse.ts`.
+- The reducer builds one compact `jangar.material-reentry-receipt.v1` per ready-truth action class and exposes it on
+  `/api/agents/control-plane/status`.
+- Held or blocked actions receive exactly one primary required output receipt, ordered by database/runtime safety,
+  watch reliability, source rollout, stage credit, then Torghut repair admission.
+- The Torghut alpha-readiness lane preserves zero-notional safety: when repair-bid admission exposes a fresh
+  promotion-custody dispatch ticket for `routeable_candidate_count`, the clearinghouse cites that receipt while live
+  capital actions stay blocked by existing material gates.
+- This implementation is projection-only. It does not alter schedule-runner enforcement, live submission flags, GitOps
+  promotion, or repair-bid admission.
+
 ### Engineer Milestone 2: API And Progress Surface
 
 Expose the clearinghouse in `/api/agents/control-plane/status` and in the ready/status UI as a compact list of current

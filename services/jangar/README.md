@@ -420,6 +420,19 @@ why a green PR or healthy pod is not yet materially safe to widen. Rollback is
 `JANGAR_READY_TRUTH_ARBITER_MODE=observe`; if the read model itself is wrong, ignore the field and continue relying on
 stage credit, clearance market, source-serving verdicts, runtime-admission passports, and repair-bid admission.
 
+Control-plane status also emits `material_reentry_clearinghouse` from
+`docs/agents/designs/192-jangar-material-readiness-reentry-clearinghouse-and-source-rollout-receipts-2026-05-13.md`.
+The clearinghouse is an observe-mode read model over ready truth, source-serving verdicts, stage credit, repair-bid
+admission, watch reliability, database health, and Torghut consumer evidence. It keeps `/ready` serving semantics
+separate from material authority, but compresses each held or blocked action class into one primary
+`material_reentry_receipt` with a required output receipt, validation commands, value gates, evidence refs, and rollback
+target. This lets implement, verify, and deployer handoffs cite the next bounded receipt instead of replaying a long
+reason-code list from multiple status sections. The Torghut alpha-readiness path is preserved as zero-notional repair:
+when the revenue-repair queue ranks `routeable_candidate_count` first and repair-bid admission exposes a
+promotion-custody dispatch ticket, the clearinghouse names that repair receipt while paper and live capital remain
+blocked by existing material gates. Rollback is to ignore `material_reentry_clearinghouse`; scheduler admission,
+runtime passports, stage credit, ready truth, and repair-bid admission continue to enforce the current safety posture.
+
 Control-plane status also emits `authority_provenance_settlement` from
 `docs/agents/designs/189-jangar-authority-provenance-settlement-and-rollout-reentry-windows-2026-05-13.md`. The
 settlement journal is a shadow read model over controller heartbeat authority, AgentRun ingestion, watch health,

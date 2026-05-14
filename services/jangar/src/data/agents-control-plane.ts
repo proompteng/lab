@@ -842,6 +842,62 @@ export type RepairBidAdmissionState = {
   rollback_target: string
 }
 
+export type MaterialReentryReceiptStatus = 'open' | 'repair_required' | 'blocked'
+
+export type MaterialReentryReceiptClass =
+  | 'watch_reliability_repair'
+  | 'controller_ingestion_repair'
+  | 'source_rollout_receipt'
+  | 'serving_image_receipt'
+  | 'stage_credit_reentry'
+  | 'torghut_executable_alpha_repair'
+  | 'torghut_execution_tca_repair'
+  | 'deployer_rollout_proof'
+  | 'merge_ready_source_receipt'
+
+export type MaterialReentryReceipt = {
+  schema_version: 'jangar.material-reentry-receipt.v1'
+  receipt_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  action_class: ActionSloBudgetActionClass
+  stage: string
+  decision: ReadyTruthMaterialReadiness
+  status: MaterialReentryReceiptStatus
+  receipt_class: MaterialReentryReceiptClass
+  source_hold_refs: string[]
+  required_output_receipt: string | null
+  required_validation_commands: string[]
+  value_gates: string[]
+  expected_gate_delta: string | null
+  max_parallelism: number
+  max_runtime_seconds: number | null
+  max_notional: number
+  evidence_refs: string[]
+  reason_codes: string[]
+  rollback_target: string
+}
+
+export type MaterialReentryClearinghouse = {
+  schema_version: 'jangar.material-reentry-clearinghouse.v1'
+  mode: 'observe'
+  design_artifact: string
+  clearinghouse_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  status: MaterialReentryReceiptStatus
+  material_readiness: ReadyTruthMaterialReadiness
+  action_receipts: MaterialReentryReceipt[]
+  open_action_classes: ActionSloBudgetActionClass[]
+  repair_required_action_classes: ActionSloBudgetActionClass[]
+  blocked_action_classes: ActionSloBudgetActionClass[]
+  primary_reentry_receipt_refs: string[]
+  top_repair_receipt_id: string | null
+  rollback_target: string
+}
+
 export type ControllerWitnessSurface =
   | 'serving_process'
   | 'controller_process'
@@ -2322,6 +2378,7 @@ export type ControlPlaneStatus = {
   terminal_debt_compaction_ledger: TerminalDebtCompactionLedger | null
   ready_action_exchange: ReadyActionExchange
   repair_bid_admission: RepairBidAdmissionState
+  material_reentry_clearinghouse: MaterialReentryClearinghouse
   repair_warrant_exchange: RepairWarrantExchange
   consumer_evidence_leases: ConsumerEvidenceLeaseSet
   clearance_market_ledger: ClearanceMarketLedger | null
