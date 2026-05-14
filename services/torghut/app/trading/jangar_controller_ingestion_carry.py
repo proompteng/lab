@@ -327,7 +327,6 @@ def _repairable_ticket_present(
     repair_slot: Mapping[str, Any],
 ) -> bool:
     ticket_class = _selected_ticket_class(settlement, repair_slot)
-    ticket_id = _selected_ticket_id(settlement, repair_slot)
     release_condition = _first_text(
         repair_slot.get("release_condition"),
         repair_slot.get("releaseCondition"),
@@ -344,7 +343,6 @@ def _repairable_ticket_present(
         ticket_class == "jangar_verify_carry"
         or release_condition == "jangar_controller_ingestion_current"
         or receipt == "jangar.verify-trust-foreclosure-ticket.v1"
-        or bool(ticket_id and repair_slot)
     )
 
 
