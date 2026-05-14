@@ -432,7 +432,12 @@ jobs:
           mapfile -t TEST_IDS < <(
             uv run --frozen pytest --collect-only -q tests/test_run_whitepaper_autoresearch_profit_target.py |
               awk '/^tests\/.*::/ {print $1}' |
-              awk -v slice="${SLICE_INDEX}" -v total="${SLICE_TOTAL}" '((NR - 1) % total) == slice'
+              while IFS= read -r test_id; do
+                checksum="$(printf '%s' "${test_id}" | cksum | awk '{print $1}')"
+                if [ "$((checksum % SLICE_TOTAL))" -eq "${SLICE_INDEX}" ]; then
+                  printf '%s\n' "${test_id}"
+                fi
+              done
           )
           printf 'Running %s autoresearch runner tests in slice %s/%s\n' "${#TEST_IDS[@]}" "${SLICE_INDEX}" "${SLICE_TOTAL}"
           if [ "${#TEST_IDS[@]}" -eq 0 ]; then
