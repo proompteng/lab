@@ -1268,6 +1268,58 @@ export const approveAction = (state: GatewayState, input: ApprovalInput) => {
   return { ok: true as const, task, agentRun }
 }
 
+export const requestDatabaseAccessApproval = (
+  state: GatewayState,
+  input: { actorId: ActorId; namespace: string; runName: string },
+) => {
+  const actor = findActor(input.actorId)
+  const target = `${input.namespace}/${input.runName}:sag.database.tables`
+  const existing = state.approvals.find(
+    (approval) =>
+      approval.action === 'database.list_tables' &&
+      approval.target === target &&
+      (approval.status === 'pending' || approval.status === 'approved'),
+  )
+  if (existing) return existing
+
+  const protectedRun = state.agentRuns.find((run) => run.namespace === input.namespace && run.name === input.runName)
+  const approval: Approval = {
+    id: nextId(state, 'appr'),
+    runId: protectedRun?.id ?? `agentrun:${input.namespace}/${input.runName}`,
+    action: 'database.list_tables',
+    target,
+    status: 'pending',
+    reason: 'AgentRun requested permission to inspect SAG database tables.',
+    requestedBy: actor.id,
+    createdAt: now(),
+  }
+  state.approvals.unshift(approval)
+  appendEvent(state, {
+    taskId: approval.runId,
+    runId: approval.runId,
+    actorId: actor.id,
+    actorEmail: actor.email,
+    actorRole: actor.role,
+    connector: 'sql',
+    operation: 'database:list_tables',
+    target,
+    status: 'approval_required',
+    severity: 'warning',
+    summary: 'Database table inspection is waiting for approval.',
+    policy: 'database-access-approval',
+    durationMs: 3,
+    evidence: {
+      approvalId: approval.id,
+      namespace: input.namespace,
+      runName: input.runName,
+      database: 'sag',
+      operation: 'list_tables',
+    },
+    request: input,
+  })
+  return approval
+}
+
 const defaultAgentRunRequest = (input?: AgentRunEvaluationInput) => ({
   actorId: input?.actorId ?? 'greg',
   name: input?.name ?? 'live-agentrun',

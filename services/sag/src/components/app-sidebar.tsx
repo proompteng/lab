@@ -1,12 +1,14 @@
 import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { AiSecurity02Icon } from '@hugeicons/core-free-icons'
 import type * as React from 'react'
 
-import { NavMain } from '~/components/nav-main'
+import { sidebarItems } from '~/components/navigation'
 import {
   Sidebar,
   SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -23,22 +25,30 @@ export function AppSidebar({
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton render={<Link to="/agent-runs" />} size="lg" tooltip="Action Gateway">
-              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-accent text-sidebar-accent-foreground">
-                <HugeiconsIcon icon={AiSecurity02Icon} strokeWidth={2} />
-              </div>
-              <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">Action Gateway</span>
-                <span className="truncate text-xs">Agent authority</span>
-              </div>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+        <div className="flex h-10 min-w-0 items-center justify-start overflow-hidden px-2 text-left text-xs font-medium group-data-[collapsible=icon]:hidden">
+          <span className="truncate">Secure Action Gateway</span>
+        </div>
       </SidebarHeader>
       <SidebarContent>
-        <NavMain active={active} />
+        <SidebarGroup>
+          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {sidebarItems.map((item) => (
+                <SidebarMenuItem key={item.url}>
+                  <SidebarMenuButton
+                    render={<Link to={item.url} />}
+                    isActive={active === item.url}
+                    tooltip={item.title}
+                  >
+                    <HugeiconsIcon icon={item.icon} strokeWidth={2} />
+                    <span>{item.title}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
       </SidebarContent>
       <SidebarRail />
     </Sidebar>
