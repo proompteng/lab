@@ -907,7 +907,6 @@ const requestInClusterText = (client: InClusterKubernetesClient, path: string) =
         ca: client.ca,
         headers: {
           authorization: `Bearer ${client.token}`,
-          accept: 'application/json',
         },
       },
       (res) => {
@@ -945,7 +944,6 @@ const requestTextStream = (client: KubernetesClient, path: string): Response => 
           ca: client.ca,
           headers: {
             authorization: `Bearer ${client.token}`,
-            accept: 'text/plain',
           },
         },
         (res) => {
