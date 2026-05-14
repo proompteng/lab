@@ -9,6 +9,7 @@ import type {
   SourceServingContractVerdictExchange,
   StageCreditLedger,
   TorghutConsumerEvidenceStatus,
+  TorghutExecutableAlphaRepairReceipt,
 } from '~/data/agents-control-plane'
 import {
   buildMaterialReentryClearinghouse,
@@ -384,8 +385,10 @@ const torghutEvidence = (overrides: Partial<TorghutConsumerEvidenceStatus> = {})
   ...overrides,
 })
 
-const torghutEvidenceWithExecutableAlphaRepair = (): TorghutConsumerEvidenceStatus => {
-  const selectedReceipt = {
+const torghutEvidenceWithExecutableAlphaRepair = (
+  selectedReceiptOverrides: Partial<TorghutExecutableAlphaRepairReceipt> = {},
+): TorghutConsumerEvidenceStatus => {
+  const selectedReceipt: TorghutExecutableAlphaRepairReceipt = {
     schema_version: 'torghut.executable-alpha-repair-receipt.v1' as const,
     receipt_id: 'executable-alpha-repair-receipt:current',
     generated_at: now.toISOString(),
@@ -420,6 +423,7 @@ const torghutEvidenceWithExecutableAlphaRepair = (): TorghutConsumerEvidenceStat
       rollback_target: 'keep max_notional=0 and live submit disabled',
     },
     rollback_target: 'stop emitting executable alpha repair receipts',
+    ...selectedReceiptOverrides,
   }
 
   return torghutEvidence({
@@ -611,5 +615,48 @@ describe('control-plane material reentry clearinghouse', () => {
     expect(paperCanary.reason_codes).toContain('torghut_alpha_repair_blocks_capital_reentry')
     expect(clearinghouse.top_implementer_dispatch?.signal_name).toBe(observe.implementer_dispatch?.signal_name)
     expect(clearinghouse.implementer_dispatches).toHaveLength(1)
+  })
+
+  it('keeps Torghut material reentry dispatch identity stable across rotated receipts', () => {
+    const buildClearinghouse = (selectedReceiptOverrides: Partial<TorghutExecutableAlphaRepairReceipt>) =>
+      buildMaterialReentryClearinghouse({
+        now,
+        namespace: 'agents',
+        database: healthyDatabase(),
+        watchReliability: watchReliability(),
+        readyTruthArbiter: readyTruth({
+          material_readiness: 'hold',
+          allowed_action_classes: ['serve_readonly', 'torghut_observe'],
+          held_action_classes: [],
+          blocked_action_classes: ['paper_canary'],
+        }),
+        sourceServingContractVerdictExchange: sourceExchange([sourceVerdict('paper_support')]),
+        stageCreditLedger: null,
+        repairBidAdmission: repairAdmission({ receipts: [], dispatch_tickets: [] }),
+        torghutConsumerEvidence: torghutEvidenceWithExecutableAlphaRepair(selectedReceiptOverrides),
+      })
+
+    const first = buildClearinghouse({
+      receipt_id: 'executable-alpha-repair-receipt:first',
+      generated_at: '2026-05-14T00:09:30.000Z',
+      fresh_until: '2026-05-14T00:11:30.000Z',
+    })
+    const second = buildClearinghouse({
+      receipt_id: 'executable-alpha-repair-receipt:second',
+      generated_at: '2026-05-14T00:09:45.000Z',
+      fresh_until: '2026-05-14T00:11:45.000Z',
+    })
+
+    const firstDispatch = receiptFor(first.action_receipts, 'torghut_observe').implementer_dispatch
+    const secondDispatch = receiptFor(second.action_receipts, 'torghut_observe').implementer_dispatch
+
+    expect(firstDispatch).toBeDefined()
+    expect(secondDispatch).toBeDefined()
+    expect(firstDispatch?.dedupe_key).toBe(secondDispatch?.dedupe_key)
+    expect(firstDispatch?.dedupe_key).toContain('material-reentry:torghut-executable-alpha:')
+    expect(firstDispatch?.dedupe_key).not.toContain('executable-alpha-repair-receipt')
+    expect(firstDispatch?.signal_name).toBe(secondDispatch?.signal_name)
+    expect(firstDispatch?.payload.source_receipt_id).toBe('executable-alpha-repair-receipt:first')
+    expect(secondDispatch?.payload.source_receipt_id).toBe('executable-alpha-repair-receipt:second')
   })
 })
