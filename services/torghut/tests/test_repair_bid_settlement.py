@@ -67,6 +67,7 @@ def _build(
     active_dedupe_keys: list[str] | None = None,
     jangar_status: dict[str, object] | None = None,
     rollout_status: dict[str, object] | None = None,
+    profit_freshness_frontier: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return build_repair_bid_settlement_ledger(
         account_label="PA3SX7FYNUTF",
@@ -81,6 +82,7 @@ def _build(
         },
         active_run_dedupe_state={"active_dedupe_keys": active_dedupe_keys or []},
         jangar_scoped_quant_status=jangar_status or {"ok": True, "status": "healthy"},
+        profit_freshness_frontier=profit_freshness_frontier,
         rollout_image_summary=rollout_status
         or {
             "state": "current",
@@ -261,6 +263,72 @@ def test_alpha_readiness_strike_reserves_promotion_custody_dispatch_capacity() -
     assert (
         "dispatch_limit_exceeded" in lots_by_class["execution_tca"]["hold_reason_codes"]
     )
+
+
+def test_profit_freshness_selected_repair_becomes_ticketable_zero_notional_lot() -> (
+    None
+):
+    ledger = _build(
+        reason_codes=[
+            "quant_health_not_configured",
+            "alpha_readiness_not_promotion_eligible",
+            "execution_tca_stale",
+        ],
+        profit_freshness_frontier={
+            "frontier_id": "profit-freshness-frontier:test",
+            "selected_zero_notional_repairs": [
+                {
+                    "lot_id": "profit-freshness-repair-lot:market-context",
+                    "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                    "blocked_dimension": "market_context",
+                    "zero_notional_action": "refresh_stale_market_context_domains",
+                    "before_refs": ["market_context:INTC"],
+                    "paper_notional_limit": "0",
+                    "live_notional_limit": "0",
+                    "state": "selected_zero_notional_repair",
+                }
+            ],
+        },
+    )
+    lots_by_id = {lot["lot_id"]: lot for lot in ledger["compacted_lots"]}
+    profit_lot = lots_by_id["profit-freshness-repair-lot:market-context"]
+
+    assert profit_lot["lot_class"] == "market_context_refresh"
+    assert profit_lot["target_value_gate"] == "zero_notional_or_stale_evidence_rate"
+    assert (
+        profit_lot["required_output_receipt"]
+        == "torghut.market-context-freshness-receipt.v1"
+    )
+    assert profit_lot["state"] == "selected"
+    assert profit_lot["dispatchable"] is True
+    assert profit_lot["max_notional"] == "0"
+    assert "profit-freshness-repair-lot:market-context" in ledger["selected_lot_ids"]
+    assert (
+        "profit-freshness-repair-lot:market-context" in ledger["dispatchable_lot_ids"]
+    )
+    assert ledger["max_notional"] == "0"
+
+
+def test_profit_freshness_nonzero_repair_is_not_compacted_for_dispatch() -> None:
+    ledger = _build(
+        profit_freshness_frontier={
+            "frontier_id": "profit-freshness-frontier:test",
+            "selected_zero_notional_repairs": [
+                {
+                    "lot_id": "profit-freshness-repair-lot:nonzero",
+                    "blocked_dimension": "market_context",
+                    "zero_notional_action": "refresh_stale_market_context_domains",
+                    "paper_notional_limit": "10",
+                    "live_notional_limit": "0",
+                    "state": "selected_zero_notional_repair",
+                }
+            ],
+        },
+    )
+
+    assert "profit-freshness-repair-lot:nonzero" not in {
+        lot["lot_id"] for lot in ledger["compacted_lots"]
+    }
 
 
 def test_string_booleans_and_rollout_workload_gaps_create_typed_lots() -> None:

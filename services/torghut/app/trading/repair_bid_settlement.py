@@ -91,6 +91,28 @@ _ALPHA_READINESS_STRIKE_REASONS = {
     "alpha_readiness_not_promotion_eligible",
     "hypothesis_not_promotion_eligible",
 }
+_PROFIT_FRESHNESS_REPAIR_PRIORITY = 99
+_ZERO_NOTIONAL_TEXT = {"", "0", "0.0", "0.00", "0.0000"}
+_PROFIT_FRESHNESS_ACTION_CONTRACTS: Mapping[str, Mapping[str, object]] = {
+    "refresh_stale_market_context_domains": {
+        "lot_class": "market_context_refresh",
+        "target_value_gate": "zero_notional_or_stale_evidence_rate",
+        "required_output_receipt": "torghut.market-context-freshness-receipt.v1",
+        "validation_command": (
+            "pytest services/torghut/tests/test_zero_notional_repair_executor.py "
+            "-k dispatch_ticket"
+        ),
+    },
+    "renew_empirical_proof_jobs": {
+        "lot_class": "empirical_replay",
+        "target_value_gate": "zero_notional_or_stale_evidence_rate",
+        "required_output_receipt": "torghut.empirical-proof-refresh-receipt.v1",
+        "validation_command": (
+            "pytest services/torghut/tests/test_zero_notional_repair_executor.py "
+            "-k dispatch_ticket"
+        ),
+    },
+}
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -144,6 +166,16 @@ def _unique(values: Sequence[str]) -> list[str]:
 
 def _strings(value: object) -> list[str]:
     return _unique([_text(item) for item in _sequence(value)])
+
+
+def _is_zero_notional(value: object, default: str = _ZERO_NOTIONAL) -> bool:
+    text = _text(value, default)
+    if text in _ZERO_NOTIONAL_TEXT:
+        return True
+    try:
+        return float(text) == 0
+    except ValueError:
+        return False
 
 
 def _timestamp(value: object) -> datetime | None:
@@ -507,6 +539,119 @@ def _build_lot(
     }
 
 
+def _profit_freshness_repairs(
+    profit_freshness_frontier: Mapping[str, Any],
+) -> list[Mapping[str, Any]]:
+    repairs: list[Mapping[str, Any]] = []
+    seen: set[str] = set()
+    raw_repairs: list[tuple[object, bool]] = [
+        (raw_repair, True)
+        for raw_repair in _sequence(
+            profit_freshness_frontier.get("selected_zero_notional_repairs")
+        )
+    ]
+    raw_repairs.extend(
+        (raw_repair, False)
+        for raw_repair in _sequence(profit_freshness_frontier.get("repair_lots"))
+    )
+    for raw_repair, explicitly_selected in raw_repairs:
+        repair = _mapping(raw_repair)
+        if not repair:
+            continue
+        repair_id = _text(repair.get("lot_id")) or _ref(
+            "profit-freshness-repair-lot", repair
+        )
+        key = f"{repair_id}:{_text(repair.get('zero_notional_action'))}"
+        if key in seen:
+            continue
+        seen.add(key)
+        if (
+            _text(repair.get("state")) != "selected_zero_notional_repair"
+            and not explicitly_selected
+        ):
+            continue
+        repairs.append(repair)
+    return repairs
+
+
+def _build_profit_freshness_lot(
+    *,
+    account_id: str,
+    session_id: str,
+    repair: Mapping[str, Any],
+    frontier: Mapping[str, Any],
+    active_keys: Sequence[str],
+) -> dict[str, object] | None:
+    action = _text(repair.get("zero_notional_action"))
+    contract = _mapping(_PROFIT_FRESHNESS_ACTION_CONTRACTS.get(action))
+    if not contract:
+        return None
+    if not (
+        _is_zero_notional(repair.get("paper_notional_limit"))
+        and _is_zero_notional(repair.get("live_notional_limit"))
+    ):
+        return None
+
+    lot_id = _text(repair.get("lot_id")) or _ref(
+        "profit-freshness-repair-lot",
+        {
+            "frontier_id": frontier.get("frontier_id"),
+            "action": action,
+            "candidate_id": repair.get("candidate_id"),
+            "hypothesis_id": repair.get("hypothesis_id"),
+            "blocked_dimension": repair.get("blocked_dimension"),
+        },
+    )
+    blocked_dimension = _text(repair.get("blocked_dimension"), "profit_freshness")
+    dedupe_key = (
+        f"{account_id}:{session_id}:profit_freshness:{action}:{blocked_dimension}"
+    )
+    hold_reasons = ["dedupe_key_active"] if dedupe_key in active_keys else []
+    state = "active" if hold_reasons else "candidate"
+    reason_codes = _unique(
+        [
+            f"profit_freshness_{blocked_dimension}_repair_selected",
+            *_strings(repair.get("guardrail_failures")),
+        ]
+    )
+    return {
+        "lot_id": lot_id,
+        "lot_class": _text(contract.get("lot_class"), "profit_freshness"),
+        "target_value_gate": _text(
+            contract.get("target_value_gate"),
+            _text(repair.get("value_gate"), "zero_notional_or_stale_evidence_rate"),
+        ),
+        "priority": _PROFIT_FRESHNESS_REPAIR_PRIORITY,
+        "expected_gate_delta": f"retire_{blocked_dimension}_stale",
+        "raw_reason_codes": reason_codes,
+        "root_cause_hypothesis": (
+            "profit freshness frontier selected a zero-notional runner repair "
+            f"for {blocked_dimension}"
+        ),
+        "required_input_refs": _unique(
+            [
+                _text(frontier.get("frontier_id")),
+                lot_id,
+                _text(repair.get("candidate_id")),
+                _text(repair.get("hypothesis_id")),
+                *_strings(repair.get("before_refs")),
+            ]
+        ),
+        "required_output_receipt": _text(contract.get("required_output_receipt")),
+        "required_output_receipt_count": 1,
+        "validation_commands": [_text(contract.get("validation_command"))],
+        "dedupe_key": dedupe_key,
+        "ttl_seconds": _DEFAULT_TTL_SECONDS,
+        "max_runtime_seconds": _DEFAULT_MAX_RUNTIME_SECONDS,
+        "max_parallelism": 1,
+        "max_notional": _ZERO_NOTIONAL,
+        "state": state,
+        "dispatchable": False,
+        "hold_reason_codes": hold_reasons,
+        "source_bid_ids": _unique([_text(frontier.get("frontier_id")), lot_id, action]),
+    }
+
+
 def _classed_reasons(
     *,
     clearinghouse_packet: Mapping[str, Any],
@@ -594,6 +739,7 @@ def build_repair_bid_settlement_ledger(
     active_run_dedupe_state: Mapping[str, Any] | None = None,
     jangar_scoped_quant_status: Mapping[str, Any] | None = None,
     rollout_image_summary: Mapping[str, Any] | None = None,
+    profit_freshness_frontier: Mapping[str, Any] | None = None,
     now: datetime | None = None,
 ) -> dict[str, object]:
     """Compact raw route-evidence bids into bounded zero-notional repair lots."""
@@ -603,6 +749,7 @@ def build_repair_bid_settlement_ledger(
     routeability_ledger = _mapping(routeability_acceptance_ledger)
     quant_status = _mapping(jangar_scoped_quant_status)
     rollout_summary = _mapping(rollout_image_summary)
+    freshness_frontier = _mapping(profit_freshness_frontier)
     active_keys = _active_dedupe_keys(_mapping(active_run_dedupe_state))
     packet_is_stale = _packet_stale(clearinghouse_packet, generated_at)
     classed_reasons = _classed_reasons(
@@ -626,6 +773,16 @@ def build_repair_bid_settlement_ledger(
         )
         for lot_class, payload in classed_reasons.items()
     ]
+    for repair in _profit_freshness_repairs(freshness_frontier):
+        profit_lot = _build_profit_freshness_lot(
+            account_id=account_label,
+            session_id=session_id,
+            repair=repair,
+            frontier=freshness_frontier,
+            active_keys=active_keys,
+        )
+        if profit_lot:
+            lots.append(profit_lot)
     compacted_lots = _select_lots(lots)
     selected_lot_ids = [
         str(lot["lot_id"]) for lot in compacted_lots if lot["state"] == "selected"

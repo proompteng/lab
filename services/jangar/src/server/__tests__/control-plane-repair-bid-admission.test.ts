@@ -243,6 +243,64 @@ describe('control-plane repair bid admission', () => {
     ])
   })
 
+  it('keeps selected profit-freshness repair tickets available during alpha-readiness strike admission', () => {
+    const profitFreshnessLot = {
+      ...baseConsumerEvidence().repair_bid_settlement_compacted_lots![0]!,
+      lot_id: 'profit-freshness-repair-lot:market-context',
+      lot_class: 'market_context_refresh',
+      target_value_gate: 'zero_notional_or_stale_evidence_rate',
+      priority: 99,
+      expected_gate_delta: 'retire_market_context_stale',
+      required_output_receipt: 'torghut.market-context-freshness-receipt.v1',
+      validation_commands: ['pytest services/torghut/tests/test_zero_notional_repair_executor.py -k dispatch_ticket'],
+      dedupe_key: 'PA3SX7FYNUTF:15m:profit_freshness:refresh_stale_market_context_domains:market_context',
+      state: 'selected',
+      dispatchable: true,
+      hold_reason_codes: [],
+    }
+    const admission = buildAdmission({
+      alpha_readiness_strike_ledger: alphaStrikeLedger(),
+      repair_bid_settlement_selected_lot_ids: [
+        'compacted-repair-lot:quant',
+        'profit-freshness-repair-lot:market-context',
+      ],
+      repair_bid_settlement_dispatchable_lot_ids: [
+        'compacted-repair-lot:quant',
+        'profit-freshness-repair-lot:market-context',
+      ],
+      repair_bid_settlement_compacted_lots: [
+        baseConsumerEvidence().repair_bid_settlement_compacted_lots![0]!,
+        profitFreshnessLot,
+      ],
+    })
+
+    const repairReceipt = admission.receipts.find((receipt) => receipt.action_class === 'dispatch_repair')
+
+    expect(repairReceipt).toMatchObject({
+      decision: 'allow',
+      admitted_lot_ids: ['compacted-repair-lot:promotion', 'profit-freshness-repair-lot:market-context'],
+      max_parallelism: 2,
+      max_notional: 0,
+    })
+    expect(admission.dispatch_tickets).toEqual([
+      expect.objectContaining({
+        torghut_lot_id: 'compacted-repair-lot:promotion',
+        lot_class: 'promotion_custody',
+        target_value_gate: 'routeable_candidate_count',
+        launch_allowed: true,
+      }),
+      expect.objectContaining({
+        torghut_lot_id: 'profit-freshness-repair-lot:market-context',
+        lot_class: 'market_context_refresh',
+        target_value_gate: 'zero_notional_or_stale_evidence_rate',
+        dedupe_key: 'PA3SX7FYNUTF:15m:profit_freshness:refresh_stale_market_context_domains:market_context',
+        required_output_receipt: 'torghut.market-context-freshness-receipt.v1',
+        launch_allowed: true,
+        max_notional: 0,
+      }),
+    ])
+  })
+
   it('holds alpha-readiness strike admission when the revenue ledger is stale', () => {
     const admission = buildAdmission({
       alpha_readiness_strike_ledger: {
