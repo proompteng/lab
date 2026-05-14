@@ -430,6 +430,50 @@ class TestCandidateSpecs(TestCase):
                     candidate_spec_capital_features(spec)["capital_feasible_flag"], 1.0
                 )
 
+    def test_feedback_escape_profiles_dedupe_and_fallback_invalid_params(self) -> None:
+        profile = {
+            "params": {
+                "entry_minute_after_open": "not-a-decimal",
+                "exit_minute_after_open": "invalid",
+                "top_n": "2",
+            },
+            "universe_symbols": ["NVDA", "AAPL"],
+            "max_notional_per_trade": "90000",
+            "max_position_pct_equity": "2.0",
+        }
+
+        expanded = candidate_specs_module._portfolio_feedback_escape_execution_profiles(
+            (profile, profile)
+        )
+
+        self.assertEqual(
+            [
+                next_profile["params"]["feedback_remediation_profile"]
+                for next_profile in expanded
+            ],
+            [
+                "daily_coverage_feedback_escape",
+                "consistency_guard_feedback_escape",
+                "turnover_coverage_feedback_escape",
+            ],
+        )
+        self.assertEqual(
+            candidate_specs_module._decimal_profile_param(
+                profile["params"],
+                "entry_minute_after_open",
+                default=Decimal("45"),
+            ),
+            Decimal("45"),
+        )
+        self.assertEqual(
+            candidate_specs_module._int_profile_param(
+                profile["params"],
+                "exit_minute_after_open",
+                default=150,
+            ),
+            150,
+        )
+
     def test_short_exhaustion_claim_compiles_short_sleeve_profiles(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-short-exhaustion",
