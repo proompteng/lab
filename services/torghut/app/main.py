@@ -3046,6 +3046,12 @@ def trading_status() -> dict[str, object]:
 
 
 def _consumer_evidence_dependency_quorum() -> JangarDependencyQuorumStatus:
+    dependency_quorum = load_jangar_dependency_quorum(
+        omit_torghut_consumer_evidence=True,
+    )
+    if dependency_quorum.reasons != ["jangar_control_plane_status_url_missing"]:
+        return dependency_quorum
+
     return JangarDependencyQuorumStatus(
         decision="allow",
         reasons=[],
@@ -3416,7 +3422,12 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         "mode": settings.trading_mode,
         "running": state.running,
         "build": build_payload,
-        "control_plane_dependency_mode": "caller_evaluated",
+        "control_plane_dependency_mode": (
+            "caller_evaluated"
+            if dependency_quorum.message
+            == CONSUMER_EVIDENCE_CONTROL_PLANE_DEPENDENCY_MESSAGE
+            else "jangar_status_non_recursive"
+        ),
         "dependency_quorum": dependency_quorum.as_payload(),
         "forecast_service": forecast_service_status,
         "lean_authority": lean_authority_status,

@@ -46,6 +46,7 @@ from app.trading.completion import (
 )
 from app.trading.execution import OrderExecutor
 from app.config import settings
+from app.trading.hypotheses import JangarDependencyQuorumStatus
 from app.models import (
     AutoresearchCandidateSpec,
     AutoresearchEpoch,
@@ -1544,6 +1545,136 @@ class TestTradingApi(TestCase):
         )
         dependency_fetch.assert_not_called()
         continuity_fetch.assert_not_called()
+
+    def test_trading_consumer_evidence_hydrates_jangar_carry_non_recursively(
+        self,
+    ) -> None:
+        settlement = {
+            "settlement_id": "controller-ingestion-settlement:current",
+            "decision": "allow",
+            "controller_ingestion_current": True,
+            "fresh_until": "2099-05-14T15:45:00+00:00",
+        }
+        board = {
+            "board_id": "verify-trust-foreclosure-board:current",
+            "fresh_until": "2099-05-14T15:45:00+00:00",
+        }
+        proof_floor = {
+            "schema_version": "torghut.profitability-proof-floor.v1",
+            "generated_at": "2026-05-08T03:54:41.769374+00:00",
+            "account_label": "PA3SX7FYNUTF",
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "blocking_reasons": ["simple_submit_disabled"],
+            "proof_dimensions": [],
+            "repair_ladder": [],
+        }
+        live_submission_gate = {
+            "allowed": False,
+            "reason": "simple_submit_disabled",
+            "blocked_reasons": ["simple_submit_disabled"],
+            "capital_stage": "shadow",
+            "dependency_quorum_decision": "allow",
+        }
+
+        with (
+            patch("app.main.resolve_hypothesis_dependency_quorum") as dependency_fetch,
+            patch("app.main.load_jangar_route_continuity_packet") as continuity_fetch,
+            patch(
+                "app.main.load_jangar_dependency_quorum",
+                return_value=JangarDependencyQuorumStatus(
+                    decision="allow",
+                    reasons=[],
+                    message="ok",
+                    controller_ingestion_settlement=settlement,
+                    verify_trust_foreclosure_board=board,
+                ),
+            ) as jangar_fetch,
+            patch(
+                "app.main._forecast_service_status",
+                return_value={
+                    "status": "healthy",
+                    "authority": "empirical",
+                    "promotion_authority_eligible_models": ["candidate-a"],
+                },
+            ),
+            patch(
+                "app.main._lean_authority_status",
+                return_value={"status": "healthy", "authority": "empirical"},
+            ),
+            patch(
+                "app.main._empirical_jobs_status",
+                return_value={
+                    "status": "healthy",
+                    "ready": True,
+                    "candidate_ids": ["candidate-a"],
+                    "dataset_snapshot_refs": ["dataset-a"],
+                },
+            ),
+            patch(
+                "app.main.load_quant_evidence_status",
+                return_value={"ok": True, "required": False},
+            ),
+            patch("app.main._load_tca_summary", return_value={}),
+            patch(
+                "app.main._build_live_submission_gate_payload",
+                return_value=live_submission_gate,
+            ),
+            patch(
+                "app.main.build_profitability_proof_floor_receipt",
+                return_value=proof_floor,
+            ),
+            patch(
+                "app.main._readiness_dependency_snapshot",
+                return_value=(
+                    {
+                        "database": {
+                            "ok": True,
+                            "schema_current": True,
+                            "schema_current_heads": ["0029_live_submission_gate"],
+                        }
+                    },
+                    datetime(2026, 5, 8, 3, 54, 41, tzinfo=timezone.utc),
+                    True,
+                ),
+            ),
+            patch("app.main.SessionLocal", self.session_local),
+        ):
+            response = self.client.get("/trading/consumer-evidence")
+
+        self.assertEqual(response.status_code, 200)
+        jangar_fetch.assert_called_once_with(omit_torghut_consumer_evidence=True)
+        dependency_fetch.assert_not_called()
+        continuity_fetch.assert_not_called()
+        payload = response.json()
+        self.assertEqual(
+            payload["control_plane_dependency_mode"],
+            "jangar_status_non_recursive",
+        )
+        self.assertEqual(
+            payload["dependency_quorum"]["controller_ingestion_settlement"],
+            settlement,
+        )
+        self.assertEqual(
+            payload["dependency_quorum"]["verify_trust_foreclosure_board"],
+            board,
+        )
+        controller_carry = payload["jangar_controller_ingestion_carry"]
+        self.assertEqual(controller_carry["carry_state"], "current")
+        self.assertEqual(
+            controller_carry["source_jangar_settlement_ref"],
+            "controller-ingestion-settlement:current",
+        )
+        self.assertNotIn(
+            "jangar_controller_ingestion_settlement_missing",
+            controller_carry["reason_codes"],
+        )
+        self.assertNotIn(
+            "jangar_verify_foreclosure_board_missing",
+            controller_carry["reason_codes"],
+        )
+        self.assertEqual(controller_carry["max_notional"], "0")
 
     def test_route_continuity_delegates_to_jangar_when_registry_requires_it(
         self,

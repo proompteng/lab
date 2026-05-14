@@ -1030,6 +1030,66 @@ class TestHypothesisReadiness(TestCase):
             rollout_witness,
         )
 
+    def test_load_jangar_dependency_quorum_can_omit_torghut_consumer_evidence(
+        self,
+    ) -> None:
+        settings.trading_jangar_control_plane_status_url = (
+            "https://jangar.example/status"
+        )
+        settings.trading_jangar_control_plane_cache_ttl_seconds = 0
+        with patch(
+            "app.trading.hypotheses.urlopen",
+            return_value=_FakeHttpResponse(
+                {
+                    "dependency_quorum": {
+                        "decision": "allow",
+                        "reasons": [],
+                        "message": "ok",
+                    }
+                }
+            ),
+        ) as urlopen_mock:
+            status = load_jangar_dependency_quorum(
+                omit_torghut_consumer_evidence=True,
+            )
+
+        self.assertEqual(status.decision, "allow")
+        request = urlopen_mock.call_args.args[0]
+        self.assertEqual(
+            request.get_header("X-torghut-consumer-evidence-mode"),
+            "omit",
+        )
+
+    def test_load_jangar_dependency_quorum_caches_by_consumer_evidence_mode(
+        self,
+    ) -> None:
+        settings.trading_jangar_control_plane_status_url = (
+            "https://jangar.example/status"
+        )
+        settings.trading_jangar_control_plane_cache_ttl_seconds = 30
+        with patch(
+            "app.trading.hypotheses.urlopen",
+            return_value=_FakeHttpResponse(
+                {
+                    "dependency_quorum": {
+                        "decision": "delay",
+                        "reasons": ["workflow_backoff_warning"],
+                        "message": "degraded",
+                    }
+                }
+            ),
+        ) as urlopen_mock:
+            first = load_jangar_dependency_quorum(
+                omit_torghut_consumer_evidence=True,
+            )
+            second = load_jangar_dependency_quorum(
+                omit_torghut_consumer_evidence=True,
+            )
+
+        self.assertEqual(first.decision, "delay")
+        self.assertIs(first, second)
+        urlopen_mock.assert_called_once()
+
     def test_load_jangar_dependency_quorum_falls_back_to_legacy_status_when_needed(
         self,
     ) -> None:
