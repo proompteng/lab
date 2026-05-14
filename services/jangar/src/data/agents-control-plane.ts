@@ -2208,6 +2208,58 @@ export type ReadyTruthGateReceipt = {
 
 export type RevenueRepairSettlementCustodyDecision = 'allow' | 'hold' | 'deny'
 
+export type ControllerIngestionSettlementDecision = 'allow' | 'repair_only' | 'hold' | 'block'
+
+export type ControllerIngestionSettlementTicketClass = 'controller_ingestion' | 'verification_carry_rollout' | 'none'
+
+export type ControllerIngestionSettlementTorghutCarryStatus =
+  | 'current'
+  | 'repairable'
+  | 'lagging'
+  | 'unavailable'
+  | 'stale'
+  | 'unknown'
+  | 'contradicted'
+
+export type ControllerIngestionSettlement = {
+  schema_version: 'jangar.controller-ingestion-settlement.v1'
+  mode: ReadyTruthArbiterMode
+  settlement_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  governing_design_refs: string[]
+  decision: ControllerIngestionSettlementDecision
+  serving_readiness: ReadyTruthServingReadiness
+  controller_witness_ref: string | null
+  controller_witness_decision: ControllerWitnessDecision | null
+  deployment_available: boolean
+  watch_epoch_current: boolean
+  controller_self_report_current: boolean
+  agentrun_ingestion_current: boolean
+  execution_trust_status: ExecutionTrustStatus['status']
+  database_status: DatabaseStatus['status']
+  source_serving_verdict_ref: string | null
+  source_serving_status: SourceServingContractDecision | null
+  source_head_sha: string | null
+  serving_build_commit: string | null
+  manifest_image_digest: string | null
+  serving_image_digest: string | null
+  verify_trust_foreclosure_board_ref: string | null
+  repair_slot_escrow_ref: string | null
+  torghut_verification_carry_status: ControllerIngestionSettlementTorghutCarryStatus
+  selected_repair_ticket: {
+    ticket_class: ControllerIngestionSettlementTicketClass
+    max_parallelism: number
+    max_notional: string
+    validation_commands: string[]
+    reason_codes: string[]
+  }
+  reason_codes: string[]
+  evidence_refs: string[]
+  rollback_target: string
+}
+
 export type RevenueRepairSettlementCustody = {
   schema_version: 'jangar.revenue-repair-settlement-custody.v1'
   mode: ReadyTruthArbiterMode
@@ -2851,6 +2903,7 @@ export type ControlPlaneStatus = {
   dependency_verdict_exchange: DependencyVerdictExchange
   source_serving_contract_verdict_exchange: SourceServingContractVerdictExchange
   control_plane_controller_witness: ControlPlaneControllerWitnessQuorum
+  controller_ingestion_settlement: ControllerIngestionSettlement
   material_action_verdict_epoch: MaterialActionVerdictEpoch
   material_action_verdicts: MaterialActionVerdict[]
   material_action_activation_receipts: MaterialActionActivationReceipt[]

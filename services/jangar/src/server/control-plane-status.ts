@@ -7,6 +7,7 @@ import {
   buildRuntimeAdapterStatusFromSource,
 } from '~/server/control-plane-authority-status'
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
+import { buildControllerIngestionSettlement } from '~/server/control-plane-controller-ingestion-settlement'
 import { buildControllerWitnessQuorum } from '~/server/control-plane-controller-witness'
 import { buildConsumerEvidenceLeaseSet } from '~/server/control-plane-consumer-evidence-leases'
 import {
@@ -23,12 +24,10 @@ import {
   type TerminalDebtCompactionEvidence,
 } from '~/server/control-plane-terminal-debt-compaction'
 import { resolveTemporalAdapter } from '~/server/control-plane-temporal-adapter'
-import {
-  buildControlPlaneMaterialActionArtifacts,
-  type RepairScheduleAttemptResolver,
-} from '~/server/control-plane-material-action-artifacts'
+import type { RepairScheduleAttemptResolver } from '~/server/control-plane-material-action-artifacts'
 import { buildMaterialGateDigest } from '~/server/control-plane-material-gate-digest'
 import { buildMaterialReentryClearinghouse } from '~/server/control-plane-material-reentry-clearinghouse'
+import { buildControlPlaneMaterialStatus } from '~/server/control-plane-material-status'
 import {
   buildRepairSlotEscrow,
   isRepairSlotEscrowEnabled,
@@ -65,7 +64,6 @@ import {
   type FailureDomainRouteProbe,
 } from '~/server/control-plane-failure-domain-leases'
 import { buildControlPlaneLeaderElectionStatus } from '~/server/control-plane-leader-election-status'
-import { buildNegativeEvidenceRouterStatus } from '~/server/control-plane-negative-evidence-router'
 import {
   collectProjectionForeclosureEvidence,
   emptyProjectionForeclosureEvidence,
@@ -85,10 +83,7 @@ import {
   maybeUseSplitTopologyRuntimeRollout,
   unknownRolloutHealth,
 } from '~/server/control-plane-rollout-health'
-import {
-  buildSourceRolloutTruthExchange,
-  resolveSourceRolloutTruthEnvironment,
-} from '~/server/control-plane-source-rollout-truth-exchange'
+import { resolveSourceRolloutTruthEnvironment } from '~/server/control-plane-source-rollout-truth-exchange'
 import { buildSourceServingContractVerdictExchange } from '~/server/control-plane-source-serving-contract-verdict'
 import {
   resolveTorghutConsumerEvidence,
@@ -460,67 +455,31 @@ export const buildControlPlaneStatus = async (
       collectionErrors: [`projection foreclosure evidence collection failed: ${normalizeMessage(error)}`],
     }),
   )
-  const buildMaterialStatus = async (torghutConsumerEvidence: TorghutConsumerEvidenceResolution) => {
-    const negativeEvidenceRouter = buildNegativeEvidenceRouterStatus({
-      now,
-      namespace: options.namespace,
-      service,
-      workflows,
-      watchReliability: watchReliabilityStatus,
-      agentRunIngestion,
-      database,
-      rolloutHealth,
-      dependencyQuorum,
-      failureDomainLeases,
-      empiricalServices,
-      executionTrust: executionTrust.executionTrust,
-      runtimeKits: runtimeAdmission.runtimeKits,
-      controllerWitness,
-      torghut: torghutConsumerEvidence.negativeEvidence,
-    })
-    const sourceRolloutTruthExchange = buildSourceRolloutTruthExchange({
-      now,
-      namespace: options.namespace,
-      service,
-      sourceHeadSha: sourceRolloutTruthEnvironment.sourceHeadSha,
-      gitopsRevision: sourceRolloutTruthEnvironment.gitopsRevision,
-      runtimeKits: runtimeAdmission.runtimeKits,
-      kubernetesEvidence: failureDomainKubernetesEvidence,
-      controllerWitness,
-      routeProbe,
-      database,
-      watchReliability: watchReliabilityStatus,
-      rolloutHealth,
-      actionSloBudgets: negativeEvidenceRouter.budgets,
-      torghutActionSloBudgets: negativeEvidenceRouter.torghutBudgets,
-    })
-    const materialArtifacts = await buildControlPlaneMaterialActionArtifacts({
+  const buildMaterialStatus = (torghutConsumerEvidence: TorghutConsumerEvidenceResolution) =>
+    buildControlPlaneMaterialStatus({
       now,
       namespace: options.namespace,
       service,
       kube: kubeGateway,
-      agentRunIngestion,
-      admissionPassports: runtimeAdmission.admissionPassports,
-      dependencyQuorum,
       workflows,
-      negativeEvidenceRouter,
-      reconciledActionClocks,
-      rolloutHealth,
-      controllerWitness,
-      database,
       watchReliability: watchReliabilityStatus,
-      empiricalServices,
-      sourceRolloutTruthExchange,
+      agentRunIngestion,
+      database,
+      rolloutHealth,
+      dependencyQuorum,
       failureDomainLeases,
+      empiricalServices,
       executionTrust,
+      runtimeAdmission,
+      controllerWitness,
+      torghutConsumerEvidence,
+      sourceRolloutTruthEnvironment,
+      failureDomainKubernetesEvidence,
       routeProbe,
-      torghutConsumerEvidence: torghutConsumerEvidence.status,
+      reconciledActionClocks,
       projectionForeclosureEvidence,
       resolveRepairScheduleAttempts: deps.resolveRepairScheduleAttempts,
     })
-
-    return { negativeEvidenceRouter, sourceRolloutTruthExchange, materialArtifacts }
-  }
 
   let torghutConsumerEvidence = await (deps.resolveTorghutConsumerEvidence ?? resolveTorghutConsumerEvidence)(now)
   let materialStatus = await buildMaterialStatus(torghutConsumerEvidence)
@@ -721,6 +680,20 @@ export const buildControlPlaneStatus = async (
         mode: resolveRepairSlotEscrowMode(),
       })
     : null
+  const controllerIngestionSettlement = buildControllerIngestionSettlement({
+    now,
+    namespace: options.namespace,
+    servingReadiness: readyTruthArbiter.serving_readiness,
+    controllerWitness,
+    agentRunIngestion,
+    executionTrust: executionTrust.executionTrust,
+    database,
+    rolloutHealth,
+    sourceServingContractVerdictExchange,
+    verifyTrustForeclosureBoard,
+    repairSlotEscrow,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+  })
 
   const degradedComponents = buildControlPlaneDegradedComponents({
     agentRunIngestion,
@@ -767,6 +740,7 @@ export const buildControlPlaneStatus = async (
     dependency_verdict_exchange: dependencyVerdictExchange,
     source_serving_contract_verdict_exchange: sourceServingContractVerdictExchange,
     control_plane_controller_witness: controllerWitness,
+    controller_ingestion_settlement: controllerIngestionSettlement,
     material_action_verdict_epoch: materialActionVerdictEpoch,
     material_action_verdicts: materialActionVerdictEpoch.final_verdicts,
     material_action_activation_receipts: materialActionActivationReceipts,

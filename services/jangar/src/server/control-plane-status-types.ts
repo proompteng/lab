@@ -7,6 +7,7 @@ import type {
   AuthorityProvenanceSettlement,
   ClearanceMarketLedger,
   ConsumerEvidenceLeaseSet,
+  ControllerIngestionSettlement,
   ControlPlaneControllerWitnessQuorum,
   DatabaseMigrationConsistency,
   DependencyVerdictExchange,
@@ -196,6 +197,7 @@ export type ControlPlaneStatus = {
   dependency_verdict_exchange: DependencyVerdictExchange
   source_serving_contract_verdict_exchange: SourceServingContractVerdictExchange
   control_plane_controller_witness: ControlPlaneControllerWitnessQuorum
+  controller_ingestion_settlement: ControllerIngestionSettlement
   material_action_verdict_epoch: MaterialActionVerdictEpoch
   material_action_verdicts: MaterialActionVerdict[]
   material_action_activation_receipts: MaterialActionActivationReceipt[]
