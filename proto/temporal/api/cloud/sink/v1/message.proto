@@ -15,7 +15,7 @@ message S3Spec {
 
     // The name of the destination S3 bucket where Temporal will send data.
     string bucket_name = 2;
-    
+
     // The region where the S3 bucket is located.
     string region = 3;
 

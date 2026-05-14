@@ -62,7 +62,7 @@ message StackTraceFileLocation {
     // Function name this line belongs to, if applicable.
     // Used for falling back to stack trace view.
     string function_name = 4;
-    
+
     // Flag to communicate whether a location should be hidden by default in the stack view.
     bool internal_code = 5;
 }

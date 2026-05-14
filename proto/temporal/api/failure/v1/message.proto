@@ -35,9 +35,13 @@ message TimeoutFailureInfo {
 
 message CanceledFailureInfo {
     temporal.api.common.v1.Payloads details = 1;
+    // The identity of the worker or client that requested the cancellation.
+    string identity = 2;
 }
 
 message TerminatedFailureInfo {
+    // The identity of the worker or client that requested the termination.
+    string identity = 1;
 }
 
 message ServerFailureInfo {
@@ -66,6 +70,7 @@ message ChildWorkflowExecutionFailureInfo {
     temporal.api.enums.v1.RetryState retry_state = 6;
 }
 
+// Representation of the Temporal SDK NexusOperationError object that is returned to workflow callers.
 message NexusOperationFailureInfo {
     // The NexusOperationScheduled event ID.
     int64 scheduled_event_id = 1;

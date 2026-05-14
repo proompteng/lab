@@ -43,7 +43,7 @@ message LogRecord {
 }
 
 message Principal {
-  // The type of the principal. 
+  // The type of the principal.
   // Possible type values: user, serviceaccount.
   string type = 1;
 

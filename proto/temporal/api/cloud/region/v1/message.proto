@@ -14,7 +14,7 @@ message Region {
     string id = 1;
     // The name of the cloud provider that's hosting the region.
     // Currently only "aws" is supported.
-    // Deprecated: Not supported after v0.3.0 api version. Use cloud_provider instead. 
+    // Deprecated: Not supported after v0.3.0 api version. Use cloud_provider instead.
     // temporal:versioning:max_version=v0.3.0
     string cloud_provider_deprecated = 2 [deprecated = true];
     // The cloud provider that's hosting the region.

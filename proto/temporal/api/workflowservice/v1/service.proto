@@ -12,6 +12,7 @@ option csharp_namespace = "Temporalio.Api.WorkflowService.V1";
 
 import "temporal/api/workflowservice/v1/request_response.proto";
 import "google/api/annotations.proto";
+import "temporal/api/protometa/v1/annotations.proto";
 
 // WorkflowService API defines how Temporal SDKs and other clients interact with the Temporal server
 // to create and interact with workflows and activities.
@@ -101,6 +102,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{workflow_id}"
+        };
     }
 
     // ExecuteMultiOperation executes multiple operations within a single workflow.
@@ -111,15 +116,12 @@ service WorkflowService {
     // Upon failure, it returns `MultiOperationExecutionFailure` where the status code
     // equals the status code of the *first* operation that failed to be started.
     //
-    // NOTE: Experimental API.
+    // (-- api-linter: core::0127::http-annotation=disabled
+    //     aip.dev/not-precedent: To be exposed over HTTP in the future. --)
     rpc ExecuteMultiOperation (ExecuteMultiOperationRequest) returns (ExecuteMultiOperationResponse) {
-        option (google.api.http) = {
-            post: "/namespaces/{namespace}/workflows/execute-multi-operation"
-            body: "*"
-            additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/workflows/execute-multi-operation"
-                body: "*"
-            }
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "{resource_id}"
         };
     }
 
@@ -131,6 +133,10 @@ service WorkflowService {
             additional_bindings {
                 get: "/api/v1/namespaces/{namespace}/workflows/{execution.workflow_id}/history"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{execution.workflow_id}"
         };
     }
 
@@ -144,6 +150,10 @@ service WorkflowService {
                 get: "/api/v1/namespaces/{namespace}/workflows/{execution.workflow_id}/history-reverse"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{execution.workflow_id}"
+        };
     }
 
     // PollWorkflowTaskQueue is called by workers to make progress on workflows.
@@ -156,6 +166,10 @@ service WorkflowService {
     // (-- api-linter: core::0127::http-annotation=disabled
     //     aip.dev/not-precedent: We do not expose worker API to HTTP. --)
     rpc PollWorkflowTaskQueue (PollWorkflowTaskQueueRequest) returns (PollWorkflowTaskQueueResponse) {
+      option (temporal.api.protometa.v1.request_header) = {
+        header: "temporal-resource-id"
+        value: "poller:{poller_group_id}"
+      };
     }
 
     // RespondWorkflowTaskCompleted is called by workers to successfully complete workflow tasks
@@ -168,6 +182,10 @@ service WorkflowService {
     // (-- api-linter: core::0127::http-annotation=disabled
     //     aip.dev/not-precedent: We do not expose worker API to HTTP. --)
     rpc RespondWorkflowTaskCompleted (RespondWorkflowTaskCompletedRequest) returns (RespondWorkflowTaskCompletedResponse) {
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "{resource_id}"
+        };
     }
 
     // RespondWorkflowTaskFailed is called by workers to indicate the processing of a workflow task
@@ -183,6 +201,10 @@ service WorkflowService {
     // (-- api-linter: core::0127::http-annotation=disabled
     //     aip.dev/not-precedent: We do not expose worker API to HTTP. --)
     rpc RespondWorkflowTaskFailed (RespondWorkflowTaskFailedRequest) returns (RespondWorkflowTaskFailedResponse) {
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "{resource_id}"
+        };
     }
 
     // PollActivityTaskQueue is called by workers to process activity tasks from a specific task
@@ -201,6 +223,10 @@ service WorkflowService {
     // (-- api-linter: core::0127::http-annotation=disabled
     //     aip.dev/not-precedent: We do not expose worker API to HTTP. --)
     rpc PollActivityTaskQueue (PollActivityTaskQueueRequest) returns (PollActivityTaskQueueResponse) {
+      option (temporal.api.protometa.v1.request_header) = {
+        header: "temporal-resource-id"
+        value: "poller:{poller_group_id}"
+      };
     }
 
     // RecordActivityTaskHeartbeat is optionally called by workers while they execute activities.
@@ -218,12 +244,16 @@ service WorkflowService {
     // indicates whether cancellation has been requested for the activity.
     rpc RecordActivityTaskHeartbeat (RecordActivityTaskHeartbeatRequest) returns (RecordActivityTaskHeartbeatResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/activities/heartbeat"
+            post: "/namespaces/{namespace}/activity-heartbeat"
             body: "*"
             additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/activities/heartbeat"
+                post: "/api/v1/namespaces/{namespace}/activity-heartbeat"
                 body: "*"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "{resource_id}"
         };
     }
 
@@ -234,12 +264,27 @@ service WorkflowService {
     //     aip.dev/not-precedent: "By" is used to indicate request type. --)
     rpc RecordActivityTaskHeartbeatById (RecordActivityTaskHeartbeatByIdRequest) returns (RecordActivityTaskHeartbeatByIdResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/activities/heartbeat-by-id"
+            // Standalone
+            post: "/namespaces/{namespace}/activities/{activity_id}/heartbeat"
             body: "*"
             additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/activities/heartbeat-by-id"
+                post: "/api/v1/namespaces/{namespace}/activities/{activity_id}/heartbeat"
                 body: "*"
             }
+
+            // Workflow
+            additional_bindings {
+                post: "/namespaces/{namespace}/workflows/{workflow_id}/activities/{activity_id}/heartbeat"
+                body: "*"
+            }
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{workflow_id}/activities/{activity_id}/heartbeat"
+                body: "*"
+            }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "{resource_id}"
         };
     }
 
@@ -251,12 +296,16 @@ service WorkflowService {
     // no longer valid due to activity timeout, already being completed, or never having existed.
     rpc RespondActivityTaskCompleted (RespondActivityTaskCompletedRequest) returns (RespondActivityTaskCompletedResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/activities/complete"
+            post: "/namespaces/{namespace}/activity-complete"
             body: "*"
             additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/activities/complete"
+                post: "/api/v1/namespaces/{namespace}/activity-complete"
                 body: "*"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "{resource_id}"
         };
     }
 
@@ -267,12 +316,27 @@ service WorkflowService {
     //     aip.dev/not-precedent: "By" is used to indicate request type. --)
     rpc RespondActivityTaskCompletedById (RespondActivityTaskCompletedByIdRequest) returns (RespondActivityTaskCompletedByIdResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/activities/complete-by-id"
+            // Standalone
+            post: "/namespaces/{namespace}/activities/{activity_id}/complete"
             body: "*"
             additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/activities/complete-by-id"
+                post: "/api/v1/namespaces/{namespace}/activities/{activity_id}/complete"
                 body: "*"
             }
+
+            // Workflow
+            additional_bindings {
+                post: "/namespaces/{namespace}/workflows/{workflow_id}/activities/{activity_id}/complete"
+                body: "*"
+            }
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{workflow_id}/activities/{activity_id}/complete"
+                body: "*"
+            }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "{resource_id}"
         };
     }
 
@@ -283,12 +347,16 @@ service WorkflowService {
     // longer valid due to activity timeout, already being completed, or never having existed.
     rpc RespondActivityTaskFailed (RespondActivityTaskFailedRequest) returns (RespondActivityTaskFailedResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/activities/fail"
+            post: "/namespaces/{namespace}/activity-fail"
             body: "*"
             additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/activities/fail"
+                post: "/api/v1/namespaces/{namespace}/activity-fail"
                 body: "*"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "{resource_id}"
         };
     }
 
@@ -299,12 +367,27 @@ service WorkflowService {
     //     aip.dev/not-precedent: "By" is used to indicate request type. --)
     rpc RespondActivityTaskFailedById (RespondActivityTaskFailedByIdRequest) returns (RespondActivityTaskFailedByIdResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/activities/fail-by-id"
+            // Standalone
+            post: "/namespaces/{namespace}/activities/{activity_id}/fail"
             body: "*"
             additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/activities/fail-by-id"
+                post: "/api/v1/namespaces/{namespace}/activities/{activity_id}/fail"
                 body: "*"
             }
+
+            // Workflow
+            additional_bindings {
+                post: "/namespaces/{namespace}/workflows/{workflow_id}/activities/{activity_id}/fail"
+                body: "*"
+            }
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{workflow_id}/activities/{activity_id}/fail"
+                body: "*"
+            }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "{resource_id}"
         };
     }
 
@@ -315,12 +398,16 @@ service WorkflowService {
     // no longer valid due to activity timeout, already being completed, or never having existed.
     rpc RespondActivityTaskCanceled (RespondActivityTaskCanceledRequest) returns (RespondActivityTaskCanceledResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/activities/cancel"
+            post: "/namespaces/{namespace}/activity-resolve-as-canceled"
             body: "*"
             additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/activities/cancel"
+                post: "/api/v1/namespaces/{namespace}/activity-resolve-as-canceled"
                 body: "*"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "{resource_id}"
         };
     }
 
@@ -331,12 +418,27 @@ service WorkflowService {
     //     aip.dev/not-precedent: "By" is used to indicate request type. --)
     rpc RespondActivityTaskCanceledById (RespondActivityTaskCanceledByIdRequest) returns (RespondActivityTaskCanceledByIdResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/activities/cancel-by-id"
+            // Standalone
+            post: "/namespaces/{namespace}/activities/{activity_id}/resolve-as-canceled"
             body: "*"
             additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/activities/cancel-by-id"
+                post: "/api/v1/namespaces/{namespace}/activities/{activity_id}/resolve-as-canceled"
                 body: "*"
             }
+
+            // Workflow
+            additional_bindings {
+                post: "/namespaces/{namespace}/workflows/{workflow_id}/activities/{activity_id}/resolve-as-canceled"
+                body: "*"
+            }
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{workflow_id}/activities/{activity_id}/resolve-as-canceled"
+                body: "*"
+            }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "{resource_id}"
         };
     }
 
@@ -355,6 +457,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{workflow_execution.workflow_id}"
+        };
     }
 
     // SignalWorkflowExecution is used to send a signal to a running workflow execution.
@@ -369,6 +475,10 @@ service WorkflowService {
                 post: "/api/v1/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/signal/{signal_name}"
                 body: "*"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{workflow_execution.workflow_id}"
         };
     }
 
@@ -393,6 +503,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{workflow_id}"
+        };
     }
 
     // ResetWorkflowExecution will reset an existing workflow execution to a specified
@@ -409,6 +523,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{workflow_execution.workflow_id}"
+        };
     }
 
     // TerminateWorkflowExecution terminates an existing workflow execution by recording a
@@ -423,6 +541,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{workflow_execution.workflow_id}"
+        };
     }
 
     // DeleteWorkflowExecution asynchronously deletes a specific Workflow Execution (when
@@ -432,7 +554,12 @@ service WorkflowService {
     //
     // (-- api-linter: core::0127::http-annotation=disabled
     //     aip.dev/not-precedent: Workflow deletion not exposed to HTTP, users should use cancel or terminate. --)
-    rpc DeleteWorkflowExecution (DeleteWorkflowExecutionRequest) returns (DeleteWorkflowExecutionResponse) {}
+    rpc DeleteWorkflowExecution (DeleteWorkflowExecutionRequest) returns (DeleteWorkflowExecutionResponse) {
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{workflow_execution.workflow_id}"
+        };
+    }
 
     // ListOpenWorkflowExecutions is a visibility API to list the open executions in a specific namespace.
     //
@@ -499,7 +626,12 @@ service WorkflowService {
     //
     // (-- api-linter: core::0127::http-annotation=disabled
     //     aip.dev/not-precedent: We do not expose worker API to HTTP. --)
-    rpc RespondQueryTaskCompleted (RespondQueryTaskCompletedRequest) returns (RespondQueryTaskCompletedResponse) {}
+    rpc RespondQueryTaskCompleted (RespondQueryTaskCompletedRequest) returns (RespondQueryTaskCompletedResponse) {
+      option (temporal.api.protometa.v1.request_header) = {
+        header: "temporal-resource-id"
+        value: "poller:{poller_group_id}"
+      };
+    }
 
     // ResetStickyTaskQueue resets the sticky task queue related information in the mutable state of
     // a given workflow. This is prudent for workers to perform if a workflow has been paged out of
@@ -516,6 +648,10 @@ service WorkflowService {
     // (-- api-linter: core::0127::http-annotation=disabled
     //     aip.dev/not-precedent: We do not expose worker API to HTTP. --)
     rpc ResetStickyTaskQueue (ResetStickyTaskQueueRequest) returns (ResetStickyTaskQueueResponse) {
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{execution.workflow_id}"
+        };
     }
 
     // ShutdownWorker is used to indicate that the given sticky task
@@ -544,6 +680,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{execution.workflow_id}"
+        };
     }
 
     // DescribeWorkflowExecution returns information about the specified workflow execution.
@@ -553,6 +693,10 @@ service WorkflowService {
             additional_bindings {
                 get: "/api/v1/namespaces/{namespace}/workflows/{execution.workflow_id}"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{execution.workflow_id}"
         };
     }
 
@@ -566,6 +710,10 @@ service WorkflowService {
             additional_bindings {
                 get: "/api/v1/namespaces/{namespace}/task-queues/{task_queue.name}"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "taskqueue:{task_queue.name}"
         };
     }
 
@@ -592,6 +740,10 @@ service WorkflowService {
     // (-- api-linter: core::0127::http-annotation=disabled
     //     aip.dev/not-precedent: We do not expose this low-level API to HTTP. --)
     rpc ListTaskQueuePartitions(ListTaskQueuePartitionsRequest) returns (ListTaskQueuePartitionsResponse) {
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "taskqueue:{task_queue.name}"
+        };
     }
 
     // Creates a new schedule.
@@ -604,6 +756,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "schedule:{schedule_id}"
+        };
     }
 
     // Returns the schedule description and current state of an existing schedule.
@@ -613,6 +769,10 @@ service WorkflowService {
             additional_bindings {
                 get: "/api/v1/namespaces/{namespace}/schedules/{schedule_id}"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "schedule:{schedule_id}"
         };
     }
 
@@ -626,6 +786,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "schedule:{schedule_id}"
+        };
     }
 
     // Makes a specific change to a schedule or triggers an immediate action.
@@ -638,6 +802,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "schedule:{schedule_id}"
+        };
     }
 
     // Lists matching times within a range.
@@ -647,6 +815,10 @@ service WorkflowService {
             additional_bindings {
                 get: "/api/v1/namespaces/{namespace}/schedules/{schedule_id}/matching-times"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "schedule:{schedule_id}"
         };
     }
 
@@ -658,6 +830,10 @@ service WorkflowService {
                 delete: "/api/v1/namespaces/{namespace}/schedules/{schedule_id}"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "schedule:{schedule_id}"
+        };
     }
 
     // List all schedules in a namespace.
@@ -666,6 +842,16 @@ service WorkflowService {
             get: "/namespaces/{namespace}/schedules"
             additional_bindings {
                 get: "/api/v1/namespaces/{namespace}/schedules"
+            }
+        };
+    }
+
+    // CountSchedules is a visibility API to count schedules in a specific namespace.
+    rpc CountSchedules (CountSchedulesRequest) returns (CountSchedulesResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/schedule-count"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/schedule-count"
             }
         };
     }
@@ -781,6 +967,10 @@ service WorkflowService {
                 get: "/api/v1/namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "deployment:{deployment_version.deployment_name}"
+        };
     }
 
     // Lists worker deployments in the namespace. Optionally can filter based on deployment series
@@ -852,6 +1042,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "deployment:{deployment_name}"
+        };
     }
 
     // Describes a Worker Deployment.
@@ -862,6 +1056,10 @@ service WorkflowService {
             additional_bindings {
                 get: "/api/v1/namespaces/{namespace}/worker-deployments/{deployment_name}"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "deployment:{deployment_name}"
         };
     }
 
@@ -874,6 +1072,10 @@ service WorkflowService {
             additional_bindings {
                 delete: "/api/v1/namespaces/{namespace}/worker-deployments/{deployment_name}"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "deployment:{deployment_name}"
         };
     }
 
@@ -892,6 +1094,10 @@ service WorkflowService {
                 delete: "/api/v1/namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "deployment:{deployment_version.deployment_name}"
+        };
     }
 
     // Set/unset the Ramping Version of a Worker Deployment and its ramp percentage. Can be used for
@@ -906,6 +1112,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "deployment:{deployment_name}"
+        };
     }
 
     // Lists all Worker Deployments that are tracked in the Namespace.
@@ -915,6 +1125,62 @@ service WorkflowService {
             get: "/namespaces/{namespace}/worker-deployments"
             additional_bindings {
                 get: "/api/v1/namespaces/{namespace}/worker-deployments"
+            }
+        };
+    }
+
+    // Creates a new Worker Deployment.
+    //
+    // Experimental. This API might significantly change or be removed in a
+    // future release.
+    rpc CreateWorkerDeployment (CreateWorkerDeploymentRequest) returns (CreateWorkerDeploymentResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/worker-deployments/{deployment_name}"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/worker-deployments/{deployment_name}"
+                body: "*"
+            }
+        };
+    }
+
+    // Creates a new Worker Deployment Version.
+    //
+    // Experimental. This API might significantly change or be removed in a
+    // future release.
+    rpc CreateWorkerDeploymentVersion (CreateWorkerDeploymentVersionRequest) returns (CreateWorkerDeploymentVersionResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}"
+                body: "*"
+            }
+        };
+    }
+
+    // Updates the compute config attached to a Worker Deployment Version.
+    // Experimental. This API might significantly change or be removed in a future release.
+    rpc UpdateWorkerDeploymentVersionComputeConfig (UpdateWorkerDeploymentVersionComputeConfigRequest) returns (UpdateWorkerDeploymentVersionComputeConfigResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}/update-compute-config"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}/update-compute-config"
+                body: "*"
+            }
+        };
+    }
+
+    // Validates the compute config without attaching it to a Worker Deployment Version.
+    // Experimental. This API might significantly change or be removed in a future release.
+    rpc ValidateWorkerDeploymentVersionComputeConfig (ValidateWorkerDeploymentVersionComputeConfigRequest) returns (ValidateWorkerDeploymentVersionComputeConfigResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}/validate-compute-config"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}/validate-compute-config"
+                body: "*"
             }
         };
     }
@@ -930,6 +1196,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "deployment:{deployment_version.deployment_name}"
+        };
     }
 
     // Set/unset the ManagerIdentity of a Worker Deployment.
@@ -943,6 +1213,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "deployment:{deployment_name}"
+        };
     }
 
     // Invokes the specified Update function on user Workflow code.
@@ -955,6 +1229,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{workflow_execution.workflow_id}"
+        };
     }
 
     // Polls a Workflow Execution for the outcome of a Workflow Update
@@ -965,6 +1243,10 @@ service WorkflowService {
     // (-- api-linter: core::0127::http-annotation=disabled
     //     aip.dev/not-precedent: We don't expose update polling API to HTTP in favor of a potential future non-blocking form. --)
     rpc PollWorkflowExecutionUpdate(PollWorkflowExecutionUpdateRequest) returns (PollWorkflowExecutionUpdateResponse) {
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{update_ref.workflow_execution.workflow_id}"
+        };
     }
 
     // StartBatchOperation starts a new batch operation
@@ -976,6 +1258,10 @@ service WorkflowService {
                 post: "/api/v1/namespaces/{namespace}/batch-operations/{job_id}"
                 body: "*"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "batch:{job_id}"
         };
     }
 
@@ -989,6 +1275,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "batch:{job_id}"
+        };
     }
 
     // DescribeBatchOperation returns the information about a batch operation
@@ -998,6 +1288,10 @@ service WorkflowService {
             additional_bindings {
                 get: "/api/v1/namespaces/{namespace}/batch-operations/{job_id}"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "batch:{job_id}"
         };
     }
 
@@ -1015,18 +1309,30 @@ service WorkflowService {
     // (-- api-linter: core::0127::http-annotation=disabled
     //     aip.dev/not-precedent: We do not expose worker API to HTTP. --)
     rpc PollNexusTaskQueue(PollNexusTaskQueueRequest) returns (PollNexusTaskQueueResponse) {
+      option (temporal.api.protometa.v1.request_header) = {
+        header: "temporal-resource-id"
+        value: "poller:{poller_group_id}"
+      };
     }
 
     // RespondNexusTaskCompleted is called by workers to respond to Nexus tasks received via PollNexusTaskQueue.
     // (-- api-linter: core::0127::http-annotation=disabled
     //     aip.dev/not-precedent: We do not expose worker API to HTTP. --)
     rpc RespondNexusTaskCompleted(RespondNexusTaskCompletedRequest) returns (RespondNexusTaskCompletedResponse) {
+      option (temporal.api.protometa.v1.request_header) = {
+        header: "temporal-resource-id"
+        value: "poller:{poller_group_id}"
+      };
     }
 
     // RespondNexusTaskFailed is called by workers to fail Nexus tasks received via PollNexusTaskQueue.
     // (-- api-linter: core::0127::http-annotation=disabled
     //     aip.dev/not-precedent: We do not expose worker API to HTTP. --)
     rpc RespondNexusTaskFailed(RespondNexusTaskFailedRequest) returns (RespondNexusTaskFailedResponse) {
+      option (temporal.api.protometa.v1.request_header) = {
+        header: "temporal-resource-id"
+        value: "poller:{poller_group_id}"
+      };
     }
 
     // UpdateActivityOptions is called by the client to update the options of an activity by its ID or type.
@@ -1035,12 +1341,16 @@ service WorkflowService {
     // structured to work well for standalone activities.
     rpc UpdateActivityOptions (UpdateActivityOptionsRequest) returns (UpdateActivityOptionsResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/activities/update-options"
+            post: "/namespaces/{namespace}/activities-deprecated/update-options"
             body: "*"
             additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/activities/update-options"
+                post: "/api/v1/namespaces/{namespace}/activities-deprecated/update-options"
                 body: "*"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{execution.workflow_id}"
         };
     }
 
@@ -1053,6 +1363,10 @@ service WorkflowService {
                 post: "/api/v1/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/update-options"
                 body: "*"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{workflow_execution.workflow_id}"
         };
     }
 
@@ -1076,12 +1390,16 @@ service WorkflowService {
     // structured to work well for standalone activities.
     rpc PauseActivity (PauseActivityRequest) returns (PauseActivityResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/activities/pause"
+            post: "/namespaces/{namespace}/activities-deprecated/pause"
             body: "*"
             additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/activities/pause"
+                post: "/api/v1/namespaces/{namespace}/activities-deprecated/pause"
                 body: "*"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{execution.workflow_id}"
         };
     }
 
@@ -1102,12 +1420,16 @@ service WorkflowService {
     // structured to work well for standalone activities.
     rpc UnpauseActivity (UnpauseActivityRequest) returns (UnpauseActivityResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/activities/unpause"
+            post: "/namespaces/{namespace}/activities-deprecated/unpause"
             body: "*"
             additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/activities/unpause"
+                post: "/api/v1/namespaces/{namespace}/activities-deprecated/unpause"
                 body: "*"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{execution.workflow_id}"
         };
     }
 
@@ -1132,12 +1454,16 @@ service WorkflowService {
     // structured to work well for standalone activities.
     rpc ResetActivity (ResetActivityRequest) returns (ResetActivityResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/activities/reset"
+            post: "/namespaces/{namespace}/activities-deprecated/reset"
             body: "*"
             additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/activities/reset"
+                post: "/api/v1/namespaces/{namespace}/activities-deprecated/reset"
                 body: "*"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{execution.workflow_id}"
         };
     }
 
@@ -1213,6 +1539,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "{resource_id}"
+        };
     };
 
     // ListWorkers is a visibility API to list worker status information in a specific namespace.
@@ -1238,6 +1568,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "taskqueue:{task_queue}"
+        };
     }
 
     // FetchWorkerConfig returns the worker configuration for a specific worker.
@@ -1249,6 +1583,10 @@ service WorkflowService {
                 post: "/api/v1/namespaces/{namespace}/workers/fetch-config"
                 body: "*"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "{resource_id}"
         };
     }
 
@@ -1264,6 +1602,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "{resource_id}"
+        };
     }
 
     // DescribeWorker returns information about the specified worker.
@@ -1273,6 +1615,10 @@ service WorkflowService {
             additional_bindings {
                 get: "/api/v1/namespaces/{namespace}/workers/describe/{worker_instance_key}"
             }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "worker:{worker_instance_key}"
         };
     }
 
@@ -1288,6 +1634,14 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/workflows/{workflow_id}/pause"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{workflow_id}/pause"
+                body: "*"
+            }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{workflow_id}"
         };
     }
 
@@ -1300,6 +1654,14 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/workflows/{workflow_id}/unpause"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{workflow_id}/unpause"
+                body: "*"
+            }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "workflow:{workflow_id}"
         };
     }
 
@@ -1313,6 +1675,25 @@ service WorkflowService {
             body: "*"
             additional_bindings {
                 post: "/api/v1/namespaces/{namespace}/activities/{activity_id}"
+                body: "*"
+            }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "activity:{activity_id}"
+        };
+    }
+
+    // StartNexusOperationExecution starts a new Nexus operation.
+    //
+    // Returns a `NexusOperationExecutionAlreadyStarted` error if an instance already exists with same operation ID in this
+    // namespace unless permitted by the specified ID conflict policy.
+    rpc StartNexusOperationExecution (StartNexusOperationExecutionRequest) returns (StartNexusOperationExecutionResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/nexus-operations/{operation_id}"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/nexus-operations/{operation_id}"
                 body: "*"
             }
         };
@@ -1330,6 +1711,24 @@ service WorkflowService {
                 get: "/api/v1/namespaces/{namespace}/activities/{activity_id}"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "activity:{activity_id}"
+        };
+    }
+
+    // DescribeNexusOperationExecution returns information about a Nexus operation.
+    // Supported use cases include:
+    // - Get current operation info without waiting
+    // - Long-poll for next state change and return new operation info
+    // Response can optionally include operation input or outcome (if the operation has completed).
+    rpc DescribeNexusOperationExecution (DescribeNexusOperationExecutionRequest) returns (DescribeNexusOperationExecutionResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/nexus-operations/{operation_id}"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/nexus-operations/{operation_id}"
+            }
+        };
     }
 
     // PollActivityExecution long-polls for an activity execution to complete and returns the
@@ -1339,6 +1738,21 @@ service WorkflowService {
             get: "/namespaces/{namespace}/activities/{activity_id}/outcome"
             additional_bindings {
                 get: "/api/v1/namespaces/{namespace}/activities/{activity_id}/outcome"
+            }
+        };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "activity:{activity_id}"
+        };
+    }
+
+    // PollNexusOperationExecution long-polls for a Nexus operation for a given wait stage to complete and returns
+    // the outcome (result or failure).
+    rpc PollNexusOperationExecution (PollNexusOperationExecutionRequest) returns (PollNexusOperationExecutionResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/nexus-operations/{operation_id}/poll"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/nexus-operations/{operation_id}/poll"
             }
         };
     }
@@ -1353,12 +1767,32 @@ service WorkflowService {
         };
     }
 
+    // ListNexusOperationExecutions is a visibility API to list Nexus operations in a specific namespace.
+    rpc ListNexusOperationExecutions (ListNexusOperationExecutionsRequest) returns (ListNexusOperationExecutionsResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/nexus-operations"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/nexus-operations"
+            }
+        };
+    }
+
     // CountActivityExecutions is a visibility API to count activity executions in a specific namespace.
     rpc CountActivityExecutions (CountActivityExecutionsRequest) returns (CountActivityExecutionsResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/activity-count"
             additional_bindings {
                 get: "/api/v1/namespaces/{namespace}/activity-count"
+            }
+        };
+    }
+
+    // CountNexusOperationExecutions is a visibility API to count Nexus operations in a specific namespace.
+    rpc CountNexusOperationExecutions (CountNexusOperationExecutionsRequest) returns (CountNexusOperationExecutionsResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/nexus-operation-count"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/nexus-operation-count"
             }
         };
     }
@@ -1378,6 +1812,26 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "activity:{activity_id}"
+        };
+    }
+
+    // RequestCancelNexusOperationExecution requests cancellation of a Nexus operation.
+    //
+    // Requesting to cancel an operation does not automatically transition the operation to canceled status.
+    // The operation will only transition to canceled status if it supports cancellation and the handler
+    // processes the cancellation request.
+    rpc RequestCancelNexusOperationExecution (RequestCancelNexusOperationExecutionRequest) returns (RequestCancelNexusOperationExecutionResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/nexus-operations/{operation_id}/cancel"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/nexus-operations/{operation_id}/cancel"
+                body: "*"
+            }
+        };
     }
 
     // TerminateActivityExecution terminates an existing activity execution immediately.
@@ -1393,6 +1847,10 @@ service WorkflowService {
                 body: "*"
             }
         };
+        option (temporal.api.protometa.v1.request_header) = {
+            header: "temporal-resource-id"
+            value: "activity:{activity_id}"
+        };
     }
 
     // DeleteActivityExecution asynchronously deletes a specific activity execution (when
@@ -1403,4 +1861,27 @@ service WorkflowService {
     // (-- api-linter: core::0127::http-annotation=disabled
     //     aip.dev/not-precedent: Activity deletion not exposed to HTTP, users should use cancel or terminate. --)
     rpc DeleteActivityExecution (DeleteActivityExecutionRequest) returns (DeleteActivityExecutionResponse) {}
+
+    // TerminateNexusOperationExecution terminates an existing Nexus operation immediately.
+    //
+    // Termination happens immediately and the operation handler cannot react to it. A terminated operation will have
+    // its outcome set to a failure with a termination reason.
+    rpc TerminateNexusOperationExecution (TerminateNexusOperationExecutionRequest) returns (TerminateNexusOperationExecutionResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/nexus-operations/{operation_id}/terminate"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/nexus-operations/{operation_id}/terminate"
+                body: "*"
+            }
+        };
+    }
+
+    // DeleteNexusOperationExecution asynchronously deletes a specific Nexus operation run (when
+    // run_id is provided) or the latest run (when run_id is not provided). If the operation
+    // is running, it will be terminated before deletion.
+    //
+    // (-- api-linter: core::0127::http-annotation=disabled
+    //     aip.dev/not-precedent: Nexus operation deletion not exposed to HTTP, users should use cancel or terminate. --)
+    rpc DeleteNexusOperationExecution (DeleteNexusOperationExecutionRequest) returns (DeleteNexusOperationExecutionResponse) {}
 }

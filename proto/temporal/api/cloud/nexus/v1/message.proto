@@ -19,7 +19,7 @@ message EndpointSpec {
     // This field is mutable.
     string name = 1;
 
-    // Indicates where the endpoint should forward received nexus requests to. 
+    // Indicates where the endpoint should forward received nexus requests to.
     EndpointTargetSpec target_spec = 2;
 
     // The set of policies (e.g. authorization) for the endpoint. Each request's caller
