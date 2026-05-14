@@ -18,6 +18,16 @@ from app.trading.discovery.mlx_training_data import (
 )
 
 
+def _capital_profile(spec: object) -> object:
+    strategy_overrides = getattr(spec, "strategy_overrides", {})
+    params = (
+        strategy_overrides.get("params")
+        if isinstance(strategy_overrides, dict)
+        else None
+    )
+    return params.get("capital_profile") if isinstance(params, dict) else None
+
+
 class TestMlxTrainingData(TestCase):
     def test_training_rows_build_from_evidence_bundles_and_rank_deterministically(
         self,
@@ -40,8 +50,7 @@ class TestMlxTrainingData(TestCase):
         evidenced_spec = next(
             spec
             for spec in specs
-            if spec.strategy_overrides.get("capital_profile")
-            == "initial_equity_cash_constrained_1x"
+            if _capital_profile(spec) == "initial_equity_cash_constrained_1x"
         )
         bundles = [
             evidence_bundle_from_frontier_candidate(
@@ -127,14 +136,12 @@ class TestMlxTrainingData(TestCase):
         over_budget = next(
             spec
             for spec in specs
-            if spec.strategy_overrides.get("capital_profile")
-            != "initial_equity_cash_constrained_1x"
+            if _capital_profile(spec) != "initial_equity_cash_constrained_1x"
         )
         feasible = next(
             spec
             for spec in specs
-            if spec.strategy_overrides.get("capital_profile")
-            == "initial_equity_cash_constrained_1x"
+            if _capital_profile(spec) == "initial_equity_cash_constrained_1x"
         )
         bundles = [
             evidence_bundle_from_frontier_candidate(

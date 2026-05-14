@@ -311,6 +311,7 @@ jobs:
   pytest-shards:
     name: Pytest shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs:
       - changes
     if: ${{ needs.changes.outputs.service == 'true' }}
@@ -354,7 +355,7 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t TEST_FILES < <(
-            find tests -name 'test_*.py' -print |
+            find tests -name 'test_*.py' ! -path 'tests/test_run_whitepaper_autoresearch_profit_target.py' -print |
               sort |
               awk -v shard="${SHARD_INDEX}" -v total="${SHARD_TOTAL}" '((NR - 1) % total) == shard'
           )
@@ -382,12 +383,86 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
 
+  pytest-autoresearch-runner:
+    name: Pytest autoresearch runner ${{ matrix.slice }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      - changes
+    if: ${{ needs.changes.outputs.service == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        slice: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache uv downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-python-3.11-torghut-uv-${{ hashFiles('services/torghut/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-python-3.11-torghut-uv-
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Sync dependencies (locked)
+        working-directory: services/torghut
+        run: uv sync --frozen --extra dev
+
+      - name: Pytest autoresearch runner coverage
+        working-directory: services/torghut
+        shell: bash
+        env:
+          COVERAGE_FILE: .coverage.autoresearch-runner-${{ matrix.slice }}
+          SLICE_INDEX: ${{ matrix.slice }}
+          SLICE_TOTAL: 8
+        run: |
+          set -euo pipefail
+          mapfile -t TEST_IDS < <(
+            uv run --frozen pytest --collect-only -q tests/test_run_whitepaper_autoresearch_profit_target.py |
+              awk '/^tests\// {print $1}' |
+              awk -v slice="${SLICE_INDEX}" -v total="${SLICE_TOTAL}" '((NR - 1) % total) == slice'
+          )
+          printf 'Running %s autoresearch runner tests in slice %s/%s\n' "${#TEST_IDS[@]}" "${SLICE_INDEX}" "${SLICE_TOTAL}"
+          if [ "${#TEST_IDS[@]}" -eq 0 ]; then
+            echo "No autoresearch runner tests selected for slice ${SLICE_INDEX}"
+            exit 1
+          fi
+
+          uv run --frozen pytest \
+            --cov \
+            --cov-branch \
+            --cov-fail-under=0 \
+            --cov-report= \
+            "${TEST_IDS[@]}"
+
+      - name: Upload coverage data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: torghut-coverage-autoresearch-runner-${{ matrix.slice }}
+          path: services/torghut/.coverage.autoresearch-runner-${{ matrix.slice }}*
+          if-no-files-found: error
+          include-hidden-files: true
+
   lint-and-tests:
     name: Bytecode + pytest + coverage
     runs-on: ubuntu-latest
     needs:
       - changes
       - static-guards
+      - pytest-autoresearch-runner
       - pytest-shards
     if: ${{ always() && needs.changes.outputs.service == 'true' }}
     steps:
@@ -401,6 +476,10 @@ jobs:
           fi
           if [ "${{ needs.pytest-shards.result }}" != "success" ]; then
             echo "Pytest shard job failed: ${{ needs.pytest-shards.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.pytest-autoresearch-runner.result }}" != "success" ]; then
+            echo "Pytest autoresearch runner job failed: ${{ needs.pytest-autoresearch-runner.result }}"
             exit 1
           fi
 
@@ -432,7 +511,7 @@ jobs:
       - name: Download coverage data
         uses: actions/download-artifact@v4
         with:
-          pattern: torghut-coverage-shard-*
+          pattern: torghut-coverage-*
           path: services/torghut/.coverage-shards
           merge-multiple: true
 
@@ -442,8 +521,8 @@ jobs:
           set -euo pipefail
           mapfile -t COVERAGE_FILES < <(find .coverage-shards -type f -name '.coverage*' -print | sort)
           printf 'Combining %s coverage data files\n' "${#COVERAGE_FILES[@]}"
-          if [ "${#COVERAGE_FILES[@]}" -lt 4 ]; then
-            echo "Expected coverage data from all 4 pytest shards"
+          if [ "${#COVERAGE_FILES[@]}" -lt 12 ]; then
+            echo "Expected coverage data from all 4 pytest shards and all 8 autoresearch runner slices"
             exit 1
           fi
           uv run --frozen coverage combine "${COVERAGE_FILES[@]}"

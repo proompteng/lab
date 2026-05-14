@@ -4,6 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 from unittest import TestCase
 
+from app.strategies.catalog import StrategyCatalogConfig
 import app.trading.discovery.candidate_specs as candidate_specs_module
 from app.trading.discovery.candidate_specs import (
     candidate_spec_from_payload,
@@ -22,6 +23,11 @@ from app.trading.semiconductor_universe import RESEARCHED_SEMICONDUCTOR_TECH_UNI
 
 
 _CHIP_UNIVERSE_SYMBOLS = set(RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE)
+
+
+def _capital_profile(spec: candidate_specs_module.CandidateSpec) -> object:
+    params = spec.strategy_overrides.get("params")
+    return params.get("capital_profile") if isinstance(params, dict) else None
 
 
 class TestCandidateSpecs(TestCase):
@@ -284,11 +290,38 @@ class TestCandidateSpecs(TestCase):
                 spec
                 for spec in specs
                 if spec.family_template_id == family_template_id
-                and spec.strategy_overrides.get("capital_profile")
+                and _capital_profile(spec)
                 == "initial_equity_cash_constrained_1x"
             ]
             self.assertTrue(capital_specs, family_template_id)
             for spec in capital_specs:
+                self.assertNotIn("capital_profile", spec.strategy_overrides)
+                params = spec.strategy_overrides["params"]
+                self.assertIsInstance(params, dict)
+                self.assertEqual(
+                    params["capital_profile"],
+                    "initial_equity_cash_constrained_1x",
+                )
+                StrategyCatalogConfig.model_validate(
+                    {
+                        "strategies": [
+                            {
+                                "name": spec.candidate_spec_id,
+                                "strategy_id": spec.candidate_spec_id,
+                                "params": params,
+                                "universe_symbols": spec.strategy_overrides.get(
+                                    "universe_symbols", []
+                                ),
+                                "max_position_pct_equity": spec.strategy_overrides.get(
+                                    "max_position_pct_equity"
+                                ),
+                                "max_notional_per_trade": spec.strategy_overrides.get(
+                                    "max_notional_per_trade"
+                                ),
+                            }
+                        ]
+                    }
+                )
                 features = candidate_spec_capital_features(spec)
                 self.assertEqual(features["capital_feasible_flag"], 1.0)
                 self.assertLessEqual(
