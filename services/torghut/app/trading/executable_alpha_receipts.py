@@ -136,6 +136,22 @@ _VALIDATION_COMMANDS_BY_CLASS = {
         "uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py",
     ],
 }
+_FEATURE_OR_DRIFT_REPAIR_REASONS = {
+    "drift_checks_missing",
+    "feature_rows_missing",
+    "required_feature_set_unavailable",
+    "hypothesis_window_evidence_missing",
+    "hypothesis_window_evidence_stale",
+}
+_POST_COST_REPAIR_REASONS = {
+    "post_cost_expectancy_non_positive",
+    "post_cost_expectancy_missing",
+}
+_CLOSED_SESSION_REPAIR_REASONS = {
+    "closed_session_market_context_hold",
+    "closed_session_signal_hold",
+    "closed_session_tca_evidence_hold",
+}
 
 
 def _text(value: object, default: str = "") -> str:
@@ -390,9 +406,21 @@ def _required_input_refs(
     return _string_list(refs)
 
 
-def _receipt_target_key(receipt: Mapping[str, Any]) -> tuple[int, str]:
+def _receipt_revenue_lane_rank(receipt: Mapping[str, Any]) -> int:
+    reason_set = set(_string_list(receipt.get("reason_codes")))
+    if reason_set.intersection(_FEATURE_OR_DRIFT_REPAIR_REASONS):
+        return 0
+    if reason_set.intersection(_POST_COST_REPAIR_REASONS):
+        return 2
+    if reason_set.intersection(_CLOSED_SESSION_REPAIR_REASONS):
+        return 3
+    return 1
+
+
+def _receipt_target_key(receipt: Mapping[str, Any]) -> tuple[int, int, str]:
     return (
         _REPAIR_CLASS_RANK.get(_text(receipt.get("repair_class")), 100),
+        _receipt_revenue_lane_rank(receipt),
         _text(receipt.get("hypothesis_id")),
     )
 

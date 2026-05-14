@@ -203,7 +203,9 @@ Testing rules for the trading core:
   `torghut.executable-alpha-repair-receipts.v1` compact receipt collection. When the live queue is topped by
   `repair_alpha_readiness`, it selects zero-notional `torghut.executable-alpha-repair-receipt.v1` work for the
   concrete alpha repair target, maps target reason codes to a repair class, carries validation commands and
-  no-delta settlement requirements, and keeps `max_notional=0`. `/trading/consumer-evidence` mirrors the same compact
+  no-delta settlement requirements, and keeps `max_notional=0`. Same-class alpha-window receipts prefer feature/drift
+  repair ahead of post-cost and closed-session holds so the selected launch candidate stays aligned with the
+  alpha-readiness settlement conveyor and dividend ledger. `/trading/consumer-evidence` mirrors the same compact
   collection for Jangar without making `/readyz` green or enabling paper/live submission.
 - `GET /trading/revenue-repair` also emits the May 14 doc 199
   `torghut.executable-alpha-settlement-slots.v1` read-model. It settles the selected executable-alpha repair receipt
