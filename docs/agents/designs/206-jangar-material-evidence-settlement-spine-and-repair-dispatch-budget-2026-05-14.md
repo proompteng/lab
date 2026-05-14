@@ -423,6 +423,20 @@ Next implementation milestone:
 - Enforcement remains observe-mode and additive. If the settlement is missing or stale, existing runtime admission,
   stage clearance, stage credit, evidence pressure, and Torghut zero-notional gates remain authoritative.
 
+2026-05-14 revenue-repair custody alignment follow-up:
+
+- The revenue-repair custody reducer now treats three alpha evidence shapes as valid settlement evidence:
+  `alpha_readiness_settlement_conveyor`, `alpha_repair_closure_board`, and
+  `executable_alpha_repair_receipts.selected_receipt`.
+- When Torghut consumer evidence carries a current queue head, custody derives `repair_only` from that queue instead
+  of reporting `business_state_missing`; this removes a false transport-missing signal from ready truth while
+  preserving material holds.
+- If the current closure board has an active no-delta budget or pending no-delta settlement market, custody returns
+  `deny` with the active release key and closure-board reason codes. It does not convert no-delta evidence into a
+  repair budget.
+- The implementation remains additive to the material settlement spine and keeps Torghut `max_notional=0` as a hard
+  safety condition.
+
 ## Deployer Handoff
 
 After engineer PR merge and image promotion, deployer must prove:
