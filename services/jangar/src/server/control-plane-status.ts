@@ -28,6 +28,7 @@ import {
   buildControlPlaneMaterialActionArtifacts,
   type RepairScheduleAttemptResolver,
 } from '~/server/control-plane-material-action-artifacts'
+import { buildMaterialReentryClearinghouse } from '~/server/control-plane-material-reentry-clearinghouse'
 import {
   createControlPlaneHeartbeatStore,
   type ControlPlaneHeartbeatRow,
@@ -606,6 +607,17 @@ export const buildControlPlaneStatus = async (
     kubernetesEvidence: failureDomainKubernetesEvidence,
     stageCreditLedger,
   })
+  const materialReentryClearinghouse = buildMaterialReentryClearinghouse({
+    now,
+    namespace: options.namespace,
+    database,
+    watchReliability: watchReliabilityStatus,
+    readyTruthArbiter,
+    sourceServingContractVerdictExchange,
+    stageCreditLedger,
+    repairBidAdmission,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+  })
   const authorityProvenanceSettlement = buildAuthorityProvenanceSettlement({
     now,
     namespace: options.namespace,
@@ -732,6 +744,7 @@ export const buildControlPlaneStatus = async (
     terminal_debt_compaction_ledger: terminalDebtCompactionLedger,
     ready_action_exchange: readyActionExchange,
     repair_bid_admission: repairBidAdmission,
+    material_reentry_clearinghouse: materialReentryClearinghouse,
     repair_warrant_exchange: repairWarrantExchange,
     consumer_evidence_leases: consumerEvidenceLeases,
     clearance_market_ledger: clearanceMarketLedger,

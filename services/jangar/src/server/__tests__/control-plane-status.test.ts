@@ -9,6 +9,7 @@ import {
 import { CLEARANCE_MARKET_DESIGN_ARTIFACT } from '~/server/control-plane-clearance-market'
 import { CONSUMER_EVIDENCE_LEASES_DESIGN_ARTIFACT } from '~/server/control-plane-consumer-evidence-leases'
 import { EVIDENCE_PRESSURE_LEDGER_DESIGN_ARTIFACT } from '~/server/control-plane-evidence-pressure-ledger'
+import { MATERIAL_REENTRY_CLEARINGHOUSE_DESIGN_ARTIFACT } from '~/server/control-plane-material-reentry-clearinghouse'
 import { READY_TRUTH_ARBITER_DESIGN_ARTIFACT } from '~/server/control-plane-ready-truth-arbiter'
 import { ROLLOUT_PROOF_PASSPORT_DESIGN_ARTIFACT } from '~/server/control-plane-rollout-proof-passport'
 import { SOURCE_SERVING_CONTRACT_VERDICT_DESIGN_ARTIFACT } from '~/server/control-plane-source-serving-contract-verdict'
@@ -1737,6 +1738,20 @@ describe('control-plane status', () => {
         max_notional: 0,
       }),
     ])
+    expect(status.material_reentry_clearinghouse).toMatchObject({
+      schema_version: 'jangar.material-reentry-clearinghouse.v1',
+      mode: 'observe',
+      design_artifact: MATERIAL_REENTRY_CLEARINGHOUSE_DESIGN_ARTIFACT,
+    })
+    expect(status.material_reentry_clearinghouse.action_receipts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_repair',
+          required_output_receipt: expect.any(String),
+          max_notional: 0,
+        }),
+      ]),
+    )
   })
 
   it('projects source rollout truth and keeps normal dispatch repair-only when GitOps lags source', async () => {
