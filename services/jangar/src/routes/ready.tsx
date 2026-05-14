@@ -1,6 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import type { ExecutionTrustStatus, TorghutRevenueRepairQueueItem } from '~/data/agents-control-plane'
+import type {
+  ExecutionTrustStatus,
+  SourceServingContractVerdictExchange,
+  TorghutRevenueRepairQueueItem,
+} from '~/data/agents-control-plane'
 import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/agents-controller'
 import { buildRuntimeAdmissionSnapshot, findAdmissionPassport } from '~/server/control-plane-runtime-admission'
 import {
@@ -21,6 +25,8 @@ import {
   type TorghutConsumerEvidenceStatus,
 } from '~/server/control-plane-torghut-consumer-evidence'
 import { buildMaterialGateDigest } from '~/server/control-plane-material-gate-digest'
+import { buildRevenueRepairSettlementCustody } from '~/server/control-plane-revenue-repair-settlement-custody'
+import type { ControlPlaneRolloutHealth } from '~/server/control-plane-status-types'
 import { getWatchReliabilitySummary } from '~/server/control-plane-watch-reliability'
 
 const isControllerHealthReady = (health: ReturnType<typeof getAgentsControllerHealth>) =>
@@ -167,6 +173,44 @@ const buildBusinessEvidence = (
   }
 }
 
+const readyPathFreshUntil = (now: Date) => new Date(now.getTime() + 60_000).toISOString()
+
+const buildReadyPathRolloutHealth = (ready: boolean): ControlPlaneRolloutHealth => ({
+  status: ready ? 'unknown' : 'degraded',
+  observed_deployments: 0,
+  degraded_deployments: ready ? 0 : 1,
+  deployments: [],
+  message: ready
+    ? 'rollout proof unavailable on /ready hot path; use control-plane status for full proof'
+    : 'serving readiness degraded on /ready hot path',
+})
+
+const buildReadyPathSourceServingExchange = (now: Date, namespace: string): SourceServingContractVerdictExchange => ({
+  mode: 'observe',
+  design_artifact:
+    'docs/agents/designs/200-jangar-revenue-repair-settlement-conveyor-and-stage-health-custody-2026-05-14.md',
+  exchange_id: `source-serving-contract-verdict-exchange:${namespace}:ready-hot-path-unavailable`,
+  generated_at: now.toISOString(),
+  fresh_until: readyPathFreshUntil(now),
+  namespace,
+  status: 'hold',
+  source_sha: null,
+  serving_build_commit: null,
+  manifest_image_digest: null,
+  serving_image_digest: null,
+  required_contracts: [],
+  observed_contracts: [],
+  missing_contracts: [],
+  verdict_refs: [],
+  allowed_action_classes: [],
+  repair_only_action_classes: [],
+  held_action_classes: ['dispatch_repair'],
+  blocked_action_classes: [],
+  reason_codes: ['source_serving_contract_unavailable_on_ready_hot_path'],
+  verdicts: [],
+  rollback_target: 'use /api/agents/control-plane/status for full source-serving rollout proof',
+})
+
 const executionTrustStatus = async (namespaces: string[]) => {
   const now = new Date()
   const resolvedNamespaces = uniqueStrings(namespaces.length > 0 ? namespaces : ['agents'])
@@ -279,6 +323,18 @@ export const getReadyHandler = async () => {
   const memoryProviderReady = memoryProvider.status !== 'blocked'
   const ready = controllersOk && leaderElectionReady && memoryProviderReady
   const status = ready && agentsControllerHealthy && servingPassportReady ? 'ok' : 'degraded'
+  const readyPathRolloutHealth = buildReadyPathRolloutHealth(ready)
+  const revenueRepairSettlementCustody = buildRevenueRepairSettlementCustody(
+    {
+      now,
+      namespace: namespaces[0] ?? 'agents',
+      rolloutHealth: readyPathRolloutHealth,
+      sourceServingContractVerdictExchange: buildReadyPathSourceServingExchange(now, namespaces[0] ?? 'agents'),
+      stageCreditLedger: null,
+      torghutConsumerEvidence: torghutConsumerEvidence.status,
+    },
+    'observe',
+  )
   const materialGateDigest = buildMaterialGateDigest({
     now,
     namespace: namespaces[0] ?? 'agents',
@@ -304,6 +360,7 @@ export const getReadyHandler = async () => {
     ...businessEvidence,
     torghut_consumer_evidence: torghutConsumerEvidence.status,
     repair_bid_admission: repairBidAdmission,
+    revenue_repair_settlement_custody: revenueRepairSettlementCustody,
     material_gate_digest: materialGateDigest,
     evidence_pressure_ledger: evidencePressureLedger,
     memory_provider: memoryProvider,
