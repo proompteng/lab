@@ -12,6 +12,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority, refreshed `2026-05-14T00:35Z`):
+  - `202-torghut-alpha-evidence-foreclosure-and-routeable-candidate-reentry-2026-05-14.md`
+  - `docs/agents/designs/197-jangar-alpha-evidence-foreclosure-governor-and-runner-custody-2026-05-14.md`
   - `201-torghut-alpha-closure-settlement-and-feature-replay-market-2026-05-14.md`
   - `docs/agents/designs/196-jangar-alpha-closure-slot-governor-and-no-delta-budget-2026-05-14.md`
   - `200-torghut-routeable-alpha-evidence-foundry-and-capital-safe-profit-ladder-2026-05-14.md`
