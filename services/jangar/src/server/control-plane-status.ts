@@ -68,6 +68,7 @@ import {
   type ProjectionForeclosureEvidence,
 } from '~/server/control-plane-projection-foreclosure-notary'
 import { buildReadyTruthArbiter } from '~/server/control-plane-ready-truth-arbiter'
+import { buildRevenueRepairSettlementCustody } from '~/server/control-plane-revenue-repair-settlement-custody'
 import { buildDefaultRepairBidAdmissionState } from '~/server/control-plane-repair-bid-admission'
 import { buildRolloutProofStatusFields } from '~/server/control-plane-rollout-proof-passport'
 import {
@@ -579,6 +580,14 @@ export const buildControlPlaneStatus = async (
     rolloutHealth,
     torghutConsumerEvidence: torghutConsumerEvidence.status,
   })
+  const revenueRepairSettlementCustody = buildRevenueRepairSettlementCustody({
+    now,
+    namespace: options.namespace,
+    rolloutHealth,
+    sourceServingContractVerdictExchange,
+    stageCreditLedger,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+  })
   const readyTruthArbiter = buildReadyTruthArbiter({
     now,
     namespace: options.namespace,
@@ -593,6 +602,7 @@ export const buildControlPlaneStatus = async (
     repairBidAdmission,
     torghutConsumerEvidence: torghutConsumerEvidence.status,
     projectionForeclosureNotary,
+    revenueRepairSettlementCustody,
   })
   const rolloutProofStatusFields = buildRolloutProofStatusFields({
     now,
@@ -770,6 +780,7 @@ export const buildControlPlaneStatus = async (
     projection_foreclosure_notary: projectionForeclosureNotary,
     stage_credit_ledger: stageCreditLedger,
     ready_truth_arbiter: readyTruthArbiter,
+    revenue_repair_settlement_custody: revenueRepairSettlementCustody,
     ...rolloutProofStatusFields,
     authority_provenance_settlement: authorityProvenanceSettlement,
     evidence_pressure_ledger: evidencePressureLedger,

@@ -871,6 +871,30 @@ export type TorghutAlphaEvidenceFoundryRef = {
   rollback_target: string | null
 }
 
+export type TorghutAlphaReadinessSettlementConveyorRef = {
+  schema_version: 'torghut.alpha-readiness-settlement-conveyor-ref.v1'
+  conveyor_schema_version: string | null
+  conveyor_id: string | null
+  generated_at: string | null
+  fresh_until: string | null
+  status: string | null
+  settlement_state: string | null
+  reason_codes: string[]
+  selected_hypothesis_id: string | null
+  selected_value_gate: string | null
+  routeable_candidate_count_before: number | null
+  routeable_candidate_count_after: number | null
+  measured_routeable_candidate_delta: number | null
+  active_no_delta_lease_count: number | null
+  required_receipt: string | null
+  validation_command: string | null
+  no_delta_release_key: string | null
+  repeat_launch_decision: string | null
+  max_notional: string | null
+  capital_rule: string | null
+  rollback_target: string | null
+}
+
 export type TorghutRevenueRepairQueueItem = {
   code: string | null
   reason: string | null
@@ -1559,6 +1583,7 @@ export type TorghutConsumerEvidenceStatus = {
   executable_alpha_repair_receipts?: TorghutExecutableAlphaRepairReceiptSet | null
   alpha_repair_closure_board?: TorghutAlphaRepairClosureBoardRef | null
   alpha_evidence_foundry?: TorghutAlphaEvidenceFoundryRef | null
+  alpha_readiness_settlement_conveyor?: TorghutAlphaReadinessSettlementConveyorRef | null
   repair_outcome_dividend_ledger_id?: string | null
   repair_outcome_receipt_ids?: string[]
   repair_outcome_open_escrow_ids?: string[]
@@ -2045,6 +2070,42 @@ export type ReadyTruthGateReceipt = {
   reason_codes: string[]
 }
 
+export type RevenueRepairSettlementCustodyDecision = 'allow' | 'hold' | 'deny'
+
+export type RevenueRepairSettlementCustody = {
+  schema_version: 'jangar.revenue-repair-settlement-custody.v1'
+  mode: ReadyTruthArbiterMode
+  custody_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  governing_design_refs: string[]
+  torghut_consumer_evidence_ref: string | null
+  torghut_conveyor_ref: string | null
+  selected_hypothesis_id: string | null
+  selected_value_gate: string | null
+  action_class: 'dispatch_repair'
+  decision: RevenueRepairSettlementCustodyDecision
+  reason_codes: string[]
+  evidence_refs: string[]
+  stage_health: {
+    stage_credit_ledger_ref: string | null
+    dispatch_repair_decision: ReadyTruthActionDecision | null
+    retained_failure_debt_refs: string[]
+    reason_codes: string[]
+  }
+  no_delta_release_key: string | null
+  no_delta_release_state: 'clear' | 'active' | 'missing'
+  rollout_proof: {
+    source_serving_verdict_ref: string | null
+    source_serving_decision: ReadyTruthActionDecision | null
+    rollout_health: ControlPlaneRolloutHealth['status']
+    reason_codes: string[]
+  }
+  validation_command: string | null
+  rollback_target: string
+}
+
 export type ReadyTruthArbiter = {
   schema_version: 'jangar.ready-truth-arbiter.v1'
   mode: ReadyTruthArbiterMode
@@ -2068,6 +2129,9 @@ export type ReadyTruthArbiter = {
   projection_authority_decision: ProjectionForeclosureDecision | null
   projection_claim_totals_by_state: ProjectionForeclosureClaimTotalsByState | null
   projection_required_repair_actions: string[]
+  revenue_repair_settlement_custody_ref: string | null
+  revenue_repair_settlement_custody_decision: RevenueRepairSettlementCustodyDecision | null
+  revenue_repair_settlement_custody_reasons: string[]
   ready_status_truth_reasons: string[]
   allowed_action_classes: ActionSloBudgetActionClass[]
   repair_only_action_classes: ActionSloBudgetActionClass[]
@@ -2574,6 +2638,7 @@ export type ControlPlaneStatus = {
   projection_foreclosure_notary: ProjectionForeclosureNotary | null
   stage_credit_ledger: StageCreditLedger | null
   ready_truth_arbiter: ReadyTruthArbiter
+  revenue_repair_settlement_custody: RevenueRepairSettlementCustody
   rollout_proof_passport: RolloutProofPassport
   runner_capacity_futures: RunnerCapacityFuture[]
   stage_launch_tickets: StageLaunchTicket[]

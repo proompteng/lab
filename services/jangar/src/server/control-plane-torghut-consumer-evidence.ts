@@ -4,6 +4,7 @@ import type {
   TorghutAlphaReadinessStrikeLedger,
   TorghutAlphaRepairClosureBoardRef,
   TorghutAlphaEvidenceFoundryRef,
+  TorghutAlphaReadinessSettlementConveyorRef,
   TorghutExecutableAlphaRepairReceiptSet,
   TorghutRepairBidSettlementLot,
   TorghutRepairBidSettlementStatus,
@@ -18,6 +19,10 @@ import {
   readAlphaEvidenceFoundry,
   readAlphaRepairClosureBoard,
 } from '~/server/control-plane-torghut-alpha-closure-evidence'
+import {
+  alphaReadinessSettlementConveyorRefSchemaMismatch,
+  readAlphaReadinessSettlementConveyorRef,
+} from '~/server/control-plane-torghut-alpha-readiness-settlement-conveyor'
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
 import { readTorghutFreshnessCarryEvidence } from '~/server/control-plane-torghut-freshness-carry'
 import { readTorghutRepairOutcomeEvidence } from '~/server/control-plane-torghut-repair-outcome'
@@ -116,6 +121,7 @@ export type TorghutConsumerEvidenceStatus = {
   executable_alpha_repair_receipts?: TorghutExecutableAlphaRepairReceiptSet | null
   alpha_repair_closure_board?: TorghutAlphaRepairClosureBoardRef | null
   alpha_evidence_foundry?: TorghutAlphaEvidenceFoundryRef | null
+  alpha_readiness_settlement_conveyor?: TorghutAlphaReadinessSettlementConveyorRef | null
   repair_outcome_dividend_ledger_id?: string | null
   repair_outcome_receipt_ids?: string[]
   repair_outcome_open_escrow_ids?: string[]
@@ -285,6 +291,8 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   const alphaRepairClosureBoard =
     readAlphaRepairClosureBoard(payload) ?? readAlphaRepairClosureBoard(revenueRepairPayload)
   const alphaEvidenceFoundry = readAlphaEvidenceFoundry(payload) ?? readAlphaEvidenceFoundry(revenueRepairPayload)
+  const alphaReadinessSettlementConveyor =
+    readAlphaReadinessSettlementConveyorRef(payload) ?? readAlphaReadinessSettlementConveyorRef(revenueRepairPayload)
   const payloadSchema = normalizeNonEmpty(payload.schema_version)
   if (payloadSchema && payloadSchema !== CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION) {
     return {
@@ -542,6 +550,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     executableAlphaRepairReceipts ? 'executable_alpha_repair_receipts' : null,
     alphaRepairClosureBoard ? 'alpha_repair_closure_board' : null,
     alphaEvidenceFoundry ? 'alpha_evidence_foundry' : null,
+    alphaReadinessSettlementConveyor ? 'alpha_readiness_settlement_conveyor' : null,
   ])
   const contractSchemaMismatches = uniqueStrings([
     routeWarrant &&
@@ -556,6 +565,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       : null,
     repairOutcome.contractSchemaMismatch,
     freshnessCarry.contractSchemaMismatch,
+    alphaReadinessSettlementConveyorRefSchemaMismatch(payload),
   ])
   const routeWarrantId = normalizeNonEmpty(routeWarrant?.warrant_id ?? routeWarrant?.exchange_id)
   const routeWarrantRepairPackets = Array.isArray(routeWarrant?.repair_packets)
@@ -719,6 +729,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       executable_alpha_repair_receipts: executableAlphaRepairReceipts,
       alpha_repair_closure_board: alphaRepairClosureBoard,
       alpha_evidence_foundry: alphaEvidenceFoundry,
+      alpha_readiness_settlement_conveyor: alphaReadinessSettlementConveyor,
       repair_outcome_dividend_ledger_id: repairOutcome.ledgerId,
       repair_outcome_receipt_ids: repairOutcome.receiptIds,
       repair_outcome_open_escrow_ids: repairOutcome.openEscrowIds,

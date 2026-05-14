@@ -9,6 +9,7 @@ import type {
   ProjectionForeclosureAuthorityState,
   RepairBidAdmissionReceipt,
   RepairBidAdmissionState,
+  RevenueRepairSettlementCustody,
   SourceServingContractActionClass,
   SourceServingContractVerdict,
   SourceServingContractVerdictExchange,
@@ -352,6 +353,45 @@ const torghutConsumerEvidence = (
   message: `torghut evidence ${status}`,
 })
 
+const revenueRepairSettlementCustody = (
+  decision: RevenueRepairSettlementCustody['decision'] = 'allow',
+  reasonCodes: string[] = [],
+): RevenueRepairSettlementCustody => ({
+  schema_version: 'jangar.revenue-repair-settlement-custody.v1',
+  mode: 'shadow',
+  custody_id: `revenue-repair-settlement-custody:${decision}`,
+  generated_at: now.toISOString(),
+  fresh_until: '2026-05-13T12:01:00.000Z',
+  namespace: 'agents',
+  governing_design_refs: [
+    'docs/agents/designs/200-jangar-revenue-repair-settlement-conveyor-and-stage-health-custody-2026-05-14.md',
+  ],
+  torghut_consumer_evidence_ref: 'torghut-consumer-evidence:current',
+  torghut_conveyor_ref: 'alpha-readiness-settlement-conveyor:current',
+  selected_hypothesis_id: 'H-MICRO-01',
+  selected_value_gate: 'routeable_candidate_count',
+  action_class: 'dispatch_repair',
+  decision,
+  reason_codes: reasonCodes,
+  evidence_refs: ['alpha-readiness-settlement-conveyor:current'],
+  stage_health: {
+    stage_credit_ledger_ref: 'stage-credit-ledger:ready-truth',
+    dispatch_repair_decision: 'allow',
+    retained_failure_debt_refs: [],
+    reason_codes: [],
+  },
+  no_delta_release_key: 'alpha-readiness-no-delta:H-MICRO-01:window-a',
+  no_delta_release_state: 'clear',
+  rollout_proof: {
+    source_serving_verdict_ref: 'source-serving-verdict:dispatch_repair',
+    source_serving_decision: 'allow',
+    rollout_health: 'healthy',
+    reason_codes: [],
+  },
+  validation_command: 'uv run --frozen pytest services/torghut/tests/test_alpha_readiness_settlement_conveyor.py',
+  rollback_target: 'JANGAR_REVENUE_REPAIR_SETTLEMENT_CUSTODY_MODE=observe and keep Torghut max_notional=0',
+})
+
 const buildInput = (
   overrides: Partial<Parameters<typeof buildReadyTruthArbiter>[0]> = {},
 ): Parameters<typeof buildReadyTruthArbiter>[0] => ({
@@ -537,5 +577,57 @@ describe('buildReadyTruthArbiter', () => {
         process.env.JANGAR_PROJECTION_FORECLOSURE_CONSUME = previous
       }
     }
+  })
+
+  it('keeps dispatch repair available when settlement custody allows the current conveyor', () => {
+    const arbiter = buildReadyTruthArbiter(
+      buildInput({
+        stageCreditLedger: stageCreditLedger({
+          dispatch_repair: 'repair_only',
+          dispatch_normal: 'hold',
+          deploy_widen: 'hold',
+          merge_ready: 'hold',
+        }),
+        revenueRepairSettlementCustody: revenueRepairSettlementCustody('allow'),
+      }),
+      'shadow',
+    )
+
+    expect(arbiter.revenue_repair_settlement_custody_decision).toBe('allow')
+    expect(arbiter.revenue_repair_settlement_custody_ref).toBe('revenue-repair-settlement-custody:allow')
+    expect(arbiter.repair_only_action_classes).toContain('dispatch_repair')
+    expect(arbiter.ready_status_truth_reasons).not.toContain('revenue_repair_settlement_custody_hold')
+  })
+
+  it('holds dispatch repair when settlement custody is waiting on a compact conveyor ref', () => {
+    const arbiter = buildReadyTruthArbiter(
+      buildInput({
+        revenueRepairSettlementCustody: revenueRepairSettlementCustody('hold', [
+          'alpha_readiness_settlement_conveyor_missing',
+        ]),
+      }),
+      'shadow',
+    )
+
+    expect(arbiter.revenue_repair_settlement_custody_decision).toBe('hold')
+    expect(arbiter.held_action_classes).toContain('dispatch_repair')
+    expect(arbiter.ready_status_truth_reasons).toEqual(
+      expect.arrayContaining(['revenue_repair_settlement_custody_hold', 'alpha_readiness_settlement_conveyor_missing']),
+    )
+  })
+
+  it('blocks dispatch repair when settlement custody denies repeated no-delta launch', () => {
+    const arbiter = buildReadyTruthArbiter(
+      buildInput({
+        revenueRepairSettlementCustody: revenueRepairSettlementCustody('deny', ['active_no_delta_lease']),
+      }),
+      'shadow',
+    )
+
+    expect(arbiter.revenue_repair_settlement_custody_decision).toBe('deny')
+    expect(arbiter.blocked_action_classes).toContain('dispatch_repair')
+    expect(arbiter.ready_status_truth_reasons).toEqual(
+      expect.arrayContaining(['revenue_repair_settlement_custody_deny', 'active_no_delta_lease']),
+    )
   })
 })

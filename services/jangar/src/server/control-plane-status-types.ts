@@ -27,6 +27,7 @@ import type {
   ReadyActionExchange,
   ReconciledActionClock,
   RecoveryWarrantStatus,
+  RevenueRepairSettlementCustody,
   ReadyTruthArbiter,
   RepairBidAdmissionState,
   RepairWarrantExchange,
@@ -201,6 +202,7 @@ export type ControlPlaneStatus = {
   projection_foreclosure_notary: ProjectionForeclosureNotary | null
   stage_credit_ledger: StageCreditLedger | null
   ready_truth_arbiter: ReadyTruthArbiter
+  revenue_repair_settlement_custody: RevenueRepairSettlementCustody
   rollout_proof_passport: RolloutProofPassport
   runner_capacity_futures: RunnerCapacityFuture[]
   stage_launch_tickets: StageLaunchTicket[]
