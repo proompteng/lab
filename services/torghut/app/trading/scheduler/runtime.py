@@ -19,7 +19,10 @@ from ..execution import OrderExecutor
 from ..execution_adapters import build_execution_adapter
 from ..firewall import OrderFirewall
 from ..ingest import ClickHouseSignalIngestor
-from ..llm.dspy_programs.runtime import DSPyReviewRuntime, DSPyRuntimeUnsupportedStateError
+from ..llm.dspy_programs.runtime import (
+    DSPyReviewRuntime,
+    DSPyRuntimeUnsupportedStateError,
+)
 from ..llm.guardrails import evaluate_llm_guardrails
 from ..market_context import MarketContextClient, evaluate_market_context
 from ..order_feed import OrderFeedIngestor
@@ -37,6 +40,7 @@ from .pipeline_helpers import _build_llm_policy_resolution
 from .state import TradingState
 
 logger = logging.getLogger(__name__)
+
 
 class TradingScheduler(TradingSchedulerGovernanceMixin):
     def __init__(self) -> None:
@@ -95,12 +99,12 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
         circuit_snapshot = None
         pipeline = self._pipeline
         llm_review_engine = (
-            getattr(pipeline, "llm_review_engine", None) if pipeline is not None else None
+            getattr(pipeline, "llm_review_engine", None)
+            if pipeline is not None
+            else None
         )
         if llm_review_engine:
-            circuit_snapshot = (
-                llm_review_engine.circuit_breaker.snapshot()
-            )
+            circuit_snapshot = llm_review_engine.circuit_breaker.snapshot()
         guardrails = evaluate_llm_guardrails()
         policy_resolution = _build_llm_policy_resolution(
             rollout_stage=guardrails.rollout_stage,
@@ -223,9 +227,24 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
                 )
             except Exception as exc:
                 health_error = str(exc)
+        domain_refresh_states = {"stale", "error"}
+        refreshable_domain_state = any(
+            str(state).strip().lower() in domain_refresh_states
+            for state in last_domain_states.values()
+        )
+        local_snapshot_stale = (
+            last_freshness_seconds is not None
+            and int(last_freshness_seconds)
+            > settings.trading_market_context_max_staleness_seconds
+        )
         if (
             settings.trading_market_context_url
-            and (last_freshness_seconds is None or last_symbol is None)
+            and (
+                last_freshness_seconds is None
+                or last_symbol is None
+                or local_snapshot_stale
+                or refreshable_domain_state
+            )
             and probe_symbol
         ):
             try:
@@ -338,8 +357,7 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
         )
         runtime_fallback_alert_active = (
             llm_requests_total > 0
-            and runtime_fallback_ratio
-            > settings.llm_dspy_runtime_fallback_alert_ratio
+            and runtime_fallback_ratio > settings.llm_dspy_runtime_fallback_alert_ratio
         )
         shorting_status = self.shorting_metadata_status()
         return {
@@ -437,7 +455,9 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
             lanes = settings.trading_accounts
             self._pipelines = [self._build_pipeline_for_account(lane) for lane in lanes]
             self._pipeline = self._pipelines[0] if self._pipelines else None
-        account_labels = ",".join(pipeline.account_label for pipeline in self._pipelines)
+        account_labels = ",".join(
+            pipeline.account_label for pipeline in self._pipelines
+        )
         logger.info(
             "Trading scheduler starting accounts=%s poll_interval_seconds=%s reconcile_interval_seconds=%s autonomy_enabled=%s autonomy_interval_seconds=%s evidence_enabled=%s evidence_interval_seconds=%s",
             account_labels or "none",
@@ -460,7 +480,9 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
             return
         account_labels = ",".join(
             pipeline.account_label
-            for pipeline in (self._pipelines or ([self._pipeline] if self._pipeline else []))
+            for pipeline in (
+                self._pipelines or ([self._pipeline] if self._pipeline else [])
+            )
         )
         logger.info("Trading scheduler stopping accounts=%s", account_labels or "none")
         self._stop_event.set()
@@ -516,8 +538,11 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
                     await self._run_autonomy_iteration()
                     last_autonomy = now
 
-                if settings.trading_evidence_continuity_enabled and self._interval_elapsed(
-                    last_evidence_check, evidence_interval, now=now
+                if (
+                    settings.trading_evidence_continuity_enabled
+                    and self._interval_elapsed(
+                        last_evidence_check, evidence_interval, now=now
+                    )
                 ):
                     await self._run_evidence_iteration()
                     last_evidence_check = now
