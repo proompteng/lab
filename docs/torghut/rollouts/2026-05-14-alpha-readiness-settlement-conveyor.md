@@ -47,6 +47,9 @@ The runtime route remains zero-notional until the image containing this PR is pr
   lineage-ready feature/drift lane, while other lanes remain behind post-cost or lineage blockers.
 - Added no-delta lease accounting keyed by source ref, evidence window, blocker set, source commit, hypothesis, and
   required receipt set.
+- Marked the emitted `torghut.alpha-readiness-settlement-receipt.v1` as funded by the settlement itself so
+  `missing_receipts` only names real upstream repair receipts and no longer records the output schema as a
+  self-dependency.
 - Preserved `max_notional=0`, `capital_rule=zero_notional_repair_only`, and live submission disabled.
 
 ## Validation

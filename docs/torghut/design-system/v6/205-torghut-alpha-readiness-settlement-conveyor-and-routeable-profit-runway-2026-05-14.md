@@ -288,6 +288,11 @@ torghut.alpha-readiness-settlement-receipt.v1
   max_notional: "0"
 ```
 
+The emitted `torghut.alpha-readiness-settlement-receipt.v1` is its own output receipt. When the receipt is present, its
+schema is included in `funded_receipts[]` and must not appear in `missing_receipts[]`; otherwise the conveyor would
+create an impossible self-dependency while real upstream receipts such as drift checks, feature replay, hypothesis
+promotion, and capital replay remain unsettled.
+
 ### Conveyor State Machine
 
 - `observing`: revenue repair is available, but the top queue item is not alpha readiness.
