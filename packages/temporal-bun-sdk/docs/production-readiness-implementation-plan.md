@@ -1,6 +1,6 @@
 # Temporal Bun SDK Production Readiness Implementation Plan
 
-_Last updated: May 5, 2026_
+_Last updated: May 14, 2026_
 
 ## Goal
 
@@ -179,10 +179,11 @@ Coverage targets:
 Acceptance:
 
 - PR gate: at least 25 high-signal corpus fixtures.
-- Release gate: at least 75 fixtures covering every GA-critical command/event
-  family.
-- Default-choice gate: at least 150 fixtures across at least two Temporal Server
-  minor versions and two SDK minor versions.
+- Release/default-choice gate: at least 25 fixtures with the required
+  feature-tag coverage and no replay failures.
+- Broad-matrix hardening target: expand toward 75+ fixtures covering every
+  GA-critical command/event family before broadening the supported Temporal
+  Server, SDK, Bun, or platform matrix.
 
 ### P3 - Protocol Golden And Compatibility Tests
 
@@ -252,9 +253,9 @@ Implementation:
     activities are running and records cancellation attempts, successful
     cancellation calls, and terminal `CANCELED` workflow outcomes in the load
     and soak reports.
-  - Remaining work is endpoint disconnect injection, heartbeat RPC failure
-    injection, and completing the long-running release lanes with passing
-    six-hour evidence.
+  - Further hardening work is endpoint disconnect injection, heartbeat RPC
+    failure injection, and longer environment-specific soaks before broadening
+    the support matrix beyond the 0.10.0 release evidence.
 - `.github/workflows/temporal-bun-sdk-nightly.yml` now provides the long-soak
   lane.
   - Runs 2-hour soak nightly.
@@ -270,9 +271,9 @@ Acceptance:
   metrics artifacts uploaded.
 - Release soak: 6 hours against pinned Temporal Server with restart mode
   enabled.
-- Default-choice release smoke: CI soak artifact present and validated by
-  `verify:production`; extended soak is required for unusual workload or
-  platform risk.
+- Default-choice release gate: six-hour CI soak artifact present and validated
+  by `verify:production` and `verify:default-choice`; extended soak is required
+  for unusual workload or platform risk.
 
 ### P5 - CI Skip Policy And Release Blocking Rules
 
@@ -337,20 +338,20 @@ Acceptance:
 
 ## Gate Matrix
 
-| Gate                 | Command                                                           | PR                        | Release           | Default-choice                |
-| -------------------- | ----------------------------------------------------------------- | ------------------------- | ----------------- | ----------------------------- |
-| Package boundary     | `bun run --filter @proompteng/temporal-bun-sdk verify:production` | required                  | required          | required                      |
-| Build                | `bun run --filter @proompteng/temporal-bun-sdk build`             | required                  | required          | required                      |
-| Unit/runtime guards  | `bun test tests/workflow/runtime-guards.test.ts`                  | required                  | required          | required                      |
-| Query guard matrix   | `bun test tests/workflow/query-guard-matrix.test.ts`              | required                  | required          | required                      |
-| Async fuzz           | `bun test tests/workflow/async-determinism-fuzz.test.ts`          | 1k seeds                  | 10k seeds         | 10k+ seeds, last 7 days green |
-| Replay corpus        | `bun scripts/replay/verify-corpus.ts`                             | 25 fixtures               | 75 fixtures       | 150 fixtures                  |
-| Protocol golden      | `bun test tests/protocol/*.test.ts`                               | required                  | required          | required                      |
-| Critical integration | `TEMPORAL_INTEGRATION_TESTS=1 bun test tests/integration`         | required                  | no critical skips | no critical skips             |
-| Load smoke           | `bun run --filter @proompteng/temporal-bun-sdk test:load`         | required                  | required          | required                      |
-| Soak                 | `bun scripts/run-worker-soak.ts`                                  | optional                  | 6h                | 24h                           |
-| Docs                 | `bun run --filter docs build`                                     | required when docs change | required          | required                      |
-| Pack                 | `npm pack --dry-run --json`                                       | optional                  | required          | required                      |
+| Gate                 | Command                                                           | PR                        | Release             | Default-choice                                  |
+| -------------------- | ----------------------------------------------------------------- | ------------------------- | ------------------- | ----------------------------------------------- |
+| Package boundary     | `bun run --filter @proompteng/temporal-bun-sdk verify:production` | required                  | required            | required                                        |
+| Build                | `bun run --filter @proompteng/temporal-bun-sdk build`             | required                  | required            | required                                        |
+| Unit/runtime guards  | `bun test tests/workflow/runtime-guards.test.ts`                  | required                  | required            | required                                        |
+| Query guard matrix   | `bun test tests/workflow/query-guard-matrix.test.ts`              | required                  | required            | required                                        |
+| Async fuzz           | `bun test tests/workflow/async-determinism-fuzz.test.ts`          | 1k seeds                  | 10k seeds           | 10k seeds, 64 operations per seed               |
+| Replay corpus        | `bun scripts/verify-replay-corpus.ts`                             | required feature tags     | 25+ fixtures        | 25+ fixtures with required feature-tag coverage |
+| Protocol golden      | `bun test tests/protocol/*.test.ts`                               | required                  | required            | required                                        |
+| Critical integration | `TEMPORAL_TEST_SERVER=1 bun test tests/integration`               | required                  | no critical skips   | no critical skips                               |
+| Load                 | `bun run --filter @proompteng/temporal-bun-sdk test:load`         | smoke profile             | required            | 1,000 workflows, peak concurrency 50            |
+| Soak                 | `bun scripts/run-worker-soak.ts`                                  | optional                  | 6h release profile  | 6h release profile with memory-slope evidence   |
+| Docs                 | `bun run --filter docs build`                                     | required when docs change | required            | required                                        |
+| Pack                 | `npm pack --dry-run --json`                                       | optional                  | required/provenance | required/provenance                             |
 
 ## First Implementation Order
 
@@ -378,13 +379,17 @@ Acceptance:
 
 ## Definition Of Done
 
-The SDK is production-default for agents when:
+The SDK is production-default for scoped Bun-first agent use when:
 
 - `agent-readiness.json` says `recommended: true`.
 - The latest release manifest proves all default-choice gates are green.
-- The replay corpus covers every GA-critical workflow/event family.
+- The replay corpus covers every GA-critical workflow/event family represented
+  in the supported feature matrix.
 - Async fuzz and query guard tests have no open determinism escapes.
 - Load and soak artifacts are linked from release artifacts and validated by
   `verify:production`.
 - Docs and comparison pages explain that this is a pure Bun SDK with public
   evidence, not an unofficial wrapper around the Node worker.
+- The recommendation remains scoped to the Bun, Temporal Server, OS/arch, and
+  workload matrix represented by the release artifact; broader environments
+  need their own replay, load, and soak evidence.

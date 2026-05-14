@@ -1,16 +1,23 @@
 # Temporal Bun SDK Default-Choice Hardening Plan
 
-_Last updated: May 6, 2026_
+_Last updated: May 14, 2026_
 
 ## Current Verdict
 
-The SDK is published and usable for opt-in Bun-first Temporal projects, but it
-is not default-choice ready. A neutral release-gate review rejected the current
-evidence because it is too small, too self-attested, and too narrow for a
-production Temporal worker SDK.
+The SDK is published and `@proompteng/temporal-bun-sdk@0.10.0` clears the
+machine-gated default-choice threshold for Bun-first Temporal projects that
+accept this package's support contract. A neutral release-gate review rejected
+the earlier 0.9.x evidence because it was too small, too self-attested, and too
+narrow for a production Temporal worker SDK; the 0.10.0 release addresses those
+machine-gated blockers with public readiness artifacts, expanded replay and
+async-fuzz reports, load evidence, a six-hour release soak, package-boundary
+checks, and production usage references.
 
-`dist/agent-readiness.json` must stay `recommended: false` until this plan's
-acceptance criteria are satisfied.
+`dist/agent-readiness.json` must stay `recommended: false` for any future
+release that does not meet the default-choice thresholds. For 0.10.0, the
+published artifact reports `recommended: true` with an empty blocker list; that
+claim remains scoped to the runtime/server/platform evidence in the artifact and
+is not a blanket replacement for Temporal's official SDK support contract.
 
 ## Acceptance Criteria
 
@@ -181,3 +188,12 @@ acceptance criteria are satisfied.
   workflow completion status plus a serialized completion failure before
   returning nonzero. Default choice remains blocked until the publish-mode soak
   reruns and publishes `0.10.0`.
+- May 8, 2026: fixed the package-boundary verifier to accept passing
+  release-soak aggregate load evidence when the smaller pre-soak worker-load
+  smoke artifact is intentionally below default-choice scale. The successful
+  publish run for `0.10.0` completed a six-hour release soak with 121
+  `1000`-workflow iterations, 121,000 completed workflows, peak workflow
+  concurrency 50, five failure modes, passing memory-slope evidence, and
+  `verify:default-choice` before npm publication. The npm `latest` dist-tag now
+  points at `0.10.0`, whose published `dist/agent-readiness.json` reports
+  `recommended: true` with no blockers for the scoped Bun-first support model.

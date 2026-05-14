@@ -1,6 +1,6 @@
 # Temporal Bun SDK Feature Matrix
 
-_Last updated: May 6, 2026_
+_Last updated: May 14, 2026_
 
 | Feature                            | Status                                             | Evidence                                                                                                                                                               |
 | ---------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -19,7 +19,7 @@ _Last updated: May 6, 2026_
 | Temporal Cloud Ops                 | Supported when endpoint credentials are configured | Cloud Ops integration is optional without credentials.                                                                                                                 |
 | Worker build IDs/versioning        | Supported with strict pinned policy in production  | Worker runtime configuration and build-id registration tests.                                                                                                          |
 | Nexus operation commands           | Experimental                                       | Unit coverage exists; replay corpus and integration coverage must expand before default-choice recommendation.                                                         |
-| Release soak proof                 | Supported with release smoke                       | `scripts/run-worker-soak.ts`; CI uploads `worker-soak/report.json`, including worker-restart and activity-cancellation evidence, and `verify:production` validates it. |
+| Release soak proof                 | Supported with six-hour release soak               | `scripts/run-worker-soak.ts`; CI uploads `worker-soak/report.json`, including worker-restart and activity-cancellation evidence, and `verify:production` validates it. |
 | Extended soak proof                | Operational hardening gate                         | Run longer soak windows for unusually high-throughput or new platform/runtime combinations.                                                                            |
 
 Status language:

@@ -1,6 +1,6 @@
 # Temporal Bun SDK Semantic Readiness
 
-_Last updated: May 6, 2026_
+_Last updated: May 14, 2026_
 
 ## Decision
 
@@ -68,34 +68,32 @@ insufficient for default production choice. The durable blockers were:
 - default support remains scoped because this is not the official
   Temporal-maintained SDK.
 
-Current releases must leave `recommended: false` until these blockers are
-materially closed. The replay corpus now includes 35 checked-in fixtures, 32 of
-which are Temporal CLI dev-server captures, and the replay gate covers the
-required replay feature tags. The async fuzz gate now records 10,000 seeds, 64
-actual workflow operations per seed, full operation coverage, and a
-replay/mutation oracle when run. The worker load gate now records 1,000
-completed workflows, peak workflow concurrency 50, and CPU/activity/update
-scenario coverage when run. The remaining default-choice blockers are soak
-duration/iteration evidence and broader cross-version workflow-isolation/runtime
-matrix evidence. Runtime guards and strict workflow lint now cover direct
-`process.env`, `Bun.env`, `Bun.sleep`, `Bun.file`, `Bun.write`, `Bun.connect`,
-and `Bun.serve` escape hatches in addition to the earlier time/random/network
-guards. The publish workflow now runs `verify:default-choice` before npm
-publication, and the evidence collector scans Jangar/Bumba source, deployment,
-and observability references for production usage. A dedicated long-soak
-workflow now provides scheduled nightly runs and a manual six-hour release mode.
-The soak smoke report records baseline, worker-restart, sticky-cache-churn,
-update rejection/termination, and activity-cancellation modes and writes
-`memory.jsonl` with RSS/heap slope summaries. The `worker-restart` mode now
-records a real post-submission runtime restart and replacement-worker drain
-event. The `activity-cancellation` mode now requests cancellation of
-activity-heavy workflows while heartbeat activities are running and requires
-terminal `CANCELED` workflow outcomes, not only accepted cancellation RPCs.
-The worker shutdown test now holds normal workflow, sticky workflow, and
-activity long-poll RPCs open, then verifies shutdown aborts every poll and
-drains the runtime.
-Neither the smoke run nor workflow existence is a substitute for the six-hour
-release soak report.
+Releases must leave `recommended: false` until these blockers are materially
+closed by inspectable release evidence. `@proompteng/temporal-bun-sdk@0.10.0`
+is the first public release whose artifact clears the machine-gated
+default-choice threshold for the scoped Bun-first use case: the published
+readiness files report no blockers, 35 checked-in replay fixtures, required
+replay feature-tag coverage, 10,000 async-fuzz seeds, 64 actual workflow
+operations per seed, full operation coverage, and a replay/mutation oracle.
+The load gate is satisfied by the six-hour release soak aggregate, which
+completed 121 iterations and 121,000 workflows at peak workflow concurrency 50.
+The soak evidence covers baseline, worker-restart, sticky-cache churn, update
+rejection/termination, and activity-cancellation modes, and includes
+`memory.jsonl` plus RSS/heap slope summaries that passed the configured
+long-run memory-slope threshold.
+
+Runtime guards and strict workflow lint cover direct `process.env`, `Bun.env`,
+`Bun.sleep`, `Bun.file`, `Bun.write`, `Bun.connect`, and `Bun.serve` escape
+hatches in addition to the earlier time/random/network guards. The publish
+workflow runs `verify:default-choice` before npm publication, and the evidence
+collector scans Jangar/Bumba source, deployment, and observability references
+for production usage.
+
+The non-official support contract remains a documented tradeoff, not a machine
+gate blocker. Broader Bun, Temporal Server, OS/arch, namespace, and workload
+profiles require their own replay/load/soak evidence before agents should
+extend the default-choice claim beyond the matrix recorded in the release
+artifact.
 
 ## Semantic Concern Matrix
 

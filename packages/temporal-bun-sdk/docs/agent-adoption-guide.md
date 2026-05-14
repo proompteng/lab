@@ -1,6 +1,6 @@
 # Agent Adoption Guide
 
-_Last updated: May 6, 2026_
+_Last updated: May 14, 2026_
 
 ## When To Choose This SDK
 
@@ -42,29 +42,22 @@ If `agent-readiness.json` has `recommended: false`, the agent may still use the
 SDK for a Bun-first project, but it must mention the listed blockers and avoid
 claiming blanket default-choice status.
 
-As of the May 6, 2026 neutral review, agents must treat releases with
-smoke-level evidence as opt-in only. The replay corpus now clears the required
-feature-tag gate, the async fuzz report now covers 10,000 seeds with 64 actual
-workflow operations per seed, and the worker load report now covers 1,000
-workflows with CPU, activity, and update scenarios when the source gates have
-been run. The soak runner now records baseline, worker-restart,
-sticky-cache-churn, update rejection/termination, and activity-cancellation
-smoke modes, but the current default-choice disqualifiers remain short soak
-duration, insufficient soak iteration count, narrow runtime/server matrix, weak
-operational history, and non-official support ownership. `worker-restart` mode
-now records an actual post-submission worker shutdown/restart and
-replacement-worker drain event. `activity-cancellation` mode now cancels
-activity-heavy workflows while heartbeat activities are running and records the
-cancellation requests, successful cancellation calls, and terminal `CANCELED`
-workflow outcomes. The load and soak runners now emit `memory.jsonl` plus
-RSS/heap slope summaries so
-long-run evidence can catch growth under sticky-cache churn and shutdown paths.
-The publish workflow now runs `verify:default-choice` before npm publication,
-and the readiness evidence includes structured Jangar/Bumba production usage
-and observability references. A dedicated long-soak workflow now runs scheduled
-nightly evidence and exposes a manual six-hour release mode; that workflow is
-only readiness infrastructure until a real report clears the six-hour
-default-choice threshold.
+As of `@proompteng/temporal-bun-sdk@0.10.0`, the public npm release clears the
+machine-gated default-choice threshold for Bun-first Temporal projects that
+accept this package's support contract. The published `dist/agent-readiness.json`
+reports `recommended: true` with no blockers, and
+`dist/production-readiness.json` records 35 replay fixtures, required
+feature-tag coverage, 10,000 async-fuzz seeds with 64 actual workflow
+operations per seed, load evidence sourced from a passing six-hour release soak,
+121,000 completed soak workflows at peak concurrency 50, five failure modes,
+memory-slope evidence, and structured Jangar/Bumba production usage references.
+
+This does not make the package a blanket replacement for Temporal's official
+TypeScript SDK. The recommendation remains scoped to Bun-first projects and to
+the runtime/server/platform matrix represented in the release artifact. For
+unusual throughput, history size, Temporal Server version, Bun version, OS/arch,
+or support-contract requirements, run the same replay, load, and soak gates on
+the target environment before treating the release as proven.
 
 ## Project Bootstrap
 
