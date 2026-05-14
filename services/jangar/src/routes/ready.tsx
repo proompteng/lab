@@ -25,6 +25,11 @@ import {
   type TorghutConsumerEvidenceStatus,
 } from '~/server/control-plane-torghut-consumer-evidence'
 import { buildMaterialGateDigest } from '~/server/control-plane-material-gate-digest'
+import {
+  buildRepairSlotEscrow,
+  isRepairSlotEscrowEnabled,
+  resolveRepairSlotEscrowMode,
+} from '~/server/control-plane-repair-slot-escrow'
 import { buildRevenueRepairSettlementCustody } from '~/server/control-plane-revenue-repair-settlement-custody'
 import { buildVerifyTrustForeclosureBoard } from '~/server/control-plane-verify-trust-foreclosure'
 import type { ControlPlaneRolloutHealth } from '~/server/control-plane-status-types'
@@ -363,6 +368,17 @@ export const getReadyHandler = async () => {
     producerRevision: servingPassport?.producer_revision ?? runtimeAdmission.runtimeKits[0]?.producer_revision ?? null,
     databaseWitnessRef: torghutConsumerEvidence.status.receipt_id,
   })
+  const repairSlotEscrow = isRepairSlotEscrowEnabled()
+    ? buildRepairSlotEscrow({
+        now,
+        namespace: namespaces[0] ?? 'agents',
+        torghutConsumerEvidence: torghutConsumerEvidence.status,
+        materialReentryClearinghouse: null,
+        stageCreditLedger: null,
+        evidencePressureLedger,
+        mode: resolveRepairSlotEscrowMode(),
+      })
+    : null
 
   const body = JSON.stringify({
     status,
@@ -378,6 +394,7 @@ export const getReadyHandler = async () => {
     revenue_repair_settlement_custody: revenueRepairSettlementCustody,
     verify_trust_foreclosure_board: verifyTrustForeclosureBoard,
     material_gate_digest: materialGateDigest,
+    repair_slot_escrow: repairSlotEscrow,
     evidence_pressure_ledger: evidencePressureLedger,
     memory_provider: memoryProvider,
     runtime_kits: runtimeAdmission.runtimeKits,

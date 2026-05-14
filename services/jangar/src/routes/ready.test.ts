@@ -439,6 +439,62 @@ describe('getReadyHandler', () => {
               observed_count: 1,
             },
           ],
+          executable_alpha_repair_receipts: {
+            schema_version: 'torghut.executable-alpha-repair-receipts.v1',
+            generated_at: '2026-05-14T00:23:00.000Z',
+            fresh_until: '2026-05-14T00:38:00.000Z',
+            source_revenue_repair_ref: 'torghut-revenue-repair-digest:ready-test',
+            status: 'selected',
+            governing_design_ref:
+              'docs/torghut/design-system/v6/199-torghut-executable-alpha-settlement-slots-and-no-delta-repair-custody-2026-05-14.md',
+            selected_receipt_id: 'executable-alpha-repair-receipt:ready-test',
+            selected_receipt: {
+              schema_version: 'torghut.executable-alpha-repair-receipt.v1',
+              receipt_id: 'executable-alpha-repair-receipt:ready-test',
+              generated_at: '2026-05-14T00:23:00.000Z',
+              fresh_until: '2026-05-14T00:38:00.000Z',
+              source_revenue_repair_ref: 'torghut-revenue-repair-digest:ready-test',
+              hypothesis_id: 'H-MICRO-01',
+              repair_class: 'capital_replay_board_refresh',
+              target_value_gate: 'routeable_candidate_count',
+              reason_codes: ['alpha_readiness_not_promotion_eligible'],
+              account_id: 'PA3SX7FYNUTF',
+              window: '15m',
+              trading_mode: 'live',
+              candidate_id: 'chip-paper-microbar-composite@execution-proof',
+              strategy_id: 'microbar_volume_continuation_long_top2_chip_v1@paper',
+              expected_gate_delta: 'retire_alpha_readiness_not_promotion_eligible',
+              required_input_refs: ['capital-replay:ready-test'],
+              required_output_receipts: [
+                'alpha_readiness_receipt',
+                'hypothesis_promotion_receipt',
+                'capital_replay_board',
+                'torghut.executable-alpha-receipts.v1',
+              ],
+              validation_commands: [
+                'uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py',
+              ],
+              max_notional: '0',
+              capital_rule: 'zero_notional_repair_only',
+              no_delta_settlement_required: true,
+              jangar_reentry: {
+                required_material_reentry_receipt: 'jangar.material-reentry-receipt.v1',
+                action_class: 'dispatch_repair',
+                max_parallelism: 1,
+                max_runtime_seconds: 1200,
+                value_gates: ['routeable_candidate_count'],
+                rollback_target: 'keep max_notional=0 and live submit disabled',
+              },
+              rollback_target: 'stop emitting executable alpha repair receipts',
+            },
+            receipts: [],
+            target_value_gate: 'routeable_candidate_count',
+            routeable_candidate_count_before: 0,
+            max_notional: '0',
+            capital_rule: 'zero_notional_repair_only',
+            reason_codes: ['alpha_readiness_not_promotion_eligible'],
+            rollback_target: 'stop emitting executable alpha repair receipts',
+          },
           alpha_repair_closure_board: {
             schema_version: 'torghut.alpha-repair-closure-board.v1',
             board_id: 'alpha-repair-closure-board:ready-test',
@@ -581,6 +637,32 @@ describe('getReadyHandler', () => {
         }),
       ]),
     )
+    expect(body.repair_slot_escrow).toMatchObject({
+      schema_version: 'jangar.repair-slot-escrow.v1',
+      mode: 'observe',
+      status: 'block',
+      selected_slot_id: null,
+      governing_design_refs: expect.arrayContaining([
+        'docs/agents/designs/194-jangar-receipt-settled-repair-slots-and-stage-custody-thaw-2026-05-14.md',
+        'docs/torghut/design-system/v6/199-torghut-executable-alpha-settlement-slots-and-no-delta-repair-custody-2026-05-14.md',
+      ]),
+      blocked_slots: [
+        expect.objectContaining({
+          action_class: 'dispatch_repair',
+          torghut_selected_receipt_id: 'executable-alpha-repair-receipt:ready-test',
+          reason_codes: expect.arrayContaining([
+            'material_reentry_clearinghouse_missing',
+            'stage_credit_ledger_missing',
+            'active_no_delta_debt_for_repair_slot',
+          ]),
+        }),
+      ],
+      scheduler_handoff: expect.objectContaining({
+        status: 'block',
+        action_class: 'dispatch_repair',
+        max_notional: 0,
+      }),
+    })
   })
 
   it('returns 200 and exposes a serving passport when only collaboration runtime debt is blocked', async () => {

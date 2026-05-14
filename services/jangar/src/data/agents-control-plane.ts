@@ -1144,6 +1144,86 @@ export type MaterialReentryClearinghouse = {
   rollback_target: string
 }
 
+export type RepairSlotEscrowMode = 'observe' | 'shadow' | 'hold' | 'enforce'
+
+export type RepairSlotEscrowStatus = 'observe_only' | 'open' | 'hold' | 'block'
+
+export type RepairSlotState = 'observe_only' | 'open' | 'held' | 'blocked' | 'settled' | 'superseded'
+
+export type RepairSlotSettlementState = 'pending' | 'retired' | 'improved' | 'no_delta' | 'invalidated' | 'failed'
+
+export type RepairSlot = {
+  slot_id: string
+  action_class: 'dispatch_repair'
+  state: RepairSlotState
+  source_revenue_repair_ref: string | null
+  torghut_selected_receipt_id: string | null
+  torghut_selected_receipt_schema: string | null
+  material_reentry_receipt_id: string | null
+  stage_credit_ledger_id: string | null
+  stage_credit_account_id: string | null
+  evidence_pressure_ledger_id: string | null
+  target_value_gate: string | null
+  expected_gate_delta: string | null
+  required_output_receipts: string[]
+  validation_commands: string[]
+  max_parallelism: number
+  max_runtime_seconds: number | null
+  max_notional: number
+  dedupe_key: string
+  before_refs: string[]
+  after_refs: string[]
+  settlement_state: RepairSlotSettlementState
+  reason_codes: string[]
+  rollback_target: string
+}
+
+export type RepairSlotNoDeltaDebt = {
+  debt_id: string
+  dedupe_key: string
+  no_delta_release_key: string | null
+  source: 'alpha_readiness_settlement_conveyor' | 'alpha_repair_dividend_ledger'
+  source_ref: string | null
+  selected_hypothesis_id: string | null
+  selected_value_gate: string | null
+  measured_delta: number | null
+  repeat_launch_decision: string | null
+  reason_codes: string[]
+  rollback_target: string | null
+}
+
+export type RepairSlotEscrowHandoff = {
+  status: RepairSlotEscrowStatus
+  selected_slot_id: string | null
+  selected_dedupe_key: string | null
+  action_class: 'dispatch_repair'
+  max_parallelism: number
+  max_runtime_seconds: number | null
+  max_notional: number
+  required_receipts: string[]
+  validation_commands: string[]
+  reason_codes: string[]
+  next_action: string
+}
+
+export type RepairSlotEscrow = {
+  schema_version: 'jangar.repair-slot-escrow.v1'
+  escrow_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  mode: RepairSlotEscrowMode
+  status: RepairSlotEscrowStatus
+  governing_design_refs: string[]
+  selected_slot_id: string | null
+  slots: RepairSlot[]
+  blocked_slots: RepairSlot[]
+  no_delta_debt: RepairSlotNoDeltaDebt[]
+  scheduler_handoff: RepairSlotEscrowHandoff
+  deployer_handoff: RepairSlotEscrowHandoff
+  rollback_target: string
+}
+
 export type ControllerWitnessSurface =
   | 'serving_process'
   | 'controller_process'
@@ -2765,6 +2845,7 @@ export type ControlPlaneStatus = {
   repair_bid_admission: RepairBidAdmissionState
   material_gate_digest: MaterialGateDigest
   material_reentry_clearinghouse: MaterialReentryClearinghouse
+  repair_slot_escrow: RepairSlotEscrow | null
   repair_warrant_exchange: RepairWarrantExchange
   consumer_evidence_leases: ConsumerEvidenceLeaseSet
   clearance_market_ledger: ClearanceMarketLedger | null
