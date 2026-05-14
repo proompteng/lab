@@ -8,6 +8,7 @@ from app.trading.discovery.evidence_bundles import (
     evidence_bundle_from_frontier_candidate,
 )
 from app.trading.discovery.hypothesis_cards import build_hypothesis_cards
+import app.trading.discovery.mlx_training_data as mlx_training_data_module
 from app.trading.discovery.mlx_training_data import (
     MlxRankerModel,
     MlxTrainingRow,
@@ -30,6 +31,25 @@ def _capital_profile(spec: object) -> object:
 
 
 class TestMlxTrainingData(TestCase):
+    def test_training_feedback_helpers_handle_string_vetoes_and_scalar_sequences(
+        self,
+    ) -> None:
+        self.assertEqual(
+            mlx_training_data_module._hard_veto_count(
+                {"hard_vetoes": "positive_day_ratio_below_oracle"}
+            ),
+            1.0,
+        )
+        self.assertEqual(
+            mlx_training_data_module._hard_veto_count({"hard_vetoes": "  "}),
+            0.0,
+        )
+        self.assertEqual(mlx_training_data_module._sequence_strings("NVDA"), ())
+        self.assertEqual(
+            mlx_training_data_module._sequence_strings(["NVDA", "", "AMD"]),
+            ("NVDA", "AMD"),
+        )
+
     def test_candidate_capital_features_include_runtime_slot_pressure(self) -> None:
         spec = CandidateSpec(
             schema_version="torghut.candidate-spec.v1",
@@ -61,6 +81,36 @@ class TestMlxTrainingData(TestCase):
 
         self.assertEqual(features["estimated_capital_slot_count"], 4.0)
         self.assertEqual(features["entry_notional_max_multiplier"], 1.5)
+        self.assertGreater(features["estimated_max_gross_exposure_pct_equity"], 1.0)
+        self.assertEqual(features["capital_feasible_flag"], 0.0)
+
+    def test_candidate_capital_features_infer_uncapped_universe_slots(self) -> None:
+        spec = CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id="spec-uncapped-universe",
+            hypothesis_id="H-UNCAPPED",
+            family_template_id="momentum_pullback_v1",
+            candidate_kind="configuration",
+            runtime_family="momentum_pullback_consistent",
+            runtime_strategy_name="momentum-pullback-long-v1",
+            feature_contract={},
+            parameter_space={},
+            strategy_overrides={
+                "max_notional_per_trade": "30000",
+                "max_position_pct_equity": "1",
+                "params": {"max_gross_exposure_pct_equity": "1.0"},
+                "universe_symbols": ["NVDA", "AVGO", "AMD"],
+            },
+            objective={},
+            hard_vetoes={},
+            expected_failure_modes=(),
+            promotion_contract={},
+        )
+
+        features = candidate_spec_capital_features(spec)
+
+        self.assertEqual(features["inferred_universe_slot_floor"], 3.0)
+        self.assertEqual(features["estimated_capital_slot_count"], 3.0)
         self.assertGreater(features["estimated_max_gross_exposure_pct_equity"], 1.0)
         self.assertEqual(features["capital_feasible_flag"], 0.0)
 
@@ -146,9 +196,7 @@ class TestMlxTrainingData(TestCase):
         result = rank_training_rows_with_lift_policy(model=tie_model, rows=rows)
 
         self.assertEqual(result.model_status, "demoted_to_heuristic")
-        self.assertEqual(
-            result.selection_reason, "heuristic_negative_lift_fallback"
-        )
+        self.assertEqual(result.selection_reason, "heuristic_negative_lift_fallback")
         self.assertLess(result.rank_bucket_lift.lift, 0)
         self.assertEqual(result.ranked_rows[0].candidate_spec_id, "aaa-strong")
         self.assertEqual(result.ranked_rows[0].score, 500.0)

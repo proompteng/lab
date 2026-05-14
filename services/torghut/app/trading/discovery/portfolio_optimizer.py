@@ -21,7 +21,27 @@ from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
 MAX_CLUSTER_CONTRIBUTION_SHARE = Decimal("0.40")
 MAX_SINGLE_SYMBOL_CONTRIBUTION_SHARE = Decimal("0.35")
 MAX_ALLOWED_PAIRWISE_CORRELATION = Decimal("0.85")
+MAX_PORTFOLIO_GROSS_EXPOSURE_PCT_EQUITY = Decimal("1.0")
 PORTFOLIO_SEARCH_BEAM_WIDTH = 256
+PORTFOLIO_COMPOSABLE_SINGLE_SLEEVE_VETOES = frozenset(
+    {
+        "active_day_ratio_below_min",
+        "active_day_ratio_below_oracle",
+        "avg_daily_notional_below_min",
+        "avg_filled_notional_per_day_below_oracle",
+        "best_day_share_above_max",
+        "best_day_share_above_oracle",
+        "daily_net_below_min",
+        "max_drawdown_above_max",
+        "max_drawdown_above_oracle",
+        "positive_day_ratio_below_oracle",
+        "train_active_ratio_below_screen",
+        "train_net_per_day_below_screen",
+        "train_worst_day_loss_above_screen",
+        "worst_day_loss_above_max",
+        "worst_day_loss_above_oracle",
+    }
+)
 
 
 def _decimal(value: Any, *, default: str = "0") -> Decimal:
@@ -69,6 +89,24 @@ def _worst_day_loss(bundle: CandidateEvidenceBundle) -> Decimal:
     return _decimal(_scorecard(bundle).get("worst_day_loss"))
 
 
+def _max_gross_exposure_pct_equity(bundle: CandidateEvidenceBundle) -> Decimal:
+    return _decimal(_scorecard(bundle).get("max_gross_exposure_pct_equity"))
+
+
+def _min_cash(bundle: CandidateEvidenceBundle) -> Decimal:
+    return _decimal(_scorecard(bundle).get("min_cash"))
+
+
+def _negative_cash_observation_count(bundle: CandidateEvidenceBundle) -> int:
+    try:
+        return max(
+            0,
+            int(_decimal(_scorecard(bundle).get("negative_cash_observation_count"))),
+        )
+    except Exception:
+        return 0
+
+
 def _hard_vetoes(bundle: CandidateEvidenceBundle) -> tuple[str, ...]:
     raw_hard_vetoes = _scorecard(bundle).get("hard_vetoes")
     if isinstance(raw_hard_vetoes, str):
@@ -83,10 +121,52 @@ def _hard_vetoes(bundle: CandidateEvidenceBundle) -> tuple[str, ...]:
     return tuple(vetoes)
 
 
+def _non_composable_hard_vetoes(bundle: CandidateEvidenceBundle) -> tuple[str, ...]:
+    return tuple(
+        veto
+        for veto in _hard_vetoes(bundle)
+        if veto not in PORTFOLIO_COMPOSABLE_SINGLE_SLEEVE_VETOES
+    )
+
+
+def _capital_safety_rejection(
+    bundle: CandidateEvidenceBundle,
+) -> dict[str, Any] | None:
+    max_gross = _max_gross_exposure_pct_equity(bundle)
+    min_cash = _min_cash(bundle)
+    negative_cash_observations = _negative_cash_observation_count(bundle)
+    if max_gross > MAX_PORTFOLIO_GROSS_EXPOSURE_PCT_EQUITY:
+        return {
+            "candidate_id": bundle.candidate_id,
+            "reason": "frontier_capital_violation",
+            "max_gross_exposure_pct_equity": str(max_gross),
+            "limit": str(MAX_PORTFOLIO_GROSS_EXPOSURE_PCT_EQUITY),
+        }
+    if min_cash < 0:
+        return {
+            "candidate_id": bundle.candidate_id,
+            "reason": "frontier_negative_cash",
+            "min_cash": str(min_cash),
+        }
+    if negative_cash_observations > 0:
+        return {
+            "candidate_id": bundle.candidate_id,
+            "reason": "frontier_negative_cash_observed",
+            "negative_cash_observation_count": negative_cash_observations,
+        }
+    return None
+
+
 def _candidate_passes_minimums(bundle: CandidateEvidenceBundle) -> bool:
     if not evidence_bundle_is_valid(bundle):
         return False
-    if _hard_vetoes(bundle):
+    if _non_composable_hard_vetoes(bundle):
+        return False
+    if _capital_safety_rejection(bundle) is not None:
+        return False
+    if _net_per_day(bundle) <= 0:
+        return False
+    if _active_ratio(bundle) <= 0 or _positive_ratio(bundle) <= 0:
         return False
     if bool(bundle.promotion_readiness.get("promotable")):
         return True
@@ -99,7 +179,7 @@ def _candidate_passes_minimums(bundle: CandidateEvidenceBundle) -> bool:
     }
     if blocking - allowed_blockers:
         return False
-    return _net_per_day(bundle) > 0 and _active_ratio(bundle) >= Decimal("0.50")
+    return True
 
 
 def _daily_net(bundle: CandidateEvidenceBundle) -> dict[str, Decimal]:
@@ -309,6 +389,25 @@ def _max_drawdown_from_daily(daily_net: Mapping[str, Decimal]) -> Decimal:
     return drawdown
 
 
+def _portfolio_max_gross_exposure_pct_equity(
+    selected: Sequence[CandidateEvidenceBundle],
+) -> Decimal:
+    return sum(
+        (_max_gross_exposure_pct_equity(bundle) for bundle in selected),
+        Decimal("0"),
+    )
+
+
+def _portfolio_min_cash(selected: Sequence[CandidateEvidenceBundle]) -> Decimal:
+    return min((_min_cash(bundle) for bundle in selected), default=Decimal("0"))
+
+
+def _portfolio_negative_cash_observation_count(
+    selected: Sequence[CandidateEvidenceBundle],
+) -> int:
+    return sum(_negative_cash_observation_count(bundle) for bundle in selected)
+
+
 def _portfolio_trading_day_count(
     selected: Sequence[CandidateEvidenceBundle],
     daily_net: Mapping[str, Decimal],
@@ -388,6 +487,13 @@ def _portfolio_scorecard(
         "positive_day_ratio": str(positive_day_ratio),
         "worst_day_loss": str(worst_day_loss),
         "max_drawdown": str(_max_drawdown_from_daily(daily_net)),
+        "max_gross_exposure_pct_equity": str(
+            _portfolio_max_gross_exposure_pct_equity(selected)
+        ),
+        "min_cash": str(_portfolio_min_cash(selected)),
+        "negative_cash_observation_count": _portfolio_negative_cash_observation_count(
+            selected
+        ),
         "best_day_share": str(best_day_share),
         "max_single_day_contribution_share": str(best_day_share),
         "cluster_contribution_shares": {
@@ -463,6 +569,9 @@ def _portfolio_selection_key(
         -_scorecard_decimal(scorecard, "best_day_share"),
         -_scorecard_decimal(scorecard, "max_single_symbol_contribution_share"),
         -_scorecard_decimal(scorecard, "max_cluster_contribution_share"),
+        -_scorecard_decimal(scorecard, "max_gross_exposure_pct_equity"),
+        _scorecard_decimal(scorecard, "min_cash"),
+        -_scorecard_decimal(scorecard, "negative_cash_observation_count"),
         -_scorecard_decimal(scorecard, "worst_day_loss"),
         -_scorecard_decimal(scorecard, "max_drawdown"),
         Decimal(len(selected)),
@@ -487,6 +596,9 @@ def _partial_selection_key(
             Decimal("0"),
             Decimal("0"),
             Decimal("0"),
+            Decimal("0"),
+            Decimal("0"),
+            Decimal("0"),
         )
     return (
         Decimal("0"),
@@ -497,6 +609,9 @@ def _partial_selection_key(
         -max((_best_day_share(bundle) for bundle in selected), default=Decimal("0")),
         -_max_share(_symbol_contribution_shares(selected)),
         -_max_share(_cluster_contribution_shares(selected)),
+        -_portfolio_max_gross_exposure_pct_equity(selected),
+        _portfolio_min_cash(selected),
+        Decimal(-_portfolio_negative_cash_observation_count(selected)),
         -max((_worst_day_loss(bundle) for bundle in selected), default=Decimal("0")),
         -max((_max_drawdown(bundle) for bundle in selected), default=Decimal("0")),
         Decimal(len(selected)),
@@ -670,11 +785,20 @@ def optimize_portfolio_candidate(
     hard_veto_rejections = [
         {
             "candidate_id": bundle.candidate_id,
-            "reason": "frontier_hard_veto",
-            "hard_vetoes": list(_hard_vetoes(bundle)),
+            "reason": "frontier_non_composable_hard_veto",
+            "hard_vetoes": list(_non_composable_hard_vetoes(bundle)),
         }
         for bundle in evidence_bundles
-        if evidence_bundle_is_valid(bundle) and _hard_vetoes(bundle)
+        if evidence_bundle_is_valid(bundle) and _non_composable_hard_vetoes(bundle)
+    ]
+    capital_safety_rejections = [
+        rejection
+        for rejection in (
+            _capital_safety_rejection(bundle)
+            for bundle in evidence_bundles
+            if evidence_bundle_is_valid(bundle)
+        )
+        if rejection is not None
     ]
     eligible = [
         bundle for bundle in evidence_bundles if _candidate_passes_minimums(bundle)
@@ -687,6 +811,7 @@ def optimize_portfolio_candidate(
     rejected: list[dict[str, Any]] = [
         *invalid_evidence_rejections,
         *hard_veto_rejections,
+        *capital_safety_rejections,
     ]
     max_allowed_correlation = MAX_ALLOWED_PAIRWISE_CORRELATION
     selection_result = _select_portfolio_bundles(

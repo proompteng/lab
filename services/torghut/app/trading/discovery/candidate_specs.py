@@ -1909,11 +1909,42 @@ def _format_profile_budget(value: Decimal) -> str:
     return text or "0"
 
 
+def _profile_rank_count_floor(profile: Mapping[str, Any]) -> int:
+    params = _mapping(profile.get("params"))
+    for key in (
+        "max_entries_per_session",
+        "max_concurrent_positions",
+        "max_pair_legs",
+        "top_n",
+        "rank_count",
+    ):
+        try:
+            if Decimal(str(params.get(key) or "0")) > 0:
+                return 1
+        except Exception:
+            continue
+    universe = profile.get("universe_symbols")
+    if not isinstance(universe, Sequence) or isinstance(universe, (str, bytes)):
+        return 1
+    cleaned_count = 0
+    for item in cast(Sequence[Any], universe):
+        if _string(item):
+            cleaned_count += 1
+    return max(1, cleaned_count)
+
+
 def _capital_limited_profile_values(profile: Mapping[str, Any]) -> tuple[str, str]:
     params = _mapping(profile.get("params"))
     pressure = max(
         Decimal("1"),
-        Decimal(str(estimate_capital_pressure(params))),
+        Decimal(
+            str(
+                estimate_capital_pressure(
+                    params,
+                    rank_count_floor=_profile_rank_count_floor(profile),
+                )
+            )
+        ),
     )
     max_notional = (Decimal("30000") / pressure).quantize(Decimal("0.01"))
     max_position = (Decimal("1") / pressure).quantize(Decimal("0.000001"))
@@ -2283,9 +2314,16 @@ def _strategy_overrides_for_profile(
         target_net_pnl_per_day=target_net_pnl_per_day,
     )
     if not profiles:
-        return {"max_notional_per_trade": "50000"}
+        return {
+            "max_notional_per_trade": "50000",
+            "params": {"position_isolation_mode": "per_strategy"},
+        }
     selected = profiles[profile_index % len(profiles)]
-    return json.loads(json.dumps(selected))
+    overrides = json.loads(json.dumps(selected))
+    params = _mapping(overrides.get("params"))
+    params.setdefault("position_isolation_mode", "per_strategy")
+    overrides["params"] = params
+    return overrides
 
 
 @dataclass(frozen=True)

@@ -219,6 +219,37 @@ def _heuristic_scores_from_history(
     ]
 
 
+def _cold_start_capital_prior_scores(
+    *,
+    descriptors: Sequence[MlxCandidateDescriptor],
+    backend: str,
+) -> list[ProposalScore]:
+    scored: list[tuple[MlxCandidateDescriptor, float]] = []
+    for descriptor in descriptors:
+        capital_overage = _float(descriptor.capital_budget_overage_ratio)
+        estimated_gross = _float(descriptor.estimated_max_gross_exposure_pct_equity)
+        configured_gross = _float(descriptor.configured_max_gross_exposure_pct_equity)
+        score = (
+            (100.0 if descriptor.capital_feasible else -100.0)
+            - (capital_overage * 1000.0)
+            - (max(0.0, estimated_gross - 1.0) * 100.0)
+            - (max(0.0, configured_gross - 1.0) * 100.0)
+        )
+        scored.append((descriptor, score))
+    ordered = sorted(scored, key=lambda item: (-item[1], item[0].candidate_id))
+    return [
+        ProposalScore(
+            candidate_id=descriptor.candidate_id,
+            descriptor_id=descriptor.descriptor_id,
+            score=score,
+            rank=index,
+            backend=backend,
+            mode="ranking_only_cold_start_capital_prior",
+        )
+        for index, (descriptor, score) in enumerate(ordered, start=1)
+    ]
+
+
 def _descriptor_by_candidate(
     descriptors: Sequence[MlxCandidateDescriptor],
 ) -> dict[str, MlxCandidateDescriptor]:
@@ -399,7 +430,10 @@ def select_proposal_batch(
             if not descriptor.capital_feasible:
                 capital_penalty += 10000.0
             combined = (
-                family_bonus + side_bonus + diversity_bonus + (score.score * 0.001)
+                family_bonus
+                + side_bonus
+                + diversity_bonus
+                + (score.score * 0.001)
                 - capital_penalty
             )
             candidate = (combined, score, descriptor)
@@ -576,17 +610,10 @@ def rank_candidate_descriptors(
         xp, [descriptor_numeric_vector(item) for item in descriptors]
     )
     if len(history_rows) < policy.minimum_history_rows:
-        return [
-            ProposalScore(
-                candidate_id=descriptor.candidate_id,
-                descriptor_id=descriptor.descriptor_id,
-                score=0.0,
-                rank=index + 1,
-                backend=backend_name,
-                mode=policy.mode,
-            )
-            for index, descriptor in enumerate(descriptors)
-        ]
+        return _cold_start_capital_prior_scores(
+            descriptors=descriptors,
+            backend=backend_name,
+        )
 
     history_vectors: list[list[float]] = []
     history_targets: list[float] = []

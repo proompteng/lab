@@ -31,6 +31,37 @@ def _capital_profile(spec: candidate_specs_module.CandidateSpec) -> object:
 
 
 class TestCandidateSpecs(TestCase):
+    def test_profile_rank_floor_handles_invalid_params_and_universe_fallbacks(
+        self,
+    ) -> None:
+        self.assertEqual(
+            candidate_specs_module._profile_rank_count_floor(
+                {
+                    "params": {"rank_count": "not-a-decimal"},
+                    "universe_symbols": "NVDA",
+                }
+            ),
+            1,
+        )
+        self.assertEqual(
+            candidate_specs_module._profile_rank_count_floor(
+                {"params": {}, "universe_symbols": ["NVDA", "", "AMD"]}
+            ),
+            2,
+        )
+
+        fallback = candidate_specs_module._strategy_overrides_for_profile(
+            family_template_id="unknown-family",
+            profile_index=0,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertEqual(fallback["max_notional_per_trade"], "50000")
+        self.assertEqual(
+            fallback["params"],
+            {"position_isolation_mode": "per_strategy"},
+        )
+
     def test_default_execution_profiles_use_chip_only_universes(self) -> None:
         seen_profiles = 0
         execution_profiles = candidate_specs_module._FAMILY_EXECUTION_PROFILES
@@ -290,8 +321,7 @@ class TestCandidateSpecs(TestCase):
                 spec
                 for spec in specs
                 if spec.family_template_id == family_template_id
-                and _capital_profile(spec)
-                == "initial_equity_cash_constrained_1x"
+                and _capital_profile(spec) == "initial_equity_cash_constrained_1x"
             ]
             self.assertTrue(capital_specs, family_template_id)
             for spec in capital_specs:
@@ -330,9 +360,7 @@ class TestCandidateSpecs(TestCase):
                     spec.candidate_spec_id,
                 )
                 self.assertEqual(
-                    spec.strategy_overrides["params"][
-                        "max_gross_exposure_pct_equity"
-                    ],
+                    spec.strategy_overrides["params"]["max_gross_exposure_pct_equity"],
                     "1.0",
                 )
 

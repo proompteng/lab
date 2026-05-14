@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import sys
 from argparse import Namespace
@@ -86,6 +87,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             output_dir=output_dir,
             paper_run_id=[],
             source_jsonl=[],
+            feedback_evidence_jsonl=[],
             seed_recent_whitepapers=True,
             target_net_pnl_per_day="500",
             max_candidates=8,
@@ -125,6 +127,71 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             persist_results=False,
         )
 
+    def _source_jsonl_args(
+        self,
+        output_dir: Path,
+        *,
+        source_count: int = 1,
+    ) -> Namespace:
+        source_path = output_dir.parent / "source.jsonl"
+        rows: list[str] = []
+        for index in range(source_count):
+            source_payload = _source_jsonl_payload()
+            source_payload["run_id"] = f"paper-jsonl-{index}"
+            rows.append(json.dumps(source_payload))
+        source_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        args = self._args(output_dir)
+        args.seed_recent_whitepapers = False
+        args.source_jsonl = [source_path]
+        return args
+
+    def _candidate_spec(
+        self,
+        candidate_spec_id: str,
+        *,
+        family_template_id: str = "microbar_cross_sectional_pairs_v1",
+        entry_minute_after_open: str = "45",
+        selection_mode: str = "reversal",
+    ) -> runner.CandidateSpec:
+        return runner.CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id=candidate_spec_id,
+            hypothesis_id=f"hyp-{candidate_spec_id}",
+            family_template_id=family_template_id,
+            candidate_kind="sleeve",
+            runtime_family=family_template_id.replace("_v1", ""),
+            runtime_strategy_name=f"{family_template_id}-runtime",
+            feature_contract={
+                "mechanism": "deterministic test spec",
+                "required_features": ("spread_bps", "depth_proxy"),
+                "source_run_id": f"source-{candidate_spec_id}",
+                "family_selection": {"rank": 1},
+            },
+            parameter_space={},
+            strategy_overrides={
+                "max_notional_per_trade": "7500",
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "entry_minute_after_open": entry_minute_after_open,
+                    "exit_minute_after_open": "150",
+                    "max_hold_seconds": "5400",
+                    "entry_cooldown_seconds": "1200",
+                    "long_stop_loss_bps": "8",
+                    "long_trailing_stop_activation_profit_bps": "6",
+                    "long_trailing_stop_drawdown_bps": "3",
+                    "selection_mode": selection_mode,
+                    "signal_motif": "open_window_reversal",
+                    "rank_feature": "cross_section_session_open_rank",
+                    "top_n": "2",
+                },
+                "universe_symbols": ["NVDA", "AAPL", "INTC"],
+            },
+            objective={"target_net_pnl_per_day": "500"},
+            hard_vetoes={},
+            expected_failure_modes=(),
+            promotion_contract={},
+        )
+
     def test_parse_args_defaults_to_500_daily_profit_program(self) -> None:
         with TemporaryDirectory() as tmpdir:
             with patch.object(
@@ -146,6 +213,329 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ),
         )
         self.assertEqual(args.symbols.split(","), _CHIP_UNIVERSE)
+        self.assertEqual(args.feedback_evidence_jsonl, [])
+
+    def test_pre_replay_ranker_ingests_feedback_evidence_bundles(self) -> None:
+        losing_spec = self._candidate_spec(
+            "spec-losing",
+            entry_minute_after_open="45",
+            selection_mode="reversal",
+        )
+        unexplored_spec = self._candidate_spec(
+            "spec-unexplored",
+            family_template_id="breakout_reclaim_v2",
+            entry_minute_after_open="90",
+            selection_mode="continuation",
+        )
+        capital_unsafe_spec = self._candidate_spec(
+            "spec-capital-unsafe",
+            family_template_id="momentum_pullback_v1",
+            entry_minute_after_open="75",
+            selection_mode="continuation",
+        )
+        losing_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=losing_spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-losing",
+                "family_template_id": losing_spec.family_template_id,
+                "runtime_family": losing_spec.runtime_family,
+                "runtime_strategy_name": losing_spec.runtime_strategy_name,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "-120",
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "0",
+                    "negative_day_count": 6,
+                    "best_day_share": "1",
+                    "worst_day_loss": "430",
+                    "max_drawdown": "997",
+                    "avg_filled_notional_per_day": "50000",
+                    "hard_vetoes": ["positive_day_ratio_below_oracle"],
+                    "daily_net": {
+                        "2026-05-01": "-100",
+                        "2026-05-04": "-140",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-feedback",
+            result_path="feedback://losing",
+        )
+        capital_unsafe_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=capital_unsafe_spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-capital-unsafe",
+                "family_template_id": capital_unsafe_spec.family_template_id,
+                "runtime_family": capital_unsafe_spec.runtime_family,
+                "runtime_strategy_name": capital_unsafe_spec.runtime_strategy_name,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "750",
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "1",
+                    "negative_day_count": 0,
+                    "best_day_share": "0.25",
+                    "worst_day_loss": "0",
+                    "max_drawdown": "0",
+                    "max_gross_exposure_pct_equity": "2.5",
+                    "min_cash": "-500",
+                    "negative_cash_observation_count": 8,
+                    "avg_filled_notional_per_day": "500000",
+                },
+            },
+            dataset_snapshot_id="snap-feedback",
+            result_path="feedback://capital-unsafe",
+        )
+
+        model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(losing_spec, unexplored_spec, capital_unsafe_spec),
+            feedback_evidence_bundles=(losing_bundle, capital_unsafe_bundle),
+        )
+
+        row_by_spec = {row["candidate_spec_id"]: row for row in rows}
+        self.assertEqual(model["feedback_evidence_bundle_count"], 2)
+        self.assertEqual(model["feedback_matched_spec_count"], 2)
+        self.assertEqual(
+            model["training_source_counts"],
+            {"feedback_real_replay": 2, "synthetic_prior": 1},
+        )
+        self.assertEqual(
+            row_by_spec[losing_spec.candidate_spec_id]["training_source"],
+            "feedback_real_replay",
+        )
+        self.assertEqual(
+            row_by_spec[losing_spec.candidate_spec_id]["selection_reason"],
+            "pre_replay_mlx_feedback_blocked",
+        )
+        self.assertEqual(
+            row_by_spec[capital_unsafe_spec.candidate_spec_id]["selection_reason"],
+            "pre_replay_mlx_feedback_blocked",
+        )
+        self.assertGreater(
+            row_by_spec[losing_spec.candidate_spec_id]["rank"],
+            row_by_spec[unexplored_spec.candidate_spec_id]["rank"],
+        )
+        self.assertGreater(
+            row_by_spec[capital_unsafe_spec.candidate_spec_id]["rank"],
+            row_by_spec[unexplored_spec.candidate_spec_id]["rank"],
+        )
+        self.assertEqual(
+            row_by_spec[unexplored_spec.candidate_spec_id]["training_source"],
+            "synthetic_prior",
+        )
+        self.assertIn(
+            "history_daily_target_shortfall",
+            row_by_spec[losing_spec.candidate_spec_id]["features"],
+        )
+
+    def test_feedback_evidence_jsonl_round_trips(self) -> None:
+        spec = self._candidate_spec("spec-feedback-jsonl")
+        bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-feedback-jsonl",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "42",
+                    "active_day_ratio": "1",
+                },
+            },
+            dataset_snapshot_id="snap-feedback",
+            result_path="feedback://jsonl",
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "feedback.jsonl"
+            path.write_text(
+                json.dumps(bundle.to_payload(), sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            loaded = runner._load_feedback_evidence_bundles((path,))
+
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0].candidate_spec_id, spec.candidate_spec_id)
+
+    def test_feedback_evidence_jsonl_reports_missing_and_invalid_lines(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            missing_path = Path(tmpdir) / "missing.jsonl"
+            with self.assertRaisesRegex(
+                ValueError,
+                "feedback_evidence_jsonl_missing",
+            ):
+                runner._load_feedback_evidence_bundles((missing_path,))
+
+            invalid_path = Path(tmpdir) / "invalid.jsonl"
+            invalid_path.write_text("\n[]\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError,
+                "feedback_evidence_jsonl_invalid",
+            ):
+                runner._load_feedback_evidence_bundles((invalid_path,))
+
+    def test_candidate_quality_gate_flags_capital_safety_failures(self) -> None:
+        policy = runner.ProfitTargetOraclePolicy()
+
+        failures = runner._candidate_quality_gate_failures(
+            {
+                "net_pnl_per_day": "750",
+                "active_day_ratio": "1",
+                "positive_day_ratio": "1",
+                "best_day_share": "0.1",
+                "worst_day_loss": "0",
+                "max_drawdown": "0",
+                "max_gross_exposure_pct_equity": "1.2",
+                "min_cash": "-10",
+                "negative_cash_observation_count": "1",
+                "avg_filled_notional_per_day": "500000",
+                "regime_slice_pass_rate": "1",
+                "posterior_edge_lower": "0.01",
+                "shadow_parity_status": "within_budget",
+                "executable_replay_passed": True,
+                "executable_replay_artifact_ref": "/tmp/replay.json",
+                "executable_replay_order_count": "5",
+                "executable_replay_account_buying_power": "10000",
+                "executable_replay_max_notional_per_trade": "9000",
+            },
+            oracle_policy=policy,
+        )
+
+        self.assertIn("max_gross_exposure_above_oracle", failures)
+        self.assertIn("min_cash_below_oracle", failures)
+        self.assertIn("negative_cash_observed", failures)
+
+    def test_pre_replay_ranker_keeps_best_duplicate_feedback_and_blocks_rejections(
+        self,
+    ) -> None:
+        string_veto_spec = self._candidate_spec("spec-string-veto")
+        min_cash_spec = self._candidate_spec("spec-min-cash")
+        negative_cash_spec = self._candidate_spec("spec-negative-cash")
+        unexplored_spec = self._candidate_spec(
+            "spec-unexplored-feedback",
+            family_template_id="breakout_reclaim_v2",
+            entry_minute_after_open="90",
+            selection_mode="continuation",
+        )
+
+        def feedback(
+            spec: runner.CandidateSpec,
+            *,
+            candidate_id: str,
+            scorecard: dict[str, object],
+        ) -> runner.CandidateEvidenceBundle:
+            return runner.evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=spec.candidate_spec_id,
+                candidate={
+                    "candidate_id": candidate_id,
+                    "family_template_id": spec.family_template_id,
+                    "runtime_family": spec.runtime_family,
+                    "runtime_strategy_name": spec.runtime_strategy_name,
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "100",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "1",
+                        "negative_day_count": 0,
+                        "best_day_share": "0.2",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "max_gross_exposure_pct_equity": "0.5",
+                        "min_cash": "0",
+                        "negative_cash_observation_count": 0,
+                        "avg_filled_notional_per_day": "500000",
+                        **scorecard,
+                    },
+                },
+                dataset_snapshot_id="snap-feedback-blockers",
+                result_path=f"feedback://{candidate_id}",
+            )
+
+        lower_duplicate = feedback(
+            string_veto_spec,
+            candidate_id="cand-string-veto-low",
+            scorecard={"net_pnl_per_day": "-500"},
+        )
+        higher_blocked_duplicate = feedback(
+            string_veto_spec,
+            candidate_id="cand-string-veto-high",
+            scorecard={
+                "net_pnl_per_day": "250",
+                "hard_vetoes": "positive_day_ratio_below_oracle",
+            },
+        )
+        min_cash_blocked = feedback(
+            min_cash_spec,
+            candidate_id="cand-min-cash",
+            scorecard={"min_cash": "-1"},
+        )
+        negative_cash_blocked = feedback(
+            negative_cash_spec,
+            candidate_id="cand-negative-cash",
+            scorecard={"negative_cash_observation_count": "1"},
+        )
+
+        model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(
+                string_veto_spec,
+                min_cash_spec,
+                negative_cash_spec,
+                unexplored_spec,
+            ),
+            feedback_evidence_bundles=(
+                lower_duplicate,
+                higher_blocked_duplicate,
+                min_cash_blocked,
+                negative_cash_blocked,
+            ),
+        )
+
+        row_by_spec = {row["candidate_spec_id"]: row for row in rows}
+        self.assertEqual(model["feedback_evidence_bundle_count"], 4)
+        self.assertEqual(model["feedback_matched_spec_count"], 3)
+        self.assertEqual(
+            row_by_spec[string_veto_spec.candidate_spec_id]["feedback_replay_target"],
+            135.0,
+        )
+        self.assertEqual(
+            row_by_spec[string_veto_spec.candidate_spec_id]["selection_reason"],
+            "pre_replay_mlx_feedback_blocked",
+        )
+        self.assertEqual(
+            row_by_spec[min_cash_spec.candidate_spec_id]["selection_reason"],
+            "pre_replay_mlx_feedback_blocked",
+        )
+        self.assertEqual(
+            row_by_spec[negative_cash_spec.candidate_spec_id]["selection_reason"],
+            "pre_replay_mlx_feedback_blocked",
+        )
+        self.assertEqual(
+            row_by_spec[unexplored_spec.candidate_spec_id]["training_source"],
+            "synthetic_prior",
+        )
+
+    def test_candidate_selection_handles_scalar_universe_overrides(self) -> None:
+        scalar_universe_spec = replace(
+            self._candidate_spec("spec-scalar-universe"),
+            strategy_overrides={
+                "max_notional_per_trade": "7500",
+                "max_position_pct_equity": "0.25",
+                "params": {"entry_minute_after_open": "45"},
+                "universe_symbols": "NVDA",
+            },
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(scalar_universe_spec,),
+            proposal_rows=[
+                {
+                    "candidate_spec_id": scalar_universe_spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": 10.0,
+                    "training_source": "synthetic_prior",
+                }
+            ],
+            top_k=1,
+            exploration_slots=0,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [scalar_universe_spec])
+        self.assertEqual(selection["rows"][0]["universe_key"], "")
 
     def test_parse_args_defaults_strategy_configmap_to_runtime_env_path(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -901,7 +1291,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
     def test_seed_recent_whitepapers_dedupes_execution_signatures(self) -> None:
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
-            args = self._args(output_dir)
+            args = self._source_jsonl_args(output_dir, source_count=2)
             args.top_k = 6
             args.exploration_slots = 4
             payload = runner.run_whitepaper_autoresearch_profit_target(args)
@@ -1141,7 +1531,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
             payload = runner.run_whitepaper_autoresearch_profit_target(
-                self._args(output_dir)
+                self._source_jsonl_args(output_dir)
             )
 
             model_payload, scores = ranker_trainer.train_from_artifacts(
@@ -1169,7 +1559,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "_parse_args",
                 return_value=Namespace(
                     **{
-                        **vars(self._args(Path(tmpdir) / "epoch")),
+                        **vars(self._source_jsonl_args(Path(tmpdir) / "epoch")),
                         "replay_mode": "real",
                     }
                 ),
@@ -1644,7 +2034,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
             payload = runner.run_whitepaper_autoresearch_profit_target(
-                self._args(output_dir)
+                self._source_jsonl_args(output_dir)
             )
             model_output = Path(tmpdir) / "ranker" / "model.json"
             scores_output = Path(tmpdir) / "ranker" / "scores.jsonl"
@@ -2541,7 +2931,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     failure_reasons=("TimeoutError:real_replay_timeout_seconds:7",),
                 )
 
-            args = self._args(output_dir)
+            args = self._source_jsonl_args(output_dir)
             args.replay_mode = "real"
             args.portfolio_size_min = 1
             with patch.object(

@@ -7,7 +7,7 @@ import argparse
 import json
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from pathlib import Path
 from typing import Any, Mapping, cast
 
@@ -25,6 +25,10 @@ from app.trading.discovery.autoresearch import (
     stable_payload_hash,
 )
 from app.trading.discovery.autoresearch_notebooks import write_autoresearch_notebooks
+from app.trading.discovery.evidence_bundles import (
+    CandidateEvidenceBundle,
+    evidence_bundle_from_frontier_candidate,
+)
 from app.trading.discovery.family_templates import family_template_dir
 from app.trading.discovery.mlx_features import (
     MlxCandidateDescriptor,
@@ -51,70 +55,85 @@ from app.trading.discovery.promotion_contract import (
     blocked_research_candidate_promotion_readiness,
     summary_promotion_readiness,
 )
+from app.trading.discovery.portfolio_candidates import PortfolioCandidateSpec
+from app.trading.discovery.portfolio_optimizer import optimize_portfolio_candidate
+from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
 from app.trading.discovery.runtime_closure import write_runtime_closure_bundle
 from app.trading.discovery.runtime_closure import RuntimeClosureExecutionContext
 import scripts.local_intraday_tsmom_replay as replay_mod
-from scripts.search_consistent_profitability_frontier import run_consistent_profitability_frontier
+from scripts.search_consistent_profitability_frontier import (
+    run_consistent_profitability_frontier,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+_CAPITAL_LIMIT_SAFETY_MULTIPLIER = Decimal("0.98")
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description='Run an autoresearch-style strategy discovery loop and emit notebooks.',
+        description="Run an autoresearch-style strategy discovery loop and emit notebooks.",
     )
     parser.add_argument(
-        '--program',
+        "--program",
         type=Path,
         required=True,
-        help='Path to the strategy autoresearch program YAML.',
+        help="Path to the strategy autoresearch program YAML.",
     )
     parser.add_argument(
-        '--output-dir',
+        "--output-dir",
         type=Path,
         required=True,
-        help='Directory that will receive a timestamped run folder.',
+        help="Directory that will receive a timestamped run folder.",
     )
     parser.add_argument(
-        '--strategy-configmap',
+        "--strategy-configmap",
         type=Path,
-        default=_REPO_ROOT / 'argocd/applications/torghut/strategy-configmap.yaml',
+        default=_REPO_ROOT / "argocd/applications/torghut/strategy-configmap.yaml",
     )
     parser.add_argument(
-        '--family-template-dir',
+        "--family-template-dir",
         type=Path,
         default=family_template_dir(),
     )
     parser.add_argument(
-        '--clickhouse-http-url',
-        default='http://torghut-clickhouse.torghut.svc.cluster.local:8123',
+        "--clickhouse-http-url",
+        default="http://torghut-clickhouse.torghut.svc.cluster.local:8123",
     )
-    parser.add_argument('--clickhouse-username', default='torghut')
-    parser.add_argument('--clickhouse-password', default='')
-    parser.add_argument('--start-equity', default='31590.02')
-    parser.add_argument('--chunk-minutes', type=int, default=10)
-    parser.add_argument('--symbols', default='')
-    parser.add_argument('--progress-log-seconds', type=int, default=30)
+    parser.add_argument("--clickhouse-username", default="torghut")
+    parser.add_argument("--clickhouse-password", default="")
+    parser.add_argument("--start-equity", default="31590.02")
+    parser.add_argument("--chunk-minutes", type=int, default=10)
+    parser.add_argument("--symbols", default="")
+    parser.add_argument("--progress-log-seconds", type=int, default=30)
     parser.add_argument(
-        '--shadow-validation-artifact',
+        "--shadow-validation-artifact",
         type=Path,
         default=None,
-        help='Optional path to an existing shadow-live-deviation-report-v1 artifact.',
+        help="Optional path to an existing shadow-live-deviation-report-v1 artifact.",
     )
-    parser.add_argument('--train-days', type=int, default=6)
-    parser.add_argument('--holdout-days', type=int, default=3)
-    parser.add_argument('--full-window-start-date', default='')
-    parser.add_argument('--full-window-end-date', default='')
-    parser.add_argument('--expected-last-trading-day', default='')
-    parser.add_argument('--allow-stale-tape', action='store_true')
-    parser.add_argument('--prefetch-full-window-rows', action='store_true')
+    parser.add_argument("--train-days", type=int, default=6)
+    parser.add_argument("--holdout-days", type=int, default=3)
+    parser.add_argument("--full-window-start-date", default="")
+    parser.add_argument("--full-window-end-date", default="")
+    parser.add_argument("--expected-last-trading-day", default="")
+    parser.add_argument("--allow-stale-tape", action="store_true")
+    parser.add_argument("--prefetch-full-window-rows", action="store_true")
     parser.add_argument(
-        '--max-frontier-runs',
+        "--max-frontier-runs",
         type=int,
         default=0,
-        help='Optional overall cap on frontier executions. 0 means use the family budgets only.',
+        help="Optional overall cap on frontier executions. 0 means use the family budgets only.",
     )
-    parser.add_argument('--json-output', type=Path)
+    parser.add_argument(
+        "--max-candidates-per-frontier-run",
+        type=int,
+        default=0,
+        help=(
+            "Optional local research cap for candidates evaluated inside each frontier "
+            "execution. 0 uses the program replay budget."
+        ),
+    )
+    parser.add_argument("--json-output", type=Path)
     return parser.parse_args()
 
 
@@ -128,16 +147,139 @@ class WorkItem:
 
 
 def _mapping(value: Any) -> dict[str, Any]:
-    return {str(key): item for key, item in value.items()} if isinstance(value, Mapping) else {}
+    return (
+        {str(key): item for key, item in value.items()}
+        if isinstance(value, Mapping)
+        else {}
+    )
 
 
 def _string(value: Any) -> str:
-    return str(value or '').strip()
+    return str(value or "").strip()
+
+
+def _float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _decimal(value: Any, *, default: Decimal = Decimal("0")) -> Decimal:
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return default
+
+
+def _json_clone(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return cast(dict[str, Any], json.loads(json.dumps(payload, default=str)))
+
+
+def _as_grid_values(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return list(value)
+    if value is None:
+        return []
+    return [value]
+
+
+def _format_decimal(value: Decimal) -> str:
+    if value == 0:
+        return "0"
+    formatted = format(value.normalize(), "f")
+    if "." in formatted:
+        return formatted.rstrip("0").rstrip(".") or "0"
+    return formatted
+
+
+def _positive_decimal_grid_values(value: Any) -> list[Decimal]:
+    decimals: list[Decimal] = []
+    for item in _as_grid_values(value):
+        parsed = _decimal(item)
+        if parsed > 0:
+            decimals.append(parsed)
+    return decimals
+
+
+def _max_entry_count(parameters: Mapping[str, Any]) -> int:
+    for key in ("max_entries_per_session", "rank_count"):
+        values = _positive_decimal_grid_values(parameters.get(key))
+        if values:
+            return max(1, int(max(values)))
+    return 1
+
+
+def _capped_numeric_grid(
+    *,
+    existing: Any,
+    maximum: Decimal,
+    fallback: Decimal,
+) -> list[str]:
+    kept = [
+        value for value in _positive_decimal_grid_values(existing) if value <= maximum
+    ]
+    if not kept:
+        kept = [fallback]
+    return [_format_decimal(value) for value in kept]
+
+
+def _apply_objective_capital_limits(
+    *,
+    sweep_config: Mapping[str, Any],
+    max_gross_exposure_pct_equity: Decimal,
+    start_equity: Decimal,
+) -> dict[str, Any]:
+    payload = _json_clone(sweep_config)
+    parameters = _mapping(payload.get("parameters"))
+    strategy_overrides = _mapping(payload.get("strategy_overrides"))
+    max_gross = max(Decimal("0"), max_gross_exposure_pct_equity)
+    effective_max_gross = (max_gross * _CAPITAL_LIMIT_SAFETY_MULTIPLIER).quantize(
+        Decimal("0.000001"),
+        rounding=ROUND_DOWN,
+    )
+    max_entries = _max_entry_count(parameters)
+    per_entry_pct_cap = (
+        (effective_max_gross / Decimal(max_entries)).quantize(
+            Decimal("0.000001"),
+            rounding=ROUND_DOWN,
+        )
+        if effective_max_gross > 0
+        else Decimal("0")
+    )
+    per_trade_notional_cap = (
+        (start_equity * effective_max_gross / Decimal(max_entries)).quantize(
+            Decimal("0.01"),
+            rounding=ROUND_DOWN,
+        )
+        if start_equity > 0 and effective_max_gross > 0
+        else Decimal("0")
+    )
+    if effective_max_gross > 0:
+        parameters["max_gross_exposure_pct_equity"] = _capped_numeric_grid(
+            existing=parameters.get("max_gross_exposure_pct_equity"),
+            maximum=effective_max_gross,
+            fallback=effective_max_gross,
+        )
+        strategy_overrides["max_position_pct_equity"] = _capped_numeric_grid(
+            existing=strategy_overrides.get("max_position_pct_equity"),
+            maximum=per_entry_pct_cap,
+            fallback=per_entry_pct_cap,
+        )
+    if per_trade_notional_cap > 0:
+        strategy_overrides["max_notional_per_trade"] = _capped_numeric_grid(
+            existing=strategy_overrides.get("max_notional_per_trade"),
+            maximum=per_trade_notional_cap,
+            fallback=per_trade_notional_cap,
+        )
+    payload["parameters"] = parameters
+    payload["strategy_overrides"] = strategy_overrides
+    return payload
 
 
 def _slug(value: str) -> str:
-    normalized = ''.join(char if char.isalnum() else '-' for char in value.lower())
-    return '-'.join(part for part in normalized.split('-') if part)
+    normalized = "".join(char if char.isalnum() else "-" for char in value.lower())
+    return "-".join(part for part in normalized.split("-") if part)
 
 
 def _iter_symbols(value: Any) -> list[str]:
@@ -152,10 +294,12 @@ def _iter_symbols(value: Any) -> list[str]:
     return []
 
 
-def _snapshot_symbols(*, args: argparse.Namespace, worklist: list[WorkItem]) -> tuple[str, ...]:
+def _snapshot_symbols(
+    *, args: argparse.Namespace, worklist: list[WorkItem]
+) -> tuple[str, ...]:
     cli_symbols = tuple(
         symbol.strip().upper()
-        for symbol in str(args.symbols or '').split(',')
+        for symbol in str(args.symbols or "").split(",")
         if symbol.strip()
     )
     if cli_symbols:
@@ -163,8 +307,8 @@ def _snapshot_symbols(*, args: argparse.Namespace, worklist: list[WorkItem]) -> 
     ordered: list[str] = []
     seen: set[str] = set()
     for item in worklist:
-        strategy_overrides = _mapping(item.sweep_config.get('strategy_overrides'))
-        for symbol in _iter_symbols(strategy_overrides.get('universe_symbols')):
+        strategy_overrides = _mapping(item.sweep_config.get("strategy_overrides"))
+        for symbol in _iter_symbols(strategy_overrides.get("universe_symbols")):
             if symbol in seen:
                 continue
             seen.add(symbol)
@@ -174,18 +318,22 @@ def _snapshot_symbols(*, args: argparse.Namespace, worklist: list[WorkItem]) -> 
 
 def _mlx_bundle_paths(run_root: Path) -> dict[str, str]:
     return {
-        'signal_rows_jsonl': str(run_root / 'mlx-snapshot-signals.jsonl'),
-        'descriptors_jsonl': str(run_root / 'mlx-candidate-descriptors.jsonl'),
-        'proposal_scores_jsonl': str(run_root / 'mlx-proposal-scores.jsonl'),
-        'history_jsonl': str(run_root / 'history.jsonl'),
-        'results_tsv': str(run_root / 'results.tsv'),
+        "signal_rows_jsonl": str(run_root / "mlx-snapshot-signals.jsonl"),
+        "descriptors_jsonl": str(run_root / "mlx-candidate-descriptors.jsonl"),
+        "proposal_scores_jsonl": str(run_root / "mlx-proposal-scores.jsonl"),
+        "history_jsonl": str(run_root / "history.jsonl"),
+        "results_tsv": str(run_root / "results.tsv"),
     }
 
 
-def _keep_candidate_limit(*, family_plan: FamilyAutoresearchPlan, replay_budget_max_candidates_per_round: int) -> int:
+def _keep_candidate_limit(
+    *, family_plan: FamilyAutoresearchPlan, replay_budget_max_candidates_per_round: int
+) -> int:
     if replay_budget_max_candidates_per_round <= 0:
         return max(1, family_plan.keep_top_candidates)
-    return max(1, min(family_plan.keep_top_candidates, replay_budget_max_candidates_per_round))
+    return max(
+        1, min(family_plan.keep_top_candidates, replay_budget_max_candidates_per_round)
+    )
 
 
 def _frontier_candidate_budget(
@@ -205,7 +353,7 @@ def _frontier_candidate_budget(
 
 def _work_item_candidate_id(work_item: WorkItem) -> str:
     return _slug(
-        f'{work_item.family_plan.family_template.family_id}-iter-{work_item.iteration}-{work_item.mutation_label}'
+        f"{work_item.family_plan.family_template.family_id}-iter-{work_item.iteration}-{work_item.mutation_label}"
     )
 
 
@@ -218,43 +366,43 @@ def _runtime_missing_candidate_payload(
 ) -> dict[str, Any]:
     runtime_harness = _mapping(family_plan.family_template.runtime_harness)
     return {
-        'candidate_id': candidate_id,
-        'family_template_id': family_plan.family_template.family_id,
-        'hard_vetoes': ['runtime_strategy_missing'],
-        'ranking': {
-            'method': 'runtime_availability_preflight',
-            'pareto_tier': 999,
-            'tie_breaker_score': '0',
-            'vetoed': True,
+        "candidate_id": candidate_id,
+        "family_template_id": family_plan.family_template.family_id,
+        "hard_vetoes": ["runtime_strategy_missing"],
+        "ranking": {
+            "method": "runtime_availability_preflight",
+            "pareto_tier": 999,
+            "tie_breaker_score": "0",
+            "vetoed": True,
         },
-        'objective_scorecard': {
-            'net_pnl_per_day': '0',
-            'active_day_ratio': '0',
-            'positive_day_ratio': '0',
-            'avg_filled_notional_per_day': '0',
-            'avg_filled_notional_per_active_day': '0',
-            'best_day_share': '1',
-            'worst_day_loss': '0',
-            'max_drawdown': '0',
-            'regime_slice_pass_rate': '0',
+        "objective_scorecard": {
+            "net_pnl_per_day": "0",
+            "active_day_ratio": "0",
+            "positive_day_ratio": "0",
+            "avg_filled_notional_per_day": "0",
+            "avg_filled_notional_per_active_day": "0",
+            "best_day_share": "1",
+            "worst_day_loss": "0",
+            "max_drawdown": "0",
+            "regime_slice_pass_rate": "0",
         },
-        'full_window': {
-            'net_per_day': '0',
-            'trading_day_count': 0,
-            'active_days': 0,
-            'daily_net': {},
-            'daily_filled_notional': {},
+        "full_window": {
+            "net_per_day": "0",
+            "trading_day_count": 0,
+            "active_days": 0,
+            "daily_net": {},
+            "daily_filled_notional": {},
         },
-        'replay_config': {
-            'params': _mapping(sweep_config.get('parameters')),
-            'strategy_overrides': _mapping(sweep_config.get('strategy_overrides')),
+        "replay_config": {
+            "params": _mapping(sweep_config.get("parameters")),
+            "strategy_overrides": _mapping(sweep_config.get("strategy_overrides")),
         },
-        'runtime_availability': {
-            'schema_version': 'torghut.runtime-availability.v1',
-            'status': 'missing',
-            'reason': reason,
-            'runtime_family': _string(runtime_harness.get('family')),
-            'runtime_strategy_name': _string(runtime_harness.get('strategy_name')),
+        "runtime_availability": {
+            "schema_version": "torghut.runtime-availability.v1",
+            "status": "missing",
+            "reason": reason,
+            "runtime_family": _string(runtime_harness.get("family")),
+            "runtime_strategy_name": _string(runtime_harness.get("strategy_name")),
         },
     }
 
@@ -266,21 +414,25 @@ def _runtime_missing_frontier_payload(
     status_reason: str,
 ) -> dict[str, Any]:
     return {
-        'schema_version': 'torghut.replay-frontier-sweep.v1',
-        'status': 'skipped_runtime_strategy_missing',
-        'status_reason': status_reason,
-        'family': _string(family_plan.family_template.runtime_harness.get('family')),
-        'strategy_name': _string(family_plan.family_template.runtime_harness.get('strategy_name')),
-        'family_template': family_plan.family_template.to_payload(),
-        'candidate_count': 1,
-        'progress': {'evaluated_candidates': 0, 'pending_candidates': 0},
-        'top': [dict(candidate_payload)],
+        "schema_version": "torghut.replay-frontier-sweep.v1",
+        "status": "skipped_runtime_strategy_missing",
+        "status_reason": status_reason,
+        "family": _string(family_plan.family_template.runtime_harness.get("family")),
+        "strategy_name": _string(
+            family_plan.family_template.runtime_harness.get("strategy_name")
+        ),
+        "family_template": family_plan.family_template.to_payload(),
+        "candidate_count": 1,
+        "progress": {"evaluated_candidates": 0, "pending_candidates": 0},
+        "top": [dict(candidate_payload)],
     }
 
 
-def _promotion_readiness_payload(*, family_plan: FamilyAutoresearchPlan) -> dict[str, Any]:
+def _promotion_readiness_payload(
+    *, family_plan: FamilyAutoresearchPlan
+) -> dict[str, Any]:
     return blocked_research_candidate_promotion_readiness(
-        candidate_id='',
+        candidate_id="",
         family_template_id=family_plan.family_template.family_id,
         runtime_harness=family_plan.family_template.runtime_harness,
     )
@@ -295,9 +447,18 @@ def _frontier_args(
     json_output_path: Path,
 ) -> argparse.Namespace:
     top_n = max(family_plan.frontier_top_n, family_plan.keep_top_candidates)
-    max_candidates_to_evaluate = _frontier_candidate_budget(
-        family_plan=family_plan,
-        replay_budget_max_candidates_per_frontier_run=int(program.replay_budget.max_candidates_per_frontier_run),
+    replay_budget_max_candidates_per_frontier_run = (
+        int(args.max_candidates_per_frontier_run)
+        if int(getattr(args, "max_candidates_per_frontier_run", 0)) > 0
+        else int(program.replay_budget.max_candidates_per_frontier_run)
+    )
+    max_candidates_to_evaluate = (
+        max(1, int(args.max_candidates_per_frontier_run))
+        if int(getattr(args, "max_candidates_per_frontier_run", 0)) > 0
+        else _frontier_candidate_budget(
+            family_plan=family_plan,
+            replay_budget_max_candidates_per_frontier_run=replay_budget_max_candidates_per_frontier_run,
+        )
     )
     return argparse.Namespace(
         strategy_configmap=args.strategy_configmap.resolve(),
@@ -327,9 +488,9 @@ def _frontier_args(
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
-    payload = yaml.safe_load(path.read_text(encoding='utf-8'))
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(payload, Mapping):
-        raise ValueError(f'sweep_config_not_mapping:{path}')
+        raise ValueError(f"sweep_config_not_mapping:{path}")
     return json.loads(json.dumps(payload))
 
 
@@ -373,7 +534,7 @@ def _maybe_write_signal_bundle(
         progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
     )
     return write_mlx_signal_bundle(
-        Path(bundle_paths['signal_rows_jsonl']),
+        Path(bundle_paths["signal_rows_jsonl"]),
         replay_mod._iter_signal_rows(signal_bundle_config),
     )
 
@@ -396,122 +557,189 @@ def _history_record(
     descriptor: MlxCandidateDescriptor | None = None,
     proposal_score: ProposalScore | None = None,
     proposal_selected: bool = False,
-    proposal_selection_reason: str = '',
+    proposal_selection_reason: str = "",
     disable_other_strategies: bool = True,
 ) -> dict[str, Any]:
-    full_window = _mapping(candidate_payload.get('full_window'))
-    scorecard = _mapping(candidate_payload.get('objective_scorecard'))
-    ranking = _mapping(candidate_payload.get('ranking'))
-    replay_config = _mapping(candidate_payload.get('replay_config'))
+    full_window = _mapping(candidate_payload.get("full_window"))
+    scorecard = _mapping(candidate_payload.get("objective_scorecard"))
+    ranking = _mapping(candidate_payload.get("ranking"))
+    replay_config = _mapping(candidate_payload.get("replay_config"))
     promotion_readiness = _promotion_readiness_payload(family_plan=family_plan)
     return {
-        'runner_run_id': runner_run_id,
-        'experiment_index': experiment_index,
-        'iteration': iteration,
-        'rank': rank,
-        'family_template_id': family_plan.family_template.family_id,
-        'candidate_id': _string(candidate_payload.get('candidate_id')),
-        'parent_candidate_id': parent_candidate_id,
-        'status': status,
-        'objective_met': objective_met,
-        'mutation_label': mutation_label,
-        'dataset_snapshot_id': dataset_snapshot_id,
-        'sweep_config_path': str(sweep_config_path),
-        'result_path': str(result_path),
-        'candidate_params': _mapping(replay_config.get('params')),
-        'candidate_strategy_overrides': _mapping(replay_config.get('strategy_overrides')),
-        'disable_other_strategies': disable_other_strategies,
-        'train_start_date': _string(replay_config.get('train_start_date')),
-        'train_end_date': _string(replay_config.get('train_end_date')),
-        'holdout_start_date': _string(replay_config.get('holdout_start_date')),
-        'holdout_end_date': _string(replay_config.get('holdout_end_date')),
-        'full_window_start_date': _string(replay_config.get('full_window_start_date')),
-        'full_window_end_date': _string(replay_config.get('full_window_end_date')),
-        'normalization_regime': _string(candidate_payload.get('normalization_regime')),
-        'net_pnl_per_day': _string(scorecard.get('net_pnl_per_day') or full_window.get('net_per_day')),
-        'active_day_ratio': _string(scorecard.get('active_day_ratio')),
-        'positive_day_ratio': _string(scorecard.get('positive_day_ratio')),
-        'avg_filled_notional_per_day': _string(scorecard.get('avg_filled_notional_per_day')),
-        'avg_filled_notional_per_active_day': _string(scorecard.get('avg_filled_notional_per_active_day')),
-        'worst_day_loss': _string(scorecard.get('worst_day_loss')),
-        'max_drawdown': _string(scorecard.get('max_drawdown')),
-        'best_day_share': _string(scorecard.get('best_day_share')),
-        'regime_slice_pass_rate': _string(scorecard.get('regime_slice_pass_rate')),
-        'pareto_tier': int(ranking.get('pareto_tier') or 999),
-        'tie_breaker_score': _string(ranking.get('tie_breaker_score')),
-        'hard_vetoes': list(cast(list[str], candidate_payload.get('hard_vetoes') or [])),
-        'daily_net': _mapping(full_window.get('daily_net')),
-        'daily_filled_notional': _mapping(full_window.get('daily_filled_notional')),
-        'pruned_symbol': _string(candidate_payload.get('pruned_symbol')),
-        'objective_scope': 'research_only',
-        'promotion_stage': promotion_readiness['stage'],
-        'promotion_status': promotion_readiness['status'],
-        'promotable': promotion_readiness['promotable'],
-        'promotion_reason': promotion_readiness['reason'],
-        'promotion_blockers': list(cast(list[str], promotion_readiness['blockers'])),
-        'promotion_required_evidence': list(cast(list[str], promotion_readiness['required_evidence'])),
-        'runtime_family': _string(_mapping(promotion_readiness['runtime_harness']).get('family')),
-        'runtime_strategy_name': _string(_mapping(promotion_readiness['runtime_harness']).get('strategy_name')),
-        'descriptor_id': _string(descriptor.descriptor_id) if descriptor is not None else '',
-        'entry_window_start_minute': descriptor.entry_window_start_minute if descriptor is not None else 0,
-        'entry_window_end_minute': descriptor.entry_window_end_minute if descriptor is not None else 0,
-        'max_hold_minutes': descriptor.max_hold_minutes if descriptor is not None else 0,
-        'rank_count': descriptor.rank_count if descriptor is not None else 0,
-        'requires_prev_day_features': descriptor.requires_prev_day_features if descriptor is not None else False,
-        'requires_cross_sectional_features': (
-            descriptor.requires_cross_sectional_features if descriptor is not None else False
+        "runner_run_id": runner_run_id,
+        "experiment_index": experiment_index,
+        "iteration": iteration,
+        "rank": rank,
+        "family_template_id": family_plan.family_template.family_id,
+        "candidate_id": _string(candidate_payload.get("candidate_id")),
+        "parent_candidate_id": parent_candidate_id,
+        "status": status,
+        "objective_met": objective_met,
+        "mutation_label": mutation_label,
+        "dataset_snapshot_id": dataset_snapshot_id,
+        "sweep_config_path": str(sweep_config_path),
+        "result_path": str(result_path),
+        "candidate_params": _mapping(replay_config.get("params")),
+        "candidate_strategy_overrides": _mapping(
+            replay_config.get("strategy_overrides")
         ),
-        'requires_quote_quality_gate': descriptor.requires_quote_quality_gate if descriptor is not None else False,
-        'proposal_score': proposal_score.score if proposal_score is not None else 0.0,
-        'proposal_rank': proposal_score.rank if proposal_score is not None else 0,
-        'proposal_backend': _string(proposal_score.backend) if proposal_score is not None else '',
-        'proposal_mode': _string(proposal_score.mode) if proposal_score is not None else '',
-        'proposal_selected': proposal_selected,
-        'proposal_selection_reason': proposal_selection_reason,
+        "disable_other_strategies": disable_other_strategies,
+        "train_start_date": _string(replay_config.get("train_start_date")),
+        "train_end_date": _string(replay_config.get("train_end_date")),
+        "holdout_start_date": _string(replay_config.get("holdout_start_date")),
+        "holdout_end_date": _string(replay_config.get("holdout_end_date")),
+        "full_window_start_date": _string(replay_config.get("full_window_start_date")),
+        "full_window_end_date": _string(replay_config.get("full_window_end_date")),
+        "normalization_regime": _string(candidate_payload.get("normalization_regime")),
+        "net_pnl_per_day": _string(
+            scorecard.get("net_pnl_per_day") or full_window.get("net_per_day")
+        ),
+        "active_day_ratio": _string(scorecard.get("active_day_ratio")),
+        "positive_day_ratio": _string(scorecard.get("positive_day_ratio")),
+        "avg_filled_notional_per_day": _string(
+            scorecard.get("avg_filled_notional_per_day")
+        ),
+        "avg_filled_notional_per_active_day": _string(
+            scorecard.get("avg_filled_notional_per_active_day")
+        ),
+        "worst_day_loss": _string(scorecard.get("worst_day_loss")),
+        "max_drawdown": _string(scorecard.get("max_drawdown")),
+        "best_day_share": _string(scorecard.get("best_day_share")),
+        "regime_slice_pass_rate": _string(scorecard.get("regime_slice_pass_rate")),
+        "pareto_tier": int(ranking.get("pareto_tier") or 999),
+        "tie_breaker_score": _string(ranking.get("tie_breaker_score")),
+        "hard_vetoes": list(
+            cast(list[str], candidate_payload.get("hard_vetoes") or [])
+        ),
+        "daily_net": _mapping(full_window.get("daily_net")),
+        "daily_filled_notional": _mapping(full_window.get("daily_filled_notional")),
+        "pruned_symbol": _string(candidate_payload.get("pruned_symbol")),
+        "objective_scope": "research_only",
+        "promotion_stage": promotion_readiness["stage"],
+        "promotion_status": promotion_readiness["status"],
+        "promotable": promotion_readiness["promotable"],
+        "promotion_reason": promotion_readiness["reason"],
+        "promotion_blockers": list(cast(list[str], promotion_readiness["blockers"])),
+        "promotion_required_evidence": list(
+            cast(list[str], promotion_readiness["required_evidence"])
+        ),
+        "runtime_family": _string(
+            _mapping(promotion_readiness["runtime_harness"]).get("family")
+        ),
+        "runtime_strategy_name": _string(
+            _mapping(promotion_readiness["runtime_harness"]).get("strategy_name")
+        ),
+        "descriptor_id": _string(descriptor.descriptor_id)
+        if descriptor is not None
+        else "",
+        "entry_window_start_minute": descriptor.entry_window_start_minute
+        if descriptor is not None
+        else 0,
+        "entry_window_end_minute": descriptor.entry_window_end_minute
+        if descriptor is not None
+        else 0,
+        "max_hold_minutes": descriptor.max_hold_minutes
+        if descriptor is not None
+        else 0,
+        "rank_count": descriptor.rank_count if descriptor is not None else 0,
+        "requires_prev_day_features": descriptor.requires_prev_day_features
+        if descriptor is not None
+        else False,
+        "requires_cross_sectional_features": (
+            descriptor.requires_cross_sectional_features
+            if descriptor is not None
+            else False
+        ),
+        "requires_quote_quality_gate": descriptor.requires_quote_quality_gate
+        if descriptor is not None
+        else False,
+        "max_position_pct_equity": (
+            _string(descriptor.max_position_pct_equity)
+            if descriptor is not None
+            else ""
+        ),
+        "configured_max_gross_exposure_pct_equity": (
+            _string(descriptor.configured_max_gross_exposure_pct_equity)
+            if descriptor is not None
+            else ""
+        ),
+        "estimated_max_gross_exposure_pct_equity": (
+            _string(descriptor.estimated_max_gross_exposure_pct_equity)
+            if descriptor is not None
+            else ""
+        ),
+        "capital_budget_overage_ratio": (
+            _string(descriptor.capital_budget_overage_ratio)
+            if descriptor is not None
+            else ""
+        ),
+        "capital_feasible": descriptor.capital_feasible
+        if descriptor is not None
+        else True,
+        "max_gross_exposure_pct_equity": _string(
+            scorecard.get("max_gross_exposure_pct_equity")
+            or full_window.get("max_gross_exposure_pct_equity")
+        ),
+        "min_cash": _string(scorecard.get("min_cash") or full_window.get("min_cash")),
+        "negative_cash_observation_count": int(
+            scorecard.get("negative_cash_observation_count")
+            or full_window.get("negative_cash_observation_count")
+            or 0
+        ),
+        "proposal_score": proposal_score.score if proposal_score is not None else 0.0,
+        "proposal_rank": proposal_score.rank if proposal_score is not None else 0,
+        "proposal_backend": _string(proposal_score.backend)
+        if proposal_score is not None
+        else "",
+        "proposal_mode": _string(proposal_score.mode)
+        if proposal_score is not None
+        else "",
+        "proposal_selected": proposal_selected,
+        "proposal_selection_reason": proposal_selection_reason,
     }
 
 
 def _write_history_jsonl(path: Path, history: list[dict[str, Any]]) -> None:
     lines = [json.dumps(item, sort_keys=True) for item in history]
-    path.write_text('\n'.join(lines) + ('\n' if lines else ''), encoding='utf-8')
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
 
 def _sanitize_tsv_field(value: Any) -> str:
-    return str(value).replace('\t', ' ').replace('\n', ' ').strip()
+    return str(value).replace("\t", " ").replace("\n", " ").strip()
 
 
 def _write_results_tsv(path: Path, history: list[dict[str, Any]]) -> None:
     header = [
-        'experiment',
-        'iteration',
-        'family_template_id',
-        'candidate_id',
-        'net_pnl_per_day',
-        'active_day_ratio',
-        'best_day_share',
-        'max_drawdown',
-        'status',
-        'description',
+        "experiment",
+        "iteration",
+        "family_template_id",
+        "candidate_id",
+        "net_pnl_per_day",
+        "active_day_ratio",
+        "best_day_share",
+        "max_drawdown",
+        "status",
+        "description",
     ]
-    rows = ['\t'.join(header)]
+    rows = ["\t".join(header)]
     for item in history:
         rows.append(
-            '\t'.join(
+            "\t".join(
                 [
-                    _sanitize_tsv_field(item['experiment_index']),
-                    _sanitize_tsv_field(item['iteration']),
-                    _sanitize_tsv_field(item['family_template_id']),
-                    _sanitize_tsv_field(item['candidate_id']),
-                    _sanitize_tsv_field(item['net_pnl_per_day']),
-                    _sanitize_tsv_field(item['active_day_ratio']),
-                    _sanitize_tsv_field(item['best_day_share']),
-                    _sanitize_tsv_field(item['max_drawdown']),
-                    _sanitize_tsv_field(item['status']),
-                    _sanitize_tsv_field(item['mutation_label']),
+                    _sanitize_tsv_field(item["experiment_index"]),
+                    _sanitize_tsv_field(item["iteration"]),
+                    _sanitize_tsv_field(item["family_template_id"]),
+                    _sanitize_tsv_field(item["candidate_id"]),
+                    _sanitize_tsv_field(item["net_pnl_per_day"]),
+                    _sanitize_tsv_field(item["active_day_ratio"]),
+                    _sanitize_tsv_field(item["best_day_share"]),
+                    _sanitize_tsv_field(item["max_drawdown"]),
+                    _sanitize_tsv_field(item["status"]),
+                    _sanitize_tsv_field(item["mutation_label"]),
                 ]
             )
         )
-    path.write_text('\n'.join(rows) + '\n', encoding='utf-8')
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
 def _best_history_record(history: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -520,14 +748,145 @@ def _best_history_record(history: list[dict[str, Any]]) -> dict[str, Any] | None
     sorted_history = sorted(
         history,
         key=lambda item: (
-            item['status'] != 'keep',
-            bool(item['hard_vetoes']),
-            int(item['pareto_tier']),
-            -float(item['net_pnl_per_day'] or '0'),
-            -float(item['active_day_ratio'] or '0'),
+            item["status"] != "keep",
+            bool(item["hard_vetoes"]),
+            int(item["pareto_tier"]),
+            -float(item["net_pnl_per_day"] or "0"),
+            -float(item["active_day_ratio"] or "0"),
         ),
     )
     return sorted_history[0]
+
+
+def _runtime_closure_candidate(
+    best_candidate: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    if best_candidate is None:
+        return None
+    if not bool(best_candidate.get("objective_met")):
+        return None
+    if cast(list[Any], best_candidate.get("hard_vetoes") or []):
+        return None
+    return best_candidate
+
+
+def _portfolio_oracle_policy(
+    program: StrategyAutoresearchProgram,
+) -> ProfitTargetOraclePolicy:
+    objective = program.objective
+    return ProfitTargetOraclePolicy(
+        min_active_day_ratio=objective.min_active_day_ratio,
+        min_positive_day_ratio=objective.min_positive_day_ratio,
+        min_daily_net_pnl=objective.min_daily_net_pnl,
+        max_best_day_share=objective.max_best_day_share,
+        max_cluster_contribution_share=Decimal("0.40"),
+        max_single_symbol_contribution_share=Decimal("0.35"),
+        max_worst_day_loss=objective.max_worst_day_loss,
+        max_drawdown=objective.max_drawdown,
+        min_avg_filled_notional_per_day=objective.min_daily_notional,
+        min_regime_slice_pass_rate=objective.min_regime_slice_pass_rate,
+        require_shadow_parity_within_budget=True,
+        require_executable_replay=True,
+    )
+
+
+def _candidate_spec_id_for_portfolio_payload(
+    *,
+    candidate: Mapping[str, Any],
+    result_path: Path,
+) -> str:
+    return (
+        _string(candidate.get("candidate_spec_id"))
+        or _string(candidate.get("descriptor_id"))
+        or _string(candidate.get("candidate_id"))
+        or result_path.parent.name
+    )
+
+
+def _portfolio_evidence_bundles_from_results(
+    run_root: Path,
+) -> tuple[CandidateEvidenceBundle, ...]:
+    bundles: list[CandidateEvidenceBundle] = []
+    seen_bundle_ids: set[str] = set()
+    for result_path in sorted((run_root / "experiments").glob("*/result.json")):
+        try:
+            payload = json.loads(result_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, Mapping):
+            continue
+        dataset_snapshot_id = _string(
+            _mapping(payload.get("dataset_snapshot_receipt")).get("snapshot_id")
+        )
+        for candidate in cast(list[Mapping[str, Any]], payload.get("top") or []):
+            if not isinstance(candidate, Mapping):
+                continue
+            bundle = evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=_candidate_spec_id_for_portfolio_payload(
+                    candidate=candidate,
+                    result_path=result_path,
+                ),
+                candidate=candidate,
+                dataset_snapshot_id=dataset_snapshot_id,
+                result_path=str(result_path),
+            )
+            if bundle.evidence_bundle_id in seen_bundle_ids:
+                continue
+            seen_bundle_ids.add(bundle.evidence_bundle_id)
+            bundles.append(bundle)
+    return tuple(bundles)
+
+
+def _write_portfolio_outputs(
+    *,
+    run_root: Path,
+    program: StrategyAutoresearchProgram,
+) -> tuple[PortfolioCandidateSpec | None, dict[str, Any]]:
+    evidence_bundles = _portfolio_evidence_bundles_from_results(run_root)
+    portfolio = optimize_portfolio_candidate(
+        evidence_bundles=evidence_bundles,
+        target_net_pnl_per_day=program.objective.target_net_pnl_per_day,
+        oracle_policy=_portfolio_oracle_policy(program),
+        portfolio_size_min=2,
+        portfolio_size_max=8,
+    )
+    portfolio_rows = [portfolio.to_payload()] if portfolio is not None else []
+    portfolio_path = run_root / "portfolio-candidates.jsonl"
+    portfolio_path.write_text(
+        "\n".join(json.dumps(item, sort_keys=True) for item in portfolio_rows)
+        + ("\n" if portfolio_rows else ""),
+        encoding="utf-8",
+    )
+    evidence_path = run_root / "candidate-evidence-bundles.jsonl"
+    evidence_path.write_text(
+        "\n".join(
+            json.dumps(bundle.to_payload(), sort_keys=True)
+            for bundle in evidence_bundles
+        )
+        + ("\n" if evidence_bundles else ""),
+        encoding="utf-8",
+    )
+    optimizer_report = (
+        dict(portfolio.optimizer_report)
+        if portfolio is not None
+        else {
+            "status": "no_portfolio_candidate",
+            "evidence_bundle_count": len(evidence_bundles),
+        }
+    )
+    optimizer_report_path = run_root / "portfolio-optimizer-report.json"
+    optimizer_report_path.write_text(
+        json.dumps(optimizer_report, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    return portfolio, {
+        "portfolio_candidates_path": str(portfolio_path),
+        "candidate_evidence_bundles_path": str(evidence_path),
+        "portfolio_optimizer_report_path": str(optimizer_report_path),
+        "portfolio_candidate_count": len(portfolio_rows),
+        "candidate_evidence_bundle_count": len(evidence_bundles),
+        "portfolio_optimizer_report": optimizer_report,
+    }
 
 
 def _proposal_diagnostics(
@@ -538,24 +897,25 @@ def _proposal_diagnostics(
 ) -> ProposalDiagnostics:
     selected_entries = [
         {
-            'candidate_id': _string(item.get('candidate_id')),
-            'descriptor_id': _string(item.get('descriptor_id')),
-            'selection_reason': _string(item.get('proposal_selection_reason')) or 'exploitation',
-            'score': float(item.get('proposal_score') or 0.0),
-            'rank': int(item.get('proposal_rank') or 0),
-            'family_template_id': _string(item.get('family_template_id')),
-            'side_policy': 'unknown',
+            "candidate_id": _string(item.get("candidate_id")),
+            "descriptor_id": _string(item.get("descriptor_id")),
+            "selection_reason": _string(item.get("proposal_selection_reason"))
+            or "exploitation",
+            "score": float(item.get("proposal_score") or 0.0),
+            "rank": int(item.get("proposal_rank") or 0),
+            "family_template_id": _string(item.get("family_template_id")),
+            "side_policy": "unknown",
         }
         for item in history
-        if bool(item.get('proposal_selected'))
+        if bool(item.get("proposal_selected"))
     ]
     selected_by_candidate: dict[str, dict[str, Any]] = {}
     descriptor_by_candidate = {item.candidate_id: item for item in descriptors}
     for item in selected_entries:
-        candidate_id = item['candidate_id']
+        candidate_id = item["candidate_id"]
         descriptor = descriptor_by_candidate.get(candidate_id)
         if descriptor is not None:
-            item['side_policy'] = descriptor.side_policy
+            item["side_policy"] = descriptor.side_policy
         selected_by_candidate[candidate_id] = item
     return build_proposal_diagnostics(
         descriptors=descriptors,
@@ -563,13 +923,35 @@ def _proposal_diagnostics(
         history_rows=history,
         selected_candidates=[
             ProposalSelectionEntry(
-                candidate_id=item['candidate_id'],
-                descriptor_id=item['descriptor_id'],
-                selection_reason=item['selection_reason'],
-                score=float(item['score']),
-                rank=int(item['rank']),
-                family_template_id=item['family_template_id'],
-                side_policy=item['side_policy'],
+                candidate_id=item["candidate_id"],
+                descriptor_id=item["descriptor_id"],
+                selection_reason=item["selection_reason"],
+                score=float(item["score"]),
+                rank=int(item["rank"]),
+                family_template_id=item["family_template_id"],
+                side_policy=item["side_policy"],
+                capital_feasible=bool(
+                    next(
+                        (
+                            history_item.get("capital_feasible")
+                            for history_item in history
+                            if _string(history_item.get("candidate_id"))
+                            == item["candidate_id"]
+                        ),
+                        True,
+                    )
+                ),
+                capital_budget_overage_ratio=_float(
+                    next(
+                        (
+                            history_item.get("capital_budget_overage_ratio")
+                            for history_item in history
+                            if _string(history_item.get("candidate_id"))
+                            == item["candidate_id"]
+                        ),
+                        0,
+                    )
+                ),
             )
             for item in selected_by_candidate.values()
         ],
@@ -582,32 +964,32 @@ def _experiment_snapshot_from_payload(
     experiment: str,
     result_path: Path,
 ) -> dict[str, Any] | None:
-    top_candidates = cast(list[dict[str, Any]], payload.get('top') or [])
+    top_candidates = cast(list[dict[str, Any]], payload.get("top") or [])
     if not top_candidates:
         return None
     top_row = _mapping(top_candidates[0])
-    scorecard = _mapping(top_row.get('objective_scorecard'))
-    progress = _mapping(payload.get('progress'))
+    scorecard = _mapping(top_row.get("objective_scorecard"))
+    progress = _mapping(payload.get("progress"))
     return {
-        'experiment': experiment,
-        'path': str(result_path),
-        'status': _string(payload.get('status')),
-        'candidate_count': int(payload.get('candidate_count') or 0),
-        'evaluated_candidates': int(progress.get('evaluated_candidates') or 0),
-        'pending_candidates': int(progress.get('pending_candidates') or 0),
-        'top_candidate_id': _string(top_row.get('candidate_id')),
-        'top_net_pnl_per_day': _string(scorecard.get('net_pnl_per_day')),
-        'top_active_day_ratio': _string(scorecard.get('active_day_ratio')),
-        'top_best_day_share': _string(scorecard.get('best_day_share')),
-        'top_hard_vetoes': list(cast(list[str], top_row.get('hard_vetoes') or [])),
+        "experiment": experiment,
+        "path": str(result_path),
+        "status": _string(payload.get("status")),
+        "candidate_count": int(payload.get("candidate_count") or 0),
+        "evaluated_candidates": int(progress.get("evaluated_candidates") or 0),
+        "pending_candidates": int(progress.get("pending_candidates") or 0),
+        "top_candidate_id": _string(top_row.get("candidate_id")),
+        "top_net_pnl_per_day": _string(scorecard.get("net_pnl_per_day")),
+        "top_active_day_ratio": _string(scorecard.get("active_day_ratio")),
+        "top_best_day_share": _string(scorecard.get("best_day_share")),
+        "top_hard_vetoes": list(cast(list[str], top_row.get("hard_vetoes") or [])),
     }
 
 
 def _load_experiment_snapshots(run_root: Path) -> list[dict[str, Any]]:
     snapshots: list[dict[str, Any]] = []
-    for result_path in sorted((run_root / 'experiments').glob('*/result.json')):
+    for result_path in sorted((run_root / "experiments").glob("*/result.json")):
         try:
-            payload = json.loads(result_path.read_text(encoding='utf-8'))
+            payload = json.loads(result_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError):
             continue
         if not isinstance(payload, Mapping):
@@ -628,10 +1010,10 @@ def _best_experiment_snapshot(snapshots: list[dict[str, Any]]) -> dict[str, Any]
     return max(
         snapshots,
         key=lambda item: (
-            Decimal(_string(item.get('top_net_pnl_per_day')) or '0'),
-            Decimal(_string(item.get('top_active_day_ratio')) or '0'),
-            -Decimal(_string(item.get('top_best_day_share')) or '0'),
-            -int(item.get('pending_candidates') or 0),
+            Decimal(_string(item.get("top_net_pnl_per_day")) or "0"),
+            Decimal(_string(item.get("top_active_day_ratio")) or "0"),
+            -Decimal(_string(item.get("top_best_day_share")) or "0"),
+            -int(item.get("pending_candidates") or 0),
         ),
     )
 
@@ -649,29 +1031,33 @@ def _live_progress_payload(
 ) -> dict[str, Any]:
     snapshots = _load_experiment_snapshots(run_root)
     payload: dict[str, Any] = {
-        'frontier_runs_started': frontier_runs,
-        'pending_work_items': len(worklist),
-        'history_row_count': len(history),
-        'descriptor_count': len(descriptors),
-        'proposal_score_count': len(proposal_scores),
-        'experiment_result_count': len(snapshots),
-        'latest_experiment': snapshots[-1] if snapshots else None,
-        'best_experiment_candidate': _best_experiment_snapshot(snapshots),
+        "frontier_runs_started": frontier_runs,
+        "pending_work_items": len(worklist),
+        "history_row_count": len(history),
+        "descriptor_count": len(descriptors),
+        "proposal_score_count": len(proposal_scores),
+        "experiment_result_count": len(snapshots),
+        "latest_experiment": snapshots[-1] if snapshots else None,
+        "best_experiment_candidate": _best_experiment_snapshot(snapshots),
     }
     if selected_for_replay is not None:
-        payload['selected_for_replay'] = {
-            'candidate_id': selected_for_replay.candidate_id,
-            'descriptor_id': selected_for_replay.descriptor_id,
-            'selection_reason': selected_for_replay.selection_reason,
-            'score': selected_for_replay.score,
-            'rank': selected_for_replay.rank,
-            'family_template_id': selected_for_replay.family_template_id,
-            'side_policy': selected_for_replay.side_policy,
-            'entry_window_start_minute': (
-                selected_descriptor.entry_window_start_minute if selected_descriptor is not None else 0
+        payload["selected_for_replay"] = {
+            "candidate_id": selected_for_replay.candidate_id,
+            "descriptor_id": selected_for_replay.descriptor_id,
+            "selection_reason": selected_for_replay.selection_reason,
+            "score": selected_for_replay.score,
+            "rank": selected_for_replay.rank,
+            "family_template_id": selected_for_replay.family_template_id,
+            "side_policy": selected_for_replay.side_policy,
+            "entry_window_start_minute": (
+                selected_descriptor.entry_window_start_minute
+                if selected_descriptor is not None
+                else 0
             ),
-            'entry_window_end_minute': (
-                selected_descriptor.entry_window_end_minute if selected_descriptor is not None else 0
+            "entry_window_end_minute": (
+                selected_descriptor.entry_window_end_minute
+                if selected_descriptor is not None
+                else 0
             ),
         }
     return payload
@@ -697,17 +1083,17 @@ def _persist_run_outputs(
     closure_execution_context: RuntimeClosureExecutionContext | None = None,
     error: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    history_path = run_root / 'history.jsonl'
-    results_tsv_path = run_root / 'results.tsv'
-    research_dossier_path = run_root / 'research_dossier.json'
-    summary_path = run_root / 'summary.json'
-    promotion_readiness_path = run_root / 'promotion_readiness.json'
-    snapshot_manifest_path = run_root / 'mlx-snapshot-manifest.json'
+    history_path = run_root / "history.jsonl"
+    results_tsv_path = run_root / "results.tsv"
+    research_dossier_path = run_root / "research_dossier.json"
+    summary_path = run_root / "summary.json"
+    promotion_readiness_path = run_root / "promotion_readiness.json"
+    snapshot_manifest_path = run_root / "mlx-snapshot-manifest.json"
     _write_history_jsonl(history_path, history)
     _write_results_tsv(results_tsv_path, history)
     research_dossier_path.write_text(
         json.dumps(program_payload, indent=2, sort_keys=True),
-        encoding='utf-8',
+        encoding="utf-8",
     )
     write_mlx_snapshot_manifest(snapshot_manifest_path, manifest)
     proposal_diagnostics = _proposal_diagnostics(
@@ -724,22 +1110,22 @@ def _persist_run_outputs(
     )
     notebook_paths = write_autoresearch_notebooks(run_root)
     summary: dict[str, Any] = {
-        'status': status,
-        'runner_run_id': runner_run_id,
-        'program_id': program_id,
-        'run_root': str(run_root),
-        'frontier_run_count': frontier_runs,
-        'objective_met': objective_met,
-        'objective_scope': 'research_only',
-        'history_path': str(history_path),
-        'results_tsv_path': str(results_tsv_path),
-        'research_dossier_path': str(research_dossier_path),
-        'promotion_readiness_path': str(promotion_readiness_path),
-        'snapshot_manifest_path': str(snapshot_manifest_path),
-        'mlx_exports': dict(mlx_exports),
-        'notebooks': [str(path) for path in notebook_paths],
-        'best_candidate': _best_history_record(history),
-        'live_progress': _live_progress_payload(
+        "status": status,
+        "runner_run_id": runner_run_id,
+        "program_id": program_id,
+        "run_root": str(run_root),
+        "frontier_run_count": frontier_runs,
+        "objective_met": objective_met,
+        "objective_scope": "research_only",
+        "history_path": str(history_path),
+        "results_tsv_path": str(results_tsv_path),
+        "research_dossier_path": str(research_dossier_path),
+        "promotion_readiness_path": str(promotion_readiness_path),
+        "snapshot_manifest_path": str(snapshot_manifest_path),
+        "mlx_exports": dict(mlx_exports),
+        "notebooks": [str(path) for path in notebook_paths],
+        "best_candidate": _best_history_record(history),
+        "live_progress": _live_progress_payload(
             run_root=run_root,
             frontier_runs=frontier_runs,
             worklist=worklist,
@@ -750,26 +1136,34 @@ def _persist_run_outputs(
             selected_descriptor=selected_descriptor,
         ),
     }
-    best_candidate = cast(dict[str, Any] | None, summary['best_candidate'])
-    summary['promotion_readiness'] = summary_promotion_readiness(best_candidate)
+    best_candidate = cast(dict[str, Any] | None, summary["best_candidate"])
+    portfolio, portfolio_outputs = _write_portfolio_outputs(
+        run_root=run_root,
+        program=program,
+    )
+    summary.update(portfolio_outputs)
+    summary["best_portfolio_candidate"] = (
+        portfolio.to_payload() if portfolio is not None else None
+    )
+    summary["promotion_readiness"] = summary_promotion_readiness(best_candidate)
     runtime_closure = write_runtime_closure_bundle(
         run_root=run_root,
         runner_run_id=runner_run_id,
         program=program,
-        best_candidate=best_candidate,
+        best_candidate=_runtime_closure_candidate(best_candidate),
         manifest=manifest,
         execution_context=closure_execution_context,
     )
-    summary['runtime_closure'] = runtime_closure.to_payload()
+    summary["runtime_closure"] = runtime_closure.to_payload()
     if error is not None:
-        summary['error'] = dict(error)
+        summary["error"] = dict(error)
     promotion_readiness_path.write_text(
-        json.dumps(summary['promotion_readiness'], indent=2, sort_keys=True),
-        encoding='utf-8',
+        json.dumps(summary["promotion_readiness"], indent=2, sort_keys=True),
+        encoding="utf-8",
     )
     summary_path.write_text(
         json.dumps(summary, indent=2, sort_keys=True),
-        encoding='utf-8',
+        encoding="utf-8",
     )
     return summary
 
@@ -779,10 +1173,10 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         args.program.resolve(),
         family_dir=args.family_template_dir.resolve(),
     )
-    runner_run_id = run_id('strategy-autoresearch')
-    run_root = (args.output_dir.resolve() / runner_run_id)
+    runner_run_id = run_id("strategy-autoresearch")
+    run_root = args.output_dir.resolve() / runner_run_id
     run_root.mkdir(parents=True, exist_ok=True)
-    (run_root / 'experiments').mkdir(parents=True, exist_ok=True)
+    (run_root / "experiments").mkdir(parents=True, exist_ok=True)
 
     worklist: list[WorkItem] = []
     seen_sweeps: set[str] = set()
@@ -794,12 +1188,17 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
             holdout_day_count=max(1, int(args.holdout_days)),
             full_window_day_count=_default_full_window_day_count(args),
         )
+        seed_sweep = _apply_objective_capital_limits(
+            sweep_config=seed_sweep,
+            max_gross_exposure_pct_equity=program.objective.max_gross_exposure_pct_equity,
+            start_equity=Decimal(str(args.start_equity)),
+        )
         worklist.append(
             WorkItem(
                 family_plan=family_plan,
                 iteration=1,
                 sweep_config=seed_sweep,
-                mutation_label='seed',
+                mutation_label="seed",
                 parent_candidate_id=None,
             )
         )
@@ -834,18 +1233,22 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         return build_mlx_snapshot_manifest(
             runner_run_id=runner_run_id,
             program=program,
-            symbols=','.join(snapshot_symbols),
+            symbols=",".join(snapshot_symbols),
             train_days=int(args.train_days),
             holdout_days=int(args.holdout_days),
             full_window_start_date=resolved_full_window_start_date,
             full_window_end_date=resolved_full_window_end_date,
             tape_freshness_receipts=tuple(tape_freshness_receipts),
             row_counts={
-                'receipt_count': len(tape_freshness_receipts),
-                'latest_receipt_row_count': int(latest_receipt.get('row_count') or 0),
-                'signal_row_count': signal_bundle_stats.row_count if signal_bundle_stats is not None else 0,
-                'signal_symbol_count': (
-                    signal_bundle_stats.symbol_count if signal_bundle_stats is not None else len(snapshot_symbols)
+                "receipt_count": len(tape_freshness_receipts),
+                "latest_receipt_row_count": int(latest_receipt.get("row_count") or 0),
+                "signal_row_count": signal_bundle_stats.row_count
+                if signal_bundle_stats is not None
+                else 0,
+                "signal_symbol_count": (
+                    signal_bundle_stats.symbol_count
+                    if signal_bundle_stats is not None
+                    else len(snapshot_symbols)
                 ),
             },
             tensor_bundle_paths=bundle_paths,
@@ -867,7 +1270,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         descriptors=descriptors,
         proposal_scores=proposal_scores,
         worklist=worklist,
-        status='running',
+        status="running",
         closure_execution_context=closure_execution_context,
     )
     signal_bundle_stats = _maybe_write_signal_bundle(
@@ -892,12 +1295,14 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         descriptors=descriptors,
         proposal_scores=proposal_scores,
         worklist=worklist,
-        status='running',
+        status="running",
         closure_execution_context=closure_execution_context,
     )
     try:
         while worklist:
-            if int(args.max_frontier_runs) > 0 and frontier_runs >= int(args.max_frontier_runs):
+            if int(args.max_frontier_runs) > 0 and frontier_runs >= int(
+                args.max_frontier_runs
+            ):
                 break
             pending_descriptors = [
                 descriptor_from_sweep_config(
@@ -917,7 +1322,10 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
             ordered_pending = sorted(
                 zip(worklist, pending_descriptors, strict=False),
                 key=lambda item: (
+                    not item[1].capital_feasible,
+                    _float(item[1].capital_budget_overage_ratio),
                     score_by_candidate[item[1].candidate_id].rank,
+                    -score_by_candidate[item[1].candidate_id].score,
                     item[0].family_plan.family_template.family_id,
                 ),
             )
@@ -931,26 +1339,30 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
             frontier_runs += 1
             experiment_index = frontier_runs
             experiment_slug = _slug(
-                f'{experiment_index:03d}-{current.family_plan.family_template.family_id}-iter-{current.iteration}'
+                f"{experiment_index:03d}-{current.family_plan.family_template.family_id}-iter-{current.iteration}"
             )
-            experiment_root = run_root / 'experiments' / experiment_slug
+            experiment_root = run_root / "experiments" / experiment_slug
             experiment_root.mkdir(parents=True, exist_ok=True)
-            sweep_config_path = experiment_root / 'sweep.yaml'
+            sweep_config_path = experiment_root / "sweep.yaml"
             sweep_config_path.write_text(
                 yaml.safe_dump(current.sweep_config, sort_keys=False),
-                encoding='utf-8',
+                encoding="utf-8",
             )
-            result_path = experiment_root / 'result.json'
+            result_path = experiment_root / "result.json"
             selected_score = score_by_candidate.get(current_descriptor.candidate_id)
             selected_for_replay = (
                 ProposalSelectionEntry(
                     candidate_id=current_descriptor.candidate_id,
                     descriptor_id=current_descriptor.descriptor_id,
-                    selection_reason='frontier_seed',
+                    selection_reason="frontier_seed",
                     score=selected_score.score,
                     rank=selected_score.rank,
                     family_template_id=current_descriptor.family_template_id,
                     side_policy=current_descriptor.side_policy,
+                    capital_feasible=current_descriptor.capital_feasible,
+                    capital_budget_overage_ratio=_float(
+                        current_descriptor.capital_budget_overage_ratio
+                    ),
                 )
                 if selected_score is not None
                 else None
@@ -968,7 +1380,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 descriptors=descriptors,
                 proposal_scores=proposal_scores,
                 worklist=worklist,
-                status='running',
+                status="running",
                 selected_for_replay=selected_for_replay,
                 selected_descriptor=current_descriptor,
                 closure_execution_context=closure_execution_context,
@@ -985,7 +1397,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 )
             except ValueError as exc:
                 status_reason = str(exc)
-                if not status_reason.startswith('strategy_not_found:'):
+                if not status_reason.startswith("strategy_not_found:"):
                     raise
                 candidate_payload = _runtime_missing_candidate_payload(
                     candidate_id=current_descriptor.candidate_id,
@@ -1010,19 +1422,21 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                         result_path=result_path,
                         candidate_payload=candidate_payload,
                         rank=1,
-                        status='skip',
+                        status="skip",
                         objective_met=False,
-                        dataset_snapshot_id='',
+                        dataset_snapshot_id="",
                         descriptor=current_descriptor,
                         proposal_score=selected_score,
                         proposal_selected=False,
-                        proposal_selection_reason='runtime_strategy_missing',
-                        disable_other_strategies=bool(current.sweep_config.get('disable_other_strategies', True)),
+                        proposal_selection_reason="runtime_strategy_missing",
+                        disable_other_strategies=bool(
+                            current.sweep_config.get("disable_other_strategies", True)
+                        ),
                     )
                 )
                 result_path.write_text(
                     json.dumps(frontier_payload, indent=2, sort_keys=True),
-                    encoding='utf-8',
+                    encoding="utf-8",
                 )
                 _persist_run_outputs(
                     run_root=run_root,
@@ -1037,26 +1451,30 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                     descriptors=descriptors,
                     proposal_scores=proposal_scores,
                     worklist=worklist,
-                    status='running',
+                    status="running",
                     closure_execution_context=closure_execution_context,
                 )
                 continue
             result_path.write_text(
                 json.dumps(frontier_payload, indent=2, sort_keys=True),
-                encoding='utf-8',
+                encoding="utf-8",
             )
             dataset_snapshot_id = _string(
-                _mapping(frontier_payload.get('dataset_snapshot_receipt')).get('snapshot_id')
+                _mapping(frontier_payload.get("dataset_snapshot_receipt")).get(
+                    "snapshot_id"
+                )
             )
-            receipt_payload = _mapping(frontier_payload.get('dataset_snapshot_receipt'))
+            receipt_payload = _mapping(frontier_payload.get("dataset_snapshot_receipt"))
             if receipt_payload:
                 tape_freshness_receipts.append(receipt_payload)
-            frontier_window = _mapping(frontier_payload.get('window'))
+            frontier_window = _mapping(frontier_payload.get("window"))
             resolved_full_window_start_date = (
-                _string(frontier_window.get('full_window_start_date')) or resolved_full_window_start_date
+                _string(frontier_window.get("full_window_start_date"))
+                or resolved_full_window_start_date
             )
             resolved_full_window_end_date = (
-                _string(frontier_window.get('full_window_end_date')) or resolved_full_window_end_date
+                _string(frontier_window.get("full_window_end_date"))
+                or resolved_full_window_end_date
             )
             signal_bundle_stats = _maybe_write_signal_bundle(
                 args=args,
@@ -1067,11 +1485,13 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 existing=signal_bundle_stats,
             )
             manifest = _refresh_manifest()
-            top_candidates = cast(list[dict[str, Any]], frontier_payload.get('top') or [])
+            top_candidates = cast(
+                list[dict[str, Any]], frontier_payload.get("top") or []
+            )
             keep_candidates = [
                 candidate
                 for candidate in top_candidates
-                if not bool(_mapping(candidate.get('ranking')).get('vetoed'))
+                if not bool(_mapping(candidate.get("ranking")).get("vetoed"))
             ]
             frontier_descriptors = [
                 descriptor_from_candidate_payload(
@@ -1087,21 +1507,28 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 policy=cast(ProposalModelPolicy, program.proposal_model_policy),
             )
             proposal_scores.extend(frontier_candidate_scores)
-            frontier_descriptor_by_candidate = {item.candidate_id: item for item in frontier_descriptors}
-            frontier_score_by_candidate = {item.candidate_id: item for item in frontier_candidate_scores}
+            frontier_descriptor_by_candidate = {
+                item.candidate_id: item for item in frontier_descriptors
+            }
+            frontier_score_by_candidate = {
+                item.candidate_id: item for item in frontier_candidate_scores
+            }
             keep_limit = _keep_candidate_limit(
                 family_plan=current.family_plan,
-                replay_budget_max_candidates_per_round=int(program.replay_budget.max_candidates_per_round),
+                replay_budget_max_candidates_per_round=int(
+                    program.replay_budget.max_candidates_per_round
+                ),
             )
             non_vetoed_descriptors = [
-                frontier_descriptor_by_candidate[_string(candidate.get('candidate_id'))]
+                frontier_descriptor_by_candidate[_string(candidate.get("candidate_id"))]
                 for candidate in keep_candidates
-                if _string(candidate.get('candidate_id')) in frontier_descriptor_by_candidate
+                if _string(candidate.get("candidate_id"))
+                in frontier_descriptor_by_candidate
             ]
             non_vetoed_scores = [
-                frontier_score_by_candidate[_string(candidate.get('candidate_id'))]
+                frontier_score_by_candidate[_string(candidate.get("candidate_id"))]
                 for candidate in keep_candidates
-                if _string(candidate.get('candidate_id')) in frontier_score_by_candidate
+                if _string(candidate.get("candidate_id")) in frontier_score_by_candidate
             ]
             exploration_slots = min(
                 max(0, int(program.proposal_model_policy.exploration_slots)),
@@ -1114,9 +1541,13 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 top_k=max(1, int(program.proposal_model_policy.top_k)),
                 exploration_slots=exploration_slots,
             )
-            if not selected_keep_entries and current.family_plan.force_keep_top_candidate_if_all_vetoed and top_candidates:
+            if (
+                not selected_keep_entries
+                and current.family_plan.force_keep_top_candidate_if_all_vetoed
+                and top_candidates
+            ):
                 first_candidate = top_candidates[0]
-                first_candidate_id = _string(first_candidate.get('candidate_id'))
+                first_candidate_id = _string(first_candidate.get("candidate_id"))
                 descriptor = frontier_descriptor_by_candidate.get(first_candidate_id)
                 score = frontier_score_by_candidate.get(first_candidate_id)
                 if descriptor is not None and score is not None:
@@ -1124,7 +1555,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                         ProposalSelectionEntry(
                             candidate_id=first_candidate_id,
                             descriptor_id=descriptor.descriptor_id,
-                            selection_reason='fallback_force_keep',
+                            selection_reason="fallback_force_keep",
                             score=score.score,
                             rank=score.rank,
                             family_template_id=descriptor.family_template_id,
@@ -1132,11 +1563,16 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                         )
                     ]
             keep_ids = {item.candidate_id for item in selected_keep_entries}
-            keep_reason_by_candidate = {item.candidate_id: item.selection_reason for item in selected_keep_entries}
+            keep_reason_by_candidate = {
+                item.candidate_id: item.selection_reason
+                for item in selected_keep_entries
+            }
             for rank, candidate in enumerate(top_candidates, start=1):
-                candidate_id = _string(candidate.get('candidate_id'))
-                candidate_status = 'keep' if candidate_id in keep_ids else 'discard'
-                candidate_objective_met = candidate_meets_objective(candidate, objective=program.objective)
+                candidate_id = _string(candidate.get("candidate_id"))
+                candidate_status = "keep" if candidate_id in keep_ids else "discard"
+                candidate_objective_met = candidate_meets_objective(
+                    candidate, objective=program.objective
+                )
                 candidate_descriptor = frontier_descriptor_by_candidate[candidate_id]
                 history.append(
                     _history_record(
@@ -1156,13 +1592,17 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                         descriptor=candidate_descriptor,
                         proposal_score=frontier_score_by_candidate.get(candidate_id),
                         proposal_selected=candidate_id in keep_ids,
-                        proposal_selection_reason=keep_reason_by_candidate.get(candidate_id, ''),
-                        disable_other_strategies=bool(current.sweep_config.get('disable_other_strategies', True)),
+                        proposal_selection_reason=keep_reason_by_candidate.get(
+                            candidate_id, ""
+                        ),
+                        disable_other_strategies=bool(
+                            current.sweep_config.get("disable_other_strategies", True)
+                        ),
                     )
                 )
                 if candidate_objective_met:
                     objective_met = True
-                if candidate_status != 'keep':
+                if candidate_status != "keep":
                     continue
                 if current.iteration >= current.family_plan.max_iterations:
                     continue
@@ -1176,6 +1616,11 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                     objective=program.objective,
                     holdout_day_count=max(1, int(args.holdout_days)),
                     full_window_day_count=_default_full_window_day_count(args),
+                )
+                next_sweep_config = _apply_objective_capital_limits(
+                    sweep_config=next_sweep_config,
+                    max_gross_exposure_pct_equity=program.objective.max_gross_exposure_pct_equity,
+                    start_equity=Decimal(str(args.start_equity)),
                 )
                 worklist.append(
                     WorkItem(
@@ -1199,7 +1644,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 descriptors=descriptors,
                 proposal_scores=proposal_scores,
                 worklist=worklist,
-                status='running',
+                status="running",
                 closure_execution_context=closure_execution_context,
             )
             if objective_met and program.objective.stop_when_objective_met:
@@ -1218,11 +1663,11 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
             descriptors=descriptors,
             proposal_scores=proposal_scores,
             worklist=worklist,
-            status='error',
+            status="error",
             closure_execution_context=closure_execution_context,
             error={
-                'type': exc.__class__.__name__,
-                'message': str(exc),
+                "type": exc.__class__.__name__,
+                "message": str(exc),
             },
         )
 
@@ -1239,7 +1684,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         descriptors=descriptors,
         proposal_scores=proposal_scores,
         worklist=worklist,
-        status='ok',
+        status="ok",
         closure_execution_context=closure_execution_context,
     )
 
@@ -1250,11 +1695,11 @@ def main() -> int:
     if args.json_output is not None:
         args.json_output.write_text(
             json.dumps(payload, indent=2, sort_keys=True),
-            encoding='utf-8',
+            encoding="utf-8",
         )
     print(json.dumps(payload, indent=2, sort_keys=True))
-    return 0 if payload.get('status') == 'ok' else 1
+    return 0 if payload.get("status") == "ok" else 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     raise SystemExit(main())

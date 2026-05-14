@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
 
+import app.trading.discovery.mlx_features as mlx_features_module
 from app.trading.discovery.autoresearch import (
     ProposalModelPolicy,
     ReplayBudget,
@@ -120,6 +121,84 @@ def _program() -> StrategyAutoresearchProgram:
 
 
 class TestMlxAutoresearch(TestCase):
+    def test_descriptor_inference_covers_side_rank_and_universe_fallbacks(
+        self,
+    ) -> None:
+        short_template = FamilyTemplate(
+            family_id="mean_reversion_exhaustion_short_v1",
+            economic_mechanism="Exhaustion reversal.",
+            supported_markets=("us_equities_intraday",),
+            required_features=(),
+            allowed_normalizations=(),
+            entry_motifs=(),
+            exit_motifs=(),
+            risk_controls=(),
+            activity_model={},
+            liquidity_assumptions={},
+            regime_activation_rules=(),
+            day_veto_rules=(),
+            default_hard_vetoes={},
+            default_selection_objectives={},
+            runtime_harness={
+                "family": "mean_reversion_exhaustion_short",
+                "strategy_name": "mean-reversion-short-v1",
+            },
+        )
+        neutral_template = FamilyTemplate(
+            family_id="stat_arb_pairs_v1",
+            economic_mechanism="Paired statistical arbitrage.",
+            supported_markets=("us_equities_intraday",),
+            required_features=(),
+            allowed_normalizations=(),
+            entry_motifs=(),
+            exit_motifs=(),
+            risk_controls=(),
+            activity_model={},
+            liquidity_assumptions={},
+            regime_activation_rules=(),
+            day_veto_rules=(),
+            default_hard_vetoes={},
+            default_selection_objectives={},
+            runtime_harness={"family": "paired_stat_arb", "strategy_name": "pairs-v1"},
+        )
+
+        self.assertEqual(
+            mlx_features_module._infer_side_policy(short_template), "short"
+        )
+        self.assertEqual(
+            mlx_features_module._infer_side_policy(neutral_template),
+            "long_short",
+        )
+        self.assertEqual(
+            mlx_features_module._infer_rank_policy(
+                {"parameters": {"cross_section_signal": ["spread_z"]}},
+                neutral_template,
+            ),
+            "cross_sectional_rank",
+        )
+        self.assertEqual(
+            mlx_features_module._infer_rank_policy(
+                {"parameters": {"rank_feature": ["momentum_z"]}},
+                neutral_template,
+            ),
+            "rank",
+        )
+        self.assertEqual(
+            mlx_features_module._infer_rank_policy(
+                {"parameters": {}}, neutral_template
+            ),
+            "none",
+        )
+        self.assertEqual(
+            mlx_features_module._infer_rank_count(
+                {
+                    "parameters": {},
+                    "strategy_overrides": {"universe_symbols": [["NVDA", "", "AMD"]]},
+                }
+            ),
+            2,
+        )
+
     def test_build_snapshot_manifest_uses_program_snapshot_policy(self) -> None:
         manifest = build_mlx_snapshot_manifest(
             runner_run_id="run-1",
@@ -299,6 +378,49 @@ class TestMlxAutoresearch(TestCase):
             )
 
         self.assertEqual(ranked[0].backend, "numpy-fallback")
+
+    def test_rank_candidate_descriptors_uses_capital_prior_during_cold_start(
+        self,
+    ) -> None:
+        family_plan = Namespace(family_template=_template())
+        over_budget = descriptor_from_sweep_config(
+            candidate_id="aaa-over-budget",
+            family_plan=family_plan,  # type: ignore[arg-type]
+            sweep_config={
+                "parameters": {"max_gross_exposure_pct_equity": ["10.0"]},
+                "strategy_overrides": {
+                    "max_position_pct_equity": ["10.0"],
+                    "max_notional_per_trade": ["315900.20"],
+                },
+            },
+        )
+        feasible = descriptor_from_sweep_config(
+            candidate_id="zzz-feasible",
+            family_plan=family_plan,  # type: ignore[arg-type]
+            sweep_config={
+                "parameters": {"max_gross_exposure_pct_equity": ["1.0"]},
+                "strategy_overrides": {
+                    "max_position_pct_equity": ["0.50"],
+                    "max_notional_per_trade": ["7500"],
+                },
+            },
+        )
+
+        ranked = rank_candidate_descriptors(
+            descriptors=[over_budget, feasible],
+            history_rows=[],
+            policy=ProposalModelPolicy(
+                enabled=True,
+                mode="ranking_only",
+                backend_preference="numpy-fallback",
+                top_k=4,
+                exploration_slots=1,
+                minimum_history_rows=2,
+            ),
+        )
+
+        self.assertEqual(ranked[0].candidate_id, "zzz-feasible")
+        self.assertEqual(ranked[0].mode, "ranking_only_cold_start_capital_prior")
 
     def test_rank_candidate_descriptors_demotes_negative_lift_model(self) -> None:
         family_plan = Namespace(family_template=_template())
