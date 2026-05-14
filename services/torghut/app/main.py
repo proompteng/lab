@@ -2992,6 +2992,13 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
     lean_authority_status = _lean_authority_status()
     with SessionLocal() as session:
         tca_summary = _load_tca_summary(session, scheduler=scheduler)
+        readiness_dependencies, _readiness_checked_at, _readiness_cache_used = (
+            _readiness_dependency_snapshot(
+                session,
+                include_database_contract=True,
+                allow_stale_dependency_cache=True,
+            )
+        )
     market_context_status = scheduler.market_context_status()
     hypothesis_payload, hypothesis_summary, _dependency_quorum = (
         _build_hypothesis_runtime_payload(
@@ -3155,7 +3162,7 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
             "proof_floor": proof_floor,
             "live_submission_gate": live_submission_gate,
             "quant_evidence": quant_evidence,
-            "dependencies": {},
+            "dependencies": readiness_dependencies,
         },
         status_payload={
             "mode": settings.trading_mode,

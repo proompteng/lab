@@ -569,6 +569,27 @@ class TestBuildRevenueRepairDigest(TestCase):
         )
         self.assertEqual(route_reacquisition["expected_unblock_value"], 13)
 
+    def test_repair_only_payload_carries_readyz_database_contract(self) -> None:
+        readyz_payload = _repair_only_readyz()
+        dependencies = readyz_payload["dependencies"]
+        self.assertIsInstance(dependencies, dict)
+        dependencies["database"] = {
+            "ok": True,
+            "schema_current": True,
+            "schema_current_heads": ["0029_live_submission_gate"],
+        }
+
+        digest = build_revenue_repair_digest(
+            readyz_payload=readyz_payload,
+            status_payload=_repair_only_status(),
+            generated_at=NOW,
+        )
+
+        closure_board = digest["alpha_repair_closure_board"]
+        self.assertIsInstance(closure_board, dict)
+        self.assertTrue(closure_board["db_schema_current"])
+        self.assertNotIn("db_check_not_provided", closure_board["reason_codes"])
+
     def test_digest_defaults_generated_at_and_handles_missing_tca_dimension(
         self,
     ) -> None:
