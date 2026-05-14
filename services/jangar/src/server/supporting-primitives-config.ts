@@ -62,6 +62,7 @@ export type SupportingPrimitivesConfig = {
   swarmRequirementMaxDispatchPerReconcile: number
   swarmRequirementMaxPayloadBytes: number
   swarmRequirementMaxAttempts: number
+  materialReentryRequirementSignals: boolean
   swarmRuntimeAdmissionEnforcement: boolean
   swarmRuntimeProofEnforcement: boolean
   stageClearanceEnforcement: 'disabled' | 'shadow' | 'hold'
@@ -85,6 +86,7 @@ export const resolveSupportingPrimitivesConfig = (env: EnvSource = process.env):
   swarmRequirementMaxDispatchPerReconcile: parsePositiveInt(env.JANGAR_SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE, 5),
   swarmRequirementMaxPayloadBytes: parsePositiveInt(env.JANGAR_SWARM_REQUIREMENT_MAX_PAYLOAD_BYTES, 16_384),
   swarmRequirementMaxAttempts: parsePositiveInt(env.JANGAR_SWARM_REQUIREMENT_MAX_ATTEMPTS, 3),
+  materialReentryRequirementSignals: parseBoolean(env.JANGAR_MATERIAL_REENTRY_REQUIREMENT_SIGNALS, false),
   swarmRuntimeAdmissionEnforcement: parseBoolean(env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT, true),
   swarmRuntimeProofEnforcement: parseBoolean(env.JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT, true),
   stageClearanceEnforcement: parseStageClearanceEnforcement(env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT),

@@ -1952,14 +1952,17 @@ const reconcileSwarm = async (
   let stageClearancePackets: StageClearancePacket[] = []
   let stageClearanceMarket: StageClearanceStatusSnapshot | null = null
   let stageClearanceUnavailableMessage: string | null = null
-  if (STAGE_NAMES.some((stage) => stageClearanceModes[stage] === 'hold')) {
+  const shouldFetchStageClearanceSnapshot =
+    STAGE_NAMES.some((stage) => stageClearanceModes[stage] === 'hold') ||
+    (supportingConfig.stageClearanceEnforcement === 'shadow' && supportingConfig.materialReentryRequirementSignals)
+  if (shouldFetchStageClearanceSnapshot) {
     try {
       const stageClearanceSnapshot = await fetchStageClearanceStatusSnapshot(swarmNamespace, supportingConfig)
       stageClearancePackets = stageClearanceSnapshot.packets
       stageClearanceMarket = stageClearanceSnapshot
     } catch (error) {
       stageClearanceUnavailableMessage = summarizeRuntimeAdmissionError(error)
-      console.warn('[jangar] stage clearance snapshot unavailable for swarm launchers', {
+      console.warn('[jangar] stage clearance snapshot unavailable for swarm launchers and material reentry', {
         swarm: swarmName,
         namespace: swarmNamespace,
         error: stageClearanceUnavailableMessage,
