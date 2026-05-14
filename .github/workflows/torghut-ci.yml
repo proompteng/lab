@@ -393,7 +393,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        slice: [0, 1, 2, 3, 4, 5, 6, 7]
+        slice: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -426,7 +426,7 @@ jobs:
         env:
           COVERAGE_FILE: .coverage.autoresearch-runner-${{ matrix.slice }}
           SLICE_INDEX: ${{ matrix.slice }}
-          SLICE_TOTAL: 8
+          SLICE_TOTAL: 16
         run: |
           set -euo pipefail
           mapfile -t TEST_IDS < <(
@@ -521,8 +521,8 @@ jobs:
           set -euo pipefail
           mapfile -t COVERAGE_FILES < <(find .coverage-shards -type f -name '.coverage*' -print | sort)
           printf 'Combining %s coverage data files\n' "${#COVERAGE_FILES[@]}"
-          if [ "${#COVERAGE_FILES[@]}" -lt 12 ]; then
-            echo "Expected coverage data from all 4 pytest shards and all 8 autoresearch runner slices"
+          if [ "${#COVERAGE_FILES[@]}" -lt 20 ]; then
+            echo "Expected coverage data from all 4 pytest shards and all 16 autoresearch runner slices"
             exit 1
           fi
           uv run --frozen coverage combine "${COVERAGE_FILES[@]}"
