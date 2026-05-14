@@ -986,6 +986,50 @@ class TestHypothesisReadiness(TestCase):
         payload = status.as_payload()
         self.assertEqual(payload["verify_trust_foreclosure_board"], board)
 
+    def test_load_jangar_dependency_quorum_preserves_repair_slot_carry(
+        self,
+    ) -> None:
+        settings.trading_jangar_control_plane_status_url = (
+            "https://jangar.example/status"
+        )
+        settings.trading_jangar_control_plane_cache_ttl_seconds = 0
+        settings.trading_jangar_control_plane_timeout_seconds = 1.0
+        repair_slot_escrow = {
+            "schema_version": "jangar.repair-slot-escrow.v1",
+            "escrow_id": "repair-slot-escrow:test",
+            "status": "block",
+            "reason_codes": ["selected_receipt_source_revenue_repair_ref_mismatch"],
+        }
+        rollout_witness = {
+            "schema_version": "jangar.foreclosure-carry-rollout-witness.v1",
+            "witness_id": "foreclosure-carry-rollout-witness:test",
+            "fresh_until": "2026-05-14T16:30:00Z",
+        }
+        with patch(
+            "app.trading.hypotheses.urlopen",
+            return_value=_FakeHttpResponse(
+                {
+                    "generated_at": "2026-05-14T16:10:00Z",
+                    "dependency_quorum": {
+                        "decision": "block",
+                        "reasons": ["empirical_jobs_degraded"],
+                        "message": "blocked",
+                    },
+                    "repair_slot_escrow": repair_slot_escrow,
+                    "foreclosure_carry_rollout_witness": rollout_witness,
+                }
+            ),
+        ):
+            status = load_jangar_dependency_quorum()
+
+        payload = status.as_payload()
+        self.assertEqual(status.decision, "block")
+        self.assertEqual(payload["repair_slot_escrow"], repair_slot_escrow)
+        self.assertEqual(
+            payload["foreclosure_carry_rollout_witness"],
+            rollout_witness,
+        )
+
     def test_load_jangar_dependency_quorum_falls_back_to_legacy_status_when_needed(
         self,
     ) -> None:

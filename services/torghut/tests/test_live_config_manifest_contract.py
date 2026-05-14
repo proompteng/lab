@@ -260,7 +260,10 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertFalse(settings.trading_universe_static_fallback_enabled)
         self.assertEqual(settings.trading_universe_max_stale_seconds, 900)
         self.assertIsNone(settings.trading_jangar_symbols_url)
-        self.assertIsNone(settings.trading_jangar_control_plane_status_url)
+        self.assertEqual(
+            settings.trading_jangar_control_plane_status_url,
+            "http://agents.agents.svc.cluster.local/api/agents/control-plane/status?namespace=agents",
+        )
         self.assertIsNone(settings.trading_jangar_quant_health_url)
         self.assertEqual(
             settings.trading_market_context_url,
@@ -280,7 +283,10 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertNotIn("TRADING_FORECAST_SERVICE_URL", env)
         self.assertNotIn("TRADING_LEAN_RUNNER_URL", env)
         self.assertNotIn("JANGAR_SYMBOLS_URL", env)
-        self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_STATUS_URL", env)
+        self.assertEqual(
+            env.get("TRADING_JANGAR_CONTROL_PLANE_STATUS_URL"),
+            settings.trading_jangar_control_plane_status_url,
+        )
         self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS", env)
         self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS", env)
         self.assertNotIn("TRADING_JANGAR_QUANT_HEALTH_REQUIRED", env)
@@ -293,18 +299,21 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(env.get("TRADING_MARKET_CONTEXT_FAIL_MODE"), "shadow_only")
         self.assertNotIn("JANGAR_BASE_URL", env)
 
-    def test_live_manifest_has_no_jangar_trading_loop_urls(self) -> None:
+    def test_live_manifest_limits_jangar_trading_loop_urls(self) -> None:
         env = _load_torghut_knative_env()
 
         blocked_env = {
             "JANGAR_SYMBOLS_URL",
-            "TRADING_JANGAR_CONTROL_PLANE_STATUS_URL",
             "TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS",
             "TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS",
             "TRADING_JANGAR_QUANT_HEALTH_REQUIRED",
             "TRADING_JANGAR_QUANT_HEALTH_URL",
         }
         self.assertTrue(blocked_env.isdisjoint(env))
+        self.assertEqual(
+            env.get("TRADING_JANGAR_CONTROL_PLANE_STATUS_URL"),
+            "http://agents.agents.svc.cluster.local/api/agents/control-plane/status?namespace=agents",
+        )
         self.assertEqual(
             env.get("TRADING_MARKET_CONTEXT_URL"),
             "http://jangar.jangar.svc.cluster.local/api/torghut/market-context",

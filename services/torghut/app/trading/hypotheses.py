@@ -306,6 +306,13 @@ class JangarDependencyQuorumStatus:
     verify_trust_foreclosure_board: dict[str, object] = field(
         default_factory=_empty_payload_dict
     )
+    repair_slot_escrow: dict[str, object] = field(default_factory=_empty_payload_dict)
+    stage_debt_repair_admission: dict[str, object] = field(
+        default_factory=_empty_payload_dict
+    )
+    foreclosure_carry_rollout_witness: dict[str, object] = field(
+        default_factory=_empty_payload_dict
+    )
     generated_at: str | None = None
 
     def as_payload(self) -> dict[str, object]:
@@ -327,6 +334,16 @@ class JangarDependencyQuorumStatus:
         if self.verify_trust_foreclosure_board:
             payload["verify_trust_foreclosure_board"] = dict(
                 self.verify_trust_foreclosure_board
+            )
+        if self.repair_slot_escrow:
+            payload["repair_slot_escrow"] = dict(self.repair_slot_escrow)
+        if self.stage_debt_repair_admission:
+            payload["stage_debt_repair_admission"] = dict(
+                self.stage_debt_repair_admission
+            )
+        if self.foreclosure_carry_rollout_witness:
+            payload["foreclosure_carry_rollout_witness"] = dict(
+                self.foreclosure_carry_rollout_witness
             )
         if self.generated_at:
             payload["generated_at"] = self.generated_at
@@ -392,6 +409,46 @@ def _extract_verify_trust_foreclosure_board(
         or payload.get("verifyTrustForeclosureBoard")
         or quorum.get("verify_trust_foreclosure_board")
         or quorum.get("verifyTrustForeclosureBoard")
+    )
+
+
+def _extract_repair_slot_escrow(
+    payload: Mapping[str, Any],
+    quorum: Mapping[str, Any],
+) -> dict[str, object]:
+    return _as_payload_dict(
+        payload.get("repair_slot_escrow")
+        or payload.get("repairSlotEscrow")
+        or quorum.get("repair_slot_escrow")
+        or quorum.get("repairSlotEscrow")
+    )
+
+
+def _extract_stage_debt_repair_admission(
+    payload: Mapping[str, Any],
+    quorum: Mapping[str, Any],
+) -> dict[str, object]:
+    return _as_payload_dict(
+        payload.get("stage_debt_repair_admission")
+        or payload.get("stageDebtRepairAdmission")
+        or quorum.get("stage_debt_repair_admission")
+        or quorum.get("stageDebtRepairAdmission")
+    )
+
+
+def _extract_foreclosure_carry_rollout_witness(
+    payload: Mapping[str, Any],
+    quorum: Mapping[str, Any],
+) -> dict[str, object]:
+    return _as_payload_dict(
+        payload.get("foreclosure_carry_rollout_witness")
+        or payload.get("foreclosureCarryRolloutWitness")
+        or payload.get("controller_ingestion_witness")
+        or payload.get("controllerIngestionWitness")
+        or quorum.get("foreclosure_carry_rollout_witness")
+        or quorum.get("foreclosureCarryRolloutWitness")
+        or quorum.get("controller_ingestion_witness")
+        or quorum.get("controllerIngestionWitness")
     )
 
 
@@ -654,6 +711,15 @@ def _fallback_quorum_from_legacy_status(
                     payload,
                     {},
                 ),
+                repair_slot_escrow=_extract_repair_slot_escrow(payload, {}),
+                stage_debt_repair_admission=_extract_stage_debt_repair_admission(
+                    payload,
+                    {},
+                ),
+                foreclosure_carry_rollout_witness=_extract_foreclosure_carry_rollout_witness(
+                    payload,
+                    {},
+                ),
             )
         if backoff_jobs > 0 or confidence == "degraded":
             return JangarDependencyQuorumStatus(
@@ -661,6 +727,15 @@ def _fallback_quorum_from_legacy_status(
                 reasons=["workflows_degraded"],
                 message="Torghut workflow reliability is degraded.",
                 verify_trust_foreclosure_board=_extract_verify_trust_foreclosure_board(
+                    payload,
+                    {},
+                ),
+                repair_slot_escrow=_extract_repair_slot_escrow(payload, {}),
+                stage_debt_repair_admission=_extract_stage_debt_repair_admission(
+                    payload,
+                    {},
+                ),
+                foreclosure_carry_rollout_witness=_extract_foreclosure_carry_rollout_witness(
                     payload,
                     {},
                 ),
@@ -682,12 +757,27 @@ def _fallback_quorum_from_legacy_status(
                         payload,
                         {},
                     ),
+                    repair_slot_escrow=_extract_repair_slot_escrow(payload, {}),
+                    stage_debt_repair_admission=_extract_stage_debt_repair_admission(
+                        payload,
+                        {},
+                    ),
+                    foreclosure_carry_rollout_witness=_extract_foreclosure_carry_rollout_witness(
+                        payload,
+                        {},
+                    ),
                 )
     return JangarDependencyQuorumStatus(
         decision="unknown",
         reasons=["jangar_dependency_quorum_missing"],
         message="Torghut control-plane status did not include dependency_quorum.",
         verify_trust_foreclosure_board=_extract_verify_trust_foreclosure_board(
+            payload,
+            {},
+        ),
+        repair_slot_escrow=_extract_repair_slot_escrow(payload, {}),
+        stage_debt_repair_admission=_extract_stage_debt_repair_admission(payload, {}),
+        foreclosure_carry_rollout_witness=_extract_foreclosure_carry_rollout_witness(
             payload,
             {},
         ),
@@ -765,6 +855,15 @@ def load_jangar_dependency_quorum() -> JangarDependencyQuorumStatus:
                     quorum,
                 ),
                 verify_trust_foreclosure_board=_extract_verify_trust_foreclosure_board(
+                    payload,
+                    quorum,
+                ),
+                repair_slot_escrow=_extract_repair_slot_escrow(payload, quorum),
+                stage_debt_repair_admission=_extract_stage_debt_repair_admission(
+                    payload,
+                    quorum,
+                ),
+                foreclosure_carry_rollout_witness=_extract_foreclosure_carry_rollout_witness(
                     payload,
                     quorum,
                 ),

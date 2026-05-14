@@ -1100,6 +1100,15 @@ def _evaluate_trading_health_payload(
             "verify_trust_foreclosure_board": _dependency_quorum.as_payload().get(
                 "verify_trust_foreclosure_board"
             ),
+            "repair_slot_escrow": _dependency_quorum.as_payload().get(
+                "repair_slot_escrow"
+            ),
+            "stage_debt_repair_admission": _dependency_quorum.as_payload().get(
+                "stage_debt_repair_admission"
+            ),
+            "foreclosure_carry_rollout_witness": _dependency_quorum.as_payload().get(
+                "foreclosure_carry_rollout_witness"
+            ),
             "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
         },
         generated_at=now,
@@ -1628,6 +1637,13 @@ def trading_revenue_repair() -> dict[str, object]:
             ),
             "verify_trust_foreclosure_board": verify_trust_foreclosure_board
             or dependency_quorum_payload.get("verify_trust_foreclosure_board"),
+            "repair_slot_escrow": dependency_quorum_payload.get("repair_slot_escrow"),
+            "stage_debt_repair_admission": dependency_quorum_payload.get(
+                "stage_debt_repair_admission"
+            ),
+            "foreclosure_carry_rollout_witness": dependency_quorum_payload.get(
+                "foreclosure_carry_rollout_witness"
+            ),
         }
     elif verify_trust_foreclosure_board is not None:
         status_payload = {
@@ -3284,6 +3300,15 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
             ),
             "verify_trust_foreclosure_board": dependency_quorum.as_payload().get(
                 "verify_trust_foreclosure_board"
+            ),
+            "repair_slot_escrow": dependency_quorum.as_payload().get(
+                "repair_slot_escrow"
+            ),
+            "stage_debt_repair_admission": dependency_quorum.as_payload().get(
+                "stage_debt_repair_admission"
+            ),
+            "foreclosure_carry_rollout_witness": dependency_quorum.as_payload().get(
+                "foreclosure_carry_rollout_witness"
             ),
         },
         generated_at=datetime.now(timezone.utc),

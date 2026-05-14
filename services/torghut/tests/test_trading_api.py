@@ -1078,6 +1078,84 @@ class TestTradingApi(TestCase):
         payload = response.json()
         self.assertEqual(payload["verify_trust_foreclosure_board"], board)
 
+    def test_revenue_repair_hydrates_jangar_repair_slot_carry(self) -> None:
+        board = {
+            "schema_version": "jangar.verify-trust-foreclosure-board.v1",
+            "board_id": "verify-trust-foreclosure-board:agents:test",
+            "fresh_until": "2026-05-14T16:30:00Z",
+        }
+        settlement = {
+            "schema_version": "jangar.controller-ingestion-settlement.v1",
+            "settlement_id": "controller-ingestion-settlement:agents:test",
+            "decision": "hold",
+            "agentrun_ingestion_current": False,
+        }
+        repair_slot_escrow = {
+            "schema_version": "jangar.repair-slot-escrow.v1",
+            "escrow_id": "repair-slot-escrow:test",
+            "status": "block",
+            "reason_codes": ["selected_receipt_source_revenue_repair_ref_mismatch"],
+        }
+        rollout_witness = {
+            "schema_version": "jangar.foreclosure-carry-rollout-witness.v1",
+            "witness_id": "foreclosure-carry-rollout-witness:test",
+        }
+        dependency_quorum = {
+            "decision": "block",
+            "reasons": ["empirical_jobs_degraded"],
+            "message": "blocked",
+            "controller_ingestion_settlement": settlement,
+            "verify_trust_foreclosure_board": board,
+            "repair_slot_escrow": repair_slot_escrow,
+            "foreclosure_carry_rollout_witness": rollout_witness,
+        }
+
+        def _build_digest(
+            *,
+            readyz_payload: dict[str, object],
+            status_payload: dict[str, object],
+        ) -> dict[str, object]:
+            self.assertEqual(readyz_payload["status"], "degraded")
+            self.assertEqual(status_payload["dependency_quorum"], dependency_quorum)
+            self.assertEqual(
+                status_payload["controller_ingestion_settlement"],
+                settlement,
+            )
+            self.assertEqual(status_payload["repair_slot_escrow"], repair_slot_escrow)
+            self.assertEqual(
+                status_payload["foreclosure_carry_rollout_witness"],
+                rollout_witness,
+            )
+            return {
+                "schema_version": "torghut.revenue-repair-digest.v1",
+                "repair_slot_escrow": status_payload.get("repair_slot_escrow"),
+            }
+
+        with (
+            patch(
+                "app.main._evaluate_trading_health_payload",
+                return_value=({"status": "degraded"}, 503),
+            ),
+            patch(
+                "app.main.trading_status",
+                return_value={
+                    "mode": "live",
+                    "pipeline_mode": "simple",
+                    "build": {"commit": "source-sha"},
+                },
+            ),
+            patch(
+                "app.main._load_jangar_dependency_quorum_payload",
+                return_value=dependency_quorum,
+            ),
+            patch("app.main.build_revenue_repair_digest", side_effect=_build_digest),
+        ):
+            response = self.client.get("/trading/revenue-repair")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["repair_slot_escrow"], repair_slot_escrow)
+
     def test_trading_consumer_evidence_avoids_recursive_jangar_status_fetch(
         self,
     ) -> None:
