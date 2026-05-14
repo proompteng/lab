@@ -11,7 +11,9 @@
   `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-14T00:12Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-14T00:12Z`):
+- Evidence (current next-work priority, refreshed `2026-05-14T00:35Z`):
+  - `200-torghut-routeable-alpha-evidence-foundry-and-capital-safe-profit-ladder-2026-05-14.md`
+  - `docs/agents/designs/195-jangar-receipt-backed-alpha-foundry-and-rollout-safety-covenant-2026-05-14.md`
   - `199-torghut-executable-alpha-settlement-slots-and-no-delta-repair-custody-2026-05-14.md`
   - `docs/agents/designs/194-jangar-receipt-settled-repair-slots-and-stage-custody-thaw-2026-05-14.md`
   - `198-torghut-alpha-repair-closure-board-and-routeable-revenue-reentry-2026-05-14.md`
