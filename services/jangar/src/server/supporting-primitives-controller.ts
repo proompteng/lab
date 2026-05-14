@@ -1598,6 +1598,7 @@ const reconcileSchedule = async (
             annotations: scheduleDebtAnnotations,
           },
           spec: {
+            backoffLimit: 1,
             template: {
               metadata: { labels, annotations: scheduleDebtAnnotations },
               spec: {

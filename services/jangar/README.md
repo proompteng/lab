@@ -253,6 +253,12 @@ check only is
 `JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false`; setting
 `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` also disables generated runner admission and proof checks so advisory
 rollback schedules do not fail because they intentionally lack passport stamps.
+The fire-time status timeout defaults to `15000` ms via `JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS`. If the
+full status projection is too slow for the runtime-admission check, the runner retries against the same service's
+`/ready` authority projection, which carries the admission passports, recovery warrants, runtime kits, and proof cells
+needed for the passport/proof gate. Stage-clearance hold mode still requires the full status projection because `/ready`
+does not carry clearance packets. Generated runner CronJobs use `backoffLimit: 1` to avoid turning one slow projection
+into a burst of repeated failed runner pods.
 
 Binary runtime-kit components must be executable, not just present on disk. The source Codex NATS helpers and the
 installed `/usr/local/bin/codex-nats-*` wrappers both satisfy that command-path contract; a non-executable helper keeps
