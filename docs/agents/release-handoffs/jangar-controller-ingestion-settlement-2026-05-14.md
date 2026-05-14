@@ -64,6 +64,10 @@ the settlement is deployed and Torghut can import current Jangar carry.
 - `bun run --filter @proompteng/jangar lint:oxlint:type`: pass with existing repository warnings, 0 errors.
 - `bun run --filter @proompteng/jangar tsc`: pass.
 - `bun run --filter @proompteng/jangar test`: pass, 196 files and 1236 tests.
+- `bunx oxfmt --check services/jangar packages/scripts/src/jangar argocd/applications/jangar`: pass.
+- `cd services/jangar && bun run test && bunx tsc --noEmit --project tsconfig.paths.json && bun run docs:inventory:check && bun run check:module-sizes`:
+  pass.
+- `bun run --cwd services/jangar build`: pass.
 - `git diff --check`: pass.
 
 ## Risk And Rollback

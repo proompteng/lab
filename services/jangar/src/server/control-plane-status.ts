@@ -24,12 +24,10 @@ import {
   type TerminalDebtCompactionEvidence,
 } from '~/server/control-plane-terminal-debt-compaction'
 import { resolveTemporalAdapter } from '~/server/control-plane-temporal-adapter'
-import {
-  buildControlPlaneMaterialActionArtifacts,
-  type RepairScheduleAttemptResolver,
-} from '~/server/control-plane-material-action-artifacts'
+import type { RepairScheduleAttemptResolver } from '~/server/control-plane-material-action-artifacts'
 import { buildMaterialGateDigest } from '~/server/control-plane-material-gate-digest'
 import { buildMaterialReentryClearinghouse } from '~/server/control-plane-material-reentry-clearinghouse'
+import { buildControlPlaneMaterialStatus } from '~/server/control-plane-material-status'
 import {
   buildRepairSlotEscrow,
   isRepairSlotEscrowEnabled,
@@ -66,7 +64,6 @@ import {
   type FailureDomainRouteProbe,
 } from '~/server/control-plane-failure-domain-leases'
 import { buildControlPlaneLeaderElectionStatus } from '~/server/control-plane-leader-election-status'
-import { buildNegativeEvidenceRouterStatus } from '~/server/control-plane-negative-evidence-router'
 import {
   collectProjectionForeclosureEvidence,
   emptyProjectionForeclosureEvidence,
@@ -86,10 +83,7 @@ import {
   maybeUseSplitTopologyRuntimeRollout,
   unknownRolloutHealth,
 } from '~/server/control-plane-rollout-health'
-import {
-  buildSourceRolloutTruthExchange,
-  resolveSourceRolloutTruthEnvironment,
-} from '~/server/control-plane-source-rollout-truth-exchange'
+import { resolveSourceRolloutTruthEnvironment } from '~/server/control-plane-source-rollout-truth-exchange'
 import { buildSourceServingContractVerdictExchange } from '~/server/control-plane-source-serving-contract-verdict'
 import {
   resolveTorghutConsumerEvidence,
@@ -461,67 +455,31 @@ export const buildControlPlaneStatus = async (
       collectionErrors: [`projection foreclosure evidence collection failed: ${normalizeMessage(error)}`],
     }),
   )
-  const buildMaterialStatus = async (torghutConsumerEvidence: TorghutConsumerEvidenceResolution) => {
-    const negativeEvidenceRouter = buildNegativeEvidenceRouterStatus({
-      now,
-      namespace: options.namespace,
-      service,
-      workflows,
-      watchReliability: watchReliabilityStatus,
-      agentRunIngestion,
-      database,
-      rolloutHealth,
-      dependencyQuorum,
-      failureDomainLeases,
-      empiricalServices,
-      executionTrust: executionTrust.executionTrust,
-      runtimeKits: runtimeAdmission.runtimeKits,
-      controllerWitness,
-      torghut: torghutConsumerEvidence.negativeEvidence,
-    })
-    const sourceRolloutTruthExchange = buildSourceRolloutTruthExchange({
-      now,
-      namespace: options.namespace,
-      service,
-      sourceHeadSha: sourceRolloutTruthEnvironment.sourceHeadSha,
-      gitopsRevision: sourceRolloutTruthEnvironment.gitopsRevision,
-      runtimeKits: runtimeAdmission.runtimeKits,
-      kubernetesEvidence: failureDomainKubernetesEvidence,
-      controllerWitness,
-      routeProbe,
-      database,
-      watchReliability: watchReliabilityStatus,
-      rolloutHealth,
-      actionSloBudgets: negativeEvidenceRouter.budgets,
-      torghutActionSloBudgets: negativeEvidenceRouter.torghutBudgets,
-    })
-    const materialArtifacts = await buildControlPlaneMaterialActionArtifacts({
+  const buildMaterialStatus = (torghutConsumerEvidence: TorghutConsumerEvidenceResolution) =>
+    buildControlPlaneMaterialStatus({
       now,
       namespace: options.namespace,
       service,
       kube: kubeGateway,
-      agentRunIngestion,
-      admissionPassports: runtimeAdmission.admissionPassports,
-      dependencyQuorum,
       workflows,
-      negativeEvidenceRouter,
-      reconciledActionClocks,
-      rolloutHealth,
-      controllerWitness,
-      database,
       watchReliability: watchReliabilityStatus,
-      empiricalServices,
-      sourceRolloutTruthExchange,
+      agentRunIngestion,
+      database,
+      rolloutHealth,
+      dependencyQuorum,
       failureDomainLeases,
+      empiricalServices,
       executionTrust,
+      runtimeAdmission,
+      controllerWitness,
+      torghutConsumerEvidence,
+      sourceRolloutTruthEnvironment,
+      failureDomainKubernetesEvidence,
       routeProbe,
-      torghutConsumerEvidence: torghutConsumerEvidence.status,
+      reconciledActionClocks,
       projectionForeclosureEvidence,
       resolveRepairScheduleAttempts: deps.resolveRepairScheduleAttempts,
     })
-
-    return { negativeEvidenceRouter, sourceRolloutTruthExchange, materialArtifacts }
-  }
 
   let torghutConsumerEvidence = await (deps.resolveTorghutConsumerEvidence ?? resolveTorghutConsumerEvidence)(now)
   let materialStatus = await buildMaterialStatus(torghutConsumerEvidence)
