@@ -83,6 +83,7 @@ controllers:
       JANGAR_WHITEPAPER_FINALIZE_BASE_URL: http://torghut.torghut.svc.cluster.local
       JANGAR_WHITEPAPER_FINALIZE_USE_SERVICE_ACCOUNT_TOKEN: "true"
       JANGAR_MATERIAL_REENTRY_REQUIREMENT_SIGNALS: "true"
+      JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS: "15000"
 resources:
   requests:
     cpu: 200m

@@ -230,6 +230,16 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(limits, 'ephemeral-storage')).toBe('16Gi')
   })
 
+  it('keeps material reentry status reads within the live controller budget', () => {
+    const values = readYamlObjects('argocd/applications/agents/values.yaml')[0]
+    const controllers = objectAt(values, 'controllers')
+    const env = objectAt(objectAt(controllers, 'env'), 'vars')
+    const timeoutMs = Number(objectAt(env, 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS'))
+
+    expect(objectAt(env, 'JANGAR_MATERIAL_REENTRY_REQUIREMENT_SIGNALS')).toBe('true')
+    expect(timeoutMs).toBeGreaterThanOrEqual(10_000)
+  })
+
   it('disable retention so schedules can always resolve their template targets', () => {
     const manifestPaths = [
       'argocd/applications/agents/swarm-agentrun-templates.yaml',
