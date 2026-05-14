@@ -1221,6 +1221,16 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(settlement_conveyor["status"], "observing")
         self.assertEqual(settlement_conveyor["max_notional"], "0")
+        alpha_dividend = payload["alpha_repair_dividend_ledger"]
+        self.assertEqual(
+            alpha_dividend["schema_version"],
+            "torghut.alpha-repair-dividend-ledger-ref.v1",
+        )
+        self.assertEqual(alpha_dividend["max_notional"], "0")
+        self.assertEqual(
+            alpha_dividend["required_recorder_schema"],
+            "jangar.material-action-custody-flight-recorder.v1",
+        )
         warrant = payload["route_warrant_exchange"]
         self.assertEqual(
             warrant["schema_version"],
@@ -4317,6 +4327,17 @@ class TestTradingApi(TestCase):
         self.assertIn(
             "alpha_readiness_settlement_receipts_missing",
             settlement_conveyor["reason_codes"],
+        )
+        alpha_dividend = payload["alpha_repair_dividend_ledger"]
+        self.assertEqual(
+            alpha_dividend["schema_version"],
+            "torghut.alpha-repair-dividend-ledger.v1",
+        )
+        self.assertEqual(alpha_dividend["dividend_state"], "blocked")
+        self.assertEqual(alpha_dividend["max_notional"], "0")
+        self.assertIn(
+            "alpha_repair_settlement_receipt_missing",
+            alpha_dividend["reason_codes"],
         )
         self.assertEqual(
             payload["evidence"]["repair_bid_settlement"]["dispatchable_lot_count"],

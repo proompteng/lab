@@ -513,6 +513,26 @@ class TestBuildRevenueRepairDigest(TestCase):
             selected_lane["repeat_launch_decision"],
             "deny",
         )
+        alpha_dividend_ledger = digest["alpha_repair_dividend_ledger"]
+        self.assertIsInstance(alpha_dividend_ledger, dict)
+        self.assertEqual(
+            alpha_dividend_ledger["schema_version"],
+            "torghut.alpha-repair-dividend-ledger.v1",
+        )
+        self.assertEqual(alpha_dividend_ledger["dividend_state"], "no_delta")
+        self.assertEqual(
+            alpha_dividend_ledger["selected_value_gate"],
+            "routeable_candidate_count",
+        )
+        self.assertEqual(alpha_dividend_ledger["max_notional"], "0")
+        self.assertEqual(
+            alpha_dividend_ledger["jangar_custody"]["required_recorder_schema"],
+            "jangar.material-action-custody-flight-recorder.v1",
+        )
+        self.assertEqual(
+            alpha_dividend_ledger["jangar_custody"]["launch_decision"],
+            "deny",
+        )
         self.assertEqual(repair_queue[1]["code"], "repair_execution_tca")
         self.assertNotIn("repair_repair_only", [item["code"] for item in repair_queue])
         self.assertIn(

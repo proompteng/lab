@@ -15,6 +15,7 @@ from .alpha_evidence_foundry import build_alpha_evidence_foundry
 from .alpha_readiness_settlement_conveyor import (
     build_alpha_readiness_settlement_conveyor,
 )
+from .alpha_repair_dividend_ledger import build_alpha_repair_dividend_ledger
 from .alpha_repair_closure_board import build_alpha_repair_closure_board
 from .executable_alpha_receipts import (
     build_executable_alpha_repair_receipts,
@@ -1037,6 +1038,20 @@ def build_revenue_repair_digest(
             "route_evidence_clearinghouse_packet": route_evidence_clearinghouse,
         },
     )
+    alpha_repair_dividend_ledger = build_alpha_repair_dividend_ledger(
+        generated_at=generated,
+        business_state=business_state,
+        revenue_ready=revenue_ready,
+        repair_queue=cast(Sequence[Mapping[str, Any]], repair_queue),
+        capital=capital,
+        evidence=evidence,
+        repair_bid_settlement_ledger=repair_bid_settlement,
+        executable_alpha_repair_receipts=executable_alpha_repair_receipts,
+        executable_alpha_settlement_slots=executable_alpha_settlement_slots,
+        alpha_evidence_foundry=alpha_evidence_foundry,
+        alpha_repair_closure_board=alpha_repair_closure_board,
+        alpha_readiness_settlement_conveyor=alpha_readiness_settlement_conveyor,
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated.isoformat(),
@@ -1051,6 +1066,7 @@ def build_revenue_repair_digest(
         "alpha_repair_closure_board": alpha_repair_closure_board,
         "alpha_evidence_foundry": alpha_evidence_foundry,
         "alpha_readiness_settlement_conveyor": alpha_readiness_settlement_conveyor,
+        "alpha_repair_dividend_ledger": alpha_repair_dividend_ledger,
         "business_state": business_state,
         "revenue_ready": revenue_ready,
         "health": {
