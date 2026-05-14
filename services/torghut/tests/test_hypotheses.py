@@ -219,6 +219,32 @@ class TestHypothesisReadiness(TestCase):
         self.assertEqual(micro["state"], "blocked")
         self.assertIn("required_feature_set_unavailable", micro["reasons"])
 
+    def test_compile_hypothesis_runtime_statuses_uses_persisted_feature_readiness(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=_state(feature_rows=0),
+            tca_summary={
+                "order_count": 0,
+                "avg_abs_slippage_bps": 0,
+                "avg_realized_shortfall_bps": 0,
+            },
+            market_context_status={"last_freshness_seconds": None},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            feature_readiness={"equity_ta_rows": 12, "equity_ta_symbols": 6},
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+        )
+
+        micro = next(item for item in statuses if item["hypothesis_id"] == "H-MICRO-01")
+        self.assertNotIn("feature_rows_missing", micro["reasons"])
+        self.assertNotIn("required_feature_set_unavailable", micro["reasons"])
+
     def test_compile_hypothesis_runtime_statuses_promotes_canary_when_thresholds_are_met(
         self,
     ) -> None:

@@ -23,6 +23,7 @@ from app.models import (
 )
 from app.trading.submission_council import (
     _QUANT_HEALTH_CACHE,
+    _coerce_aware_datetime,
     _load_profit_promotion_table_counts,
     build_live_submission_gate_payload,
     load_quant_evidence_status,
@@ -132,6 +133,18 @@ class TestSubmissionCouncil(TestCase):
             "status": "healthy",
             "source_url": "http://jangar.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
         }
+
+    def test_coerce_aware_datetime_normalizes_runtime_status_values(self) -> None:
+        self.assertEqual(
+            _coerce_aware_datetime(datetime(2026, 5, 13, 20, 56, 16)),
+            datetime(2026, 5, 13, 20, 56, 16, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            _coerce_aware_datetime("2026-05-13T20:56:16Z"),
+            datetime(2026, 5, 13, 20, 56, 16, tzinfo=timezone.utc),
+        )
+        self.assertIsNone(_coerce_aware_datetime("not-a-timestamp"))
+        self.assertIsNone(_coerce_aware_datetime(None))
 
     def test_load_profit_promotion_counts_includes_autoresearch_ledgers(self) -> None:
         engine = create_engine(
@@ -317,6 +330,67 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(equity_source["rows"], 9)
         self.assertEqual(rejection_source["rows"], 2)
         self.assertEqual(rejection_source["source_ref"], "postgres:trade_decisions:7d")
+
+    def test_profit_lease_projection_uses_clickhouse_ta_readiness_after_restart(
+        self,
+    ) -> None:
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                last_autonomy_promotion_eligible=True,
+                last_autonomy_promotion_action="promote",
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=45,
+                metrics=SimpleNamespace(
+                    feature_batch_rows_total=0,
+                    feature_null_rate={},
+                    feature_staleness_ms_p95=0,
+                    feature_duplicate_ratio=None,
+                    decision_state_total={},
+                ),
+            ),
+            hypothesis_summary={
+                "summary": {
+                    "promotion_eligible_total": 1,
+                    "capital_stage_totals": {"shadow": 1},
+                    "dependency_quorum": {
+                        "decision": "allow",
+                        "reasons": [],
+                        "message": "ready",
+                    },
+                },
+                "items": [
+                    {
+                        "hypothesis_id": "H-CONT-01",
+                        "lane_id": "continuation",
+                        "strategy_family": "intraday_continuation",
+                        "promotion_eligible": True,
+                        "capital_stage": "shadow",
+                        "reasons": [],
+                    }
+                ],
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status=self._healthy_quant_status(),
+            clickhouse_ta_status={
+                "state": "current",
+                "source_ref": "torghut.ta_signals",
+                "latest_signal_at": "2026-05-13T20:56:16+00:00",
+                "signal_rows": 12,
+                "symbol_count": 6,
+            },
+        )
+
+        projection = result["profit_lease_projection"]
+        reasons = projection["torghut_capital"]["blocking_reason_codes"]
+        self.assertNotIn("equity_ta_rows_missing", reasons)
+        equity_source = next(
+            source
+            for source in projection["source_provenance"]
+            if source["source_class"] == "equity_ta"
+        )
+        self.assertEqual(equity_source["rows"], 12)
+        self.assertEqual(equity_source["symbols"], 6)
+        self.assertEqual(equity_source["source_ref"], "torghut.ta_signals")
 
     def test_build_live_submission_gate_payload_fails_closed_on_empty_quant_evidence(
         self,

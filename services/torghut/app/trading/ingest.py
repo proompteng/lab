@@ -35,6 +35,21 @@ LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN = timedelta(minutes=5)
 SIMULATION_CURSOR_BASELINE = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
+def _coerce_count(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return int(value.strip())
+        except ValueError:
+            return 0
+    return 0
+
+
 def _simulation_fetch_window() -> timedelta:
     return timedelta(seconds=max(1, settings.trading_simulation_fetch_window_seconds))
 
@@ -806,11 +821,59 @@ class ClickHouseSignalIngestor:
                 "source_ref": self.table,
                 "time_column": time_column,
             }
-        return {
+        status: dict[str, Any] = {
             "state": "current",
             "latest_signal_at": latest_signal_at,
             "source_ref": self.table,
             "time_column": time_column,
+        }
+        try:
+            status.update(
+                self._latest_signal_readiness_counts(
+                    time_column=time_column,
+                    latest_signal_at=latest_signal_at,
+                )
+            )
+        except Exception as exc:
+            logger.warning("Failed to load ClickHouse TA readiness counts: %s", exc)
+            status["readiness_reason_codes"] = ["clickhouse_ta_readiness_query_failed"]
+            status["readiness_detail"] = str(exc)[:200]
+        return status
+
+    def _latest_signal_readiness_counts(
+        self,
+        *,
+        time_column: str,
+        latest_signal_at: datetime,
+    ) -> dict[str, Any]:
+        safe_time_column = _safe_identifier(time_column, kind="column")
+        lookback_minutes = max(int(self.initial_lookback_minutes or 1), 1)
+        window_start = latest_signal_at - timedelta(minutes=lookback_minutes)
+        where_parts = [
+            f"{safe_time_column} >= {to_datetime64(window_start)}",
+            f"{safe_time_column} <= {to_datetime64(latest_signal_at)}",
+        ]
+        source_clause = self._source_where_clause()
+        if source_clause is not None:
+            where_parts.append(source_clause)
+        query = " ".join(
+            [
+                "SELECT",
+                "count() AS signal_rows, uniqExact(symbol) AS symbol_count",
+                "FROM",
+                self.table,
+                "WHERE",
+                " AND ".join(where_parts),
+                "FORMAT JSONEachRow",
+            ]
+        )
+        rows = self._query_clickhouse(query)
+        row = rows[0] if rows else {}
+        return {
+            "signal_rows": _coerce_count(row.get("signal_rows")),
+            "symbol_count": _coerce_count(row.get("symbol_count")),
+            "readiness_window_start": window_start,
+            "readiness_window_end": latest_signal_at,
         }
 
     def _latest_signal_timestamp_queries(self, time_column: str) -> list[str]:
