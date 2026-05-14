@@ -49,6 +49,7 @@ from .models import (
 )
 from .observability import capture_posthog_event, shutdown_posthog_telemetry
 from .trading import TradingScheduler
+from .trading.alpha_evidence_foundry import compact_alpha_evidence_foundry
 from .trading.alpha_repair_closure_board import compact_alpha_repair_closure_board
 from .trading.autonomy import (
     assert_runtime_gate_policy_contract,
@@ -1125,6 +1126,12 @@ def _evaluate_trading_health_payload(
                 cast(
                     Mapping[str, Any],
                     revenue_repair_digest.get("alpha_repair_closure_board"),
+                )
+            ),
+            "alpha_evidence_foundry": compact_alpha_evidence_foundry(
+                cast(
+                    Mapping[str, Any],
+                    revenue_repair_digest.get("alpha_evidence_foundry"),
                 )
             ),
             "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
@@ -3309,6 +3316,12 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
             cast(
                 Mapping[str, Any],
                 revenue_repair_digest.get("alpha_repair_closure_board"),
+            )
+        ),
+        "alpha_evidence_foundry": compact_alpha_evidence_foundry(
+            cast(
+                Mapping[str, Any],
+                revenue_repair_digest.get("alpha_evidence_foundry"),
             )
         ),
         "route_warrant_exchange": route_warrant_exchange,
