@@ -35,6 +35,7 @@ import {
 import { buildRevenueRepairSettlementCustody } from '~/server/control-plane-revenue-repair-settlement-custody'
 import { buildAgentRunIngestionStatus } from '~/server/control-plane-serving-process-status'
 import { buildVerifyTrustForeclosureBoard } from '~/server/control-plane-verify-trust-foreclosure'
+import { buildMaterialEvidenceSettlementSpine } from '~/server/control-plane-material-evidence-settlement'
 import type {
   AgentRunIngestionStatus,
   ControlPlaneRolloutHealth,
@@ -551,6 +552,25 @@ export const getReadyHandler = async () => {
     repairSlotEscrow,
     torghutConsumerEvidence: torghutConsumerEvidence.status,
   })
+  const materialEvidenceSettlementSpine = buildMaterialEvidenceSettlementSpine({
+    now,
+    namespace: namespaces[0] ?? 'agents',
+    servingReadiness: ready ? status : 'down',
+    executionTrust: trust,
+    projectionWatermarks,
+    readyTruthArbiter: null,
+    stageCreditLedger: null,
+    controllerIngestionSettlement,
+    sourceServingContractVerdictExchange: readyPathSourceServingExchange,
+    rolloutProofPassport: null,
+    materialGateDigest,
+    database: readyPathDatabase,
+    rolloutHealth: readyPathRolloutHealth,
+    workflows: null,
+    terminalDebtCompactionLedger: null,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+    repairBidAdmission,
+  })
 
   const body = JSON.stringify({
     status,
@@ -567,6 +587,7 @@ export const getReadyHandler = async () => {
     controller_ingestion_settlement: controllerIngestionSettlement,
     verify_trust_foreclosure_board: verifyTrustForeclosureBoard,
     material_gate_digest: materialGateDigest,
+    material_evidence_settlement_spine: materialEvidenceSettlementSpine,
     repair_slot_escrow: repairSlotEscrow,
     evidence_pressure_ledger: evidencePressureLedger,
     memory_provider: memoryProvider,

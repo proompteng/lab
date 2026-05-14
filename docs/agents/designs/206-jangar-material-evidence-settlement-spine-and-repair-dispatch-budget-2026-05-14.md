@@ -391,6 +391,18 @@ Rollback is operationally simple because the contract is additive:
 
 ## Engineer Handoff
 
+2026-05-14 implementation note:
+
+- Jangar now emits observe-mode `material_evidence_settlement_spine` on full control-plane status and `/ready`.
+- The reducer distinguishes stale, missing, unavailable, schema-mismatched, summary-only, and queue-head-inferred
+  Torghut revenue-repair topline evidence before selecting a repair budget.
+- The first implementation keeps enforcement additive: it can select one zero-notional `dispatch_repair` ticket for
+  alpha readiness or controller-ingestion repair, but global block conditions such as nonzero notional evidence
+  dominate any selected ticket.
+- Local coverage now includes queue-head inference, material-gate duplicate no-delta holds, controller-ingestion
+  repair budgeting, nonzero-notional blocking, status projection, and `/ready` projection. Schedule-runner stamping
+  remains a later observe-mode consumer step after deployer parity evidence.
+
 Next implementation milestone:
 
 - Objective: implement observe-mode `material_evidence_settlement_spine` in Jangar and add a Torghut topline parser

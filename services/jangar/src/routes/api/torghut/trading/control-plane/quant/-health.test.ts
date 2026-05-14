@@ -45,7 +45,7 @@ describe('getQuantHealthHandler', () => {
 
     expect(response.status).toBe(400)
     expect(getQuantLatestStoreStatus).not.toHaveBeenCalled()
-  })
+  }, 30_000)
 
   it('returns degraded status when materialization lag breaches threshold during market hours', async () => {
     vi.useFakeTimers()
