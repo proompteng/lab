@@ -391,6 +391,199 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(len(loaded), 1)
         self.assertEqual(loaded[0].candidate_spec_id, spec.candidate_spec_id)
 
+    def test_feedback_evidence_loads_recent_persisted_epoch_bundles(self) -> None:
+        spec = self._candidate_spec("spec-feedback-persisted")
+        bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-feedback-persisted",
+                "family_template_id": spec.family_template_id,
+                "runtime_family": spec.runtime_family,
+                "runtime_strategy_name": spec.runtime_strategy_name,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "-210",
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "0",
+                    "negative_day_count": 5,
+                    "daily_net": {
+                        "2026-05-01": "-120",
+                        "2026-05-04": "-300",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-feedback-persisted",
+            result_path="db://autoresearch/prior-epoch/candidate-evidence-bundles.jsonl",
+        )
+        with (
+            Session(self.engine) as session,
+            patch(
+                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                side_effect=lambda: Session(self.engine),
+            ),
+        ):
+            session.add(
+                AutoresearchEpoch(
+                    epoch_id="prior-feedback-epoch",
+                    status="no_profit_target_candidate",
+                    target_net_pnl_per_day=Decimal("500"),
+                    paper_run_ids_json=[],
+                    snapshot_manifest_json={},
+                    runner_config_json={},
+                    summary_json={
+                        "candidate_evidence_bundle_payloads": [bundle.to_payload()]
+                    },
+                    started_at=datetime(2026, 5, 12, 14, 0, 0),
+                    completed_at=datetime(2026, 5, 12, 14, 5, 0),
+                    failure_reason=None,
+                )
+            )
+            session.commit()
+
+            loaded, manifest = runner._load_autoresearch_feedback_evidence_bundles(
+                (), include_persisted=True
+            )
+
+        model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(spec,), feedback_evidence_bundles=loaded
+        )
+
+        self.assertEqual(manifest["combined_bundle_count"], 1)
+        self.assertEqual(manifest["persisted"]["status"], "loaded")
+        self.assertEqual(
+            manifest["persisted"]["source_epoch_ids"], ["prior-feedback-epoch"]
+        )
+        self.assertEqual(model["feedback_evidence_bundle_count"], 1)
+        self.assertEqual(model["feedback_matched_spec_count"], 1)
+        self.assertEqual(rows[0]["training_source"], "feedback_real_replay")
+        self.assertEqual(rows[0]["feedback_match_scope"], "candidate_spec_id")
+
+    def test_feedback_evidence_dedupe_handles_missing_bundle_ids(self) -> None:
+        spec = self._candidate_spec("spec-feedback-dedupe")
+        bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-feedback-dedupe",
+                "objective_scorecard": {"net_pnl_per_day": "10"},
+            },
+            dataset_snapshot_id="snap-feedback-dedupe",
+            result_path="feedback://dedupe",
+        )
+        no_id_bundle = replace(bundle, evidence_bundle_id="")
+
+        deduped = runner._dedupe_feedback_evidence_bundles((no_id_bundle, no_id_bundle))
+
+        self.assertEqual(len(deduped), 1)
+        self.assertEqual(deduped[0].candidate_spec_id, spec.candidate_spec_id)
+
+    def test_feedback_evidence_persisted_loader_reports_unavailable_store(self) -> None:
+        with patch(
+            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            side_effect=RuntimeError("db unavailable"),
+        ):
+            loaded, manifest = runner._load_autoresearch_feedback_evidence_bundles(
+                (), include_persisted=True
+            )
+
+        self.assertEqual(loaded, ())
+        self.assertEqual(manifest["combined_bundle_count"], 0)
+        self.assertEqual(manifest["persisted"]["status"], "unavailable")
+        self.assertIn("db unavailable", manifest["persisted"]["error"])
+
+    def test_feedback_evidence_persisted_loader_skips_empty_invalid_and_limited_payloads(
+        self,
+    ) -> None:
+        valid_spec = self._candidate_spec("spec-feedback-limit")
+        valid_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=valid_spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-feedback-limit",
+                "objective_scorecard": {"net_pnl_per_day": "25"},
+            },
+            dataset_snapshot_id="snap-feedback-limit",
+            result_path="feedback://limit",
+        )
+        extra_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-feedback-extra",
+            candidate={
+                "candidate_id": "cand-feedback-extra",
+                "objective_scorecard": {"net_pnl_per_day": "30"},
+            },
+            dataset_snapshot_id="snap-feedback-limit",
+            result_path="feedback://limit-extra",
+        )
+        invalid_payload = {"schema_version": "torghut.invalid-feedback.v1"}
+
+        with (
+            Session(self.engine) as session,
+            patch(
+                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                side_effect=lambda: Session(self.engine),
+            ),
+        ):
+            session.add_all(
+                [
+                    AutoresearchEpoch(
+                        epoch_id="feedback-empty-epoch",
+                        status="no_profit_target_candidate",
+                        target_net_pnl_per_day=Decimal("500"),
+                        paper_run_ids_json=[],
+                        snapshot_manifest_json={},
+                        runner_config_json={},
+                        summary_json={},
+                        started_at=datetime(2026, 5, 13, 14, 0, 0),
+                        completed_at=datetime(2026, 5, 13, 14, 5, 0),
+                        failure_reason=None,
+                    ),
+                    AutoresearchEpoch(
+                        epoch_id="feedback-invalid-and-limited-epoch",
+                        status="no_profit_target_candidate",
+                        target_net_pnl_per_day=Decimal("500"),
+                        paper_run_ids_json=[],
+                        snapshot_manifest_json={},
+                        runner_config_json={},
+                        summary_json={
+                            "candidate_evidence_bundle_payloads": [
+                                invalid_payload,
+                                valid_bundle.to_payload(),
+                                extra_bundle.to_payload(),
+                            ]
+                        },
+                        started_at=datetime(2026, 5, 12, 14, 0, 0),
+                        completed_at=datetime(2026, 5, 12, 14, 5, 0),
+                        failure_reason=None,
+                    ),
+                    AutoresearchEpoch(
+                        epoch_id="feedback-unscanned-after-limit-epoch",
+                        status="no_profit_target_candidate",
+                        target_net_pnl_per_day=Decimal("500"),
+                        paper_run_ids_json=[],
+                        snapshot_manifest_json={},
+                        runner_config_json={},
+                        summary_json={
+                            "candidate_evidence_bundle_payloads": [
+                                extra_bundle.to_payload()
+                            ]
+                        },
+                        started_at=datetime(2026, 5, 11, 14, 0, 0),
+                        completed_at=datetime(2026, 5, 11, 14, 5, 0),
+                        failure_reason=None,
+                    ),
+                ]
+            )
+            session.commit()
+
+            loaded, manifest = runner._load_recent_persisted_feedback_evidence_bundles(
+                limit=1
+            )
+
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0].candidate_spec_id, valid_spec.candidate_spec_id)
+        self.assertEqual(manifest["status"], "loaded")
+        self.assertEqual(manifest["invalid_payload_count"], 1)
+        self.assertEqual(
+            manifest["source_epoch_ids"], ["feedback-invalid-and-limited-epoch"]
+        )
+
     def test_feedback_evidence_jsonl_reports_missing_and_invalid_lines(self) -> None:
         with TemporaryDirectory() as tmpdir:
             missing_path = Path(tmpdir) / "missing.jsonl"
@@ -1670,6 +1863,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(len(proposals), payload["proposal_score_count"])
         self.assertEqual(len(portfolios), 1)
         self.assertEqual(portfolios[0].status, "blocked")
+        self.assertEqual(
+            epoch.summary_json["candidate_evidence_bundle_payload_count"],
+            len(epoch.summary_json["candidate_evidence_bundle_payloads"]),
+        )
 
     def test_epoch_ledgers_allow_repeated_candidate_specs_across_epochs(
         self,

@@ -90,6 +90,8 @@ _DEFAULT_STRICT_DAILY_PROFIT_PROGRAM = Path(
     "config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml"
 )
 _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC = 8
+_MAX_PERSISTED_FEEDBACK_EVIDENCE_BUNDLES = 512
+_MAX_PERSISTED_FEEDBACK_EVIDENCE_EPOCHS = 12
 _PROGRAM_SOURCE_DEFAULT_CONFIDENCE = "0.70"
 _RUNTIME_CLOSURE_PROOF_ORACLE_BLOCKERS = frozenset(
     {
@@ -342,6 +344,114 @@ def _load_feedback_evidence_bundles(
                     f"feedback_evidence_jsonl_invalid:{raw_path}:{line_number}:{exc}"
                 ) from exc
     return tuple(bundles)
+
+
+def _dedupe_feedback_evidence_bundles(
+    bundles: Sequence[CandidateEvidenceBundle],
+) -> tuple[CandidateEvidenceBundle, ...]:
+    seen: set[str] = set()
+    deduped: list[CandidateEvidenceBundle] = []
+    for bundle in bundles:
+        key = bundle.evidence_bundle_id or _stable_hash(bundle.to_payload())
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(bundle)
+    return tuple(deduped)
+
+
+def _evidence_bundle_payloads_for_epoch_summary(
+    evidence_bundles: Sequence[CandidateEvidenceBundle],
+) -> list[dict[str, Any]]:
+    return [
+        bundle.to_payload()
+        for bundle in evidence_bundles[:_MAX_PERSISTED_FEEDBACK_EVIDENCE_BUNDLES]
+    ]
+
+
+def _load_recent_persisted_feedback_evidence_bundles(
+    *,
+    limit: int = _MAX_PERSISTED_FEEDBACK_EVIDENCE_BUNDLES,
+    epoch_limit: int = _MAX_PERSISTED_FEEDBACK_EVIDENCE_EPOCHS,
+) -> tuple[tuple[CandidateEvidenceBundle, ...], dict[str, Any]]:
+    manifest: dict[str, Any] = {
+        "source": "autoresearch_epochs.summary_json.candidate_evidence_bundle_payloads",
+        "epoch_scan_limit": epoch_limit,
+        "bundle_limit": limit,
+        "scanned_epoch_count": 0,
+        "loaded_bundle_count": 0,
+        "invalid_payload_count": 0,
+    }
+    try:
+        with SessionLocal() as session:
+            epochs = (
+                session.execute(
+                    select(AutoresearchEpoch)
+                    .order_by(
+                        AutoresearchEpoch.completed_at.desc(),
+                        AutoresearchEpoch.created_at.desc(),
+                    )
+                    .limit(epoch_limit)
+                )
+                .scalars()
+                .all()
+            )
+    except Exception as exc:
+        manifest["status"] = "unavailable"
+        manifest["error"] = str(exc)
+        return (), manifest
+
+    manifest["scanned_epoch_count"] = len(epochs)
+    bundles: list[CandidateEvidenceBundle] = []
+    invalid_payload_count = 0
+    source_epoch_ids: list[str] = []
+    for epoch in epochs:
+        if len(bundles) >= limit:
+            break
+        summary = _mapping(epoch.summary_json)
+        payloads = _list_of_mappings(summary.get("candidate_evidence_bundle_payloads"))
+        if not payloads:
+            continue
+        source_epoch_ids.append(epoch.epoch_id)
+        for payload in payloads:
+            if len(bundles) >= limit:
+                break
+            try:
+                bundles.append(evidence_bundle_from_payload(payload))
+            except Exception:
+                invalid_payload_count += 1
+
+    deduped = _dedupe_feedback_evidence_bundles(bundles)
+    manifest["status"] = "loaded" if deduped else "empty"
+    manifest["source_epoch_ids"] = source_epoch_ids
+    manifest["loaded_bundle_count"] = len(deduped)
+    manifest["invalid_payload_count"] = invalid_payload_count
+    return deduped, manifest
+
+
+def _load_autoresearch_feedback_evidence_bundles(
+    paths: Sequence[Path],
+    *,
+    include_persisted: bool,
+) -> tuple[tuple[CandidateEvidenceBundle, ...], dict[str, Any]]:
+    explicit_bundles = _load_feedback_evidence_bundles(paths)
+    persisted_bundles: tuple[CandidateEvidenceBundle, ...] = ()
+    persisted_manifest: dict[str, Any] = {"status": "disabled"}
+    if include_persisted:
+        (
+            persisted_bundles,
+            persisted_manifest,
+        ) = _load_recent_persisted_feedback_evidence_bundles()
+    combined = _dedupe_feedback_evidence_bundles(
+        (*explicit_bundles, *persisted_bundles)
+    )
+    return combined, {
+        "schema_version": "torghut.feedback-evidence-source-manifest.v1",
+        "explicit_jsonl_path_count": len(paths),
+        "explicit_jsonl_bundle_count": len(explicit_bundles),
+        "persisted": persisted_manifest,
+        "combined_bundle_count": len(combined),
+    }
 
 
 def _program_claim_type(claim: ResearchClaim) -> str:
@@ -3895,8 +4005,12 @@ def run_whitepaper_autoresearch_profit_target(
             started_at=started_at,
         )
     try:
-        feedback_evidence_bundles = _load_feedback_evidence_bundles(
-            cast(Sequence[Path], getattr(args, "feedback_evidence_jsonl", ()) or ())
+        (
+            feedback_evidence_bundles,
+            feedback_evidence_source_manifest,
+        ) = _load_autoresearch_feedback_evidence_bundles(
+            cast(Sequence[Path], getattr(args, "feedback_evidence_jsonl", ()) or ()),
+            include_persisted=bool(getattr(args, "persist_results", False)),
         )
     except ValueError as exc:
         return _write_failure_summary(
@@ -3906,6 +4020,10 @@ def run_whitepaper_autoresearch_profit_target(
             reason=str(exc),
             started_at=started_at,
         )
+    _write_json(
+        output_dir / "feedback-evidence-source-manifest.json",
+        feedback_evidence_source_manifest,
+    )
     pre_replay_model, pre_replay_proposal_rows = _pre_replay_proposal_model_and_rows(
         specs=candidate_specs,
         feedback_evidence_bundles=feedback_evidence_bundles,
@@ -4064,6 +4182,9 @@ def run_whitepaper_autoresearch_profit_target(
                     "profitability_search_goal": str(profitability_goal_path),
                     "candidate_selection_manifest": str(
                         output_dir / "candidate-selection-manifest.json"
+                    ),
+                    "feedback_evidence_source_manifest": str(
+                        output_dir / "feedback-evidence-source-manifest.json"
                     ),
                     "partial_candidate_evidence_bundles": str(partial_artifact_path)
                     if partial_replay_result.evidence_bundles
@@ -4284,6 +4405,13 @@ def run_whitepaper_autoresearch_profit_target(
         "candidate_spec_count": len(candidate_specs),
         "candidate_compiler_blocker_count": len(compilation.blockers),
         "evidence_bundle_count": len(replay_result.evidence_bundles),
+        "candidate_evidence_bundle_payloads": _evidence_bundle_payloads_for_epoch_summary(
+            replay_result.evidence_bundles
+        ),
+        "candidate_evidence_bundle_payload_count": min(
+            len(replay_result.evidence_bundles),
+            _MAX_PERSISTED_FEEDBACK_EVIDENCE_BUNDLES,
+        ),
         "replay_candidate_spec_count": len(replay_candidate_specs),
         "replay_incomplete": replay_result.incomplete,
         "replay_failure_reasons": replay_failure_reasons,
@@ -4320,6 +4448,9 @@ def run_whitepaper_autoresearch_profit_target(
             ),
             "pre_replay_proposal_model": str(
                 output_dir / "pre-replay-mlx-ranker-model.json"
+            ),
+            "feedback_evidence_source_manifest": str(
+                output_dir / "feedback-evidence-source-manifest.json"
             ),
             "mlx_snapshot_manifest": str(output_dir / "mlx-snapshot-manifest.json"),
             "candidate_compiler_report": str(
