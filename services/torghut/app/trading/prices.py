@@ -105,6 +105,13 @@ class ClickHousePriceFetcher(PriceFetcher):
         lookback_minutes: Optional[int] = None,
         quote_lookback_seconds: Optional[int] = None,
         quote_forward_seconds: Optional[int] = None,
+        alpaca_quote_fallback_enabled: Optional[bool] = None,
+        alpaca_data_api_base_url: Optional[str] = None,
+        alpaca_api_key_id: Optional[str] = None,
+        alpaca_api_secret_key: Optional[str] = None,
+        alpaca_quote_feed: Optional[str] = None,
+        alpaca_quote_timeout_seconds: Optional[float] = None,
+        alpaca_quote_max_age_seconds: Optional[int] = None,
     ) -> None:
         self.url = (url or settings.trading_clickhouse_url or "").rstrip("/")
         self.username = username or settings.trading_clickhouse_username
@@ -127,6 +134,36 @@ class ClickHousePriceFetcher(PriceFetcher):
             else quote_forward_seconds
         )
         self.quote_forward_seconds = max(0, configured_forward_seconds)
+        self.alpaca_quote_fallback_enabled = (
+            settings.trading_alpaca_quote_fallback_enabled
+            if alpaca_quote_fallback_enabled is None
+            else alpaca_quote_fallback_enabled
+        )
+        self.alpaca_data_api_base_url = (
+            alpaca_data_api_base_url
+            or settings.apca_data_api_base_url
+            or "https://data.alpaca.markets"
+        ).rstrip("/")
+        self.alpaca_api_key_id = alpaca_api_key_id or settings.apca_api_key_id
+        self.alpaca_api_secret_key = (
+            alpaca_api_secret_key or settings.apca_api_secret_key
+        )
+        self.alpaca_quote_feed = (
+            alpaca_quote_feed
+            if alpaca_quote_feed is not None
+            else settings.trading_alpaca_quote_feed
+        ).strip()
+        self.alpaca_quote_timeout_seconds = (
+            alpaca_quote_timeout_seconds
+            if alpaca_quote_timeout_seconds is not None
+            else settings.trading_alpaca_quote_timeout_seconds
+        )
+        self.alpaca_quote_max_age_seconds = max(
+            1,
+            alpaca_quote_max_age_seconds
+            if alpaca_quote_max_age_seconds is not None
+            else settings.trading_alpaca_quote_max_age_seconds,
+        )
         self._columns: Optional[set[str]] = None
 
     def fetch_price(self, signal: SignalEnvelope) -> Optional[Decimal]:
@@ -199,6 +236,10 @@ class ClickHousePriceFetcher(PriceFetcher):
             symbol=symbol,
             target_ts=target_ts,
         )
+        quote_source = "ta_signals_quote"
+        if quote_row is None:
+            quote_row = self._fetch_alpaca_latest_quote_row(symbol=symbol)
+            quote_source = "alpaca_latest_quote"
         as_of = _snapshot_as_of(row, signal.event_ts)
         price = _select_price(row)
         spread = _optional_decimal(row.get("spread"))
@@ -213,7 +254,7 @@ class ClickHousePriceFetcher(PriceFetcher):
             price = price or _select_price(quote_row) or _midpoint(bid=bid, ask=ask)
             spread = spread or quote_spread
             as_of = quote_as_of if not row else as_of
-            source = "ta_microbars+ta_signals_quote" if row else "ta_signals_quote"
+            source = f"ta_microbars+{quote_source}" if row else quote_source
         if price is None and bid is None and ask is None:
             return None
         return MarketSnapshot(
@@ -277,6 +318,135 @@ class ClickHousePriceFetcher(PriceFetcher):
         if not rows:
             return None
         return rows[0]
+
+    def _fetch_alpaca_latest_quote_row(self, *, symbol: str) -> dict[str, Any] | None:
+        if not self.alpaca_quote_fallback_enabled:
+            return None
+        if not self.alpaca_api_key_id or not self.alpaca_api_secret_key:
+            logger.warning(
+                "Alpaca latest quote fallback disabled by missing credentials symbol=%s",
+                symbol,
+            )
+            return None
+        quote = self._fetch_alpaca_latest_quote(symbol=symbol)
+        if quote is None:
+            return None
+        bid = _optional_decimal(quote.get("bp") or quote.get("bid_price"))
+        ask = _optional_decimal(quote.get("ap") or quote.get("ask_price"))
+        if bid is None or ask is None or bid <= 0 or ask < bid:
+            logger.info(
+                "Alpaca latest quote fallback rejected invalid quote symbol=%s", symbol
+            )
+            return None
+        spread_bps = _quote_spread_bps(bid=bid, ask=ask)
+        if spread_bps is None:
+            return None
+        if spread_bps > settings.trading_signal_max_executable_spread_bps:
+            logger.info(
+                "Alpaca latest quote fallback rejected wide quote symbol=%s spread_bps=%s",
+                symbol,
+                spread_bps,
+            )
+            return None
+        quote_ts = _parse_ts(quote.get("t") or quote.get("timestamp"))
+        if quote_ts is None:
+            logger.info(
+                "Alpaca latest quote fallback rejected missing timestamp symbol=%s",
+                symbol,
+            )
+            return None
+        if quote_ts.tzinfo is None:
+            quote_ts = quote_ts.replace(tzinfo=timezone.utc)
+        quote_age = max(
+            0.0,
+            (
+                datetime.now(timezone.utc) - quote_ts.astimezone(timezone.utc)
+            ).total_seconds(),
+        )
+        if quote_age > self.alpaca_quote_max_age_seconds:
+            logger.info(
+                "Alpaca latest quote fallback rejected stale quote symbol=%s age_seconds=%.3f",
+                symbol,
+                quote_age,
+            )
+            return None
+        return {
+            "event_ts": quote_ts.isoformat(),
+            "imbalance_bid_px": bid,
+            "imbalance_ask_px": ask,
+            "imbalance_spread": ask - bid,
+        }
+
+    def _fetch_alpaca_latest_quote(self, *, symbol: str) -> Mapping[str, Any] | None:
+        params: dict[str, str] = {}
+        if self.alpaca_quote_feed:
+            params["feed"] = self.alpaca_quote_feed
+        query = urlencode(params)
+        request_url = (
+            f"{self.alpaca_data_api_base_url}/v2/stocks/{symbol}/quotes/latest"
+        )
+        if query:
+            request_url = f"{request_url}?{query}"
+        parsed = urlsplit(request_url)
+        scheme = parsed.scheme.lower()
+        if scheme not in {"http", "https"}:
+            logger.warning(
+                "Unsupported Alpaca data API URL scheme: %s", scheme or "missing"
+            )
+            return None
+        if not parsed.hostname:
+            logger.warning("Invalid Alpaca data API URL host")
+            return None
+
+        headers = {
+            "Accept": "application/json",
+            "APCA-API-KEY-ID": self.alpaca_api_key_id or "",
+            "APCA-API-SECRET-KEY": self.alpaca_api_secret_key or "",
+        }
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
+        connection = connection_class(
+            parsed.hostname,
+            parsed.port,
+            timeout=self.alpaca_quote_timeout_seconds,
+        )
+        try:
+            connection.request("GET", path, headers=headers)
+            response = connection.getresponse()
+            body = response.read().decode("utf-8", errors="replace")
+        except Exception as exc:
+            logger.warning(
+                "Alpaca latest quote fallback request failed symbol=%s error=%s",
+                symbol,
+                exc,
+            )
+            return None
+        finally:
+            connection.close()
+        if response.status < 200 or response.status >= 300:
+            logger.warning(
+                "Alpaca latest quote fallback HTTP failure symbol=%s status=%s body=%s",
+                symbol,
+                response.status,
+                body[:200],
+            )
+            return None
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            logger.warning(
+                "Alpaca latest quote fallback returned invalid JSON symbol=%s", symbol
+            )
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        payload_mapping = cast(Mapping[str, Any], payload)
+        quote = payload_mapping.get("quote")
+        if not isinstance(quote, Mapping):
+            return None
+        return cast(Mapping[str, Any], quote)
 
     def _query_clickhouse(self, query: str) -> list[dict[str, Any]]:
         params = {"query": query}
@@ -423,6 +593,13 @@ def _midpoint(*, bid: Decimal | None, ask: Decimal | None) -> Optional[Decimal]:
     if bid is None or ask is None:
         return None
     return (bid + ask) / Decimal("2")
+
+
+def _quote_spread_bps(*, bid: Decimal, ask: Decimal) -> Optional[Decimal]:
+    midpoint = _midpoint(bid=bid, ask=ask)
+    if midpoint is None or midpoint <= 0:
+        return None
+    return ((ask - bid) / midpoint) * Decimal("10000")
 
 
 def _quote_spread_bps_sql() -> str:

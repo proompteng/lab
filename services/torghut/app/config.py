@@ -49,6 +49,7 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_drift_rollback_on_performance": "torghut_trading_drift_rollback_on_performance",
     "trading_execution_advisor_enabled": "torghut_trading_execution_advisor_enabled",
     "trading_execution_advisor_live_apply_enabled": "torghut_trading_execution_advisor_live_apply_enabled",
+    "trading_alpaca_quote_fallback_enabled": "torghut_trading_alpaca_quote_fallback_enabled",
     "trading_simulation_enabled": "torghut_trading_simulation_enabled",
     "trading_allow_shorts": "torghut_trading_allow_shorts",
     "trading_fractional_equities_enabled": "torghut_trading_fractional_equities_enabled",
@@ -434,6 +435,30 @@ class Settings(BaseSettings):
             "a signal timestamp but before decision evaluation. Keep this disabled for "
             "replay and live-submit lanes."
         ),
+    )
+    trading_alpaca_quote_fallback_enabled: bool = Field(
+        default=False,
+        alias="TRADING_ALPACA_QUOTE_FALLBACK_ENABLED",
+        description=(
+            "Allow runtime executable quote backfill from Alpaca latest stock quotes "
+            "when ClickHouse signal rows do not carry bid/ask. Keep disabled for "
+            "live-submit lanes unless explicitly promoted."
+        ),
+    )
+    trading_alpaca_quote_feed: str = Field(
+        default="iex",
+        alias="TRADING_ALPACA_QUOTE_FEED",
+        description="Alpaca stock-data feed used for latest-quote executable backfill.",
+    )
+    trading_alpaca_quote_timeout_seconds: float = Field(
+        default=2.0,
+        alias="TRADING_ALPACA_QUOTE_TIMEOUT_SECONDS",
+        description="HTTP timeout for Alpaca latest-quote executable backfill.",
+    )
+    trading_alpaca_quote_max_age_seconds: int = Field(
+        default=20,
+        alias="TRADING_ALPACA_QUOTE_MAX_AGE_SECONDS",
+        description="Reject Alpaca fallback quotes older than this many seconds.",
     )
     trading_poll_ms: int = Field(default=5000, alias="TRADING_POLL_MS")
     trading_reconcile_ms: int = Field(default=15000, alias="TRADING_RECONCILE_MS")
