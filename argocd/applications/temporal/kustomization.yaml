@@ -6,12 +6,6 @@ resources:
   - load-balancer-frontend.yaml
   - ingressroute-temporal-k8s-private.yaml
 
-patches:
-  - path: overlays/elasticsearch-master-two-node-affinity.yaml
-    target:
-      kind: StatefulSet
-      name: elasticsearch-master
-
 helmCharts:
   - name: cassandra
     repo: https://charts.helm.sh/incubator
@@ -37,6 +31,7 @@ helmCharts:
     namespace: temporal
     valuesInline:
       replicas: 3
+      antiAffinity: ""
       minimumMasterNodes: 2
       protocol: http
       createCert: false
