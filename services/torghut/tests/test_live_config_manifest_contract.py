@@ -571,9 +571,9 @@ class TestLiveConfigManifestContract(TestCase):
         pod_spec = cast(Mapping[str, object], template.get("spec", {}))
         containers = cast(list[Mapping[str, object]], pod_spec.get("containers", []))
 
-        self.assertEqual(spec.get("schedule"), "*/10 * * * *")
+        self.assertEqual(spec.get("schedule"), "*/5 * * * *")
         self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
-        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 600)
+        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 240)
         self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
         self.assertEqual(
             pod_spec.get("nodeSelector"),
@@ -600,8 +600,8 @@ class TestLiveConfigManifestContract(TestCase):
         args = "\n".join(str(item) for item in container.get("args", []))
         self.assertIn("scripts/refresh_execution_tca_metrics.py", args)
         self.assertIn("--older-than-seconds 900", args)
-        self.assertIn("--batch-size 5000", args)
-        self.assertIn("--max-batches 3", args)
+        self.assertIn("--batch-size 250", args)
+        self.assertIn("--max-batches 1", args)
         self.assertIn("--apply", args)
 
     def test_migration_job_prepares_sim_database_before_sim_upgrade(self) -> None:

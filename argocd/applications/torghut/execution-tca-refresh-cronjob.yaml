@@ -7,14 +7,14 @@ metadata:
     app.kubernetes.io/name: torghut
     app.kubernetes.io/component: execution-tca-refresh
 spec:
-  schedule: "*/10 * * * *"
+  schedule: "*/5 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       backoffLimit: 1
-      activeDeadlineSeconds: 600
+      activeDeadlineSeconds: 240
       template:
         spec:
           restartPolicy: OnFailure
@@ -40,7 +40,7 @@ spec:
                   cd /app
                   /opt/venv/bin/python scripts/refresh_execution_tca_metrics.py \
                     --older-than-seconds 900 \
-                    --batch-size 5000 \
-                    --max-batches 3 \
+                    --batch-size 250 \
+                    --max-batches 1 \
                     --apply \
                     --json
