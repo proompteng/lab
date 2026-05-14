@@ -2618,6 +2618,31 @@ describe('supporting primitives controller', () => {
               },
             },
           },
+          {
+            receipt_id: 'material-reentry-receipt:alpha-duplicate',
+            implementer_dispatch: {
+              schema_version: 'jangar.material-reentry-implementer-dispatch.v1',
+              dispatch_kind: 'swarm_requirement_signal',
+              source_swarm: 'jangar-control-plane',
+              target_swarm: 'torghut-quant',
+              target_stage: 'implement',
+              target_role: 'engineer',
+              signal_name: 'material-reentry-torghut-alpha-rotated',
+              channel: 'workflow.general.requirement',
+              description: 'Implement Torghut zero-notional executable-alpha repair for routeable_candidate_count',
+              priority: 'critical',
+              dedupe_key: 'material-reentry:alpha:routeable_candidate_count',
+              payload: {
+                type: 'material_reentry_requirement',
+                business_metric: 'routeable_candidate_count',
+                target_value_gate: 'routeable_candidate_count',
+                required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+                max_notional: 0,
+                no_codex_review: true,
+                review_policy: 'no_automatic_codex_review',
+              },
+            },
+          },
         ],
       },
     )
@@ -2681,11 +2706,21 @@ describe('supporting primitives controller', () => {
       | { metadata: Record<string, unknown>; spec: Record<string, unknown> }
       | undefined
     expect(signalPayload).toBeDefined()
-    expect(signalPayload?.metadata.name).toBe('material-reentry-torghut-alpha-test')
-    const signalLabels = (signalPayload?.metadata.labels ?? {}) as Record<string, string>
+    if (!signalPayload) throw new Error('expected material reentry Signal to be applied')
+    expect(signalPayload.metadata.name).toMatch(/^material-reentry-torghut-quant-[a-z0-9]+$/)
+    expect(
+      (signalPayload.metadata.annotations as Record<string, string>)['swarm.proompteng.ai/material-reentry-dispatch'],
+    ).toBe('material-reentry:alpha:routeable_candidate_count')
+    expect(
+      (signalPayload.metadata.annotations as Record<string, string>)[
+        'swarm.proompteng.ai/material-reentry-source-signal'
+      ],
+    ).toBe('material-reentry-torghut-alpha-rotated')
+    const signalLabels = (signalPayload.metadata.labels ?? {}) as Record<string, string>
     expect(signalLabels['swarm.proompteng.ai/from']).toBe('jangar-control-plane')
     expect(signalLabels['swarm.proompteng.ai/to']).toBe('torghut-quant')
-    expect(signalPayload?.spec.channel).toBe('workflow.general.requirement')
+    expect(signalPayload.spec.channel).toBe('workflow.general.requirement')
+    expect(apply.mock.calls.filter((call) => (call[0] as Record<string, unknown>).kind === 'Signal')).toHaveLength(1)
 
     const requirementRun = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
@@ -2695,7 +2730,7 @@ describe('supporting primitives controller', () => {
       }) as { metadata: Record<string, unknown>; spec: Record<string, unknown> } | undefined
     expect(requirementRun).toBeDefined()
     const parameters = (requirementRun?.spec.parameters ?? {}) as Record<string, string>
-    expect(parameters.swarmRequirementSignal).toBe('material-reentry-torghut-alpha-test')
+    expect(parameters.swarmRequirementSignal).toBe(signalPayload.metadata.name)
     expect(parameters.swarmRequirementSource).toBe('jangar-control-plane')
     expect(parameters.swarmRequirementTarget).toBe('torghut-quant')
     expect(parameters.swarmBusinessMetric).toBe('routeable_candidate_count')

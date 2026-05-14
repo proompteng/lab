@@ -1,4 +1,5 @@
 import { asRecord, asString } from '~/server/primitives-http'
+import { hashNameSuffix, makeHashedName } from '~/server/supporting-primitives-naming'
 import {
   normalizeLabelValue,
   SWARM_REQUIREMENT_LABEL_CHANNEL,
@@ -72,43 +73,50 @@ export const readMaterialReentryRequirementSignals = (status: Record<string, unk
   const receiptDispatches = asArray(clearinghouse.action_receipts)
     .map(asRecord)
     .map((receipt) => readMaterialReentryRequirementSignal(receipt?.implementer_dispatch))
-  const byName = new Map<string, MaterialReentryRequirementSignal>()
+  const byDedupeKey = new Map<string, MaterialReentryRequirementSignal>()
   for (const signal of [...directDispatches, ...receiptDispatches]) {
-    if (signal) byName.set(signal.signalName, signal)
+    if (signal) byDedupeKey.set(signal.dedupeKey, signal)
   }
-  return [...byName.values()]
+  return [...byDedupeKey.values()]
 }
+
+const materialReentrySignalName = (dispatch: MaterialReentryRequirementSignal) =>
+  makeHashedName(`material-reentry-${dispatch.targetSwarm}`, hashNameSuffix(dispatch.dedupeKey))
 
 const materialReentrySignalResource = (
   dispatch: MaterialReentryRequirementSignal,
   namespace: string,
-): Record<string, unknown> => ({
-  apiVersion: 'signals.proompteng.ai/v1alpha1',
-  kind: 'Signal',
-  metadata: {
-    name: dispatch.signalName,
-    namespace,
-    labels: {
-      [SWARM_REQUIREMENT_LABEL_TYPE]: 'requirement',
-      [SWARM_REQUIREMENT_LABEL_FROM]: normalizeLabelValue(dispatch.sourceSwarm),
-      [SWARM_REQUIREMENT_LABEL_TO]: normalizeLabelValue(dispatch.targetSwarm),
-      [SWARM_REQUIREMENT_LABEL_CHANNEL]: 'nats',
-      priority: normalizeLabelValue(dispatch.priority),
+): Record<string, unknown> => {
+  const name = materialReentrySignalName(dispatch)
+  return {
+    apiVersion: 'signals.proompteng.ai/v1alpha1',
+    kind: 'Signal',
+    metadata: {
+      name,
+      namespace,
+      labels: {
+        [SWARM_REQUIREMENT_LABEL_TYPE]: 'requirement',
+        [SWARM_REQUIREMENT_LABEL_FROM]: normalizeLabelValue(dispatch.sourceSwarm),
+        [SWARM_REQUIREMENT_LABEL_TO]: normalizeLabelValue(dispatch.targetSwarm),
+        [SWARM_REQUIREMENT_LABEL_CHANNEL]: 'nats',
+        priority: normalizeLabelValue(dispatch.priority),
+      },
+      annotations: {
+        'swarm.proompteng.ai/material-reentry-dispatch': dispatch.dedupeKey,
+        'swarm.proompteng.ai/material-reentry-source-signal': dispatch.signalName,
+      },
     },
-    annotations: {
-      'swarm.proompteng.ai/material-reentry-dispatch': dispatch.dedupeKey,
+    spec: {
+      channel: dispatch.channel,
+      description: dispatch.description,
+      priority: dispatch.priority,
+      payload: {
+        ...dispatch.payload,
+        material_reentry_dispatch_dedupe_key: dispatch.dedupeKey,
+      },
     },
-  },
-  spec: {
-    channel: dispatch.channel,
-    description: dispatch.description,
-    priority: dispatch.priority,
-    payload: {
-      ...dispatch.payload,
-      material_reentry_dispatch_dedupe_key: dispatch.dedupeKey,
-    },
-  },
-})
+  }
+}
 
 const summarizePublishError = (error: unknown) => {
   if (error instanceof Error && error.message.trim().length > 0) return error.message
@@ -122,18 +130,19 @@ export const publishMaterialReentryRequirementSignals = async (
   let publishErrors = 0
   for (const dispatch of input.materialReentryRequirementSignals) {
     if (dispatch.targetSwarm !== input.swarmName || dispatch.targetStage !== 'implement') continue
-    if (input.existingSignalNames.has(dispatch.signalName)) continue
+    const signalName = materialReentrySignalName(dispatch)
+    if (input.existingSignalNames.has(signalName)) continue
     const signal = materialReentrySignalResource(dispatch, input.namespace)
     try {
       await input.kube.apply(signal)
       publishedSignals.push(signal)
-      input.existingSignalNames.add(dispatch.signalName)
+      input.existingSignalNames.add(signalName)
     } catch (error) {
       publishErrors += 1
       console.warn('[jangar] failed to publish material reentry requirement signal', {
         swarm: input.swarmName,
         namespace: input.namespace,
-        signal: dispatch.signalName,
+        signal: signalName,
         error: summarizePublishError(error),
       })
     }
