@@ -89,8 +89,11 @@ controllers:
       JANGAR_WHITEPAPER_FINALIZE_ENABLED: "true"
       JANGAR_WHITEPAPER_FINALIZE_BASE_URL: http://torghut.torghut.svc.cluster.local
       JANGAR_WHITEPAPER_FINALIZE_USE_SERVICE_ACCOUNT_TOKEN: "true"
-      JANGAR_MATERIAL_REENTRY_REQUIREMENT_SIGNALS: "true"
-      JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS: "15000"
+      JANGAR_MATERIAL_REENTRY_REQUIREMENT_SIGNALS: "false"
+      JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL: http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?view=schedule-runner
+      JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS: "30000"
+      JANGAR_SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE: "1"
+      JANGAR_SWARM_REQUIREMENT_MAX_ACTIVE_PER_SWARM: "2"
 resources:
   requests:
     cpu: 200m
@@ -104,10 +107,10 @@ controller:
     resources:
       requests:
         cpu: "1"
-        memory: 2Gi
+        memory: 4Gi
         ephemeral-storage: 8Gi
       limits:
-        memory: 8Gi
+        memory: 16Gi
         ephemeral-storage: 16Gi
   namespaces:
     - agents

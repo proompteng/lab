@@ -118,6 +118,7 @@ import { getMetricsSinkPressureSummary } from '~/server/metrics'
 import type { ExecutionTrustStatus, WorkflowsReliabilityStatus } from '~/data/agents-control-plane'
 
 export type { ControlPlaneStatus, DatabaseStatus, GrpcStatus } from './control-plane-status-types'
+export { projectControlPlaneStatus, type ControlPlaneStatusView } from './control-plane-status-projection'
 export { buildExecutionTrust } from './control-plane-execution-trust'
 
 type ControllerHealth = ReturnType<typeof getAgentsControllerHealth>

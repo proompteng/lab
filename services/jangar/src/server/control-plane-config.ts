@@ -24,6 +24,8 @@ const DEFAULT_WATCH_RELIABILITY_BLOCK_RESTARTS = 3
 const DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD = 2
 const DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD = 3
 const DEFAULT_TORGHUT_STATUS_TIMEOUT_MS = 15000
+const DEFAULT_STATUS_CACHE_TTL_MS = 0
+const DEFAULT_STATUS_CACHE_MAX_ENTRIES = 32
 
 const normalizeNonEmpty = (value: string | undefined | null) => {
   const normalized = value?.trim()
@@ -111,6 +113,8 @@ export type ControlPlaneStatusConfig = {
   rolloutDeployments: string[]
   workflowsWarningBackoffThreshold: number
   workflowsDegradedBackoffThreshold: number
+  statusCacheTtlMs: number
+  statusCacheMaxEntries: number
 }
 
 export type ControlPlaneCacheFreshnessConfig = {
@@ -271,6 +275,18 @@ export const resolveControlPlaneStatusConfig = (env: EnvSource = process.env): C
       env.JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD,
       DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD,
       workflowsWarningBackoffThreshold,
+    ),
+    statusCacheTtlMs: parsePositiveInt(
+      env.JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS,
+      DEFAULT_STATUS_CACHE_TTL_MS,
+      0,
+      60_000,
+    ),
+    statusCacheMaxEntries: parsePositiveInt(
+      env.JANGAR_CONTROL_PLANE_STATUS_CACHE_MAX_ENTRIES,
+      DEFAULT_STATUS_CACHE_MAX_ENTRIES,
+      1,
+      256,
     ),
   }
 }

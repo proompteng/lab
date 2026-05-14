@@ -49,12 +49,16 @@ describe('control-plane-config', () => {
       resolveControlPlaneStatusConfig({
         JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SWARMS: 'jangar-control-plane,torghut-quant,jangar-control-plane',
         JANGAR_CONTROL_PLANE_ROLLOUT_DEPLOYMENTS: 'agents,agents-controllers,agents',
+        JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS: '10000',
+        JANGAR_CONTROL_PLANE_STATUS_CACHE_MAX_ENTRIES: '64',
         JANGAR_TORGHUT_STATUS_TIMEOUT_MS: '6500',
         JANGAR_WORKFLOWS_WINDOW_MINUTES: '45',
       }),
     ).toMatchObject({
       executionTrustSwarms: ['jangar-control-plane', 'torghut-quant'],
       rolloutDeployments: ['agents', 'agents-controllers'],
+      statusCacheTtlMs: 10000,
+      statusCacheMaxEntries: 64,
       torghutStatusTimeoutMs: 6500,
       workflowsWindowMinutes: 45,
     })

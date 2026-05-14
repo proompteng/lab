@@ -100,6 +100,13 @@ const requirementIdForSignal = (signalNamespace: string, signalName: string) => 
   return Math.abs(hash).toString(36).padStart(8, '0').slice(0, 8)
 }
 
+const isRequirementRunPayload = (payload: Record<string, unknown>) => {
+  if (payload.kind !== 'AgentRun') return false
+  const metadata = payload.metadata as Record<string, unknown> | undefined
+  const name = metadata?.name ?? metadata?.generateName
+  return typeof name === 'string' && name.includes('req')
+}
+
 const buildAdmissionPassport = (
   consumerClass: 'serving' | 'swarm_plan' | 'swarm_implement' | 'swarm_verify',
   overrides: Record<string, unknown> = {},
@@ -453,6 +460,7 @@ describe('supporting primitives controller', () => {
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS
+    delete process.env.JANGAR_SWARM_REQUIREMENT_MAX_ACTIVE_PER_SWARM
     delete process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT
     delete process.env.JANGAR_STAGE_CLEARANCE_HOLD_STAGES
     delete process.env.JANGAR_MATERIAL_REENTRY_REQUIREMENT_SIGNALS
@@ -473,6 +481,7 @@ describe('supporting primitives controller', () => {
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL
     delete process.env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS
+    delete process.env.JANGAR_SWARM_REQUIREMENT_MAX_ACTIVE_PER_SWARM
     delete process.env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT
     delete process.env.JANGAR_STAGE_CLEARANCE_HOLD_STAGES
     delete process.env.JANGAR_MATERIAL_REENTRY_REQUIREMENT_SIGNALS
@@ -2533,15 +2542,16 @@ describe('supporting primitives controller', () => {
     const requirementRunPayloads = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
       .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
-      .filter((payload) => {
-        const metadata = payload.metadata as Record<string, unknown>
-        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
-      })
+      .filter(isRequirementRunPayload)
     expect(requirementRunPayloads).toHaveLength(1)
     const requirementRun = requirementRunPayloads[0] as {
       metadata: Record<string, unknown>
       spec: Record<string, unknown>
     }
+    expect(requirementRun.metadata.name).toBe(
+      `jangar-control-plane-torghut-quant-req-${requirementIdForSignal('agents', 'torghut-risk-handoff-1')}-1`,
+    )
+    expect(requirementRun.metadata.generateName).toBeUndefined()
     const runLabels = (requirementRun.metadata.labels ?? {}) as Record<string, string>
     expect(runLabels['swarm.proompteng.ai/requirement-channel']).toBe('nats')
     expect(runLabels['swarm.proompteng.ai/from']).toBe('torghut-quant')
@@ -2598,6 +2608,128 @@ describe('supporting primitives controller', () => {
     const conditions = Array.isArray(status.conditions) ? status.conditions : []
     const bridge = conditions.find((condition) => condition.type === 'RequirementsBridge')
     expect(bridge?.status).toBe('True')
+  })
+
+  it('throttles requirement dispatch when active requirement runs already fill the swarm cap', async () => {
+    process.env.JANGAR_SWARM_REQUIREMENT_MAX_ACTIVE_PER_SWARM = '1'
+
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Schedule) {
+        return { status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' } }
+      }
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-implement-template', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+          },
+        }
+      }
+      return null
+    })
+    const activeRequirementId = requirementIdForSignal('agents', 'existing-risk-handoff')
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          items: [
+            {
+              kind: 'AgentRun',
+              metadata: {
+                name: 'jangar-control-plane-torghut-quant-req-existing-1',
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/stage': 'implement',
+                  'swarm.proompteng.ai/requirement-id': activeRequirementId,
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              status: { phase: 'Running' },
+            },
+          ],
+        }
+      }
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'torghut-risk-handoff-2',
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'workflow.general.requirement',
+                description: 'Raise risk budget guardrails after the current run drains',
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        domains: ['platform-reliability'],
+        objectives: ['improve reliability'],
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        discovery: { sources: [{ name: 'github-issues' }] },
+        delivery: { deploymentTargets: ['agents'] },
+        mission: {
+          ledgerRef: '/workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md',
+          businessMetric: 'reduce failed AgentRuns',
+          validationContract: ['dispatch requirements only when business value is named'],
+          valueGates: ['failed_agentrun_rate'],
+        },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const requirementRunPayloads = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter(isRequirementRunPayload)
+    expect(requirementRunPayloads).toHaveLength(0)
+
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    const requirements = (status.requirements ?? {}) as Record<string, unknown>
+    expect(requirements.pending).toBe(1)
+    expect(requirements.dispatched).toBe(0)
+    expect(requirements.throttled).toBe(1)
+    expect(requirements.active).toBe(1)
+
+    const conditions = Array.isArray(status.conditions) ? status.conditions : []
+    const bridge = conditions.find((condition) => condition.type === 'RequirementsBridge')
+    expect(bridge).toMatchObject({ status: 'True', reason: 'Throttled' })
   })
 
   it('publishes material reentry repair dispatches as implementer requirement runs in shadow mode', async () => {
@@ -2745,10 +2877,7 @@ describe('supporting primitives controller', () => {
 
     const requirementRun = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
-      .find((payload) => {
-        const metadata = payload.metadata as Record<string, unknown> | undefined
-        return payload.kind === 'AgentRun' && String(metadata?.generateName).includes('req')
-      }) as { metadata: Record<string, unknown>; spec: Record<string, unknown> } | undefined
+      .find(isRequirementRunPayload) as { metadata: Record<string, unknown>; spec: Record<string, unknown> } | undefined
     expect(requirementRun).toBeDefined()
     const parameters = (requirementRun?.spec.parameters ?? {}) as Record<string, string>
     expect(parameters.swarmRequirementSignal).toBe(signalPayload.metadata.name)
@@ -2859,10 +2988,7 @@ describe('supporting primitives controller', () => {
     const requirementRunPayloads = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
       .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
-      .filter((payload) => {
-        const metadata = payload.metadata as Record<string, unknown>
-        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
-      })
+      .filter(isRequirementRunPayload)
     expect(requirementRunPayloads).toHaveLength(0)
 
     const statusCall = applyStatus.mock.calls.at(-1)
@@ -3345,10 +3471,7 @@ describe('supporting primitives controller', () => {
     const requirementRunPayloads = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
       .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
-      .filter((payload) => {
-        const metadata = payload.metadata as Record<string, unknown>
-        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
-      })
+      .filter(isRequirementRunPayload)
     expect(requirementRunPayloads).toHaveLength(0)
 
     const statusCall = applyStatus.mock.calls.at(-1)
@@ -3469,10 +3592,7 @@ describe('supporting primitives controller', () => {
     const requirementRunPayloads = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
       .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
-      .filter((payload) => {
-        const metadata = payload.metadata as Record<string, unknown>
-        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
-      })
+      .filter(isRequirementRunPayload)
     expect(requirementRunPayloads).toHaveLength(0)
 
     const statusCall = applyStatus.mock.calls.at(-1)
@@ -3605,10 +3725,7 @@ describe('supporting primitives controller', () => {
     const requirementRunPayloads = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
       .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
-      .filter((payload) => {
-        const metadata = payload.metadata as Record<string, unknown>
-        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
-      })
+      .filter(isRequirementRunPayload)
     expect(requirementRunPayloads).toHaveLength(0)
 
     const statusCall = applyStatus.mock.calls.at(-1)
@@ -3731,10 +3848,7 @@ describe('supporting primitives controller', () => {
     const requirementRunPayloads = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
       .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
-      .filter((payload) => {
-        const metadata = payload.metadata as Record<string, unknown>
-        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
-      })
+      .filter(isRequirementRunPayload)
     expect(requirementRunPayloads).toHaveLength(0)
 
     const statusCall = applyStatus.mock.calls.at(-1)
@@ -3952,10 +4066,9 @@ describe('supporting primitives controller', () => {
     const requirementRun = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
       .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
-      .find((payload) => {
-        const metadata = payload.metadata as Record<string, unknown>
-        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
-      }) as { metadata?: Record<string, unknown>; spec?: Record<string, unknown> } | undefined
+      .find(isRequirementRunPayload) as
+      | { metadata?: Record<string, unknown>; spec?: Record<string, unknown> }
+      | undefined
 
     expect(requirementRun).toBeTruthy()
     expect(requirementRun?.metadata?.annotations).toMatchObject({
@@ -4088,10 +4201,7 @@ describe('supporting primitives controller', () => {
     const requirementRunPayloads = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
       .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
-      .filter((payload) => {
-        const metadata = payload.metadata as Record<string, unknown>
-        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
-      })
+      .filter(isRequirementRunPayload)
     expect(requirementRunPayloads).toHaveLength(2)
     const firstParameters = (requirementRunPayloads[0]?.spec as Record<string, unknown> | undefined)?.parameters as
       | Record<string, string>
@@ -4192,10 +4302,7 @@ describe('supporting primitives controller', () => {
     const requirementRunPayloads = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
       .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
-      .filter((payload) => {
-        const metadata = payload.metadata as Record<string, unknown>
-        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
-      })
+      .filter(isRequirementRunPayload)
     expect(requirementRunPayloads).toHaveLength(1)
     const requirementRun = requirementRunPayloads[0] as {
       metadata: Record<string, unknown>
@@ -4296,10 +4403,7 @@ describe('supporting primitives controller', () => {
     const requirementRunPayloads = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
       .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
-      .filter((payload) => {
-        const metadata = payload.metadata as Record<string, unknown>
-        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
-      })
+      .filter(isRequirementRunPayload)
     expect(requirementRunPayloads).toHaveLength(1)
     const requirementRun = requirementRunPayloads[0] as {
       spec: Record<string, unknown>
@@ -4401,10 +4505,7 @@ describe('supporting primitives controller', () => {
     const requirementRunPayloads = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
       .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
-      .filter((payload) => {
-        const metadata = payload.metadata as Record<string, unknown>
-        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
-      })
+      .filter(isRequirementRunPayload)
     expect(requirementRunPayloads).toHaveLength(1)
     const requirementRun = requirementRunPayloads[0] as {
       metadata: Record<string, unknown>
@@ -4504,10 +4605,7 @@ describe('supporting primitives controller', () => {
     const requirementRunPayloads = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
       .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
-      .filter((payload) => {
-        const metadata = payload.metadata as Record<string, unknown>
-        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
-      })
+      .filter(isRequirementRunPayload)
     expect(requirementRunPayloads).toHaveLength(1)
     const truncatedRun = requirementRunPayloads.find((requirement) => {
       const spec = (requirement as { spec: Record<string, unknown> }).spec
@@ -4946,10 +5044,7 @@ describe('supporting primitives controller', () => {
     const requirementRunPayloads = apply.mock.calls
       .map((call) => call[0] as Record<string, unknown>)
       .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
-      .filter((payload) => {
-        const metadata = payload.metadata as Record<string, unknown>
-        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
-      })
+      .filter(isRequirementRunPayload)
     expect(requirementRunPayloads).toHaveLength(1)
     const requirementRun = requirementRunPayloads[0] as {
       metadata: Record<string, unknown>

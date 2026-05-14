@@ -26,6 +26,11 @@ import {
   stopMaterialReentrySwarmReconcileLoop,
 } from '~/server/supporting-primitives-material-reentry-swarm-reconciler'
 import { publishMaterialReentryRequirementSignals } from '~/server/supporting-primitives-material-reentry-requirements'
+import {
+  collectMaterialReentryDedupeKeys,
+  collectRequirementRunStates,
+  describeRequirementBridgeActivity,
+} from '~/server/supporting-primitives-requirement-bridge'
 import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
 import {
   buildScheduleRunnerCommand,
@@ -99,8 +104,6 @@ import {
   filterRunsAfterTime,
   getRunTimestamp,
   isNatsChannel,
-  isIdempotencyDuplicateRun,
-  makeGenerateName,
   makeRequirementObjective,
   normalizeParameterMap,
   parseDurationToMs,
@@ -2138,32 +2141,13 @@ const reconcileSwarm = async (
     namespace: swarmNamespace,
     swarmName,
     existingSignalNames: listedRequirementSignalNames,
+    existingDedupeKeys: collectMaterialReentryDedupeKeys(listedRequirementSignals),
   })
   const requirementSignals = sortRequirementSignalsForDispatch([
     ...listedRequirementSignals,
     ...materialReentrySignalPublication.publishedSignals,
   ])
-  const requirementRunStates = new Map<
-    string,
-    {
-      any: boolean
-      active: boolean
-      success: boolean
-      failed: number
-    }
-  >()
-  for (const run of implementRuns) {
-    const requirementId = asString(readNested(run, ['metadata', 'labels', SWARM_REQUIREMENT_LABEL_ID]))
-    if (!requirementId) continue
-    if (isIdempotencyDuplicateRun(run)) continue
-    const phase = (asString(readNested(run, ['status', 'phase'])) ?? '').toLowerCase()
-    const current = requirementRunStates.get(requirementId) ?? { any: false, active: false, success: false, failed: 0 }
-    current.any = true
-    if (TERMINAL_SUCCESS_PHASES.has(phase)) current.success = true
-    if (ACTIVE_PHASES.has(phase)) current.active = true
-    if (TERMINAL_FAILURE_PHASES.has(phase)) current.failed += 1
-    requirementRunStates.set(requirementId, current)
-  }
+  let { activeRequirementRuns, requirementRunStates } = collectRequirementRunStates(implementRuns)
 
   let requirementTemplate: Record<string, unknown> | null | undefined
   let requirementTemplateError: string | null = null
@@ -2181,6 +2165,7 @@ const reconcileSwarm = async (
   const requirementStats = {
     pending: 0,
     dispatched: 0,
+    throttled: 0,
     blocked: 0,
     admissionBlocked: 0,
     stageClearanceBlocked: 0,
@@ -2254,7 +2239,14 @@ const reconcileSwarm = async (
       requirementStats.blocked += 1
       continue
     }
-    if (requirementStats.dispatched >= SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE) continue
+    if (activeRequirementRuns >= supportingConfig.swarmRequirementMaxActivePerSwarm) {
+      requirementStats.throttled += 1
+      continue
+    }
+    if (requirementStats.dispatched >= SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE) {
+      requirementStats.throttled += 1
+      continue
+    }
     if (!implementStageConfig?.targetRef) {
       requirementStats.blocked += 1
       continue
@@ -2343,7 +2335,8 @@ const reconcileSwarm = async (
     const targetSpec = asRecord(requirementTemplate.spec) ?? {}
     const targetWorkload = asRecord(targetSpec.workload) ?? {}
     const targetWorkloadImage = asString(targetWorkload.image) ?? defaultWorkloadImage
-    const generateName = makeGenerateName(`${swarmName}-${sourceSwarmLabel}`, `req-${requirementId}-${attempt}`)
+    const runName = makeName(`${swarmName}-${sourceSwarmLabel}`, `req-${requirementId}-${attempt}`)
+    const deliveryId = `swarm-requirement-${swarmName}-${requirementId}-attempt-${attempt}`
 
     try {
       if (targetKind === 'AgentRun') {
@@ -2354,7 +2347,7 @@ const reconcileSwarm = async (
           apiVersion: 'agents.proompteng.ai/v1alpha1',
           kind: 'AgentRun',
           metadata: {
-            generateName,
+            name: runName,
             namespace: targetNamespace,
             labels: runLabels,
             annotations: runAnnotations,
@@ -2362,7 +2355,7 @@ const reconcileSwarm = async (
           },
           spec: {
             ...targetSpec,
-            idempotencyKey: `swarm-requirement-${swarmName}-${requirementId}-attempt-${attempt}`,
+            idempotencyKey: deliveryId,
             parameters: {
               ...existingParameters,
               ...requirementParameters,
@@ -2377,7 +2370,7 @@ const reconcileSwarm = async (
           apiVersion: 'orchestration.proompteng.ai/v1alpha1',
           kind: 'OrchestrationRun',
           metadata: {
-            generateName,
+            name: runName,
             namespace: targetNamespace,
             labels: runLabels,
             annotations: runAnnotations,
@@ -2385,7 +2378,7 @@ const reconcileSwarm = async (
           },
           spec: {
             ...targetSpec,
-            deliveryId: `swarm-requirement-${swarmName}-${requirementId}-attempt-${attempt}`,
+            deliveryId,
             parameters: {
               ...existingParameters,
               ...requirementParameters,
@@ -2398,6 +2391,7 @@ const reconcileSwarm = async (
       }
 
       requirementStats.dispatched += 1
+      activeRequirementRuns += 1
       requirementRunStates.set(requirementId, { any: true, active: true, success: false, failed: state?.failed ?? 0 })
     } catch {
       requirementStats.blocked += 1
@@ -2603,6 +2597,8 @@ const reconcileSwarm = async (
     requirements: {
       pending: requirementStats.pending,
       dispatched: requirementStats.dispatched,
+      throttled: requirementStats.throttled,
+      active: activeRequirementRuns,
       blocked: requirementStats.blocked,
       admissionBlocked: requirementStats.admissionBlocked,
       stageClearanceBlocked: requirementStats.stageClearanceBlocked,
@@ -2816,14 +2812,17 @@ const reconcileSwarm = async (
       message: `${requirementStats.blocked} requirement signal(s) blocked for manual intervention`,
     })
   } else {
+    const activity = describeRequirementBridgeActivity({
+      pending: requirementStats.pending,
+      dispatched: requirementStats.dispatched,
+      throttled: requirementStats.throttled,
+      active: activeRequirementRuns,
+    })
     conditions = upsertCondition(conditions, {
       type: 'RequirementsBridge',
       status: 'True',
-      reason: requirementStats.pending > 0 ? 'Processing' : 'Idle',
-      message:
-        requirementStats.pending > 0
-          ? `${requirementStats.pending} requirement signal(s) pending; ${requirementStats.dispatched} dispatched`
-          : 'no requirement signals pending',
+      reason: activity.reason,
+      message: activity.message,
     })
   }
   nextStatus.conditions = conditions
