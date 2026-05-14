@@ -2257,9 +2257,24 @@ def _select_candidate_specs_for_replay(
                         "max_position_pct_equity"
                     ]
                 ),
+                "max_trade_pct_equity": str(
+                    capital_features_by_spec[spec.candidate_spec_id][
+                        "max_trade_pct_equity"
+                    ]
+                ),
                 "estimated_max_gross_exposure_pct_equity": str(
                     capital_features_by_spec[spec.candidate_spec_id][
                         "estimated_max_gross_exposure_pct_equity"
+                    ]
+                ),
+                "estimated_capital_slot_count": str(
+                    capital_features_by_spec[spec.candidate_spec_id][
+                        "estimated_capital_slot_count"
+                    ]
+                ),
+                "entry_notional_max_multiplier": str(
+                    capital_features_by_spec[spec.candidate_spec_id][
+                        "entry_notional_max_multiplier"
                     ]
                 ),
                 "capital_budget_overage_ratio": str(

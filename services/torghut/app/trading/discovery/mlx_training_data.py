@@ -9,10 +9,10 @@ from datetime import UTC, datetime
 from typing import Any, Mapping, Sequence, cast
 
 from app.trading.discovery.candidate_specs import CandidateSpec
+from app.trading.discovery.capital_budget import estimate_capital_budget
 from app.trading.discovery.evidence_bundles import CandidateEvidenceBundle
 
 MLX_RANKER_SCHEMA_VERSION = "torghut.mlx-ranker.v1"
-DEFAULT_CAPITAL_START_EQUITY = 31590.02
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
@@ -161,39 +161,15 @@ def _positive_or_default(value: float, default: float) -> float:
 def candidate_spec_capital_features(spec: CandidateSpec) -> Mapping[str, float]:
     overrides = _mapping(spec.strategy_overrides)
     params = _mapping(overrides.get("params"))
-    max_notional = _float(overrides.get("max_notional_per_trade"))
-    max_position_pct = _float(overrides.get("max_position_pct_equity"))
-    configured_max_gross_pct = _float(params.get("max_gross_exposure_pct_equity"))
-    max_entries = _positive_or_default(_float(params.get("max_entries_per_session")), 1.0)
-    max_notional_pct_start_equity = (
-        max_notional / DEFAULT_CAPITAL_START_EQUITY
-        if DEFAULT_CAPITAL_START_EQUITY > 0.0
-        else 0.0
+    features = estimate_capital_budget(
+        strategy_overrides=overrides,
+        params=params,
+    ).to_feature_payload()
+    features["max_entries_per_session"] = _positive_or_default(
+        _float(params.get("max_entries_per_session")),
+        1.0,
     )
-    max_trade_pct_equity = max(
-        max_notional_pct_start_equity,
-        _positive_or_default(max_position_pct, 0.0),
-    )
-    inferred_max_gross_pct = max_trade_pct_equity * max_entries
-    estimated_max_gross_pct = max(configured_max_gross_pct, inferred_max_gross_pct)
-    capital_budget_overage_ratio = max(0.0, estimated_max_gross_pct - 1.0) + max(
-        0.0, max_trade_pct_equity - 1.0
-    )
-    capital_feasible = (
-        1.0
-        if estimated_max_gross_pct <= 1.0 and max_trade_pct_equity <= 1.0
-        else 0.0
-    )
-    return {
-        "max_notional_per_trade": max_notional,
-        "max_notional_pct_start_equity": max_notional_pct_start_equity,
-        "max_position_pct_equity": max_position_pct,
-        "configured_max_gross_exposure_pct_equity": configured_max_gross_pct,
-        "estimated_max_gross_exposure_pct_equity": estimated_max_gross_pct,
-        "max_entries_per_session": max_entries,
-        "capital_budget_overage_ratio": capital_budget_overage_ratio,
-        "capital_feasible_flag": capital_feasible,
-    }
+    return features
 
 
 def capital_budget_penalty(features: Mapping[str, float]) -> float:

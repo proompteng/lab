@@ -5,9 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any, Literal, Mapping, Sequence, cast
 
+from app.trading.discovery.capital_budget import estimate_capital_pressure
 from app.trading.discovery.hypothesis_cards import HypothesisCard
 from app.trading.semiconductor_universe import (
     LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE as LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE,
@@ -1901,30 +1902,22 @@ def _mapping(value: Any) -> dict[str, Any]:
     return {str(key): item for key, item in cast(Mapping[Any, Any], value).items()}
 
 
-def _profile_decimal(value: Any, *, default: str = "0") -> Decimal:
-    try:
-        return Decimal(str(value if value is not None else default))
-    except (InvalidOperation, TypeError, ValueError):
-        return Decimal(default)
-
-
-def _profile_slot_count(profile: Mapping[str, Any]) -> int:
-    params = _mapping(profile.get("params"))
-    slot_values = [
-        _profile_decimal(params.get("max_entries_per_session"), default="1"),
-        _profile_decimal(params.get("max_pair_legs"), default="1"),
-        _profile_decimal(params.get("top_n"), default="1"),
-    ]
-    return max(1, int(max(slot_values)))
+def _format_profile_budget(value: Decimal) -> str:
+    text = format(value.normalize(), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def _capital_limited_profile_values(profile: Mapping[str, Any]) -> tuple[str, str]:
-    slot_count = _profile_slot_count(profile)
-    if slot_count <= 1:
-        return "30000", "1.0"
-    if slot_count == 2:
-        return "15000", "0.50"
-    return "7500", "0.25"
+    params = _mapping(profile.get("params"))
+    pressure = max(
+        Decimal("1"),
+        Decimal(str(estimate_capital_pressure(params))),
+    )
+    max_notional = (Decimal("30000") / pressure).quantize(Decimal("0.01"))
+    max_position = (Decimal("1") / pressure).quantize(Decimal("0.000001"))
+    return _format_profile_budget(max_notional), _format_profile_budget(max_position)
 
 
 def _capital_constrained_execution_profiles(
