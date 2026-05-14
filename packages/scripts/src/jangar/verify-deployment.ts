@@ -88,7 +88,12 @@ const supportedRevisionModes = ['exact', 'ancestor'] as const
 type ExpectedRevisionMode = (typeof supportedRevisionModes)[number]
 const supportedAdmissionPassportConsumers = ['serving', 'swarm_plan', 'swarm_implement', 'swarm_verify'] as const
 type AdmissionPassportConsumer = (typeof supportedAdmissionPassportConsumers)[number]
-const defaultAdmissionPassportConsumers: AdmissionPassportConsumer[] = ['serving', 'swarm_plan', 'swarm_implement']
+const defaultAdmissionPassportConsumers: AdmissionPassportConsumer[] = [
+  'serving',
+  'swarm_plan',
+  'swarm_implement',
+  'swarm_verify',
+]
 const supportedAuthorityProvenanceSettlementStates = [
   'settled',
   'settled_with_split',
@@ -435,7 +440,7 @@ Options:
   --control-plane-status-namespace <name>
                                       Namespace passed to /api/agents/control-plane/status (default: agents)
   --admission-passport-consumers <csv>
-                                      Required passport consumers (default: serving,swarm_plan,swarm_implement)
+                                      Required passport consumers (default: ${defaultAdmissionPassportConsumers.join(',')})
   --skip-admission-passport-verification
                                       Skip runtime admission passport parity verification
   --skip-runtime-proof-verification
@@ -1314,6 +1319,7 @@ export const __private = {
   isExpectedRevisionSatisfied,
   parseArgs,
   parseAdmissionPassportConsumers,
+  defaultAdmissionPassportConsumers,
   verifyAuthorityProvenanceSettlement,
   verifyAdmissionPassportParity,
   verifyRuntimeProofSurfaceParity,
