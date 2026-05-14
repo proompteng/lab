@@ -79,6 +79,7 @@ const isZeroNotional = (value: string | null | undefined) => {
 const digestFreshUntil = (input: BuildMaterialGateDigestInput) => {
   const futureTimes = [
     input.torghutConsumerEvidence.fresh_until,
+    input.torghutConsumerEvidence.alpha_closure_dividend_slo?.fresh_until,
     input.torghutConsumerEvidence.alpha_repair_closure_board?.fresh_until,
     input.torghutConsumerEvidence.alpha_evidence_foundry?.fresh_until,
     input.repairBidAdmission.fresh_until,
@@ -91,15 +92,21 @@ const digestFreshUntil = (input: BuildMaterialGateDigestInput) => {
 }
 
 const validationRefsForCarry = (input: BuildMaterialGateDigestInput) => {
+  const slo = input.torghutConsumerEvidence.alpha_closure_dividend_slo
+  if (slo?.validation_commands && slo.validation_commands.length > 0) return slo.validation_commands
   const board = input.torghutConsumerEvidence.alpha_repair_closure_board
   const explicitRefs = board?.validation_commands ?? []
   if (explicitRefs.length > 0) return explicitRefs
-  return [`curl -fsS ${input.torghutConsumerEvidence.endpoint} | jq '.alpha_repair_closure_board'`]
+  return [`curl -fsS ${input.torghutConsumerEvidence.endpoint} | jq '.alpha_closure_dividend_slo'`]
 }
 
 const sourceRefsForCarry = (input: BuildMaterialGateDigestInput) =>
   uniqueStrings([
     input.torghutConsumerEvidence.receipt_id,
+    input.torghutConsumerEvidence.alpha_closure_dividend_slo?.slo_id,
+    input.torghutConsumerEvidence.alpha_closure_dividend_slo?.source_revenue_repair_ref,
+    input.torghutConsumerEvidence.alpha_closure_dividend_slo?.source_board_ref,
+    input.torghutConsumerEvidence.alpha_closure_dividend_slo?.source_settlement_market_ref,
     input.torghutConsumerEvidence.alpha_repair_closure_board?.board_id,
     input.torghutConsumerEvidence.alpha_repair_closure_board?.settlement_market_id,
     input.torghutConsumerEvidence.alpha_evidence_foundry?.foundry_id,
@@ -116,6 +123,66 @@ const launchableRepairTickets = (input: BuildMaterialGateDigestInput) =>
 const alphaClosureCarryDecision = (
   input: BuildMaterialGateDigestInput,
 ): Pick<AlphaClosureCarry, 'decision' | 'reason_codes'> => {
+  const slo = input.torghutConsumerEvidence.alpha_closure_dividend_slo
+  if (slo) {
+    const reasons: string[] = []
+    if (!isFresh(slo.fresh_until, input.now)) reasons.push('alpha_closure_dividend_slo_stale')
+    if (slo.selected_value_gate !== 'routeable_candidate_count') reasons.push('alpha_closure_wrong_value_gate')
+    if (!slo.required_settlement_receipt) reasons.push('alpha_closure_settlement_receipt_missing')
+    if (!isZeroNotional(slo.max_notional)) reasons.push('alpha_closure_notional_nonzero')
+    if (slo.capital_rule && slo.capital_rule !== 'zero_notional_repair_only') {
+      reasons.push('alpha_closure_capital_rule_not_zero_notional')
+    }
+    if (!slo.active_dedupe_key) {
+      reasons.push('alpha_closure_active_dedupe_key_missing')
+    } else if (input.repairBidAdmission.active_dedupe_keys.includes(slo.active_dedupe_key)) {
+      reasons.push('alpha_closure_dedupe_active')
+    }
+
+    const dividendState = normalizeReason(slo.dividend_state)
+    if (dividendState === 'invalid') reasons.push('alpha_closure_dividend_slo_invalid')
+    if (dividendState === 'stale') reasons.push('alpha_closure_dividend_slo_stale')
+    if (dividendState === 'no_delta') reasons.push('alpha_closure_no_delta_active')
+    if (!dividendState) reasons.push('alpha_closure_dividend_state_missing')
+
+    const repairTickets = launchableRepairTickets(input)
+    if (repairTickets.length === 0) reasons.push('repair_bid_dispatch_ticket_missing')
+
+    const noDeltaState = normalizeReason(slo.no_delta_budget_state)
+    const noDeltaDebtCount = slo.no_delta_debt_count ?? 0
+    if (!noDeltaState) {
+      reasons.push('alpha_closure_no_delta_budget_missing')
+    } else if (noDeltaState === 'consumed') {
+      reasons.push('alpha_closure_no_delta_budget_consumed')
+    } else if (!AVAILABLE_NO_DELTA_STATES.has(noDeltaState)) {
+      reasons.push(`alpha_closure_no_delta_budget_${noDeltaState}`)
+    }
+    if (noDeltaDebtCount > 0) reasons.push('alpha_closure_no_delta_debt_active')
+
+    const reasonCodes = uniqueStrings([...reasons, ...(slo.reason_codes ?? [])])
+    if (
+      reasonCodes.some((reason) =>
+        ['alpha_closure_notional_nonzero', 'alpha_closure_dividend_slo_invalid'].includes(reason),
+      )
+    ) {
+      return { decision: 'block', reason_codes: reasonCodes }
+    }
+    if (
+      reasonCodes.some((reason) =>
+        [
+          'alpha_closure_dedupe_active',
+          'alpha_closure_no_delta_active',
+          'alpha_closure_no_delta_budget_consumed',
+          'alpha_closure_no_delta_debt_active',
+        ].includes(reason),
+      )
+    ) {
+      return { decision: 'deny', reason_codes: reasonCodes }
+    }
+    if (reasonCodes.length > 0 || dividendState !== 'paid') return { decision: 'hold', reason_codes: reasonCodes }
+    return { decision: 'allow', reason_codes: [] }
+  }
+
   const board = input.torghutConsumerEvidence.alpha_repair_closure_board
   if (!board) {
     return { decision: 'hold', reason_codes: ['alpha_closure_carry_missing'] }
@@ -172,28 +239,36 @@ const alphaClosureCarryDecision = (
 }
 
 const buildAlphaClosureCarry = (input: BuildMaterialGateDigestInput): AlphaClosureCarry => {
+  const slo = input.torghutConsumerEvidence.alpha_closure_dividend_slo
   const board = input.torghutConsumerEvidence.alpha_repair_closure_board
   const decision = alphaClosureCarryDecision(input)
   return {
     schema_version: 'jangar.alpha-closure-carry.v1',
     source: 'torghut.consumer-evidence',
-    board_id: board?.board_id ?? null,
-    settlement_market_id: board?.settlement_market_id ?? null,
-    selected_hypothesis_id: board?.selected_hypothesis_id ?? null,
-    selected_value_gate: board?.selected_value_gate ?? null,
-    required_settlement_receipt: board?.required_settlement_receipt ?? null,
-    active_dedupe_key: board?.active_dedupe_key ?? null,
-    no_delta_budget_state: board?.no_delta_budget_state ?? null,
-    no_delta_debt_count: board?.no_delta_debt_count ?? null,
-    next_allowed_attempt_after: board?.next_allowed_attempt_after ?? null,
-    max_notional: board?.max_notional ?? null,
-    capital_rule: board?.capital_rule ?? null,
+    slo_id: slo?.slo_id ?? null,
+    dividend_state: slo?.dividend_state ?? null,
+    board_id: slo?.source_board_ref ?? board?.board_id ?? null,
+    settlement_market_id: slo?.source_settlement_market_ref ?? board?.settlement_market_id ?? null,
+    selected_hypothesis_id: slo?.selected_hypothesis_id ?? board?.selected_hypothesis_id ?? null,
+    selected_value_gate: slo?.selected_value_gate ?? board?.selected_value_gate ?? null,
+    required_settlement_receipt: slo?.required_settlement_receipt ?? board?.required_settlement_receipt ?? null,
+    active_dedupe_key: slo?.active_dedupe_key ?? board?.active_dedupe_key ?? null,
+    routeable_candidate_count_before: slo?.routeable_candidate_count_before ?? null,
+    routeable_candidate_count_after: slo?.routeable_candidate_count_after ?? null,
+    measured_delta: slo?.measured_delta ?? null,
+    no_delta_budget_state: slo?.no_delta_budget_state ?? board?.no_delta_budget_state ?? null,
+    no_delta_debt_count: slo?.no_delta_debt_count ?? board?.no_delta_debt_count ?? null,
+    next_allowed_attempt_after: slo?.next_allowed_attempt_after ?? board?.next_allowed_attempt_after ?? null,
+    max_notional: slo?.max_notional ?? board?.max_notional ?? null,
+    capital_rule: slo?.capital_rule ?? board?.capital_rule ?? null,
     decision: decision.decision,
     reason_codes: decision.reason_codes,
-    release_conditions: board?.release_conditions ?? [],
+    release_conditions: slo?.release_conditions ?? board?.release_conditions ?? [],
     validation_refs: validationRefsForCarry(input),
     rollback_target:
-      board?.rollback_target ?? 'disable material gate digest enforcement and keep Torghut max_notional=0',
+      slo?.rollback_target ??
+      board?.rollback_target ??
+      'disable material gate digest enforcement and keep Torghut max_notional=0',
   }
 }
 

@@ -49,6 +49,7 @@ from .models import (
 )
 from .observability import capture_posthog_event, shutdown_posthog_telemetry
 from .trading import TradingScheduler
+from .trading.alpha_closure_dividend_slo import build_alpha_closure_dividend_slo
 from .trading.alpha_evidence_foundry import compact_alpha_evidence_foundry
 from .trading.alpha_readiness_settlement_conveyor import (
     compact_alpha_readiness_settlement_conveyor,
@@ -1184,6 +1185,17 @@ def _evaluate_trading_health_payload(
                     Mapping[str, Any],
                     revenue_repair_digest.get("alpha_repair_dividend_ledger"),
                 )
+            ),
+            "alpha_closure_dividend_slo": build_alpha_closure_dividend_slo(
+                generated_at=datetime.now(timezone.utc),
+                alpha_repair_closure_board=cast(
+                    Mapping[str, Any] | None,
+                    revenue_repair_digest.get("alpha_repair_closure_board"),
+                ),
+                alpha_repair_dividend_ledger=cast(
+                    Mapping[str, Any] | None,
+                    revenue_repair_digest.get("alpha_repair_dividend_ledger"),
+                ),
             ),
             "jangar_controller_ingestion_carry": compact_jangar_controller_ingestion_carry(
                 cast(
@@ -3485,6 +3497,17 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
                 Mapping[str, Any],
                 revenue_repair_digest.get("alpha_repair_dividend_ledger"),
             )
+        ),
+        "alpha_closure_dividend_slo": build_alpha_closure_dividend_slo(
+            generated_at=datetime.now(timezone.utc),
+            alpha_repair_closure_board=cast(
+                Mapping[str, Any] | None,
+                revenue_repair_digest.get("alpha_repair_closure_board"),
+            ),
+            alpha_repair_dividend_ledger=cast(
+                Mapping[str, Any] | None,
+                revenue_repair_digest.get("alpha_repair_dividend_ledger"),
+            ),
         ),
         "jangar_controller_ingestion_carry": compact_jangar_controller_ingestion_carry(
             cast(

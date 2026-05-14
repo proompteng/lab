@@ -1366,6 +1366,14 @@ class TestTradingApi(TestCase):
             alpha_dividend["required_recorder_schema"],
             "jangar.material-action-custody-flight-recorder.v1",
         )
+        alpha_closure_slo = payload["alpha_closure_dividend_slo"]
+        self.assertEqual(
+            alpha_closure_slo["schema_version"],
+            "torghut.alpha-closure-dividend-slo.v1",
+        )
+        self.assertEqual(alpha_closure_slo["max_notional"], "0")
+        self.assertEqual(alpha_closure_slo["capital_rule"], "zero_notional_repair_only")
+        self.assertEqual(alpha_closure_slo["enforcement_mode"], "observe")
         controller_carry = payload["jangar_controller_ingestion_carry"]
         self.assertEqual(
             controller_carry["schema_version"],

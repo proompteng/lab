@@ -107,6 +107,80 @@ const baseConsumerEvidence = (
 })
 
 describe('control-plane material gate digest', () => {
+  it('uses the alpha closure dividend SLO as the dispatch repair custody source', () => {
+    const digest = buildMaterialGateDigest({
+      now,
+      namespace: 'agents',
+      servingReadiness: 'ok',
+      businessState: 'repair_only',
+      revenueReady: false,
+      affectedValueGate: 'routeable_candidate_count',
+      torghutConsumerEvidence: baseConsumerEvidence({
+        alpha_closure_dividend_slo: {
+          schema_version: 'torghut.alpha-closure-dividend-slo.v1',
+          slo_id: 'alpha-closure-dividend-slo:test',
+          generated_at: now.toISOString(),
+          fresh_until: '2026-05-14T08:39:00.000Z',
+          source_revenue_repair_ref: 'torghut-revenue-repair-digest:test',
+          source_board_ref: 'alpha-repair-closure-board:test',
+          source_settlement_market_ref: 'alpha-closure-settlement-market:test',
+          selected_hypothesis_id: 'H-MICRO-01',
+          selected_value_gate: 'routeable_candidate_count',
+          selected_repair_class: 'feature_replay_closure',
+          required_settlement_receipt: 'torghut.alpha-closure-settlement-receipt.v1',
+          active_dedupe_key: 'alpha-window:test',
+          routeable_candidate_count_before: 0,
+          routeable_candidate_count_after: 0,
+          measured_delta: 0,
+          dividend_state: 'no_delta',
+          retired_reason_codes: [],
+          preserved_reason_codes: ['route_universe_empty'],
+          introduced_reason_codes: [],
+          no_delta_budget_state: 'consumed',
+          no_delta_debt_count: 1,
+          release_conditions: ['evidence_window_changes'],
+          next_allowed_attempt_after: '2026-05-14T08:39:00.000Z',
+          validation_commands: ['uv run --frozen pytest services/torghut/tests/test_alpha_closure_dividend_slo.py'],
+          enforcement_mode: 'observe',
+          max_notional: '0',
+          capital_rule: 'zero_notional_repair_only',
+          reason_codes: ['alpha_closure_no_delta_active'],
+          rollback_target: 'disable alpha_closure_dividend_slo emission and keep Torghut max_notional=0',
+        },
+      }),
+      repairBidAdmission: baseRepairBidAdmission(),
+      fullStatusAvailable: false,
+    })
+
+    expect(digest.alpha_closure_carry).toMatchObject({
+      slo_id: 'alpha-closure-dividend-slo:test',
+      dividend_state: 'no_delta',
+      board_id: 'alpha-repair-closure-board:test',
+      settlement_market_id: 'alpha-closure-settlement-market:test',
+      routeable_candidate_count_before: 0,
+      routeable_candidate_count_after: 0,
+      measured_delta: 0,
+      decision: 'deny',
+      reason_codes: expect.arrayContaining([
+        'alpha_closure_no_delta_active',
+        'alpha_closure_no_delta_budget_consumed',
+        'alpha_closure_no_delta_debt_active',
+      ]),
+      validation_refs: ['uv run --frozen pytest services/torghut/tests/test_alpha_closure_dividend_slo.py'],
+    })
+    expect(digest.action_class_decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_repair',
+          source_refs: expect.arrayContaining([
+            'alpha-closure-dividend-slo:test',
+            'torghut-revenue-repair-digest:test',
+          ]),
+        }),
+      ]),
+    )
+  })
+
   it('denies repair dispatch when alpha closure no-delta budget is consumed', () => {
     const digest = buildMaterialGateDigest({
       now,

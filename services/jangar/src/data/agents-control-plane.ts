@@ -919,6 +919,38 @@ export type TorghutAlphaRepairDividendLedgerRef = {
   rollback_target: string | null
 }
 
+export type TorghutAlphaClosureDividendSlo = {
+  schema_version: 'torghut.alpha-closure-dividend-slo.v1'
+  slo_id: string
+  generated_at: string | null
+  fresh_until: string | null
+  source_revenue_repair_ref: string | null
+  source_board_ref: string | null
+  source_settlement_market_ref: string | null
+  selected_hypothesis_id: string | null
+  selected_value_gate: string | null
+  selected_repair_class: string | null
+  required_settlement_receipt: string | null
+  active_dedupe_key: string | null
+  routeable_candidate_count_before: number | null
+  routeable_candidate_count_after: number | null
+  measured_delta: number | null
+  dividend_state: string | null
+  retired_reason_codes: string[]
+  preserved_reason_codes: string[]
+  introduced_reason_codes: string[]
+  no_delta_budget_state: string | null
+  no_delta_debt_count: number | null
+  release_conditions: string[]
+  next_allowed_attempt_after: string | null
+  validation_commands: string[]
+  enforcement_mode: string | null
+  max_notional: string | null
+  capital_rule: string | null
+  reason_codes: string[]
+  rollback_target: string | null
+}
+
 export type TorghutNoDeltaRepairReentryAuctionRef = {
   schema_version: 'torghut.no-delta-repair-reentry-auction-ref.v1'
   auction_schema_version: string | null
@@ -1041,12 +1073,17 @@ export type MaterialGateDigestReadiness = 'allow' | 'repair_only' | 'hold' | 'bl
 export type AlphaClosureCarry = {
   schema_version: 'jangar.alpha-closure-carry.v1'
   source: 'torghut.consumer-evidence'
+  slo_id: string | null
+  dividend_state: string | null
   board_id: string | null
   settlement_market_id: string | null
   selected_hypothesis_id: string | null
   selected_value_gate: string | null
   required_settlement_receipt: string | null
   active_dedupe_key: string | null
+  routeable_candidate_count_before: number | null
+  routeable_candidate_count_after: number | null
+  measured_delta: number | null
   no_delta_budget_state: string | null
   no_delta_debt_count: number | null
   next_allowed_attempt_after: string | null
@@ -1811,6 +1848,7 @@ export type TorghutConsumerEvidenceStatus = {
   alpha_evidence_foundry?: TorghutAlphaEvidenceFoundryRef | null
   alpha_readiness_settlement_conveyor?: TorghutAlphaReadinessSettlementConveyorRef | null
   alpha_repair_dividend_ledger?: TorghutAlphaRepairDividendLedgerRef | null
+  alpha_closure_dividend_slo?: TorghutAlphaClosureDividendSlo | null
   no_delta_repair_reentry_auction?: TorghutNoDeltaRepairReentryAuctionRef | null
   repair_outcome_dividend_ledger_id?: string | null
   repair_outcome_receipt_ids?: string[]
