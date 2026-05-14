@@ -20,6 +20,7 @@ import {
   resolveTorghutConsumerEvidence,
   type TorghutConsumerEvidenceStatus,
 } from '~/server/control-plane-torghut-consumer-evidence'
+import { buildMaterialGateDigest } from '~/server/control-plane-material-gate-digest'
 import { getWatchReliabilitySummary } from '~/server/control-plane-watch-reliability'
 
 const isControllerHealthReady = (health: ReturnType<typeof getAgentsControllerHealth>) =>
@@ -278,6 +279,19 @@ export const getReadyHandler = async () => {
   const memoryProviderReady = memoryProvider.status !== 'blocked'
   const ready = controllersOk && leaderElectionReady && memoryProviderReady
   const status = ready && agentsControllerHealthy && servingPassportReady ? 'ok' : 'degraded'
+  const materialGateDigest = buildMaterialGateDigest({
+    now,
+    namespace: namespaces[0] ?? 'agents',
+    servingReadiness: ready ? status : 'down',
+    businessState: businessEvidence.business_state,
+    revenueReady: businessEvidence.revenue_ready,
+    affectedValueGate: businessEvidence.affected_value_gate,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+    repairBidAdmission,
+    fullStatusAvailable: false,
+    producerRevision: servingPassport?.producer_revision ?? runtimeAdmission.runtimeKits[0]?.producer_revision ?? null,
+    databaseWitnessRef: torghutConsumerEvidence.status.receipt_id,
+  })
 
   const body = JSON.stringify({
     status,
@@ -290,6 +304,7 @@ export const getReadyHandler = async () => {
     ...businessEvidence,
     torghut_consumer_evidence: torghutConsumerEvidence.status,
     repair_bid_admission: repairBidAdmission,
+    material_gate_digest: materialGateDigest,
     evidence_pressure_ledger: evidencePressureLedger,
     memory_provider: memoryProvider,
     runtime_kits: runtimeAdmission.runtimeKits,

@@ -19,6 +19,7 @@ import type {
   MaterialActionVerdict,
   MaterialActionVerdictEpoch,
   MaterialActionActivationReceipt,
+  MaterialGateDigest,
   MaterialReentryClearinghouse,
   NegativeEvidenceRouterStatus,
   ProjectionWatermarkStatus,
@@ -208,6 +209,7 @@ export type ControlPlaneStatus = {
   terminal_debt_compaction_ledger: TerminalDebtCompactionLedger | null
   ready_action_exchange: ReadyActionExchange
   repair_bid_admission: RepairBidAdmissionState
+  material_gate_digest: MaterialGateDigest
   material_reentry_clearinghouse: MaterialReentryClearinghouse
   repair_warrant_exchange: RepairWarrantExchange
   consumer_evidence_leases: ConsumerEvidenceLeaseSet

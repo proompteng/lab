@@ -1593,10 +1593,7 @@ const reconcileSchedule = async (
         successfulJobsHistoryLimit: 3,
         failedJobsHistoryLimit: 1,
         jobTemplate: {
-          metadata: {
-            labels,
-            annotations: scheduleDebtAnnotations,
-          },
+          metadata: { labels, annotations: scheduleDebtAnnotations },
           spec: {
             backoffLimit: 1,
             template: {

@@ -924,6 +924,86 @@ describe('control-plane Torghut consumer evidence', () => {
     })
   })
 
+  it('maps compact alpha closure and foundry refs from consumer evidence', async () => {
+    process.env = {
+      ...originalEnv,
+      JANGAR_TORGHUT_STATUS_URL: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
+    }
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        buildJsonResponse({
+          schema_version: 'torghut.consumer-evidence-status.v1',
+          route_proven_profit_receipt: {
+            schema_version: 'torghut.route-proven-profit-receipt.v1',
+            receipt_id: 'torghut-route-proven-profit:alpha-closure',
+            generated_at: '2026-05-14T08:24:00.000Z',
+            fresh_until: '2026-05-14T08:25:00.000Z',
+            paper_readiness_state: 'blocked',
+            live_readiness_state: 'blocked',
+            max_notional: '0',
+            reason_codes: [],
+          },
+          alpha_repair_closure_board: {
+            schema_version: 'torghut.alpha-repair-closure-board-ref.v1',
+            board_id: 'alpha-repair-closure-board:test',
+            generated_at: '2026-05-14T08:24:00.000Z',
+            fresh_until: '2026-05-14T08:39:00.000Z',
+            status: 'selected',
+            selected_value_gate: 'routeable_candidate_count',
+            settlement_market_id: 'alpha-closure-settlement-market:test',
+            selected_hypothesis_id: 'H-MICRO-01',
+            required_settlement_receipt: 'torghut.alpha-closure-settlement-receipt.v1',
+            active_dedupe_key: 'alpha-window:test',
+            no_delta_budget_state: 'consumed',
+            no_delta_debt_count: 1,
+            max_notional: '0',
+            capital_rule: 'zero_notional_repair_only',
+            release_conditions: ['evidence_window_changes'],
+          },
+          alpha_evidence_foundry: {
+            schema_version: 'torghut.alpha-evidence-foundry-ref.v1',
+            foundry_id: 'alpha-evidence-foundry:test',
+            generated_at: '2026-05-14T08:24:00.000Z',
+            fresh_until: '2026-05-14T08:39:00.000Z',
+            status: 'selected',
+            selected_queue_code: 'repair_alpha_readiness',
+            selected_value_gate: 'routeable_candidate_count',
+            required_output_receipt: 'torghut.alpha-evidence-window-receipt.v1',
+            receipt_count: 3,
+            selected_receipt_id: 'alpha-evidence-window-receipt:test',
+            selected_hypothesis_id: 'H-MICRO-01',
+            hypothesis_ids: ['H-MICRO-01'],
+            no_delta_debt_count: 3,
+            routeable_candidate_count_before: 0,
+            max_notional: '0',
+            capital_state: 'zero_notional',
+            capital_rule: 'zero_notional_repair_only',
+          },
+        }),
+      ),
+    ) as unknown as typeof globalThis.fetch
+
+    const result = await resolveTorghutConsumerEvidence(new Date('2026-05-14T08:24:10.000Z'))
+
+    expect(result.status.observed_contracts).toEqual(
+      expect.arrayContaining(['alpha_repair_closure_board', 'alpha_evidence_foundry']),
+    )
+    expect(result.status.alpha_repair_closure_board).toMatchObject({
+      board_id: 'alpha-repair-closure-board:test',
+      settlement_market_id: 'alpha-closure-settlement-market:test',
+      selected_hypothesis_id: 'H-MICRO-01',
+      no_delta_budget_state: 'consumed',
+      no_delta_debt_count: 1,
+      release_conditions: ['evidence_window_changes'],
+    })
+    expect(result.status.alpha_evidence_foundry).toMatchObject({
+      foundry_id: 'alpha-evidence-foundry:test',
+      selected_queue_code: 'repair_alpha_readiness',
+      selected_value_gate: 'routeable_candidate_count',
+      no_delta_debt_count: 3,
+    })
+  })
+
   it('maps status schema mismatch to schema_mismatch evidence', async () => {
     process.env = {
       ...originalEnv,
