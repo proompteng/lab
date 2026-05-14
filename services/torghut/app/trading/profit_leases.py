@@ -514,7 +514,8 @@ def _rejection_source(
             account=account,
             window=window,
             source_class="rejection_drag",
-            source_ref="scheduler:decision_state_total",
+            source_ref=rejection_summary.get("source_ref")
+            or "scheduler:decision_state_total",
             freshness_state="missing",
             rows=total,
             rejection_drag_bps=drag_bps,
@@ -531,7 +532,8 @@ def _rejection_source(
         account=account,
         window=window,
         source_class="rejection_drag",
-        source_ref="scheduler:decision_state_total",
+        source_ref=rejection_summary.get("source_ref")
+        or "scheduler:decision_state_total",
         freshness_state="current",
         rows=total,
         rejection_drag_bps=drag_bps,
