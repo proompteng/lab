@@ -229,6 +229,12 @@ Testing rules for the trading core:
   `torghut.alpha-evidence-window-receipt.v1` receipts with feature, drift, post-cost, market-context, TCA,
   route-universe, no-delta, and zero-notional fields. `/readyz` and `/trading/consumer-evidence` mirror only the
   compact `torghut.alpha-evidence-foundry-ref.v1` fields for Jangar admission.
+- `GET /trading/revenue-repair` also emits the May 14 doc 205
+  `torghut.alpha-readiness-settlement-conveyor.v1` read-model and the May 14 doc 204
+  `torghut.alpha-repair-dividend-ledger.v1` accounting surface. The conveyor selects the current
+  zero-notional alpha-readiness lane, and the dividend ledger records whether that lane paid
+  `routeable_candidate_count`, produced no-delta debt, or must be blocked/stale before another material repair launch.
+  `/readyz` and `/trading/consumer-evidence` mirror compact refs for Jangar custody while keeping `max_notional=0`.
 - `GET /trading/status` and `GET /readyz` now include the May 8 doc 181
   `quality_adjusted_profit_frontier` shadow projection. The reducer ranks zero-notional repair packets from quant
   quality, market-context risk flags, route/TCA state, simulation-cache freshness, and Jangar evidence-quality refs

@@ -53,6 +53,9 @@ from .trading.alpha_evidence_foundry import compact_alpha_evidence_foundry
 from .trading.alpha_readiness_settlement_conveyor import (
     compact_alpha_readiness_settlement_conveyor,
 )
+from .trading.alpha_repair_dividend_ledger import (
+    compact_alpha_repair_dividend_ledger,
+)
 from .trading.alpha_repair_closure_board import compact_alpha_repair_closure_board
 from .trading.autonomy import (
     assert_runtime_gate_policy_contract,
@@ -1150,6 +1153,12 @@ def _evaluate_trading_health_payload(
                 cast(
                     Mapping[str, Any],
                     revenue_repair_digest.get("alpha_readiness_settlement_conveyor"),
+                )
+            ),
+            "alpha_repair_dividend_ledger": compact_alpha_repair_dividend_ledger(
+                cast(
+                    Mapping[str, Any],
+                    revenue_repair_digest.get("alpha_repair_dividend_ledger"),
                 )
             ),
             "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
@@ -3359,6 +3368,12 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
             cast(
                 Mapping[str, Any],
                 revenue_repair_digest.get("alpha_readiness_settlement_conveyor"),
+            )
+        ),
+        "alpha_repair_dividend_ledger": compact_alpha_repair_dividend_ledger(
+            cast(
+                Mapping[str, Any],
+                revenue_repair_digest.get("alpha_repair_dividend_ledger"),
             )
         ),
         "route_warrant_exchange": route_warrant_exchange,
