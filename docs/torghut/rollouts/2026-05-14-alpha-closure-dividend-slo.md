@@ -33,6 +33,8 @@ capital safety. This change does not enable live submission, paper canary, or an
 - Updated Jangar consumer-evidence ingestion to parse the SLO and include it in observed contracts.
 - Updated Jangar material-gate digest to prefer the SLO for alpha closure carry decisions, with fallback to the
   existing alpha repair closure board.
+- Rebasing onto current `main` pulled in the 16-slice autoresearch CI workflow; raised that job timeout from 10 to 15
+  minutes after slice 9 passed all tests in 573.96s but was canceled before coverage artifact upload.
 
 ## Business Evidence
 
@@ -75,6 +77,9 @@ hold reason for duplicate no-delta dispatch.
 - `bunx tsc --noEmit -p tsconfig.app.json`
 - `bun run --cwd services/jangar docs:inventory:check`
 - `bunx oxfmt --check docs/jangar/architecture-inventory.md`
+- `uv run --frozen python -c 'from pathlib import Path; import yaml; yaml.safe_load(Path("../../.github/workflows/torghut-ci.yml").read_text()); print("torghut-ci.yml parses")'`
+- CI evidence from PR #6687: `Pytest autoresearch runner 9` passed 5 tests in 573.96s, then the 10-minute job window
+  canceled before upload; the workflow timeout is now 15 minutes.
 
 ## Risk And Rollback
 
