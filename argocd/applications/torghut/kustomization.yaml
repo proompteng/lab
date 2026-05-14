@@ -18,6 +18,7 @@ resources:
   - serviceaccount.yaml
   - role.yaml
   - rolebinding.yaml
+  - workflow-controller-configmap-rbac.yaml
   - rollouts-analysis-role.yaml
   - rollouts-analysis-rolebinding-codex-workflow.yaml
   - rollouts-analysis-rolebinding-runtime.yaml
