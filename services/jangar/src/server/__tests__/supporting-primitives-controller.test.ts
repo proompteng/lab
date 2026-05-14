@@ -390,6 +390,7 @@ const mockStageClearanceStatus = (
   stageCreditLedger?: Record<string, unknown>,
   evidencePressureLedger?: Record<string, unknown>,
   materialReentryClearinghouse?: Record<string, unknown>,
+  materialEvidenceSettlementSpine?: Record<string, unknown>,
 ) =>
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(
     new Response(
@@ -399,6 +400,7 @@ const mockStageClearanceStatus = (
         stage_credit_ledger: stageCreditLedger,
         evidence_pressure_ledger: evidencePressureLedger,
         material_reentry_clearinghouse: materialReentryClearinghouse,
+        material_evidence_settlement_spine: materialEvidenceSettlementSpine,
       }),
       {
         status: 200,
@@ -600,10 +602,12 @@ describe('supporting primitives controller', () => {
     expect(command).toContain('clearance_market_ledger')
     expect(command).toContain('stage_credit_ledger')
     expect(command).toContain('evidence_pressure_ledger')
+    expect(command).toContain('material_evidence_settlement_spine')
     expect(command).toContain('current stage clearance packet')
     expect(command).toContain('current clearance market stage admission')
     expect(command).toContain('current stage credit account')
     expect(command).toContain('current evidence pressure budget')
+    expect(command).toContain('material evidence settlement')
     expect(command).toContain('runner slot future')
     expect(command).toContain('stage clearance shadow evidence unavailable')
     expect(command).not.toContain('stale schedule admission passport')
@@ -630,6 +634,9 @@ describe('supporting primitives controller', () => {
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRunnerSlotFutureId"')
     expect(command).toContain(
       'writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmEvidencePressureLedgerId"',
+    )
+    expect(command).toContain(
+      'writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmMaterialEvidenceSettlementId"',
     )
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRecoveryWarrantId"')
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRuntimeProofDesignRef"')
@@ -767,6 +774,64 @@ describe('supporting primitives controller', () => {
       swarmEvidencePressureMode: 'shadow',
       swarmEvidencePressureReasonCodes: 'kubernetes_watch_rate_limited',
       swarmEvidencePressureWatchBackoffState: 'pressured',
+    })
+  })
+
+  it('stamps material evidence settlement handoff fields into launch traces', () => {
+    const admission = resolveStageClearanceAdmissionFromPackets({
+      namespace: 'agents',
+      swarmName: 'jangar-control-plane',
+      stage: 'implement',
+      mode: 'hold',
+      packets: [buildStageClearancePacket('implement')],
+      clearanceMarket: {
+        clearanceMarketLedgerId: 'clearance-market:agents:test',
+        stageAdmissions: buildClearanceMarketLedger('implement').stage_admission,
+        stageCredit: buildStageCreditSnapshot('implement'),
+        evidencePressure: buildEvidencePressureSnapshot('allow', 'shadow'),
+        materialEvidence: {
+          settlementId: 'material-evidence-settlement:agents:test',
+          decision: 'hold',
+          mode: 'observe',
+          freshUntil: '2026-01-20T00:05:00.000Z',
+          reasonCodes: ['execution_trust_degraded'],
+          repairTicketClass: 'none',
+          selectedTicketRef: null,
+          selectedValueGate: 'routeable_candidate_count',
+          businessState: 'repair_only',
+          maxNotional: '0',
+          governingDesignRefs: [
+            'docs/agents/designs/206-jangar-material-evidence-settlement-spine-and-repair-dispatch-budget-2026-05-14.md',
+          ],
+        },
+      },
+      nowMs: Date.parse('2026-01-20T00:00:00.000Z'),
+    })
+
+    expect(admission.admitted).toBe(true)
+    expect(admission.materialEvidence).toMatchObject({
+      settlementId: 'material-evidence-settlement:agents:test',
+      decision: 'hold',
+      selectedValueGate: 'routeable_candidate_count',
+      businessState: 'repair_only',
+      maxNotional: '0',
+    })
+    expect(admission.annotations).toMatchObject({
+      'swarm.proompteng.ai/material-evidence-settlement-id': 'material-evidence-settlement:agents:test',
+      'swarm.proompteng.ai/material-evidence-decision': 'hold',
+      'swarm.proompteng.ai/material-evidence-mode': 'observe',
+      'swarm.proompteng.ai/material-evidence-selected-value-gate': 'routeable_candidate_count',
+      'swarm.proompteng.ai/material-evidence-business-state': 'repair_only',
+      'swarm.proompteng.ai/material-evidence-max-notional': '0',
+    })
+    expect(admission.parameters).toMatchObject({
+      swarmMaterialEvidenceSettlementId: 'material-evidence-settlement:agents:test',
+      swarmMaterialEvidenceDecision: 'hold',
+      swarmMaterialEvidenceMode: 'observe',
+      swarmMaterialEvidenceReasonCodes: 'execution_trust_degraded',
+      swarmMaterialEvidenceSelectedValueGate: 'routeable_candidate_count',
+      swarmMaterialEvidenceBusinessState: 'repair_only',
+      swarmMaterialEvidenceMaxNotional: '0',
     })
   })
 
