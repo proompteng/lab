@@ -1231,6 +1231,16 @@ class TestTradingApi(TestCase):
             alpha_dividend["required_recorder_schema"],
             "jangar.material-action-custody-flight-recorder.v1",
         )
+        no_delta_auction = payload["no_delta_repair_reentry_auction"]
+        self.assertEqual(
+            no_delta_auction["schema_version"],
+            "torghut.no-delta-repair-reentry-auction-ref.v1",
+        )
+        self.assertIn(
+            no_delta_auction["reentry_decision"],
+            {"deny", "hold"},
+        )
+        self.assertEqual(no_delta_auction["max_notional"], "0")
         warrant = payload["route_warrant_exchange"]
         self.assertEqual(
             warrant["schema_version"],

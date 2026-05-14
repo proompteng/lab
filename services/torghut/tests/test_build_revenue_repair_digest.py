@@ -533,6 +533,23 @@ class TestBuildRevenueRepairDigest(TestCase):
             alpha_dividend_ledger["jangar_custody"]["launch_decision"],
             "deny",
         )
+        no_delta_auction = digest["no_delta_repair_reentry_auction"]
+        self.assertIsInstance(no_delta_auction, dict)
+        self.assertEqual(
+            no_delta_auction["schema_version"],
+            "torghut.no-delta-repair-reentry-auction.v1",
+        )
+        self.assertEqual(no_delta_auction["reentry_decision"], "deny")
+        self.assertEqual(
+            no_delta_auction["selected_value_gate"],
+            "routeable_candidate_count",
+        )
+        self.assertEqual(no_delta_auction["selected_ticket"], None)
+        self.assertEqual(no_delta_auction["max_notional"], "0")
+        self.assertIn(
+            "duplicate_no_delta_reentry_denied",
+            no_delta_auction["reason_codes"],
+        )
         self.assertEqual(repair_queue[1]["code"], "repair_execution_tca")
         self.assertNotIn("repair_repair_only", [item["code"] for item in repair_queue])
         self.assertIn(
