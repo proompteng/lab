@@ -13,7 +13,10 @@ from typing import Any, Mapping, Sequence, cast
 from .alpha_readiness_strike_ledger import build_alpha_readiness_strike_ledger
 from .alpha_evidence_foundry import build_alpha_evidence_foundry
 from .alpha_repair_closure_board import build_alpha_repair_closure_board
-from .executable_alpha_receipts import build_executable_alpha_repair_receipts
+from .executable_alpha_receipts import (
+    build_executable_alpha_repair_receipts,
+    build_executable_alpha_settlement_slots,
+)
 
 
 SCHEMA_VERSION = "torghut.revenue-repair-digest.v1"
@@ -989,6 +992,15 @@ def build_revenue_repair_digest(
         },
         db_check=db_check,
     )
+    executable_alpha_settlement_slots = build_executable_alpha_settlement_slots(
+        generated_at=generated,
+        business_state=business_state,
+        revenue_ready=revenue_ready,
+        repair_queue=cast(Sequence[Mapping[str, Any]], repair_queue),
+        capital=capital,
+        evidence=evidence,
+        executable_alpha_repair_receipts=executable_alpha_repair_receipts,
+    )
     alpha_evidence_foundry = build_alpha_evidence_foundry(
         generated_at=generated,
         business_state=business_state,
@@ -1015,6 +1027,7 @@ def build_revenue_repair_digest(
         "repair_bid_settlement_ledger": dict(repair_bid_settlement),
         "alpha_readiness_strike_ledger": alpha_readiness_strike_ledger,
         "executable_alpha_repair_receipts": executable_alpha_repair_receipts,
+        "executable_alpha_settlement_slots": executable_alpha_settlement_slots,
         "alpha_repair_closure_board": alpha_repair_closure_board,
         "alpha_evidence_foundry": alpha_evidence_foundry,
         "business_state": business_state,

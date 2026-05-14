@@ -24,6 +24,7 @@ from app.trading.revenue_repair import (
     _sequence,
     build_alpha_evidence_foundry,
     build_alpha_repair_closure_board,
+    build_executable_alpha_settlement_slots,
     build_revenue_repair_digest,
     main,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "_sequence",
     "build_alpha_evidence_foundry",
     "build_alpha_repair_closure_board",
+    "build_executable_alpha_settlement_slots",
     "build_revenue_repair_digest",
     "main",
 ]

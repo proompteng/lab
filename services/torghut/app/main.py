@@ -84,7 +84,10 @@ from .trading.evidence_receipts import (
     build_schema_receipt,
     build_service_health_receipt,
 )
-from .trading.executable_alpha_receipts import build_capital_replay_projection
+from .trading.executable_alpha_receipts import (
+    build_capital_replay_projection,
+    compact_executable_alpha_settlement_slots,
+)
 from .trading.feature_quality import (
     FeatureQualityThresholds,
     evaluate_feature_batch_quality,
@@ -1122,6 +1125,12 @@ def _evaluate_trading_health_payload(
             "freshness_carry_ledger": freshness_carry_ledger,
             "repair_receipt_frontier": repair_receipt_frontier,
             "repair_outcome_dividend_ledger": repair_outcome_dividend_ledger,
+            "executable_alpha_settlement_slots": compact_executable_alpha_settlement_slots(
+                cast(
+                    Mapping[str, Any],
+                    revenue_repair_digest.get("executable_alpha_settlement_slots"),
+                )
+            ),
             "alpha_repair_closure_board": compact_alpha_repair_closure_board(
                 cast(
                     Mapping[str, Any],
@@ -3311,6 +3320,12 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         ),
         "executable_alpha_repair_receipts": revenue_repair_digest.get(
             "executable_alpha_repair_receipts"
+        ),
+        "executable_alpha_settlement_slots": compact_executable_alpha_settlement_slots(
+            cast(
+                Mapping[str, Any],
+                revenue_repair_digest.get("executable_alpha_settlement_slots"),
+            )
         ),
         "alpha_repair_closure_board": compact_alpha_repair_closure_board(
             cast(

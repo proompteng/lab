@@ -205,6 +205,12 @@ Testing rules for the trading core:
   concrete alpha repair target, maps target reason codes to a repair class, carries validation commands and
   no-delta settlement requirements, and keeps `max_notional=0`. `/trading/consumer-evidence` mirrors the same compact
   collection for Jangar without making `/readyz` green or enabling paper/live submission.
+- `GET /trading/revenue-repair` also emits the May 14 doc 199
+  `torghut.executable-alpha-settlement-slots.v1` read-model. It settles the selected executable-alpha repair receipt
+  against the current routeable-candidate count, emits no-delta debt when the selected blocker remains unchanged,
+  names the material reentry receipt reference, and stays additive with `max_notional=0`. `/readyz` and
+  `/trading/consumer-evidence` mirror only the compact
+  `torghut.executable-alpha-settlement-slots-ref.v1` fields for Jangar admission.
 - `GET /trading/revenue-repair` also emits the May 14 doc 198
   `torghut.alpha-repair-closure-board.v1` board. The board binds the top `repair_alpha_readiness` queue item to the
   selected executable-alpha repair receipt, names the routeable-candidate value gate, records zero-notional
