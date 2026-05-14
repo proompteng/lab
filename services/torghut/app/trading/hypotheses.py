@@ -707,6 +707,10 @@ def _fallback_quorum_from_legacy_status(
                 decision="block",
                 reasons=["workflows_data_unknown"],
                 message="Torghut workflow reliability is unavailable.",
+                controller_ingestion_settlement=_extract_controller_ingestion_settlement(
+                    payload,
+                    {},
+                ),
                 verify_trust_foreclosure_board=_extract_verify_trust_foreclosure_board(
                     payload,
                     {},
@@ -726,6 +730,10 @@ def _fallback_quorum_from_legacy_status(
                 decision="delay",
                 reasons=["workflows_degraded"],
                 message="Torghut workflow reliability is degraded.",
+                controller_ingestion_settlement=_extract_controller_ingestion_settlement(
+                    payload,
+                    {},
+                ),
                 verify_trust_foreclosure_board=_extract_verify_trust_foreclosure_board(
                     payload,
                     {},
@@ -753,6 +761,10 @@ def _fallback_quorum_from_legacy_status(
                     decision="delay",
                     reasons=["jangar_namespace_degraded"],
                     message="Torghut namespace health is degraded.",
+                    controller_ingestion_settlement=_extract_controller_ingestion_settlement(
+                        payload,
+                        {},
+                    ),
                     verify_trust_foreclosure_board=_extract_verify_trust_foreclosure_board(
                         payload,
                         {},
@@ -771,6 +783,10 @@ def _fallback_quorum_from_legacy_status(
         decision="unknown",
         reasons=["jangar_dependency_quorum_missing"],
         message="Torghut control-plane status did not include dependency_quorum.",
+        controller_ingestion_settlement=_extract_controller_ingestion_settlement(
+            payload,
+            {},
+        ),
         verify_trust_foreclosure_board=_extract_verify_trust_foreclosure_board(
             payload,
             {},

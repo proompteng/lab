@@ -262,7 +262,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIsNone(settings.trading_jangar_symbols_url)
         self.assertEqual(
             settings.trading_jangar_control_plane_status_url,
-            "http://agents.agents.svc.cluster.local/api/agents/control-plane/status?namespace=agents",
+            "http://agents.agents.svc.cluster.local/ready",
         )
         self.assertIsNone(settings.trading_jangar_quant_health_url)
         self.assertEqual(
@@ -312,7 +312,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertTrue(blocked_env.isdisjoint(env))
         self.assertEqual(
             env.get("TRADING_JANGAR_CONTROL_PLANE_STATUS_URL"),
-            "http://agents.agents.svc.cluster.local/api/agents/control-plane/status?namespace=agents",
+            "http://agents.agents.svc.cluster.local/ready",
         )
         self.assertEqual(env.get("TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS"), "30")
         self.assertEqual(

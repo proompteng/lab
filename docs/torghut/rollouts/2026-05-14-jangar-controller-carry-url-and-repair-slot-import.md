@@ -35,6 +35,10 @@ reported `carry_state=unavailable` with `jangar_control_plane_status_url_missing
 - `repair_slot_escrow.status=block`
 - controller carry still zero-notional; no live or paper widening was authorized
 
+Follow-up evidence showed the full Jangar status route could exceed Torghut's 2 second import timeout on a cold
+request, which turned current Jangar carry into `jangar_status_fetch_failed`. The low-latency Jangar `/ready` route
+already carried verify-foreclosure and repair-slot evidence, but not `controller_ingestion_settlement`.
+
 After local changes, pre-deploy live Torghut business evidence is intentionally unchanged until GitOps rolls the new
 manifest and image:
 
@@ -49,9 +53,14 @@ manifest and image:
 ## Change
 
 - The live Torghut Knative service now sets `TRADING_JANGAR_CONTROL_PLANE_STATUS_URL` to the cluster-local Jangar
-  control-plane status route.
+  `/ready` route instead of the slower full control-plane status route.
+- Jangar `/ready` now emits `controller_ingestion_settlement` alongside `verify_trust_foreclosure_board` and
+  `repair_slot_escrow`, using hot-path proof fields that explicitly say full source-serving and database proof remain
+  available from `/api/agents/control-plane/status`.
 - `JangarDependencyQuorumStatus` now preserves `repair_slot_escrow`, `stage_debt_repair_admission`, and
   `foreclosure_carry_rollout_witness`.
+- `JangarDependencyQuorumStatus` also preserves top-level `controller_ingestion_settlement` from legacy or `/ready`
+  payloads that do not include a nested `dependency_quorum`.
 - Revenue repair, health, and consumer evidence pass those carry fields into
   `torghut.jangar-controller-ingestion-carry.v1`.
 - Held or blocked Jangar controller-ingestion settlements with current board or repair-slot evidence classify as
@@ -72,7 +81,7 @@ manifest and image:
 
 ## Risk And Rollback
 
-Risk is limited to Torghut observing Jangar control-plane status for revenue-repair carry. This does not enable live
+Risk is limited to Torghut observing Jangar `/ready` for revenue-repair carry. This does not enable live
 submission, paper widening, or nonzero notional. The rollback is to remove `TRADING_JANGAR_CONTROL_PLANE_STATUS_URL`
 from `argocd/applications/torghut/knative-service.yaml` and stop emitting the additional repair-slot carry fields;
 Torghut will return to the existing unavailable-carry denial while keeping `max_notional=0`.
