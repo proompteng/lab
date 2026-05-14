@@ -268,13 +268,13 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(
             set(settings.trading_static_symbols),
-            _LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS,
+            set(_QUOTE_COVERED_PAPER_STRATEGY_UNIVERSE),
         )
         self.assertFalse(settings.trading_market_context_required)
         self.assertEqual(settings.trading_market_context_fail_mode, "shadow_only")
         self.assertEqual(
             set(settings.trading_universe_static_fallback_symbols),
-            _LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS,
+            set(_QUOTE_COVERED_PAPER_STRATEGY_UNIVERSE),
         )
         self.assertNotIn("TRADING_FEATURE_FLAGS_URL", env)
         self.assertNotIn("TRADING_FORECAST_SERVICE_URL", env)
@@ -466,22 +466,22 @@ class TestLiveConfigManifestContract(TestCase):
         ws_annotations = cast(Mapping[str, object], ws_metadata).get("annotations")
         self.assertIsInstance(ws_annotations, Mapping)
 
-        _assert_exact_live_execution_chip_universe(
+        _assert_exact_quote_covered_paper_strategy_universe(
             self,
             _csv_symbols(live_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS")),
             context="live static fallback symbols",
         )
-        _assert_exact_live_execution_chip_universe(
+        _assert_exact_quote_covered_paper_strategy_universe(
             self,
             _csv_symbols(live_env.get("TRADING_UNIVERSE_SYMBOL_ALLOWLIST")),
             context="live runtime universe allowlist",
         )
-        _assert_exact_live_execution_chip_universe(
+        _assert_exact_quote_covered_paper_strategy_universe(
             self,
             _csv_symbols(sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS")),
             context="sim static fallback symbols",
         )
-        _assert_exact_live_execution_chip_universe(
+        _assert_exact_quote_covered_paper_strategy_universe(
             self,
             _csv_symbols(sim_env.get("TRADING_UNIVERSE_SYMBOL_ALLOWLIST")),
             context="sim runtime universe allowlist",
@@ -523,7 +523,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(
             sim_env.get("TRADING_STATIC_SYMBOLS"),
-            "NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC",
+            "AAPL,AMZN,INTC,NVDA",
         )
         self.assertEqual(sim_env.get("CLICKHOUSE_DATABASE"), "torghut")
         self.assertEqual(sim_env.get("TRADING_SIGNAL_TABLE"), "torghut.ta_signals")
@@ -540,7 +540,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(
             sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS"),
-            "NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC",
+            "AAPL,AMZN,INTC,NVDA",
         )
         self.assertNotIn("JANGAR_SYMBOLS_URL", sim_env)
         self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_STATUS_URL", sim_env)
@@ -811,7 +811,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(env.get("TRADING_UNIVERSE_SOURCE"), "static")
         self.assertEqual(env.get("TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR"), "false")
         self.assertEqual(env.get("TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED"), "false")
-        _assert_exact_live_execution_chip_universe(
+        _assert_exact_quote_covered_paper_strategy_universe(
             self,
             str(env.get("TRADING_STATIC_SYMBOLS", "")).split(","),
             context="live static universe",

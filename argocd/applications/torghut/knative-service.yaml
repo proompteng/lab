@@ -173,11 +173,11 @@ spec:
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED
               value: "false"
             - name: TRADING_STATIC_SYMBOLS
-              value: NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC
+              value: AAPL,AMZN,INTC,NVDA
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS
-              value: NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC
+              value: AAPL,AMZN,INTC,NVDA
             - name: TRADING_UNIVERSE_SYMBOL_ALLOWLIST
-              value: NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC
+              value: AAPL,AMZN,INTC,NVDA
             - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
               value: "900"
             - name: POSTHOG_ENABLED
