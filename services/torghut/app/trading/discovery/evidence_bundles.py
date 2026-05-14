@@ -123,7 +123,12 @@ def evidence_bundle_from_frontier_candidate(
         symbol_shares = _decomposition_symbol_contribution_shares(candidate)
         if symbol_shares:
             scorecard = {**scorecard, "symbol_contribution_shares": symbol_shares}
-    for key in ("family_template_id", "runtime_family", "runtime_strategy_name"):
+    for key in (
+        "family_template_id",
+        "runtime_family",
+        "runtime_strategy_name",
+        "execution_signature",
+    ):
         value = _string(candidate.get(key))
         if value and key not in scorecard:
             scorecard = {**scorecard, key: value}

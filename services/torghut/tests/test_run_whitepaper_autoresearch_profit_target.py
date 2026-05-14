@@ -553,6 +553,223 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "synthetic_prior",
         )
 
+    def test_pre_replay_ranker_blocks_feedback_execution_signature_drift(
+        self,
+    ) -> None:
+        original_spec = self._candidate_spec("spec-original-signature")
+        drifted_spec = replace(
+            original_spec,
+            candidate_spec_id="spec-drifted-signature",
+            hypothesis_id="hyp-spec-drifted-signature",
+            feature_contract={
+                **dict(original_spec.feature_contract),
+                "source_run_id": "source-spec-drifted-signature",
+            },
+        )
+        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=original_spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-original-signature",
+                "family_template_id": original_spec.family_template_id,
+                "runtime_family": original_spec.runtime_family,
+                "runtime_strategy_name": original_spec.runtime_strategy_name,
+                "execution_signature": runner._candidate_spec_execution_signature(
+                    original_spec
+                ),
+                "objective_scorecard": {
+                    "net_pnl_per_day": "-33",
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "0",
+                    "negative_day_count": 5,
+                    "daily_net": {
+                        "2026-05-01": "-12",
+                        "2026-05-04": "-54",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-feedback-signature",
+            result_path="feedback://signature-drift",
+        )
+
+        model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(drifted_spec,),
+            feedback_evidence_bundles=(feedback_bundle,),
+        )
+
+        self.assertEqual(model["feedback_matched_spec_count"], 0)
+        self.assertEqual(model["feedback_execution_signature_matched_spec_count"], 1)
+        row = rows[0]
+        self.assertEqual(row["candidate_spec_id"], drifted_spec.candidate_spec_id)
+        self.assertEqual(row["training_source"], "feedback_execution_signature_replay")
+        self.assertEqual(
+            row["selection_reason"], "pre_replay_mlx_signature_feedback_blocked"
+        )
+        self.assertEqual(
+            row["feedback_source_candidate_spec_id"],
+            original_spec.candidate_spec_id,
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(drifted_spec,),
+            proposal_rows=rows,
+            top_k=1,
+            exploration_slots=0,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(selection["budget"]["selected_count"], 0)
+        self.assertEqual(
+            selection["budget"]["pre_replay_feedback_blocked_candidate_count"], 1
+        )
+        self.assertEqual(
+            selection["rows"][0]["selection_reason"],
+            "pre_replay_mlx_signature_feedback_blocked",
+        )
+
+    def test_pre_replay_ranker_penalizes_family_feedback_without_blocking_mutations(
+        self,
+    ) -> None:
+        source_spec = self._candidate_spec("spec-family-source")
+        mutated_family_spec = self._candidate_spec(
+            "spec-family-mutated",
+            entry_minute_after_open="60",
+        )
+        unrelated_spec = self._candidate_spec(
+            "spec-unrelated-family",
+            family_template_id="breakout_reclaim_v2",
+            entry_minute_after_open="90",
+            selection_mode="continuation",
+        )
+        family_feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=source_spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-family-source",
+                "family_template_id": source_spec.family_template_id,
+                "runtime_family": source_spec.runtime_family,
+                "runtime_strategy_name": source_spec.runtime_strategy_name,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "125",
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "1",
+                    "negative_day_count": 0,
+                    "daily_net": {
+                        "2026-05-01": "250",
+                        "2026-05-04": "-25",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-family-feedback",
+            result_path="feedback://family",
+        )
+        no_family_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-not-in-current-epoch",
+            candidate={
+                "candidate_id": "cand-no-family",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "-999",
+                    "daily_net": {"2026-05-01": "-999"},
+                },
+            },
+            dataset_snapshot_id="snap-no-family",
+            result_path="feedback://no-family",
+        )
+
+        model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(mutated_family_spec, unrelated_spec),
+            feedback_evidence_bundles=(family_feedback_bundle, no_family_bundle),
+        )
+
+        row_by_spec = {row["candidate_spec_id"]: row for row in rows}
+        self.assertEqual(model["feedback_family_matched_spec_count"], 1)
+        self.assertEqual(model["training_source_counts"]["feedback_family_replay"], 1)
+        self.assertEqual(
+            row_by_spec[mutated_family_spec.candidate_spec_id]["training_source"],
+            "feedback_family_replay",
+        )
+        self.assertEqual(
+            row_by_spec[mutated_family_spec.candidate_spec_id]["feedback_match_scope"],
+            "family_template_id",
+        )
+        self.assertEqual(
+            row_by_spec[mutated_family_spec.candidate_spec_id][
+                "feedback_source_candidate_spec_id"
+            ],
+            source_spec.candidate_spec_id,
+        )
+        self.assertEqual(
+            row_by_spec[mutated_family_spec.candidate_spec_id]["selection_reason"],
+            "pre_replay_mlx_family_feedback_penalized",
+        )
+        self.assertEqual(
+            row_by_spec[unrelated_spec.candidate_spec_id]["training_source"],
+            "synthetic_prior",
+        )
+
+    def test_candidate_selection_blocks_synthetic_nonpositive_expected_value(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-negative-synthetic-prior")
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(spec,),
+            proposal_rows=[
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": 0.0,
+                    "selection_reason": "pre_replay_mlx_rank",
+                    "training_source": "synthetic_prior",
+                    "feedback_evidence_context_count": 1,
+                }
+            ],
+            top_k=1,
+            exploration_slots=0,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(selection["budget"]["eligible_candidate_count"], 0)
+        self.assertEqual(
+            selection["budget"]["pre_replay_nonpositive_synthetic_candidate_count"], 1
+        )
+        self.assertEqual(
+            selection["rows"][0]["selection_reason"],
+            "pre_replay_mlx_synthetic_nonpositive_expected_value",
+        )
+
+    def test_candidate_selection_ignores_malformed_feedback_context_for_synthetic_prior(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-malformed-feedback-context")
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(spec,),
+            proposal_rows=[
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": 0.0,
+                    "selection_reason": "pre_replay_mlx_rank",
+                    "training_source": "synthetic_prior",
+                    "feedback_evidence_context_count": "bad-int",
+                }
+            ],
+            top_k=1,
+            exploration_slots=0,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [spec])
+        self.assertEqual(selection["budget"]["eligible_candidate_count"], 1)
+        self.assertEqual(
+            selection["budget"]["pre_replay_nonpositive_synthetic_candidate_count"],
+            0,
+        )
+
     def test_candidate_selection_handles_scalar_universe_overrides(self) -> None:
         scalar_universe_spec = replace(
             self._candidate_spec("spec-scalar-universe"),
@@ -1942,6 +2159,92 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ]
         )
 
+    def test_remediation_recommends_surface_mutation_when_mlx_blocks_synthetic_prior(
+        self,
+    ) -> None:
+        remediation = runner._candidate_search_remediation(
+            failure_reason="portfolio_optimizer_produced_no_candidate",
+            candidate_selection={
+                "budget": {
+                    "compiled_candidate_count": 12,
+                    "unique_execution_signature_count": 12,
+                    "eligible_candidate_count": 0,
+                    "selected_count": 0,
+                    "pre_replay_nonpositive_synthetic_candidate_count": 12,
+                    "pre_replay_blocked_candidate_count": 12,
+                    "max_candidates": 12,
+                    "top_k": 8,
+                    "exploration_slots_effective": 4,
+                },
+                "rows": [
+                    {
+                        "candidate_spec_id": "spec-negative-prior",
+                        "selected_for_replay": False,
+                        "selection_reason": "pre_replay_mlx_synthetic_nonpositive_expected_value",
+                    }
+                ],
+            },
+            evidence_bundles=(),
+            false_positive_table=(),
+            best_false_negative_table=(),
+            replay_timeout_seconds=7200,
+            max_frontier_candidates_per_spec=2,
+        )
+
+        self.assertEqual(
+            remediation["next_actions"][0]["action"],
+            "expand_or_mutate_strategy_surface_after_negative_mlx_prior",
+        )
+        self.assertEqual(
+            remediation["next_actions"][0]["observed_selection_budget"][
+                "pre_replay_nonpositive_synthetic_candidate_count"
+            ],
+            12,
+        )
+
+    def test_remediation_recommends_surface_mutation_when_feedback_blocks_all_candidates(
+        self,
+    ) -> None:
+        remediation = runner._candidate_search_remediation(
+            failure_reason="portfolio_optimizer_produced_no_candidate",
+            candidate_selection={
+                "budget": {
+                    "compiled_candidate_count": 8,
+                    "unique_execution_signature_count": 8,
+                    "eligible_candidate_count": 0,
+                    "selected_count": 0,
+                    "pre_replay_feedback_blocked_candidate_count": 8,
+                    "pre_replay_blocked_candidate_count": 8,
+                    "max_candidates": 8,
+                    "top_k": 4,
+                    "exploration_slots_effective": 4,
+                },
+                "rows": [
+                    {
+                        "candidate_spec_id": "spec-feedback-blocked",
+                        "selected_for_replay": False,
+                        "selection_reason": "pre_replay_mlx_feedback_blocked",
+                    }
+                ],
+            },
+            evidence_bundles=(),
+            false_positive_table=(),
+            best_false_negative_table=(),
+            replay_timeout_seconds=7200,
+            max_frontier_candidates_per_spec=2,
+        )
+
+        self.assertEqual(
+            remediation["next_actions"][0]["action"],
+            "expand_or_mutate_strategy_surface_after_feedback_blocks_all_candidates",
+        )
+        self.assertEqual(
+            remediation["next_actions"][0]["observed_selection_budget"][
+                "pre_replay_feedback_blocked_candidate_count"
+            ],
+            8,
+        )
+
     def test_next_epoch_plan_rejects_breadth_shrinking_remediation_flags(self) -> None:
         with TemporaryDirectory() as tmpdir:
             args = self._args(Path(tmpdir) / "epoch")
@@ -2553,6 +2856,51 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             result.evidence_bundles[1].candidate_id, "cand-real-diversifier"
         )
         self.assertEqual(result.evidence_bundles[0].dataset_snapshot_id, "snap-real")
+
+    def test_real_replay_injects_spec_metadata_into_evidence_bundle(self) -> None:
+        spec = self._candidate_spec("spec-real-replay-signature")
+        with TemporaryDirectory() as tmpdir:
+            result_path = Path(tmpdir) / "result.json"
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "top": [
+                            {
+                                "candidate_id": "cand-real",
+                                "objective_scorecard": {
+                                    "net_pnl_per_day": "25",
+                                    "active_day_ratio": "1",
+                                    "positive_day_ratio": "1",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = runner._real_replay_result_from_factory_payload(
+                {
+                    "experiments": [
+                        {
+                            "candidate_spec_id": spec.candidate_spec_id,
+                            "experiment_id": "exp-real",
+                            "dataset_snapshot_id": "snap-real",
+                            "result_path": str(result_path),
+                        }
+                    ]
+                },
+                specs_by_id={spec.candidate_spec_id: spec},
+            )
+
+        self.assertEqual(len(result.evidence_bundles), 1)
+        scorecard = result.evidence_bundles[0].objective_scorecard
+        self.assertEqual(scorecard["family_template_id"], spec.family_template_id)
+        self.assertEqual(scorecard["runtime_family"], spec.runtime_family)
+        self.assertEqual(scorecard["runtime_strategy_name"], spec.runtime_strategy_name)
+        self.assertEqual(
+            scorecard["execution_signature"],
+            runner._candidate_spec_execution_signature(spec),
+        )
 
     def test_real_replay_uses_spec_universe_instead_of_global_symbols(self) -> None:
         with TemporaryDirectory() as tmpdir:
