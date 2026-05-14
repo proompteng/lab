@@ -1,0 +1,286 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from copy import deepcopy
+from datetime import datetime, timezone
+from typing import Any, cast
+
+import pytest
+
+from app.trading.no_delta_repair_reentry_auction import (
+    build_no_delta_repair_reentry_auction,
+    compact_no_delta_repair_reentry_auction,
+)
+
+NOW = datetime(2026, 5, 14, 14, 40, tzinfo=timezone.utc)
+
+
+def _repair_queue() -> list[dict[str, object]]:
+    return [
+        {
+            "code": "repair_alpha_readiness",
+            "reason": "alpha_readiness_not_promotion_eligible",
+            "dimension": "alpha_readiness",
+            "action": "clear_hypothesis_blockers_before_capital",
+            "priority": 70,
+            "expected_unblock_value": 3,
+            "value_gate": "routeable_candidate_count",
+            "required_output_receipt": "torghut.executable-alpha-receipts.v1",
+            "required_receipts": [
+                "alpha_readiness_receipt",
+                "hypothesis_promotion_receipt",
+                "capital_replay_board",
+            ],
+            "max_notional": "0",
+            "capital_rule": "zero_notional_repair_only",
+        }
+    ]
+
+
+def _repair_bid_settlement() -> dict[str, object]:
+    return {
+        "ledger_id": "repair-bid-settlement-ledger:test",
+        "account_id": "PA3SX7FYNUTF",
+        "session_id": "15m",
+        "trading_mode": "live",
+        "routeable_candidate_count": 0,
+    }
+
+
+def _conveyor() -> dict[str, object]:
+    return {
+        "schema_version": "torghut.alpha-readiness-settlement-conveyor.v1",
+        "conveyor_id": "alpha-readiness-settlement-conveyor:test",
+        "generated_at": NOW.isoformat(),
+        "fresh_until": "2026-05-14T14:55:00+00:00",
+        "status": "no_delta",
+        "settlement_state": "no_delta",
+        "source_revenue_repair_ref": "torghut-revenue-repair-digest:test",
+        "account_id": "PA3SX7FYNUTF",
+        "window": "15m",
+        "trading_mode": "live",
+        "selected_value_gate": "routeable_candidate_count",
+        "routeable_candidate_count_before": 0,
+        "routeable_candidate_count_after": 0,
+        "measured_routeable_candidate_delta": 0,
+        "active_no_delta_lease_count": 1,
+        "selected_lane": {
+            "hypothesis_id": "H-MICRO-01",
+            "strategy_id": "microbar_volume_continuation_long_top2_chip_v1@paper",
+            "lane_id": "microstructure-breakout",
+            "before_reason_codes": [
+                "drift_checks_missing",
+                "feature_rows_missing",
+                "required_feature_set_unavailable",
+            ],
+            "required_receipts": [
+                "alpha_readiness_receipt",
+                "capital_replay_board",
+                "feature_replay_receipt",
+            ],
+            "no_delta_release_key": "release-key:micro",
+            "repeat_launch_decision": "deny",
+            "measured_routeable_candidate_delta": 0,
+            "max_notional": "0",
+        },
+        "settlement_receipt": {
+            "schema_version": "torghut.alpha-readiness-settlement-receipt.v1",
+            "receipt_id": "alpha-readiness-settlement-receipt:micro",
+            "hypothesis_id": "H-MICRO-01",
+            "settlement_state": "no_delta",
+            "routeable_candidate_count_before": 0,
+            "routeable_candidate_count_after": 0,
+            "measured_routeable_candidate_delta": 0,
+            "preserved_reason_codes": [
+                "drift_checks_missing",
+                "feature_rows_missing",
+                "required_feature_set_unavailable",
+            ],
+            "no_delta_release_key": "release-key:micro",
+            "repeat_launch_decision": "deny",
+            "missing_receipts": ["feature_replay_receipt"],
+        },
+    }
+
+
+def _dividend_ledger() -> dict[str, object]:
+    return {
+        "schema_version": "torghut.alpha-repair-dividend-ledger.v1",
+        "ledger_id": "alpha-repair-dividend-ledger:test",
+        "generated_at": NOW.isoformat(),
+        "fresh_until": "2026-05-14T14:55:00+00:00",
+        "source_revenue_repair_ref": "torghut-revenue-repair-digest:test",
+        "source_alpha_readiness_settlement_conveyor_ref": (
+            "alpha-readiness-settlement-conveyor:test"
+        ),
+        "account_id": "PA3SX7FYNUTF",
+        "window": "15m",
+        "trading_mode": "live",
+        "status": "no_delta",
+        "dividend_state": "no_delta",
+        "reason_codes": ["active_no_delta_release_key"],
+        "selected_queue_code": "repair_alpha_readiness",
+        "selected_value_gate": "routeable_candidate_count",
+        "routeable_candidate_count_before": 0,
+        "routeable_candidate_count_after": 0,
+        "measured_delta": 0,
+        "selected_hypothesis_id": "H-MICRO-01",
+        "preserved_reason_codes": [
+            "drift_checks_missing",
+            "feature_rows_missing",
+            "required_feature_set_unavailable",
+        ],
+        "required_output_receipt": "torghut.executable-alpha-receipts.v1",
+        "required_receipts": [
+            "alpha_readiness_receipt",
+            "feature_replay_receipt",
+        ],
+        "no_delta_release_key": "release-key:micro",
+        "no_delta_release_conditions": [
+            "source_ref_changes",
+            "evidence_window_changes",
+            "blocker_set_changes",
+            "required_receipt_changes",
+        ],
+        "jangar_custody": {
+            "required_recorder_schema": (
+                "jangar.material-action-custody-flight-recorder.v1"
+            ),
+            "launch_decision": "deny",
+            "launch_decision_reason": "no_delta_release_key_active",
+        },
+        "max_notional": "0",
+        "capital_rule": "zero_notional_repair_only",
+    }
+
+
+def _build(
+    *,
+    conveyor: Mapping[str, Any] | None = None,
+    dividend: Mapping[str, Any] | None = None,
+    capital: Mapping[str, Any] | None = None,
+    jangar_verification_carry: Mapping[str, Any] | None = None,
+) -> dict[str, object]:
+    return build_no_delta_repair_reentry_auction(
+        generated_at=NOW,
+        business_state="repair_only",
+        revenue_ready=False,
+        repair_queue=_repair_queue(),
+        capital=capital or {"capital_state": "zero_notional", "max_notional": "0"},
+        alpha_readiness_settlement_conveyor=_conveyor()
+        if conveyor is None
+        else conveyor,
+        alpha_repair_dividend_ledger=_dividend_ledger()
+        if dividend is None
+        else dividend,
+        repair_bid_settlement_ledger=_repair_bid_settlement(),
+        jangar_verification_carry=jangar_verification_carry,
+    )
+
+
+def test_no_delta_reentry_auction_denies_unchanged_active_release_key() -> None:
+    auction = _build()
+
+    assert auction["schema_version"] == "torghut.no-delta-repair-reentry-auction.v1"
+    assert auction["reentry_decision"] == "deny"
+    assert auction["active_no_delta_release_key"] == "release-key:micro"
+    assert auction["selected_ticket"] is None
+    assert auction["selected_value_gate"] == "routeable_candidate_count"
+    assert auction["max_notional"] == "0"
+    assert "no_release_condition_changed" in auction["reason_codes"]
+    assert "duplicate_no_delta_reentry_denied" in auction["reason_codes"]
+
+    tickets = cast(list[Mapping[str, Any]], auction["candidate_tickets"])
+    assert tickets
+    assert {ticket["state"] for ticket in tickets} == {"denied"}
+
+
+def test_no_delta_reentry_auction_selects_one_changed_evidence_ticket() -> None:
+    dividend = deepcopy(_dividend_ledger())
+    dividend["changed_release_conditions"] = ["evidence_window_changed"]
+
+    auction = _build(dividend=dividend)
+
+    assert auction["reentry_decision"] == "allow"
+    selected = cast(Mapping[str, Any], auction["selected_ticket"])
+    assert selected["ticket_class"] == "alpha_evidence_window"
+    assert selected["release_condition"] == "evidence_window_changed"
+    assert selected["state"] == "selected"
+    assert selected["max_notional"] == "0"
+    assert (
+        selected["required_output_receipt"]
+        == "torghut.alpha-evidence-window-receipt.v1"
+    )
+
+    selected_tickets = [
+        ticket
+        for ticket in cast(list[Mapping[str, Any]], auction["candidate_tickets"])
+        if ticket["state"] == "eligible"
+    ]
+    assert len(selected_tickets) == 1
+
+
+def test_no_delta_reentry_auction_selects_jangar_foreclosure_ticket() -> None:
+    auction = _build(
+        jangar_verification_carry={
+            "schema_version": "jangar.verify-trust-foreclosure-board.v1",
+            "board_id": "verify-trust-foreclosure-board:agents:test",
+            "status": "current",
+            "execution_trust_status": "degraded",
+            "fresh_until": "2026-05-14T14:55:00+00:00",
+            "foreclosure_tickets": [
+                {
+                    "ticket_id": "verify-trust-foreclosure-ticket:test",
+                    "state": "open",
+                    "required_output_receipt": (
+                        "jangar.verify-trust-foreclosure-ticket.v1"
+                    ),
+                }
+            ],
+        }
+    )
+
+    assert auction["reentry_decision"] == "allow"
+    selected = cast(Mapping[str, Any], auction["selected_ticket"])
+    assert selected["ticket_class"] == "jangar_verify_carry"
+    assert selected["release_condition"] == "jangar_verify_foreclosure_ticket_current"
+
+
+def test_no_delta_reentry_auction_denies_nonzero_notional() -> None:
+    auction = _build(capital={"capital_state": "shadow", "max_notional": "25"})
+
+    assert auction["reentry_decision"] == "deny"
+    assert auction["max_notional"] == "25"
+    assert "capital_notional_nonzero" in auction["reason_codes"]
+
+
+def test_compact_no_delta_reentry_auction_ref() -> None:
+    auction = _build()
+    compact = compact_no_delta_repair_reentry_auction(auction)
+
+    assert compact["schema_version"] == "torghut.no-delta-repair-reentry-auction-ref.v1"
+    assert compact["auction_id"] == auction["auction_id"]
+    assert compact["reentry_decision"] == "deny"
+    assert compact["active_no_delta_release_key"] == "release-key:micro"
+    assert compact["selected_ticket_id"] is None
+    assert compact["max_notional"] == "0"
+
+    assert compact_no_delta_repair_reentry_auction(None) == {
+        "schema_version": "torghut.no-delta-repair-reentry-auction-ref.v1",
+        "status": "missing",
+        "reason_codes": ["no_delta_repair_reentry_auction_missing"],
+    }
+
+
+def test_no_delta_reentry_auction_rejects_naive_generated_at() -> None:
+    with pytest.raises(ValueError, match="generated_at_missing_timezone"):
+        build_no_delta_repair_reentry_auction(
+            generated_at=datetime(2026, 5, 14, 14, 40),
+            business_state="repair_only",
+            revenue_ready=False,
+            repair_queue=_repair_queue(),
+            capital={"capital_state": "zero_notional", "max_notional": "0"},
+            alpha_readiness_settlement_conveyor=_conveyor(),
+            alpha_repair_dividend_ledger=_dividend_ledger(),
+            repair_bid_settlement_ledger=_repair_bid_settlement(),
+        )

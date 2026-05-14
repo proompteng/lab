@@ -113,6 +113,9 @@ from .trading.jangar_continuity import load_jangar_route_continuity_packet
 from .trading.lean_lanes import LeanLaneManager
 from .trading.lean_runtime import lean_authority_status
 from .trading.llm.evaluation import build_llm_evaluation_metrics
+from .trading.no_delta_repair_reentry_auction import (
+    compact_no_delta_repair_reentry_auction,
+)
 from .trading.profit_carry_passports import build_profit_carry_passport_ledger
 from .trading.profit_freshness_frontier import build_profit_freshness_frontier
 from .trading.profit_repair_settlement import build_profit_repair_settlement_ledger
@@ -1159,6 +1162,12 @@ def _evaluate_trading_health_payload(
                 cast(
                     Mapping[str, Any],
                     revenue_repair_digest.get("alpha_repair_dividend_ledger"),
+                )
+            ),
+            "no_delta_repair_reentry_auction": compact_no_delta_repair_reentry_auction(
+                cast(
+                    Mapping[str, Any],
+                    revenue_repair_digest.get("no_delta_repair_reentry_auction"),
                 )
             ),
             "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
@@ -3374,6 +3383,12 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
             cast(
                 Mapping[str, Any],
                 revenue_repair_digest.get("alpha_repair_dividend_ledger"),
+            )
+        ),
+        "no_delta_repair_reentry_auction": compact_no_delta_repair_reentry_auction(
+            cast(
+                Mapping[str, Any],
+                revenue_repair_digest.get("no_delta_repair_reentry_auction"),
             )
         ),
         "route_warrant_exchange": route_warrant_exchange,

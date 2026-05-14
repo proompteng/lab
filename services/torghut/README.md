@@ -237,6 +237,12 @@ Testing rules for the trading core:
   zero-notional alpha-readiness lane, and the dividend ledger records whether that lane paid
   `routeable_candidate_count`, produced no-delta debt, or must be blocked/stale before another material repair launch.
   `/readyz` and `/trading/consumer-evidence` mirror compact refs for Jangar custody while keeping `max_notional=0`.
+- `GET /trading/revenue-repair` also emits the May 14 doc 206
+  `torghut.no-delta-repair-reentry-auction.v1` observe-mode reducer. The auction denies repeat alpha-readiness
+  launches while the active no-delta release key is unchanged, selects at most one zero-notional reentry ticket when a
+  source, evidence-window, blocker, receipt, selected-hypothesis, or Jangar verify-carry release condition changes, and
+  mirrors a compact `torghut.no-delta-repair-reentry-auction-ref.v1` through `/readyz` and
+  `/trading/consumer-evidence`. It does not enable paper or live submission.
 - `GET /trading/status` and `GET /readyz` now include the May 8 doc 181
   `quality_adjusted_profit_frontier` shadow projection. The reducer ranks zero-notional repair packets from quant
   quality, market-context risk flags, route/TCA state, simulation-cache freshness, and Jangar evidence-quality refs

@@ -21,6 +21,9 @@ from .executable_alpha_receipts import (
     build_executable_alpha_repair_receipts,
     build_executable_alpha_settlement_slots,
 )
+from .no_delta_repair_reentry_auction import (
+    build_no_delta_repair_reentry_auction,
+)
 
 
 SCHEMA_VERSION = "torghut.revenue-repair-digest.v1"
@@ -1052,6 +1055,21 @@ def build_revenue_repair_digest(
         alpha_repair_closure_board=alpha_repair_closure_board,
         alpha_readiness_settlement_conveyor=alpha_readiness_settlement_conveyor,
     )
+    no_delta_repair_reentry_auction = build_no_delta_repair_reentry_auction(
+        generated_at=generated,
+        business_state=business_state,
+        revenue_ready=revenue_ready,
+        repair_queue=cast(Sequence[Mapping[str, Any]], repair_queue),
+        capital=capital,
+        alpha_readiness_settlement_conveyor=alpha_readiness_settlement_conveyor,
+        alpha_repair_dividend_ledger=alpha_repair_dividend_ledger,
+        repair_bid_settlement_ledger=repair_bid_settlement,
+        jangar_verification_carry=cast(
+            Mapping[str, Any] | None,
+            status_payload.get("verify_trust_foreclosure_board")
+            or status_payload.get("jangar_verification_carry"),
+        ),
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated.isoformat(),
@@ -1067,6 +1085,7 @@ def build_revenue_repair_digest(
         "alpha_evidence_foundry": alpha_evidence_foundry,
         "alpha_readiness_settlement_conveyor": alpha_readiness_settlement_conveyor,
         "alpha_repair_dividend_ledger": alpha_repair_dividend_ledger,
+        "no_delta_repair_reentry_auction": no_delta_repair_reentry_auction,
         "business_state": business_state,
         "revenue_ready": revenue_ready,
         "health": {
