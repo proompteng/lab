@@ -1193,6 +1193,13 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(alpha_foundry["status"], "inactive")
         self.assertEqual(alpha_foundry["max_notional"], "0")
+        settlement_conveyor = payload["alpha_readiness_settlement_conveyor"]
+        self.assertEqual(
+            settlement_conveyor["schema_version"],
+            "torghut.alpha-readiness-settlement-conveyor-ref.v1",
+        )
+        self.assertEqual(settlement_conveyor["status"], "observing")
+        self.assertEqual(settlement_conveyor["max_notional"], "0")
         warrant = payload["route_warrant_exchange"]
         self.assertEqual(
             warrant["schema_version"],
@@ -4278,6 +4285,17 @@ class TestTradingApi(TestCase):
         self.assertIn(
             "alpha_evidence_window_receipts_missing",
             alpha_foundry["reason_codes"],
+        )
+        settlement_conveyor = payload["alpha_readiness_settlement_conveyor"]
+        self.assertEqual(
+            settlement_conveyor["schema_version"],
+            "torghut.alpha-readiness-settlement-conveyor.v1",
+        )
+        self.assertEqual(settlement_conveyor["status"], "blocked")
+        self.assertEqual(settlement_conveyor["max_notional"], "0")
+        self.assertIn(
+            "alpha_readiness_settlement_receipts_missing",
+            settlement_conveyor["reason_codes"],
         )
         self.assertEqual(
             payload["evidence"]["repair_bid_settlement"]["dispatchable_lot_count"],
