@@ -263,6 +263,8 @@ plan, implement, verify, and cross-swarm requirement launches.
 
 Admitted schedules and requirement runs carry these trace fields in annotations and run parameters:
 
+- `swarmRuntimeAdmissionDesignRef`
+- `swarmRuntimeProofDesignRef`
 - `swarmAdmissionPassportId`
 - `swarmAdmissionDecision`
 - `swarmRecoveryCaseSetDigest`

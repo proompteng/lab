@@ -571,6 +571,8 @@ describe('supporting primitives controller', () => {
     expect(command).toContain('JANGAR_STAGE_CLEARANCE_ENFORCEMENT')
     expect(command).toContain('JANGAR_EVIDENCE_PRESSURE_LEDGER_MODE')
     expect(command).toContain('missing schedule admission passport annotation for')
+    expect(command).toContain('runtime-admission-design-ref')
+    expect(command).toContain('runtime-proof-design-ref')
     expect(command).toContain('stage_clearance_packets')
     expect(command).toContain('clearance_market_ledger')
     expect(command).toContain('stage_credit_ledger')
@@ -591,6 +593,9 @@ describe('supporting primitives controller', () => {
     expect(command).toContain(
       'writeNestedRecordValue(manifest, ["metadata", "annotations"], admissionAnnotations.runtimeDigest',
     )
+    expect(command).toContain(
+      'writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRuntimeAdmissionDesignRef"',
+    )
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmAdmissionPassportId"')
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearancePacketId"')
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmClearanceMarketLedgerId"')
@@ -604,6 +609,7 @@ describe('supporting primitives controller', () => {
       'writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmEvidencePressureLedgerId"',
     )
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRecoveryWarrantId"')
+    expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRuntimeProofDesignRef"')
     expect(command).toContain('writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmRuntimeKitSetDigest"')
     expect(command).toContain('current schedule recovery warrant')
     expect(command).toContain('runtime proof cell')
@@ -835,6 +841,8 @@ describe('supporting primitives controller', () => {
           'swarm.proompteng.ai/name': 'jangar-control-plane',
         },
         annotations: {
+          'swarm.proompteng.ai/runtime-admission-design-ref':
+            'docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md',
           'swarm.proompteng.ai/admission-passport-id': 'passport:swarm_plan:test',
           'swarm.proompteng.ai/admission-decision': 'allow',
           'swarm.proompteng.ai/recovery-case-set-digest': 'recovery-digest-test',
@@ -859,11 +867,15 @@ describe('supporting primitives controller', () => {
     }
 
     expect(template.metadata?.annotations).toMatchObject({
+      'swarm.proompteng.ai/runtime-admission-design-ref':
+        'docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md',
       'swarm.proompteng.ai/admission-passport-id': 'passport:swarm_plan:test',
       'swarm.proompteng.ai/admission-decision': 'allow',
       'swarm.proompteng.ai/runtime-kit-set-digest': 'runtime-digest:swarm_plan',
     })
     expect(template.spec?.parameters).toMatchObject({
+      swarmRuntimeAdmissionDesignRef:
+        'docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md',
       swarmAdmissionPassportId: 'passport:swarm_plan:test',
       swarmAdmissionDecision: 'allow',
       swarmRecoveryCaseSetDigest: 'recovery-digest-test',
@@ -1042,6 +1054,10 @@ describe('supporting primitives controller', () => {
     }
 
     expect(runTemplate.metadata?.annotations).toMatchObject({
+      'swarm.proompteng.ai/runtime-admission-design-ref':
+        'docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md',
+      'swarm.proompteng.ai/runtime-proof-design-ref':
+        'docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md',
       'swarm.proompteng.ai/admission-passport-id': 'passport:swarm_plan:current',
       'swarm.proompteng.ai/admission-decision': 'allow',
       'swarm.proompteng.ai/runtime-kit-set-digest': 'runtime-digest:current',
@@ -1050,6 +1066,10 @@ describe('supporting primitives controller', () => {
       'swarm.proompteng.ai/required-proof-cells': 'runtime-proof-cell:plan:test',
     })
     expect(runTemplate.spec?.parameters).toMatchObject({
+      swarmRuntimeAdmissionDesignRef:
+        'docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md',
+      swarmRuntimeProofDesignRef:
+        'docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md',
       swarmAdmissionPassportId: 'passport:swarm_plan:current',
       swarmRuntimeKitSetDigest: 'runtime-digest:current',
       swarmRequiredRuntimeKits: 'runtime-kit:collaboration:current',
@@ -2728,6 +2748,12 @@ describe('supporting primitives controller', () => {
       'passport:swarm_plan:test',
     )
     expect((stageStates.plan?.admission as Record<string, unknown> | undefined)?.decision).toBe('block')
+    expect((stageStates.plan?.admission as Record<string, unknown> | undefined)?.runtimeAdmissionDesignRef).toBe(
+      'docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md',
+    )
+    expect((stageStates.plan?.admission as Record<string, unknown> | undefined)?.runtimeProofDesignRef).toBe(
+      'docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md',
+    )
   })
 
   it('blocks stage schedules when the stage recovery warrant is not sealed', async () => {
@@ -2815,6 +2841,12 @@ describe('supporting primitives controller', () => {
     expect(String(stageStates.plan?.message)).toContain('recovery warrant recovery-warrant:plan:test')
     expect(planAdmission?.recoveryWarrantId).toBe('recovery-warrant:plan:test')
     expect(planAdmission?.recoveryWarrantStatus).toBe('active')
+    expect(planAdmission?.runtimeAdmissionDesignRef).toBe(
+      'docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md',
+    )
+    expect(planAdmission?.runtimeProofDesignRef).toBe(
+      'docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md',
+    )
   })
 
   it('keeps passport-only stage admission available when runtime proof enforcement is disabled', async () => {
@@ -3610,6 +3642,10 @@ describe('supporting primitives controller', () => {
 
     expect(requirementRun).toBeTruthy()
     expect(requirementRun?.metadata?.annotations).toMatchObject({
+      'swarm.proompteng.ai/runtime-admission-design-ref':
+        'docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md',
+      'swarm.proompteng.ai/runtime-proof-design-ref':
+        'docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md',
       'swarm.proompteng.ai/admission-passport-id': 'passport:swarm_implement:test',
       'swarm.proompteng.ai/admission-decision': 'allow',
       'swarm.proompteng.ai/runtime-kit-set-digest': 'runtime-digest:swarm_implement',
@@ -3618,6 +3654,10 @@ describe('supporting primitives controller', () => {
       'swarm.proompteng.ai/required-proof-cells': 'runtime-proof-cell:implement:test',
     })
     expect(requirementRun?.spec?.parameters).toMatchObject({
+      swarmRuntimeAdmissionDesignRef:
+        'docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md',
+      swarmRuntimeProofDesignRef:
+        'docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md',
       swarmAdmissionPassportId: 'passport:swarm_implement:test',
       swarmAdmissionDecision: 'allow',
       swarmRecoveryCaseSetDigest: 'recovery-digest-test',

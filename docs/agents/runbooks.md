@@ -299,7 +299,9 @@ Expected outcomes:
 - schedule-runner pods fail closed before creating AgentRuns when a launch-capable swarm runner manifest lacks its
   passport stamp, when the current passport is not allowed or fresh, or when the current runtime-kit/proof evidence is
   unhealthy. Stale template stamps are rehydrated from current status before AgentRun creation rather than treated as a
-  launch failure. If this fire-time check itself is blocking emergency recovery, set
+  launch failure. Rehydrated launches also carry `swarmRuntimeAdmissionDesignRef` and `swarmRuntimeProofDesignRef` so
+  handoffs can prove the runtime contract that admitted the run. If this fire-time check itself is blocking emergency
+  recovery, set
   `JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false` and keep `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=true` so the
   controller still deletes newly blocked schedules.
 - stage-clearance packet stamping is shadow by default through `JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow`. Use

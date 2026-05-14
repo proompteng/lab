@@ -379,11 +379,12 @@ The first enforcement slice is the stage and requirement launcher gate:
 - degraded authority or degraded runtime-kit evidence keeps the serving passport non-blocking as `degrade`, but compiles
   launch-capable swarm passports as `hold`; missing required runtime-kit evidence still compiles launch-capable
   passports as `block`, and the launcher gate treats both non-admitted decisions as launch stops.
-- admitted schedules, schedule runner templates, and requirement runs cite the passport id, admission decision, recovery
-  digest, runtime-kit set digest, required runtime kits, and producer revision in annotations plus run parameters.
+- admitted schedules, schedule runner templates, and requirement runs cite this design document, the passport id,
+  admission decision, recovery digest, runtime-kit set digest, required runtime kits, and producer revision in
+  annotations plus run parameters.
 - generated schedule runners rehydrate launch authority at fire time: stale template stamps are replaced with the
-  current allowed passport, recovery digest, runtime-kit set digest, and proof-cell evidence before creating the
-  AgentRun; missing stamps or unhealthy current evidence still fail closed.
+  current allowed passport, design reference, recovery digest, runtime-kit set digest, and proof-cell evidence before
+  creating the AgentRun; missing stamps or unhealthy current evidence still fail closed.
 - command-style runtime components are admitted only when the resolved command path is executable; a file that exists
   on `PATH` but cannot run remains runtime-kit debt and blocks the collaboration passport.
 - generated schedule-runner fire-time admission and proof checks are tied to the controller-level enforcement gate, so
