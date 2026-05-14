@@ -1780,6 +1780,37 @@ describe('supporting primitives controller', () => {
     }
   })
 
+  it('periodically rescans swarms when material reentry requirement publishing is enabled', async () => {
+    const previousNodeEnv = process.env.NODE_ENV
+    const previousVitest = process.env.VITEST
+    process.env.NODE_ENV = 'production'
+    delete process.env.VITEST
+    process.env.JANGAR_MATERIAL_REENTRY_REQUIREMENT_SIGNALS = 'true'
+    resolveSwarmAvailability = () => ({ code: 0 })
+
+    try {
+      await startSupportingPrimitivesController()
+
+      const kube = vi.mocked(primitivesKubeMocks.createKubernetesClient).mock.results[0]?.value as
+        | { list?: ReturnType<typeof vi.fn> }
+        | undefined
+      const list = kube?.list
+      expect(list).toBeDefined()
+      list?.mockClear()
+
+      await vi.advanceTimersByTimeAsync(__test__.MATERIAL_REENTRY_SWARM_RECONCILE_INTERVAL_MS)
+
+      expect(list).toHaveBeenCalledWith(RESOURCE_MAP.Swarm, 'agents')
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv
+      if (previousVitest === undefined) {
+        delete process.env.VITEST
+      } else {
+        process.env.VITEST = previousVitest
+      }
+    }
+  })
+
   it('reconciles a valid swarm by creating stage schedules and active status', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
