@@ -49,6 +49,7 @@ from .models import (
 )
 from .observability import capture_posthog_event, shutdown_posthog_telemetry
 from .trading import TradingScheduler
+from .trading.alpha_repair_closure_board import compact_alpha_repair_closure_board
 from .trading.autonomy import (
     assert_runtime_gate_policy_contract,
     evaluate_evidence_continuity,
@@ -1048,6 +1049,36 @@ def _evaluate_trading_health_payload(
         "required": bool(quant_evidence.get("required", False)),
         "window": quant_evidence.get("window"),
     }
+    revenue_repair_digest = build_revenue_repair_digest(
+        readyz_payload={
+            "status": (
+                "degraded" if live_submission_gate.get("allowed") is not True else "ok"
+            ),
+            "proof_floor": proof_floor,
+            "live_submission_gate": live_submission_gate,
+            "quant_evidence": quant_evidence,
+            "dependencies": dependencies,
+        },
+        status_payload={
+            "mode": settings.trading_mode,
+            "pipeline_mode": settings.trading_pipeline_mode,
+            "build": build_payload,
+            "live_submission_gate": live_submission_gate,
+            "proof_floor": proof_floor,
+            "quant_evidence": quant_evidence,
+            "routeability_repair_acceptance_ledger": routeability_repair_acceptance_ledger,
+            "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
+            "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
+            "capital_replay_board": capital_replay_projection.get(
+                "capital_replay_board"
+            ),
+            "executable_alpha_receipts": capital_replay_projection.get(
+                "executable_alpha_receipts"
+            ),
+            "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
+        },
+        generated_at=now,
+    )
     dependency_statuses = [
         cast(dict[str, object], checks).get("ok", True)
         for name, checks in dependencies.items()
@@ -1090,6 +1121,12 @@ def _evaluate_trading_health_payload(
             "freshness_carry_ledger": freshness_carry_ledger,
             "repair_receipt_frontier": repair_receipt_frontier,
             "repair_outcome_dividend_ledger": repair_outcome_dividend_ledger,
+            "alpha_repair_closure_board": compact_alpha_repair_closure_board(
+                cast(
+                    Mapping[str, Any],
+                    revenue_repair_digest.get("alpha_repair_closure_board"),
+                )
+            ),
             "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
             "route_reacquisition_board": route_reacquisition_board,
             "quant_evidence": quant_evidence,
@@ -3267,6 +3304,12 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         ),
         "executable_alpha_repair_receipts": revenue_repair_digest.get(
             "executable_alpha_repair_receipts"
+        ),
+        "alpha_repair_closure_board": compact_alpha_repair_closure_board(
+            cast(
+                Mapping[str, Any],
+                revenue_repair_digest.get("alpha_repair_closure_board"),
+            )
         ),
         "route_warrant_exchange": route_warrant_exchange,
         "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,

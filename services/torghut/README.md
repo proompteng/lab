@@ -205,6 +205,12 @@ Testing rules for the trading core:
   concrete alpha repair target, maps target reason codes to a repair class, carries validation commands and
   no-delta settlement requirements, and keeps `max_notional=0`. `/trading/consumer-evidence` mirrors the same compact
   collection for Jangar without making `/readyz` green or enabling paper/live submission.
+- `GET /trading/revenue-repair` also emits the May 14 doc 198
+  `torghut.alpha-repair-closure-board.v1` board. The board binds the top `repair_alpha_readiness` queue item to the
+  selected executable-alpha repair receipt, names the routeable-candidate value gate, records zero-notional
+  no-delta debt when candidate count does not move, and keeps the rollback target at `max_notional=0`.
+  `/readyz` and `/trading/consumer-evidence` mirror only the compact
+  `torghut.alpha-repair-closure-board-ref.v1` fields for Jangar admission.
 - `GET /trading/status` and `GET /readyz` now include the May 8 doc 181
   `quality_adjusted_profit_frontier` shadow projection. The reducer ranks zero-notional repair packets from quant
   quality, market-context risk flags, route/TCA state, simulation-cache freshness, and Jangar evidence-quality refs

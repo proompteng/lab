@@ -1172,6 +1172,13 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(executable_alpha_repair["status"], "inactive")
         self.assertEqual(executable_alpha_repair["max_notional"], "0")
+        alpha_repair_closure = payload["alpha_repair_closure_board"]
+        self.assertEqual(
+            alpha_repair_closure["schema_version"],
+            "torghut.alpha-repair-closure-board-ref.v1",
+        )
+        self.assertEqual(alpha_repair_closure["status"], "inactive")
+        self.assertEqual(alpha_repair_closure["max_notional"], "0")
         warrant = payload["route_warrant_exchange"]
         self.assertEqual(
             warrant["schema_version"],
@@ -2904,6 +2911,14 @@ class TestTradingApi(TestCase):
             self.assertIn("readiness_cache", payload["dependencies"])
             self.assertIn("cache_used", payload["dependencies"]["readiness_cache"])
             self.assertFalse(payload["dependencies"]["readiness_cache"]["cache_stale"])
+            self.assertEqual(
+                payload["alpha_repair_closure_board"]["schema_version"],
+                "torghut.alpha-repair-closure-board-ref.v1",
+            )
+            self.assertEqual(
+                payload["alpha_repair_closure_board"]["max_notional"],
+                "0",
+            )
         finally:
             settings.trading_enabled = original
             settings.trading_universe_source = original_source
@@ -4192,6 +4207,15 @@ class TestTradingApi(TestCase):
             "alpha_readiness_repair_targets_missing",
             payload["executable_alpha_repair_receipts"]["reason_codes"],
         )
+        closure_board = payload["alpha_repair_closure_board"]
+        self.assertEqual(
+            closure_board["schema_version"],
+            "torghut.alpha-repair-closure-board.v1",
+        )
+        self.assertEqual(closure_board["status"], "blocked")
+        self.assertEqual(closure_board["selected_value_gate"], "routeable_candidate_count")
+        self.assertEqual(closure_board["max_notional"], "0")
+        self.assertIn("alpha_repair_receipt_missing", closure_board["reason_codes"])
         self.assertEqual(
             payload["evidence"]["repair_bid_settlement"]["dispatchable_lot_count"],
             1,
