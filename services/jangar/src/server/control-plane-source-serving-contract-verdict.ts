@@ -41,6 +41,8 @@ export type SourceServingContractEvidence = {
   sourceCiRunId?: string | null
   sourceCiConclusion?: string | null
   manifestImageDigest?: string | null
+  servingBuildCommit?: string | null
+  servingImageDigest?: string | null
   requiredContracts?: string[]
 }
 
@@ -116,6 +118,12 @@ export const resolveSourceServingContractEnvironment = (
   sourceCiRunId: normalizeNonEmpty(env.JANGAR_SOURCE_CI_RUN_ID ?? env.SOURCE_CI_RUN_ID),
   sourceCiConclusion: normalizeNonEmpty(env.JANGAR_SOURCE_CI_CONCLUSION ?? env.SOURCE_CI_CONCLUSION),
   manifestImageDigest: normalizeNonEmpty(env.JANGAR_MANIFEST_IMAGE_DIGEST ?? env.MANIFEST_IMAGE_DIGEST),
+  servingBuildCommit: normalizeNonEmpty(
+    env.JANGAR_SERVING_BUILD_COMMIT ?? env.SOURCE_SERVING_BUILD_COMMIT ?? env.JANGAR_SOURCE_HEAD_SHA,
+  ),
+  servingImageDigest: normalizeNonEmpty(
+    env.JANGAR_SERVING_IMAGE_DIGEST ?? env.SOURCE_SERVING_IMAGE_DIGEST ?? env.JANGAR_MANIFEST_IMAGE_DIGEST,
+  ),
   requiredContracts: parseContractList(
     env.JANGAR_SOURCE_SERVING_REQUIRED_CONTRACTS ?? env.SOURCE_SERVING_REQUIRED_CONTRACTS,
   ),
@@ -167,8 +175,11 @@ const resolveSourceServingSummary = (input: SourceServingContractVerdictInput): 
   const missingContracts = requiredContracts.filter((contract) => !observedContracts.includes(contract))
   const contractSchemaMismatches = compactStrings(torghut.contract_schema_mismatches ?? [])
   const manifestImageDigest = normalizeNonEmpty(evidence.manifestImageDigest)
-  const servingImageDigest = normalizeNonEmpty(torghut.serving_image_digest) ?? normalizeNonEmpty(torghut.image_digest)
-  const servingBuildCommit = normalizeNonEmpty(torghut.build_commit)
+  const servingImageDigest =
+    normalizeNonEmpty(evidence.servingImageDigest) ??
+    normalizeNonEmpty(torghut.serving_image_digest) ??
+    normalizeNonEmpty(torghut.image_digest)
+  const servingBuildCommit = normalizeNonEmpty(evidence.servingBuildCommit) ?? normalizeNonEmpty(torghut.build_commit)
   const sourceRevisionMissing = !sourceSha || !manifestSha
   const sourceGitopsMismatch = Boolean(sourceSha && manifestSha && !commitsMatch(sourceSha, manifestSha))
   const servingBuildMissing = !servingBuildCommit || servingBuildCommit === 'unknown'

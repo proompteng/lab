@@ -148,4 +148,33 @@ describe('control-plane source-serving contract verdict', () => {
       max_notional: 250,
     })
   })
+
+  it('uses Jangar serving proof env instead of Torghut build metadata for source convergence', () => {
+    const digest = 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+    const exchange = build({
+      torghutConsumerEvidence: torghutEvidence({
+        build_commit: 'torghut-build-commit',
+        image_digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        max_notional: '250',
+      }),
+      evidence: {
+        sourceCiRunId: '9003',
+        sourceCiConclusion: 'success',
+        manifestImageDigest: digest,
+        servingBuildCommit: '4dfa7c70771f3f8d6f3884c52a77c41e5e851638',
+        servingImageDigest: digest,
+      },
+    })
+
+    expect(exchange.status).toBe('allow')
+    expect(exchange.serving_build_commit).toBe('4dfa7c70771f3f8d6f3884c52a77c41e5e851638')
+    expect(exchange.serving_image_digest).toBe(digest)
+    expect(exchange.reason_codes).not.toContain('source_serving_build_mismatch')
+    expect(exchange.reason_codes).not.toContain('manifest_serving_image_digest_mismatch')
+    expect(verdict(exchange, 'live_support')).toMatchObject({
+      decision: 'allow',
+      source_serving_state: 'converged',
+      max_notional: 250,
+    })
+  })
 })
