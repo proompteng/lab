@@ -523,6 +523,13 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(sim_env.get("TRADING_MODE"), "paper")
         self.assertEqual(sim_env.get("TRADING_PIPELINE_MODE"), "simple")
         self.assertTrue(_manifest_bool(sim_env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
+        self.assertTrue(
+            _manifest_bool(sim_env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED")
+        )
+        self.assertEqual(
+            sim_env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
+            "25",
+        )
         self.assertFalse(_manifest_bool(sim_env, "TRADING_SIMULATION_ENABLED"))
         self.assertEqual(sim_env.get("TRADING_UNIVERSE_SOURCE"), "static")
         self.assertEqual(
@@ -851,6 +858,9 @@ class TestLiveConfigManifestContract(TestCase):
             context="live static universe",
         )
         self.assertFalse(_manifest_bool(env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
+        self.assertFalse(
+            _manifest_bool(env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED")
+        )
         self.assertFalse(_manifest_bool(env, "TRADING_ALPACA_QUOTE_FALLBACK_ENABLED"))
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ENABLED"))
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION"))

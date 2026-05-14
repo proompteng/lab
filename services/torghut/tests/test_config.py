@@ -757,6 +757,8 @@ class TestConfig(TestCase):
             TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS=50.0,
             TRADING_SIMPLE_SUBMIT_ENABLED=True,
             TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED=True,
+            TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED=True,
+            TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL=15.0,
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
 
@@ -766,6 +768,8 @@ class TestConfig(TestCase):
         self.assertEqual(settings.trading_simple_buying_power_reserve_bps, 50.0)
         self.assertTrue(settings.trading_simple_submit_enabled)
         self.assertTrue(settings.trading_simple_order_feed_telemetry_enabled)
+        self.assertTrue(settings.trading_simple_paper_route_probe_enabled)
+        self.assertEqual(settings.trading_simple_paper_route_probe_max_notional, 15.0)
 
     def test_parses_signal_staleness_critical_reasons(self) -> None:
         settings = Settings(
@@ -1026,6 +1030,7 @@ class TestConfig(TestCase):
             "trading_lean_live_canary_hard_rollback_enabled",
             "trading_simple_submit_enabled",
             "trading_simple_order_feed_telemetry_enabled",
+            "trading_simple_paper_route_probe_enabled",
             "trading_empirical_jobs_health_required",
             "trading_jangar_quant_health_required",
         }

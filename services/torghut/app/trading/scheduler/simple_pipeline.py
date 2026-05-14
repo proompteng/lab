@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from typing import Any, Optional, cast
 
 from sqlalchemy.orm import Session
@@ -49,8 +49,14 @@ _SIMPLE_ALLOWED_REJECT_REASONS = {
     "broker_precheck_failed",
     "broker_submit_failed",
 }
+_PAPER_ROUTE_PROBE_REASONS = {
+    "execution_tca_route_universe_empty",
+    "execution_tca_symbol_missing",
+    "tca_evidence_stale",
+}
 _PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS = 86_400
 _SIMPLE_MARKET_CONTEXT_RETRY_INTERVAL = timedelta(seconds=30)
+_PAPER_ROUTE_PROBE_QTY_STEP = Decimal("0.0001")
 
 
 class SimpleTradingPipeline(TradingPipeline):
@@ -506,6 +512,13 @@ class SimpleTradingPipeline(TradingPipeline):
         return None
 
     @staticmethod
+    def _proof_floor_market_session_open(proof_floor: Mapping[str, object]) -> bool:
+        market_window = proof_floor.get("market_window")
+        if not isinstance(market_window, Mapping):
+            return False
+        return bool(cast(Mapping[str, object], market_window).get("session_open"))
+
+    @staticmethod
     def _proof_floor_route_candidate_symbols(
         proof_floor: Mapping[str, object],
     ) -> set[str]:
@@ -526,6 +539,143 @@ class SimpleTradingPipeline(TradingPipeline):
             if symbol:
                 candidate_symbols.add(symbol)
         return candidate_symbols
+
+    @staticmethod
+    def _proof_floor_route_repair_symbols(
+        proof_floor: Mapping[str, object],
+    ) -> set[str]:
+        route_book = proof_floor.get("route_reacquisition_book")
+        if not isinstance(route_book, Mapping):
+            return set()
+        summary = cast(Mapping[str, Any], route_book).get("summary")
+        if not isinstance(summary, Mapping):
+            return set()
+        repair_symbols: set[str] = set()
+        for key in ("repair_candidate_symbols", "candidate_symbols"):
+            raw_symbols = cast(Mapping[str, Any], summary).get(key)
+            if not isinstance(raw_symbols, list):
+                continue
+            for raw_symbol in cast(list[object], raw_symbols):
+                symbol = str(raw_symbol).strip().upper()
+                if symbol:
+                    repair_symbols.add(symbol)
+        return repair_symbols
+
+    @staticmethod
+    def _paper_route_probe_reference_price(
+        decision: StrategyDecision,
+    ) -> Decimal | None:
+        for value in (
+            decision.limit_price,
+            decision.params.get("price"),
+            cast(Mapping[str, Any], decision.params.get("simple_lane") or {}).get(
+                "price"
+            )
+            if isinstance(decision.params.get("simple_lane"), Mapping)
+            else None,
+            cast(Mapping[str, Any], decision.params.get("price_snapshot") or {}).get(
+                "price"
+            )
+            if isinstance(decision.params.get("price_snapshot"), Mapping)
+            else None,
+        ):
+            price = _optional_decimal(value)
+            if price is not None and price > 0:
+                return price
+        return None
+
+    def _paper_route_probe_context(
+        self,
+        *,
+        proof_floor: Mapping[str, object],
+        decision: StrategyDecision,
+    ) -> dict[str, object] | None:
+        if settings.trading_mode != "paper":
+            return None
+        if not settings.trading_simple_paper_route_probe_enabled:
+            return None
+        if not settings.trading_simple_submit_enabled:
+            return None
+        if decision.action != "buy":
+            return None
+        cap = _optional_decimal(settings.trading_simple_paper_route_probe_max_notional)
+        if cap is None or cap <= 0:
+            return None
+        if not self._proof_floor_market_session_open(proof_floor):
+            return None
+
+        blocking_reasons = {
+            str(item).strip()
+            for item in cast(list[object], proof_floor.get("blocking_reasons") or [])
+            if str(item).strip()
+        }
+        if not (blocking_reasons & _PAPER_ROUTE_PROBE_REASONS):
+            return None
+
+        repair_symbols = self._proof_floor_route_repair_symbols(proof_floor)
+        symbol = decision.symbol.strip().upper()
+        if repair_symbols and symbol not in repair_symbols:
+            return None
+
+        return {
+            "enabled": True,
+            "mode": "paper_route_acquisition",
+            "max_notional": str(cap),
+            "symbol": symbol,
+            "blocking_reasons": sorted(blocking_reasons),
+            "route_repair_symbols": sorted(repair_symbols),
+        }
+
+    def _apply_paper_route_probe_cap(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        proof_floor: Mapping[str, object],
+        context: Mapping[str, object],
+    ) -> bool:
+        cap = _optional_decimal(context.get("max_notional"))
+        price = self._paper_route_probe_reference_price(decision)
+        if cap is None or cap <= 0 or price is None or price <= 0:
+            return False
+
+        capped_qty = (cap / price).quantize(
+            _PAPER_ROUTE_PROBE_QTY_STEP,
+            rounding=ROUND_DOWN,
+        )
+        if capped_qty <= 0:
+            return False
+        if decision.qty > 0:
+            capped_qty = min(decision.qty, capped_qty)
+
+        capped_notional = capped_qty * price
+        params = dict(decision.params)
+        simple_lane = dict(cast(Mapping[str, Any], params.get("simple_lane") or {}))
+        simple_lane["final_qty"] = str(capped_qty)
+        simple_lane["notional"] = str(capped_notional)
+        simple_lane["paper_route_probe_cap_applied"] = True
+        params["simple_lane"] = simple_lane
+        params["paper_route_probe"] = {
+            **dict(context),
+            "reference_price": str(price),
+            "capped_qty": str(capped_qty),
+            "capped_notional": str(capped_notional),
+            "capital_stage": str(proof_floor.get("capital_state") or "zero_notional"),
+        }
+        decision.qty = capped_qty
+        decision.params = params
+        self.executor.sync_decision_state(session, decision_row, decision)
+        self.executor.update_decision_params(session, decision_row, params)
+        logger.warning(
+            "Allowing bounded paper route-acquisition probe strategy_id=%s symbol=%s qty=%s notional=%s reasons=%s",
+            decision.strategy_id,
+            decision.symbol,
+            capped_qty,
+            capped_notional,
+            ",".join(cast(list[str], context.get("blocking_reasons") or [])),
+        )
+        return True
 
     @staticmethod
     def _proof_floor_symbol_block_reason(
@@ -588,16 +738,29 @@ class SimpleTradingPipeline(TradingPipeline):
             proof_floor
         )
         if proof_floor_block_reason is not None:
-            self._block_decision_submission(
+            probe_context = self._paper_route_probe_context(
+                proof_floor=proof_floor,
+                decision=decision,
+            )
+            if probe_context is None or not self._apply_paper_route_probe_cap(
                 session=session,
                 decision=decision,
                 decision_row=decision_row,
-                reason=proof_floor_block_reason,
-                submission_stage="blocked_profitability_proof_floor",
-                capital_stage=str(proof_floor.get("capital_state") or "zero_notional"),
-                extra_metadata={"profitability_proof_floor": dict(proof_floor)},
-            )
-            return False
+                proof_floor=proof_floor,
+                context=probe_context,
+            ):
+                self._block_decision_submission(
+                    session=session,
+                    decision=decision,
+                    decision_row=decision_row,
+                    reason=proof_floor_block_reason,
+                    submission_stage="blocked_profitability_proof_floor",
+                    capital_stage=str(
+                        proof_floor.get("capital_state") or "zero_notional"
+                    ),
+                    extra_metadata={"profitability_proof_floor": dict(proof_floor)},
+                )
+                return False
         proof_floor_symbol_block_reason = self._proof_floor_symbol_block_reason(
             proof_floor,
             decision.symbol,
