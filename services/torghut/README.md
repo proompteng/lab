@@ -167,9 +167,11 @@ Testing rules for the trading core:
   - `torghut_trading_alpha_readiness_rollback_required_total`
 - The live trading-loop manifest sets `TRADING_JANGAR_CONTROL_PLANE_STATUS_URL` to the cluster-local Jangar
   control-plane status route so revenue-repair can import controller-ingestion carry, verify-foreclosure boards, and
-  repair-slot escrow for zero-notional no-delta decisions. Paper/sim still leaves that URL unset. The executable
-  universe remains declared inside Torghut, and live submission remains gated by Torghut-owned signal, empirical-job,
-  proof-floor, routeability, and execution evidence rather than by Jangar serving health alone.
+  repair-slot escrow for zero-notional no-delta decisions. Live also pins
+  `TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS=30` because the status route can take longer than the config default
+  under controller/database load. Paper/sim still leaves that URL unset. The executable universe remains declared
+  inside Torghut, and live submission remains gated by Torghut-owned signal, empirical-job, proof-floor, routeability,
+  and execution evidence rather than by Jangar serving health alone.
 - Optional cross-service dependency quorum checks remain available for off-path experiments by setting
   `TRADING_JANGAR_CONTROL_PLANE_STATUS_URL` on non-production surfaces that need the same bounded carry import.
 - Optional external quant-health checks remain available by setting `TRADING_JANGAR_QUANT_HEALTH_URL`. Torghut rejects

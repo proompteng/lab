@@ -288,7 +288,8 @@ class TestLiveConfigManifestContract(TestCase):
             settings.trading_jangar_control_plane_status_url,
         )
         self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS", env)
-        self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS", env)
+        self.assertEqual(env.get("TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS"), "30")
+        self.assertEqual(settings.trading_jangar_control_plane_timeout_seconds, 30)
         self.assertNotIn("TRADING_JANGAR_QUANT_HEALTH_REQUIRED", env)
         self.assertNotIn("TRADING_JANGAR_QUANT_HEALTH_URL", env)
         self.assertEqual(
@@ -305,7 +306,6 @@ class TestLiveConfigManifestContract(TestCase):
         blocked_env = {
             "JANGAR_SYMBOLS_URL",
             "TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS",
-            "TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS",
             "TRADING_JANGAR_QUANT_HEALTH_REQUIRED",
             "TRADING_JANGAR_QUANT_HEALTH_URL",
         }
@@ -314,6 +314,7 @@ class TestLiveConfigManifestContract(TestCase):
             env.get("TRADING_JANGAR_CONTROL_PLANE_STATUS_URL"),
             "http://agents.agents.svc.cluster.local/api/agents/control-plane/status?namespace=agents",
         )
+        self.assertEqual(env.get("TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS"), "30")
         self.assertEqual(
             env.get("TRADING_MARKET_CONTEXT_URL"),
             "http://jangar.jangar.svc.cluster.local/api/torghut/market-context",
