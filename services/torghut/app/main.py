@@ -3083,7 +3083,13 @@ def _build_consumer_evidence_receipt_projection(
     return consumer_evidence_receipt, route_proven_profit_receipt
 
 
-def _build_trading_consumer_evidence_payload() -> dict[str, object]:
+def _consumer_evidence_summary_view(view: str | None) -> bool:
+    return (view or "").strip().lower() in {"compact", "summary", "jangar"}
+
+
+def _build_trading_consumer_evidence_payload(
+    *, summary: bool = False
+) -> dict[str, object]:
     scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
     if scheduler is None:
         scheduler = TradingScheduler()
@@ -3157,6 +3163,35 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
             serving_revision=cast(str | None, shadow_first_runtime["active_revision"]),
         )
     )
+    control_plane_dependency_mode = (
+        "caller_evaluated"
+        if dependency_quorum.message
+        == CONSUMER_EVIDENCE_CONTROL_PLANE_DEPENDENCY_MESSAGE
+        else "jangar_status_non_recursive"
+    )
+    if summary:
+        return {
+            "schema_version": "torghut.consumer-evidence-status.v1",
+            "view": "summary",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "enabled": settings.trading_enabled,
+            "mode": settings.trading_mode,
+            "running": state.running,
+            "build": build_payload,
+            "control_plane_dependency_mode": control_plane_dependency_mode,
+            "dependency_quorum": dependency_quorum.as_payload(),
+            "forecast_service": forecast_service_status,
+            "lean_authority": lean_authority_status,
+            "empirical_jobs": empirical_jobs,
+            "market_context": market_context_status,
+            "quant_evidence": quant_evidence,
+            "live_submission_gate": live_submission_gate,
+            "proof_floor": proof_floor,
+            "simple_lane_status": simple_lane_status,
+            "torghut_consumer_evidence_receipt": consumer_evidence_receipt,
+            "route_proven_profit_receipt": route_proven_profit_receipt,
+            "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
+        }
     route_reacquisition_board = build_route_reacquisition_board(
         proof_floor_receipt=proof_floor,
         route_reacquisition_book=cast(
@@ -3422,12 +3457,7 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         "mode": settings.trading_mode,
         "running": state.running,
         "build": build_payload,
-        "control_plane_dependency_mode": (
-            "caller_evaluated"
-            if dependency_quorum.message
-            == CONSUMER_EVIDENCE_CONTROL_PLANE_DEPENDENCY_MESSAGE
-            else "jangar_status_non_recursive"
-        ),
+        "control_plane_dependency_mode": control_plane_dependency_mode,
         "dependency_quorum": dependency_quorum.as_payload(),
         "forecast_service": forecast_service_status,
         "lean_authority": lean_authority_status,
@@ -3508,10 +3538,14 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
 
 
 @app.get("/trading/consumer-evidence")
-def trading_consumer_evidence() -> dict[str, object]:
+def trading_consumer_evidence(
+    view: str | None = Query(default=None),
+) -> dict[str, object]:
     """Return Jangar-facing Torghut evidence without recursive Jangar status fetches."""
 
-    return _build_trading_consumer_evidence_payload()
+    return _build_trading_consumer_evidence_payload(
+        summary=_consumer_evidence_summary_view(view)
+    )
 
 
 @app.get("/trading/metrics")

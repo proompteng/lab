@@ -93,6 +93,20 @@ const requestJson = async (url: string, timeoutMs: number): Promise<JsonRouteRes
   }
 }
 
+const compactConsumerEvidenceEndpoint = (endpoint: string): string => {
+  try {
+    const url = new URL(endpoint)
+    const path = url.pathname.replace(/\/+$/, '')
+    if (path.endsWith('/trading/consumer-evidence') && !url.searchParams.has('view')) {
+      url.searchParams.set('view', 'summary')
+      return url.toString()
+    }
+  } catch {
+    return endpoint
+  }
+  return endpoint
+}
+
 const readMarketContext = (
   payload: Record<string, unknown>,
 ): Pick<TorghutNegativeEvidenceInput, 'market_context_status' | 'market_context_stale_domains'> => {
@@ -142,7 +156,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     }
   }
 
-  const routeResult = await requestJson(endpoint, config.torghutStatusTimeoutMs)
+  const routeResult = await requestJson(compactConsumerEvidenceEndpoint(endpoint), config.torghutStatusTimeoutMs)
   if (!routeResult.ok) {
     const routeMissing = routeResult.statusCode === 404
     const status = routeMissing ? 'route_missing' : 'unavailable'

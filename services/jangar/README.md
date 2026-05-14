@@ -718,6 +718,9 @@ controller-ingestion settlement, terminal debt compaction, and Torghut max_notio
 
 Design doc `docs/agents/designs/188-jangar-typed-torghut-evidence-admission-and-repair-dispatch-2026-05-13.md`
 requires Jangar to expose typed Torghut custody evidence from the non-recursive `/trading/consumer-evidence` route.
+Jangar requests `/trading/consumer-evidence?view=summary` when the configured Torghut status URL points at the
+consumer-evidence route, so readiness gets the compact status, receipt, route-profit, and canary fields without
+pulling the full operator ledger payload through the control-plane hot path.
 When Torghut imports Jangar carry for that route, it calls `/api/agents/control-plane/status` with
 `x-torghut-consumer-evidence-mode: omit`; Jangar then computes the local control-plane status without fetching Torghut
 consumer evidence, which prevents a Torghut -> Jangar -> Torghut status loop.
