@@ -215,6 +215,32 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(args.symbols.split(","), _CHIP_UNIVERSE)
         self.assertEqual(args.feedback_evidence_jsonl, [])
 
+    def test_workflow_template_surfaces_feedback_and_fails_closed_on_stale_tape(
+        self,
+    ) -> None:
+        template_path = (
+            Path(__file__).parents[3]
+            / "argocd"
+            / "applications"
+            / "torghut"
+            / "whitepaper-autoresearch-workflowtemplate.yaml"
+        )
+        template = template_path.read_text()
+
+        self.assertIn("name: feedbackEvidenceJsonlB64", template)
+        self.assertIn("--feedback-evidence-jsonl", template)
+        self.assertIn(
+            'if [ -n "{{inputs.parameters.fullWindowStartDate}}" ]; then',
+            template,
+        )
+        self.assertIn(
+            'if [ -n "{{inputs.parameters.expectedLastTradingDay}}" ]; then',
+            template,
+        )
+        self.assertIn("name: allowStaleTape\n        value: 'false'", template)
+        self.assertNotIn("value: '2026-04-24'", template)
+        self.assertNotIn("value: '2026-05-01'", template)
+
     def test_pre_replay_ranker_ingests_feedback_evidence_bundles(self) -> None:
         losing_spec = self._candidate_spec(
             "spec-losing",

@@ -18,16 +18,18 @@ spec:
         value: /tmp/torghut-whitepaper-autoresearch
       - name: sourceJsonlB64
         value: ''
+      - name: feedbackEvidenceJsonlB64
+        value: ''
       - name: seedRecentWhitepapers
         value: 'true'
       - name: symbols
         value: NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC
       - name: fullWindowStartDate
-        value: '2026-04-24'
+        value: ''
       - name: fullWindowEndDate
-        value: '2026-05-01'
+        value: ''
       - name: expectedLastTradingDay
-        value: '2026-05-01'
+        value: ''
       - name: targetNetPnlPerDay
         value: '500'
       - name: maxCandidates
@@ -55,7 +57,7 @@ spec:
       - name: prefetchFullWindowRows
         value: 'true'
       - name: allowStaleTape
-        value: 'true'
+        value: 'false'
       - name: persistResults
         value: 'true'
   templates:
@@ -68,6 +70,7 @@ spec:
           - name: runId
           - name: outputRoot
           - name: sourceJsonlB64
+          - name: feedbackEvidenceJsonlB64
           - name: seedRecentWhitepapers
           - name: symbols
           - name: fullWindowStartDate
@@ -136,6 +139,7 @@ spec:
             OUTPUT_DIR="${OUTPUT_ROOT%/}/${RUN_ID}"
             WORKDIR=/tmp/torghut-whitepaper-autoresearch-workflow
             SOURCE_JSONL="${WORKDIR}/sources.jsonl"
+            FEEDBACK_EVIDENCE_JSONL="${WORKDIR}/feedback-evidence.jsonl"
             mkdir -p "${WORKDIR}" "${OUTPUT_DIR}"
 
             SCRIPT_ARGS=(
@@ -164,9 +168,6 @@ spec:
               --real-replay-shard-workers "{{inputs.parameters.realReplayShardWorkers}}"
               --train-days 6
               --holdout-days 3
-              --full-window-start-date "{{inputs.parameters.fullWindowStartDate}}"
-              --full-window-end-date "{{inputs.parameters.fullWindowEndDate}}"
-              --expected-last-trading-day "{{inputs.parameters.expectedLastTradingDay}}"
               --min-active-day-ratio 1
               --min-positive-day-ratio 1
               --min-daily-net-pnl "{{inputs.parameters.targetNetPnlPerDay}}"
@@ -179,6 +180,19 @@ spec:
             if [ -n "{{inputs.parameters.sourceJsonlB64}}" ]; then
               printf '%s' "{{inputs.parameters.sourceJsonlB64}}" | base64 -d > "${SOURCE_JSONL}"
               SCRIPT_ARGS+=(--source-jsonl "${SOURCE_JSONL}")
+            fi
+            if [ -n "{{inputs.parameters.feedbackEvidenceJsonlB64}}" ]; then
+              printf '%s' "{{inputs.parameters.feedbackEvidenceJsonlB64}}" | base64 -d > "${FEEDBACK_EVIDENCE_JSONL}"
+              SCRIPT_ARGS+=(--feedback-evidence-jsonl "${FEEDBACK_EVIDENCE_JSONL}")
+            fi
+            if [ -n "{{inputs.parameters.fullWindowStartDate}}" ]; then
+              SCRIPT_ARGS+=(--full-window-start-date "{{inputs.parameters.fullWindowStartDate}}")
+            fi
+            if [ -n "{{inputs.parameters.fullWindowEndDate}}" ]; then
+              SCRIPT_ARGS+=(--full-window-end-date "{{inputs.parameters.fullWindowEndDate}}")
+            fi
+            if [ -n "{{inputs.parameters.expectedLastTradingDay}}" ]; then
+              SCRIPT_ARGS+=(--expected-last-trading-day "{{inputs.parameters.expectedLastTradingDay}}")
             fi
             if [ "{{inputs.parameters.prefetchFullWindowRows}}" = "true" ]; then
               SCRIPT_ARGS+=(--prefetch-full-window-rows)
