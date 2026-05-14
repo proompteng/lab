@@ -12,6 +12,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority, refreshed `2026-05-14T00:12Z`):
+  - `199-torghut-executable-alpha-settlement-slots-and-no-delta-repair-custody-2026-05-14.md`
+  - `docs/agents/designs/194-jangar-receipt-settled-repair-slots-and-stage-custody-thaw-2026-05-14.md`
   - `198-torghut-alpha-repair-closure-board-and-routeable-revenue-reentry-2026-05-14.md`
   - `docs/agents/designs/193-jangar-cross-plane-closure-board-and-revenue-repair-admission-2026-05-14.md`
   - `197-torghut-executable-alpha-repair-receipts-and-zero-notional-reentry-2026-05-13.md`
