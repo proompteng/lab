@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: 2026-05-14T08:35:25Z
+    deploy.knative.dev/rollout: 2026-05-14T09:24:00Z
 spec:
   replicas: 1
   strategy:
@@ -57,11 +57,11 @@ spec:
             - name: UI_PORT
               value: "8080"
             - name: JANGAR_RUNTIME_IMAGE
-              value: registry.ide-newton.ts.net/lab/jangar:2ee617e3@sha256:5f4a8f428f3092a004b3bb5d34f85874933f1add8a2485af8fbb52da183d257b
+              value: registry.ide-newton.ts.net/lab/jangar:7a05e24d@sha256:b89653f68e0bf2489a08805ff0d928fb92d35b908da7d6b06cd7daced22e7ea1
             - name: JANGAR_SOURCE_HEAD_SHA
-              value: 2ee617e354af746549731b54e037f90af5d3fd6f
+              value: 7a05e24d523d4310c00b6ae4577cc0834610bb12
             - name: JANGAR_GITOPS_REVISION
-              value: 2ee617e354af746549731b54e037f90af5d3fd6f
+              value: 7a05e24d523d4310c00b6ae4577cc0834610bb12
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: "120"
             - name: JANGAR_BUMBA_TASK_QUEUE
