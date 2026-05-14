@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
+import pytest
+
 from app.trading.executable_alpha_receipts import (
     build_executable_alpha_repair_receipts,
     build_executable_alpha_settlement_slots,
@@ -143,6 +145,11 @@ def _h_cont_alpha_readiness() -> dict[str, object]:
     }
 
 
+def _h_cont_repair_receipts() -> tuple[dict[str, object], dict[str, object]]:
+    alpha = _h_cont_alpha_readiness()
+    return alpha, _build(alpha_readiness=alpha)
+
+
 def _settlement_evidence(
     alpha_readiness: Mapping[str, Any] | None = None,
     *,
@@ -203,14 +210,6 @@ def _build_settlement_slots(
         ),
         executable_alpha_repair_receipts=repair_receipts,
     )
-
-
-def _selected_repair_receipt_payload() -> dict[str, object]:
-    alpha = _h_cont_alpha_readiness()
-    repair_receipts = _build(alpha_readiness=alpha)
-    selected = cast(dict[str, object], repair_receipts["selected_receipt"])
-    assert selected["receipt_id"] == repair_receipts["selected_receipt_id"]
-    return repair_receipts
 
 
 def test_alpha_readiness_top_queue_selects_zero_notional_lineage_receipt() -> None:
@@ -360,10 +359,9 @@ def test_settlement_slots_block_when_capital_safety_is_not_zero_notional() -> No
 
 
 def test_settlement_slots_block_stale_selected_repair_receipt() -> None:
-    alpha = _h_cont_alpha_readiness()
-    repair_receipts = _build(alpha_readiness=alpha)
+    alpha, repair_receipts = _h_cont_repair_receipts()
     selected = cast(dict[str, object], repair_receipts["selected_receipt"])
-    selected["fresh_until"] = "2026-05-13T22:54:00+00:00"
+    selected["fresh_until"] = "2026-05-13T22:54:00Z"
 
     payload = build_executable_alpha_settlement_slots(
         generated_at=NOW,
@@ -380,10 +378,144 @@ def test_settlement_slots_block_stale_selected_repair_receipt() -> None:
     assert payload["reason_codes"] == ["selected_executable_alpha_repair_receipt_stale"]
 
 
-def test_settlement_slots_select_receipt_by_id_when_selected_payload_missing() -> None:
-    alpha = _h_cont_alpha_readiness()
-    repair_receipts = _selected_repair_receipt_payload()
+def test_settlement_slots_select_receipt_by_id_and_records_routeable_improvement() -> (
+    None
+):
+    alpha, repair_receipts = _h_cont_repair_receipts()
+    selected = cast(dict[str, object], repair_receipts["selected_receipt"])
+    selected_receipt_id = selected["receipt_id"]
+    selected.pop("reason_codes")
+    selected.pop("required_output_receipts")
     repair_receipts["selected_receipt"] = None
+    repair_receipts["selected_receipt_id"] = selected_receipt_id
+
+    payload = build_executable_alpha_settlement_slots(
+        generated_at=NOW,
+        business_state="repair_only",
+        revenue_ready=False,
+        repair_queue=_top_alpha_queue(),
+        capital={"max_notional": "0", "live_submission_allowed": False},
+        evidence=_settlement_evidence(alpha, routeable_candidate_count=1),
+        executable_alpha_repair_receipts=repair_receipts,
+    )
+
+    selected_slot = cast(Mapping[str, Any], payload["selected_slot"])
+    assert payload["status"] == "settled"
+    assert payload["no_delta_debt"] == []
+    assert selected_slot["selected_receipt_id"] == selected_receipt_id
+    assert selected_slot["settlement_state"] == "improved"
+    assert selected_slot["measured_delta"] == 1
+    assert set(selected_slot["before_reason_codes"]) == {
+        "post_cost_expectancy_non_positive",
+        "closed_session_signal_hold",
+        "closed_session_tca_evidence_hold",
+    }
+    assert set(selected_slot["required_after_receipts"]) == {
+        "alpha_readiness_receipt",
+        "hypothesis_promotion_receipt",
+        "capital_replay_board",
+        "torghut.executable-alpha-receipts.v1",
+    }
+
+
+def test_settlement_slots_fall_back_to_before_reasons_when_after_target_missing() -> (
+    None
+):
+    alpha, repair_receipts = _h_cont_repair_receipts()
+    after_alpha = {
+        "repair_targets": [
+            {
+                "hypothesis_id": "H-OTHER",
+                "reasons": ["post_cost_expectancy_non_positive"],
+            }
+        ]
+    }
+
+    payload = build_executable_alpha_settlement_slots(
+        generated_at=NOW,
+        business_state="repair_only",
+        revenue_ready=False,
+        repair_queue=_top_alpha_queue(),
+        capital={"max_notional": "0", "live_submission_allowed": False},
+        evidence=_settlement_evidence(after_alpha),
+        executable_alpha_repair_receipts=repair_receipts,
+    )
+
+    selected_slot = cast(Mapping[str, Any], payload["selected_slot"])
+    selected_receipt = cast(Mapping[str, Any], repair_receipts["selected_receipt"])
+    assert alpha["repair_targets"]
+    assert set(selected_slot["after_reason_codes"]) == set(
+        selected_receipt["reason_codes"]
+    )
+    assert selected_slot["settlement_state"] == "no_delta"
+
+
+def test_settlement_slots_retire_when_before_blocker_clears() -> None:
+    _, repair_receipts = _h_cont_repair_receipts()
+    after_alpha = {
+        "repair_targets": [
+            {
+                "hypothesis_id": "H-OTHER",
+                "reasons": ["post_cost_expectancy_non_positive"],
+            },
+            {
+                "hypothesis_id": "H-CONT-01",
+                "reasons": ["fresh_after_receipt_missing"],
+            },
+        ]
+    }
+
+    payload = build_executable_alpha_settlement_slots(
+        generated_at=NOW,
+        business_state="repair_only",
+        revenue_ready=False,
+        repair_queue=_top_alpha_queue(),
+        capital={"max_notional": "0", "live_submission_allowed": False},
+        evidence=_settlement_evidence(after_alpha),
+        executable_alpha_repair_receipts=repair_receipts,
+    )
+
+    selected_slot = cast(Mapping[str, Any], payload["selected_slot"])
+    assert selected_slot["settlement_state"] == "retired"
+    assert selected_slot["retired_reason_codes"] == [
+        "closed_session_signal_hold",
+        "closed_session_tca_evidence_hold",
+        "post_cost_expectancy_non_positive",
+    ]
+
+
+def test_settlement_slots_improve_when_blocker_count_shrinks() -> None:
+    _, repair_receipts = _h_cont_repair_receipts()
+    after_alpha = {
+        "repair_targets": [
+            {
+                "hypothesis_id": "H-CONT-01",
+                "reasons": ["post_cost_expectancy_non_positive"],
+            }
+        ]
+    }
+
+    payload = build_executable_alpha_settlement_slots(
+        generated_at=NOW,
+        business_state="repair_only",
+        revenue_ready=False,
+        repair_queue=_top_alpha_queue(),
+        capital={"max_notional": "0", "live_submission_allowed": False},
+        evidence=_settlement_evidence(after_alpha),
+        executable_alpha_repair_receipts=repair_receipts,
+    )
+
+    selected_slot = cast(Mapping[str, Any], payload["selected_slot"])
+    assert selected_slot["settlement_state"] == "improved"
+    assert selected_slot["preserved_reason_codes"] == [
+        "post_cost_expectancy_non_positive"
+    ]
+
+
+def test_settlement_slots_block_selected_receipt_with_nonzero_notional() -> None:
+    alpha, repair_receipts = _h_cont_repair_receipts()
+    selected = cast(dict[str, object], repair_receipts["selected_receipt"])
+    selected["max_notional"] = "25"
 
     payload = build_executable_alpha_settlement_slots(
         generated_at=NOW,
@@ -395,24 +527,19 @@ def test_settlement_slots_select_receipt_by_id_when_selected_payload_missing() -
         executable_alpha_repair_receipts=repair_receipts,
     )
 
-    assert payload["status"] == "settled"
-    assert payload["selected_receipt_id"] == repair_receipts["selected_receipt_id"]
-    selected_slot = cast(Mapping[str, Any], payload["selected_slot"])
-    assert (
-        selected_slot["selected_receipt_id"] == repair_receipts["selected_receipt_id"]
-    )
+    assert payload["status"] == "blocked"
+    assert payload["selected_slot"] is None
+    assert payload["reason_codes"] == ["selected_receipt_notional_nonzero"]
 
 
 def test_settlement_slots_use_receipt_settlement_reasons_and_keep_unknown_blocker() -> (
     None
 ):
-    repair_receipts = _selected_repair_receipt_payload()
+    alpha, repair_receipts = _h_cont_repair_receipts()
     selected = cast(dict[str, object], repair_receipts["selected_receipt"])
     selected["reason_codes"] = []
     settlement = cast(dict[str, object], selected["settlement"])
     settlement["before_reason_codes"] = ["closed_session_signal_hold"]
-
-    alpha = _h_cont_alpha_readiness()
     target = cast(dict[str, object], cast(list[object], alpha["repair_targets"])[0])
     target["hypothesis_id"] = "H-OTHER"
 
@@ -432,12 +559,35 @@ def test_settlement_slots_use_receipt_settlement_reasons_and_keep_unknown_blocke
     assert no_delta_debt[0]["remaining_blocker"] == "closed_session_signal_hold"
 
 
-def test_settlement_slots_mark_retired_when_blocker_set_clears() -> None:
-    alpha = _h_cont_alpha_readiness()
-    repair_receipts = _build(alpha_readiness=alpha)
-    target = cast(dict[str, object], cast(list[object], alpha["repair_targets"])[0])
-    target["reasons"] = ["drift_checks_missing"]
-    target["informational_reasons"] = []
+def test_compact_settlement_slots_reports_missing_payload() -> None:
+    compact = compact_executable_alpha_settlement_slots(None)
+
+    assert compact == {
+        "schema_version": "torghut.executable-alpha-settlement-slots-ref.v1",
+        "status": "missing",
+        "reason_codes": ["executable_alpha_settlement_slots_missing"],
+    }
+
+
+def test_settlement_slots_reject_generated_at_without_timezone() -> None:
+    alpha, repair_receipts = _h_cont_repair_receipts()
+
+    with pytest.raises(ValueError, match="generated_at_missing_timezone"):
+        build_executable_alpha_settlement_slots(
+            generated_at=datetime(2026, 5, 13, 22, 55),
+            business_state="repair_only",
+            revenue_ready=False,
+            repair_queue=_top_alpha_queue(),
+            capital={"max_notional": "0", "live_submission_allowed": False},
+            evidence=_settlement_evidence(alpha),
+            executable_alpha_repair_receipts=repair_receipts,
+        )
+
+
+def test_settlement_slots_allow_invalid_fresh_until_as_untrusted_input() -> None:
+    alpha, repair_receipts = _h_cont_repair_receipts()
+    selected = cast(dict[str, object], repair_receipts["selected_receipt"])
+    selected["fresh_until"] = "invalid"
 
     payload = build_executable_alpha_settlement_slots(
         generated_at=NOW,
@@ -450,63 +600,14 @@ def test_settlement_slots_mark_retired_when_blocker_set_clears() -> None:
     )
 
     assert payload["status"] == "settled"
-    selected_slot = cast(Mapping[str, Any], payload["selected_slot"])
-    assert selected_slot["settlement_state"] == "retired"
-    assert payload["no_delta_debt"] == []
 
 
-def test_settlement_slots_mark_improved_when_routeable_count_increases() -> None:
-    payload = _build_settlement_slots(routeable_candidate_count=1)
-
-    assert payload["status"] == "settled"
-    selected_slot = cast(Mapping[str, Any], payload["selected_slot"])
-    assert selected_slot["settlement_state"] == "improved"
-    assert selected_slot["measured_delta"] == 1
-    assert selected_slot["no_delta_reason"] == ""
-    assert payload["no_delta_debt"] == []
-
-
-def test_settlement_slots_block_invalid_and_naive_selected_receipt_timestamps() -> None:
-    alpha = _h_cont_alpha_readiness()
-    repair_receipts = _selected_repair_receipt_payload()
+def test_settlement_slots_block_naive_stale_selected_receipt_timestamp() -> None:
+    alpha, repair_receipts = _h_cont_repair_receipts()
     selected = cast(dict[str, object], repair_receipts["selected_receipt"])
-    selected["fresh_until"] = "not-a-date"
-
-    invalid_timestamp_payload = build_executable_alpha_settlement_slots(
-        generated_at=NOW,
-        business_state="repair_only",
-        revenue_ready=False,
-        repair_queue=_top_alpha_queue(),
-        capital={"max_notional": "0", "live_submission_allowed": False},
-        evidence=_settlement_evidence(alpha),
-        executable_alpha_repair_receipts=repair_receipts,
-    )
-    assert invalid_timestamp_payload["status"] == "settled"
-
     selected["fresh_until"] = (
         (NOW - timedelta(minutes=1)).replace(tzinfo=None).isoformat()
     )
-    stale_naive_payload = build_executable_alpha_settlement_slots(
-        generated_at=NOW,
-        business_state="repair_only",
-        revenue_ready=False,
-        repair_queue=_top_alpha_queue(),
-        capital={"max_notional": "0", "live_submission_allowed": False},
-        evidence=_settlement_evidence(alpha),
-        executable_alpha_repair_receipts=repair_receipts,
-    )
-
-    assert stale_naive_payload["status"] == "blocked"
-    assert stale_naive_payload["reason_codes"] == [
-        "selected_executable_alpha_repair_receipt_stale"
-    ]
-
-
-def test_settlement_slots_block_selected_receipt_nonzero_notional() -> None:
-    alpha = _h_cont_alpha_readiness()
-    repair_receipts = _selected_repair_receipt_payload()
-    selected = cast(dict[str, object], repair_receipts["selected_receipt"])
-    selected["max_notional"] = "10"
 
     payload = build_executable_alpha_settlement_slots(
         generated_at=NOW,
@@ -519,27 +620,7 @@ def test_settlement_slots_block_selected_receipt_nonzero_notional() -> None:
     )
 
     assert payload["status"] == "blocked"
-    assert payload["selected_slot"] is None
-    assert payload["reason_codes"] == ["selected_receipt_notional_nonzero"]
-
-
-def test_settlement_slots_require_timezone_aware_generation_time() -> None:
-    try:
-        _build_settlement_slots(generated_at=NOW.replace(tzinfo=None))
-    except ValueError as error:
-        assert str(error) == "generated_at_missing_timezone"
-    else:
-        raise AssertionError("expected generated_at_missing_timezone")
-
-
-def test_compact_settlement_slots_reports_missing_payload() -> None:
-    compact = compact_executable_alpha_settlement_slots(None)
-
-    assert compact == {
-        "schema_version": "torghut.executable-alpha-settlement-slots-ref.v1",
-        "status": "missing",
-        "reason_codes": ["executable_alpha_settlement_slots_missing"],
-    }
+    assert payload["reason_codes"] == ["selected_executable_alpha_repair_receipt_stale"]
 
 
 def test_compact_settlement_slots_exposes_no_delta_receipt_ref() -> None:
