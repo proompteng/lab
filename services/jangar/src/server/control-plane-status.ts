@@ -1,5 +1,3 @@
-import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
-
 import { getAgentsControllerHealth } from '~/server/agents-controller'
 import { buildReconciledActionClocks } from '~/server/control-plane-action-clock'
 import { buildAuthorityProvenanceSettlement } from '~/server/control-plane-authority-provenance-settlement'
@@ -24,6 +22,7 @@ import {
   isTerminalDebtCompactionEnabled,
   type TerminalDebtCompactionEvidence,
 } from '~/server/control-plane-terminal-debt-compaction'
+import { resolveTemporalAdapter } from '~/server/control-plane-temporal-adapter'
 import {
   buildControlPlaneMaterialActionArtifacts,
   type RepairScheduleAttemptResolver,
@@ -120,9 +119,6 @@ import type { ExecutionTrustStatus, WorkflowsReliabilityStatus } from '~/data/ag
 export type { ControlPlaneStatus, DatabaseStatus, GrpcStatus } from './control-plane-status-types'
 export { buildExecutionTrust } from './control-plane-execution-trust'
 
-const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
-const DEFAULT_TEMPORAL_PORT = 7233
-const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
 type ControllerHealth = ReturnType<typeof getAgentsControllerHealth>
 
 export type ControlPlaneStatusOptions = {
@@ -195,31 +191,6 @@ const defaultGetHeartbeat: HeartbeatResolver = async (input) => {
   } catch (error) {
     console.warn('[jangar] failed to read control-plane heartbeat:', normalizeMessage(error))
     return null
-  }
-}
-
-const resolveTemporalAdapter = async (): Promise<RuntimeAdapterStatus> => {
-  try {
-    const config = await loadTemporalConfig({
-      defaults: { host: DEFAULT_TEMPORAL_HOST, port: DEFAULT_TEMPORAL_PORT, address: DEFAULT_TEMPORAL_ADDRESS },
-    })
-    return {
-      name: 'temporal',
-      available: true,
-      status: 'configured',
-      message: 'temporal configuration resolved',
-      endpoint: config.address ?? DEFAULT_TEMPORAL_ADDRESS,
-      authority: buildLocalControlPlaneAuthority('agents'),
-    }
-  } catch (error) {
-    return {
-      name: 'temporal',
-      available: false,
-      status: 'degraded',
-      message: normalizeMessage(error),
-      endpoint: DEFAULT_TEMPORAL_ADDRESS,
-      authority: buildLocalControlPlaneAuthority('agents'),
-    }
   }
 }
 
