@@ -4,6 +4,10 @@
 
 Start here:
 
+- `docs/agents/designs/204-jangar-source-bound-verification-carry-exchange-and-repair-slot-reconciliation-2026-05-14.md`
+  (current Jangar source-bound verification carry exchange and repair-slot reconciliation contract)
+- `docs/torghut/design-system/v6/210-torghut-source-bound-verification-carry-import-and-no-delta-release-2026-05-14.md`
+  (current Torghut source-bound verification-carry import and no-delta release contract)
 - `docs/agents/designs/203-jangar-foreclosure-carry-rollout-witness-and-stage-debt-repair-2026-05-14.md`
   (current Jangar foreclosure-carry rollout witness and stage-debt repair contract)
 - `docs/torghut/design-system/v6/209-torghut-verification-carry-import-and-alpha-repair-release-2026-05-14.md`
