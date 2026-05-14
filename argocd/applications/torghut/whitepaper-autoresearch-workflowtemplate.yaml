@@ -37,19 +37,19 @@ spec:
       - name: targetNetPnlPerDay
         value: '500'
       - name: maxCandidates
-        value: '64'
+        value: '96'
       - name: topK
-        value: '16'
+        value: '24'
       - name: explorationSlots
-        value: '8'
+        value: '16'
       - name: portfolioSizeMin
-        value: '2'
+        value: '3'
       - name: portfolioSizeMax
         value: '8'
       - name: maxFrontierCandidatesPerSpec
         value: '2'
       - name: maxTotalFrontierCandidates
-        value: '24'
+        value: '48'
       - name: realReplayTimeoutSeconds
         value: '7200'
       - name: realReplayShardSize
@@ -57,7 +57,7 @@ spec:
       - name: realReplayShardTimeoutSeconds
         value: '900'
       - name: realReplayShardWorkers
-        value: '3'
+        value: '6'
       - name: prefetchFullWindowRows
         value: 'true'
       - name: allowStaleTape
