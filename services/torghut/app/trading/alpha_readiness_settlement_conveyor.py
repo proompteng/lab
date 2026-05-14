@@ -503,12 +503,13 @@ def _build_settlement_receipt(
         return None
     reason_codes = _reason_codes(selected_receipt)
     reason_set = set(reason_codes)
-    funded_receipts = _funded_receipts(
-        _string_list(selected_lane.get("required_receipts")),
-        selected_receipt,
+    required_receipts = _string_list(selected_lane.get("required_receipts"))
+    funded_receipts = _append_unique(
+        _funded_receipts(required_receipts, selected_receipt),
+        ALPHA_READINESS_SETTLEMENT_RECEIPT_SCHEMA_VERSION,
     )
     missing_receipts = _missing_receipts(
-        _string_list(selected_lane.get("required_receipts")),
+        required_receipts,
         funded_receipts,
     )
     measured_delta = _int(selected_lane.get("measured_routeable_candidate_delta"))

@@ -207,6 +207,11 @@ def test_alpha_readiness_settlement_conveyor_selects_micro_no_delta_lane() -> No
     assert receipt["evidence_window_state"] == "no_delta"
     assert receipt["drift_state"] == "missing"
     assert receipt["schema_lineage_state"] == "missing"
+    assert "torghut.alpha-readiness-settlement-receipt.v1" in receipt["funded_receipts"]
+    assert (
+        "torghut.alpha-readiness-settlement-receipt.v1"
+        not in receipt["missing_receipts"]
+    )
     assert receipt["max_notional"] == "0"
 
 
@@ -241,6 +246,11 @@ def test_alpha_readiness_settlement_conveyor_marks_paid_when_selected_lane_moves
     receipt = cast(Mapping[str, Any], conveyor["settlement_receipt"])
     assert receipt["settlement_state"] == "paid"
     assert "feature_replay_receipt" in receipt["funded_receipts"]
+    assert "torghut.alpha-readiness-settlement-receipt.v1" in receipt["funded_receipts"]
+    assert (
+        "torghut.alpha-readiness-settlement-receipt.v1"
+        not in receipt["missing_receipts"]
+    )
 
 
 def test_alpha_readiness_settlement_conveyor_quarantines_nonzero_notional() -> None:
