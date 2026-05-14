@@ -2,18 +2,23 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { SendHorizontal } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Badge, Button, Textarea } from '~/components/base-ui'
 import { GatewayFrame } from '~/components/gateway-shell'
-import { loadInitialSnapshot } from '~/lib/load-snapshot'
+import { Badge } from '~/components/ui/badge'
+import { Button } from '~/components/ui/button'
+import { Empty, EmptyHeader, EmptyTitle } from '~/components/ui/empty'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
+import { Textarea } from '~/components/ui/textarea'
+import { ruleModeLabel, ruleScope, ruleTargetLabel, statusBadgeVariant, userFacingText } from '~/lib/sag-display'
 import { createRule, fetchSnapshot } from '~/lib/sag-client'
-import { type GatewayRule, type GatewaySnapshot } from '~/server/gateway'
+import { loadInitialSnapshot } from '~/lib/load-snapshot'
+import type { GatewayRule, GatewaySnapshot } from '~/server/gateway'
 
 export const Route = createFileRoute('/rules')({
-  component: RulesRoute,
+  component: PoliciesRoute,
   loader: loadInitialSnapshot,
 })
 
-function RulesRoute() {
+function PoliciesRoute() {
   const initialSnapshot = Route.useLoaderData() as GatewaySnapshot
   const [enabled, setEnabled] = useState(false)
   const [text, setText] = useState('')
@@ -37,52 +42,84 @@ function RulesRoute() {
 
   return (
     <GatewayFrame active="/rules" snapshot={snapshot}>
-      <div className="grid min-h-0 flex-1 grid-cols-[360px_minmax(0,1fr)]">
-        <aside className="flex min-h-0 flex-col border-r border-zinc-800 p-4">
-          <h2 className="text-sm font-medium text-zinc-100">Rule Builder</h2>
-          <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3">
-            <Textarea
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              placeholder="Block AgentRuns that request production secrets"
-              className="min-h-36"
-            />
-            <Button disabled={text.trim().length < 8 || mutation.isPending} onClick={() => mutation.mutate(text)}>
-              <SendHorizontal data-icon="inline-start" />
-              Create rule
-            </Button>
-          </div>
+      <header className="flex h-14 shrink-0 items-center border-b border-zinc-900 px-5">
+        <div className="min-w-0">
+          <h2 className="truncate text-sm font-semibold text-zinc-50">Policies</h2>
+          <div className="mt-0.5 text-xs text-zinc-400">{snapshot.rules.length} active</div>
+        </div>
+      </header>
+      <div className="grid min-h-0 flex-1 grid-cols-[340px_minmax(0,1fr)]">
+        <aside className="flex min-h-0 flex-col gap-3 border-r border-zinc-900 p-4">
+          <h3 className="text-xs font-medium text-zinc-500">Create policy</h3>
+          <Textarea
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            placeholder="Require approval before production changes"
+            className="min-h-36 bg-zinc-950"
+          />
+          <Button disabled={text.trim().length < 8 || mutation.isPending} onClick={() => mutation.mutate(text)}>
+            <SendHorizontal data-icon="inline-start" />
+            Create
+          </Button>
         </aside>
         <section className="min-h-0 overflow-y-auto">
-          <div className="grid h-10 grid-cols-[220px_110px_150px_minmax(0,1fr)] items-center border-b border-zinc-800 px-5 text-[11px] font-medium text-zinc-500">
-            <span>Name</span>
-            <span>Mode</span>
-            <span>Target</span>
-            <span>Pattern</span>
-          </div>
-          <div className="divide-y divide-zinc-900">
-            {snapshot.rules.map((rule) => (
-              <RuleLine key={rule.id} rule={rule} />
-            ))}
-          </div>
+          {snapshot.rules.length === 0 ? (
+            <Empty className="min-h-36 border-0">
+              <EmptyHeader>
+                <EmptyTitle>No policies</EmptyTitle>
+              </EmptyHeader>
+            </Empty>
+          ) : null}
+          {snapshot.rules.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow className="border-zinc-900">
+                  <TableHead className="px-4 text-xs text-zinc-400">Policy</TableHead>
+                  <TableHead className="w-32 px-4 text-xs text-zinc-400">Mode</TableHead>
+                  <TableHead className="px-4 text-xs text-zinc-400">Applies to</TableHead>
+                  <TableHead className="w-36 px-4 text-xs text-zinc-400">Source</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {snapshot.rules.map((rule) => (
+                  <PolicyLine key={rule.id} rule={rule} />
+                ))}
+              </TableBody>
+            </Table>
+          ) : null}
         </section>
       </div>
     </GatewayFrame>
   )
 }
 
-function RuleLine({ rule }: { rule: GatewayRule }) {
+function PolicyLine({ rule }: { rule: GatewayRule }) {
   return (
-    <div className="grid min-h-14 grid-cols-[220px_110px_150px_minmax(0,1fr)] items-center px-5 text-xs">
-      <div className="min-w-0">
-        <p className="truncate text-zinc-100">{rule.name}</p>
-        <p className="truncate font-mono text-[11px] text-zinc-500">{rule.id}</p>
-      </div>
-      <Badge variant={rule.mode === 'block' ? 'destructive' : rule.mode === 'approval' ? 'secondary' : 'outline'}>
-        {rule.mode}
-      </Badge>
-      <span className="font-mono text-[11px] text-zinc-400">{rule.target}</span>
-      <span className="min-w-0 truncate font-mono text-[11px] text-zinc-500">{rule.pattern}</span>
-    </div>
+    <TableRow className="border-zinc-900">
+      <TableCell className="px-4">
+        <div className="grid gap-0.5">
+          <span className="text-xs font-medium text-zinc-100">{rule.name}</span>
+          <span className="line-clamp-1 text-[11px] text-zinc-600">{userFacingText(rule.summary)}</span>
+        </div>
+      </TableCell>
+      <TableCell className="w-32 px-4">
+        <Badge
+          variant={statusBadgeVariant(
+            rule.mode === 'block' ? 'blocked' : rule.mode === 'approval' ? 'needs_approval' : 'allowed',
+          )}
+        >
+          {ruleModeLabel(rule.mode)}
+        </Badge>
+      </TableCell>
+      <TableCell className="px-4">
+        <div className="grid gap-0.5">
+          <span className="text-xs text-zinc-300">{ruleTargetLabel(rule.target)}</span>
+          <span className="text-[11px] text-zinc-600">{ruleScope(rule)}</span>
+        </div>
+      </TableCell>
+      <TableCell className="w-36 px-4 text-xs text-zinc-500">
+        {rule.source === 'natural-language' ? 'Request' : 'System'}
+      </TableCell>
+    </TableRow>
   )
 }

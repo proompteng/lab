@@ -2,11 +2,22 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { CheckCircle2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Badge, Button } from '~/components/base-ui'
 import { GatewayFrame } from '~/components/gateway-shell'
-import { loadInitialSnapshot } from '~/lib/load-snapshot'
+import { Badge } from '~/components/ui/badge'
+import { Button } from '~/components/ui/button'
+import { Empty, EmptyHeader, EmptyTitle } from '~/components/ui/empty'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
+import {
+  approvalActionLabel,
+  formatTime,
+  statusBadgeVariant,
+  statusLabel,
+  targetLabel,
+  userFacingText,
+} from '~/lib/sag-display'
 import { approveRun, fetchSnapshot } from '~/lib/sag-client'
-import { type Approval, type GatewaySnapshot } from '~/server/gateway'
+import { loadInitialSnapshot } from '~/lib/load-snapshot'
+import type { Approval, GatewaySnapshot } from '~/server/gateway'
 
 export const Route = createFileRoute('/approvals')({
   component: ApprovalsRoute,
@@ -32,25 +43,44 @@ function ApprovalsRoute() {
 
   return (
     <GatewayFrame active="/approvals" snapshot={snapshot}>
+      <header className="flex h-14 shrink-0 items-center border-b border-zinc-900 px-5">
+        <div className="min-w-0">
+          <h2 className="truncate text-sm font-semibold text-zinc-50">Approvals</h2>
+          <div className="mt-0.5 text-xs text-zinc-400">{snapshot.stats.awaitingApproval} waiting</div>
+        </div>
+      </header>
       <section className="min-h-0 flex-1 overflow-y-auto">
-        <div className="grid h-10 grid-cols-[160px_130px_minmax(0,1fr)_240px_120px] items-center border-b border-zinc-800 px-5 text-[11px] font-medium text-zinc-500">
-          <span>Approval</span>
-          <span>Status</span>
-          <span>Action</span>
-          <span>Target</span>
-          <span />
-        </div>
-        <div className="divide-y divide-zinc-900">
-          {snapshot.approvals.map((approval) => (
-            <ApprovalLine
-              key={approval.id}
-              approval={approval}
-              approving={mutation.isPending}
-              onApprove={() => mutation.mutate(approval.id)}
-            />
-          ))}
-          {snapshot.approvals.length === 0 ? <div className="p-6 text-sm text-zinc-500">No approvals.</div> : null}
-        </div>
+        {snapshot.approvals.length === 0 ? (
+          <Empty className="min-h-36 border-0">
+            <EmptyHeader>
+              <EmptyTitle>No approvals</EmptyTitle>
+            </EmptyHeader>
+          </Empty>
+        ) : null}
+        {snapshot.approvals.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="border-zinc-900">
+                <TableHead className="w-36 px-4 text-xs text-zinc-400">Status</TableHead>
+                <TableHead className="px-4 text-xs text-zinc-400">Action</TableHead>
+                <TableHead className="px-4 text-xs text-zinc-400">Run</TableHead>
+                <TableHead className="px-4 text-xs text-zinc-400">Reason</TableHead>
+                <TableHead className="w-28 px-4 text-xs text-zinc-400" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {snapshot.approvals.map((approval) => (
+                <ApprovalLine
+                  key={approval.id}
+                  approval={approval}
+                  runTitle={snapshot.actionRuns.find((run) => run.id === approval.taskId)?.title}
+                  approving={mutation.isPending}
+                  onApprove={() => mutation.mutate(approval.id)}
+                />
+              ))}
+            </TableBody>
+          </Table>
+        ) : null}
       </section>
     </GatewayFrame>
   )
@@ -58,23 +88,34 @@ function ApprovalsRoute() {
 
 function ApprovalLine({
   approval,
+  runTitle,
   approving,
   onApprove,
 }: {
   approval: Approval
+  runTitle?: string
   approving: boolean
   onApprove: () => void
 }) {
   return (
-    <div className="grid min-h-14 grid-cols-[160px_130px_minmax(0,1fr)_240px_120px] items-center px-5 text-xs">
-      <span className="font-mono text-[11px] text-zinc-400">{approval.id}</span>
-      <Badge variant={approval.status === 'pending' ? 'secondary' : 'outline'}>{approval.status}</Badge>
-      <span className="min-w-0 truncate text-zinc-300">{approval.action}</span>
-      <span className="min-w-0 truncate font-mono text-[11px] text-zinc-500">{approval.target}</span>
-      <Button size="sm" variant="secondary" disabled={approval.status !== 'pending' || approving} onClick={onApprove}>
-        <CheckCircle2 data-icon="inline-start" />
-        Approve
-      </Button>
-    </div>
+    <TableRow className="border-zinc-900">
+      <TableCell className="w-36 px-4">
+        <Badge variant={statusBadgeVariant(approval.status)}>{statusLabel(approval.status)}</Badge>
+      </TableCell>
+      <TableCell className="px-4">
+        <div className="grid gap-0.5">
+          <span className="text-sm font-medium text-zinc-100">{approvalActionLabel(approval.action)}</span>
+          <span className="text-xs text-zinc-400">{targetLabel(approval.target)}</span>
+        </div>
+      </TableCell>
+      <TableCell className="px-4 text-sm text-zinc-300">{runTitle ?? formatTime(approval.createdAt)}</TableCell>
+      <TableCell className="px-4 text-sm text-zinc-300">{userFacingText(approval.reason)}</TableCell>
+      <TableCell className="w-28 px-4 text-right">
+        <Button size="sm" variant="secondary" disabled={approval.status !== 'pending' || approving} onClick={onApprove}>
+          <CheckCircle2 data-icon="inline-start" />
+          Approve
+        </Button>
+      </TableCell>
+    </TableRow>
   )
 }

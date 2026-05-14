@@ -139,6 +139,49 @@ export type ConnectorCall = {
   evidence: EvidenceRecord
 }
 
+export type ActionDecision = 'pending' | 'allowed' | 'needs_approval' | 'blocked' | 'executed' | 'approved' | 'failed'
+
+export type ActionEvidence = {
+  summary: string
+  target: string
+  policy: string
+  durationMs: number
+}
+
+export type AgentActionStep = {
+  id: string
+  runId: string
+  sequence: number
+  source: ConnectorKind
+  sourceLabel: string
+  action: string
+  target: string
+  decision: ActionDecision
+  decisionLabel: string
+  evidence: ActionEvidence
+  approvalId?: string
+}
+
+export type AgentActionRun = {
+  id: string
+  title: string
+  request: string
+  requestedBy: string
+  requesterRole: string
+  createdAt: string
+  updatedAt: string
+  decision: ActionDecision
+  decisionLabel: string
+  riskScore: number
+  sourceCount: number
+  actionCount: number
+  auditCount: number
+  summary: string
+  approvalId?: string
+  approvalStatus?: Approval['status']
+  steps: AgentActionStep[]
+}
+
 export type ProtectedAgentRun = {
   id: string
   name: string
@@ -164,6 +207,7 @@ export type RuleMessage = {
 }
 
 export type GatewaySnapshot = {
+  actionRuns: AgentActionRun[]
   actors: Actor[]
   connectors: Connector[]
   events: GatewayEvent[]
@@ -1332,6 +1376,189 @@ const statusSummary = (status: ProtectedAgentRun['status'], name: string) => {
   return `Allowed ${name} with audit capture.`
 }
 
+const displayText = (value: string) =>
+  value
+    .replaceAll('AgentRuns', 'protected workloads')
+    .replaceAll('AgentRun', 'protected workload')
+    .replaceAll('SQL policy state', 'policy data')
+    .replaceAll('SQL', 'policy data')
+    .replaceAll('REST', 'workload API')
+    .replaceAll('GraphQL', 'audit graph')
+    .replaceAll('legacy feed', 'operations feed')
+    .replaceAll('legacy line-oriented status feed', 'operations status feed')
+    .replaceAll('connector', 'source')
+
+const actionSourceLabel = (value: ConnectorKind) => {
+  const labels: Record<ConnectorKind, string> = {
+    sql: 'Policy data',
+    rest: 'Workload API',
+    graphql: 'Audit graph',
+    legacy: 'Ops feed',
+    kubernetes: 'Workload control',
+    policy: 'Policy gate',
+    audit: 'Audit log',
+  }
+  return labels[value]
+}
+
+const actionOperationLabel = (value: string) => {
+  const labels: Record<string, string> = {
+    'policy_context.read': 'Read current policy',
+    'agentruns.list': 'Inspect workloads',
+    'audit_graph.query': 'Reconcile audit',
+    'legacy_status.parse': 'Parse ops feed',
+    'guarded_action.execute': 'Execute change',
+    'task:intake': 'Receive request',
+    'task:plan': 'Plan actions',
+    'approval:request': 'Hold for approval',
+    'approval:approve': 'Release action',
+    'policy:block': 'Block action',
+    'rule:create': 'Create policy',
+    'agentrun:evaluate': 'Evaluate workload',
+    'legacy.import': 'Import event',
+  }
+  return labels[value] ?? displayText(value)
+}
+
+const actionPolicyLabel = (value: string) => {
+  if (value === 'no-rule-match') return 'Clear'
+  if (value === 'identity-rbac-v1') return 'Identity'
+  if (value === 'connector-plan-v1') return 'Plan'
+  if (value === 'approval-rbac-v1') return 'Approval'
+  if (value === 'natural-language-rule-builder-v2') return 'Created'
+  if (value.includes(',')) return `${value.split(',').filter(Boolean).length} policies`
+  if (value.startsWith('rule-')) return 'Policy'
+  return displayText(value)
+}
+
+const actionTargetLabel = (value: string) => {
+  if (value.includes('sag.sql')) return 'Policy store'
+  if (value.includes('guarded-action')) return 'Workload controller'
+  if (value.includes('kubernetes/apis') || value.includes('agents.proompteng.ai')) return 'Workload API'
+  if (value.includes('sag.graphql')) return 'Audit graph'
+  if (value.includes('line-protocol')) return 'Ops feed'
+  if (value.includes('/api/events/export')) return 'Audit export'
+  if (value.startsWith('postgresql://')) return 'Policy store'
+  if (value.startsWith('/api/internal/graphql')) return 'Audit graph'
+  return displayText(value)
+}
+
+const actionDecisionLabel = (value: ActionDecision) => {
+  const labels: Record<ActionDecision, string> = {
+    pending: 'Pending',
+    allowed: 'Allowed',
+    needs_approval: 'Needs approval',
+    blocked: 'Blocked',
+    executed: 'Executed',
+    approved: 'Approved',
+    failed: 'Failed',
+  }
+  return labels[value]
+}
+
+const taskDecision = (task: GatewayTask): ActionDecision => {
+  if (task.decision === 'approval_required' || task.status === 'waiting_approval') return 'needs_approval'
+  if (task.decision === 'approved') return 'approved'
+  if (task.decision === 'blocked' || task.status === 'blocked') return 'blocked'
+  if (task.decision === 'failed' || task.status === 'failed') return 'failed'
+  if (task.decision === 'succeeded' || task.status === 'succeeded') return 'executed'
+  if (task.decision === 'planned' || task.status === 'running') return 'pending'
+  return 'allowed'
+}
+
+const stepDecision = (
+  step: PlanStep,
+  call: ConnectorCall | undefined,
+  approval: Approval | undefined,
+): ActionDecision => {
+  if (approval?.status === 'approved') return 'approved'
+  if (approval?.status === 'pending' || step.status === 'approval_required') return 'needs_approval'
+  if (step.status === 'blocked' || call?.status === 'blocked') return 'blocked'
+  if (step.status === 'failed' || call?.status === 'failed') return 'failed'
+  if (call?.status === 'succeeded' || step.status === 'succeeded') return 'executed'
+  if (step.status === 'allowed') return 'allowed'
+  return 'pending'
+}
+
+const callEvidenceSummary = (call: ConnectorCall | undefined, step: PlanStep) => {
+  if (!call) {
+    if (step.status === 'approval_required') return 'Waiting for approval.'
+    if (step.status === 'blocked') return 'Stopped before execution.'
+    return 'Ready.'
+  }
+
+  const evidence = call.evidence
+  const liveWorkloads = typeof evidence.liveAgentRuns === 'number' ? evidence.liveAgentRuns : null
+  const protectedWithSecrets = typeof evidence.protectedWithSecrets === 'number' ? evidence.protectedWithSecrets : null
+  const linesParsed = typeof evidence.linesParsed === 'number' ? evidence.linesParsed : null
+  const nodes = typeof evidence.nodes === 'number' ? evidence.nodes : null
+  const tasks = typeof evidence.tasks === 'number' ? evidence.tasks : null
+  const auditEvents = typeof evidence.auditEvents === 'number' ? evidence.auditEvents : null
+
+  if (call.connector === 'rest' && liveWorkloads !== null) {
+    return `${liveWorkloads} workloads inspected, ${protectedWithSecrets ?? 0} sensitive.`
+  }
+  if (call.connector === 'legacy' && linesParsed !== null) return `${linesParsed} ops records normalized.`
+  if (call.connector === 'graphql' && nodes !== null) return `${nodes} audit nodes reconciled.`
+  if (call.connector === 'sql' && tasks !== null) return `${tasks} requests, ${auditEvents ?? 0} audit events.`
+  return `${actionOperationLabel(call.operation)} completed.`
+}
+
+const buildActionRuns = (state: GatewayState): AgentActionRun[] =>
+  state.tasks.map((task) => {
+    const steps = state.planSteps
+      .filter((step) => step.taskId === task.id)
+      .sort((left, right) => left.sequence - right.sequence)
+    const events = state.events.filter((event) => event.taskId === task.id)
+    const taskApproval = state.approvals.find((approval) => approval.taskId === task.id)
+    const sources = new Set(steps.map((step) => step.connector))
+
+    const actionSteps: AgentActionStep[] = steps.map((step) => {
+      const call = state.connectorCalls.find((item) => item.stepId === step.id)
+      const approval = state.approvals.find((item) => item.runId === step.id)
+      const decision = stepDecision(step, call, approval)
+      return {
+        id: step.id,
+        runId: task.id,
+        sequence: step.sequence,
+        source: step.connector,
+        sourceLabel: actionSourceLabel(step.connector),
+        action: actionOperationLabel(step.operation),
+        target: actionTargetLabel(step.target),
+        decision,
+        decisionLabel: actionDecisionLabel(decision),
+        evidence: {
+          summary: callEvidenceSummary(call, step),
+          target: actionTargetLabel(call?.target ?? step.target),
+          policy: actionPolicyLabel(step.policy),
+          durationMs: call?.durationMs ?? step.durationMs,
+        },
+        approvalId: approval?.id,
+      }
+    })
+
+    const decision = taskDecision(task)
+    return {
+      id: task.id,
+      title: displayText(task.title.replace(/\.\.\.$/, '')),
+      request: displayText(task.intent),
+      requestedBy: task.actorEmail,
+      requesterRole: findActor(task.requestedBy).role,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      decision,
+      decisionLabel: actionDecisionLabel(decision),
+      riskScore: task.riskScore,
+      sourceCount: sources.size,
+      actionCount: actionSteps.length,
+      auditCount: events.length,
+      summary: displayText(task.summary),
+      approvalId: taskApproval?.id,
+      approvalStatus: taskApproval?.status,
+      steps: actionSteps,
+    }
+  })
+
 export const buildSnapshot = (stateInput: GatewayState, filters?: SnapshotFilters): GatewaySnapshot => {
   const state = normalizeGatewayState(stateInput)
   const normalized = filters ?? {}
@@ -1361,6 +1588,7 @@ export const buildSnapshot = (stateInput: GatewayState, filters?: SnapshotFilter
   })
 
   return {
+    actionRuns: buildActionRuns(state),
     actors,
     connectors,
     events: filteredEvents,

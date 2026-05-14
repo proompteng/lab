@@ -1,7 +1,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: sag-agentrun-reader
+  name: sag-agentrun-operator
   labels:
     app.kubernetes.io/name: sag
     app.kubernetes.io/part-of: lab
@@ -15,6 +15,7 @@ rules:
       - get
       - list
       - watch
+      - create
   - apiGroups:
       - batch
     resources:
@@ -23,18 +24,32 @@ rules:
       - get
       - list
       - watch
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - pods/log
+    verbs:
+      - get
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: sag-agentrun-reader
+  name: sag-agentrun-operator
   labels:
     app.kubernetes.io/name: sag
     app.kubernetes.io/part-of: lab
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: sag-agentrun-reader
+  name: sag-agentrun-operator
 subjects:
   - kind: ServiceAccount
     name: sag

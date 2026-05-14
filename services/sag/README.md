@@ -1,6 +1,6 @@
 # Secure Action Gateway
 
-Secure Action Gateway protects internal AgentRuns before sensitive runtime authority is attached. It evaluates requested secrets, connectors, and tools, applies deterministic rules, records approval decisions, and exports a redacted audit trail.
+SAG turns a natural-language request into an Agent Action Run: planned action steps, source calls, policy decisions, approval gates, and audit replay.
 
 ## Local Run
 
@@ -18,12 +18,11 @@ bun run --filter @proompteng/sag lint:oxlint
 bun run --filter @proompteng/sag build
 ```
 
-## Live Workflow
+## Product Flow
 
 1. Open `/`.
-2. Click `Evaluate AgentRun`.
-3. Review the event log and selected AgentRun manifest.
-4. Create a rule in `/rules`.
-5. Evaluate a mutating AgentRun action through `/api/agents/runs`.
-6. Approve or deny from `/approvals`.
-7. Export `/api/events/export`.
+2. Submit a request.
+3. Review the Agent Action Run.
+4. Approve a held action when policy requires it.
+5. Open `Audit`.
+6. Export the audit replay.

@@ -15,7 +15,7 @@ export const Route = createRootRoute({
 
 function RootDocument() {
   return (
-    <html lang="en" className="dark h-full bg-zinc-950">
+    <html lang="en" className="dark h-full bg-zinc-950 text-zinc-100 [color-scheme:dark]">
       <head>
         <HeadContent />
       </head>
