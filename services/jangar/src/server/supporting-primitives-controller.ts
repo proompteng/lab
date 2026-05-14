@@ -19,6 +19,7 @@ import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
 import { startResourceWatch } from '~/server/kube-watch'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import { publishMaterialReentryRequirementSignals } from '~/server/supporting-primitives-material-reentry-requirements'
 import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
 import {
   buildScheduleRunnerCommand,
@@ -2122,11 +2123,27 @@ const reconcileSwarm = async (
       stageConfig.stage === 'implement' && stageConfig.enabled && Boolean(stageConfig.targetRef),
   )
   const requirementSelector = `${SWARM_REQUIREMENT_LABEL_TYPE}=requirement,${SWARM_REQUIREMENT_LABEL_TO}=${swarmLabel}`
-  const requirementSignals = sortRequirementSignalsForDispatch(
+  const listedRequirementSignals = sortRequirementSignalsForDispatch(
     listItems(await kube.list(RESOURCE_MAP.Signal, swarmNamespace, requirementSelector)).filter(
       (signal) => !isTerminalRequirementSignal(signal),
     ),
   )
+  const listedRequirementSignalNames = new Set(
+    listedRequirementSignals
+      .map((signal) => asString(readNested(signal, ['metadata', 'name'])))
+      .filter((name): name is string => Boolean(name)),
+  )
+  const materialReentrySignalPublication = await publishMaterialReentryRequirementSignals({
+    kube,
+    materialReentryRequirementSignals: stageClearanceMarket?.materialReentryRequirementSignals ?? [],
+    namespace: swarmNamespace,
+    swarmName,
+    existingSignalNames: listedRequirementSignalNames,
+  })
+  const requirementSignals = sortRequirementSignalsForDispatch([
+    ...listedRequirementSignals,
+    ...materialReentrySignalPublication.publishedSignals,
+  ])
   const requirementRunStates = new Map<
     string,
     {
@@ -2171,6 +2188,8 @@ const reconcileSwarm = async (
     completed: 0,
     invalidChannel: 0,
     rejected: 0,
+    materialReentryGenerated: materialReentrySignalPublication.publishedSignals.length,
+    materialReentryPublishErrors: materialReentrySignalPublication.publishErrors,
     duplicates: countIdempotencyDuplicates(implementRuns),
     paused: requirementDispatchPauseAssessment !== null,
     pauseReason: requirementDispatchPauseAssessment ? 'AgentRunIngestionDegraded' : null,
@@ -2591,6 +2610,8 @@ const reconcileSwarm = async (
       completed: requirementStats.completed,
       invalidChannel: requirementStats.invalidChannel,
       rejected: requirementStats.rejected,
+      materialReentryGenerated: requirementStats.materialReentryGenerated,
+      materialReentryPublishErrors: requirementStats.materialReentryPublishErrors,
       duplicates: requirementStats.duplicates,
       paused: requirementStats.paused,
       admission: admissionStatusForStage(requirementAdmission),
@@ -2633,6 +2654,7 @@ const reconcileSwarm = async (
   const requirementsHealthy =
     requirementStats.blocked === 0 &&
     requirementStats.duplicates === 0 &&
+    requirementStats.materialReentryPublishErrors === 0 &&
     !requirementStats.paused &&
     !requirementTemplateError
   const readyActive = unhealthyStages.length === 0 && requirementsHealthy
@@ -2713,11 +2735,13 @@ const reconcileSwarm = async (
             ? requirementAdmission.reason
             : requirementStats.stageClearanceBlocked > 0 && requirementStageClearance
               ? requirementStageClearance.reason
-              : !requirementsHealthy
-                ? 'RequirementsBridgeDegraded'
-                : unhealthyStages.length > 0
-                  ? 'StageHealthDegraded'
-                  : 'Healthy',
+              : requirementStats.materialReentryPublishErrors > 0
+                ? 'MaterialReentrySignalPublishFailed'
+                : !requirementsHealthy
+                  ? 'RequirementsBridgeDegraded'
+                  : unhealthyStages.length > 0
+                    ? 'StageHealthDegraded'
+                    : 'Healthy',
     message:
       verifyFailures >= 2
         ? `verify stage has ${verifyFailures} consecutive failures`
@@ -2727,11 +2751,13 @@ const reconcileSwarm = async (
             ? requirementAdmission.message
             : requirementStats.stageClearanceBlocked > 0 && requirementStageClearance
               ? requirementStageClearance.message
-              : !requirementsHealthy
-                ? 'requirement bridge is degraded'
-                : unhealthyStages.length > 0
-                  ? `unhealthy stages: ${unhealthyStages.join(', ')}`
-                  : 'all stage and requirement health checks passing',
+              : requirementStats.materialReentryPublishErrors > 0
+                ? `${requirementStats.materialReentryPublishErrors} material reentry requirement signal(s) failed to publish`
+                : !requirementsHealthy
+                  ? 'requirement bridge is degraded'
+                  : unhealthyStages.length > 0
+                    ? `unhealthy stages: ${unhealthyStages.join(', ')}`
+                    : 'all stage and requirement health checks passing',
   })
 
   if (requirementStats.invalidChannel > 0) {
@@ -2775,6 +2801,13 @@ const reconcileSwarm = async (
       status: 'False',
       reason: 'RequirementDispatchDuplicate',
       message: `${requirementStats.duplicates} duplicate/idempotent requirement run(s) detected`,
+    })
+  } else if (requirementStats.materialReentryPublishErrors > 0) {
+    conditions = upsertCondition(conditions, {
+      type: 'RequirementsBridge',
+      status: 'False',
+      reason: 'MaterialReentrySignalPublishFailed',
+      message: `${requirementStats.materialReentryPublishErrors} material reentry requirement signal(s) failed to publish`,
     })
   } else if (requirementStats.blocked > 0) {
     conditions = upsertCondition(conditions, {

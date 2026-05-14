@@ -6,6 +6,10 @@ import type {
   StageClearancePacket,
 } from '~/data/agents-control-plane'
 import { asRecord, asString } from '~/server/primitives-http'
+import {
+  readMaterialReentryRequirementSignals,
+  type MaterialReentryRequirementSignal,
+} from '~/server/supporting-primitives-material-reentry-requirements'
 import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
 import {
   applyEvidencePressureTrace,
@@ -95,6 +99,7 @@ export type StageClearanceStatusSnapshot = {
   stageAdmissions: ClearanceMarketStageAdmission[]
   stageCredit: StageCreditStatusSnapshot | null
   evidencePressure: EvidencePressureStatusSnapshot | null
+  materialReentryRequirementSignals: MaterialReentryRequirementSignal[]
 }
 
 type StageCreditAccountSnapshot = {
@@ -288,6 +293,7 @@ const readStageClearanceStatusSnapshot = (status: Record<string, unknown>): Stag
       .filter(isPresent),
     stageCredit: readStageCreditStatusSnapshot(status.stage_credit_ledger),
     evidencePressure: readEvidencePressureStatusSnapshot(status.evidence_pressure_ledger),
+    materialReentryRequirementSignals: readMaterialReentryRequirementSignals(status),
   }
 }
 
