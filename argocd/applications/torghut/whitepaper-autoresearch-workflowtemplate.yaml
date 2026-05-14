@@ -68,7 +68,7 @@ spec:
     - name: run
       nodeSelector:
         kubernetes.io/arch: arm64
-      activeDeadlineSeconds: 21600
+      activeDeadlineSeconds: 10800
       inputs:
         parameters:
           - name: runId

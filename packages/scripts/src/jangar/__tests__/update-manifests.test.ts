@@ -109,6 +109,11 @@ describe('updateJangarManifests', () => {
       runtimeImageEnv: true,
       sourceHeadShaEnv: false,
       gitopsRevisionEnv: false,
+      sourceCiRunIdEnv: false,
+      sourceCiConclusionEnv: false,
+      manifestImageDigestEnv: false,
+      servingBuildCommitEnv: false,
+      servingImageDigestEnv: false,
       worker: false,
       agentsValues: false,
     })
@@ -271,6 +276,63 @@ describe('updateJangarManifests', () => {
       digest: 'sha256:controlplanedigest',
     })
     expect(result.changed.agentsValues).toBe(true)
+
+    rmSync(fixture.dir, { recursive: true, force: true })
+  })
+
+  it('publishes source-serving proof env to service and agents control-plane values', () => {
+    const fixture = createFixture()
+    const sourceHeadSha = '9e7b87d813d9732d44586e213d9f47ec178f705a'
+    const gitopsRevision = '9e7b87d8'
+    const controlPlaneDigest = 'sha256:controlplanedigest'
+
+    const result = updateJangarManifests({
+      imageName,
+      tag: 'agents-tag',
+      digest: 'sha256:agentsdigest',
+      controlPlaneImageName: 'registry.ide-newton.ts.net/lab/jangar-control-plane',
+      controlPlaneDigest,
+      sourceHeadSha,
+      gitopsRevision,
+      sourceCiRunId: '123456',
+      sourceCiConclusion: 'success',
+      rolloutTimestamp: '2026-02-20T08:45:00.000Z',
+      kustomizationPath: relative(repoRoot, fixture.kustomizationPath),
+      serviceManifestPath: relative(repoRoot, fixture.serviceManifestPath),
+      agentsValuesPath: relative(repoRoot, fixture.agentsValuesPath),
+    })
+
+    const serviceManifest = YAML.parse(readFileSync(fixture.serviceManifestPath, 'utf8')) as {
+      spec?: { template?: { spec?: { containers?: Array<{ env?: Array<{ name?: string; value?: string }> }> } } }
+    }
+    const values = YAML.parse(readFileSync(fixture.agentsValuesPath, 'utf8')) as {
+      controlPlane?: { env?: { vars?: Record<string, string> } }
+    }
+    const serviceEnv = serviceManifest.spec?.template?.spec?.containers?.[0]?.env
+    const expectedProofEnv = {
+      JANGAR_SOURCE_HEAD_SHA: sourceHeadSha,
+      JANGAR_GITOPS_REVISION: gitopsRevision,
+      JANGAR_SOURCE_CI_RUN_ID: '123456',
+      JANGAR_SOURCE_CI_CONCLUSION: 'success',
+      JANGAR_MANIFEST_IMAGE_DIGEST: controlPlaneDigest,
+      JANGAR_SERVING_BUILD_COMMIT: sourceHeadSha,
+      JANGAR_SERVING_IMAGE_DIGEST: controlPlaneDigest,
+    }
+
+    for (const [name, value] of Object.entries(expectedProofEnv)) {
+      expect(serviceEnv).toContainEqual({ name, value })
+      expect(values.controlPlane?.env?.vars?.[name]).toBe(value)
+    }
+    expect(result.changed).toMatchObject({
+      sourceHeadShaEnv: true,
+      gitopsRevisionEnv: true,
+      sourceCiRunIdEnv: true,
+      sourceCiConclusionEnv: true,
+      manifestImageDigestEnv: true,
+      servingBuildCommitEnv: true,
+      servingImageDigestEnv: true,
+      agentsValues: true,
+    })
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })

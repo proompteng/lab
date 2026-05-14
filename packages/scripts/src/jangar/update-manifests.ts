@@ -27,6 +27,11 @@ export type UpdateManifestsOptions = {
   controlPlaneDigest?: string
   sourceHeadSha?: string
   gitopsRevision?: string
+  sourceCiRunId?: string
+  sourceCiConclusion?: string
+  manifestImageDigest?: string
+  servingBuildCommit?: string
+  servingImageDigest?: string
   rolloutTimestamp: string
   kustomizationPath?: string
   serviceManifestPath?: string
@@ -43,6 +48,11 @@ type CliOptions = {
   controlPlaneDigest?: string
   sourceHeadSha?: string
   gitopsRevision?: string
+  sourceCiRunId?: string
+  sourceCiConclusion?: string
+  manifestImageDigest?: string
+  servingBuildCommit?: string
+  servingImageDigest?: string
   rolloutTimestamp?: string
   kustomizationPath?: string
   serviceManifestPath?: string
@@ -69,6 +79,53 @@ const asRecord = (value: unknown): Record<string, unknown> | null => {
   return null
 }
 
+type SourceServingProofEnv = {
+  sourceHeadSha?: string
+  gitopsRevision?: string
+  sourceCiRunId?: string
+  sourceCiConclusion?: string
+  manifestImageDigest?: string
+  servingBuildCommit?: string
+  servingImageDigest?: string
+}
+
+const buildSourceServingProofEnv = (proof: SourceServingProofEnv) =>
+  Object.fromEntries(
+    Object.entries({
+      JANGAR_SOURCE_HEAD_SHA: normalizeOptional(proof.sourceHeadSha),
+      JANGAR_GITOPS_REVISION: normalizeOptional(proof.gitopsRevision),
+      JANGAR_SOURCE_CI_RUN_ID: normalizeOptional(proof.sourceCiRunId),
+      JANGAR_SOURCE_CI_CONCLUSION: normalizeOptional(proof.sourceCiConclusion),
+      JANGAR_MANIFEST_IMAGE_DIGEST: normalizeOptional(proof.manifestImageDigest),
+      JANGAR_SERVING_BUILD_COMMIT: normalizeOptional(proof.servingBuildCommit),
+      JANGAR_SERVING_IMAGE_DIGEST: normalizeOptional(proof.servingImageDigest),
+    }).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  )
+
+const upsertDeploymentEnvValues = (manifestPath: string, containerName: string, values: Record<string, string>) => {
+  const changed: Record<string, boolean> = {}
+  for (const [name, value] of Object.entries(values)) {
+    changed[name] = upsertDeploymentContainerEnvValue(manifestPath, containerName, name, value)
+    if (changed[name]) {
+      console.log(`Updated ${manifestPath} env ${name} to ${value}`)
+    } else {
+      console.warn(`Warning: ${manifestPath} env ${name} was not updated; manifest may already match.`)
+    }
+  }
+  return changed
+}
+
+const upsertRecordValues = (record: Record<string, unknown>, values: Record<string, string>) => {
+  let changed = false
+  for (const [key, value] of Object.entries(values)) {
+    if (record[key] !== value) {
+      record[key] = value
+      changed = true
+    }
+  }
+  return changed
+}
+
 const updateAgentsValuesManifest = (
   valuesPath: string,
   imageName: string,
@@ -76,6 +133,7 @@ const updateAgentsValuesManifest = (
   digest: string,
   controlPlaneImageName?: string,
   controlPlaneDigest?: string,
+  sourceServingProofEnv: Record<string, string> = {},
 ): boolean => {
   const source = readFileSync(valuesPath, 'utf8')
   const parsed = YAML.parse(source)
@@ -111,6 +169,16 @@ const updateAgentsValuesManifest = (
     doc.controlPlane = controlPlane
   }
 
+  if (Object.keys(sourceServingProofEnv).length > 0) {
+    const controlPlane = asRecord(doc.controlPlane) ?? {}
+    const controlPlaneEnv = asRecord(controlPlane.env) ?? {}
+    const controlPlaneEnvVars = asRecord(controlPlaneEnv.vars) ?? {}
+    upsertRecordValues(controlPlaneEnvVars, sourceServingProofEnv)
+    controlPlaneEnv.vars = controlPlaneEnvVars
+    controlPlane.env = controlPlaneEnv
+    doc.controlPlane = controlPlane
+  }
+
   const updated = YAML.stringify(doc, { lineWidth: 120 })
   if (source === updated) {
     console.warn('Warning: agents values were not updated; values already match requested image.')
@@ -129,6 +197,9 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
   const digest = normalizeDigest(options.digest ?? inspectImageDigest(`${options.imageName}:${options.tag}`))
   const controlPlaneDigest = options.controlPlaneDigest ? normalizeDigest(options.controlPlaneDigest) : undefined
   const agentsValuesPath = options.agentsValuesPath ? resolvePath(options.agentsValuesPath) : null
+  const manifestImageDigest = normalizeOptional(options.manifestImageDigest) ?? controlPlaneDigest
+  const servingBuildCommit = normalizeOptional(options.servingBuildCommit) ?? normalizeOptional(options.sourceHeadSha)
+  const servingImageDigest = normalizeOptional(options.servingImageDigest) ?? controlPlaneDigest
 
   const kustomizationChanged = updateKustomizationImage(kustomizationPath, options.imageName, options.tag, digest)
   if (!kustomizationChanged) {
@@ -162,28 +233,17 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
   }
 
   const sourceHeadSha = normalizeOptional(options.sourceHeadSha)
-  const sourceHeadShaEnvChanged = sourceHeadSha
-    ? upsertDeploymentContainerEnvValue(serviceManifestPath, 'app', 'JANGAR_SOURCE_HEAD_SHA', sourceHeadSha)
-    : false
-  if (sourceHeadSha) {
-    if (!sourceHeadShaEnvChanged) {
-      console.warn('Warning: jangar source head env was not updated; manifest may already match.')
-    } else {
-      console.log(`Updated ${serviceManifestPath} env JANGAR_SOURCE_HEAD_SHA to ${sourceHeadSha}`)
-    }
-  }
-
   const gitopsRevision = normalizeOptional(options.gitopsRevision)
-  const gitopsRevisionEnvChanged = gitopsRevision
-    ? upsertDeploymentContainerEnvValue(serviceManifestPath, 'app', 'JANGAR_GITOPS_REVISION', gitopsRevision)
-    : false
-  if (gitopsRevision) {
-    if (!gitopsRevisionEnvChanged) {
-      console.warn('Warning: jangar GitOps revision env was not updated; manifest may already match.')
-    } else {
-      console.log(`Updated ${serviceManifestPath} env JANGAR_GITOPS_REVISION to ${gitopsRevision}`)
-    }
-  }
+  const sourceServingProofEnv = buildSourceServingProofEnv({
+    sourceHeadSha,
+    gitopsRevision,
+    sourceCiRunId: options.sourceCiRunId,
+    sourceCiConclusion: options.sourceCiConclusion,
+    manifestImageDigest,
+    servingBuildCommit,
+    servingImageDigest,
+  })
+  const sourceServingProofEnvChanged = upsertDeploymentEnvValues(serviceManifestPath, 'app', sourceServingProofEnv)
 
   const workerChanged = workerManifestPath
     ? updateManifestAnnotation(workerManifestPath, 'kubectl.kubernetes.io/restartedAt', options.rolloutTimestamp)
@@ -205,6 +265,7 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
         digest,
         options.controlPlaneImageName,
         controlPlaneDigest,
+        sourceServingProofEnv,
       )
     : false
 
@@ -217,8 +278,13 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
       kustomization: kustomizationChanged,
       service: serviceChanged,
       runtimeImageEnv: runtimeImageEnvChanged,
-      sourceHeadShaEnv: sourceHeadShaEnvChanged,
-      gitopsRevisionEnv: gitopsRevisionEnvChanged,
+      sourceHeadShaEnv: sourceServingProofEnvChanged.JANGAR_SOURCE_HEAD_SHA ?? false,
+      gitopsRevisionEnv: sourceServingProofEnvChanged.JANGAR_GITOPS_REVISION ?? false,
+      sourceCiRunIdEnv: sourceServingProofEnvChanged.JANGAR_SOURCE_CI_RUN_ID ?? false,
+      sourceCiConclusionEnv: sourceServingProofEnvChanged.JANGAR_SOURCE_CI_CONCLUSION ?? false,
+      manifestImageDigestEnv: sourceServingProofEnvChanged.JANGAR_MANIFEST_IMAGE_DIGEST ?? false,
+      servingBuildCommitEnv: sourceServingProofEnvChanged.JANGAR_SERVING_BUILD_COMMIT ?? false,
+      servingImageDigestEnv: sourceServingProofEnvChanged.JANGAR_SERVING_IMAGE_DIGEST ?? false,
       worker: workerChanged,
       agentsValues: agentsValuesChanged,
     },
@@ -241,6 +307,11 @@ Options:
   --control-plane-digest <value>
   --source-head-sha <sha>
   --gitops-revision <sha>
+  --source-ci-run-id <id>
+  --source-ci-conclusion <conclusion>
+  --manifest-image-digest <digest>
+  --serving-build-commit <sha>
+  --serving-image-digest <digest>
   --rollout-timestamp <ISO8601>
   --kustomization-path <path>
   --service-manifest-path <path>
@@ -287,6 +358,21 @@ Options:
       case '--gitops-revision':
         options.gitopsRevision = value
         break
+      case '--source-ci-run-id':
+        options.sourceCiRunId = value
+        break
+      case '--source-ci-conclusion':
+        options.sourceCiConclusion = value
+        break
+      case '--manifest-image-digest':
+        options.manifestImageDigest = value
+        break
+      case '--serving-build-commit':
+        options.servingBuildCommit = value
+        break
+      case '--serving-image-digest':
+        options.servingImageDigest = value
+        break
       case '--rollout-timestamp':
         options.rolloutTimestamp = value
         break
@@ -331,6 +417,21 @@ export const main = (cliOptions?: CliOptions) => {
       process.env.JANGAR_GITOPS_REVISION ??
       process.env.ARGOCD_APP_REVISION ??
       process.env.ARGOCD_REVISION,
+    sourceCiRunId: parsed.sourceCiRunId ?? process.env.JANGAR_SOURCE_CI_RUN_ID ?? process.env.GITHUB_RUN_ID,
+    sourceCiConclusion: parsed.sourceCiConclusion ?? process.env.JANGAR_SOURCE_CI_CONCLUSION,
+    manifestImageDigest:
+      parsed.manifestImageDigest ??
+      process.env.JANGAR_MANIFEST_IMAGE_DIGEST ??
+      process.env.JANGAR_CONTROL_PLANE_IMAGE_DIGEST,
+    servingBuildCommit:
+      parsed.servingBuildCommit ??
+      process.env.JANGAR_SERVING_BUILD_COMMIT ??
+      process.env.JANGAR_SOURCE_HEAD_SHA ??
+      process.env.JANGAR_COMMIT,
+    servingImageDigest:
+      parsed.servingImageDigest ??
+      process.env.JANGAR_SERVING_IMAGE_DIGEST ??
+      process.env.JANGAR_CONTROL_PLANE_IMAGE_DIGEST,
     rolloutTimestamp,
     kustomizationPath: parsed.kustomizationPath ?? process.env.JANGAR_KUSTOMIZATION_PATH,
     serviceManifestPath: parsed.serviceManifestPath ?? process.env.JANGAR_SERVICE_MANIFEST,
