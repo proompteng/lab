@@ -4,6 +4,10 @@
 
 Start here:
 
+- `docs/agents/designs/206-jangar-route-adjacent-proof-custody-and-torghut-reentry-admission-2026-05-14.md`
+  (current Jangar route-adjacent proof custody and Torghut reentry admission contract)
+- `docs/torghut/design-system/v6/212-torghut-route-adjacent-proof-and-execution-freshness-reentry-2026-05-14.md`
+  (current Torghut route-adjacent proof and execution-freshness reentry contract)
 - `docs/agents/designs/204-jangar-source-bound-verification-carry-exchange-and-repair-slot-reconciliation-2026-05-14.md`
   (current Jangar source-bound verification carry exchange and repair-slot reconciliation contract)
 - `docs/torghut/design-system/v6/210-torghut-source-bound-verification-carry-import-and-no-delta-release-2026-05-14.md`
