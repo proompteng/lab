@@ -26,6 +26,7 @@ import {
 } from '~/server/control-plane-torghut-consumer-evidence'
 import { buildMaterialGateDigest } from '~/server/control-plane-material-gate-digest'
 import { buildRevenueRepairSettlementCustody } from '~/server/control-plane-revenue-repair-settlement-custody'
+import { buildVerifyTrustForeclosureBoard } from '~/server/control-plane-verify-trust-foreclosure'
 import type { ControlPlaneRolloutHealth } from '~/server/control-plane-status-types'
 import { getWatchReliabilitySummary } from '~/server/control-plane-watch-reliability'
 
@@ -324,14 +325,28 @@ export const getReadyHandler = async () => {
   const ready = controllersOk && leaderElectionReady && memoryProviderReady
   const status = ready && agentsControllerHealthy && servingPassportReady ? 'ok' : 'degraded'
   const readyPathRolloutHealth = buildReadyPathRolloutHealth(ready)
+  const readyPathSourceServingExchange = buildReadyPathSourceServingExchange(now, namespaces[0] ?? 'agents')
   const revenueRepairSettlementCustody = buildRevenueRepairSettlementCustody(
     {
       now,
       namespace: namespaces[0] ?? 'agents',
       rolloutHealth: readyPathRolloutHealth,
-      sourceServingContractVerdictExchange: buildReadyPathSourceServingExchange(now, namespaces[0] ?? 'agents'),
+      sourceServingContractVerdictExchange: readyPathSourceServingExchange,
       stageCreditLedger: null,
       torghutConsumerEvidence: torghutConsumerEvidence.status,
+    },
+    'observe',
+  )
+  const verifyTrustForeclosureBoard = buildVerifyTrustForeclosureBoard(
+    {
+      now,
+      namespace: namespaces[0] ?? 'agents',
+      executionTrust: trust,
+      sourceServingContractVerdictExchange: readyPathSourceServingExchange,
+      torghutConsumerEvidence: torghutConsumerEvidence.status,
+      revenueRepairSettlementCustody,
+      rolloutHealth: readyPathRolloutHealth,
+      serviceHealth: ready ? status : 'down',
     },
     'observe',
   )
@@ -361,6 +376,7 @@ export const getReadyHandler = async () => {
     torghut_consumer_evidence: torghutConsumerEvidence.status,
     repair_bid_admission: repairBidAdmission,
     revenue_repair_settlement_custody: revenueRepairSettlementCustody,
+    verify_trust_foreclosure_board: verifyTrustForeclosureBoard,
     material_gate_digest: materialGateDigest,
     evidence_pressure_ledger: evidencePressureLedger,
     memory_provider: memoryProvider,

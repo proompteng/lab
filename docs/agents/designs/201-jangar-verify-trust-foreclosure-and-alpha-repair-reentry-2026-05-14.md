@@ -454,3 +454,35 @@ revenue-repair agree on the board decision before calling the PR-to-rollout path
 The smallest blocker preventing improvement is current and specific: `jangar-control-plane:verify` has consecutive
 failures, and Torghut's selected alpha repair has an active no-delta release key with routeable candidate count still
 at zero.
+
+## Implementation Update - 2026-05-14
+
+The implementation now emits the additive `verify_trust_foreclosure_board` in observe mode from both the `/ready` hot
+path and `/api/agents/control-plane/status`. The board joins execution trust, source-serving truth, controller and
+database witnesses when available, route stability, revenue-repair settlement custody, Torghut consumer evidence, and
+the compact alpha repair dividend ledger. It exposes `alpha_repair_reentry_admission` so duplicate no-delta alpha
+repair launches are denied with the active release key while serve-readonly and Torghut observe paths stay separate.
+
+Jangar now parses Torghut's compact `torghut.alpha-repair-dividend-ledger-ref.v1` from consumer evidence and carries
+`ledger_id`, selected hypothesis, selected value gate, routeable candidate delta, no-delta release key,
+`launch_decision`, validation command, max notional, capital rule, and rollback target into the control-plane data
+model.
+
+Local validation for the implementation:
+
+- `bunx vitest run --config vitest.config.ts src/server/__tests__/control-plane-verify-trust-foreclosure.test.ts src/server/__tests__/control-plane-torghut-consumer-evidence.test.ts src/routes/ready.test.ts`
+- `bunx vitest run --config vitest.config.ts src/server/__tests__/control-plane-status.test.ts`
+- `bun run --filter @proompteng/jangar tsc`
+- `bun run --filter @proompteng/jangar lint`
+- `bun run --filter @proompteng/jangar lint:oxlint`
+- `bunx oxfmt --check` on the touched Jangar files
+
+Live pre-rollout evidence from `http://agents.agents.svc.cluster.local/ready` at `2026-05-14T13:25:30Z` still shows
+`business_state=repair_only`, `revenue_ready=false`, top repair `repair_alpha_readiness`, affected value gate
+`routeable_candidate_count`, and `execution_trust.status=degraded` for
+`jangar-control-plane:plan:plan consecutive failures`. The deployed service does not yet expose
+`verify_trust_foreclosure_board`; release must verify that field after this PR rolls out.
+
+Rollback for this implementation is to set `JANGAR_VERIFY_TRUST_FORECLOSURE_MODE=observe` or stop consuming the board
+while leaving ready truth, revenue-repair settlement custody, material gate digest, and Torghut max notional `0` as the
+active safety authorities.
