@@ -165,13 +165,13 @@ Testing rules for the trading core:
   - `torghut_trading_alpha_readiness_hypotheses_total`
   - `torghut_trading_alpha_readiness_promotion_eligible_total`
   - `torghut_trading_alpha_readiness_rollback_required_total`
-- Live and paper trading-loop manifests intentionally do not configure Jangar control-plane, quant-health,
-  symbol-universe, or market-context URLs. The executable universe is declared inside Torghut, and readiness must be
-  proven from Torghut-owned signal, empirical-job, proof-floor, routeability, and execution evidence rather than an
-  external Jangar status service.
+- The live trading-loop manifest sets `TRADING_JANGAR_CONTROL_PLANE_STATUS_URL` to the cluster-local Jangar
+  control-plane status route so revenue-repair can import controller-ingestion carry, verify-foreclosure boards, and
+  repair-slot escrow for zero-notional no-delta decisions. Paper/sim still leaves that URL unset. The executable
+  universe remains declared inside Torghut, and live submission remains gated by Torghut-owned signal, empirical-job,
+  proof-floor, routeability, and execution evidence rather than by Jangar serving health alone.
 - Optional cross-service dependency quorum checks remain available for off-path experiments by setting
-  `TRADING_JANGAR_CONTROL_PLANE_STATUS_URL`. Do not add that variable to the production live or paper trading services
-  unless the trading loop is explicitly meant to fail closed on that external service.
+  `TRADING_JANGAR_CONTROL_PLANE_STATUS_URL` on non-production surfaces that need the same bounded carry import.
 - Optional external quant-health checks remain available by setting `TRADING_JANGAR_QUANT_HEALTH_URL`. Torghut rejects
   that URL when it does not target the typed `/api/torghut/trading/control-plane/quant/health` surface; use
   `TRADING_JANGAR_QUANT_WINDOW` to align the expected freshness window. The production live and paper trading manifests
@@ -247,8 +247,9 @@ Testing rules for the trading core:
   `torghut.jangar-controller-ingestion-carry.v1` import reducer. It classifies Jangar controller-ingestion carry as
   `current`, `repairable`, `lagging`, `unavailable`, `stale`, or `contradicted`, feeds that state into the no-delta
   auction, and mirrors a compact `torghut.jangar-controller-ingestion-carry-ref.v1` through `/readyz` and
-  `/trading/consumer-evidence`. A `jangar_verify_carry` ticket is selectable only for `repairable` carry and always
-  keeps `max_notional=0`.
+  `/trading/consumer-evidence`. The import carries Jangar repair-slot escrow and rollout-witness refs when available
+  so `hold` or `block` settlements can name the exact zero-notional blocker instead of collapsing to a generic missing
+  carry. A `jangar_verify_carry` ticket is selectable only for `repairable` carry and always keeps `max_notional=0`.
 - `GET /trading/status` and `GET /readyz` now include the May 8 doc 181
   `quality_adjusted_profit_frontier` shadow projection. The reducer ranks zero-notional repair packets from quant
   quality, market-context risk flags, route/TCA state, simulation-cache freshness, and Jangar evidence-quality refs

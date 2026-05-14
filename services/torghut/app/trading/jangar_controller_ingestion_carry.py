@@ -257,11 +257,17 @@ def _controller_ingestion_current(settlement: Mapping[str, Any]) -> bool | None:
     if direct is not None:
         return direct
     for key in (
+        "agentrun_ingestion_current",
+        "agentrunIngestionCurrent",
         "ingestion_current",
         "ingestionCurrent",
+        "controller_self_report_current",
+        "controllerSelfReportCurrent",
         "current",
         "watch_current",
         "watchCurrent",
+        "watch_epoch_current",
+        "watchEpochCurrent",
         "self_report_current",
         "selfReportCurrent",
     ):
@@ -463,6 +469,17 @@ def build_jangar_controller_ingestion_carry(
         )
         if not selected_ticket_class:
             selected_ticket_class = "jangar_verify_carry"
+    elif (
+        decision in {"hold", "block"}
+        and settlement
+        and (board_ref or source_claim or ingestion_current is False)
+    ):
+        carry_state = "lagging"
+        reason_codes = _append_unique(
+            reason_codes,
+            f"jangar_controller_ingestion_{decision}",
+            "jangar_controller_ingestion_lagging",
+        )
     elif source_claim and (not board_ref or ingestion_current is not True):
         carry_state = "lagging"
         reason_codes = _append_unique(

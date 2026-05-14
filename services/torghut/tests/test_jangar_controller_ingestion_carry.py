@@ -102,6 +102,39 @@ def test_controller_ingestion_carry_classifies_lagging_source_claim() -> None:
     assert "jangar_controller_ingestion_lagging" in carry["reason_codes"]
 
 
+def test_controller_ingestion_carry_classifies_held_jangar_settlement_as_lagging() -> (
+    None
+):
+    carry = build_jangar_controller_ingestion_carry(
+        generated_at=NOW,
+        dependency_quorum={
+            "controller_ingestion_settlement": {
+                "settlement_id": "controller-ingestion-settlement:hold",
+                "decision": "hold",
+                "agentrun_ingestion_current": False,
+                "fresh_until": "2026-05-14T15:45:00+00:00",
+                "reason_codes": ["agentrun_ingestion_unknown"],
+            },
+            "verify_trust_foreclosure_board": {
+                "board_id": "verify-trust-foreclosure-board:hold",
+                "fresh_until": "2026-05-14T15:45:00+00:00",
+            },
+            "repair_slot_escrow": {
+                "escrow_id": "repair-slot-escrow:hold",
+                "status": "block",
+                "reason_codes": ["selected_receipt_source_revenue_repair_ref_mismatch"],
+            },
+        },
+    )
+
+    assert carry["carry_state"] == "lagging"
+    assert carry["jangar_settlement_decision"] == "hold"
+    assert carry["jangar_controller_ingestion_current"] is False
+    assert carry["jangar_repair_slot_escrow_ref"] == "repair-slot-escrow:hold"
+    assert "jangar_controller_ingestion_hold" in carry["reason_codes"]
+    assert "jangar_controller_ingestion_lagging" in carry["reason_codes"]
+
+
 def test_controller_ingestion_carry_classifies_stale_settlement() -> None:
     carry = build_jangar_controller_ingestion_carry(
         generated_at=NOW,
