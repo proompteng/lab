@@ -325,6 +325,7 @@ class TestLiveConfigManifestContract(TestCase):
                 "breakout-continuation-long-v1",
                 "mean-reversion-rebound-long-v1",
                 "mean-reversion-exhaustion-short-v1",
+                "late-day-continuation-long-v1",
             },
         )
 
@@ -398,6 +399,22 @@ class TestLiveConfigManifestContract(TestCase):
                 self.assertLessEqual(
                     Decimal(str(params.get("max_spread_bps") or "0")),
                     Decimal("20"),
+                )
+            elif str(strategy.get("strategy_type")) == "late_day_continuation_long_v1":
+                self.assertEqual(name, "late-day-continuation-long-v1")
+                self.assertLessEqual(
+                    _strategy_decimal(strategy, "max_notional_per_trade")
+                    or Decimal("0"),
+                    Decimal("94770"),
+                )
+                self.assertEqual(
+                    _strategy_decimal(strategy, "max_position_pct_equity"),
+                    Decimal("3.0"),
+                )
+                self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
+                self.assertLessEqual(
+                    Decimal(str(params.get("max_spread_bps") or "0")),
+                    Decimal("22"),
                 )
             else:
                 self.fail(
