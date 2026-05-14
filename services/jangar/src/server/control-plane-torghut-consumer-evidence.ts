@@ -6,6 +6,7 @@ import type {
   TorghutRepairBidSettlementLot,
   TorghutRepairBidSettlementStatus,
   TorghutRepairOutcomeEscrow,
+  TorghutRevenueRepairQueueItem,
 } from '~/data/agents-control-plane'
 import {
   deriveRevenueRepairEndpoint,
@@ -15,6 +16,11 @@ import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
 import { readTorghutFreshnessCarryEvidence } from '~/server/control-plane-torghut-freshness-carry'
 import { readTorghutRepairOutcomeEvidence } from '~/server/control-plane-torghut-repair-outcome'
 import { readExecutableAlphaRepairReceipts } from '~/server/control-plane-torghut-executable-alpha-repair'
+import {
+  hasRevenueRepairSummary,
+  normalizeRevenueRepairBoolean,
+  readRevenueRepairQueue,
+} from '~/server/control-plane-torghut-revenue-repair'
 import type { TorghutNegativeEvidenceInput } from '~/server/control-plane-negative-evidence-router-torghut'
 import {
   normalizeNonEmpty,
@@ -38,6 +44,9 @@ export type TorghutConsumerEvidenceStatus = {
   candidate_id: string | null
   dataset_snapshot_ref: string | null
   max_notional: string | null
+  revenue_repair_business_state?: string | null
+  revenue_repair_ready?: boolean | null
+  revenue_repair_queue?: TorghutRevenueRepairQueueItem[]
   route_canary_id?: string | null
   jangar_parity_escrow_ref?: string | null
   serving_revision?: string | null
@@ -252,15 +261,19 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   const inlineExecutableAlphaRepairReceipts = readExecutableAlphaRepairReceipts(payload)
   const revenueRepairEndpoint = deriveRevenueRepairEndpoint(endpoint)
   const revenueRepairResult =
-    (!inlineAlphaReadinessStrikeLedger || !inlineExecutableAlphaRepairReceipts) &&
     revenueRepairEndpoint &&
-    revenueRepairEndpoint !== endpoint
+    revenueRepairEndpoint !== endpoint &&
+    (!hasRevenueRepairSummary(payload) || !inlineAlphaReadinessStrikeLedger || !inlineExecutableAlphaRepairReceipts)
       ? await requestJson(revenueRepairEndpoint, config.torghutStatusTimeoutMs)
       : null
   const alphaReadinessStrikeLedger =
     inlineAlphaReadinessStrikeLedger ?? readAlphaReadinessStrikeLedger(revenueRepairResult?.payload ?? null)
   const executableAlphaRepairReceipts =
     inlineExecutableAlphaRepairReceipts ?? readExecutableAlphaRepairReceipts(revenueRepairResult?.payload ?? null)
+  const revenueRepairPayload = hasRevenueRepairSummary(payload) ? payload : (revenueRepairResult?.payload ?? null)
+  const revenueRepairBusinessState = normalizeReason(revenueRepairPayload?.business_state)
+  const revenueRepairReady = normalizeRevenueRepairBoolean(revenueRepairPayload?.revenue_ready)
+  const revenueRepairQueue = readRevenueRepairQueue(revenueRepairPayload)
   const payloadSchema = normalizeNonEmpty(payload.schema_version)
   if (payloadSchema && payloadSchema !== CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION) {
     return {
@@ -623,6 +636,9 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       candidate_id: normalizeNonEmpty(receipt.candidate_id),
       dataset_snapshot_ref: normalizeNonEmpty(receipt.dataset_snapshot_ref),
       max_notional: maxNotional,
+      revenue_repair_business_state: revenueRepairBusinessState,
+      revenue_repair_ready: revenueRepairReady,
+      revenue_repair_queue: revenueRepairQueue,
       route_canary_id: normalizeNonEmpty(receipt.route_canary_id),
       jangar_parity_escrow_ref: normalizeNonEmpty(receipt.jangar_parity_escrow_ref),
       serving_revision: servingRevision,

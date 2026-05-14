@@ -385,6 +385,19 @@ Implementation note, 2026-05-14:
 - This implementation is projection-only. It does not alter schedule-runner enforcement, live submission flags, GitOps
   promotion, or repair-bid admission.
 
+Implementation note, 2026-05-14 ready projection:
+
+- Jangar now hydrates compact revenue-repair summary fields from `/trading/revenue-repair` alongside the existing
+  Torghut consumer-evidence receipt.
+- `/ready` projects `business_state`, `revenue_ready`, `repair_queue`, `top_repair_queue_item`, and
+  `affected_value_gate` at the response top level so mission ledgers and deployer handoffs can cite the active
+  repair-only blocker without rehydrating nested Torghut payloads.
+- These fields are read-only handoff evidence for `ready_status_truth` and `handoff_evidence_quality`. They do not
+  change HTTP readiness, schedule admission, runtime passports, stage credit, repair-bid admission, or Torghut capital
+  gates.
+- Rollback is to ignore the top-level ready projection or revert the projection while continuing to consume nested
+  Torghut evidence and the material reentry clearinghouse.
+
 ### Engineer Milestone 2: API And Progress Surface
 
 Expose the clearinghouse in `/api/agents/control-plane/status` and in the ready/status UI as a compact list of current

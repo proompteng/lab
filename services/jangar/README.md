@@ -434,6 +434,10 @@ when the revenue-repair queue ranks `routeable_candidate_count` first and repair
 promotion-custody dispatch ticket, the clearinghouse names that repair receipt while paper and live capital remain
 blocked by existing material gates. Rollback is to ignore `material_reentry_clearinghouse`; scheduler admission,
 runtime passports, stage credit, ready truth, and repair-bid admission continue to enforce the current safety posture.
+The `/ready` response also projects the same revenue-repair business evidence at the top level as `business_state`,
+`revenue_ready`, `repair_queue`, `top_repair_queue_item`, and `affected_value_gate` so mission ledgers and deployer
+handoffs do not have to rehydrate the nested Torghut payload before naming the active repair-only blocker. These fields
+are evidence only; they do not change HTTP readiness or enable paper/live capital.
 
 Control-plane status also emits `authority_provenance_settlement` from
 `docs/agents/designs/189-jangar-authority-provenance-settlement-and-rollout-reentry-windows-2026-05-13.md`. The
