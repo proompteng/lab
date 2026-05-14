@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
 
 from .alpha_readiness_strike_ledger import build_alpha_readiness_strike_ledger
+from .alpha_repair_closure_board import build_alpha_repair_closure_board
 from .executable_alpha_receipts import build_executable_alpha_repair_receipts
 
 
@@ -851,6 +852,12 @@ def build_revenue_repair_digest(
         status_payload.get("repair_bid_settlement_ledger"),
         readyz_payload.get("repair_bid_settlement_ledger"),
     )
+    db_check = _choose_mapping(
+        status_payload.get("db_check"),
+        status_payload.get("database_contract"),
+        _mapping(_mapping(readyz_payload.get("dependencies")).get("database")),
+        _mapping(_mapping(readyz_payload.get("dependencies")).get("database_contract")),
+    )
     dependencies = _mapping(readyz_payload.get("dependencies"))
     blocking_reasons = _collect_blocking_reasons(readyz_payload, status_payload)
     repair_queue = _build_repair_queue(proof_floor, status_payload, blocking_reasons)
@@ -932,6 +939,23 @@ def build_revenue_repair_digest(
         capital=capital,
         repair_bid_settlement_ledger=repair_bid_settlement,
     )
+    alpha_repair_closure_board = build_alpha_repair_closure_board(
+        generated_at=generated,
+        business_state=business_state,
+        revenue_ready=revenue_ready,
+        repair_queue=cast(Sequence[Mapping[str, Any]], repair_queue),
+        capital=capital,
+        evidence=evidence,
+        executable_alpha_repair_receipts=executable_alpha_repair_receipts,
+        source_serving_metadata={
+            "build": build,
+            "source_serving_repair_receipt_ledger": status_payload.get(
+                "source_serving_repair_receipt_ledger"
+            ),
+            "route_evidence_clearinghouse_packet": route_evidence_clearinghouse,
+        },
+        db_check=db_check,
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated.isoformat(),
@@ -942,6 +966,7 @@ def build_revenue_repair_digest(
         "repair_bid_settlement_ledger": dict(repair_bid_settlement),
         "alpha_readiness_strike_ledger": alpha_readiness_strike_ledger,
         "executable_alpha_repair_receipts": executable_alpha_repair_receipts,
+        "alpha_repair_closure_board": alpha_repair_closure_board,
         "business_state": business_state,
         "revenue_ready": revenue_ready,
         "health": {

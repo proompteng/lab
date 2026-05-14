@@ -416,6 +416,29 @@ class TestBuildRevenueRepairDigest(TestCase):
         )
         self.assertEqual(selected_repair_receipt["max_notional"], "0")
         self.assertTrue(selected_repair_receipt["no_delta_settlement_required"])
+        closure_board = digest["alpha_repair_closure_board"]
+        self.assertIsInstance(closure_board, dict)
+        self.assertEqual(
+            closure_board["schema_version"],
+            "torghut.alpha-repair-closure-board.v1",
+        )
+        self.assertEqual(closure_board["status"], "selected")
+        self.assertEqual(
+            closure_board["selected_value_gate"], "routeable_candidate_count"
+        )
+        self.assertEqual(closure_board["max_notional"], "0")
+        repair_closures = closure_board["repair_closures"]
+        self.assertIsInstance(repair_closures, list)
+        self.assertEqual(repair_closures[0]["queue_code"], "repair_alpha_readiness")
+        self.assertEqual(
+            repair_closures[0]["required_output_receipt"],
+            "torghut.executable-alpha-receipts.v1",
+        )
+        self.assertEqual(
+            repair_closures[0]["no_delta_reason"],
+            "routeable_candidate_count_unchanged",
+        )
+        self.assertEqual(len(closure_board["no_delta_debt"]), 1)
         self.assertEqual(repair_queue[1]["code"], "repair_execution_tca")
         self.assertNotIn("repair_repair_only", [item["code"] for item in repair_queue])
         self.assertIn(

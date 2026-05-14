@@ -22,6 +22,7 @@ from app.trading.revenue_repair import (
     _load_json_object,
     _parse_generated_at,
     _sequence,
+    build_alpha_repair_closure_board,
     build_revenue_repair_digest,
     main,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "_load_json_object",
     "_parse_generated_at",
     "_sequence",
+    "build_alpha_repair_closure_board",
     "build_revenue_repair_digest",
     "main",
 ]
