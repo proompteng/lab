@@ -967,6 +967,32 @@ describe('control-plane Torghut consumer evidence', () => {
             capital_rule: 'zero_notional_repair_only',
             release_conditions: ['evidence_window_changes'],
           },
+          alpha_closure_dividend_slo: {
+            schema_version: 'torghut.alpha-closure-dividend-slo.v1',
+            slo_id: 'alpha-closure-dividend-slo:test',
+            generated_at: '2026-05-14T08:24:00.000Z',
+            fresh_until: '2026-05-14T08:39:00.000Z',
+            source_revenue_repair_ref: 'torghut-revenue-repair-digest:test',
+            source_board_ref: 'alpha-repair-closure-board:test',
+            source_settlement_market_ref: 'alpha-closure-settlement-market:test',
+            selected_hypothesis_id: 'H-MICRO-01',
+            selected_value_gate: 'routeable_candidate_count',
+            selected_repair_class: 'feature_replay_closure',
+            required_settlement_receipt: 'torghut.alpha-closure-settlement-receipt.v1',
+            active_dedupe_key: 'alpha-window:test',
+            routeable_candidate_count_before: 0,
+            routeable_candidate_count_after: 0,
+            measured_delta: 0,
+            dividend_state: 'no_delta',
+            preserved_reason_codes: ['route_universe_empty'],
+            no_delta_budget_state: 'consumed',
+            no_delta_debt_count: 1,
+            release_conditions: ['evidence_window_changes'],
+            validation_commands: ['uv run --frozen pytest services/torghut/tests/test_alpha_closure_dividend_slo.py'],
+            max_notional: '0',
+            capital_rule: 'zero_notional_repair_only',
+            reason_codes: ['alpha_closure_no_delta_active'],
+          },
           alpha_evidence_foundry: {
             schema_version: 'torghut.alpha-evidence-foundry-ref.v1',
             foundry_id: 'alpha-evidence-foundry:test',
@@ -993,7 +1019,7 @@ describe('control-plane Torghut consumer evidence', () => {
     const result = await resolveTorghutConsumerEvidence(new Date('2026-05-14T08:24:10.000Z'))
 
     expect(result.status.observed_contracts).toEqual(
-      expect.arrayContaining(['alpha_repair_closure_board', 'alpha_evidence_foundry']),
+      expect.arrayContaining(['alpha_repair_closure_board', 'alpha_closure_dividend_slo', 'alpha_evidence_foundry']),
     )
     expect(result.status.alpha_repair_closure_board).toMatchObject({
       board_id: 'alpha-repair-closure-board:test',
@@ -1008,6 +1034,15 @@ describe('control-plane Torghut consumer evidence', () => {
       selected_queue_code: 'repair_alpha_readiness',
       selected_value_gate: 'routeable_candidate_count',
       no_delta_debt_count: 3,
+    })
+    expect(result.status.alpha_closure_dividend_slo).toMatchObject({
+      slo_id: 'alpha-closure-dividend-slo:test',
+      source_board_ref: 'alpha-repair-closure-board:test',
+      source_settlement_market_ref: 'alpha-closure-settlement-market:test',
+      selected_hypothesis_id: 'H-MICRO-01',
+      dividend_state: 'no_delta',
+      no_delta_budget_state: 'consumed',
+      no_delta_debt_count: 1,
     })
   })
 
