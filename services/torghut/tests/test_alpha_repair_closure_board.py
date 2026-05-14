@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, cast
 
+import pytest
+
 from app.trading.alpha_repair_closure_board import (
     build_alpha_repair_closure_board,
     compact_alpha_repair_closure_board,
@@ -78,18 +80,21 @@ def _repair_receipts() -> dict[str, object]:
 
 def _build(
     *,
+    generated_at: datetime = NOW,
     repair_queue: list[dict[str, object]] | None = None,
     capital: Mapping[str, Any] | None = None,
+    evidence: Mapping[str, Any] | None = None,
+    repair_receipts: Mapping[str, Any] | None = None,
     db_check: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     return build_alpha_repair_closure_board(
-        generated_at=NOW,
+        generated_at=generated_at,
         business_state="repair_only",
         revenue_ready=False,
         repair_queue=repair_queue or _repair_queue(),
         capital=capital or {"max_notional": "0"},
-        evidence=_evidence(),
-        executable_alpha_repair_receipts=_repair_receipts(),
+        evidence=evidence or _evidence(),
+        executable_alpha_repair_receipts=repair_receipts or _repair_receipts(),
         source_serving_metadata={
             "build": {
                 "commit": "source-sha",
@@ -122,6 +127,54 @@ def test_alpha_repair_closure_board_selects_zero_notional_top_alpha_repair() -> 
     no_delta_debt = cast(list[Mapping[str, Any]], board["no_delta_debt"])
     assert no_delta_debt[0]["dedupe_key"] == closure["dedupe_key"]
     assert "blocker_set_changes" in no_delta_debt[0]["release_conditions"]
+
+
+def test_alpha_repair_closure_board_accepts_string_db_schema_flags() -> None:
+    selected = _build(db_check={"schema_current": "allow"})
+    held = _build(db_check={"schema_current": "hold"})
+    default_held = _build(db_check={"schema_current": "unknown"})
+
+    assert selected["status"] == "selected"
+    assert selected["db_schema_current"] is True
+    assert held["status"] == "held"
+    assert held["db_schema_current"] is False
+    assert default_held["status"] == "held"
+    assert "db_check_schema_not_current" in default_held["reason_codes"]
+
+
+def test_alpha_repair_closure_board_uses_receipt_list_fallback_and_positive_delta() -> None:
+    repair_receipts = _repair_receipts()
+    selected_receipt = cast(dict[str, object], repair_receipts.pop("selected_receipt"))
+    selected_receipt["measured_delta"] = "2.0"
+    selected_receipt["reason_codes"] = [
+        "alpha_readiness_not_promotion_eligible",
+        "alpha_readiness_not_promotion_eligible",
+        "",
+    ]
+    repair_receipts["receipts"] = [selected_receipt]
+    evidence = _evidence()
+    repair_bid_settlement = cast(dict[str, object], evidence["repair_bid_settlement"])
+    routeability_acceptance = cast(dict[str, object], evidence["routeability_acceptance"])
+    repair_bid_settlement["routeable_candidate_count"] = True
+    routeability_acceptance["accepted_routeable_candidate_count"] = 4.7
+    evidence["route_evidence_clearinghouse"] = {
+        "accepted_routeable_candidate_count": "not-a-count",
+    }
+
+    board = _build(evidence=evidence, repair_receipts=repair_receipts)
+
+    closure = cast(list[Mapping[str, Any]], board["repair_closures"])[0]
+    assert board["routeable_candidate_count"] == 4
+    assert closure["measured_delta"] == 2
+    assert closure["no_delta_reason"] == ""
+    assert board["no_delta_debt"] == []
+    assert closure["before_refs"][-1] == "executable-alpha-repair-receipt:test"
+    assert closure["required_receipts"].count("torghut.executable-alpha-receipts.v1") == 1
+
+
+def test_alpha_repair_closure_board_rejects_naive_generated_at() -> None:
+    with pytest.raises(ValueError, match="generated_at_missing_timezone"):
+        _build(generated_at=datetime(2026, 5, 14, 0, 10))
 
 
 def test_alpha_repair_closure_board_holds_when_db_schema_is_not_current() -> None:
@@ -169,3 +222,33 @@ def test_compact_alpha_repair_closure_board_returns_jangar_facing_ref() -> None:
     assert compact["required_output_receipt"] == "torghut.executable-alpha-receipts.v1"
     assert compact["no_delta_debt_count"] == 1
     assert compact["max_notional"] == "0"
+
+
+def test_compact_alpha_repair_closure_board_reports_missing_payload() -> None:
+    compact = compact_alpha_repair_closure_board(None)
+
+    assert compact == {
+        "schema_version": "torghut.alpha-repair-closure-board-ref.v1",
+        "status": "missing",
+        "reason_codes": ["alpha_repair_closure_board_missing"],
+    }
+
+
+def test_compact_alpha_repair_closure_board_tolerates_non_sequence_closures() -> None:
+    compact = compact_alpha_repair_closure_board(
+        {
+            "schema_version": "torghut.alpha-repair-closure-board.v1",
+            "status": "held",
+            "reason_codes": "not-a-list",
+            "repair_closures": "not-a-list",
+            "no_delta_debt": "not-a-list",
+            "top_queue_item_ref": {
+                "required_output_receipt": "torghut.executable-alpha-receipts.v1",
+            },
+        }
+    )
+
+    assert compact["reason_codes"] == []
+    assert compact["top_closure_id"] is None
+    assert compact["required_output_receipt"] == "torghut.executable-alpha-receipts.v1"
+    assert compact["no_delta_debt_count"] == 0
