@@ -4,7 +4,7 @@ metadata:
   name: jangar-swarm-discover-template
   namespace: agents
   annotations:
-    agents.proompteng.ai/template: 'true'
+    agents.proompteng.ai/template: "true"
 spec:
   agentRef:
     name: codex-spark-agent
@@ -64,7 +64,7 @@ metadata:
   name: jangar-swarm-plan-template
   namespace: agents
   annotations:
-    agents.proompteng.ai/template: 'true'
+    agents.proompteng.ai/template: "true"
 spec:
   agentRef:
     name: codex-spark-agent
@@ -124,7 +124,7 @@ metadata:
   name: jangar-swarm-implement-template
   namespace: agents
   annotations:
-    agents.proompteng.ai/template: 'true'
+    agents.proompteng.ai/template: "true"
 spec:
   agentRef:
     name: codex-spark-agent
@@ -185,7 +185,7 @@ metadata:
   name: jangar-swarm-verify-template
   namespace: agents
   annotations:
-    agents.proompteng.ai/template: 'true'
+    agents.proompteng.ai/template: "true"
 spec:
   agentRef:
     name: codex-spark-agent
@@ -195,6 +195,15 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
+  workload:
+    resources:
+      requests:
+        cpu: "1"
+        memory: 4Gi
+        ephemeral-storage: 8Gi
+      limits:
+        memory: 16Gi
+        ephemeral-storage: 16Gi
   ttlSecondsAfterFinished: 0
   workflow:
     steps:
@@ -249,7 +258,7 @@ metadata:
   name: torghut-swarm-discover-template
   namespace: agents
   annotations:
-    agents.proompteng.ai/template: 'true'
+    agents.proompteng.ai/template: "true"
 spec:
   agentRef:
     name: codex-spark-agent
@@ -309,7 +318,7 @@ metadata:
   name: torghut-swarm-plan-template
   namespace: agents
   annotations:
-    agents.proompteng.ai/template: 'true'
+    agents.proompteng.ai/template: "true"
 spec:
   agentRef:
     name: codex-spark-agent
@@ -369,7 +378,7 @@ metadata:
   name: torghut-swarm-implement-template
   namespace: agents
   annotations:
-    agents.proompteng.ai/template: 'true'
+    agents.proompteng.ai/template: "true"
 spec:
   agentRef:
     name: codex-spark-agent
@@ -430,7 +439,7 @@ metadata:
   name: torghut-swarm-verify-template
   namespace: agents
   annotations:
-    agents.proompteng.ai/template: 'true'
+    agents.proompteng.ai/template: "true"
 spec:
   agentRef:
     name: codex-spark-agent
@@ -440,6 +449,15 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
+  workload:
+    resources:
+      requests:
+        cpu: "1"
+        memory: 4Gi
+        ephemeral-storage: 8Gi
+      limits:
+        memory: 16Gi
+        ephemeral-storage: 16Gi
   ttlSecondsAfterFinished: 0
   workflow:
     steps:
