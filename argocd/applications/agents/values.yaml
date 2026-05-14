@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: 13d640a0
-  digest: sha256:68335f00b292252c64080a51f6b7f724fabc68be7f70f156ca3f44619e2590a8
+  tag: b9e2b92d
+  digest: sha256:a668ae5b35a0402dea5c677cac12fe90e3ba987bdbabb327dffaeb4bf87ac7a9
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,25 +11,25 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: 13d640a0
-    digest: sha256:5a3935288918a35399d60c667d823af93cad07fa01d2219b7b18ae77126b7016
+    tag: b9e2b92d
+    digest: sha256:4b4c83c512a93b5e61bb9876ef882674c69bef66b26b397ea333901638f21d8a
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
       JANGAR_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence
       JANGAR_TORGHUT_STATUS_TIMEOUT_MS: "3000"
-      JANGAR_SOURCE_HEAD_SHA: 13d640a02e107b453684078b13a223711444407b
-      JANGAR_GITOPS_REVISION: 13d640a02e107b453684078b13a223711444407b
-      JANGAR_SOURCE_CI_RUN_ID: "25864565594"
+      JANGAR_SOURCE_HEAD_SHA: b9e2b92d5e566c4e57bf213e149fd8cd319e2c4c
+      JANGAR_GITOPS_REVISION: b9e2b92d5e566c4e57bf213e149fd8cd319e2c4c
+      JANGAR_SOURCE_CI_RUN_ID: "25867585507"
       JANGAR_SOURCE_CI_CONCLUSION: success
-      JANGAR_MANIFEST_IMAGE_DIGEST: sha256:5a3935288918a35399d60c667d823af93cad07fa01d2219b7b18ae77126b7016
-      JANGAR_SERVING_BUILD_COMMIT: 13d640a02e107b453684078b13a223711444407b
-      JANGAR_SERVING_IMAGE_DIGEST: sha256:5a3935288918a35399d60c667d823af93cad07fa01d2219b7b18ae77126b7016
+      JANGAR_MANIFEST_IMAGE_DIGEST: sha256:4b4c83c512a93b5e61bb9876ef882674c69bef66b26b397ea333901638f21d8a
+      JANGAR_SERVING_BUILD_COMMIT: b9e2b92d5e566c4e57bf213e149fd8cd319e2c4c
+      JANGAR_SERVING_IMAGE_DIGEST: sha256:4b4c83c512a93b5e61bb9876ef882674c69bef66b26b397ea333901638f21d8a
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: 13d640a0
-    digest: sha256:68335f00b292252c64080a51f6b7f724fabc68be7f70f156ca3f44619e2590a8
+    tag: b9e2b92d
+    digest: sha256:a668ae5b35a0402dea5c677cac12fe90e3ba987bdbabb327dffaeb4bf87ac7a9
 argocdHooks:
   enabled: true
   image:
