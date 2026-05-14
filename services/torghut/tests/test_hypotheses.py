@@ -1053,6 +1053,42 @@ class TestHypothesisReadiness(TestCase):
         self.assertEqual(status.decision, "block")
         self.assertEqual(status.reasons, ["workflows_data_unknown"])
 
+    def test_load_jangar_dependency_quorum_preserves_ready_controller_ingestion_settlement(
+        self,
+    ) -> None:
+        settings.trading_jangar_control_plane_status_url = (
+            "https://jangar.example/ready"
+        )
+        settings.trading_jangar_control_plane_cache_ttl_seconds = 0
+        settlement = {
+            "schema_version": "jangar.controller-ingestion-settlement.v1",
+            "settlement_id": "controller-ingestion-settlement:ready-test",
+            "decision": "hold",
+            "agentrun_ingestion_current": False,
+            "reason_codes": ["source_serving_hold"],
+        }
+        board = {
+            "schema_version": "jangar.verify-trust-foreclosure-board.v1",
+            "board_id": "verify-trust-foreclosure-board:ready-test",
+        }
+        with patch(
+            "app.trading.hypotheses.urlopen",
+            return_value=_FakeHttpResponse(
+                {
+                    "status": "ok",
+                    "controller_ingestion_settlement": settlement,
+                    "verify_trust_foreclosure_board": board,
+                }
+            ),
+        ):
+            status = load_jangar_dependency_quorum()
+
+        self.assertEqual(status.decision, "unknown")
+        self.assertEqual(status.reasons, ["jangar_dependency_quorum_missing"])
+        payload = status.as_payload()
+        self.assertEqual(payload["controller_ingestion_settlement"], settlement)
+        self.assertEqual(payload["verify_trust_foreclosure_board"], board)
+
     def test_load_jangar_dependency_quorum_handles_malformed_url(self) -> None:
         settings.trading_jangar_control_plane_status_url = "jangar.example/status"
         settings.trading_jangar_control_plane_cache_ttl_seconds = 0

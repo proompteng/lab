@@ -576,6 +576,24 @@ describe('getReadyHandler', () => {
       validation_command: 'uv run --frozen pytest services/torghut/tests/test_alpha_readiness_settlement_conveyor.py',
       rollback_target: 'stop emitting alpha_readiness_settlement_conveyor and keep Torghut max_notional=0',
     })
+    expect(body.controller_ingestion_settlement).toMatchObject({
+      schema_version: 'jangar.controller-ingestion-settlement.v1',
+      mode: 'observe',
+      namespace: 'agents',
+      serving_readiness: 'ok',
+      controller_witness_ref: 'controller-witness:agents:ready-hot-path',
+      database_status: 'disabled',
+      source_serving_status: 'hold',
+      verify_trust_foreclosure_board_ref: expect.any(String),
+      selected_repair_ticket: {
+        max_notional: '0',
+      },
+      reason_codes: expect.arrayContaining([
+        'database_disabled',
+        'source_serving_hold',
+        'source_serving_contract_unavailable_on_ready_hot_path',
+      ]),
+    })
     expect(body.verify_trust_foreclosure_board).toMatchObject({
       schema_version: 'jangar.verify-trust-foreclosure-board.v1',
       mode: 'observe',
