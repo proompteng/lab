@@ -20,6 +20,10 @@ spec:
         value: ''
       - name: feedbackEvidenceJsonlB64
         value: ''
+      - name: feedbackEvidenceConfigMapName
+        value: torghut-whitepaper-autoresearch-feedback-evidence
+      - name: feedbackEvidenceConfigMapKey
+        value: feedback-evidence.jsonl
       - name: seedRecentWhitepapers
         value: 'true'
       - name: symbols
@@ -64,13 +68,15 @@ spec:
     - name: run
       nodeSelector:
         kubernetes.io/arch: arm64
-      activeDeadlineSeconds: 10800
+      activeDeadlineSeconds: 21600
       inputs:
         parameters:
           - name: runId
           - name: outputRoot
           - name: sourceJsonlB64
           - name: feedbackEvidenceJsonlB64
+          - name: feedbackEvidenceConfigMapName
+          - name: feedbackEvidenceConfigMapKey
           - name: seedRecentWhitepapers
           - name: symbols
           - name: fullWindowStartDate
@@ -114,9 +120,18 @@ spec:
                 key: torghut_password
           - name: TRADING_STRATEGY_CONFIG_PATH
             value: /etc/torghut/strategies.yaml
+          - name: TORGHUT_WHITEPAPER_SOURCE_JSONL_B64
+            value: "{{inputs.parameters.sourceJsonlB64}}"
+          - name: TORGHUT_WHITEPAPER_FEEDBACK_EVIDENCE_JSONL_B64
+            value: "{{inputs.parameters.feedbackEvidenceJsonlB64}}"
+          - name: TORGHUT_WHITEPAPER_FEEDBACK_EVIDENCE_CONFIGMAP_PATH
+            value: /var/run/torghut-feedback/feedback-evidence.jsonl
         volumeMounts:
           - name: strategy-config
             mountPath: /etc/torghut
+            readOnly: true
+          - name: feedback-evidence
+            mountPath: /var/run/torghut-feedback
             readOnly: true
         resources:
           requests:
@@ -177,12 +192,15 @@ spec:
             if [ "{{inputs.parameters.seedRecentWhitepapers}}" = "true" ]; then
               SCRIPT_ARGS+=(--seed-recent-whitepapers)
             fi
-            if [ -n "{{inputs.parameters.sourceJsonlB64}}" ]; then
-              printf '%s' "{{inputs.parameters.sourceJsonlB64}}" | base64 -d > "${SOURCE_JSONL}"
+            if [ -n "${TORGHUT_WHITEPAPER_SOURCE_JSONL_B64}" ]; then
+              printf '%s' "${TORGHUT_WHITEPAPER_SOURCE_JSONL_B64}" | base64 -d > "${SOURCE_JSONL}"
               SCRIPT_ARGS+=(--source-jsonl "${SOURCE_JSONL}")
             fi
-            if [ -n "{{inputs.parameters.feedbackEvidenceJsonlB64}}" ]; then
-              printf '%s' "{{inputs.parameters.feedbackEvidenceJsonlB64}}" | base64 -d > "${FEEDBACK_EVIDENCE_JSONL}"
+            if [ -s "${TORGHUT_WHITEPAPER_FEEDBACK_EVIDENCE_CONFIGMAP_PATH:-}" ]; then
+              cp "${TORGHUT_WHITEPAPER_FEEDBACK_EVIDENCE_CONFIGMAP_PATH}" "${FEEDBACK_EVIDENCE_JSONL}"
+              SCRIPT_ARGS+=(--feedback-evidence-jsonl "${FEEDBACK_EVIDENCE_JSONL}")
+            elif [ -n "${TORGHUT_WHITEPAPER_FEEDBACK_EVIDENCE_JSONL_B64}" ]; then
+              printf '%s' "${TORGHUT_WHITEPAPER_FEEDBACK_EVIDENCE_JSONL_B64}" | base64 -d > "${FEEDBACK_EVIDENCE_JSONL}"
               SCRIPT_ARGS+=(--feedback-evidence-jsonl "${FEEDBACK_EVIDENCE_JSONL}")
             fi
             if [ -n "{{inputs.parameters.fullWindowStartDate}}" ]; then
@@ -215,6 +233,13 @@ spec:
             items:
               - key: strategies.yaml
                 path: strategies.yaml
+        - name: feedback-evidence
+          configMap:
+            name: "{{inputs.parameters.feedbackEvidenceConfigMapName}}"
+            optional: true
+            items:
+              - key: "{{inputs.parameters.feedbackEvidenceConfigMapKey}}"
+                path: feedback-evidence.jsonl
       outputs:
         artifacts:
           - name: whitepaper-autoresearch-output

@@ -228,7 +228,21 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         template = template_path.read_text()
 
         self.assertIn("name: feedbackEvidenceJsonlB64", template)
+        self.assertIn("name: feedbackEvidenceConfigMapName", template)
+        self.assertIn("name: feedbackEvidenceConfigMapKey", template)
         self.assertIn("--feedback-evidence-jsonl", template)
+        self.assertIn("TORGHUT_WHITEPAPER_FEEDBACK_EVIDENCE_JSONL_B64", template)
+        self.assertIn("TORGHUT_WHITEPAPER_FEEDBACK_EVIDENCE_CONFIGMAP_PATH", template)
+        self.assertIn("TORGHUT_WHITEPAPER_SOURCE_JSONL_B64", template)
+        self.assertIn("name: feedback-evidence", template)
+        self.assertNotIn(
+            "printf '%s' \"{{inputs.parameters.feedbackEvidenceJsonlB64}}\"",
+            template,
+        )
+        self.assertNotIn(
+            "printf '%s' \"{{inputs.parameters.sourceJsonlB64}}\"",
+            template,
+        )
         self.assertIn(
             'if [ -n "{{inputs.parameters.fullWindowStartDate}}" ]; then',
             template,
