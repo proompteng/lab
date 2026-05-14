@@ -12,9 +12,11 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`,
   `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-14T20:27Z`):
+- Evidence (current next-work priority, refreshed `2026-05-14T20:45Z`):
   - `docs/agents/designs/206-jangar-route-adjacent-proof-custody-and-torghut-reentry-admission-2026-05-14.md`
   - `212-torghut-route-adjacent-proof-and-execution-freshness-reentry-2026-05-14.md`
+  - `docs/agents/designs/206-jangar-material-evidence-settlement-spine-and-repair-dispatch-budget-2026-05-14.md`
+  - `212-torghut-revenue-repair-topline-contract-and-alpha-evidence-budget-2026-05-14.md`
   - `docs/agents/designs/206-jangar-consumer-evidence-parity-settlement-and-alpha-release-custody-2026-05-14.md`
   - `212-torghut-consumer-evidence-parity-and-alpha-release-freshness-2026-05-14.md`
   - `docs/agents/designs/205-jangar-controller-ingestion-settlement-and-verification-carry-cutover-2026-05-14.md`
