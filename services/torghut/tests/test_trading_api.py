@@ -1081,11 +1081,31 @@ class TestTradingApi(TestCase):
                 "app.main.build_profitability_proof_floor_receipt",
                 return_value=proof_floor,
             ),
+            patch(
+                "app.main._readiness_dependency_snapshot",
+                return_value=(
+                    {
+                        "database": {
+                            "ok": True,
+                            "schema_current": True,
+                            "schema_current_heads": ["0029_live_submission_gate"],
+                        }
+                    },
+                    datetime(2026, 5, 8, 3, 54, 41, tzinfo=timezone.utc),
+                    True,
+                ),
+            ) as readiness_snapshot,
             patch("app.main.SessionLocal", self.session_local),
         ):
             response = self.client.get("/trading/consumer-evidence")
 
         self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            readiness_snapshot.call_args.kwargs["include_database_contract"]
+        )
+        self.assertTrue(
+            readiness_snapshot.call_args.kwargs["allow_stale_dependency_cache"]
+        )
         payload = response.json()
         self.assertEqual(
             payload["schema_version"], "torghut.consumer-evidence-status.v1"
@@ -1186,6 +1206,7 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(alpha_repair_closure["status"], "inactive")
         self.assertEqual(alpha_repair_closure["max_notional"], "0")
+        self.assertNotIn("db_check_not_provided", alpha_repair_closure["reason_codes"])
         alpha_foundry = payload["alpha_evidence_foundry"]
         self.assertEqual(
             alpha_foundry["schema_version"],
