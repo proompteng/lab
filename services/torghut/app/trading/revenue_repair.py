@@ -21,6 +21,9 @@ from .executable_alpha_receipts import (
     build_executable_alpha_repair_receipts,
     build_executable_alpha_settlement_slots,
 )
+from .jangar_controller_ingestion_carry import (
+    build_jangar_controller_ingestion_carry,
+)
 from .no_delta_repair_reentry_auction import (
     build_no_delta_repair_reentry_auction,
 )
@@ -1055,6 +1058,29 @@ def build_revenue_repair_digest(
         alpha_repair_closure_board=alpha_repair_closure_board,
         alpha_readiness_settlement_conveyor=alpha_readiness_settlement_conveyor,
     )
+    dependency_quorum = _mapping(status_payload.get("dependency_quorum"))
+    jangar_controller_ingestion_carry = build_jangar_controller_ingestion_carry(
+        generated_at=generated,
+        dependency_quorum=dependency_quorum,
+        controller_ingestion_settlement=cast(
+            Mapping[str, Any] | None,
+            status_payload.get("controller_ingestion_settlement"),
+        ),
+        verify_trust_foreclosure_board=cast(
+            Mapping[str, Any] | None,
+            status_payload.get("verify_trust_foreclosure_board")
+            or status_payload.get("jangar_verification_carry"),
+        ),
+        repair_slot_escrow=cast(
+            Mapping[str, Any] | None,
+            status_payload.get("repair_slot_escrow")
+            or status_payload.get("stage_debt_repair_admission"),
+        ),
+        foreclosure_carry_rollout_witness=cast(
+            Mapping[str, Any] | None,
+            status_payload.get("foreclosure_carry_rollout_witness"),
+        ),
+    )
     no_delta_repair_reentry_auction = build_no_delta_repair_reentry_auction(
         generated_at=generated,
         business_state=business_state,
@@ -1069,6 +1095,7 @@ def build_revenue_repair_digest(
             status_payload.get("verify_trust_foreclosure_board")
             or status_payload.get("jangar_verification_carry"),
         ),
+        jangar_controller_ingestion_carry=jangar_controller_ingestion_carry,
     )
     return {
         "schema_version": SCHEMA_VERSION,
@@ -1085,6 +1112,7 @@ def build_revenue_repair_digest(
         "alpha_evidence_foundry": alpha_evidence_foundry,
         "alpha_readiness_settlement_conveyor": alpha_readiness_settlement_conveyor,
         "alpha_repair_dividend_ledger": alpha_repair_dividend_ledger,
+        "jangar_controller_ingestion_carry": jangar_controller_ingestion_carry,
         "no_delta_repair_reentry_auction": no_delta_repair_reentry_auction,
         "business_state": business_state,
         "revenue_ready": revenue_ready,

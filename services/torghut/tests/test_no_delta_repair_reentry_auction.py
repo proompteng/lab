@@ -160,6 +160,7 @@ def _build(
     dividend: Mapping[str, Any] | None = None,
     capital: Mapping[str, Any] | None = None,
     jangar_verification_carry: Mapping[str, Any] | None = None,
+    jangar_controller_ingestion_carry: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     return build_no_delta_repair_reentry_auction(
         generated_at=NOW,
@@ -175,6 +176,7 @@ def _build(
         else dividend,
         repair_bid_settlement_ledger=_repair_bid_settlement(),
         jangar_verification_carry=jangar_verification_carry,
+        jangar_controller_ingestion_carry=jangar_controller_ingestion_carry,
     )
 
 
@@ -256,13 +258,79 @@ def test_no_delta_reentry_auction_selects_jangar_foreclosure_ticket() -> None:
                     ),
                 }
             ],
-        }
+        },
+        jangar_controller_ingestion_carry={
+            "schema_version": "torghut.jangar-controller-ingestion-carry.v1",
+            "carry_id": "jangar-controller-ingestion-carry:repairable",
+            "carry_state": "repairable",
+            "selected_release_condition": "jangar_controller_ingestion_current",
+            "selected_ticket_class": "jangar_verify_carry",
+            "selected_ticket_id": "verify-trust-foreclosure-ticket:test",
+            "max_notional": "0",
+            "reason_codes": ["jangar_controller_ingestion_repairable"],
+        },
     )
 
     assert auction["reentry_decision"] == "allow"
     selected = cast(Mapping[str, Any], auction["selected_ticket"])
     assert selected["ticket_class"] == "jangar_verify_carry"
-    assert selected["release_condition"] == "jangar_verify_foreclosure_ticket_current"
+    assert selected["release_condition"] == "jangar_controller_ingestion_current"
+
+
+def test_no_delta_reentry_auction_does_not_select_jangar_ticket_for_current_carry() -> (
+    None
+):
+    auction = _build(
+        jangar_controller_ingestion_carry={
+            "schema_version": "torghut.jangar-controller-ingestion-carry.v1",
+            "carry_id": "jangar-controller-ingestion-carry:current",
+            "carry_state": "current",
+            "selected_release_condition": "jangar_controller_ingestion_current",
+            "selected_ticket_class": "none",
+            "max_notional": "0",
+            "reason_codes": [],
+        },
+    )
+
+    assert auction["reentry_decision"] == "deny"
+    assert auction["selected_ticket"] is None
+    release_states = {
+        condition["code"]: condition["state"]
+        for condition in cast(list[Mapping[str, Any]], auction["release_conditions"])
+    }
+    assert release_states["jangar_controller_ingestion_current"] == "current"
+    tickets = cast(list[Mapping[str, Any]], auction["candidate_tickets"])
+    jangar_ticket = next(
+        ticket for ticket in tickets if ticket["ticket_class"] == "jangar_verify_carry"
+    )
+    assert (
+        "jangar_controller_ingestion_carry_not_repairable"
+        in jangar_ticket["hold_reason_codes"]
+    )
+
+
+@pytest.mark.parametrize(
+    "carry_state",
+    ["unavailable", "stale", "lagging", "contradicted"],
+)
+def test_no_delta_reentry_auction_denies_unusable_controller_carry(
+    carry_state: str,
+) -> None:
+    auction = _build(
+        jangar_controller_ingestion_carry={
+            "schema_version": "torghut.jangar-controller-ingestion-carry.v1",
+            "carry_id": f"jangar-controller-ingestion-carry:{carry_state}",
+            "carry_state": carry_state,
+            "selected_release_condition": "jangar_controller_ingestion_current",
+            "selected_ticket_class": "none",
+            "max_notional": "0",
+            "reason_codes": [f"jangar_controller_ingestion_{carry_state}"],
+        },
+    )
+
+    assert auction["reentry_decision"] == "deny"
+    assert auction["selected_ticket"] is None
+    assert f"jangar_controller_ingestion_{carry_state}" in auction["reason_codes"]
 
 
 def test_no_delta_reentry_auction_denies_nonzero_notional() -> None:

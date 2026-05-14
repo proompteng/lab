@@ -533,6 +533,19 @@ class TestBuildRevenueRepairDigest(TestCase):
             alpha_dividend_ledger["jangar_custody"]["launch_decision"],
             "deny",
         )
+        controller_carry = digest["jangar_controller_ingestion_carry"]
+        self.assertIsInstance(controller_carry, dict)
+        self.assertEqual(
+            controller_carry["schema_version"],
+            "torghut.jangar-controller-ingestion-carry.v1",
+        )
+        self.assertEqual(controller_carry["carry_state"], "unavailable")
+        self.assertEqual(controller_carry["selected_ticket_class"], "none")
+        self.assertEqual(controller_carry["max_notional"], "0")
+        self.assertIn(
+            "jangar_controller_ingestion_settlement_missing",
+            controller_carry["reason_codes"],
+        )
         no_delta_auction = digest["no_delta_repair_reentry_auction"]
         self.assertIsInstance(no_delta_auction, dict)
         self.assertEqual(
@@ -546,6 +559,10 @@ class TestBuildRevenueRepairDigest(TestCase):
         )
         self.assertEqual(no_delta_auction["selected_ticket"], None)
         self.assertEqual(no_delta_auction["max_notional"], "0")
+        self.assertEqual(
+            no_delta_auction["jangar_controller_ingestion_carry"]["carry_state"],
+            "unavailable",
+        )
         self.assertIn(
             "duplicate_no_delta_reentry_denied",
             no_delta_auction["reason_codes"],
@@ -627,6 +644,51 @@ class TestBuildRevenueRepairDigest(TestCase):
             ],
         )
         self.assertEqual(route_reacquisition["expected_unblock_value"], 13)
+
+    def test_repair_only_payload_selects_repairable_jangar_carry_ticket(self) -> None:
+        status_payload = _repair_only_status()
+        status_payload["dependency_quorum"] = {
+            "controller_ingestion_settlement": {
+                "settlement_id": "controller-ingestion-settlement:repairable",
+                "decision": "repair_only",
+                "controller_ingestion_current": False,
+                "selected_repair_ticket": {
+                    "ticket_id": "verify-trust-foreclosure-ticket:repairable",
+                    "ticket_class": "jangar_verify_carry",
+                    "required_output_receipt": (
+                        "jangar.verify-trust-foreclosure-ticket.v1"
+                    ),
+                    "validation_commands": [
+                        "bun run --filter jangar test -- services/jangar/src/server/__tests__/control-plane-verify-trust-foreclosure.test.ts"
+                    ],
+                },
+            }
+        }
+
+        digest = build_revenue_repair_digest(
+            readyz_payload=_repair_only_readyz(),
+            status_payload=status_payload,
+            generated_at=NOW,
+        )
+
+        controller_carry = cast(
+            dict[str, object], digest["jangar_controller_ingestion_carry"]
+        )
+        self.assertEqual(controller_carry["carry_state"], "repairable")
+        self.assertEqual(
+            controller_carry["selected_ticket_class"], "jangar_verify_carry"
+        )
+        no_delta_auction = cast(
+            dict[str, object], digest["no_delta_repair_reentry_auction"]
+        )
+        self.assertEqual(no_delta_auction["reentry_decision"], "allow")
+        selected_ticket = cast(dict[str, object], no_delta_auction["selected_ticket"])
+        self.assertEqual(selected_ticket["ticket_class"], "jangar_verify_carry")
+        self.assertEqual(
+            selected_ticket["release_condition"],
+            "jangar_controller_ingestion_current",
+        )
+        self.assertEqual(selected_ticket["max_notional"], "0")
 
     def test_repair_only_payload_carries_readyz_database_contract(self) -> None:
         readyz_payload = _repair_only_readyz()

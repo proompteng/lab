@@ -36,6 +36,7 @@ _RELEASE_CONDITION_CODES = [
     "blocker_set_changed",
     "required_receipt_set_changed",
     "selected_hypothesis_changed",
+    "jangar_controller_ingestion_current",
     "jangar_verify_foreclosure_ticket_current",
     "schema_lineage_receipt_current",
     "empirical_receipt_current",
@@ -403,9 +404,21 @@ def _condition_state(
     changed_conditions: set[str],
     preserved_reasons: set[str],
     jangar_carry: Mapping[str, Any],
+    jangar_controller_ingestion_carry: Mapping[str, Any],
 ) -> tuple[str, list[str]]:
     if code in changed_conditions:
         return "changed", ["release_condition_changed"]
+    if code == "jangar_controller_ingestion_current":
+        carry_state = _text(jangar_controller_ingestion_carry.get("carry_state"))
+        if carry_state == "current":
+            return "current", ["jangar_controller_ingestion_carry_current"]
+        if carry_state == "repairable":
+            return "repairable", ["jangar_controller_ingestion_carry_repairable"]
+        if carry_state:
+            return carry_state, _string_list(
+                jangar_controller_ingestion_carry.get("reason_codes")
+            )
+        return "unavailable", ["jangar_controller_ingestion_carry_unavailable"]
     if code == "jangar_verify_foreclosure_ticket_current":
         if _text(jangar_carry.get("status")) == "current" and _text(
             jangar_carry.get("current_foreclosure_ticket_id")
@@ -434,6 +447,7 @@ def _build_release_conditions(
     changed_conditions: set[str],
     preserved_reason_codes: Sequence[str],
     jangar_carry: Mapping[str, Any],
+    jangar_controller_ingestion_carry: Mapping[str, Any],
 ) -> list[dict[str, object]]:
     preserved = set(preserved_reason_codes)
     return [
@@ -449,6 +463,7 @@ def _build_release_conditions(
                 changed_conditions=changed_conditions,
                 preserved_reasons=preserved,
                 jangar_carry=jangar_carry,
+                jangar_controller_ingestion_carry=jangar_controller_ingestion_carry,
             )
         ]
     ]
@@ -456,7 +471,7 @@ def _build_release_conditions(
 
 def _condition_unblocks(condition: Mapping[str, Any]) -> bool:
     state = _text(condition.get("state"))
-    return state in {"changed", "current"}
+    return state in {"changed", "current", "repairable"}
 
 
 def _ticket_specs() -> list[dict[str, object]]:
@@ -514,7 +529,10 @@ def _ticket_specs() -> list[dict[str, object]]:
         },
         {
             "ticket_class": "jangar_verify_carry",
-            "release_conditions": ["jangar_verify_foreclosure_ticket_current"],
+            "release_conditions": [
+                "jangar_controller_ingestion_current",
+                "jangar_verify_foreclosure_ticket_current",
+            ],
             "required_output_receipt": "jangar.verify-trust-foreclosure-ticket.v1",
             "validation_commands": [
                 "bun run --filter jangar test -- services/jangar/src/server/__tests__/control-plane-verify-trust-foreclosure.test.ts"
@@ -533,6 +551,7 @@ def _build_candidate_tickets(
     release_conditions: Sequence[Mapping[str, Any]],
     max_notional: str,
     top_item_is_alpha: bool,
+    jangar_controller_ingestion_carry: Mapping[str, Any],
 ) -> list[dict[str, object]]:
     conditions_by_code = {
         _text(condition.get("code")): condition for condition in release_conditions
@@ -563,6 +582,12 @@ def _build_candidate_tickets(
             hold_reason_codes.append("release_condition_not_changed")
         if active_no_delta_release_key and not matched_condition:
             hold_reason_codes.append("active_no_delta_release_key_unchanged")
+        if (
+            _text(spec.get("ticket_class")) == "jangar_verify_carry"
+            and _text(jangar_controller_ingestion_carry.get("carry_state"))
+            != "repairable"
+        ):
+            hold_reason_codes.append("jangar_controller_ingestion_carry_not_repairable")
 
         state = "held"
         if hold_reason_codes and active_no_delta_release_key:
@@ -637,6 +662,7 @@ def build_no_delta_repair_reentry_auction(
     alpha_repair_dividend_ledger: Mapping[str, Any],
     repair_bid_settlement_ledger: Mapping[str, Any],
     jangar_verification_carry: Mapping[str, Any] | None = None,
+    jangar_controller_ingestion_carry: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     """Build the observe-mode no-delta reentry auction for alpha repair."""
 
@@ -689,6 +715,7 @@ def build_no_delta_repair_reentry_auction(
         generated=generated,
         jangar_verification_carry=jangar_verification_carry,
     )
+    controller_carry = _mapping(jangar_controller_ingestion_carry)
     preserved_codes = _preserved_reason_codes(
         alpha_repair_dividend_ledger,
         alpha_readiness_settlement_conveyor,
@@ -697,6 +724,7 @@ def build_no_delta_repair_reentry_auction(
         changed_conditions=changed_conditions,
         preserved_reason_codes=preserved_codes,
         jangar_carry=jangar_carry,
+        jangar_controller_ingestion_carry=controller_carry,
     )
     top_item_is_alpha = _is_alpha_repair(top_item)
     candidate_tickets = _build_candidate_tickets(
@@ -707,6 +735,7 @@ def build_no_delta_repair_reentry_auction(
         release_conditions=release_conditions,
         max_notional=max_notional,
         top_item_is_alpha=top_item_is_alpha,
+        jangar_controller_ingestion_carry=controller_carry,
     )
     selected_ticket = _select_ticket(candidate_tickets)
 
@@ -732,6 +761,7 @@ def build_no_delta_repair_reentry_auction(
     reason_codes = _append_unique(
         reason_codes,
         jangar_carry.get("reason_codes"),
+        controller_carry.get("reason_codes"),
     )
 
     if not _zero_notional(max_notional):
@@ -797,6 +827,7 @@ def build_no_delta_repair_reentry_auction(
         "reentry_decision": reentry_decision,
         "reason_codes": reason_codes,
         "jangar_verification_carry": jangar_carry,
+        "jangar_controller_ingestion_carry": controller_carry or None,
         "max_notional": max_notional,
         "capital_rule": _text(
             top_item.get("capital_rule"), "zero_notional_repair_only"
@@ -841,6 +872,9 @@ def compact_no_delta_repair_reentry_auction(
         "selected_release_condition": selected_ticket.get("release_condition"),
         "required_output_receipt": selected_ticket.get("required_output_receipt"),
         "validation_command": validation_commands[0] if validation_commands else None,
+        "jangar_controller_ingestion_carry_state": _mapping(
+            payload.get("jangar_controller_ingestion_carry")
+        ).get("carry_state"),
         "enforcement_mode": payload.get("enforcement_mode"),
         "max_notional": payload.get("max_notional"),
         "capital_rule": payload.get("capital_rule"),
