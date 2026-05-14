@@ -821,7 +821,12 @@ class TradingPipeline:
         if snapshot is None:
             return signal
         payload = dict(signal.payload)
-        if price is None and snapshot.price is not None:
+        snapshot_has_executable_quote = (
+            snapshot.bid is not None and snapshot.ask is not None
+        )
+        if snapshot.price is not None and (
+            price is None or snapshot_has_executable_quote
+        ):
             payload["price"] = snapshot.price
         if payload.get("spread") is None and snapshot.spread is not None:
             payload["spread"] = snapshot.spread

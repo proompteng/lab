@@ -844,6 +844,60 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(enriched.payload.get("spread"), Decimal("0.02"))
         self.assertTrue(pipeline._signal_quote_quality.assess(enriched).valid)
 
+    def test_ensure_signal_executable_price_replaces_feature_price_when_quote_is_backfilled(
+        self,
+    ) -> None:
+        alpaca_client = FakeAlpacaClient()
+        pipeline = TradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(
+                Decimal("117.36"),
+                spread=Decimal("0.40"),
+                bid=Decimal("117.10"),
+                ask=Decimal("117.50"),
+            ),
+        )
+        pipeline._signal_quote_quality.assess(
+            SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, 14, 30, tzinfo=timezone.utc),
+                symbol="INTC",
+                payload={
+                    "price": Decimal("117.20"),
+                    "spread": Decimal("0.10"),
+                    "imbalance_bid_px": Decimal("117.15"),
+                    "imbalance_ask_px": Decimal("117.25"),
+                },
+                timeframe="1Sec",
+            )
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
+            symbol="INTC",
+            payload={
+                "price": Decimal("83.00"),
+                "macd": {"macd": Decimal("1.1"), "signal": Decimal("0.4")},
+            },
+            timeframe="1Sec",
+        )
+
+        enriched = pipeline._ensure_signal_executable_price(signal)
+
+        self.assertEqual(enriched.payload.get("price"), Decimal("117.36"))
+        self.assertEqual(enriched.payload.get("imbalance_bid_px"), Decimal("117.10"))
+        self.assertEqual(enriched.payload.get("imbalance_ask_px"), Decimal("117.50"))
+        self.assertTrue(pipeline._signal_quote_quality.assess(enriched).valid)
+
     def test_ensure_signal_executable_price_backfills_missing_price_from_snapshot(
         self,
     ) -> None:
