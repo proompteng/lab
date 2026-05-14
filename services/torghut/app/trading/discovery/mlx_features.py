@@ -8,9 +8,8 @@ from dataclasses import dataclass
 from typing import Any, Mapping, cast
 
 from app.trading.discovery.autoresearch import FamilyAutoresearchPlan
+from app.trading.discovery.capital_budget import estimate_capital_budget
 from app.trading.discovery.family_templates import FamilyTemplate
-
-DEFAULT_CAPITAL_START_EQUITY = 31590.02
 
 
 def _string(value: Any) -> str:
@@ -143,27 +142,23 @@ def _infer_budget(value: Any, default: str = '0') -> str:
 
 
 def _capital_budget_payload(config: Mapping[str, Any], *, rank_count: int) -> dict[str, Any]:
-    max_notional = _float(_override_value(config, 'max_notional_per_trade'))
-    max_notional_pct_start_equity = (
-        max_notional / DEFAULT_CAPITAL_START_EQUITY if DEFAULT_CAPITAL_START_EQUITY > 0 else 0.0
+    estimate = estimate_capital_budget(
+        strategy_overrides=_mapping(config.get('strategy_overrides')),
+        params=_mapping(config.get('parameters')),
+        rank_count_floor=rank_count,
     )
-    max_position_pct = _float(_override_value(config, 'max_position_pct_equity'))
-    max_trade_pct_equity = max(max_notional_pct_start_equity, max_position_pct)
-    configured_max_gross_pct = _float(_param_value(config, 'max_gross_exposure_pct_equity'))
-    estimated_max_gross_pct = max(
-        configured_max_gross_pct,
-        max_trade_pct_equity * max(1, rank_count),
-    )
-    capital_budget_overage_ratio = max(0.0, estimated_max_gross_pct - 1.0) + max(
-        0.0, max_trade_pct_equity - 1.0
-    )
-    capital_feasible = estimated_max_gross_pct <= 1.0 and max_trade_pct_equity <= 1.0
     return {
-        'max_position_pct_equity': _format_float(max_position_pct),
-        'configured_max_gross_exposure_pct_equity': _format_float(configured_max_gross_pct),
-        'estimated_max_gross_exposure_pct_equity': _format_float(estimated_max_gross_pct),
-        'capital_budget_overage_ratio': _format_float(capital_budget_overage_ratio),
-        'capital_feasible': capital_feasible,
+        'max_position_pct_equity': _format_float(estimate.max_position_pct_equity),
+        'configured_max_gross_exposure_pct_equity': _format_float(
+            estimate.configured_max_gross_exposure_pct_equity
+        ),
+        'estimated_max_gross_exposure_pct_equity': _format_float(
+            estimate.estimated_max_gross_exposure_pct_equity
+        ),
+        'capital_budget_overage_ratio': _format_float(
+            estimate.capital_budget_overage_ratio
+        ),
+        'capital_feasible': bool(estimate.capital_feasible_flag),
     }
 
 

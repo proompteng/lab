@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from unittest import TestCase
 
-from app.trading.discovery.candidate_specs import compile_candidate_specs
+from app.trading.discovery.candidate_specs import CandidateSpec, compile_candidate_specs
 from app.trading.discovery.evidence_bundles import (
     evidence_bundle_from_frontier_candidate,
 )
@@ -12,6 +12,7 @@ from app.trading.discovery.mlx_training_data import (
     MlxRankerModel,
     MlxTrainingRow,
     build_mlx_training_rows,
+    candidate_spec_capital_features,
     rank_training_rows,
     rank_training_rows_with_lift_policy,
     train_mlx_ranker,
@@ -29,6 +30,40 @@ def _capital_profile(spec: object) -> object:
 
 
 class TestMlxTrainingData(TestCase):
+    def test_candidate_capital_features_include_runtime_slot_pressure(self) -> None:
+        spec = CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id="spec-slot-pressure",
+            hypothesis_id="H-SLOT",
+            family_template_id="breakout_reclaim_v2",
+            candidate_kind="configuration",
+            runtime_family="breakout_continuation_consistent",
+            runtime_strategy_name="breakout-continuation-long-v1",
+            feature_contract={},
+            parameter_space={},
+            strategy_overrides={
+                "max_notional_per_trade": "10000",
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "max_gross_exposure_pct_equity": "1.0",
+                    "max_entries_per_session": "2",
+                    "max_concurrent_positions": "4",
+                    "entry_notional_max_multiplier": "1.5",
+                },
+            },
+            objective={},
+            hard_vetoes={},
+            expected_failure_modes=(),
+            promotion_contract={},
+        )
+
+        features = candidate_spec_capital_features(spec)
+
+        self.assertEqual(features["estimated_capital_slot_count"], 4.0)
+        self.assertEqual(features["entry_notional_max_multiplier"], 1.5)
+        self.assertGreater(features["estimated_max_gross_exposure_pct_equity"], 1.0)
+        self.assertEqual(features["capital_feasible_flag"], 0.0)
+
     def test_training_rows_build_from_evidence_bundles_and_rank_deterministically(
         self,
     ) -> None:
