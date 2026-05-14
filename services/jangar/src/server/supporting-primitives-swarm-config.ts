@@ -1,3 +1,4 @@
+import type { AdmissionPassportStatus, RecoveryWarrantStatus } from '~/data/agents-control-plane'
 import { asRecord, asString } from '~/server/primitives-http'
 import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
 import { hashNameSuffix } from '~/server/supporting-primitives-naming'
@@ -61,6 +62,13 @@ export const SWARM_MISSION_ANNOTATION_VALIDATION_CONTRACT = 'swarm.proompteng.ai
 export const SWARM_MISSION_ANNOTATION_VALUE_GATES = 'swarm.proompteng.ai/value-gates'
 export const SWARM_MISSION_ANNOTATION_HANDOFF_FIELDS = 'swarm.proompteng.ai/handoff-fields'
 export const SWARM_MISSION_ANNOTATION_SOURCE_DESIGN = 'swarm.proompteng.ai/source-design'
+export const SWARM_RUNTIME_ADMISSION_DESIGN_REF =
+  'docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md'
+export const SWARM_RUNTIME_PROOF_DESIGN_REF =
+  'docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md'
+export const SWARM_ADMISSION_ANNOTATION_RUNTIME_ADMISSION_DESIGN_REF =
+  'swarm.proompteng.ai/runtime-admission-design-ref'
+export const SWARM_ADMISSION_ANNOTATION_RUNTIME_PROOF_DESIGN_REF = 'swarm.proompteng.ai/runtime-proof-design-ref'
 export const SWARM_ADMISSION_ANNOTATION_PASSPORT_ID = 'swarm.proompteng.ai/admission-passport-id'
 export const SWARM_ADMISSION_ANNOTATION_DECISION = 'swarm.proompteng.ai/admission-decision'
 export const SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST = 'swarm.proompteng.ai/recovery-case-set-digest'
@@ -70,6 +78,50 @@ export const SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION = 'swarm.proompteng.ai
 export const SWARM_ADMISSION_ANNOTATION_WARRANT_ID = 'swarm.proompteng.ai/recovery-warrant-id'
 export const SWARM_ADMISSION_ANNOTATION_WARRANT_STATUS = 'swarm.proompteng.ai/recovery-warrant-status'
 export const SWARM_ADMISSION_ANNOTATION_PROOF_CELLS = 'swarm.proompteng.ai/required-proof-cells'
+export const buildSwarmAdmissionTrace = (
+  passport: AdmissionPassportStatus | null,
+  warrant: RecoveryWarrantStatus | null = null,
+) => {
+  if (!passport) {
+    return {
+      annotations: {},
+      parameters: {},
+    }
+  }
+
+  const requiredRuntimeKits = passport.required_runtime_kits.join(',')
+  const requiredProofCells = warrant?.required_proof_cell_ids.join(',') ?? ''
+  const annotations: Record<string, string> = {
+    [SWARM_ADMISSION_ANNOTATION_RUNTIME_ADMISSION_DESIGN_REF]: SWARM_RUNTIME_ADMISSION_DESIGN_REF,
+    [SWARM_ADMISSION_ANNOTATION_PASSPORT_ID]: passport.admission_passport_id,
+    [SWARM_ADMISSION_ANNOTATION_DECISION]: passport.decision,
+    [SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST]: passport.recovery_case_set_digest,
+    [SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST]: passport.runtime_kit_set_digest,
+    [SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS]: requiredRuntimeKits,
+    [SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION]: passport.producer_revision,
+  }
+  const parameters: Record<string, string> = {
+    swarmRuntimeAdmissionDesignRef: SWARM_RUNTIME_ADMISSION_DESIGN_REF,
+    swarmAdmissionPassportId: passport.admission_passport_id,
+    swarmAdmissionDecision: passport.decision,
+    swarmRecoveryCaseSetDigest: passport.recovery_case_set_digest,
+    swarmRuntimeKitSetDigest: passport.runtime_kit_set_digest,
+    swarmRequiredRuntimeKits: requiredRuntimeKits,
+    swarmAdmissionProducerRevision: passport.producer_revision,
+  }
+  if (warrant) {
+    annotations[SWARM_ADMISSION_ANNOTATION_RUNTIME_PROOF_DESIGN_REF] = SWARM_RUNTIME_PROOF_DESIGN_REF
+    annotations[SWARM_ADMISSION_ANNOTATION_WARRANT_ID] = warrant.recovery_warrant_id
+    annotations[SWARM_ADMISSION_ANNOTATION_WARRANT_STATUS] = warrant.status
+    annotations[SWARM_ADMISSION_ANNOTATION_PROOF_CELLS] = requiredProofCells
+    parameters.swarmRuntimeProofDesignRef = SWARM_RUNTIME_PROOF_DESIGN_REF
+    parameters.swarmRecoveryWarrantId = warrant.recovery_warrant_id
+    parameters.swarmRecoveryWarrantStatus = warrant.status
+    parameters.swarmRequiredProofCells = requiredProofCells
+  }
+
+  return { annotations, parameters }
+}
 export const SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT = resolveSupportingPrimitivesConfig(
   process.env,
 ).swarmRequirementMaxPayloadBytes
@@ -525,6 +577,8 @@ export const resolveScheduleRuntimeInjection = (schedule: Record<string, unknown
   const valueGates = asString(annotations[SWARM_MISSION_ANNOTATION_VALUE_GATES])
   const handoffRequiredFields = asString(annotations[SWARM_MISSION_ANNOTATION_HANDOFF_FIELDS])
   const sourceDesign = asString(annotations[SWARM_MISSION_ANNOTATION_SOURCE_DESIGN])
+  const runtimeAdmissionDesignRef = asString(annotations[SWARM_ADMISSION_ANNOTATION_RUNTIME_ADMISSION_DESIGN_REF])
+  const runtimeProofDesignRef = asString(annotations[SWARM_ADMISSION_ANNOTATION_RUNTIME_PROOF_DESIGN_REF])
   const admissionPassportId = asString(annotations[SWARM_ADMISSION_ANNOTATION_PASSPORT_ID])
   const admissionDecision = asString(annotations[SWARM_ADMISSION_ANNOTATION_DECISION])
   const recoveryCaseSetDigest = asString(annotations[SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST])
@@ -550,6 +604,8 @@ export const resolveScheduleRuntimeInjection = (schedule: Record<string, unknown
   if (valueGates) parameters.swarmValueGates = valueGates
   if (handoffRequiredFields) parameters.swarmHandoffRequiredFields = handoffRequiredFields
   if (sourceDesign) parameters.swarmSourceDesign = sourceDesign
+  if (runtimeAdmissionDesignRef) parameters.swarmRuntimeAdmissionDesignRef = runtimeAdmissionDesignRef
+  if (runtimeProofDesignRef) parameters.swarmRuntimeProofDesignRef = runtimeProofDesignRef
   if (admissionPassportId) parameters.swarmAdmissionPassportId = admissionPassportId
   if (admissionDecision) parameters.swarmAdmissionDecision = admissionDecision
   if (recoveryCaseSetDigest) parameters.swarmRecoveryCaseSetDigest = recoveryCaseSetDigest
@@ -562,6 +618,8 @@ export const resolveScheduleRuntimeInjection = (schedule: Record<string, unknown
 
   const runAnnotations = Object.fromEntries(
     [
+      [SWARM_ADMISSION_ANNOTATION_RUNTIME_ADMISSION_DESIGN_REF, runtimeAdmissionDesignRef],
+      [SWARM_ADMISSION_ANNOTATION_RUNTIME_PROOF_DESIGN_REF, runtimeProofDesignRef],
       [SWARM_ADMISSION_ANNOTATION_PASSPORT_ID, admissionPassportId],
       [SWARM_ADMISSION_ANNOTATION_DECISION, admissionDecision],
       [SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST, recoveryCaseSetDigest],

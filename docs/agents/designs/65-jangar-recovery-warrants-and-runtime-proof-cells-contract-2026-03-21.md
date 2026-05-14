@@ -410,8 +410,9 @@ Implementation note: launch runtime-proof enforcement (2026-05-07).
 - schedule-runner pods repeat the live status check immediately before creating the target AgentRun or
   OrchestrationRun, refresh the stamped recovery-warrant/proof-cell parameters, and fail closed if the current warrant
   or required proof cells are no longer valid.
-- admitted schedules and requirement runs now cite `swarmRecoveryWarrantId`, `swarmRecoveryWarrantStatus`, and
-  `swarmRequiredProofCells` alongside the existing passport/runtime-kit trace.
+- admitted schedules and requirement runs now cite this proof-cell design with `swarmRuntimeProofDesignRef`,
+  `swarmRecoveryWarrantId`, `swarmRecoveryWarrantStatus`, and `swarmRequiredProofCells` alongside the existing
+  passport/runtime-kit trace.
 - recovery warrant ids, recovery epoch ids, required proof-cell ids, and deploy-verification projection watermark ids
   are stable across ordinary freshness refreshes; they change only when the admitted passport, runtime-kit digest,
   proof content, or decision changes materially.

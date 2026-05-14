@@ -46,6 +46,7 @@ import {
 import { makeName } from '~/server/supporting-primitives-naming'
 import {
   buildSwarmAgentIdentity,
+  buildSwarmAdmissionTrace,
   buildSwarmRuntimeParameters,
   buildSwarmScheduleAnnotations,
   deriveStageStaggerMinute,
@@ -63,15 +64,6 @@ import {
   STAGE_LAST_RUN_KEY,
   STAGE_NAMES,
   SWARM_AGENT_WORKER_ID_LABEL,
-  SWARM_ADMISSION_ANNOTATION_DECISION,
-  SWARM_ADMISSION_ANNOTATION_PASSPORT_ID,
-  SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION,
-  SWARM_ADMISSION_ANNOTATION_PROOF_CELLS,
-  SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST,
-  SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST,
-  SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS,
-  SWARM_ADMISSION_ANNOTATION_WARRANT_ID,
-  SWARM_ADMISSION_ANNOTATION_WARRANT_STATUS,
   SWARM_REQUIREMENT_ANNOTATION_SIGNAL,
   SWARM_REQUIREMENT_LABEL_ATTEMPT,
   SWARM_REQUIREMENT_LABEL_CHANNEL,
@@ -82,6 +74,8 @@ import {
   SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE,
   SWARM_REQUIREMENT_MAX_ATTEMPTS,
   SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT,
+  SWARM_RUNTIME_ADMISSION_DESIGN_REF,
+  SWARM_RUNTIME_PROOF_DESIGN_REF,
   SWARM_SCHEDULE_ANNOTATION_IDENTITY,
   SWARM_SCHEDULE_ANNOTATION_NATS_URL,
   type StageName,
@@ -253,47 +247,6 @@ const shouldEnforceSwarmRuntimeProof = () => {
   return true
 }
 
-const buildAdmissionTrace = (
-  passport: AdmissionPassportStatus | null,
-  warrant: RecoveryWarrantStatus | null = null,
-) => {
-  if (!passport) {
-    return {
-      annotations: {},
-      parameters: {},
-    }
-  }
-
-  const requiredRuntimeKits = passport.required_runtime_kits.join(',')
-  const requiredProofCells = warrant?.required_proof_cell_ids.join(',') ?? ''
-  const annotations: Record<string, string> = {
-    [SWARM_ADMISSION_ANNOTATION_PASSPORT_ID]: passport.admission_passport_id,
-    [SWARM_ADMISSION_ANNOTATION_DECISION]: passport.decision,
-    [SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST]: passport.recovery_case_set_digest,
-    [SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST]: passport.runtime_kit_set_digest,
-    [SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS]: requiredRuntimeKits,
-    [SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION]: passport.producer_revision,
-  }
-  const parameters: Record<string, string> = {
-    swarmAdmissionPassportId: passport.admission_passport_id,
-    swarmAdmissionDecision: passport.decision,
-    swarmRecoveryCaseSetDigest: passport.recovery_case_set_digest,
-    swarmRuntimeKitSetDigest: passport.runtime_kit_set_digest,
-    swarmRequiredRuntimeKits: requiredRuntimeKits,
-    swarmAdmissionProducerRevision: passport.producer_revision,
-  }
-  if (warrant) {
-    annotations[SWARM_ADMISSION_ANNOTATION_WARRANT_ID] = warrant.recovery_warrant_id
-    annotations[SWARM_ADMISSION_ANNOTATION_WARRANT_STATUS] = warrant.status
-    annotations[SWARM_ADMISSION_ANNOTATION_PROOF_CELLS] = requiredProofCells
-    parameters.swarmRecoveryWarrantId = warrant.recovery_warrant_id
-    parameters.swarmRecoveryWarrantStatus = warrant.status
-    parameters.swarmRequiredProofCells = requiredProofCells
-  }
-
-  return { annotations, parameters }
-}
-
 const summarizePassportBlock = (passport: AdmissionPassportStatus | null) => {
   if (!passport) return 'missing launch admission passport'
   const reasons = passport.reason_codes.length > 0 ? `: ${passport.reason_codes.join(', ')}` : ''
@@ -434,7 +387,7 @@ const resolveLaunchAdmission = (input: {
         consumerClass,
       })
     : undefined
-  const trace = buildAdmissionTrace(passport ?? null)
+  const trace = buildSwarmAdmissionTrace(passport ?? null)
   if (!passport) {
     return {
       enforced: true,
@@ -456,7 +409,7 @@ const resolveLaunchAdmission = (input: {
     passport,
   })
   const runtimeProofCells = findRequiredProofCellsForWarrant(input.snapshot, warrant ?? null)
-  const traceWithWarrant = buildAdmissionTrace(passport, warrant ?? null)
+  const traceWithWarrant = buildSwarmAdmissionTrace(passport, warrant ?? null)
 
   if (passport.decision !== 'allow') {
     return {
@@ -522,6 +475,8 @@ const admissionStatusForStage = (admission: SwarmLaunchAdmission) => ({
   decision: admission.passport?.decision ?? null,
   recoveryWarrantId: admission.warrant?.recovery_warrant_id ?? null,
   recoveryWarrantStatus: admission.warrant?.status ?? null,
+  runtimeAdmissionDesignRef: admission.enforced ? SWARM_RUNTIME_ADMISSION_DESIGN_REF : null,
+  runtimeProofDesignRef: admission.proofEnforced ? SWARM_RUNTIME_PROOF_DESIGN_REF : null,
   reason: admission.reason,
   message: admission.message,
   runtimeKitSetDigest: admission.passport?.runtime_kit_set_digest ?? null,
