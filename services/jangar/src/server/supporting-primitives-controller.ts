@@ -19,6 +19,12 @@ import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
 import { startResourceWatch } from '~/server/kube-watch'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import {
+  MATERIAL_REENTRY_SWARM_RECONCILE_INTERVAL_MS,
+  startMaterialReentrySwarmReconcileLoop,
+  startSwarmWatchers,
+  stopMaterialReentrySwarmReconcileLoop,
+} from '~/server/supporting-primitives-material-reentry-swarm-reconciler'
 import { publishMaterialReentryRequirementSignals } from '~/server/supporting-primitives-material-reentry-requirements'
 import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
 import {
@@ -765,23 +771,6 @@ const clearSwarmUnfreezeTimer = (namespace: string, name: string) => {
   swarmUnfreezeTimers.delete(key)
 }
 
-const startSwarmWatchers = (
-  kube: ReturnType<typeof createKubernetesClient>,
-  namespaces: string[],
-  handles: Array<{ stop: () => void }>,
-) => {
-  for (const namespace of namespaces) {
-    handles.push(
-      startResourceWatch({
-        resource: RESOURCE_MAP.Swarm,
-        namespace,
-        onEvent: (event) => handleResourceEvent(kube, namespace, event),
-        onError: (error) => console.warn('[jangar] swarm watch failed', error),
-      }),
-    )
-  }
-}
-
 const refreshOptionalSwarmWatches = async (
   kube: ReturnType<typeof createKubernetesClient>,
   namespaces: string[],
@@ -793,8 +782,15 @@ const refreshOptionalSwarmWatches = async (
   const crds = await checkCrds(kubeGateway)
   if (lifecycleToken !== token || !started) return
   if (!crds.ok || !optionalCrdsReady.has(RESOURCE_MAP.Swarm)) return
-  startSwarmWatchers(kube, namespaces, watchHandles)
+  startSwarmWatchers(namespaces, watchHandles, (namespace, event) => handleResourceEvent(kube, namespace, event))
   swarmWatchersStarted = true
+  startMaterialReentrySwarmReconcileLoop({
+    kube,
+    namespaces,
+    canReconcile: () => started && lifecycleToken === token && optionalCrdsReady.has(RESOURCE_MAP.Swarm),
+    queueResourceTask,
+    reconcileSwarm: (swarm, namespace) => reconcileSwarm(kube, swarm, namespace),
+  })
   void reconcileAll(kube, namespaces)
 }
 
@@ -3217,13 +3213,8 @@ export const startSupportingPrimitivesController = async () => {
       )
       if (optionalCrdsReady.has(RESOURCE_MAP.Swarm)) {
         swarmWatchersStarted = true
-        handles.push(
-          startResourceWatch({
-            resource: RESOURCE_MAP.Swarm,
-            namespace,
-            onEvent: (event) => handleResourceEvent(kube, namespace, event),
-            onError: (error) => console.warn('[jangar] swarm watch failed', error),
-          }),
+        startSwarmWatchers([namespace], handles, (eventNamespace, event) =>
+          handleResourceEvent(kube, eventNamespace, event),
         )
       }
       handles.push(
@@ -3270,6 +3261,16 @@ export const startSupportingPrimitivesController = async () => {
       )
     }
 
+    if (optionalCrdsReady.has(RESOURCE_MAP.Swarm)) {
+      startMaterialReentrySwarmReconcileLoop({
+        kube,
+        namespaces,
+        canReconcile: () => started && lifecycleToken === token && optionalCrdsReady.has(RESOURCE_MAP.Swarm),
+        queueResourceTask,
+        reconcileSwarm: (swarm, namespace) => reconcileSwarm(kube, swarm, namespace),
+      })
+    }
+
     if (!optionalCrdsReady.has(RESOURCE_MAP.Swarm)) {
       if (swarmCrdsRefreshHandle) clearInterval(swarmCrdsRefreshHandle)
       swarmCrdsRefreshHandle = setInterval(() => {
@@ -3307,6 +3308,7 @@ export const stopSupportingPrimitivesController = () => {
     clearInterval(swarmCrdsRefreshHandle)
     swarmCrdsRefreshHandle = null
   }
+  stopMaterialReentrySwarmReconcileLoop()
   swarmWatchersStarted = false
   for (const handle of watchHandles) {
     handle.stop()
@@ -3343,6 +3345,7 @@ export const __test__ = {
   shouldThrottleSwarmStatusReconcile,
   SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS,
   shouldStartWithFeatureFlag,
+  MATERIAL_REENTRY_SWARM_RECONCILE_INTERVAL_MS,
   SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS,
   SWARM_CRD_REFRESH_INTERVAL_MS,
 }
