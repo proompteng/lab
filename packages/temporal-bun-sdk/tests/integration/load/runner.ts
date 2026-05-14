@@ -720,10 +720,34 @@ const waitForWorkflowCompletionsRpc = async ({
   return completions
 }
 
-const calculateLoadCompletionBudgetMs = (
-  config: Pick<WorkerLoadConfig, 'workflowDurationBudgetMs' | 'metricsFlushTimeoutMs'>,
-): number =>
-  config.workflowDurationBudgetMs + Math.max(config.metricsFlushTimeoutMs, 5_000)
+type LoadCompletionBudgetConfig = Pick<WorkerLoadConfig, 'workflowDurationBudgetMs' | 'metricsFlushTimeoutMs'> &
+  Partial<
+    Pick<
+      WorkerLoadConfig,
+      | 'activityScheduleToCloseTimeoutMs'
+      | 'activityScheduleToStartTimeoutMs'
+      | 'activityStartToCloseTimeoutMs'
+      | 'workflowCount'
+      | 'workflowDescribeConcurrency'
+    >
+  >
+
+const calculateLoadCompletionBudgetMs = (config: LoadCompletionBudgetConfig): number => {
+  const activityTimeoutBudgetMs = Math.max(
+    config.activityScheduleToCloseTimeoutMs ?? 0,
+    (config.activityScheduleToStartTimeoutMs ?? 0) + (config.activityStartToCloseTimeoutMs ?? 0),
+  )
+  const workflowCompletionBudgetMs = Math.max(config.workflowDurationBudgetMs, activityTimeoutBudgetMs)
+  const describeDrainBudgetMs =
+    typeof config.workflowCount === 'number'
+      ? Math.ceil(
+          Math.max(1, config.workflowCount) /
+            Math.max(1, config.workflowDescribeConcurrency ?? config.workflowCount),
+        ) * 10_000
+      : 0
+  const flushAndDescribeBudgetMs = Math.max(config.metricsFlushTimeoutMs, 5_000, describeDrainBudgetMs)
+  return workflowCompletionBudgetMs + flushAndDescribeBudgetMs
+}
 
 const isAcceptedTerminalWorkflowStatus = (status: string): boolean =>
   status === 'COMPLETED' || status === 'TERMINATED' || status === 'CANCELED'
