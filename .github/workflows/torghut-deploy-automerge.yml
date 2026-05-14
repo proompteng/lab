@@ -57,6 +57,7 @@ jobs:
             'argocd/applications/torghut/analysis-template-teardown-clean.yaml'
             'argocd/applications/torghut/analysis-template-artifact-bundle.yaml'
             'argocd/applications/torghut/empirical-jobs-backfill-job.yaml'
+            'argocd/applications/torghut/execution-tca-refresh-cronjob.yaml'
             'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'
             'argocd/applications/torghut-options/catalog/deployment.yaml'
             'argocd/applications/torghut-options/enricher/deployment.yaml'
