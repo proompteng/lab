@@ -413,6 +413,16 @@ Next implementation milestone:
 - Production gate: one selected repair budget or a typed hold; never broad dispatch from partial Torghut evidence.
 - Required evidence: local tests above plus live `/ready` and full-status settlement payload after deployment.
 
+2026-05-14 scheduler trace follow-up:
+
+- Schedule-runner launch validation now copies the current `material_evidence_settlement_spine` id, decision, mode,
+  freshness, reason codes, selected repair ticket, value gate, business state, max notional, and governing design refs
+  into new `AgentRun`/`OrchestrationRun` annotations and parameters when a fresh status snapshot is available.
+- Supporting-primitives stage-clearance snapshots expose the same material-evidence trace in launch admission status, so
+  schedule and requirement handoffs can cite the material authority packet that governed a launch attempt.
+- Enforcement remains observe-mode and additive. If the settlement is missing or stale, existing runtime admission,
+  stage clearance, stage credit, evidence pressure, and Torghut zero-notional gates remain authoritative.
+
 ## Deployer Handoff
 
 After engineer PR merge and image promotion, deployer must prove:

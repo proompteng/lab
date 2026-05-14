@@ -2,6 +2,9 @@ import type {
   ActionSloBudgetActionClass,
   ClearanceMarketDecision,
   ClearanceMarketStageAdmission,
+  MaterialEvidenceRepairTicketClass,
+  MaterialEvidenceSettlementDecision,
+  MaterialEvidenceSettlementMode,
   StageClearanceDecision,
   StageClearancePacket,
 } from '~/data/agents-control-plane'
@@ -20,6 +23,17 @@ import {
   type EvidencePressureTrace,
 } from '~/server/supporting-primitives-evidence-pressure'
 import {
+  SWARM_MATERIAL_EVIDENCE_ANNOTATION_BUSINESS_STATE,
+  SWARM_MATERIAL_EVIDENCE_ANNOTATION_DECISION,
+  SWARM_MATERIAL_EVIDENCE_ANNOTATION_DESIGN_REFS,
+  SWARM_MATERIAL_EVIDENCE_ANNOTATION_FRESH_UNTIL,
+  SWARM_MATERIAL_EVIDENCE_ANNOTATION_MAX_NOTIONAL,
+  SWARM_MATERIAL_EVIDENCE_ANNOTATION_MODE,
+  SWARM_MATERIAL_EVIDENCE_ANNOTATION_REASON_CODES,
+  SWARM_MATERIAL_EVIDENCE_ANNOTATION_REPAIR_TICKET_CLASS,
+  SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_TICKET,
+  SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_VALUE_GATE,
+  SWARM_MATERIAL_EVIDENCE_ANNOTATION_SETTLEMENT_ID,
   SWARM_STAGE_CLEARANCE_ANNOTATION_ACTION_CLASS,
   SWARM_STAGE_CLEARANCE_ANNOTATION_CLEARANCE_MARKET_LEDGER_ID,
   SWARM_STAGE_CLEARANCE_ANNOTATION_CLEARANCE_MARKET_SELECTED_REPAIR_LOT,
@@ -68,6 +82,20 @@ export type StageCreditTrace = {
   selectedRepairLotRef: string | null
 }
 
+export type MaterialEvidenceSettlementTrace = {
+  settlementId: string
+  decision: MaterialEvidenceSettlementDecision | null
+  mode: MaterialEvidenceSettlementMode | null
+  freshUntil: string | null
+  reasonCodes: string[]
+  repairTicketClass: MaterialEvidenceRepairTicketClass | null
+  selectedTicketRef: string | null
+  selectedValueGate: string | null
+  businessState: string | null
+  maxNotional: string | null
+  governingDesignRefs: string[]
+}
+
 export type StageClearanceLaunchAdmission = {
   mode: StageClearanceMode
   admitted: boolean
@@ -77,6 +105,7 @@ export type StageClearanceLaunchAdmission = {
   clearanceMarket: StageClearanceMarketTrace | null
   stageCredit: StageCreditTrace | null
   evidencePressure: EvidencePressureTrace | null
+  materialEvidence: MaterialEvidenceSettlementTrace | null
   reason:
     | 'StageClearanceDisabled'
     | 'StageClearanceAllowed'
@@ -99,6 +128,7 @@ export type StageClearanceStatusSnapshot = {
   stageAdmissions: ClearanceMarketStageAdmission[]
   stageCredit: StageCreditStatusSnapshot | null
   evidencePressure: EvidencePressureStatusSnapshot | null
+  materialEvidence: MaterialEvidenceSettlementTrace | null
   materialReentryRequirementSignals: MaterialReentryRequirementSignal[]
 }
 
@@ -130,13 +160,36 @@ type StageClearanceAdmissionSnapshot = Pick<
   StageClearanceStatusSnapshot,
   'clearanceMarketLedgerId' | 'stageAdmissions'
 > &
-  Partial<Pick<StageClearanceStatusSnapshot, 'stageCredit' | 'evidencePressure'>>
+  Partial<Pick<StageClearanceStatusSnapshot, 'stageCredit' | 'evidencePressure' | 'materialEvidence'>>
 
 const asArray = (value: unknown) => (Array.isArray(value) ? value : [])
 
 const isPresent = <T>(value: T | null | undefined): value is T => value != null
 
 const compactStrings = (values: unknown[]) => values.map(asString).filter(isPresent)
+
+const parseMaterialEvidenceDecision = (value: unknown): MaterialEvidenceSettlementDecision | null => {
+  const decision = asString(value)
+  return decision === 'allow' || decision === 'repair_only' || decision === 'hold' || decision === 'block'
+    ? decision
+    : null
+}
+
+const parseMaterialEvidenceMode = (value: unknown): MaterialEvidenceSettlementMode | null => {
+  const mode = asString(value)
+  return mode === 'observe' || mode === 'shadow' || mode === 'enforce' ? mode : null
+}
+
+const parseMaterialEvidenceRepairTicketClass = (value: unknown): MaterialEvidenceRepairTicketClass | null => {
+  const ticketClass = asString(value)
+  return ticketClass === 'none' ||
+    ticketClass === 'controller_ingestion' ||
+    ticketClass === 'verification_carry_rollout' ||
+    ticketClass === 'alpha_readiness' ||
+    ticketClass === 'consumer_evidence_projection_refresh'
+    ? ticketClass
+    : null
+}
 
 export const normalizeStageClearanceHoldStages = (values: string[]) =>
   new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean))
@@ -283,6 +336,29 @@ const readStageCreditStatusSnapshot = (value: unknown): StageCreditStatusSnapsho
   }
 }
 
+const readMaterialEvidenceSettlementTrace = (value: unknown): MaterialEvidenceSettlementTrace | null => {
+  const record = asRecord(value)
+  if (!record) return null
+  const settlementId = asString(record.settlement_id)
+  if (!settlementId) return null
+
+  const budget = asRecord(record.repair_dispatch_budget)
+  const businessTruth = asRecord(record.business_truth)
+  return {
+    settlementId,
+    decision: parseMaterialEvidenceDecision(record.decision),
+    mode: parseMaterialEvidenceMode(record.mode),
+    freshUntil: asString(record.fresh_until),
+    reasonCodes: compactStrings(asArray(record.reason_codes)),
+    repairTicketClass: parseMaterialEvidenceRepairTicketClass(budget?.ticket_class),
+    selectedTicketRef: asString(budget?.selected_ticket_ref),
+    selectedValueGate: asString(businessTruth?.selected_value_gate),
+    businessState: asString(businessTruth?.business_state),
+    maxNotional: asString(businessTruth?.max_notional),
+    governingDesignRefs: compactStrings(asArray(record.governing_design_refs)),
+  }
+}
+
 const readStageClearanceStatusSnapshot = (status: Record<string, unknown>): StageClearanceStatusSnapshot => {
   const clearanceMarketLedger = asRecord(status.clearance_market_ledger)
   return {
@@ -293,6 +369,7 @@ const readStageClearanceStatusSnapshot = (status: Record<string, unknown>): Stag
       .filter(isPresent),
     stageCredit: readStageCreditStatusSnapshot(status.stage_credit_ledger),
     evidencePressure: readEvidencePressureStatusSnapshot(status.evidence_pressure_ledger),
+    materialEvidence: readMaterialEvidenceSettlementTrace(status.material_evidence_settlement_spine),
     materialReentryRequirementSignals: readMaterialReentryRequirementSignals(status),
   }
 }
@@ -396,6 +473,7 @@ const buildStageClearanceTrace = (
   clearanceMarket: StageClearanceMarketTrace | null,
   stageCredit: StageCreditTrace | null,
   evidencePressure: EvidencePressureTrace | null,
+  materialEvidence: MaterialEvidenceSettlementTrace | null,
 ): Pick<StageClearanceLaunchAdmission, 'annotations' | 'parameters'> => {
   const reasonCodes = packet.reason_codes.join(',')
   const annotations: Record<string, string> = {
@@ -481,6 +559,52 @@ const buildStageClearanceTrace = (
     parameters.swarmCreditSelectedRepairLotRef = stageCredit.selectedRepairLotRef
   }
   applyEvidencePressureTrace(annotations, parameters, evidencePressure)
+  if (materialEvidence) {
+    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_SETTLEMENT_ID] = materialEvidence.settlementId
+    parameters.swarmMaterialEvidenceSettlementId = materialEvidence.settlementId
+  }
+  if (materialEvidence?.decision) {
+    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_DECISION] = materialEvidence.decision
+    parameters.swarmMaterialEvidenceDecision = materialEvidence.decision
+  }
+  if (materialEvidence?.mode) {
+    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_MODE] = materialEvidence.mode
+    parameters.swarmMaterialEvidenceMode = materialEvidence.mode
+  }
+  if (materialEvidence?.freshUntil) {
+    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_FRESH_UNTIL] = materialEvidence.freshUntil
+    parameters.swarmMaterialEvidenceFreshUntil = materialEvidence.freshUntil
+  }
+  if (materialEvidence && materialEvidence.reasonCodes.length > 0) {
+    const materialEvidenceReasonCodes = materialEvidence.reasonCodes.join(',')
+    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_REASON_CODES] = materialEvidenceReasonCodes
+    parameters.swarmMaterialEvidenceReasonCodes = materialEvidenceReasonCodes
+  }
+  if (materialEvidence?.repairTicketClass) {
+    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_REPAIR_TICKET_CLASS] = materialEvidence.repairTicketClass
+    parameters.swarmMaterialEvidenceRepairTicketClass = materialEvidence.repairTicketClass
+  }
+  if (materialEvidence?.selectedTicketRef) {
+    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_TICKET] = materialEvidence.selectedTicketRef
+    parameters.swarmMaterialEvidenceSelectedTicketRef = materialEvidence.selectedTicketRef
+  }
+  if (materialEvidence?.selectedValueGate) {
+    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_VALUE_GATE] = materialEvidence.selectedValueGate
+    parameters.swarmMaterialEvidenceSelectedValueGate = materialEvidence.selectedValueGate
+  }
+  if (materialEvidence?.businessState) {
+    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_BUSINESS_STATE] = materialEvidence.businessState
+    parameters.swarmMaterialEvidenceBusinessState = materialEvidence.businessState
+  }
+  if (materialEvidence?.maxNotional) {
+    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_MAX_NOTIONAL] = materialEvidence.maxNotional
+    parameters.swarmMaterialEvidenceMaxNotional = materialEvidence.maxNotional
+  }
+  if (materialEvidence && materialEvidence.governingDesignRefs.length > 0) {
+    const materialEvidenceDesignRefs = materialEvidence.governingDesignRefs.join(',')
+    annotations[SWARM_MATERIAL_EVIDENCE_ANNOTATION_DESIGN_REFS] = materialEvidenceDesignRefs
+    parameters.swarmMaterialEvidenceDesignRefs = materialEvidenceDesignRefs
+  }
   return { annotations, parameters }
 }
 
@@ -517,6 +641,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       clearanceMarket: null,
       stageCredit: null,
       evidencePressure: null,
+      materialEvidence: null,
       reason: 'StageClearanceDisabled',
       message: 'stage clearance enforcement disabled',
       annotations: {},
@@ -543,6 +668,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       clearanceMarket: null,
       stageCredit: null,
       evidencePressure: null,
+      materialEvidence: input.clearanceMarket?.materialEvidence ?? null,
       reason: 'StageClearanceMissing',
       message: `missing stage clearance packet for ${input.swarmName}/${input.stage}/${actionClass}`,
       annotations: {},
@@ -554,7 +680,15 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
   const nowMs = input.nowMs ?? Date.now()
   const stageCredit = stageCreditTraceForPacket(input.clearanceMarket, packet, nowMs)
   const evidencePressure = evidencePressureTraceForAction(input.clearanceMarket, actionClass)
-  const trace = buildStageClearanceTrace(packet, input.mode, clearanceMarket, stageCredit, evidencePressure)
+  const materialEvidence = input.clearanceMarket?.materialEvidence ?? null
+  const trace = buildStageClearanceTrace(
+    packet,
+    input.mode,
+    clearanceMarket,
+    stageCredit,
+    evidencePressure,
+    materialEvidence,
+  )
   const freshUntilMs = Date.parse(packet.fresh_until)
   if (!Number.isFinite(freshUntilMs) || freshUntilMs <= nowMs) {
     return {
@@ -566,6 +700,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       clearanceMarket,
       stageCredit,
       evidencePressure,
+      materialEvidence,
       reason: 'StageClearanceStale',
       message: `stage clearance packet ${packet.packet_id} is stale`,
       ...trace,
@@ -582,6 +717,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       clearanceMarket,
       stageCredit,
       evidencePressure,
+      materialEvidence,
       reason: 'StageClearanceHeld',
       message: summarizeStageClearanceBlock(packet, clearanceMarket),
       ...trace,
@@ -597,6 +733,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       clearanceMarket,
       stageCredit,
       evidencePressure,
+      materialEvidence,
       reason: 'StageClearanceHeld',
       message: `clearance market stage admission ${clearanceMarket.stageAdmissionId ?? clearanceMarket.ledgerId} is ${
         clearanceMarket.decision
@@ -616,6 +753,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
       clearanceMarket,
       stageCredit,
       evidencePressure,
+      materialEvidence,
       reason: 'StageClearanceLaunchBudgetExhausted',
       message: `stage clearance packet ${packet.packet_id} has no launch budget`,
       ...trace,
@@ -633,6 +771,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
         clearanceMarket,
         stageCredit,
         evidencePressure,
+        materialEvidence,
         reason: 'EvidencePressureStale',
         message: `evidence pressure ledger ${evidencePressure.ledgerId} is stale`,
         ...trace,
@@ -648,6 +787,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
         clearanceMarket,
         stageCredit,
         evidencePressure,
+        materialEvidence,
         reason: 'EvidencePressureHeld',
         message: `evidence pressure budget ${evidencePressure.ledgerId}/${actionClass} is ${
           evidencePressure.decision ?? 'missing'
@@ -666,6 +806,7 @@ export const resolveStageClearanceAdmissionFromPackets = (input: {
     clearanceMarket,
     stageCredit,
     evidencePressure,
+    materialEvidence,
     reason: input.mode === 'hold' ? 'StageClearanceAllowed' : 'StageClearanceShadow',
     message:
       input.mode === 'hold'
@@ -689,6 +830,7 @@ export const resolveStageClearanceUnavailable = (
   clearanceMarket: null,
   stageCredit: null,
   evidencePressure: null,
+  materialEvidence: null,
   reason: 'StageClearanceUnavailable',
   message: `stage clearance snapshot unavailable: ${errorMessage}`,
   annotations: {},
@@ -729,6 +871,7 @@ export const resolveStageClearanceForStage = async (input: {
           stageAdmissions: input.clearanceMarket?.stageAdmissions ?? [],
           stageCredit: input.clearanceMarket?.stageCredit ?? null,
           evidencePressure: input.clearanceMarket?.evidencePressure ?? null,
+          materialEvidence: input.clearanceMarket?.materialEvidence ?? null,
         }
       : await fetchStageClearanceStatusSnapshot(input.namespace, config)
     return resolveStageClearanceAdmissionFromPackets({
@@ -779,6 +922,16 @@ export const stageClearanceStatusForStage = (admission: StageClearanceLaunchAdmi
   evidencePressureReasonCodes: admission.evidencePressure?.reasonCodes ?? [],
   evidencePressureWatchBackoffState: admission.evidencePressure?.watchBackoffState ?? null,
   evidencePressureRequiredRepairReceipts: admission.evidencePressure?.requiredRepairReceipts ?? [],
+  materialEvidenceSettlementId: admission.materialEvidence?.settlementId ?? null,
+  materialEvidenceDecision: admission.materialEvidence?.decision ?? null,
+  materialEvidenceMode: admission.materialEvidence?.mode ?? null,
+  materialEvidenceFreshUntil: admission.materialEvidence?.freshUntil ?? null,
+  materialEvidenceReasonCodes: admission.materialEvidence?.reasonCodes ?? [],
+  materialEvidenceRepairTicketClass: admission.materialEvidence?.repairTicketClass ?? null,
+  materialEvidenceSelectedTicketRef: admission.materialEvidence?.selectedTicketRef ?? null,
+  materialEvidenceSelectedValueGate: admission.materialEvidence?.selectedValueGate ?? null,
+  materialEvidenceBusinessState: admission.materialEvidence?.businessState ?? null,
+  materialEvidenceMaxNotional: admission.materialEvidence?.maxNotional ?? null,
   reason: admission.reason,
   message: admission.message,
 })

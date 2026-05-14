@@ -67,6 +67,20 @@ export const SWARM_EVIDENCE_PRESSURE_ANNOTATION_WATCH_BACKOFF_STATE =
   'swarm.proompteng.ai/evidence-pressure-watch-backoff-state'
 export const SWARM_EVIDENCE_PRESSURE_ANNOTATION_REQUIRED_REPAIR_RECEIPTS =
   'swarm.proompteng.ai/evidence-pressure-required-repair-receipts'
+export const SWARM_MATERIAL_EVIDENCE_ANNOTATION_SETTLEMENT_ID = 'swarm.proompteng.ai/material-evidence-settlement-id'
+export const SWARM_MATERIAL_EVIDENCE_ANNOTATION_DECISION = 'swarm.proompteng.ai/material-evidence-decision'
+export const SWARM_MATERIAL_EVIDENCE_ANNOTATION_MODE = 'swarm.proompteng.ai/material-evidence-mode'
+export const SWARM_MATERIAL_EVIDENCE_ANNOTATION_FRESH_UNTIL = 'swarm.proompteng.ai/material-evidence-fresh-until'
+export const SWARM_MATERIAL_EVIDENCE_ANNOTATION_REASON_CODES = 'swarm.proompteng.ai/material-evidence-reason-codes'
+export const SWARM_MATERIAL_EVIDENCE_ANNOTATION_REPAIR_TICKET_CLASS =
+  'swarm.proompteng.ai/material-evidence-repair-ticket-class'
+export const SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_TICKET =
+  'swarm.proompteng.ai/material-evidence-selected-ticket'
+export const SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_VALUE_GATE =
+  'swarm.proompteng.ai/material-evidence-selected-value-gate'
+export const SWARM_MATERIAL_EVIDENCE_ANNOTATION_BUSINESS_STATE = 'swarm.proompteng.ai/material-evidence-business-state'
+export const SWARM_MATERIAL_EVIDENCE_ANNOTATION_MAX_NOTIONAL = 'swarm.proompteng.ai/material-evidence-max-notional'
+export const SWARM_MATERIAL_EVIDENCE_ANNOTATION_DESIGN_REFS = 'swarm.proompteng.ai/material-evidence-design-refs'
 
 export const buildScheduleRunnerCommand = (): string =>
   [
@@ -123,6 +137,19 @@ export const buildScheduleRunnerCommand = (): string =>
       reasonCodes: SWARM_EVIDENCE_PRESSURE_ANNOTATION_REASON_CODES,
       watchBackoffState: SWARM_EVIDENCE_PRESSURE_ANNOTATION_WATCH_BACKOFF_STATE,
       requiredRepairReceipts: SWARM_EVIDENCE_PRESSURE_ANNOTATION_REQUIRED_REPAIR_RECEIPTS,
+    })};`,
+    `  const materialEvidenceAnnotations = ${JSON.stringify({
+      settlementId: SWARM_MATERIAL_EVIDENCE_ANNOTATION_SETTLEMENT_ID,
+      decision: SWARM_MATERIAL_EVIDENCE_ANNOTATION_DECISION,
+      mode: SWARM_MATERIAL_EVIDENCE_ANNOTATION_MODE,
+      freshUntil: SWARM_MATERIAL_EVIDENCE_ANNOTATION_FRESH_UNTIL,
+      reasonCodes: SWARM_MATERIAL_EVIDENCE_ANNOTATION_REASON_CODES,
+      repairTicketClass: SWARM_MATERIAL_EVIDENCE_ANNOTATION_REPAIR_TICKET_CLASS,
+      selectedTicket: SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_TICKET,
+      selectedValueGate: SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_VALUE_GATE,
+      businessState: SWARM_MATERIAL_EVIDENCE_ANNOTATION_BUSINESS_STATE,
+      maxNotional: SWARM_MATERIAL_EVIDENCE_ANNOTATION_MAX_NOTIONAL,
+      designRefs: SWARM_MATERIAL_EVIDENCE_ANNOTATION_DESIGN_REFS,
     })};`,
     `  const swarmNameLabelName = ${JSON.stringify(SWARM_NAME_LABEL)};`,
     `  const stageLabelName = ${JSON.stringify(SWARM_STAGE_LABEL)};`,
@@ -397,6 +424,25 @@ export const buildScheduleRunnerCommand = (): string =>
     '    const evidencePressureWatchBackoff = asRecord(evidencePressureLedger?.watch_backoff_policy);',
     '    const evidencePressureWatchBackoffState = asString(evidencePressureWatchBackoff?.state);',
     '    const evidencePressureEnforced = isEvidencePressureEnforced(evidencePressureMode) || isEvidencePressureEnforced(configuredEvidencePressureMode);',
+    '    const materialEvidence = asRecord(status.material_evidence_settlement_spine);',
+    '    const materialEvidenceSettlementId = asString(materialEvidence?.settlement_id);',
+    '    const materialEvidenceDecision = asString(materialEvidence?.decision);',
+    '    const materialEvidenceMode = asString(materialEvidence?.mode);',
+    '    const materialEvidenceFreshUntil = asString(materialEvidence?.fresh_until);',
+    '    const materialEvidenceFreshUntilMs = Date.parse(materialEvidenceFreshUntil);',
+    '    const materialEvidenceCurrent = Boolean(materialEvidenceSettlementId && Number.isFinite(materialEvidenceFreshUntilMs) && materialEvidenceFreshUntilMs > Date.now());',
+    '    const materialEvidenceReasonCodes = normalizeRuntimeKits(asArray(materialEvidence?.reason_codes).map(asString).filter(Boolean));',
+    '    const materialEvidenceDesignRefs = normalizeRuntimeKits(asArray(materialEvidence?.governing_design_refs).map(asString).filter(Boolean));',
+    '    const materialEvidenceBudget = asRecord(materialEvidence?.repair_dispatch_budget);',
+    '    const materialEvidenceRepairTicketClass = asString(materialEvidenceBudget?.ticket_class);',
+    '    const materialEvidenceSelectedTicket = asString(materialEvidenceBudget?.selected_ticket_ref);',
+    '    const materialEvidenceBusinessTruth = asRecord(materialEvidence?.business_truth);',
+    '    const materialEvidenceSelectedValueGate = asString(materialEvidenceBusinessTruth?.selected_value_gate);',
+    '    const materialEvidenceBusinessState = asString(materialEvidenceBusinessTruth?.business_state);',
+    '    const materialEvidenceMaxNotional = asString(materialEvidenceBusinessTruth?.max_notional);',
+    '    if (materialEvidenceSettlementId && !materialEvidenceCurrent) {',
+    '      console.warn(`[jangar] material evidence settlement ${materialEvidenceSettlementId} is stale`);',
+    '    }',
     '    if (stageCreditLedgerId) {',
     '      if (!stageCreditLedgerCurrent) {',
     '        const message = `current stage credit ledger ${stageCreditLedgerId} is stale`;',
@@ -490,6 +536,17 @@ export const buildScheduleRunnerCommand = (): string =>
     '    if (evidencePressureReasonCodes) writeNestedRecordValue(manifest, ["metadata", "annotations"], evidencePressureAnnotations.reasonCodes, evidencePressureReasonCodes);',
     '    if (evidencePressureWatchBackoffState) writeNestedRecordValue(manifest, ["metadata", "annotations"], evidencePressureAnnotations.watchBackoffState, evidencePressureWatchBackoffState);',
     '    if (evidencePressureRequiredRepairReceipts) writeNestedRecordValue(manifest, ["metadata", "annotations"], evidencePressureAnnotations.requiredRepairReceipts, evidencePressureRequiredRepairReceipts);',
+    '    if (materialEvidenceCurrent) writeNestedRecordValue(manifest, ["metadata", "annotations"], materialEvidenceAnnotations.settlementId, materialEvidenceSettlementId);',
+    '    if (materialEvidenceCurrent && materialEvidenceDecision) writeNestedRecordValue(manifest, ["metadata", "annotations"], materialEvidenceAnnotations.decision, materialEvidenceDecision);',
+    '    if (materialEvidenceCurrent && materialEvidenceMode) writeNestedRecordValue(manifest, ["metadata", "annotations"], materialEvidenceAnnotations.mode, materialEvidenceMode);',
+    '    if (materialEvidenceCurrent && materialEvidenceFreshUntil) writeNestedRecordValue(manifest, ["metadata", "annotations"], materialEvidenceAnnotations.freshUntil, materialEvidenceFreshUntil);',
+    '    if (materialEvidenceCurrent && materialEvidenceReasonCodes) writeNestedRecordValue(manifest, ["metadata", "annotations"], materialEvidenceAnnotations.reasonCodes, materialEvidenceReasonCodes);',
+    '    if (materialEvidenceCurrent && materialEvidenceRepairTicketClass) writeNestedRecordValue(manifest, ["metadata", "annotations"], materialEvidenceAnnotations.repairTicketClass, materialEvidenceRepairTicketClass);',
+    '    if (materialEvidenceCurrent && materialEvidenceSelectedTicket) writeNestedRecordValue(manifest, ["metadata", "annotations"], materialEvidenceAnnotations.selectedTicket, materialEvidenceSelectedTicket);',
+    '    if (materialEvidenceCurrent && materialEvidenceSelectedValueGate) writeNestedRecordValue(manifest, ["metadata", "annotations"], materialEvidenceAnnotations.selectedValueGate, materialEvidenceSelectedValueGate);',
+    '    if (materialEvidenceCurrent && materialEvidenceBusinessState) writeNestedRecordValue(manifest, ["metadata", "annotations"], materialEvidenceAnnotations.businessState, materialEvidenceBusinessState);',
+    '    if (materialEvidenceCurrent && materialEvidenceMaxNotional) writeNestedRecordValue(manifest, ["metadata", "annotations"], materialEvidenceAnnotations.maxNotional, materialEvidenceMaxNotional);',
+    '    if (materialEvidenceCurrent && materialEvidenceDesignRefs) writeNestedRecordValue(manifest, ["metadata", "annotations"], materialEvidenceAnnotations.designRefs, materialEvidenceDesignRefs);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearancePacketId", packetId);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceDecision", decision);',
     '    writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmStageClearanceActionClass", actionClass);',
@@ -519,6 +576,17 @@ export const buildScheduleRunnerCommand = (): string =>
     '    if (evidencePressureReasonCodes) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmEvidencePressureReasonCodes", evidencePressureReasonCodes);',
     '    if (evidencePressureWatchBackoffState) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmEvidencePressureWatchBackoffState", evidencePressureWatchBackoffState);',
     '    if (evidencePressureRequiredRepairReceipts) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmEvidencePressureRequiredRepairReceipts", evidencePressureRequiredRepairReceipts);',
+    '    if (materialEvidenceCurrent) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmMaterialEvidenceSettlementId", materialEvidenceSettlementId);',
+    '    if (materialEvidenceCurrent && materialEvidenceDecision) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmMaterialEvidenceDecision", materialEvidenceDecision);',
+    '    if (materialEvidenceCurrent && materialEvidenceMode) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmMaterialEvidenceMode", materialEvidenceMode);',
+    '    if (materialEvidenceCurrent && materialEvidenceFreshUntil) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmMaterialEvidenceFreshUntil", materialEvidenceFreshUntil);',
+    '    if (materialEvidenceCurrent && materialEvidenceReasonCodes) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmMaterialEvidenceReasonCodes", materialEvidenceReasonCodes);',
+    '    if (materialEvidenceCurrent && materialEvidenceRepairTicketClass) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmMaterialEvidenceRepairTicketClass", materialEvidenceRepairTicketClass);',
+    '    if (materialEvidenceCurrent && materialEvidenceSelectedTicket) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmMaterialEvidenceSelectedTicketRef", materialEvidenceSelectedTicket);',
+    '    if (materialEvidenceCurrent && materialEvidenceSelectedValueGate) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmMaterialEvidenceSelectedValueGate", materialEvidenceSelectedValueGate);',
+    '    if (materialEvidenceCurrent && materialEvidenceBusinessState) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmMaterialEvidenceBusinessState", materialEvidenceBusinessState);',
+    '    if (materialEvidenceCurrent && materialEvidenceMaxNotional) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmMaterialEvidenceMaxNotional", materialEvidenceMaxNotional);',
+    '    if (materialEvidenceCurrent && materialEvidenceDesignRefs) writeNestedRecordValue(manifest, ["spec", "parameters"], "swarmMaterialEvidenceDesignRefs", materialEvidenceDesignRefs);',
     '  };',
     '  const targetByKind = {',
     "  AgentRun: { group: 'agents.proompteng.ai', version: 'v1alpha1', plural: 'agentruns' },",
