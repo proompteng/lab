@@ -197,14 +197,31 @@ def test_no_delta_reentry_auction_denies_unchanged_active_release_key() -> None:
 
 def test_no_delta_reentry_auction_selects_one_changed_evidence_ticket() -> None:
     dividend = deepcopy(_dividend_ledger())
-    dividend["changed_release_conditions"] = ["evidence_window_changed"]
+    dividend["changed_release_conditions"] = [
+        "source_ref_changes",
+        "evidence_window_changes",
+        "blocker_set_changes",
+        "required_receipt_changes",
+        "selected_hypothesis_changed",
+        "schema_lineage_receipt_current",
+    ]
 
     auction = _build(dividend=dividend)
 
     assert auction["reentry_decision"] == "allow"
+    release_states = {
+        condition["code"]: condition["state"]
+        for condition in cast(list[Mapping[str, Any]], auction["release_conditions"])
+    }
+    assert release_states["source_revenue_repair_ref_changed"] == "changed"
+    assert release_states["evidence_window_changed"] == "changed"
+    assert release_states["blocker_set_changed"] == "changed"
+    assert release_states["required_receipt_set_changed"] == "changed"
+    assert release_states["selected_hypothesis_changed"] == "changed"
+    assert release_states["schema_lineage_receipt_current"] == "changed"
     selected = cast(Mapping[str, Any], auction["selected_ticket"])
     assert selected["ticket_class"] == "alpha_evidence_window"
-    assert selected["release_condition"] == "evidence_window_changed"
+    assert selected["release_condition"] == "source_revenue_repair_ref_changed"
     assert selected["state"] == "selected"
     assert selected["max_notional"] == "0"
     assert (
@@ -217,7 +234,9 @@ def test_no_delta_reentry_auction_selects_one_changed_evidence_ticket() -> None:
         for ticket in cast(list[Mapping[str, Any]], auction["candidate_tickets"])
         if ticket["state"] == "eligible"
     ]
-    assert len(selected_tickets) == 1
+    assert any(
+        ticket["ticket_class"] == "alpha_evidence_window" for ticket in selected_tickets
+    )
 
 
 def test_no_delta_reentry_auction_selects_jangar_foreclosure_ticket() -> None:
@@ -254,31 +273,38 @@ def test_no_delta_reentry_auction_denies_nonzero_notional() -> None:
     assert "capital_notional_nonzero" in auction["reason_codes"]
 
 
-def test_no_delta_reentry_auction_holds_without_active_key_or_release_change() -> None:
-    conveyor = deepcopy(_conveyor())
-    conveyor["status"] = "settled"
-    conveyor["settlement_state"] = "settled"
-    conveyor["active_no_delta_lease_count"] = 0
-    conveyor["selected_lane"] = {
-        **cast(dict[str, object], conveyor["selected_lane"]),
-        "repeat_launch_decision": "allow",
-        "no_delta_release_key": "",
-    }
+def test_no_delta_reentry_auction_denies_invalid_notional_string() -> None:
+    auction = _build(
+        capital={"capital_state": "shadow", "max_notional": "not-a-number"}
+    )
 
+    assert auction["reentry_decision"] == "deny"
+    assert auction["max_notional"] == "not-a-number"
+    assert "capital_notional_nonzero" in auction["reason_codes"]
+
+
+def test_no_delta_reentry_auction_holds_without_active_key_or_release_change() -> None:
     dividend = deepcopy(_dividend_ledger())
-    dividend["status"] = "settled"
-    dividend["dividend_state"] = "settled"
-    dividend["no_delta_release_key"] = ""
-    dividend["jangar_custody"] = {
-        "launch_decision": "allow",
-        "launch_decision_reason": "repaired",
-    }
+    dividend["dividend_state"] = "positive_delta"
+    dividend["routeable_candidate_count_before"] = True
+    dividend["routeable_candidate_count_after"] = 2.0
+    dividend["jangar_custody"] = {"launch_decision": "allow"}
+
+    conveyor = deepcopy(_conveyor())
+    conveyor["active_no_delta_lease_count"] = "not-a-number"
+    conveyor["repeat_launch_decision"] = "allow"
+    selected_lane = cast(dict[str, object], conveyor["selected_lane"])
+    selected_lane["repeat_launch_decision"] = "allow"
 
     auction = _build(conveyor=conveyor, dividend=dividend)
 
-    assert auction["reentry_decision"] == "hold"
     assert auction["active_no_delta_release_key"] is None
+    assert auction["reentry_decision"] == "hold"
+    assert auction["routeable_candidate_count_before"] == 1
+    assert auction["routeable_candidate_count_after"] == 2
     assert "no_release_condition_changed" in auction["reason_codes"]
+    assert "duplicate_no_delta_reentry_denied" not in auction["reason_codes"]
+
     tickets = cast(list[Mapping[str, Any]], auction["candidate_tickets"])
     assert {ticket["state"] for ticket in tickets} == {"held"}
 
@@ -320,13 +346,37 @@ def test_no_delta_reentry_auction_maps_stale_jangar_release_conditions() -> None
     assert "jangar_foreclosure_ticket_missing" in auction["reason_codes"]
 
 
-def test_no_delta_reentry_auction_denies_malformed_notional() -> None:
+@pytest.mark.parametrize(
+    ("fresh_until", "expected_extra_reason"),
+    [
+        ("", None),
+        ("not-a-date", None),
+        ("2026-05-14T14:00:00", None),
+        ("2026-05-14T14:00:00Z", "jangar_verification_carry_stale"),
+    ],
+)
+def test_no_delta_reentry_auction_handles_unusable_jangar_carry_times(
+    fresh_until: str,
+    expected_extra_reason: str | None,
+) -> None:
     auction = _build(
-        capital={"capital_state": "shadow", "max_notional": "not-a-number"}
+        jangar_verification_carry={
+            "schema_version": "jangar.verify-trust-foreclosure-board.v1",
+            "board_id": "verify-trust-foreclosure-board:agents:test",
+            "status": "current",
+            "execution_trust_status": "degraded",
+            "fresh_until": fresh_until,
+            "reason_codes": ["existing_reason", " ", "existing_reason"],
+            "foreclosure_tickets": [],
+        }
     )
 
-    assert auction["reentry_decision"] == "deny"
-    assert "capital_notional_nonzero" in auction["reason_codes"]
+    carry = cast(Mapping[str, Any], auction["jangar_verification_carry"])
+    reason_codes = cast(list[str], carry["reason_codes"])
+    assert reason_codes.count("existing_reason") == 1
+    assert "jangar_foreclosure_ticket_missing" in reason_codes
+    if expected_extra_reason is not None:
+        assert expected_extra_reason in reason_codes
 
 
 def test_compact_no_delta_reentry_auction_ref() -> None:
