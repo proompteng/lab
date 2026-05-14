@@ -247,7 +247,10 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIsNone(settings.trading_jangar_symbols_url)
         self.assertIsNone(settings.trading_jangar_control_plane_status_url)
         self.assertIsNone(settings.trading_jangar_quant_health_url)
-        self.assertIsNone(settings.trading_market_context_url)
+        self.assertEqual(
+            settings.trading_market_context_url,
+            "http://jangar.jangar.svc.cluster.local/api/torghut/market-context",
+        )
         self.assertEqual(
             set(settings.trading_static_symbols),
             _LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS,
@@ -267,11 +270,12 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS", env)
         self.assertNotIn("TRADING_JANGAR_QUANT_HEALTH_REQUIRED", env)
         self.assertNotIn("TRADING_JANGAR_QUANT_HEALTH_URL", env)
-        self.assertNotIn("TRADING_MARKET_CONTEXT_URL", env)
-        self.assertFalse(
-            any(key.startswith("TRADING_MARKET_CONTEXT_") for key in env),
-            "live trading service must not import external market-context wiring",
+        self.assertEqual(
+            env.get("TRADING_MARKET_CONTEXT_URL"), settings.trading_market_context_url
         )
+        self.assertEqual(env.get("TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS"), "5")
+        self.assertEqual(env.get("TRADING_MARKET_CONTEXT_REQUIRED"), "false")
+        self.assertEqual(env.get("TRADING_MARKET_CONTEXT_FAIL_MODE"), "shadow_only")
         self.assertNotIn("JANGAR_BASE_URL", env)
 
     def test_live_manifest_has_no_jangar_trading_loop_urls(self) -> None:
@@ -284,9 +288,12 @@ class TestLiveConfigManifestContract(TestCase):
             "TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS",
             "TRADING_JANGAR_QUANT_HEALTH_REQUIRED",
             "TRADING_JANGAR_QUANT_HEALTH_URL",
-            "TRADING_MARKET_CONTEXT_URL",
         }
         self.assertTrue(blocked_env.isdisjoint(env))
+        self.assertEqual(
+            env.get("TRADING_MARKET_CONTEXT_URL"),
+            "http://jangar.jangar.svc.cluster.local/api/torghut/market-context",
+        )
 
     def test_strategy_catalog_universes_are_chip_only(self) -> None:
         for strategy in _load_torghut_strategy_catalog():

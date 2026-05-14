@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, cast
 
@@ -21,7 +21,7 @@ from ..firewall import OrderFirewall
 from ..ingest import ClickHouseSignalIngestor
 from ..llm.dspy_programs.runtime import DSPyReviewRuntime, DSPyRuntimeUnsupportedStateError
 from ..llm.guardrails import evaluate_llm_guardrails
-from ..market_context import MarketContextClient
+from ..market_context import MarketContextClient, evaluate_market_context
 from ..order_feed import OrderFeedIngestor
 from ..prices import ClickHousePriceFetcher
 from ..reconcile import Reconciler
@@ -172,7 +172,11 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
             raw_status = None
             if isinstance(executor, OrderExecutor):
                 raw_status = executor.shorting_metadata_status()
-            account_ready = raw_status.get("account_ready") if isinstance(raw_status, Mapping) else None
+            account_ready = (
+                raw_status.get("account_ready")
+                if isinstance(raw_status, Mapping)
+                else None
+            )
             alert_active = account_ready is False
         if isinstance(executor, OrderExecutor):
             status = cast(dict[str, object], executor.shorting_metadata_status())
@@ -188,6 +192,7 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
     def market_context_status(self) -> dict[str, object]:
         health: dict[str, Any] | None = None
         health_error: str | None = None
+        context_error: str | None = None
         pipeline = self._pipeline
         market_context_client = (
             getattr(pipeline, "market_context_client", None)
@@ -197,14 +202,72 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
         if not isinstance(market_context_client, MarketContextClient):
             market_context_client = MarketContextClient()
         as_of = resolve_market_context_as_of()
-        if self.state.last_market_context_symbol:
+        last_symbol = self.state.last_market_context_symbol
+        last_checked_at = self.state.last_market_context_checked_at
+        last_as_of = self.state.last_market_context_as_of
+        last_freshness_seconds = self.state.last_market_context_freshness_seconds
+        last_quality_score = self.state.last_market_context_quality_score
+        last_domain_states = dict(self.state.last_market_context_domain_states)
+        last_risk_flags = list(self.state.last_market_context_risk_flags)
+        last_allow_llm = self.state.last_market_context_allow_llm
+        last_reason = self.state.last_market_context_reason
+        alert_active = self.state.market_context_alert_active
+        alert_reason = self.state.market_context_alert_reason
+        probe_symbol = self._market_context_probe_symbol()
+        fetch_symbol = last_symbol or probe_symbol
+        if fetch_symbol:
             try:
                 health = market_context_client.fetch_health(
-                    self.state.last_market_context_symbol,
+                    fetch_symbol,
                     as_of=as_of,
                 )
             except Exception as exc:
                 health_error = str(exc)
+        if (
+            settings.trading_market_context_url
+            and (last_freshness_seconds is None or last_symbol is None)
+            and probe_symbol
+        ):
+            try:
+                bundle = market_context_client.fetch(probe_symbol, as_of=as_of)
+            except Exception as exc:
+                context_error = str(exc)
+                self.state.last_market_context_fetch_error = context_error
+            else:
+                if bundle is not None:
+                    verdict = evaluate_market_context(bundle)
+                    last_symbol = bundle.symbol
+                    last_checked_at = datetime.now(timezone.utc)
+                    last_as_of = bundle.as_of_utc
+                    last_freshness_seconds = int(bundle.freshness_seconds)
+                    last_quality_score = float(bundle.quality_score)
+                    last_domain_states = {
+                        "technicals": bundle.domains.technicals.state,
+                        "fundamentals": bundle.domains.fundamentals.state,
+                        "news": bundle.domains.news.state,
+                        "regime": bundle.domains.regime.state,
+                    }
+                    last_risk_flags = list(bundle.risk_flags)
+                    last_allow_llm = verdict.allow_llm
+                    last_reason = verdict.reason
+                    alert_active = not verdict.allow_llm
+                    alert_reason = verdict.reason
+                    self.state.last_market_context_symbol = last_symbol
+                    self.state.last_market_context_checked_at = last_checked_at
+                    self.state.last_market_context_as_of = last_as_of
+                    self.state.last_market_context_freshness_seconds = (
+                        last_freshness_seconds
+                    )
+                    self.state.last_market_context_quality_score = last_quality_score
+                    self.state.last_market_context_domain_states = dict(
+                        last_domain_states
+                    )
+                    self.state.last_market_context_risk_flags = list(last_risk_flags)
+                    self.state.last_market_context_allow_llm = last_allow_llm
+                    self.state.last_market_context_reason = last_reason
+                    self.state.last_market_context_fetch_error = None
+                    self.state.market_context_alert_active = alert_active
+                    self.state.market_context_alert_reason = alert_reason
         return {
             "required": settings.trading_market_context_required,
             "fail_mode": settings.trading_market_context_fail_mode,
@@ -213,24 +276,55 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
             "max_staleness_seconds": settings.trading_market_context_max_staleness_seconds,
             "fundamentals_degraded_max_staleness_seconds": settings.trading_market_context_fundamentals_degraded_max_staleness_seconds,
             "news_degraded_max_staleness_seconds": settings.trading_market_context_news_degraded_max_staleness_seconds,
-            "last_symbol": self.state.last_market_context_symbol,
-            "last_checked_at": self.state.last_market_context_checked_at,
-            "last_as_of": self.state.last_market_context_as_of,
-            "last_freshness_seconds": self.state.last_market_context_freshness_seconds,
-            "last_quality_score": self.state.last_market_context_quality_score,
-            "last_domain_states": dict(self.state.last_market_context_domain_states),
-            "last_risk_flags": list(self.state.last_market_context_risk_flags),
-            "last_allow_llm": self.state.last_market_context_allow_llm,
-            "last_reason": self.state.last_market_context_reason,
-            "last_fetch_error": self.state.last_market_context_fetch_error,
+            "last_symbol": last_symbol,
+            "last_checked_at": last_checked_at,
+            "last_as_of": last_as_of,
+            "last_freshness_seconds": last_freshness_seconds,
+            "last_quality_score": last_quality_score,
+            "last_domain_states": last_domain_states,
+            "last_risk_flags": last_risk_flags,
+            "last_allow_llm": last_allow_llm,
+            "last_reason": last_reason,
+            "last_fetch_error": self.state.last_market_context_fetch_error
+            or context_error,
             "reason_total": dict(self.state.metrics.llm_market_context_reason_total),
             "shadow_total": dict(self.state.metrics.llm_market_context_shadow_total),
-            "alert_active": self.state.market_context_alert_active,
-            "alert_reason": self.state.market_context_alert_reason,
+            "alert_active": alert_active,
+            "alert_reason": alert_reason,
             "health": health,
             "health_error": health_error,
-            "time_source": trading_time_status(account_label=settings.trading_account_label),
+            "time_source": trading_time_status(
+                account_label=settings.trading_account_label
+            ),
         }
+
+    def _market_context_probe_symbol(self) -> str | None:
+        existing_symbol = (
+            str(self.state.last_market_context_symbol or "").strip().upper()
+        )
+        if existing_symbol:
+            return existing_symbol
+        pipeline = self._pipeline
+        resolver = (
+            getattr(pipeline, "universe_resolver", None)
+            if pipeline is not None
+            else None
+        )
+        if resolver is not None:
+            try:
+                symbols = cast(
+                    Iterable[object], getattr(resolver.get_resolution(), "symbols", ())
+                )
+                for symbol in sorted(str(raw).strip().upper() for raw in symbols):
+                    if symbol:
+                        return symbol
+            except Exception:
+                logger.exception("Market-context status probe universe unavailable")
+        for symbol in settings.trading_static_symbols:
+            normalized = str(symbol).strip().upper()
+            if normalized:
+                return normalized
+        return None
 
     def rejection_alert_status(self) -> dict[str, object]:
         llm_requests_total = max(0, int(self.state.metrics.llm_requests_total))
