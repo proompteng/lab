@@ -405,11 +405,12 @@ Implementation note: launch runtime-proof enforcement (2026-05-07).
   same runtime-admission snapshot as the admission passport before creating schedules, schedule runner templates, or
   cross-swarm requirement runs.
 - discover, plan, implement, and verify launches require their matching recovery warrant to be `sealed` and to cite
-  present, required, fresh, healthy runtime proof cells. A missing, broken, active, quarantined, or stale proof surface
-  blocks launch as `RuntimeProofSurfaceBlocked`.
+  the same runtime-kit digest and producer revision as the current admission passport, plus present, required, fresh,
+  healthy runtime proof cells. A missing, broken, active, quarantined, stale-parity, or stale proof surface blocks
+  launch as `RuntimeProofSurfaceBlocked`.
 - schedule-runner pods repeat the live status check immediately before creating the target AgentRun or
   OrchestrationRun, refresh the stamped recovery-warrant/proof-cell parameters, and fail closed if the current warrant
-  or required proof cells are no longer valid.
+  does not match the current passport or required proof cells are no longer valid.
 - admitted schedules and requirement runs now cite this proof-cell design with `swarmRuntimeProofDesignRef`,
   `swarmRecoveryWarrantId`, `swarmRecoveryWarrantStatus`, and `swarmRequiredProofCells` alongside the existing
   passport/runtime-kit trace.

@@ -235,7 +235,8 @@ matching runner resources, and records the unavailable passport state in swarm s
 armed.
 When runtime proof enforcement is enabled with `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=true` (the production default),
 the same launch gate also requires the stage recovery warrant (`discover`, `plan`, `implement`, or `verify`) to be
-`sealed` and backed by present, required, fresh, healthy runtime proof cells. A broken or incomplete warrant records
+`sealed`, cite the same runtime-kit digest and producer revision as the current passport, and be backed by present,
+required, fresh, healthy runtime proof cells. A broken, incomplete, or stale-parity warrant records
 `RuntimeProofSurfaceBlocked`, deletes schedule runner resources, and prevents requirement dispatch. Broken or
 quarantined implement warrants reject the matching requirement Signal once with typed proof-surface evidence. Emergency
 rollback for the proof layer only is `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=false`; the passport admission gate remains
@@ -244,10 +245,11 @@ active.
 Schedule-runner pods also verify the stamped passport and sealed warrant against the current
 `/api/agents/control-plane/status?namespace=<schedule namespace>` response immediately before creating the AgentRun or
 OrchestrationRun. A launch-capable swarm runner manifest missing its admission passport stamp, a current non-`allow`
-passport, stale freshness window, unhealthy cited runtime kit, non-sealed recovery warrant, or stale/unhealthy required
-proof cell fails the runner before work is launched. If the stamped passport id or runtime-kit digest drifted but the
-current status payload is still admitted, the runner refreshes the outgoing run annotations and parameters to the
-current passport, warrant, and proof-cell ids before launch. Emergency rollback for this fire-time check only is
+passport, stale freshness window, unhealthy cited runtime kit, non-sealed or passport-mismatched recovery warrant, or
+stale/unhealthy required proof cell fails the runner before work is launched. If the stamped passport id or runtime-kit
+digest drifted but the current status payload is still admitted, the runner refreshes the outgoing run annotations and
+parameters to the current passport, warrant, and proof-cell ids before launch. Emergency rollback for this fire-time
+check only is
 `JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false`; setting
 `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` also disables generated runner admission and proof checks so advisory
 rollback schedules do not fail because they intentionally lack passport stamps.

@@ -328,6 +328,16 @@ const summarizeWarrantBlock = ({
   if (warrant.status !== 'sealed') {
     return `recovery warrant ${warrant.recovery_warrant_id} for ${executionClass} is ${warrant.status}${reasons}`
   }
+  if (warrant.runtime_kit_digest !== passport.runtime_kit_set_digest) {
+    const warrantDigest = warrant.runtime_kit_digest || 'missing'
+    const passportDigest = passport.runtime_kit_set_digest || 'missing'
+    return `recovery warrant ${warrant.recovery_warrant_id} runtime kit digest ${warrantDigest} does not match admission passport ${passport.admission_passport_id} runtime kit digest ${passportDigest}`
+  }
+  if (warrant.admitted_revision !== passport.producer_revision) {
+    const warrantRevision = warrant.admitted_revision || 'missing'
+    const passportRevision = passport.producer_revision || 'missing'
+    return `recovery warrant ${warrant.recovery_warrant_id} admitted revision ${warrantRevision} does not match admission passport ${passport.admission_passport_id} producer revision ${passportRevision}`
+  }
   if (warrant.required_proof_cell_ids.length === 0) {
     return `recovery warrant ${warrant.recovery_warrant_id} does not cite required proof cells`
   }

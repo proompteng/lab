@@ -614,6 +614,8 @@ describe('supporting primitives controller', () => {
     expect(command).toContain('current schedule recovery warrant')
     expect(command).toContain('runtime proof cell')
     expect(command).toContain('current schedule admission runtime kit')
+    expect(command).toContain('does not match current passport runtime kit digest')
+    expect(command).toContain('does not match current passport producer revision')
     expect(command).toContain('active same-swarm stage run')
     expect(command).toContain('labelSelector')
     expect(command).toContain("method: 'GET'")
@@ -2847,6 +2849,92 @@ describe('supporting primitives controller', () => {
     expect(planAdmission?.runtimeProofDesignRef).toBe(
       'docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md',
     )
+  })
+
+  it('blocks stage schedules when the sealed recovery warrant no longer matches the passport digest', async () => {
+    process.env.JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT = '1'
+    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(
+      buildAdmissionSnapshot(
+        {},
+        {
+          plan: {
+            runtime_kit_digest: 'runtime-digest:stale',
+          },
+        },
+      ),
+    )
+
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Schedule) {
+        return { status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' } }
+      }
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-sample', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+          },
+        }
+      }
+      return null
+    })
+    const list = vi.fn(async () => ({ items: [] }))
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const schedulePayloads = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((payload) => payload.kind === 'Schedule')
+    const scheduleStages = schedulePayloads.map((payload) =>
+      String(
+        ((payload.metadata as Record<string, unknown>).labels as Record<string, unknown>)['swarm.proompteng.ai/stage'],
+      ),
+    )
+    expect(scheduleStages).toEqual(expect.arrayContaining(['discover', 'implement', 'verify']))
+    expect(scheduleStages).not.toContain('plan')
+    expect(deleteFn).toHaveBeenCalledWith(RESOURCE_MAP.Schedule, expect.stringContaining('plan-sched'), 'agents', {
+      wait: false,
+    })
+
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    const stageStates = (status.stageStates ?? {}) as Record<string, Record<string, unknown>>
+    const planAdmission = stageStates.plan?.admission as Record<string, unknown> | undefined
+    expect(stageStates.plan?.phase).toBe('AdmissionBlocked')
+    expect(stageStates.plan?.reason).toBe('RuntimeProofSurfaceBlocked')
+    expect(String(stageStates.plan?.message)).toContain('does not match admission passport')
+    expect(String(stageStates.plan?.message)).toContain('runtime-digest:stale')
+    expect(planAdmission?.recoveryWarrantId).toBe('recovery-warrant:plan:test')
+    expect(planAdmission?.recoveryWarrantStatus).toBe('sealed')
   })
 
   it('keeps passport-only stage admission available when runtime proof enforcement is disabled', async () => {
