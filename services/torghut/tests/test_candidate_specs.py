@@ -375,6 +375,61 @@ class TestCandidateSpecs(TestCase):
                     "1.0",
                 )
 
+    def test_portfolio_profit_target_adds_feedback_escape_profiles(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-feedback-escape",
+            claims=[
+                {
+                    "claim_id": "claim-feedback-escape",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": "Order-flow clustering can predict short-horizon continuation.",
+                    "confidence": "0.82",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        expected_profiles = {
+            "daily_coverage_feedback_escape",
+            "consistency_guard_feedback_escape",
+            "turnover_coverage_feedback_escape",
+        }
+        for family_template_id in candidate_specs_module._FAMILY_RUNTIME:
+            family_specs = [
+                spec for spec in specs if spec.family_template_id == family_template_id
+            ]
+            remediation_profiles = {
+                str(
+                    spec.strategy_overrides["params"].get(
+                        "feedback_remediation_profile"
+                    )
+                )
+                for spec in family_specs
+                if isinstance(spec.strategy_overrides.get("params"), dict)
+                and spec.strategy_overrides["params"].get(
+                    "feedback_remediation_profile"
+                )
+            }
+            self.assertGreaterEqual(
+                remediation_profiles,
+                expected_profiles,
+                family_template_id,
+            )
+            for spec in family_specs:
+                params = spec.strategy_overrides.get("params")
+                if not isinstance(params, dict) or not params.get(
+                    "feedback_remediation_profile"
+                ):
+                    continue
+                self.assertEqual(params["max_gross_exposure_pct_equity"], "1.0")
+                self.assertTrue(str(params["capital_profile"]).startswith("feedback_"))
+                self.assertEqual(
+                    candidate_spec_capital_features(spec)["capital_feasible_flag"], 1.0
+                )
+
     def test_short_exhaustion_claim_compiles_short_sleeve_profiles(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-short-exhaustion",
