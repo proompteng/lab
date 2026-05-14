@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: 2fa5bf6d
-  digest: sha256:7415690c826f7a6674eea3dbc90fa779f3d5dc00f5c64dc8040e447c126b636e
+  tag: b6f2fb1a
+  digest: sha256:46f6360bed7014436675c803a4d43e4982345860f89917b59f94cb1481cc0f6f
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,25 +11,25 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: 2fa5bf6d
-    digest: sha256:2441f0658e8bd91f9d48f8fb862c3d4fe11503f2bcab425f349392a6f10b467c
+    tag: b6f2fb1a
+    digest: sha256:cc3c0f19d3f37be594be3645aecddbe3bc440fe78143cc3d4b559cada887e9ab
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
       JANGAR_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence
       JANGAR_TORGHUT_STATUS_TIMEOUT_MS: "3000"
-      JANGAR_SOURCE_HEAD_SHA: 2fa5bf6d4ff92c1d11303c916d50e817e0008762
-      JANGAR_GITOPS_REVISION: 2fa5bf6d4ff92c1d11303c916d50e817e0008762
-      JANGAR_SOURCE_CI_RUN_ID: "25880757101"
+      JANGAR_SOURCE_HEAD_SHA: b6f2fb1acfd94c48ad9ca267e41017474cc7481d
+      JANGAR_GITOPS_REVISION: b6f2fb1acfd94c48ad9ca267e41017474cc7481d
+      JANGAR_SOURCE_CI_RUN_ID: "25886491933"
       JANGAR_SOURCE_CI_CONCLUSION: success
-      JANGAR_MANIFEST_IMAGE_DIGEST: sha256:2441f0658e8bd91f9d48f8fb862c3d4fe11503f2bcab425f349392a6f10b467c
-      JANGAR_SERVING_BUILD_COMMIT: 2fa5bf6d4ff92c1d11303c916d50e817e0008762
-      JANGAR_SERVING_IMAGE_DIGEST: sha256:2441f0658e8bd91f9d48f8fb862c3d4fe11503f2bcab425f349392a6f10b467c
+      JANGAR_MANIFEST_IMAGE_DIGEST: sha256:cc3c0f19d3f37be594be3645aecddbe3bc440fe78143cc3d4b559cada887e9ab
+      JANGAR_SERVING_BUILD_COMMIT: b6f2fb1acfd94c48ad9ca267e41017474cc7481d
+      JANGAR_SERVING_IMAGE_DIGEST: sha256:cc3c0f19d3f37be594be3645aecddbe3bc440fe78143cc3d4b559cada887e9ab
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: 2fa5bf6d
-    digest: sha256:7415690c826f7a6674eea3dbc90fa779f3d5dc00f5c64dc8040e447c126b636e
+    tag: b6f2fb1a
+    digest: sha256:46f6360bed7014436675c803a4d43e4982345860f89917b59f94cb1481cc0f6f
 argocdHooks:
   enabled: true
   image:
