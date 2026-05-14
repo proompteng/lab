@@ -24,6 +24,7 @@ const defaultAnalysisActivityManifestPath = 'argocd/applications/torghut/analysi
 const defaultAnalysisTeardownManifestPath = 'argocd/applications/torghut/analysis-template-teardown-clean.yaml'
 const defaultAnalysisArtifactManifestPath = 'argocd/applications/torghut/analysis-template-artifact-bundle.yaml'
 const defaultEmpiricalBackfillManifestPath = 'argocd/applications/torghut/empirical-jobs-backfill-job.yaml'
+const defaultExecutionTcaRefreshManifestPath = 'argocd/applications/torghut/execution-tca-refresh-cronjob.yaml'
 const defaultWhitepaperSemanticBackfillManifestPath =
   'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'
 const defaultOptionsCatalogManifestPath = 'argocd/applications/torghut-options/catalog/deployment.yaml'
@@ -48,6 +49,7 @@ type UpdateManifestsOptions = {
   analysisTeardownManifestPath?: string
   analysisArtifactManifestPath?: string
   empiricalBackfillManifestPath?: string
+  executionTcaRefreshManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
@@ -72,6 +74,7 @@ type CliOptions = {
   analysisTeardownManifestPath?: string
   analysisArtifactManifestPath?: string
   empiricalBackfillManifestPath?: string
+  executionTcaRefreshManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
@@ -293,6 +296,11 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.empiricalBackfillManifestPath ?? defaultEmpiricalBackfillManifestPath,
     'torghut-empirical-jobs-backfill image reference',
   )
+  const executionTcaRefresh = updateImageOnlyManifest(
+    options,
+    options.executionTcaRefreshManifestPath ?? defaultExecutionTcaRefreshManifestPath,
+    'torghut-execution-tca-refresh image reference',
+  )
   const whitepaperSemanticBackfill = updateImageOnlyManifest(
     options,
     options.whitepaperSemanticBackfillManifestPath ?? defaultWhitepaperSemanticBackfillManifestPath,
@@ -326,6 +334,7 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     analysisTeardown,
     analysisArtifact,
     empiricalBackfill,
+    executionTcaRefresh,
     whitepaperSemanticBackfill,
     optionsCatalog,
     optionsEnricher,
@@ -366,6 +375,7 @@ Options:
   --analysis-teardown-manifest-path <path>
   --analysis-artifact-manifest-path <path>
   --empirical-backfill-manifest-path <path>
+  --execution-tca-refresh-manifest-path <path>
   --whitepaper-semantic-backfill-manifest-path <path>
   --options-catalog-manifest-path <path>
   --options-enricher-manifest-path <path>`)
@@ -440,6 +450,9 @@ Options:
       case '--empirical-backfill-manifest-path':
         options.empiricalBackfillManifestPath = value
         break
+      case '--execution-tca-refresh-manifest-path':
+        options.executionTcaRefreshManifestPath = value
+        break
       case '--whitepaper-semantic-backfill-manifest-path':
         options.whitepaperSemanticBackfillManifestPath = value
         break
@@ -500,6 +513,8 @@ const main = (cliOptions?: CliOptions) => {
       parsed.analysisArtifactManifestPath ?? process.env.TORGHUT_ANALYSIS_ARTIFACT_MANIFEST_PATH,
     empiricalBackfillManifestPath:
       parsed.empiricalBackfillManifestPath ?? process.env.TORGHUT_EMPIRICAL_BACKFILL_MANIFEST_PATH,
+    executionTcaRefreshManifestPath:
+      parsed.executionTcaRefreshManifestPath ?? process.env.TORGHUT_EXECUTION_TCA_REFRESH_MANIFEST_PATH,
     whitepaperSemanticBackfillManifestPath:
       parsed.whitepaperSemanticBackfillManifestPath ?? process.env.TORGHUT_WHITEPAPER_SEMANTIC_BACKFILL_MANIFEST_PATH,
     optionsCatalogManifestPath: parsed.optionsCatalogManifestPath ?? process.env.TORGHUT_OPTIONS_CATALOG_MANIFEST_PATH,

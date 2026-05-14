@@ -558,6 +558,52 @@ class TestLiveConfigManifestContract(TestCase):
             {"kubernetes.io/arch": "arm64"},
         )
 
+    def test_execution_tca_refresh_cronjob_keeps_readiness_evidence_fresh(
+        self,
+    ) -> None:
+        manifest = _load_yaml_mapping(
+            "argocd/applications/torghut/execution-tca-refresh-cronjob.yaml"
+        )
+        spec = cast(Mapping[str, object], manifest.get("spec", {}))
+        job_template = cast(Mapping[str, object], spec.get("jobTemplate", {}))
+        job_spec = cast(Mapping[str, object], job_template.get("spec", {}))
+        template = cast(Mapping[str, object], job_spec.get("template", {}))
+        pod_spec = cast(Mapping[str, object], template.get("spec", {}))
+        containers = cast(list[Mapping[str, object]], pod_spec.get("containers", []))
+
+        self.assertEqual(spec.get("schedule"), "*/10 * * * *")
+        self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
+        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 600)
+        self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
+        self.assertEqual(
+            pod_spec.get("nodeSelector"),
+            {"kubernetes.io/arch": "arm64"},
+        )
+        self.assertTrue(containers)
+
+        container = containers[0]
+        self.assertIn(
+            "registry.ide-newton.ts.net/lab/torghut@sha256:",
+            str(container.get("image")),
+        )
+        env = {
+            item.get("name"): item
+            for item in cast(list[Mapping[str, object]], container.get("env", []))
+        }
+        db_dsn = cast(Mapping[str, object], env["DB_DSN"])
+        value_from = cast(Mapping[str, object], db_dsn.get("valueFrom", {}))
+        self.assertEqual(
+            value_from.get("secretKeyRef"),
+            {"name": "torghut-db-app", "key": "uri"},
+        )
+
+        args = "\n".join(str(item) for item in container.get("args", []))
+        self.assertIn("scripts/refresh_execution_tca_metrics.py", args)
+        self.assertIn("--older-than-seconds 900", args)
+        self.assertIn("--batch-size 5000", args)
+        self.assertIn("--max-batches 3", args)
+        self.assertIn("--apply", args)
+
     def test_migration_job_prepares_sim_database_before_sim_upgrade(self) -> None:
         manifest = _load_yaml_mapping(
             "argocd/applications/torghut/db-migrations-job.yaml"
