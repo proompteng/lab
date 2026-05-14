@@ -491,6 +491,28 @@ class TestBuildRevenueRepairDigest(TestCase):
             "blocked",
         )
         self.assertEqual(len(alpha_foundry["no_delta_debt"]), 1)
+        settlement_conveyor = digest["alpha_readiness_settlement_conveyor"]
+        self.assertIsInstance(settlement_conveyor, dict)
+        self.assertEqual(
+            settlement_conveyor["schema_version"],
+            "torghut.alpha-readiness-settlement-conveyor.v1",
+        )
+        self.assertEqual(settlement_conveyor["status"], "no_delta")
+        self.assertEqual(
+            settlement_conveyor["selected_value_gate"],
+            "routeable_candidate_count",
+        )
+        self.assertEqual(
+            settlement_conveyor["required_output_receipt"],
+            "torghut.alpha-readiness-settlement-receipt.v1",
+        )
+        self.assertEqual(settlement_conveyor["max_notional"], "0")
+        selected_lane = settlement_conveyor["selected_lane"]
+        self.assertIsInstance(selected_lane, dict)
+        self.assertEqual(
+            selected_lane["repeat_launch_decision"],
+            "deny",
+        )
         self.assertEqual(repair_queue[1]["code"], "repair_execution_tca")
         self.assertNotIn("repair_repair_only", [item["code"] for item in repair_queue])
         self.assertIn(
