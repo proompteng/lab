@@ -78,7 +78,7 @@ function AgentRunsRoute() {
 
   return (
     <GatewayFrame active="/agent-runs" snapshot={snapshot}>
-      <GatewayPageHeader title="Agent Runs" detail="Create, inspect, follow logs." />
+      <GatewayPageHeader title="Agent Runs" />
 
       <main className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.45fr)]">
         <section className="flex min-h-0 flex-col gap-4 overflow-hidden">
