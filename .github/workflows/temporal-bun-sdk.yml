@@ -74,6 +74,8 @@ jobs:
 
       - name: Cache Bun install
         uses: actions/cache@v4
+        timeout-minutes: 5
+        continue-on-error: true
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-1.3.13-${{ hashFiles('bun.lock') }}
