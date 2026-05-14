@@ -18,6 +18,8 @@ from app.models import (
     AutoresearchPortfolioCandidate,
     AutoresearchProposalScore,
     Base,
+    Strategy,
+    TradeDecision,
 )
 from app.trading.submission_council import (
     _QUANT_HEALTH_CACHE,
@@ -203,6 +205,118 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(counts["autoresearch_portfolio_candidates"], 1)
         self.assertEqual(counts["autoresearch_portfolio_blocked"], 1)
         self.assertEqual(counts["autoresearch_portfolio_ready"], 0)
+
+    def test_profit_lease_projection_uses_runtime_feature_and_persisted_decision_evidence(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        now = datetime.now(timezone.utc)
+        with session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.add_all(
+                [
+                    TradeDecision(
+                        strategy_id=strategy.id,
+                        alpaca_account_label="paper",
+                        symbol="AAPL",
+                        timeframe="1Min",
+                        decision_json={"action": "buy"},
+                        status="planned",
+                        created_at=now,
+                    ),
+                    TradeDecision(
+                        strategy_id=strategy.id,
+                        alpaca_account_label="paper",
+                        symbol="AAPL",
+                        timeframe="1Min",
+                        decision_json={"action": "sell"},
+                        status="blocked",
+                        created_at=now,
+                    ),
+                ]
+            )
+            session.commit()
+
+            result = build_live_submission_gate_payload(
+                SimpleNamespace(
+                    last_autonomy_promotion_eligible=True,
+                    last_autonomy_promotion_action="promote",
+                    drift_live_promotion_eligible=False,
+                    last_market_context_freshness_seconds=45,
+                    metrics=SimpleNamespace(
+                        feature_batch_rows_total=9,
+                        feature_null_rate={"price": 0.0},
+                        feature_staleness_ms_p95=250,
+                        feature_duplicate_ratio=0.0,
+                        decision_state_total={},
+                    ),
+                ),
+                hypothesis_summary={
+                    "summary": {
+                        "promotion_eligible_total": 1,
+                        "capital_stage_totals": {"shadow": 1},
+                        "dependency_quorum": {
+                            "decision": "allow",
+                            "reasons": [],
+                            "message": "ready",
+                        },
+                    },
+                    "items": [
+                        {
+                            "hypothesis_id": "H-CONT-01",
+                            "lane_id": "continuation",
+                            "strategy_family": "intraday_continuation",
+                            "promotion_eligible": True,
+                            "capital_stage": "shadow",
+                            "reasons": [],
+                        }
+                    ],
+                },
+                empirical_jobs_status={"ready": True, "status": "healthy"},
+                quant_health_status=self._healthy_quant_status(),
+                promotion_certificate_evidence=[
+                    {
+                        "hypothesis_id": "H-CONT-01",
+                        "metric_window": self._metric_window(),
+                        "promotion_decision": self._promotion_decision(),
+                    }
+                ],
+                session=session,
+            )
+
+        projection = result["profit_lease_projection"]
+        reasons = projection["torghut_capital"]["blocking_reason_codes"]
+        self.assertNotIn("equity_ta_rows_missing", reasons)
+        self.assertNotIn("rejection_drag_unmeasured", reasons)
+        equity_source = next(
+            source
+            for source in projection["source_provenance"]
+            if source["source_class"] == "equity_ta"
+        )
+        rejection_source = next(
+            source
+            for source in projection["source_provenance"]
+            if source["source_class"] == "rejection_drag"
+        )
+        self.assertEqual(equity_source["rows"], 9)
+        self.assertEqual(rejection_source["rows"], 2)
+        self.assertEqual(rejection_source["source_ref"], "postgres:trade_decisions:7d")
 
     def test_build_live_submission_gate_payload_fails_closed_on_empty_quant_evidence(
         self,

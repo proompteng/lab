@@ -25,6 +25,7 @@ from ..models import (
     StrategyHypothesis,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
+    TradeDecision,
     VNextDatasetSnapshot,
     VNextPromotionDecision,
 )
@@ -983,7 +984,70 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, int]:
     }
 
 
-def _build_profit_rejection_summary(state: object) -> dict[str, object]:
+def _build_profit_data_readiness_summary(state: object) -> dict[str, object]:
+    metrics = getattr(state, "metrics", None)
+    rows = _safe_int(getattr(metrics, "feature_batch_rows_total", 0))
+    null_rate = getattr(metrics, "feature_null_rate", {}) if metrics else {}
+    staleness_ms_p95 = _safe_int(getattr(metrics, "feature_staleness_ms_p95", 0))
+    duplicate_ratio = getattr(metrics, "feature_duplicate_ratio", None)
+    return {
+        "equity_ta_rows": rows,
+        "equity_ta_symbols": 0,
+        "equity_ta_source_ref": "scheduler.metrics.feature_batch_rows_total",
+        "feature_null_rate": dict(cast(Mapping[str, float], null_rate))
+        if isinstance(null_rate, Mapping)
+        else {},
+        "feature_staleness_ms_p95": staleness_ms_p95,
+        "feature_duplicate_ratio": duplicate_ratio,
+    }
+
+
+def _load_persisted_profit_rejection_summary(
+    session: Session,
+    *,
+    account_label: str | None,
+    now: datetime,
+) -> dict[str, object]:
+    lookback_start = now - timedelta(days=7)
+    filters = [TradeDecision.created_at >= lookback_start]
+    if account_label:
+        filters.append(TradeDecision.alpaca_account_label == account_label)
+    rows = session.execute(
+        select(TradeDecision.status, func.count())
+        .where(*filters)
+        .group_by(TradeDecision.status)
+    ).all()
+    status_totals: dict[str, int] = {}
+    for status, count in rows:
+        normalized = str(status or "unknown").strip().lower() or "unknown"
+        status_totals[normalized] = status_totals.get(normalized, 0) + _safe_int(count)
+    rejected = status_totals.get("rejected", 0)
+    blocked = status_totals.get("blocked", 0)
+    filled = status_totals.get("filled", 0)
+    planned = status_totals.get("planned", 0) + status_totals.get("submitted", 0)
+    total = sum(status_totals.values())
+    rejection_drag_ratio = (
+        float(rejected + blocked) / float(total) if total > 0 else None
+    )
+    return {
+        "rejected": rejected,
+        "blocked": blocked,
+        "filled": filled,
+        "planned": planned,
+        "total": total,
+        "rejection_drag_ratio": rejection_drag_ratio,
+        "status_totals": status_totals,
+        "source_ref": "postgres:trade_decisions:7d",
+    }
+
+
+def _build_profit_rejection_summary(
+    state: object,
+    *,
+    session: Session | None = None,
+    account_label: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, object]:
     metrics = getattr(state, "metrics", None)
     state_totals = getattr(metrics, "decision_state_total", {}) if metrics else {}
     decision_state_total = (
@@ -998,6 +1062,12 @@ def _build_profit_rejection_summary(state: object) -> dict[str, object]:
     total = sum(_safe_int(value) for value in decision_state_total.values())
     if total == 0:
         total = rejected + blocked + filled + planned
+    if total <= 0 and session is not None:
+        return _load_persisted_profit_rejection_summary(
+            session,
+            account_label=account_label,
+            now=now or datetime.now(timezone.utc),
+        )
     rejection_drag_ratio = (
         float(rejected + blocked) / float(total) if total > 0 else None
     )
@@ -1120,8 +1190,15 @@ def build_live_submission_gate_payload(
         quant_evidence=quant_evidence,
         empirical_jobs_status=empirical_jobs_status,
         dependency_quorum=dependency_quorum_payload,
-        rejection_summary=_build_profit_rejection_summary(state),
+        rejection_summary=_build_profit_rejection_summary(
+            state,
+            session=session,
+            account_label=_safe_text(quant_evidence.get("account"))
+            or quant_account_label,
+            now=now,
+        ),
         promotion_table_counts=promotion_table_counts,
+        data_readiness=_build_profit_data_readiness_summary(state),
         live_controls=_build_profit_live_controls(state),
         account=_safe_text(quant_evidence.get("account")),
         window=_safe_text(quant_evidence.get("window")),
