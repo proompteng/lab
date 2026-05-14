@@ -346,15 +346,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(
             row_by_spec[capital_unsafe_spec.candidate_spec_id]["selection_reason"],
-            "pre_replay_mlx_feedback_blocked",
+            "pre_replay_mlx_feedback_penalized",
         )
         self.assertGreater(
             row_by_spec[losing_spec.candidate_spec_id]["rank"],
             row_by_spec[unexplored_spec.candidate_spec_id]["rank"],
         )
         self.assertGreater(
-            row_by_spec[capital_unsafe_spec.candidate_spec_id]["rank"],
-            row_by_spec[unexplored_spec.candidate_spec_id]["rank"],
+            row_by_spec[capital_unsafe_spec.candidate_spec_id]["proposal_score"],
+            -999999,
         )
         self.assertEqual(
             row_by_spec[unexplored_spec.candidate_spec_id]["training_source"],
@@ -822,15 +822,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(
             row_by_spec[string_veto_spec.candidate_spec_id]["selection_reason"],
-            "pre_replay_mlx_feedback_blocked",
+            "pre_replay_mlx_feedback_penalized",
         )
         self.assertEqual(
             row_by_spec[min_cash_spec.candidate_spec_id]["selection_reason"],
-            "pre_replay_mlx_feedback_blocked",
+            "pre_replay_mlx_feedback_penalized",
         )
         self.assertEqual(
             row_by_spec[negative_cash_spec.candidate_spec_id]["selection_reason"],
-            "pre_replay_mlx_feedback_blocked",
+            "pre_replay_mlx_feedback_penalized",
         )
         self.assertEqual(
             row_by_spec[unexplored_spec.candidate_spec_id]["training_source"],
@@ -1051,6 +1051,119 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             selection["rows"][0]["selection_reason"],
             "pre_replay_mlx_family_feedback_blocked",
         )
+
+    def test_candidate_selection_keeps_positive_blocked_feedback_repair_candidates(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-positive-blocked-feedback")
+        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-positive-blocked-feedback",
+                "family_template_id": spec.family_template_id,
+                "runtime_family": spec.runtime_family,
+                "runtime_strategy_name": spec.runtime_strategy_name,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "959.07",
+                    "active_day_ratio": "0.2",
+                    "positive_day_ratio": "0.2",
+                    "negative_day_count": 2,
+                    "min_cash": "-100",
+                    "negative_cash_observation_count": 8,
+                    "daily_net": {
+                        "2026-05-01": "4795.37",
+                        "2026-05-04": "-980.59",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-positive-blocked-feedback",
+            result_path="feedback://positive-blocked",
+        )
+
+        _model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(spec,),
+            feedback_evidence_bundles=(feedback_bundle,),
+        )
+
+        self.assertEqual(rows[0]["training_source"], "feedback_real_replay")
+        self.assertEqual(
+            rows[0]["selection_reason"], "pre_replay_mlx_feedback_penalized"
+        )
+        self.assertGreater(Decimal(str(rows[0]["proposal_score"])), Decimal("-999999"))
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(spec,),
+            proposal_rows=rows,
+            top_k=1,
+            exploration_slots=0,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [spec])
+        self.assertEqual(selection["budget"]["selected_count"], 1)
+        self.assertEqual(selection["budget"]["eligible_candidate_count"], 1)
+        self.assertEqual(
+            selection["rows"][0]["selection_reason"],
+            "exploitation",
+        )
+
+    def test_candidate_selection_keeps_positive_signature_feedback_repair_candidates(
+        self,
+    ) -> None:
+        source_spec = self._candidate_spec("spec-positive-signature-source")
+        matching_spec = self._candidate_spec("spec-positive-signature-match")
+        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=source_spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-positive-signature-source",
+                "family_template_id": source_spec.family_template_id,
+                "runtime_family": source_spec.runtime_family,
+                "runtime_strategy_name": source_spec.runtime_strategy_name,
+                "execution_signature": runner._candidate_spec_execution_signature(
+                    source_spec
+                ),
+                "objective_scorecard": {
+                    "net_pnl_per_day": "741.86",
+                    "active_day_ratio": "0.3333333333",
+                    "positive_day_ratio": "0.1666666667",
+                    "negative_day_count": 3,
+                    "daily_net": {
+                        "2026-05-01": "4451.21",
+                        "2026-05-04": "-1668.80",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-positive-signature-feedback",
+            result_path="feedback://positive-signature",
+        )
+
+        _model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(matching_spec,),
+            feedback_evidence_bundles=(feedback_bundle,),
+        )
+
+        self.assertEqual(
+            rows[0]["training_source"], "feedback_execution_signature_replay"
+        )
+        self.assertEqual(
+            rows[0]["selection_reason"],
+            "pre_replay_mlx_signature_feedback_penalized",
+        )
+        self.assertGreater(Decimal(str(rows[0]["proposal_score"])), Decimal("-999999"))
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(matching_spec,),
+            proposal_rows=rows,
+            top_k=1,
+            exploration_slots=0,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [matching_spec])
+        self.assertEqual(selection["budget"]["selected_count"], 1)
+        self.assertEqual(selection["budget"]["eligible_candidate_count"], 1)
 
     def test_candidate_selection_blocks_synthetic_nonpositive_expected_value(
         self,
