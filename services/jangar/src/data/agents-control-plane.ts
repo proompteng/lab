@@ -1029,6 +1029,7 @@ export type MaterialReentryReceiptClass =
   | 'source_rollout_receipt'
   | 'serving_image_receipt'
   | 'stage_credit_reentry'
+  | 'torghut_alpha_closure_repair'
   | 'torghut_executable_alpha_repair'
   | 'torghut_execution_tca_repair'
   | 'deployer_rollout_proof'
@@ -1556,6 +1557,8 @@ export type TorghutConsumerEvidenceStatus = {
   repair_bid_settlement_reason_codes?: string[]
   alpha_readiness_strike_ledger?: TorghutAlphaReadinessStrikeLedger | null
   executable_alpha_repair_receipts?: TorghutExecutableAlphaRepairReceiptSet | null
+  alpha_repair_closure_board?: TorghutAlphaRepairClosureBoardRef | null
+  alpha_evidence_foundry?: TorghutAlphaEvidenceFoundryRef | null
   repair_outcome_dividend_ledger_id?: string | null
   repair_outcome_receipt_ids?: string[]
   repair_outcome_open_escrow_ids?: string[]

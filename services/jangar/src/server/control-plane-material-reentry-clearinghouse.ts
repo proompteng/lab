@@ -19,6 +19,7 @@ import type {
   TorghutConsumerEvidenceStatus,
   TorghutExecutableAlphaRepairReceipt,
 } from '~/data/agents-control-plane'
+import { buildTorghutAlphaClosureRepairPlanParts } from '~/server/control-plane-material-reentry-alpha-closure'
 import type { ControlPlaneWatchReliability, DatabaseStatus } from '~/server/control-plane-status-types'
 
 export const MATERIAL_REENTRY_CLEARINGHOUSE_DESIGN_ARTIFACT =
@@ -278,6 +279,35 @@ const buildTorghutExecutableAlphaImplementerDispatch = (input: {
   }
 }
 
+const buildTorghutAlphaClosureRepairPlan = (input: {
+  torghutConsumerEvidence: TorghutConsumerEvidenceStatus
+  actionClass: ActionSloBudgetActionClass
+  now: Date
+}): ReceiptPlan => {
+  const board = input.torghutConsumerEvidence.alpha_repair_closure_board
+  if (!board) {
+    return basePlan({
+      receiptClass: 'torghut_alpha_closure_repair',
+      requiredOutputReceipt: topTorghutRequiredOutput(input.torghutConsumerEvidence),
+      valueGates: [topTorghutValueGate(input.torghutConsumerEvidence) ?? 'routeable_candidate_count'],
+      reasonCodes: ['alpha_closure_carry_missing'],
+      rollbackTarget: 'disable alpha repair closure board requirement and keep Torghut max_notional=0',
+    })
+  }
+  const parts = buildTorghutAlphaClosureRepairPlanParts({
+    torghutConsumerEvidence: input.torghutConsumerEvidence,
+    actionClass: input.actionClass,
+    board,
+    now: input.now,
+    defaultMaxRuntimeSeconds: DEFAULT_MAX_RUNTIME_SECONDS,
+  })
+
+  return basePlan({
+    receiptClass: 'torghut_alpha_closure_repair',
+    ...parts,
+  })
+}
+
 const buildTorghutRepairPlan = (input: {
   repairBidAdmission: RepairBidAdmissionState
   torghutConsumerEvidence: TorghutConsumerEvidenceStatus
@@ -408,7 +438,16 @@ const chooseReceiptPlan = (input: {
   const stageCreditAccount = stageCreditAccountFor(input.stageCreditLedger, input.actionClass)
   const repairReceipt = repairReceiptFor(input.repairBidAdmission, input.actionClass)
   const alphaTicket = topAlphaDispatchTicket(input.repairBidAdmission)
+  const alphaClosureBoard = input.torghutConsumerEvidence.alpha_repair_closure_board
   const selectedAlphaReceipt = selectedExecutableAlphaReceipt(input.torghutConsumerEvidence)
+
+  if (alphaClosureBoard && (isTorghutRepairAction(input.actionClass) || isCapitalAction(input.actionClass))) {
+    return buildTorghutAlphaClosureRepairPlan({
+      torghutConsumerEvidence: input.torghutConsumerEvidence,
+      actionClass: input.actionClass,
+      now: input.now,
+    })
+  }
 
   if (
     selectedAlphaReceipt &&
@@ -652,7 +691,8 @@ export const buildMaterialReentryClearinghouse = (input: {
   const topRepairReceipt =
     actionReceipts.find(
       (receipt) =>
-        receipt.receipt_class === 'torghut_executable_alpha_repair' &&
+        (receipt.receipt_class === 'torghut_alpha_closure_repair' ||
+          receipt.receipt_class === 'torghut_executable_alpha_repair') &&
         receipt.value_gates.includes('routeable_candidate_count'),
     ) ?? null
   const implementerDispatches = actionReceipts
@@ -676,6 +716,8 @@ export const buildMaterialReentryClearinghouse = (input: {
       input.stageCreditLedger?.fresh_until,
       input.sourceServingContractVerdictExchange.fresh_until,
       input.torghutConsumerEvidence.fresh_until,
+      input.torghutConsumerEvidence.alpha_repair_closure_board?.fresh_until,
+      input.torghutConsumerEvidence.alpha_evidence_foundry?.fresh_until,
       input.torghutConsumerEvidence.executable_alpha_repair_receipts?.fresh_until,
     ]),
     namespace: input.namespace,

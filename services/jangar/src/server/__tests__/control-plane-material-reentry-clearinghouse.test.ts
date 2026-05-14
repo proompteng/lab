@@ -8,6 +8,7 @@ import type {
   SourceServingContractVerdict,
   SourceServingContractVerdictExchange,
   StageCreditLedger,
+  TorghutAlphaRepairClosureBoardRef,
   TorghutConsumerEvidenceStatus,
   TorghutExecutableAlphaRepairReceipt,
 } from '~/data/agents-control-plane'
@@ -449,6 +450,64 @@ const torghutEvidenceWithExecutableAlphaRepair = (
   })
 }
 
+const alphaRepairClosureBoard = (
+  overrides: Partial<TorghutAlphaRepairClosureBoardRef> = {},
+): TorghutAlphaRepairClosureBoardRef => ({
+  schema_version: 'torghut.alpha-repair-closure-board-ref.v1',
+  board_id: 'alpha-repair-closure-board:current',
+  generated_at: now.toISOString(),
+  fresh_until: '2026-05-14T00:11:00.000Z',
+  status: 'selected',
+  reason_codes: [],
+  top_closure_id: 'alpha-repair-closure:H-MICRO-01',
+  selected_value_gate: 'routeable_candidate_count',
+  required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+  settlement_market_id: 'alpha-closure-settlement-market:current',
+  settlement_market_status: 'pending_no_delta',
+  selected_hypothesis_id: 'H-MICRO-01',
+  selected_repair_class: 'feature_replay_closure',
+  required_settlement_receipt: 'torghut.alpha-closure-settlement-receipt.v1',
+  active_dedupe_key: 'alpha-closure:H-MICRO-01:feature_replay:routeable',
+  no_delta_budget_state: 'consumed',
+  no_delta_debt_count: 1,
+  next_allowed_attempt_after: '2026-05-14T00:20:00.000Z',
+  max_notional: '0',
+  capital_rule: 'zero_notional_repair_only',
+  release_conditions: ['evidence_window_changes', 'blocker_set_changes'],
+  validation_commands: ['uv run --frozen pytest services/torghut/tests/test_alpha_repair_closure_board.py'],
+  rollback_target: 'disable alpha repair closure board emission and keep Torghut max_notional=0',
+  ...overrides,
+})
+
+const torghutEvidenceWithAlphaClosure = (
+  boardOverrides: Partial<TorghutAlphaRepairClosureBoardRef> = {},
+  selectedReceiptOverrides: Partial<TorghutExecutableAlphaRepairReceipt> = {},
+): TorghutConsumerEvidenceStatus => ({
+  ...torghutEvidenceWithExecutableAlphaRepair(selectedReceiptOverrides),
+  alpha_repair_closure_board: alphaRepairClosureBoard(boardOverrides),
+  alpha_evidence_foundry: {
+    schema_version: 'torghut.alpha-evidence-foundry-ref.v1',
+    foundry_id: 'alpha-evidence-foundry:current',
+    generated_at: now.toISOString(),
+    fresh_until: '2026-05-14T00:11:00.000Z',
+    status: 'selected',
+    reason_codes: [],
+    selected_queue_code: 'repair_alpha_readiness',
+    selected_value_gate: 'routeable_candidate_count',
+    required_output_receipt: 'torghut.alpha-evidence-window-receipt.v1',
+    receipt_count: 3,
+    selected_receipt_id: 'alpha-evidence-window-receipt:current',
+    selected_hypothesis_id: 'H-MICRO-01',
+    hypothesis_ids: ['H-MICRO-01'],
+    no_delta_debt_count: 1,
+    routeable_candidate_count_before: 0,
+    max_notional: '0',
+    capital_state: 'zero_notional',
+    capital_rule: 'zero_notional_repair_only',
+    rollback_target: 'stop emitting alpha evidence foundry refs and keep Torghut max_notional=0',
+  },
+})
+
 const receiptFor = (receipts: MaterialReentryReceipt[], actionClass: ActionSloBudgetActionClass) => {
   const receipt = receipts.find((entry) => entry.action_class === actionClass)
   expect(receipt).toBeDefined()
@@ -615,6 +674,139 @@ describe('control-plane material reentry clearinghouse', () => {
     expect(paperCanary.reason_codes).toContain('torghut_alpha_repair_blocks_capital_reentry')
     expect(clearinghouse.top_implementer_dispatch?.signal_name).toBe(observe.implementer_dispatch?.signal_name)
     expect(clearinghouse.implementer_dispatches).toHaveLength(1)
+  })
+
+  it('holds Torghut material reentry when alpha closure no-delta debt is active', () => {
+    const clearinghouse = buildMaterialReentryClearinghouse({
+      now,
+      namespace: 'agents',
+      database: healthyDatabase(),
+      watchReliability: watchReliability(),
+      readyTruthArbiter: readyTruth({
+        material_readiness: 'hold',
+        allowed_action_classes: ['serve_readonly', 'torghut_observe'],
+        held_action_classes: [],
+        blocked_action_classes: ['paper_canary'],
+      }),
+      sourceServingContractVerdictExchange: sourceExchange([sourceVerdict('paper_support')]),
+      stageCreditLedger: null,
+      repairBidAdmission: repairAdmission({ receipts: [], dispatch_tickets: [] }),
+      torghutConsumerEvidence: torghutEvidenceWithAlphaClosure(),
+    })
+
+    const observe = receiptFor(clearinghouse.action_receipts, 'torghut_observe')
+    const paperCanary = receiptFor(clearinghouse.action_receipts, 'paper_canary')
+
+    expect(observe).toMatchObject({
+      decision: 'repair_only',
+      status: 'repair_required',
+      receipt_class: 'torghut_alpha_closure_repair',
+      required_output_receipt: 'torghut.alpha-closure-settlement-receipt.v1',
+      value_gates: ['routeable_candidate_count'],
+      max_parallelism: 0,
+      max_notional: 0,
+      implementer_dispatch: null,
+    })
+    expect(observe.reason_codes).toEqual(
+      expect.arrayContaining(['alpha_closure_no_delta_budget_consumed', 'alpha_closure_no_delta_debt_active']),
+    )
+    expect(observe.source_hold_refs).toEqual(
+      expect.arrayContaining([
+        'alpha-repair-closure-board:current',
+        'alpha-closure-settlement-market:current',
+        'alpha-closure:H-MICRO-01:feature_replay:routeable',
+      ]),
+    )
+    expect(paperCanary).toMatchObject({
+      status: 'blocked',
+      receipt_class: 'torghut_alpha_closure_repair',
+      max_parallelism: 0,
+      implementer_dispatch: null,
+    })
+    expect(paperCanary.reason_codes).toContain('torghut_alpha_closure_blocks_capital_reentry')
+    expect(clearinghouse.top_repair_receipt_id).toBe(observe.receipt_id)
+    expect(clearinghouse.implementer_dispatches).toHaveLength(0)
+    expect(clearinghouse.top_implementer_dispatch).toBeNull()
+  })
+
+  it('dispatches one Torghut alpha-closure settlement with stable identity when no-delta budget is available', () => {
+    const buildClearinghouse = (boardOverrides: Partial<TorghutAlphaRepairClosureBoardRef>) =>
+      buildMaterialReentryClearinghouse({
+        now,
+        namespace: 'agents',
+        database: healthyDatabase(),
+        watchReliability: watchReliability(),
+        readyTruthArbiter: readyTruth({
+          material_readiness: 'hold',
+          allowed_action_classes: ['serve_readonly', 'torghut_observe'],
+          held_action_classes: [],
+          blocked_action_classes: ['paper_canary'],
+        }),
+        sourceServingContractVerdictExchange: sourceExchange([sourceVerdict('paper_support')]),
+        stageCreditLedger: null,
+        repairBidAdmission: repairAdmission({ receipts: [], dispatch_tickets: [] }),
+        torghutConsumerEvidence: torghutEvidenceWithAlphaClosure({
+          no_delta_budget_state: 'available',
+          no_delta_debt_count: 0,
+          ...boardOverrides,
+        }),
+      })
+
+    const first = buildClearinghouse({
+      board_id: 'alpha-repair-closure-board:first',
+      settlement_market_id: 'alpha-closure-settlement-market:first',
+      generated_at: '2026-05-14T00:09:30.000Z',
+      fresh_until: '2026-05-14T00:11:30.000Z',
+    })
+    const second = buildClearinghouse({
+      board_id: 'alpha-repair-closure-board:second',
+      settlement_market_id: 'alpha-closure-settlement-market:second',
+      generated_at: '2026-05-14T00:09:45.000Z',
+      fresh_until: '2026-05-14T00:11:45.000Z',
+    })
+
+    const firstObserve = receiptFor(first.action_receipts, 'torghut_observe')
+    const secondObserve = receiptFor(second.action_receipts, 'torghut_observe')
+    const firstDispatch = firstObserve.implementer_dispatch
+    const secondDispatch = secondObserve.implementer_dispatch
+
+    expect(firstObserve).toMatchObject({
+      receipt_class: 'torghut_alpha_closure_repair',
+      required_output_receipt: 'torghut.alpha-closure-settlement-receipt.v1',
+      max_parallelism: 1,
+      max_notional: 0,
+      reason_codes: [],
+    })
+    expect(firstDispatch).toMatchObject({
+      dispatch_kind: 'swarm_requirement_signal',
+      source_swarm: 'jangar-control-plane',
+      target_swarm: 'torghut-quant',
+      target_stage: 'implement',
+      target_role: 'engineer',
+      channel: 'workflow.general.requirement',
+      priority: 'critical',
+      payload: expect.objectContaining({
+        business_metric: 'routeable_candidate_count',
+        target_value_gate: 'routeable_candidate_count',
+        required_output_receipt: 'torghut.alpha-closure-settlement-receipt.v1',
+        hypothesis_id: 'H-MICRO-01',
+        repair_class: 'feature_replay_closure',
+        max_notional: 0,
+        no_codex_review: true,
+        review_policy: 'no_automatic_codex_review',
+        material_reentry_receipt_id: firstObserve.receipt_id,
+      }),
+    })
+    expect(firstDispatch?.payload.acceptance).toEqual(
+      expect.arrayContaining(['do not request automatic Codex review or post @codex review']),
+    )
+    expect(firstDispatch?.dedupe_key).toBe(secondDispatch?.dedupe_key)
+    expect(firstDispatch?.dedupe_key).toContain('material-reentry:torghut-alpha-closure:')
+    expect(firstDispatch?.dedupe_key).not.toContain('alpha-repair-closure-board')
+    expect(firstDispatch?.signal_name).toBe(secondDispatch?.signal_name)
+    expect(firstDispatch?.payload.source_receipt_id).toBe('alpha-repair-closure-board:first')
+    expect(secondDispatch?.payload.source_receipt_id).toBe('alpha-repair-closure-board:second')
+    expect(secondDispatch?.payload.settlement_market_id).toBe('alpha-closure-settlement-market:second')
   })
 
   it('keeps Torghut material reentry dispatch identity stable across rotated receipts', () => {
