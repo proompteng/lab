@@ -242,8 +242,15 @@ class TestHypothesisReadiness(TestCase):
         )
 
         micro = next(item for item in statuses if item["hypothesis_id"] == "H-MICRO-01")
+        cont = next(item for item in statuses if item["hypothesis_id"] == "H-CONT-01")
+        rev = next(item for item in statuses if item["hypothesis_id"] == "H-REV-01")
+        self.assertNotIn("signal_lag_exceeded", cont["reasons"])
         self.assertNotIn("feature_rows_missing", micro["reasons"])
         self.assertNotIn("required_feature_set_unavailable", micro["reasons"])
+        self.assertNotIn("signal_lag_exceeded", micro["reasons"])
+        self.assertNotIn("signal_lag_exceeded", rev["reasons"])
+        self.assertEqual(cont["observed"]["signal_lag_seconds"], None)
+        self.assertEqual(cont["observed"]["feature_batch_rows_total"], 12)
 
     def test_compile_hypothesis_runtime_statuses_promotes_canary_when_thresholds_are_met(
         self,

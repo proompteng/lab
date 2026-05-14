@@ -876,14 +876,20 @@ def compile_hypothesis_runtime_statuses(
                 and evidence_age_minutes > requirements.max_evidence_age_minutes
             ):
                 reasons.append("evidence_continuity_stale")
-        if requirements.max_signal_lag_seconds is not None and (
-            signal_lag_seconds is None
-            or signal_lag_seconds > requirements.max_signal_lag_seconds
-        ):
-            if market_session_open is False:
-                informational_reasons.append("closed_session_signal_hold")
-            else:
-                reasons.append("signal_lag_exceeded")
+        max_signal_lag_seconds = requirements.max_signal_lag_seconds
+        if max_signal_lag_seconds is not None:
+            signal_lag_unmeasured_without_features = (
+                signal_lag_seconds is None and feature_batch_rows_total <= 0
+            )
+            signal_lag_exceeds_budget = (
+                signal_lag_seconds is not None
+                and signal_lag_seconds > max_signal_lag_seconds
+            )
+            if signal_lag_unmeasured_without_features or signal_lag_exceeds_budget:
+                if market_session_open is False:
+                    informational_reasons.append("closed_session_signal_hold")
+                else:
+                    reasons.append("signal_lag_exceeded")
         if (
             requirements.max_no_signal_streak is not None
             and no_signal_streak > requirements.max_no_signal_streak
