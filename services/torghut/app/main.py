@@ -948,6 +948,7 @@ def _evaluate_trading_health_payload(
         route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
         routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
         quant_evidence=quant_evidence,
+        profit_freshness_frontier=profit_freshness_frontier,
     )
     route_warrant_exchange = _build_route_warrant_exchange_payload(
         torghut_revision=BUILD_COMMIT,
@@ -2761,6 +2762,7 @@ def trading_status() -> dict[str, object]:
         route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
         routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
         quant_evidence=quant_evidence,
+        profit_freshness_frontier=profit_freshness_frontier,
     )
     route_warrant_exchange = _build_route_warrant_exchange_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
@@ -3189,6 +3191,19 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         tca_summary=tca_summary,
         options_catalog_freshness=options_catalog_freshness,
     )
+    profit_freshness_frontier = _build_profit_freshness_frontier_payload(
+        torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        dependency_quorum=dependency_quorum.as_payload(),
+        proof_floor=proof_floor,
+        routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+        quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
+        route_reacquisition_board=route_reacquisition_board,
+        live_submission_gate=live_submission_gate,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        empirical_jobs_status=empirical_jobs,
+        hypothesis_payload=hypothesis_payload,
+    )
     repair_bid_settlement_ledger = _build_repair_bid_settlement_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
         source_commit=BUILD_COMMIT,
@@ -3197,6 +3212,7 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
         route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
         routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
         quant_evidence=quant_evidence,
+        profit_freshness_frontier=profit_freshness_frontier,
     )
     revenue_repair_digest = build_revenue_repair_digest(
         readyz_payload={
@@ -3226,19 +3242,6 @@ def _build_trading_consumer_evidence_payload() -> dict[str, object]:
             ),
         },
         generated_at=datetime.now(timezone.utc),
-    )
-    profit_freshness_frontier = _build_profit_freshness_frontier_payload(
-        torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
-        dependency_quorum=dependency_quorum.as_payload(),
-        proof_floor=proof_floor,
-        routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
-        quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
-        route_reacquisition_board=route_reacquisition_board,
-        live_submission_gate=live_submission_gate,
-        quant_evidence=quant_evidence,
-        market_context_status=market_context_status,
-        empirical_jobs_status=empirical_jobs,
-        hypothesis_payload=hypothesis_payload,
     )
     evidence_clock_arbiter, routeable_profit_candidate_exchange = (
         _build_evidence_clock_payloads(
@@ -5632,7 +5635,7 @@ def _build_route_evidence_clearinghouse_payload(*, torghut_revision: str | None,
 
 
 # fmt: off
-def _build_repair_bid_settlement_payload(*, torghut_revision: str | None, source_commit: str | None, dependency_quorum: Mapping[str, Any], build: Mapping[str, Any], route_evidence_clearinghouse_packet: Mapping[str, Any], routeability_repair_acceptance_ledger: Mapping[str, Any], quant_evidence: Mapping[str, Any]) -> dict[str, object]:
+def _build_repair_bid_settlement_payload(*, torghut_revision: str | None, source_commit: str | None, dependency_quorum: Mapping[str, Any], build: Mapping[str, Any], route_evidence_clearinghouse_packet: Mapping[str, Any], routeability_repair_acceptance_ledger: Mapping[str, Any], quant_evidence: Mapping[str, Any], profit_freshness_frontier: Mapping[str, Any] | None = None) -> dict[str, object]:
 # fmt: on
     return build_repair_bid_settlement_ledger(
         account_label=settings.trading_account_label,
@@ -5644,6 +5647,7 @@ def _build_repair_bid_settlement_payload(*, torghut_revision: str | None, source
         routeability_acceptance_ledger=routeability_repair_acceptance_ledger,
         active_run_dedupe_state={},
         jangar_scoped_quant_status=quant_evidence,
+        profit_freshness_frontier=profit_freshness_frontier,
         rollout_image_summary=_build_route_image_proof_summary(
             build=build,
             dependency_quorum=dependency_quorum,

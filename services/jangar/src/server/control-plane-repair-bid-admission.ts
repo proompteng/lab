@@ -112,6 +112,21 @@ const isLotSelected = (lot: TorghutRepairBidSettlementLot, selectedLotIds: Set<s
 const isLotDispatchable = (lot: TorghutRepairBidSettlementLot, dispatchableLotIds: Set<string>) =>
   dispatchableLotIds.has(lot.lot_id) || lot.dispatchable === true
 
+const isProfitFreshnessRepairLot = (lot: TorghutRepairBidSettlementLot) =>
+  lot.lot_id.startsWith('profit-freshness-repair-lot:') &&
+  lot.target_value_gate === 'zero_notional_or_stale_evidence_rate'
+
+const uniqueLots = (lots: TorghutRepairBidSettlementLot[]) => {
+  const result: TorghutRepairBidSettlementLot[] = []
+  const seen = new Set<string>()
+  for (const lot of lots) {
+    if (seen.has(lot.lot_id)) continue
+    seen.add(lot.lot_id)
+    result.push(lot)
+  }
+  return result
+}
+
 const alphaStrikeFresh = (ledger: TorghutAlphaReadinessStrikeLedger, now: Date) => {
   const parsed = parseTimestampMs(ledger.fresh_until)
   return Boolean(parsed && parsed > now.getTime())
@@ -305,6 +320,8 @@ export const buildRepairBidAdmissionState = (input: RepairBidAdmissionInput): Re
   const dispatchableLotIds = new Set(torghut.repair_bid_settlement_dispatchable_lot_ids ?? [])
   const compactedLots = torghut.repair_bid_settlement_compacted_lots ?? []
   const selectedLots = compactedLots.filter((lot) => isLotSelected(lot, selectedLotIds))
+  const dispatchableSelectedLots = selectedLots.filter((lot) => isLotDispatchable(lot, dispatchableLotIds))
+  const profitFreshnessTicketLots = dispatchableSelectedLots.filter(isProfitFreshnessRepairLot)
   const strikeSlot = alphaStrikeSlot(torghut.alpha_readiness_strike_ledger, input.now)
   const strikeLot =
     strikeSlot && torghut.alpha_readiness_strike_ledger
@@ -313,10 +330,14 @@ export const buildRepairBidAdmissionState = (input: RepairBidAdmissionInput): Re
   const alphaStrikeRequired =
     torghut.alpha_readiness_strike_ledger?.selected_business_blocker?.value_gate === 'routeable_candidate_count'
   const ticketLots = strikeLot
-    ? [strikeLot]
+    ? uniqueLots([strikeLot, ...profitFreshnessTicketLots])
     : alphaStrikeRequired
-      ? []
-      : selectedLots.filter((lot) => isLotDispatchable(lot, dispatchableLotIds))
+      ? profitFreshnessTicketLots
+      : dispatchableSelectedLots
+  const receiptLotRefs = uniqueStrings([
+    ...(strikeLot ? [strikeLot.lot_id] : []),
+    ...selectedLots.map((lot) => lot.lot_id),
+  ])
   const ledgerMaxNotional = torghut.repair_bid_settlement_max_notional
   const baseReasons = uniqueStrings([
     ...(ledgerCurrent ? [] : [`torghut_repair_bid_settlement_${ledgerStatus}`]),
@@ -398,7 +419,7 @@ export const buildRepairBidAdmissionState = (input: RepairBidAdmissionInput): Re
       action_class: actionClass,
       decision: actionDecision.decision,
       torghut_settlement_ledger_ref: torghut.repair_bid_settlement_ledger_id ?? null,
-      torghut_compacted_lot_refs: strikeLot ? [strikeLot.lot_id] : selectedLots.map((lot) => lot.lot_id),
+      torghut_compacted_lot_refs: receiptLotRefs,
       active_dedupe_keys: [...activeDedupeKeys].sort(),
       admitted_lot_ids: actionClass === 'dispatch_repair' ? admittedLotIds : [],
       held_lot_ids: heldLotIds,
