@@ -40,11 +40,38 @@ class TestDbAccountScopeInvariants(TestCase):
         self.assertFalse(status["legacy_executions_single_account_indexes_present"])
         self.assertFalse(status["legacy_trade_cursor_source_only_index_present"])
 
-    def test_account_scope_invariants_detects_legacy_single_account_constraints(self) -> None:
+    def test_account_scope_invariants_reuses_session_connection_for_inspector(
+        self,
+    ) -> None:
+        inspected_connections: list[object] = []
+        original_inspect = app_db.inspect
+
+        with self.session_local() as session:
+            expected_connection = session.connection()
+
+            def inspect_connection(connection: object) -> object:
+                inspected_connections.append(connection)
+                return original_inspect(connection)
+
+            with patch("app.db.inspect", side_effect=inspect_connection):
+                status = check_account_scope_invariants(session)
+
+        self.assertTrue(status["account_scope_ready"])
+        self.assertEqual(inspected_connections, [expected_connection])
+
+    def test_account_scope_invariants_detects_legacy_single_account_constraints(
+        self,
+    ) -> None:
         with self.engine.begin() as conn:
-            conn.execute(text("DROP INDEX IF EXISTS uq_executions_account_alpaca_order_id"))
-            conn.execute(text("DROP INDEX IF EXISTS uq_executions_account_client_order_id"))
-            conn.execute(text("DROP INDEX IF EXISTS uq_trade_decisions_account_decision_hash"))
+            conn.execute(
+                text("DROP INDEX IF EXISTS uq_executions_account_alpaca_order_id")
+            )
+            conn.execute(
+                text("DROP INDEX IF EXISTS uq_executions_account_client_order_id")
+            )
+            conn.execute(
+                text("DROP INDEX IF EXISTS uq_trade_decisions_account_decision_hash")
+            )
             conn.execute(text("DROP INDEX IF EXISTS uq_trade_cursor_source_account"))
             conn.execute(
                 text(
@@ -126,7 +153,9 @@ class TestDbSchemaCurrent(TestCase):
         self.assertFalse(status["schema_current"])
         self.assertEqual(
             status["expected_heads_signature"],
-            hashlib.sha256("0011_demo_alpha,0012_demo_beta".encode("utf-8")).hexdigest(),
+            hashlib.sha256(
+                "0011_demo_alpha,0012_demo_beta".encode("utf-8")
+            ).hexdigest(),
         )
         self.assertEqual(status["schema_missing_heads"], ["0012_demo_beta"])
         self.assertEqual(status["schema_unexpected_heads"], ["0012_demo_gamma"])
@@ -162,7 +191,9 @@ class TestDbSchemaCurrent(TestCase):
 
 
 class TestDbMigrationGraphParsing(TestCase):
-    def test_parse_migration_graph_infers_roots_heads_forks_and_stable_signature(self) -> None:
+    def test_parse_migration_graph_infers_roots_heads_forks_and_stable_signature(
+        self,
+    ) -> None:
         with TemporaryDirectory() as tmpdir:
             versions_dir = Path(tmpdir)
             (versions_dir / "0001_root.py").write_text(
@@ -198,7 +229,9 @@ class TestDbMigrationGraphParsing(TestCase):
             second["expected_schema_graph_signature"],
         )
 
-    def test_parse_migration_graph_reports_duplicate_revisions_and_orphans(self) -> None:
+    def test_parse_migration_graph_reports_duplicate_revisions_and_orphans(
+        self,
+    ) -> None:
         with TemporaryDirectory() as tmpdir:
             versions_dir = Path(tmpdir)
             (versions_dir / "0001_first.py").write_text(

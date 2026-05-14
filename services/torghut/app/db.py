@@ -121,7 +121,7 @@ def _named_unique_constraint_present(
 def check_account_scope_invariants(session: Session) -> dict[str, object]:
     """Validate schema constraints required for account-scoped trading isolation."""
 
-    inspector = inspect(session.bind)
+    inspector = inspect(session.connection())
     checks: dict[str, object] = {}
     errors: list[str] = []
 
