@@ -140,6 +140,8 @@ spec:
               value: "60"
             - name: TRADING_EXECUTABLE_QUOTE_FORWARD_SECONDS
               value: "0"
+            - name: TRADING_ALPACA_QUOTE_FALLBACK_ENABLED
+              value: "false"
             - name: TRADING_SESSION_CONTEXT_WARMUP_MAX_SECONDS
               value: "300"
             - name: TRADING_SESSION_CONTEXT_WARMUP_MAX_SIGNALS
