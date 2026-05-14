@@ -104,6 +104,7 @@ class ClickHousePriceFetcher(PriceFetcher):
         quote_table: Optional[str] = None,
         lookback_minutes: Optional[int] = None,
         quote_lookback_seconds: Optional[int] = None,
+        quote_forward_seconds: Optional[int] = None,
     ) -> None:
         self.url = (url or settings.trading_clickhouse_url or "").rstrip("/")
         self.username = username or settings.trading_clickhouse_username
@@ -120,6 +121,12 @@ class ClickHousePriceFetcher(PriceFetcher):
             quote_lookback_seconds
             or settings.trading_executable_quote_lookback_seconds,
         )
+        configured_forward_seconds = (
+            settings.trading_executable_quote_forward_seconds
+            if quote_forward_seconds is None
+            else quote_forward_seconds
+        )
+        self.quote_forward_seconds = max(0, configured_forward_seconds)
         self._columns: Optional[set[str]] = None
 
     def fetch_price(self, signal: SignalEnvelope) -> Optional[Decimal]:
@@ -226,6 +233,13 @@ class ClickHousePriceFetcher(PriceFetcher):
         target_ts: datetime,
     ) -> dict[str, Any] | None:
         lookback = target_ts - timedelta(seconds=self.quote_lookback_seconds)
+        quote_window_end = target_ts
+        if self.quote_forward_seconds > 0:
+            forward_end = target_ts + timedelta(seconds=self.quote_forward_seconds)
+            now = datetime.now(timezone.utc)
+            if target_ts.tzinfo is None:
+                now = now.replace(tzinfo=None)
+            quote_window_end = min(forward_end, now)
         order_clause = "event_ts DESC"
         query = " ".join(
             [
@@ -237,7 +251,7 @@ class ClickHousePriceFetcher(PriceFetcher):
                 "AND",
                 f"event_ts >= {to_datetime64(lookback)}",
                 "AND",
-                f"event_ts <= {to_datetime64(target_ts)}",
+                f"event_ts <= {to_datetime64(quote_window_end)}",
                 "AND",
                 "imbalance_bid_px IS NOT NULL",
                 "AND",

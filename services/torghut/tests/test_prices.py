@@ -38,12 +38,14 @@ class RoutingClickHousePriceFetcher(ClickHousePriceFetcher):
         price_rows: list[dict[str, object]],
         quote_rows: list[dict[str, object]],
         fail_quote_query: bool = False,
+        quote_forward_seconds: int = 0,
     ) -> None:
         super().__init__(
             url="http://example",
             table="torghut.ta_microbars",
             quote_table="torghut.ta_signals",
             quote_lookback_seconds=60,
+            quote_forward_seconds=quote_forward_seconds,
         )
         self.price_rows = price_rows
         self.quote_rows = quote_rows
@@ -192,6 +194,41 @@ class TestClickHousePriceFetcher(TestCase):
         self.assertEqual(snapshot.spread, Decimal("0.20"))
         self.assertEqual(snapshot.source, "ta_signals_quote")
 
+    def test_fetch_market_snapshot_can_use_runtime_forward_quote_window(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="NVDA",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[
+                {
+                    "event_ts": "2026-01-01T12:00:45Z",
+                    "imbalance_bid_px": "200.10",
+                    "imbalance_ask_px": "200.30",
+                }
+            ],
+            quote_forward_seconds=30,
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("200.20"))
+        self.assertEqual(snapshot.bid, Decimal("200.10"))
+        self.assertEqual(snapshot.ask, Decimal("200.30"))
+        self.assertEqual(
+            snapshot.as_of, datetime(2026, 1, 1, 12, 0, 45, tzinfo=timezone.utc)
+        )
+        self.assertEqual(snapshot.source, "ta_signals_quote")
+        self.assertIn(
+            "event_ts <= toDateTime64('2026-01-01 12:01:00", fetcher.queries[1]
+        )
+
     def test_fetch_market_snapshot_returns_none_without_price_or_quote(
         self,
     ) -> None:
@@ -238,9 +275,7 @@ class TestClickHousePriceFetcher(TestCase):
             payload={},
         )
         fetcher = RoutingClickHousePriceFetcher(
-            price_rows=[
-                {"event_ts": "2026-01-01T12:00:29Z", "c": "200.25"}
-            ],
+            price_rows=[{"event_ts": "2026-01-01T12:00:29Z", "c": "200.25"}],
             quote_rows=[],
             fail_quote_query=True,
         )

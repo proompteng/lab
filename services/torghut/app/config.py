@@ -426,6 +426,15 @@ class Settings(BaseSettings):
         alias="TRADING_EXECUTABLE_QUOTE_LOOKBACK_SECONDS",
         description="Maximum age for a last-good executable quote used to backfill bid/ask before quote-quality checks.",
     )
+    trading_executable_quote_forward_seconds: int = Field(
+        default=0,
+        alias="TRADING_EXECUTABLE_QUOTE_FORWARD_SECONDS",
+        description=(
+            "Runtime-only grace window for using an executable quote that arrives after "
+            "a signal timestamp but before decision evaluation. Keep this disabled for "
+            "replay and live-submit lanes."
+        ),
+    )
     trading_poll_ms: int = Field(default=5000, alias="TRADING_POLL_MS")
     trading_reconcile_ms: int = Field(default=15000, alias="TRADING_RECONCILE_MS")
     trading_order_feed_enabled: bool = Field(
