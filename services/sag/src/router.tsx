@@ -18,10 +18,15 @@ export function createRouter() {
   return createTanStackRouter({
     routeTree,
     defaultPreload: 'intent',
+    defaultPendingComponent: PendingShell,
     Wrap: function Wrap({ children }) {
       return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     },
   })
+}
+
+function PendingShell() {
+  return <div className="min-h-screen bg-zinc-950 text-zinc-100" />
 }
 
 export function getRouter() {

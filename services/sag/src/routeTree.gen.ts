@@ -14,11 +14,15 @@ import { Route as EventsRouteImport } from './routes/events'
 import { Route as ConnectorsRouteImport } from './routes/connectors'
 import { Route as ApprovalsRouteImport } from './routes/approvals'
 import { Route as AgentsRouteImport } from './routes/agents'
+import { Route as AgentRunsRouteImport } from './routes/agent-runs'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiTasksRouteImport } from './routes/api/tasks'
 import { Route as ApiSnapshotRouteImport } from './routes/api/snapshot'
 import { Route as ApiRulesRouteImport } from './routes/api/rules'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
+import { Route as ApiAgentsRouteImport } from './routes/api/agents'
+import { Route as ApiAgentRunsRouteImport } from './routes/api/agent-runs'
+import { Route as ApiAgentRunLogsRouteImport } from './routes/api/agent-run-logs'
 import { Route as ApiWorkspaceClearRouteImport } from './routes/api/workspace/clear'
 import { Route as ApiInternalLegacyRouteImport } from './routes/api/internal/legacy'
 import { Route as ApiInternalGraphqlRouteImport } from './routes/api/internal/graphql'
@@ -51,6 +55,11 @@ const AgentsRoute = AgentsRouteImport.update({
   path: '/agents',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AgentRunsRoute = AgentRunsRouteImport.update({
+  id: '/agent-runs',
+  path: '/agent-runs',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -74,6 +83,21 @@ const ApiRulesRoute = ApiRulesRouteImport.update({
 const ApiHealthRoute = ApiHealthRouteImport.update({
   id: '/api/health',
   path: '/api/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAgentsRoute = ApiAgentsRouteImport.update({
+  id: '/api/agents',
+  path: '/api/agents',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAgentRunsRoute = ApiAgentRunsRouteImport.update({
+  id: '/api/agent-runs',
+  path: '/api/agent-runs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAgentRunLogsRoute = ApiAgentRunLogsRouteImport.update({
+  id: '/api/agent-run-logs',
+  path: '/api/agent-run-logs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiWorkspaceClearRoute = ApiWorkspaceClearRouteImport.update({
@@ -102,18 +126,22 @@ const ApiApprovalsApproveRoute = ApiApprovalsApproveRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAgentsRunsRoute = ApiAgentsRunsRouteImport.update({
-  id: '/api/agents/runs',
-  path: '/api/agents/runs',
-  getParentRoute: () => rootRouteImport,
+  id: '/runs',
+  path: '/runs',
+  getParentRoute: () => ApiAgentsRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/agent-runs': typeof AgentRunsRoute
   '/agents': typeof AgentsRoute
   '/approvals': typeof ApprovalsRoute
   '/connectors': typeof ConnectorsRoute
   '/events': typeof EventsRoute
   '/rules': typeof RulesRoute
+  '/api/agent-run-logs': typeof ApiAgentRunLogsRoute
+  '/api/agent-runs': typeof ApiAgentRunsRoute
+  '/api/agents': typeof ApiAgentsRouteWithChildren
   '/api/health': typeof ApiHealthRoute
   '/api/rules': typeof ApiRulesRoute
   '/api/snapshot': typeof ApiSnapshotRoute
@@ -127,11 +155,15 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/agent-runs': typeof AgentRunsRoute
   '/agents': typeof AgentsRoute
   '/approvals': typeof ApprovalsRoute
   '/connectors': typeof ConnectorsRoute
   '/events': typeof EventsRoute
   '/rules': typeof RulesRoute
+  '/api/agent-run-logs': typeof ApiAgentRunLogsRoute
+  '/api/agent-runs': typeof ApiAgentRunsRoute
+  '/api/agents': typeof ApiAgentsRouteWithChildren
   '/api/health': typeof ApiHealthRoute
   '/api/rules': typeof ApiRulesRoute
   '/api/snapshot': typeof ApiSnapshotRoute
@@ -146,11 +178,15 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/agent-runs': typeof AgentRunsRoute
   '/agents': typeof AgentsRoute
   '/approvals': typeof ApprovalsRoute
   '/connectors': typeof ConnectorsRoute
   '/events': typeof EventsRoute
   '/rules': typeof RulesRoute
+  '/api/agent-run-logs': typeof ApiAgentRunLogsRoute
+  '/api/agent-runs': typeof ApiAgentRunsRoute
+  '/api/agents': typeof ApiAgentsRouteWithChildren
   '/api/health': typeof ApiHealthRoute
   '/api/rules': typeof ApiRulesRoute
   '/api/snapshot': typeof ApiSnapshotRoute
@@ -166,11 +202,15 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/agent-runs'
     | '/agents'
     | '/approvals'
     | '/connectors'
     | '/events'
     | '/rules'
+    | '/api/agent-run-logs'
+    | '/api/agent-runs'
+    | '/api/agents'
     | '/api/health'
     | '/api/rules'
     | '/api/snapshot'
@@ -184,11 +224,15 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/agent-runs'
     | '/agents'
     | '/approvals'
     | '/connectors'
     | '/events'
     | '/rules'
+    | '/api/agent-run-logs'
+    | '/api/agent-runs'
+    | '/api/agents'
     | '/api/health'
     | '/api/rules'
     | '/api/snapshot'
@@ -202,11 +246,15 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/agent-runs'
     | '/agents'
     | '/approvals'
     | '/connectors'
     | '/events'
     | '/rules'
+    | '/api/agent-run-logs'
+    | '/api/agent-runs'
+    | '/api/agents'
     | '/api/health'
     | '/api/rules'
     | '/api/snapshot'
@@ -221,16 +269,19 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AgentRunsRoute: typeof AgentRunsRoute
   AgentsRoute: typeof AgentsRoute
   ApprovalsRoute: typeof ApprovalsRoute
   ConnectorsRoute: typeof ConnectorsRoute
   EventsRoute: typeof EventsRoute
   RulesRoute: typeof RulesRoute
+  ApiAgentRunLogsRoute: typeof ApiAgentRunLogsRoute
+  ApiAgentRunsRoute: typeof ApiAgentRunsRoute
+  ApiAgentsRoute: typeof ApiAgentsRouteWithChildren
   ApiHealthRoute: typeof ApiHealthRoute
   ApiRulesRoute: typeof ApiRulesRoute
   ApiSnapshotRoute: typeof ApiSnapshotRoute
   ApiTasksRoute: typeof ApiTasksRoute
-  ApiAgentsRunsRoute: typeof ApiAgentsRunsRoute
   ApiApprovalsApproveRoute: typeof ApiApprovalsApproveRoute
   ApiEventsExportRoute: typeof ApiEventsExportRoute
   ApiInternalGraphqlRoute: typeof ApiInternalGraphqlRoute
@@ -275,6 +326,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agent-runs': {
+      id: '/agent-runs'
+      path: '/agent-runs'
+      fullPath: '/agent-runs'
+      preLoaderRoute: typeof AgentRunsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -308,6 +366,27 @@ declare module '@tanstack/react-router' {
       path: '/api/health'
       fullPath: '/api/health'
       preLoaderRoute: typeof ApiHealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/agents': {
+      id: '/api/agents'
+      path: '/api/agents'
+      fullPath: '/api/agents'
+      preLoaderRoute: typeof ApiAgentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/agent-runs': {
+      id: '/api/agent-runs'
+      path: '/api/agent-runs'
+      fullPath: '/api/agent-runs'
+      preLoaderRoute: typeof ApiAgentRunsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/agent-run-logs': {
+      id: '/api/agent-run-logs'
+      path: '/api/agent-run-logs'
+      fullPath: '/api/agent-run-logs'
+      preLoaderRoute: typeof ApiAgentRunLogsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/workspace/clear': {
@@ -347,26 +426,41 @@ declare module '@tanstack/react-router' {
     }
     '/api/agents/runs': {
       id: '/api/agents/runs'
-      path: '/api/agents/runs'
+      path: '/runs'
       fullPath: '/api/agents/runs'
       preLoaderRoute: typeof ApiAgentsRunsRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof ApiAgentsRoute
     }
   }
 }
 
+interface ApiAgentsRouteChildren {
+  ApiAgentsRunsRoute: typeof ApiAgentsRunsRoute
+}
+
+const ApiAgentsRouteChildren: ApiAgentsRouteChildren = {
+  ApiAgentsRunsRoute: ApiAgentsRunsRoute,
+}
+
+const ApiAgentsRouteWithChildren = ApiAgentsRoute._addFileChildren(
+  ApiAgentsRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AgentRunsRoute: AgentRunsRoute,
   AgentsRoute: AgentsRoute,
   ApprovalsRoute: ApprovalsRoute,
   ConnectorsRoute: ConnectorsRoute,
   EventsRoute: EventsRoute,
   RulesRoute: RulesRoute,
+  ApiAgentRunLogsRoute: ApiAgentRunLogsRoute,
+  ApiAgentRunsRoute: ApiAgentRunsRoute,
+  ApiAgentsRoute: ApiAgentsRouteWithChildren,
   ApiHealthRoute: ApiHealthRoute,
   ApiRulesRoute: ApiRulesRoute,
   ApiSnapshotRoute: ApiSnapshotRoute,
   ApiTasksRoute: ApiTasksRoute,
-  ApiAgentsRunsRoute: ApiAgentsRunsRoute,
   ApiApprovalsApproveRoute: ApiApprovalsApproveRoute,
   ApiEventsExportRoute: ApiEventsExportRoute,
   ApiInternalGraphqlRoute: ApiInternalGraphqlRoute,

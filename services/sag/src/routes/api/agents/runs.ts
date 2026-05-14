@@ -28,7 +28,11 @@ export const Route = createFileRoute('/api/agents/runs')({
         }
         if (!liveAgentRun && !payload?.name && (!requestedSecrets || requestedSecrets.length === 0)) {
           return jsonResponse(
-            { ok: false, error: 'No live AgentRun with requested secrets was found', snapshot: buildSnapshot(state) },
+            {
+              ok: false,
+              error: 'No live protected workload with sensitive access was found',
+              snapshot: buildSnapshot(state),
+            },
             404,
           )
         }

@@ -1,12 +1,22 @@
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { Badge } from '~/components/base-ui'
 import { GatewayFrame } from '~/components/gateway-shell'
+import { Badge } from '~/components/ui/badge'
+import { Empty, EmptyHeader, EmptyTitle } from '~/components/ui/empty'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
+import {
+  formatTime,
+  operationLabel,
+  policyLabel,
+  sourceLabel,
+  statusBadgeVariant,
+  statusLabel,
+  userFacingText,
+} from '~/lib/sag-display'
 import { fetchSnapshot } from '~/lib/sag-client'
 import { loadInitialSnapshot } from '~/lib/load-snapshot'
-import { cn } from '~/lib/utils'
-import { type EventStatus, type GatewayEvent, type GatewaySnapshot } from '~/server/gateway'
+import type { GatewayEvent, GatewaySnapshot } from '~/server/gateway'
 
 export const Route = createFileRoute('/events')({
   component: EventsRoute,
@@ -27,22 +37,38 @@ function EventsRoute() {
 
   return (
     <GatewayFrame active="/events" snapshot={snapshot}>
-      <section className="flex min-h-0 flex-1 flex-col">
-        <div className="grid h-10 shrink-0 grid-cols-[96px_96px_130px_minmax(0,1fr)_220px] items-center border-b border-zinc-800 px-5 text-[11px] font-medium text-zinc-500">
-          <span>Time</span>
-          <span>Source</span>
-          <span>Result</span>
-          <span>Operation</span>
-          <span>Policy</span>
+      <header className="flex h-14 shrink-0 items-center border-b border-zinc-900 px-5">
+        <div className="min-w-0">
+          <h2 className="truncate text-sm font-semibold text-zinc-50">Audit</h2>
+          <div className="mt-0.5 text-xs text-zinc-400">{snapshot.events.length} events</div>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="divide-y divide-zinc-900">
-            {snapshot.events.map((event) => (
-              <EventLine key={event.id} event={event} />
-            ))}
-            {snapshot.events.length === 0 ? <div className="p-6 text-sm text-zinc-500">No events.</div> : null}
-          </div>
-        </div>
+      </header>
+      <section className="min-h-0 flex-1 overflow-y-auto">
+        {snapshot.events.length === 0 ? (
+          <Empty className="min-h-36 border-0">
+            <EmptyHeader>
+              <EmptyTitle>No audit events</EmptyTitle>
+            </EmptyHeader>
+          </Empty>
+        ) : null}
+        {snapshot.events.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="border-zinc-900">
+                <TableHead className="w-24 px-4 text-xs text-zinc-400">Time</TableHead>
+                <TableHead className="w-40 px-4 text-xs text-zinc-400">Source</TableHead>
+                <TableHead className="w-36 px-4 text-xs text-zinc-400">Decision</TableHead>
+                <TableHead className="px-4 text-xs text-zinc-400">Action</TableHead>
+                <TableHead className="px-4 text-xs text-zinc-400">Evidence</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {snapshot.events.map((event) => (
+                <EventLine key={event.id} event={event} />
+              ))}
+            </TableBody>
+          </Table>
+        ) : null}
       </section>
     </GatewayFrame>
   )
@@ -50,24 +76,23 @@ function EventsRoute() {
 
 function EventLine({ event }: { event: GatewayEvent }) {
   return (
-    <div className="grid min-h-12 grid-cols-[96px_96px_130px_minmax(0,1fr)_220px] items-center px-5 text-xs">
-      <span className="font-mono text-[11px] text-zinc-500">
-        {new Date(event.timestamp).toISOString().slice(11, 19)}
-      </span>
-      <Badge className="font-mono">{event.connector}</Badge>
-      <Status status={event.status} />
-      <span className="min-w-0 truncate font-mono text-[11px] text-zinc-100">{event.operation}</span>
-      <span className="min-w-0 truncate font-mono text-[11px] text-zinc-500">{event.policy}</span>
-    </div>
-  )
-}
-
-function Status({ status }: { status: EventStatus }) {
-  const blocked = status === 'blocked' || status === 'denied'
-  const attention = status === 'approval_required'
-  return (
-    <Badge variant={blocked ? 'destructive' : attention ? 'secondary' : 'outline'} className={cn('capitalize')}>
-      {status.replace('_', ' ')}
-    </Badge>
+    <TableRow className="border-zinc-900">
+      <TableCell className="w-24 px-4 font-mono text-xs text-zinc-400">{formatTime(event.timestamp)}</TableCell>
+      <TableCell className="w-40 px-4">
+        <Badge variant="outline">{sourceLabel(event.connector)}</Badge>
+      </TableCell>
+      <TableCell className="w-36 px-4">
+        <Badge variant={statusBadgeVariant(event.status)}>{statusLabel(event.status)}</Badge>
+      </TableCell>
+      <TableCell className="px-4">
+        <span className="text-sm font-medium text-zinc-100">{operationLabel(event.operation)}</span>
+      </TableCell>
+      <TableCell className="px-4">
+        <div className="grid gap-0.5">
+          <span className="line-clamp-1 text-sm text-zinc-300">{userFacingText(event.summary)}</span>
+          <span className="text-xs text-zinc-400">{policyLabel(event.policy)}</span>
+        </div>
+      </TableCell>
+    </TableRow>
   )
 }

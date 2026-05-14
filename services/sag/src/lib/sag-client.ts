@@ -1,4 +1,5 @@
 import type { GatewayRule, GatewaySnapshot, GatewayTask, ProtectedAgentRun } from '~/server/gateway'
+import type { AgentRunLogResult, CreateLiveAgentRunInput, LiveAgent, LiveAgentRun } from '~/server/kubernetes'
 
 export type SnapshotCommandResponse = {
   ok: boolean
@@ -19,6 +20,25 @@ export type TaskResponse = SnapshotCommandResponse & {
   task?: GatewayTask
 }
 
+export type LiveAgentsResponse = {
+  ok: boolean
+  agents: LiveAgent[]
+}
+
+export type LiveAgentRunsResponse = {
+  ok: boolean
+  runs: LiveAgentRun[]
+}
+
+export type CreateLiveAgentRunResponse = SnapshotCommandResponse & {
+  run: LiveAgentRun
+  agentRun?: ProtectedAgentRun
+}
+
+export type AgentRunLogsResponse = AgentRunLogResult & {
+  ok: boolean
+}
+
 export const fetchJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(path, {
     ...init,
@@ -35,6 +55,21 @@ export const fetchJson = async <T>(path: string, init?: RequestInit): Promise<T>
 }
 
 export const fetchSnapshot = () => fetchJson<GatewaySnapshot>('/api/snapshot')
+
+export const fetchLiveAgents = () => fetchJson<LiveAgentsResponse>('/api/agents')
+
+export const fetchLiveAgentRuns = () => fetchJson<LiveAgentRunsResponse>('/api/agent-runs')
+
+export const createLiveAgentRun = (input: CreateLiveAgentRunInput) =>
+  fetchJson<CreateLiveAgentRunResponse>('/api/agent-runs', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+
+export const fetchAgentRunLogs = ({ namespace, name }: { namespace: string; name: string }) =>
+  fetchJson<AgentRunLogsResponse>(
+    `/api/agent-run-logs?namespace=${encodeURIComponent(namespace)}&name=${encodeURIComponent(name)}&tailLines=400`,
+  )
 
 export const approveRun = (approvalId: string) =>
   fetchJson<SnapshotCommandResponse>('/api/approvals/approve', {

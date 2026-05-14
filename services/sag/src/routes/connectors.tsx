@@ -1,18 +1,21 @@
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { Badge } from '~/components/base-ui'
 import { GatewayFrame } from '~/components/gateway-shell'
+import { Badge } from '~/components/ui/badge'
+import { Empty, EmptyHeader, EmptyTitle } from '~/components/ui/empty'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
+import { connectorAccessLabel, connectorGuardrailLabel, sourceLabel, statusBadgeVariant } from '~/lib/sag-display'
 import { fetchSnapshot } from '~/lib/sag-client'
 import { loadInitialSnapshot } from '~/lib/load-snapshot'
-import { type Connector, type GatewaySnapshot } from '~/server/gateway'
+import type { Connector, GatewaySnapshot } from '~/server/gateway'
 
 export const Route = createFileRoute('/connectors')({
-  component: ConnectorsRoute,
+  component: SourcesRoute,
   loader: loadInitialSnapshot,
 })
 
-function ConnectorsRoute() {
+function SourcesRoute() {
   const initialSnapshot = Route.useLoaderData() as GatewaySnapshot
   const [enabled, setEnabled] = useState(false)
   useEffect(() => setEnabled(true), [])
@@ -26,31 +29,55 @@ function ConnectorsRoute() {
 
   return (
     <GatewayFrame active="/connectors" snapshot={snapshot}>
+      <header className="flex h-14 shrink-0 items-center border-b border-zinc-900 px-5">
+        <div className="min-w-0">
+          <h2 className="truncate text-sm font-semibold text-zinc-50">Sources</h2>
+          <div className="mt-0.5 text-xs text-zinc-400">{snapshot.connectors.length} connected</div>
+        </div>
+      </header>
       <section className="min-h-0 flex-1 overflow-y-auto">
-        <div className="grid h-10 grid-cols-[180px_270px_minmax(0,1fr)] items-center border-b border-zinc-800 px-5 text-[11px] font-medium text-zinc-500">
-          <span>Connector</span>
-          <span>Target</span>
-          <span>Boundary</span>
-        </div>
-        <div className="divide-y divide-zinc-900">
-          {snapshot.connectors.map((connector) => (
-            <ConnectorLine key={connector.id} connector={connector} />
-          ))}
-        </div>
+        {snapshot.connectors.length === 0 ? (
+          <Empty className="min-h-36 border-0">
+            <EmptyHeader>
+              <EmptyTitle>No sources</EmptyTitle>
+            </EmptyHeader>
+          </Empty>
+        ) : null}
+        {snapshot.connectors.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="border-zinc-900">
+                <TableHead className="w-48 px-4 text-xs text-zinc-400">Source</TableHead>
+                <TableHead className="px-4 text-xs text-zinc-400">Access</TableHead>
+                <TableHead className="px-4 text-xs text-zinc-400">Guardrail</TableHead>
+                <TableHead className="w-28 px-4 text-xs text-zinc-400">Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {snapshot.connectors.map((connector) => (
+                <SourceLine key={connector.id} connector={connector} />
+              ))}
+            </TableBody>
+          </Table>
+        ) : null}
       </section>
     </GatewayFrame>
   )
 }
 
-function ConnectorLine({ connector }: { connector: Connector }) {
+function SourceLine({ connector }: { connector: Connector }) {
   return (
-    <div className="grid min-h-16 grid-cols-[180px_270px_minmax(0,1fr)] items-center px-5 text-xs">
-      <div className="min-w-0">
-        <p className="truncate text-zinc-100">{connector.name}</p>
-        <Badge className="mt-1 font-mono">{connector.id}</Badge>
-      </div>
-      <span className="min-w-0 truncate font-mono text-[11px] text-zinc-400">{connector.target}</span>
-      <span className="min-w-0 truncate text-zinc-400">{connector.trustBoundary}</span>
-    </div>
+    <TableRow className="border-zinc-900">
+      <TableCell className="w-48 px-4">
+        <Badge variant="outline">{sourceLabel(connector.id)}</Badge>
+      </TableCell>
+      <TableCell className="px-4 text-sm text-zinc-100">{connectorAccessLabel(connector)}</TableCell>
+      <TableCell className="px-4 text-sm text-zinc-300">{connectorGuardrailLabel(connector)}</TableCell>
+      <TableCell className="w-28 px-4">
+        <Badge variant={statusBadgeVariant(connector.status === 'ready' ? 'allowed' : 'failed')}>
+          {connector.status}
+        </Badge>
+      </TableCell>
+    </TableRow>
   )
 }
