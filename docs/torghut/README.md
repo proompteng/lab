@@ -4,6 +4,8 @@
 
 Start here:
 
+- `docs/torghut/design-system/v6/207-torghut-quant-plan-closeout-and-alpha-repair-reentry-handoff-2026-05-14.md`
+  (current quant plan closeout and alpha-repair reentry handoff)
 - `docs/torghut/design-system/v6/206-torghut-no-delta-repair-reentry-auction-and-verification-carry-2026-05-14.md`
   (current no-delta repair reentry auction and verification carry contract)
 - `docs/agents/designs/201-jangar-verify-trust-foreclosure-and-alpha-repair-reentry-2026-05-14.md`

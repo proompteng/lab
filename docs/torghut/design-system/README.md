@@ -35,6 +35,7 @@ The v1 documents are written to stay consistent with:
 If you are trying to decide which docs are current contract truth versus historical milestone records, start with:
 
 - `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md`
+- `docs/torghut/design-system/v6/207-torghut-quant-plan-closeout-and-alpha-repair-reentry-handoff-2026-05-14.md`
 - `docs/torghut/design-system/v6/206-torghut-no-delta-repair-reentry-auction-and-verification-carry-2026-05-14.md`
 - `docs/agents/designs/201-jangar-verify-trust-foreclosure-and-alpha-repair-reentry-2026-05-14.md`
 - `docs/torghut/design-system/v6/205-torghut-alpha-readiness-settlement-conveyor-and-routeable-profit-runway-2026-05-14.md`
