@@ -784,7 +784,10 @@ def _fallback_quorum_from_legacy_status(
     )
 
 
-def load_jangar_dependency_quorum() -> JangarDependencyQuorumStatus:
+def load_jangar_dependency_quorum(
+    *,
+    omit_torghut_consumer_evidence: bool = False,
+) -> JangarDependencyQuorumStatus:
     status_url = (settings.trading_jangar_control_plane_status_url or "").strip()
     if not status_url:
         return JangarDependencyQuorumStatus(
@@ -792,12 +795,16 @@ def load_jangar_dependency_quorum() -> JangarDependencyQuorumStatus:
             reasons=["jangar_control_plane_status_url_missing"],
             message="TRADING_JANGAR_CONTROL_PLANE_STATUS_URL is not configured.",
         )
+    cache_key = (
+        f"{status_url}#omit_torghut_consumer_evidence="
+        f"{str(omit_torghut_consumer_evidence).lower()}"
+    )
 
     ttl_seconds = max(0, int(settings.trading_jangar_control_plane_cache_ttl_seconds))
     if ttl_seconds > 0:
         now = datetime.now(timezone.utc)
         with _JANGAR_QUORUM_CACHE_LOCK:
-            cached = cast(dict[str, Any] | None, _JANGAR_QUORUM_CACHE.get(status_url))
+            cached = cast(dict[str, Any] | None, _JANGAR_QUORUM_CACHE.get(cache_key))
             if cached is not None:
                 checked_at = cast(datetime | None, cached.get("checked_at"))
                 if checked_at is not None and now - checked_at <= timedelta(
@@ -807,9 +814,10 @@ def load_jangar_dependency_quorum() -> JangarDependencyQuorumStatus:
 
     decoded: Any = None
     try:
-        request = Request(
-            status_url, method="GET", headers={"accept": "application/json"}
-        )
+        headers = {"accept": "application/json"}
+        if omit_torghut_consumer_evidence:
+            headers["x-torghut-consumer-evidence-mode"] = "omit"
+        request = Request(status_url, method="GET", headers=headers)
         with urlopen(
             request, timeout=settings.trading_jangar_control_plane_timeout_seconds
         ) as response:
@@ -883,7 +891,7 @@ def load_jangar_dependency_quorum() -> JangarDependencyQuorumStatus:
 
     if ttl_seconds > 0:
         with _JANGAR_QUORUM_CACHE_LOCK:
-            _JANGAR_QUORUM_CACHE[status_url] = {
+            _JANGAR_QUORUM_CACHE[cache_key] = {
                 "checked_at": datetime.now(timezone.utc),
                 "status": status,
             }

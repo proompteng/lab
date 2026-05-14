@@ -251,7 +251,9 @@ Testing rules for the trading core:
   auction, and mirrors a compact `torghut.jangar-controller-ingestion-carry-ref.v1` through `/readyz` and
   `/trading/consumer-evidence`. The import carries Jangar repair-slot escrow and rollout-witness refs when available
   so `hold` or `block` settlements can name the exact zero-notional blocker instead of collapsing to a generic missing
-  carry. A `jangar_verify_carry` ticket is selectable only for `repairable` carry and always keeps `max_notional=0`.
+  carry. `/trading/consumer-evidence` fetches the Jangar status payload with Torghut consumer-evidence expansion
+  explicitly omitted, so the route can mirror current Jangar carry without recursively calling itself through Jangar.
+  A `jangar_verify_carry` ticket is selectable only for `repairable` carry and always keeps `max_notional=0`.
 - `GET /trading/status` and `GET /readyz` now include the May 8 doc 181
   `quality_adjusted_profit_frontier` shadow projection. The reducer ranks zero-notional repair packets from quant
   quality, market-context risk flags, route/TCA state, simulation-cache freshness, and Jangar evidence-quality refs
