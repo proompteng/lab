@@ -468,6 +468,12 @@ Jangar now parses Torghut's compact `torghut.alpha-repair-dividend-ledger-ref.v1
 `launch_decision`, validation command, max notional, capital rule, and rollback target into the control-plane data
 model.
 
+The board also binds alpha-repair reentry admission to Torghut's compact `alpha_repair_closure_board` when present.
+That keeps foreclosure and `material_gate_digest.alpha_closure_carry` aligned on the selected hypothesis, required
+settlement receipt, active dedupe key, consumed no-delta budget, validation command, and rollback target. The fallback
+order remains closure board, alpha repair dividend ledger, alpha-readiness settlement conveyor, and executable-alpha
+repair receipt.
+
 Local validation for the implementation:
 
 - `bunx vitest run --config vitest.config.ts src/server/__tests__/control-plane-verify-trust-foreclosure.test.ts src/server/__tests__/control-plane-torghut-consumer-evidence.test.ts src/routes/ready.test.ts`

@@ -2195,6 +2195,7 @@ export type VerifyTrustForeclosureBoard = {
   database_projection_ref: string | null
   route_stability_ref: string | null
   torghut_consumer_evidence_ref: string | null
+  torghut_alpha_repair_closure_board_ref: string | null
   torghut_alpha_repair_dividend_ref: string | null
   active_no_delta_release_key: string | null
   debt_classes: string[]

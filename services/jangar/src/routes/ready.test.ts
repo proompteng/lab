@@ -522,7 +522,8 @@ describe('getReadyHandler', () => {
       schema_version: 'jangar.verify-trust-foreclosure-board.v1',
       mode: 'observe',
       torghut_consumer_evidence_ref: 'torghut-route-proven-profit:ready-test',
-      active_no_delta_release_key: 'alpha-readiness-no-delta:ready-test',
+      torghut_alpha_repair_closure_board_ref: 'alpha-repair-closure-board:ready-test',
+      active_no_delta_release_key: 'alpha-window:ready-test',
       debt_classes: expect.arrayContaining([
         'source_rollout_truth_split',
         'controller_witness_unavailable_on_hot_path',
@@ -545,11 +546,13 @@ describe('getReadyHandler', () => {
         reason_codes: expect.arrayContaining([
           'source_rollout_truth_split',
           'torghut_no_delta_active',
-          'alpha_readiness_repeat_launch_denied',
+          'alpha_closure_no_delta_budget_consumed',
+          'alpha_closure_no_delta_debt_active',
           'revenue_repair_settlement_custody_deny',
         ]),
-        required_output_receipt: 'torghut.alpha-readiness-settlement-receipt.v1',
-        validation_command: 'uv run --frozen pytest services/torghut/tests/test_alpha_readiness_settlement_conveyor.py',
+        required_output_receipt: 'torghut.alpha-closure-settlement-receipt.v1',
+        validation_command:
+          "curl -fsS http://torghut.torghut.svc.cluster.local/trading/consumer-evidence | jq '.alpha_repair_closure_board'",
         rollback_target: 'stop emitting alpha_readiness_settlement_conveyor and keep Torghut max_notional=0',
       },
     })

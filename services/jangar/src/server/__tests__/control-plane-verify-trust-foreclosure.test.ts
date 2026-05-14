@@ -6,6 +6,7 @@ import type {
   RevenueRepairSettlementCustody,
   SourceServingContractVerdict,
   SourceServingContractVerdictExchange,
+  TorghutAlphaRepairClosureBoardRef,
   TorghutAlphaReadinessSettlementConveyorRef,
   TorghutAlphaRepairDividendLedgerRef,
   TorghutConsumerEvidenceStatus,
@@ -197,6 +198,35 @@ const dividend = (
   ...overrides,
 })
 
+const closureBoard = (
+  overrides: Partial<TorghutAlphaRepairClosureBoardRef> = {},
+): TorghutAlphaRepairClosureBoardRef => ({
+  schema_version: 'torghut.alpha-repair-closure-board-ref.v1',
+  board_id: 'alpha-repair-closure-board:current',
+  generated_at: now.toISOString(),
+  fresh_until: '2026-05-14T12:30:00.000Z',
+  status: 'selected',
+  reason_codes: [],
+  top_closure_id: 'alpha-repair-closure:current',
+  selected_value_gate: 'routeable_candidate_count',
+  required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+  settlement_market_id: 'alpha-closure-settlement-market:current',
+  settlement_market_status: 'pending_no_delta',
+  selected_hypothesis_id: 'H-CONT-01',
+  selected_repair_class: 'capital_replay_board_refresh',
+  required_settlement_receipt: 'torghut.alpha-closure-settlement-receipt.v1',
+  active_dedupe_key: 'alpha-closure-dedupe:H-CONT-01:window-a',
+  no_delta_budget_state: 'consumed',
+  no_delta_debt_count: 1,
+  next_allowed_attempt_after: null,
+  max_notional: '0',
+  capital_rule: 'zero_notional_repair_only',
+  release_conditions: ['evidence_window_changes', 'blocker_set_changes'],
+  validation_commands: ['uv run --frozen pytest services/torghut/tests/test_alpha_repair_closure_board.py'],
+  rollback_target: 'disable alpha_repair_closure_board emission and keep Torghut max_notional=0',
+  ...overrides,
+})
+
 const torghutEvidence = (overrides: Partial<TorghutConsumerEvidenceStatus> = {}): TorghutConsumerEvidenceStatus => ({
   status: 'current',
   endpoint: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
@@ -225,6 +255,7 @@ const torghutEvidence = (overrides: Partial<TorghutConsumerEvidenceStatus> = {})
       observed_count: 1,
     },
   ],
+  alpha_repair_closure_board: null,
   alpha_readiness_settlement_conveyor: conveyor(),
   alpha_repair_dividend_ledger: dividend(),
   reason_codes: [],
@@ -362,6 +393,70 @@ describe('buildVerifyTrustForeclosureBoard', () => {
       revenue_ready: false,
       top_repair_queue_item_code: 'repair_alpha_readiness',
     })
+  })
+
+  it('uses compact alpha closure board no-delta debt as the reentry source of truth', () => {
+    const board = buildVerifyTrustForeclosureBoard(
+      {
+        now,
+        namespace: 'agents',
+        executionTrust: executionTrust(),
+        sourceServingContractVerdictExchange: sourceExchange(),
+        torghutConsumerEvidence: torghutEvidence({
+          alpha_repair_closure_board: closureBoard(),
+          alpha_readiness_settlement_conveyor: conveyor({
+            active_no_delta_lease_count: 0,
+            repeat_launch_decision: 'allow',
+            selected_hypothesis_id: 'H-MICRO-01',
+            no_delta_release_key: 'alpha-readiness-no-delta:H-MICRO-01:window-a',
+          }),
+          alpha_repair_dividend_ledger: null,
+        }),
+        revenueRepairSettlementCustody: custody('allow'),
+        rolloutHealth: rolloutHealth(),
+        controllerWitness: controllerWitness(),
+        database: database(),
+        serviceHealth: 'ok',
+      },
+      'observe',
+    )
+
+    expect(board.torghut_alpha_repair_closure_board_ref).toBe('alpha-repair-closure-board:current')
+    expect(board.active_no_delta_release_key).toBe('alpha-closure-dedupe:H-CONT-01:window-a')
+    expect(board.debt_classes).toEqual(expect.arrayContaining(['torghut_no_delta_active']))
+    expect(board.alpha_repair_reentry_admission).toMatchObject({
+      release_key_state: 'active',
+      decision: 'deny',
+      selected_hypothesis_id: 'H-CONT-01',
+      selected_value_gate: 'routeable_candidate_count',
+      required_output_receipt: 'torghut.alpha-closure-settlement-receipt.v1',
+      validation_command: 'uv run --frozen pytest services/torghut/tests/test_alpha_repair_closure_board.py',
+      rollback_target: 'disable alpha_repair_closure_board emission and keep Torghut max_notional=0',
+      reason_codes: expect.arrayContaining([
+        'torghut_no_delta_active',
+        'alpha_closure_no_delta_budget_consumed',
+        'alpha_closure_no_delta_debt_active',
+      ]),
+    })
+    expect(board.foreclosure_tickets).toContainEqual(
+      expect.objectContaining({
+        debt_class: 'torghut_no_delta_active',
+        source_ref: 'alpha-repair-closure-board:current',
+        state: 'denied',
+      }),
+    )
+    expect(board.action_decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_repair',
+          decision: 'block',
+          evidence_refs: expect.arrayContaining([
+            'alpha-repair-closure-board:current',
+            'revenue-repair-settlement-custody:allow',
+          ]),
+        }),
+      ]),
+    )
   })
 
   it('holds material dispatch for stage-trust debt when the release key is clear', () => {

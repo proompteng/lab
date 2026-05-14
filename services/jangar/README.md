@@ -634,6 +634,31 @@ Rollback: ignore `material_gate_digest` consumers and keep existing ready truth,
 and material-action verdict consumers in control. Do not enable paper or live submission while Torghut remains
 repair-only or the repair queue is non-empty.
 
+## Verify trust foreclosure board
+
+`/ready` and `/api/agents/control-plane/status` emit the observe-mode `verify_trust_foreclosure_board` from
+`docs/agents/designs/201-jangar-verify-trust-foreclosure-and-alpha-repair-reentry-2026-05-14.md`. The board keeps
+serving readiness separate from material authority: serving can be `ok` while plan, verify, source rollout, or Torghut
+no-delta debt holds or denies material actions.
+
+When Torghut publishes `alpha_repair_closure_board`, Jangar treats that compact closure ref as the alpha-repair reentry
+source of truth before falling back to the older alpha-readiness conveyor or dividend refs. The foreclosure board uses
+the closure board id, selected hypothesis, required settlement receipt, active dedupe key, no-delta budget state,
+validation command, and rollback target so it matches `material_gate_digest.alpha_closure_carry` and denies duplicate
+closure launches before another runner pod is created.
+
+Validation:
+
+```bash
+curl -fsS http://localhost:8080/ready | jq '.verify_trust_foreclosure_board'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.verify_trust_foreclosure_board.alpha_repair_reentry_admission'
+curl -fsS http://torghut.torghut.svc.cluster.local/trading/consumer-evidence | jq '.alpha_repair_closure_board'
+```
+
+Rollback: set `JANGAR_VERIFY_TRUST_FORECLOSURE_MODE=observe` or ignore `verify_trust_foreclosure_board` consumers.
+Keep ready truth, revenue-repair settlement custody, material gate digest, and Torghut `max_notional=0` as the active
+safety authorities.
+
 ## Torghut stage-custody evidence
 
 Design doc `docs/agents/designs/188-jangar-typed-torghut-evidence-admission-and-repair-dispatch-2026-05-13.md`
