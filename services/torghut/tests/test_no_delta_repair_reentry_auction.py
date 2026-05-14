@@ -254,6 +254,81 @@ def test_no_delta_reentry_auction_denies_nonzero_notional() -> None:
     assert "capital_notional_nonzero" in auction["reason_codes"]
 
 
+def test_no_delta_reentry_auction_holds_without_active_key_or_release_change() -> None:
+    conveyor = deepcopy(_conveyor())
+    conveyor["status"] = "settled"
+    conveyor["settlement_state"] = "settled"
+    conveyor["active_no_delta_lease_count"] = 0
+    conveyor["selected_lane"] = {
+        **cast(dict[str, object], conveyor["selected_lane"]),
+        "repeat_launch_decision": "allow",
+        "no_delta_release_key": "",
+    }
+
+    dividend = deepcopy(_dividend_ledger())
+    dividend["status"] = "settled"
+    dividend["dividend_state"] = "settled"
+    dividend["no_delta_release_key"] = ""
+    dividend["jangar_custody"] = {
+        "launch_decision": "allow",
+        "launch_decision_reason": "repaired",
+    }
+
+    auction = _build(conveyor=conveyor, dividend=dividend)
+
+    assert auction["reentry_decision"] == "hold"
+    assert auction["active_no_delta_release_key"] is None
+    assert "no_release_condition_changed" in auction["reason_codes"]
+    tickets = cast(list[Mapping[str, Any]], auction["candidate_tickets"])
+    assert {ticket["state"] for ticket in tickets} == {"held"}
+
+
+def test_no_delta_reentry_auction_maps_stale_jangar_release_conditions() -> None:
+    dividend = deepcopy(_dividend_ledger())
+    dividend["changed_release_conditions"] = [
+        "source_ref_changes",
+        "blocker_set_changes",
+        "required_receipt_changes",
+        "selected_hypothesis_changes",
+        "jangar_verify_foreclosure_ticket_current",
+    ]
+
+    auction = _build(
+        dividend=dividend,
+        jangar_verification_carry={
+            "schema_version": "jangar.verify-trust-foreclosure-board.v1",
+            "board_id": "verify-trust-foreclosure-board:agents:test",
+            "status": "current",
+            "execution_trust_status": "degraded",
+            "fresh_until": "2026-05-14T14:39:00+00:00",
+            "foreclosure_tickets": [],
+        },
+    )
+
+    condition_codes = {
+        condition["code"]
+        for condition in cast(list[Mapping[str, str]], auction["release_conditions"])
+    }
+    assert {
+        "source_revenue_repair_ref_changed",
+        "blocker_set_changed",
+        "required_receipt_set_changed",
+        "selected_hypothesis_changed",
+        "jangar_verify_foreclosure_ticket_current",
+    } <= condition_codes
+    assert "jangar_verification_carry_stale" in auction["reason_codes"]
+    assert "jangar_foreclosure_ticket_missing" in auction["reason_codes"]
+
+
+def test_no_delta_reentry_auction_denies_malformed_notional() -> None:
+    auction = _build(
+        capital={"capital_state": "shadow", "max_notional": "not-a-number"}
+    )
+
+    assert auction["reentry_decision"] == "deny"
+    assert "capital_notional_nonzero" in auction["reason_codes"]
+
+
 def test_compact_no_delta_reentry_auction_ref() -> None:
     auction = _build()
     compact = compact_no_delta_repair_reentry_auction(auction)
