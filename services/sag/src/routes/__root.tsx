@@ -1,5 +1,5 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
-import appCss from '../styles.css?url'
+import '../styles.css'
 
 export const Route = createRootRoute({
   head: () => ({
@@ -10,10 +10,7 @@ export const Route = createRootRoute({
       { name: 'color-scheme', content: 'dark' },
       { title: 'Secure Action Gateway' },
     ],
-    links: [
-      { rel: 'stylesheet', href: appCss },
-      { rel: 'icon', href: 'data:,' },
-    ],
+    links: [{ rel: 'icon', href: 'data:,' }],
   }),
   component: RootDocument,
 })
