@@ -51,17 +51,17 @@ from app.trading.quote_quality import (
 )
 from app.trading.session_context import SessionContextTracker
 
-logging.getLogger('alembic').setLevel(logging.WARNING)
+logging.getLogger("alembic").setLevel(logging.WARNING)
 
-logging.getLogger('alembic').setLevel(logging.WARNING)
+logging.getLogger("alembic").setLevel(logging.WARNING)
 
 REGULAR_OPEN_UTC = time(hour=13, minute=30)
 REGULAR_CLOSE_UTC = time(hour=20, minute=0)
 DEFAULT_CHUNK_MINUTES = 10
-DEFAULT_START_EQUITY = Decimal('31590.02')
+DEFAULT_START_EQUITY = Decimal("31590.02")
 DEFAULT_PROGRESS_LOG_INTERVAL_SECONDS = 15
 logger = logging.getLogger(__name__)
-_SHARED_POSITION_OWNER = '__shared__'
+_SHARED_POSITION_OWNER = "__shared__"
 
 
 def _position_key(symbol: str, strategy_id: str) -> tuple[str, str]:
@@ -83,6 +83,7 @@ class ReplayConfig:
     progress_log_interval_seconds: int = DEFAULT_PROGRESS_LOG_INTERVAL_SECONDS
     capture_traces: bool = False
     capture_trace_funnel: bool = False
+    force_position_isolation: bool = False
     max_executable_spread_bps: Decimal = DEFAULT_MAX_EXECUTABLE_SPREAD_BPS
     max_quote_mid_jump_bps: Decimal = DEFAULT_MAX_QUOTE_MID_JUMP_BPS
     max_jump_with_wide_spread_bps: Decimal = DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS
@@ -123,108 +124,113 @@ class ClosedTrade:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description='Replay intraday TSMOM over a week of ClickHouse `ta_signals`.',
+        description="Replay intraday TSMOM over a week of ClickHouse `ta_signals`.",
     )
     parser.add_argument(
-        '--strategy-configmap',
-        default='argocd/applications/torghut/strategy-configmap.yaml',
+        "--strategy-configmap",
+        default="argocd/applications/torghut/strategy-configmap.yaml",
     )
     parser.add_argument(
-        '--clickhouse-http-url',
+        "--clickhouse-http-url",
         default=os.environ.get(
-            'TA_CLICKHOUSE_URL',
-            'http://torghut-clickhouse.torghut.svc.cluster.local:8123',
+            "TA_CLICKHOUSE_URL",
+            "http://torghut-clickhouse.torghut.svc.cluster.local:8123",
         ),
     )
     parser.add_argument(
-        '--clickhouse-username',
+        "--clickhouse-username",
         default=os.environ.get(
-            'TA_CLICKHOUSE_USERNAME',
-            os.environ.get('CLICKHOUSE_USERNAME', 'torghut'),
+            "TA_CLICKHOUSE_USERNAME",
+            os.environ.get("CLICKHOUSE_USERNAME", "torghut"),
         ),
     )
     parser.add_argument(
-        '--clickhouse-password',
+        "--clickhouse-password",
         default=os.environ.get(
-            'TA_CLICKHOUSE_PASSWORD',
-            os.environ.get('CLICKHOUSE_PASSWORD', ''),
+            "TA_CLICKHOUSE_PASSWORD",
+            os.environ.get("CLICKHOUSE_PASSWORD", ""),
         ),
     )
-    parser.add_argument('--start-date', default='2026-03-23')
-    parser.add_argument('--end-date', default='2026-03-27')
-    parser.add_argument('--chunk-minutes', type=int, default=DEFAULT_CHUNK_MINUTES)
-    parser.add_argument('--start-equity', default=str(DEFAULT_START_EQUITY))
+    parser.add_argument("--start-date", default="2026-03-23")
+    parser.add_argument("--end-date", default="2026-03-27")
+    parser.add_argument("--chunk-minutes", type=int, default=DEFAULT_CHUNK_MINUTES)
+    parser.add_argument("--start-equity", default=str(DEFAULT_START_EQUITY))
     parser.add_argument(
-        '--symbols',
-        default='',
-        help='Optional comma-separated symbol filter applied in the ClickHouse query.',
+        "--symbols",
+        default="",
+        help="Optional comma-separated symbol filter applied in the ClickHouse query.",
     )
     parser.add_argument(
-        '--progress-log-seconds',
+        "--progress-log-seconds",
         type=int,
         default=DEFAULT_PROGRESS_LOG_INTERVAL_SECONDS,
-        help='Emit replay heartbeat logs at most once per this many seconds.',
+        help="Emit replay heartbeat logs at most once per this many seconds.",
     )
     parser.add_argument(
-        '--max-executable-spread-bps',
+        "--max-executable-spread-bps",
         default=str(DEFAULT_MAX_EXECUTABLE_SPREAD_BPS),
-        help='Reject quotes wider than this when evaluating, filling, or flattening.',
+        help="Reject quotes wider than this when evaluating, filling, or flattening.",
     )
     parser.add_argument(
-        '--max-quote-mid-jump-bps',
+        "--max-quote-mid-jump-bps",
         default=str(DEFAULT_MAX_QUOTE_MID_JUMP_BPS),
-        help='Reject wide-spread quotes whose midpoint jumps beyond this many bps from the last sane price.',
+        help="Reject wide-spread quotes whose midpoint jumps beyond this many bps from the last sane price.",
     )
     parser.add_argument(
-        '--max-jump-with-wide-spread-bps',
+        "--max-jump-with-wide-spread-bps",
         default=str(DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS),
-        help='Minimum spread width required before the jump filter blocks a quote.',
+        help="Minimum spread width required before the jump filter blocks a quote.",
     )
     parser.add_argument(
-        '--log-level',
-        default=os.environ.get('TORGHUT_REPLAY_LOG_LEVEL', 'INFO'),
-        help='Python logging level for replay progress logs.',
+        "--log-level",
+        default=os.environ.get("TORGHUT_REPLAY_LOG_LEVEL", "INFO"),
+        help="Python logging level for replay progress logs.",
     )
     parser.add_argument(
-        '--trace-output',
+        "--trace-output",
         type=Path,
-        help='Optional path to write replay trace JSONL.',
+        help="Optional path to write replay trace JSONL.",
     )
     parser.add_argument(
-        '--funnel-output',
+        "--funnel-output",
         type=Path,
-        help='Optional path to write replay funnel JSON.',
+        help="Optional path to write replay funnel JSON.",
     )
     parser.add_argument(
-        '--near-misses-output',
+        "--near-misses-output",
         type=Path,
-        help='Optional path to write replay near-miss JSON.',
+        help="Optional path to write replay near-miss JSON.",
     )
     parser.add_argument(
-        '--collect-traces',
-        action='store_true',
-        help='Capture per-strategy runtime traces and emit them in payload trace output.',
+        "--collect-traces",
+        action="store_true",
+        help="Capture per-strategy runtime traces and emit them in payload trace output.",
     )
     parser.add_argument(
-        '--collect-trace-funnel',
-        action='store_true',
-        help='Capture aggregate runtime gate funnel diagnostics without emitting per-row trace records.',
+        "--collect-trace-funnel",
+        action="store_true",
+        help="Capture aggregate runtime gate funnel diagnostics without emitting per-row trace records.",
     )
-    parser.add_argument('--no-flatten-eod', action='store_true')
-    parser.add_argument('--json', action='store_true')
+    parser.add_argument("--no-flatten-eod", action="store_true")
+    parser.add_argument(
+        "--force-position-isolation",
+        action="store_true",
+        help="Own replay positions by strategy id even when runtime metadata omits isolation.",
+    )
+    parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 
 
 def _load_strategies(path: Path) -> list[Strategy]:
-    root_payload = yaml.safe_load(path.read_text(encoding='utf-8'))
+    root_payload = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(root_payload, dict):
-        raise RuntimeError('strategy_configmap_not_mapping')
-    data = root_payload.get('data')
+        raise RuntimeError("strategy_configmap_not_mapping")
+    data = root_payload.get("data")
     if not isinstance(data, dict):
-        raise RuntimeError('strategy_configmap_missing_data')
-    strategies_yaml = data.get('strategies.yaml')
+        raise RuntimeError("strategy_configmap_missing_data")
+    strategies_yaml = data.get("strategies.yaml")
     if not isinstance(strategies_yaml, str):
-        raise RuntimeError('strategy_configmap_missing_strategies_yaml')
+        raise RuntimeError("strategy_configmap_missing_strategies_yaml")
     catalog = StrategyCatalogConfig.model_validate(yaml.safe_load(strategies_yaml))
     strategies: list[Strategy] = []
     for item in catalog.strategies:
@@ -253,35 +259,35 @@ def _http_query(
     password: str | None,
     query: str,
 ) -> str:
-    body = query.encode('utf-8')
+    body = query.encode("utf-8")
     last_error: Exception | None = None
     for attempt in range(3):
-        req = request.Request(url=url.rstrip('/') + '/', data=body, method='POST')
+        req = request.Request(url=url.rstrip("/") + "/", data=body, method="POST")
         if username:
-            credentials = f'{username}:{password or ""}'.encode('utf-8')
-            req.add_header('Authorization', 'Basic ' + _b64(credentials))
+            credentials = f"{username}:{password or ''}".encode("utf-8")
+            req.add_header("Authorization", "Basic " + _b64(credentials))
         try:
             with request.urlopen(req, timeout=120) as resp:
-                return resp.read().decode('utf-8')
+                return resp.read().decode("utf-8")
         except error.HTTPError as exc:
-            payload = exc.read().decode('utf-8', errors='replace')
-            raise RuntimeError(f'clickhouse_http_error: {exc.code}: {payload}') from exc
+            payload = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"clickhouse_http_error: {exc.code}: {payload}") from exc
         except http.client.IncompleteRead as exc:
             if exc.partial:
-                return exc.partial.decode('utf-8', errors='replace')
+                return exc.partial.decode("utf-8", errors="replace")
             last_error = exc
         except Exception as exc:  # pragma: no cover - retry path for flaky transport
             last_error = exc
         time_mod.sleep(0.5 * (attempt + 1))
     if last_error is None:
-        raise RuntimeError('clickhouse_http_query_failed')
-    raise RuntimeError(f'clickhouse_http_query_failed: {last_error}') from last_error
+        raise RuntimeError("clickhouse_http_query_failed")
+    raise RuntimeError(f"clickhouse_http_query_failed: {last_error}") from last_error
 
 
 def _b64(raw: bytes) -> str:
     import base64
 
-    return base64.b64encode(raw).decode('ascii')
+    return base64.b64encode(raw).decode("ascii")
 
 
 def _iter_signal_rows(config: ReplayConfig) -> Iterable[SignalEnvelope]:
@@ -289,13 +295,19 @@ def _iter_signal_rows(config: ReplayConfig) -> Iterable[SignalEnvelope]:
     current_day = config.start_date
     while current_day <= config.end_date:
         if current_day.weekday() >= 5:
-            logger.info('replay_day_skip day=%s reason=weekend', current_day.isoformat())
+            logger.info(
+                "replay_day_skip day=%s reason=weekend", current_day.isoformat()
+            )
             current_day += timedelta(days=1)
             continue
-        session_start = datetime.combine(current_day, REGULAR_OPEN_UTC, tzinfo=timezone.utc)
-        session_end = datetime.combine(current_day, REGULAR_CLOSE_UTC, tzinfo=timezone.utc)
+        session_start = datetime.combine(
+            current_day, REGULAR_OPEN_UTC, tzinfo=timezone.utc
+        )
+        session_end = datetime.combine(
+            current_day, REGULAR_CLOSE_UTC, tzinfo=timezone.utc
+        )
         logger.info(
-            'replay_day_fetch_start day=%s session_start=%s session_end=%s',
+            "replay_day_fetch_start day=%s session_start=%s session_end=%s",
             current_day.isoformat(),
             session_start.isoformat(),
             session_end.isoformat(),
@@ -305,7 +317,7 @@ def _iter_signal_rows(config: ReplayConfig) -> Iterable[SignalEnvelope]:
             chunk_end = min(chunk_start + chunk_delta, session_end)
             fetch_started_at = time_mod.monotonic()
             logger.debug(
-                'replay_chunk_fetch_start day=%s chunk_start=%s chunk_end=%s symbol_count=%s',
+                "replay_chunk_fetch_start day=%s chunk_start=%s chunk_end=%s symbol_count=%s",
                 current_day.isoformat(),
                 chunk_start.isoformat(),
                 chunk_end.isoformat(),
@@ -320,7 +332,7 @@ def _iter_signal_rows(config: ReplayConfig) -> Iterable[SignalEnvelope]:
                 symbols=config.symbols,
             )
             logger.debug(
-                'replay_chunk_fetch_done day=%s chunk_start=%s chunk_end=%s rows=%s elapsed_s=%.3f',
+                "replay_chunk_fetch_done day=%s chunk_start=%s chunk_end=%s rows=%s elapsed_s=%.3f",
                 current_day.isoformat(),
                 chunk_start.isoformat(),
                 chunk_end.isoformat(),
@@ -343,10 +355,10 @@ def _fetch_chunk(
     chunk_end: datetime,
     symbols: tuple[str, ...] = (),
 ) -> list[SignalEnvelope]:
-    symbol_filter = ''
+    symbol_filter = ""
     if symbols:
-        rendered_symbols = ', '.join(f"'{symbol}'" for symbol in symbols)
-        symbol_filter = f'\n  AND s.symbol IN ({rendered_symbols})'
+        rendered_symbols = ", ".join(f"'{symbol}'" for symbol in symbols)
+        symbol_filter = f"\n  AND s.symbol IN ({rendered_symbols})"
     query = f"""
 SELECT
   s.symbol,
@@ -376,8 +388,8 @@ ANY LEFT JOIN torghut.ta_microbars AS m
   AND s.window_size = m.window_size
 WHERE s.source = 'ta'
   AND s.window_size = 'PT1S'
-  AND s.event_ts >= toDateTime64('{chunk_start.strftime('%Y-%m-%d %H:%M:%S')}', 3, 'UTC')
-  AND s.event_ts < toDateTime64('{chunk_end.strftime('%Y-%m-%d %H:%M:%S')}', 3, 'UTC')
+  AND s.event_ts >= toDateTime64('{chunk_start.strftime("%Y-%m-%d %H:%M:%S")}', 3, 'UTC')
+  AND s.event_ts < toDateTime64('{chunk_end.strftime("%Y-%m-%d %H:%M:%S")}', 3, 'UTC')
   {symbol_filter}
   AND isNotNull(s.imbalance_bid_px)
   AND isNotNull(s.imbalance_ask_px)
@@ -389,7 +401,7 @@ FORMAT TSVRaw
         password=password,
         query=query,
     )
-    reader = csv.reader(raw.splitlines(), delimiter='\t')
+    reader = csv.reader(raw.splitlines(), delimiter="\t")
     rows: list[SignalEnvelope] = []
     for parts in reader:
         parsed = _parse_signal_row(parts)
@@ -430,50 +442,52 @@ def _parse_signal_row(parts: list[str]) -> SignalEnvelope | None:
     ask_sz_value = _to_decimal(ask_sz)
     imbalance_spread_value = _to_decimal(imbalance_spread)
     payload = {
-        'macd': _to_decimal(macd),
-        'macd_signal': _to_decimal(macd_signal),
-        'ema12': _to_decimal(ema12),
-        'ema26': _to_decimal(ema26),
-        'rsi14': _to_decimal(rsi14),
-        'rsi': _to_decimal(rsi14),
-        'price': price_value,
-        'vwap_session': _to_decimal(vwap_session),
-        'vwap_w5m': _to_decimal(vwap_w5m),
-        'vol_realized_w60s': _to_decimal(vol),
-        'microbar_volume': _to_decimal(microbar_volume),
-        'imbalance_bid_px': bid_px_value,
-        'imbalance_ask_px': ask_px_value,
-        'imbalance_bid_sz': bid_sz_value,
-        'imbalance_ask_sz': ask_sz_value,
-        'imbalance_spread': imbalance_spread_value,
-        'imbalance': {
-            'bid_px': bid_px_value,
-            'ask_px': ask_px_value,
-            'bid_sz': bid_sz_value,
-            'ask_sz': ask_sz_value,
-            'spread': imbalance_spread_value if imbalance_spread_value is not None else spread_value,
+        "macd": _to_decimal(macd),
+        "macd_signal": _to_decimal(macd_signal),
+        "ema12": _to_decimal(ema12),
+        "ema26": _to_decimal(ema26),
+        "rsi14": _to_decimal(rsi14),
+        "rsi": _to_decimal(rsi14),
+        "price": price_value,
+        "vwap_session": _to_decimal(vwap_session),
+        "vwap_w5m": _to_decimal(vwap_w5m),
+        "vol_realized_w60s": _to_decimal(vol),
+        "microbar_volume": _to_decimal(microbar_volume),
+        "imbalance_bid_px": bid_px_value,
+        "imbalance_ask_px": ask_px_value,
+        "imbalance_bid_sz": bid_sz_value,
+        "imbalance_ask_sz": ask_sz_value,
+        "imbalance_spread": imbalance_spread_value,
+        "imbalance": {
+            "bid_px": bid_px_value,
+            "ask_px": ask_px_value,
+            "bid_sz": bid_sz_value,
+            "ask_sz": ask_sz_value,
+            "spread": imbalance_spread_value
+            if imbalance_spread_value is not None
+            else spread_value,
         },
-        'spread': spread_value,
-        'spread_bps': (
-            (spread_value / price_value) * Decimal('10000')
+        "spread": spread_value,
+        "spread_bps": (
+            (spread_value / price_value) * Decimal("10000")
             if spread_value is not None and price_value is not None and price_value > 0
             else None
         ),
-        'window_size': 'PT1S',
-        'window_step': 'PT1S',
+        "window_size": "PT1S",
+        "window_step": "PT1S",
     }
     return SignalEnvelope(
         event_ts=_parse_clickhouse_ts(event_ts),
         symbol=symbol,
-        timeframe='1Sec',
+        timeframe="1Sec",
         seq=int(seq),
-        source='ta',
+        source="ta",
         payload=payload,
     )
 
 
 def _parse_clickhouse_ts(value: str) -> datetime:
-    normalized = value.replace(' ', 'T')
+    normalized = value.replace(" ", "T")
     parsed = datetime.fromisoformat(normalized)
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
@@ -482,7 +496,7 @@ def _parse_clickhouse_ts(value: str) -> datetime:
 
 def _to_decimal(value: str) -> Decimal | None:
     stripped = value.strip()
-    if not stripped or stripped == '\\N':
+    if not stripped or stripped == "\\N":
         return None
     return Decimal(stripped)
 
@@ -491,6 +505,8 @@ def _positions_payload(
     positions: dict[tuple[str, str], PositionState],
     last_prices: dict[str, Decimal],
     pending_orders: dict[tuple[str, str], PendingOrder] | None = None,
+    *,
+    force_position_isolation: bool = False,
 ) -> list[dict[str, Any]]:
     projected_positions: dict[tuple[str, str], PositionState] = {
         key: PositionState(
@@ -509,7 +525,10 @@ def _positions_payload(
     for pending in (pending_orders or {}).values():
         decision = pending.decision
         symbol = decision.symbol
-        owner_strategy_id = _decision_position_owner(decision)
+        owner_strategy_id = _decision_position_owner(
+            decision,
+            force_position_isolation=force_position_isolation,
+        )
         position_key = _position_key(symbol, owner_strategy_id)
         reference_price = (
             decision.limit_price
@@ -518,20 +537,22 @@ def _positions_payload(
         )
         projected_prices[symbol] = reference_price
         existing = projected_positions.get(position_key)
-        if decision.action == 'buy':
+        if decision.action == "buy":
             if existing is None:
                 projected_positions[position_key] = PositionState(
                     strategy_id=owner_strategy_id,
                     qty=decision.qty,
                     avg_entry_price=reference_price,
                     opened_at=pending.signal.event_ts,
-                    entry_cost_total=Decimal('0'),
+                    entry_cost_total=Decimal("0"),
                     decision_at=pending.created_at,
                     pending_entry=True,
                 )
                 continue
             if existing.qty < 0:
-                remaining_abs_qty = abs(existing.qty) - min(decision.qty, abs(existing.qty))
+                remaining_abs_qty = abs(existing.qty) - min(
+                    decision.qty, abs(existing.qty)
+                )
                 if remaining_abs_qty <= 0:
                     projected_positions.pop(position_key, None)
                     continue
@@ -556,9 +577,9 @@ def _positions_payload(
                 avg_entry_price=avg_entry,
                 opened_at=existing.opened_at,
                 entry_cost_total=existing.entry_cost_total,
-                    decision_at=existing.decision_at,
-                    pending_entry=existing.pending_entry,
-                )
+                decision_at=existing.decision_at,
+                pending_entry=existing.pending_entry,
+            )
             continue
         if existing is None:
             projected_positions[position_key] = PositionState(
@@ -566,7 +587,7 @@ def _positions_payload(
                 qty=-decision.qty,
                 avg_entry_price=reference_price,
                 opened_at=pending.signal.event_ts,
-                entry_cost_total=Decimal('0'),
+                entry_cost_total=Decimal("0"),
                 decision_at=pending.created_at,
                 pending_entry=True,
             )
@@ -607,15 +628,15 @@ def _positions_payload(
         signed_qty = position.qty
         payload.append(
             {
-                'symbol': symbol,
-                'strategy_id': position.strategy_id,
-                'qty': str(abs(signed_qty)),
-                'side': 'short' if signed_qty < 0 else 'long',
-                'market_value': str(signed_qty * market_price),
-                'avg_entry_price': str(position.avg_entry_price),
-                'opened_at': position.opened_at.isoformat(),
-                'decision_at': position.decision_at.isoformat(),
-                'pending_entry': position.pending_entry,
+                "symbol": symbol,
+                "strategy_id": position.strategy_id,
+                "qty": str(abs(signed_qty)),
+                "side": "short" if signed_qty < 0 else "long",
+                "market_value": str(signed_qty * market_price),
+                "avg_entry_price": str(position.avg_entry_price),
+                "opened_at": position.opened_at.isoformat(),
+                "decision_at": position.decision_at.isoformat(),
+                "pending_entry": position.pending_entry,
             }
         )
     return payload
@@ -638,8 +659,8 @@ def _position_exposure(
     positions: dict[tuple[str, str], PositionState],
     last_prices: dict[str, Decimal],
 ) -> tuple[Decimal, Decimal]:
-    gross_exposure = Decimal('0')
-    net_exposure = Decimal('0')
+    gross_exposure = Decimal("0")
+    net_exposure = Decimal("0")
     for (symbol, _owner_strategy_id), position in positions.items():
         market_value = position.qty * last_prices.get(symbol, position.avg_entry_price)
         gross_exposure += abs(market_value)
@@ -648,7 +669,7 @@ def _position_exposure(
 
 
 def _extract_spread(signal: SignalEnvelope) -> Decimal | None:
-    raw = signal.payload.get('spread')
+    raw = signal.payload.get("spread")
     if isinstance(raw, Decimal):
         return raw
     if raw is None:
@@ -657,7 +678,7 @@ def _extract_spread(signal: SignalEnvelope) -> Decimal | None:
 
 
 def _extract_bid(signal: SignalEnvelope) -> Decimal | None:
-    raw = signal.payload.get('imbalance_bid_px')
+    raw = signal.payload.get("imbalance_bid_px")
     if isinstance(raw, Decimal):
         return raw
     if raw is None:
@@ -666,7 +687,7 @@ def _extract_bid(signal: SignalEnvelope) -> Decimal | None:
 
 
 def _extract_ask(signal: SignalEnvelope) -> Decimal | None:
-    raw = signal.payload.get('imbalance_ask_px')
+    raw = signal.payload.get("imbalance_ask_px")
     if isinstance(raw, Decimal):
         return raw
     if raw is None:
@@ -675,14 +696,14 @@ def _extract_ask(signal: SignalEnvelope) -> Decimal | None:
 
 
 def _extract_price(signal: SignalEnvelope) -> Decimal:
-    raw = signal.payload.get('price')
+    raw = signal.payload.get("price")
     if isinstance(raw, Decimal):
         return raw
     return Decimal(str(raw))
 
 
 def _extract_volatility(signal: SignalEnvelope) -> Decimal | None:
-    raw = signal.payload.get('vol_realized_w60s')
+    raw = signal.payload.get("vol_realized_w60s")
     if raw is None:
         return None
     if isinstance(raw, Decimal):
@@ -690,20 +711,24 @@ def _extract_volatility(signal: SignalEnvelope) -> Decimal | None:
     return Decimal(str(raw))
 
 
-def _signal_spread_bps(*, signal: SignalEnvelope, price: Decimal | None = None) -> Decimal | None:
+def _signal_spread_bps(
+    *, signal: SignalEnvelope, price: Decimal | None = None
+) -> Decimal | None:
     resolved_price = _extract_price(signal) if price is None else price
     if resolved_price <= 0:
         return None
     spread = _extract_spread(signal)
     if spread is None:
         return None
-    return (abs(spread) / resolved_price) * Decimal('10000')
+    return (abs(spread) / resolved_price) * Decimal("10000")
 
 
-def _signal_mid_jump_bps(*, price: Decimal, reference_price: Decimal | None) -> Decimal | None:
+def _signal_mid_jump_bps(
+    *, price: Decimal, reference_price: Decimal | None
+) -> Decimal | None:
     if reference_price is None or reference_price <= 0:
         return None
-    return (abs(price - reference_price) / reference_price) * Decimal('10000')
+    return (abs(price - reference_price) / reference_price) * Decimal("10000")
 
 
 def _quote_quality_status(
@@ -731,12 +756,12 @@ def _log_quote_skipped(
     has_pending_order: bool,
 ) -> None:
     logger.debug(
-        'replay_quote_skipped ts=%s symbol=%s reason=%s spread_bps=%s jump_bps=%s open_position=%s pending_order=%s',
+        "replay_quote_skipped ts=%s symbol=%s reason=%s spread_bps=%s jump_bps=%s open_position=%s pending_order=%s",
         signal.event_ts.isoformat(),
         signal.symbol,
-        status.reason or 'unknown',
-        _decimal_text(status.spread_bps) if status.spread_bps is not None else 'None',
-        _decimal_text(status.jump_bps) if status.jump_bps is not None else 'None',
+        status.reason or "unknown",
+        _decimal_text(status.spread_bps) if status.spread_bps is not None else "None",
+        _decimal_text(status.jump_bps) if status.jump_bps is not None else "None",
         has_open_position,
         has_pending_order,
     )
@@ -770,8 +795,8 @@ def _estimate_trade_cost(
 
 
 def _record_decision(stats: dict[str, Any], decision: StrategyDecision) -> None:
-    stats['decision_count'] += 1
-    symbol_counts = stats.setdefault('decision_symbols', defaultdict(int))
+    stats["decision_count"] += 1
+    symbol_counts = stats.setdefault("decision_symbols", defaultdict(int))
     symbol_counts[decision.symbol] += 1
 
 
@@ -779,14 +804,14 @@ def _apply_order_preferences(
     decision: StrategyDecision,
     signal: SignalEnvelope,
 ) -> StrategyDecision:
-    position_exit = decision.params.get('position_exit')
+    position_exit = decision.params.get("position_exit")
     if isinstance(position_exit, dict):
-        exit_type = str(position_exit.get('type') or '').strip()
-        if exit_type == 'session_flatten_minute_utc':
+        exit_type = str(position_exit.get("type") or "").strip()
+        if exit_type == "session_flatten_minute_utc":
             return decision
     if not settings.trading_execution_prefer_limit:
         return decision
-    if decision.order_type != 'market':
+    if decision.order_type != "market":
         return decision
     price = _extract_price(signal)
     spread = _extract_spread(signal)
@@ -798,71 +823,71 @@ def _apply_order_preferences(
         return decision
     return decision.model_copy(
         update={
-            'order_type': 'limit',
-            'limit_price': _near_touch_limit_price(price, spread, decision.action),
+            "order_type": "limit",
+            "limit_price": _near_touch_limit_price(price, spread, decision.action),
         }
     )
 
 
 def _init_day_stats() -> dict[str, Any]:
     return {
-        'decision_count': 0,
-        'filled_count': 0,
-        'filled_notional': Decimal('0'),
-        'gross_pnl': Decimal('0'),
-        'net_pnl': Decimal('0'),
-        'cost_total': Decimal('0'),
-        'wins': 0,
-        'losses': 0,
-        'closed_trades': [],
-        'capital_snapshot_count': 0,
-        'min_cash': None,
-        'min_equity': None,
-        'max_gross_exposure': Decimal('0'),
-        'max_net_exposure_abs': Decimal('0'),
-        'max_gross_exposure_pct_equity': Decimal('0'),
-        'negative_cash_observation_count': 0,
+        "decision_count": 0,
+        "filled_count": 0,
+        "filled_notional": Decimal("0"),
+        "gross_pnl": Decimal("0"),
+        "net_pnl": Decimal("0"),
+        "cost_total": Decimal("0"),
+        "wins": 0,
+        "losses": 0,
+        "closed_trades": [],
+        "capital_snapshot_count": 0,
+        "min_cash": None,
+        "min_equity": None,
+        "max_gross_exposure": Decimal("0"),
+        "max_net_exposure_abs": Decimal("0"),
+        "max_gross_exposure_pct_equity": Decimal("0"),
+        "negative_cash_observation_count": 0,
     }
 
 
 def _init_funnel_stats() -> dict[str, Any]:
     return {
-        'retained_rows': 0,
-        'runtime_evaluable_rows': 0,
-        'quote_valid_rows': 0,
-        'strategy_evaluations': 0,
-        'gate_pass_counts': defaultdict(int),
-        'first_failed_gate_counts': defaultdict(int),
-        'failing_threshold_counts': defaultdict(int),
-        'passed_trace_count': 0,
-        'decision_count': 0,
-        'filled_count': 0,
-        'filled_notional': Decimal('0'),
-        'closed_trade_count': 0,
-        'gross_pnl': Decimal('0'),
-        'net_pnl': Decimal('0'),
-        'cost_total': Decimal('0'),
+        "retained_rows": 0,
+        "runtime_evaluable_rows": 0,
+        "quote_valid_rows": 0,
+        "strategy_evaluations": 0,
+        "gate_pass_counts": defaultdict(int),
+        "first_failed_gate_counts": defaultdict(int),
+        "failing_threshold_counts": defaultdict(int),
+        "passed_trace_count": 0,
+        "decision_count": 0,
+        "filled_count": 0,
+        "filled_notional": Decimal("0"),
+        "closed_trade_count": 0,
+        "gross_pnl": Decimal("0"),
+        "net_pnl": Decimal("0"),
+        "cost_total": Decimal("0"),
     }
 
 
 def _ensure_replay_stats_bucket(bucket: dict[str, Any]) -> dict[str, Any]:
-    bucket.setdefault('decision_count', 0)
-    bucket.setdefault('filled_count', 0)
-    bucket.setdefault('filled_notional', Decimal('0'))
-    bucket.setdefault('gross_pnl', Decimal('0'))
-    bucket.setdefault('net_pnl', Decimal('0'))
-    bucket.setdefault('cost_total', Decimal('0'))
-    bucket.setdefault('wins', 0)
-    bucket.setdefault('losses', 0)
-    bucket.setdefault('closed_trades', [])
-    bucket.setdefault('closed_trade_count', 0)
-    bucket.setdefault('capital_snapshot_count', 0)
-    bucket.setdefault('min_cash', None)
-    bucket.setdefault('min_equity', None)
-    bucket.setdefault('max_gross_exposure', Decimal('0'))
-    bucket.setdefault('max_net_exposure_abs', Decimal('0'))
-    bucket.setdefault('max_gross_exposure_pct_equity', Decimal('0'))
-    bucket.setdefault('negative_cash_observation_count', 0)
+    bucket.setdefault("decision_count", 0)
+    bucket.setdefault("filled_count", 0)
+    bucket.setdefault("filled_notional", Decimal("0"))
+    bucket.setdefault("gross_pnl", Decimal("0"))
+    bucket.setdefault("net_pnl", Decimal("0"))
+    bucket.setdefault("cost_total", Decimal("0"))
+    bucket.setdefault("wins", 0)
+    bucket.setdefault("losses", 0)
+    bucket.setdefault("closed_trades", [])
+    bucket.setdefault("closed_trade_count", 0)
+    bucket.setdefault("capital_snapshot_count", 0)
+    bucket.setdefault("min_cash", None)
+    bucket.setdefault("min_equity", None)
+    bucket.setdefault("max_gross_exposure", Decimal("0"))
+    bucket.setdefault("max_net_exposure_abs", Decimal("0"))
+    bucket.setdefault("max_gross_exposure_pct_equity", Decimal("0"))
+    bucket.setdefault("negative_cash_observation_count", 0)
     return bucket
 
 
@@ -882,24 +907,26 @@ def _record_capital_snapshot(
     gross_exposure_pct_equity = (
         gross_exposure / equity
         if equity > 0
-        else Decimal('999999999') if gross_exposure > 0 else Decimal('0')
+        else Decimal("999999999")
+        if gross_exposure > 0
+        else Decimal("0")
     )
-    min_cash = bucket.get('min_cash')
+    min_cash = bucket.get("min_cash")
     if not isinstance(min_cash, Decimal) or cash < min_cash:
-        bucket['min_cash'] = cash
-    min_equity = bucket.get('min_equity')
+        bucket["min_cash"] = cash
+    min_equity = bucket.get("min_equity")
     if not isinstance(min_equity, Decimal) or equity < min_equity:
-        bucket['min_equity'] = equity
-    if gross_exposure > bucket['max_gross_exposure']:
-        bucket['max_gross_exposure'] = gross_exposure
+        bucket["min_equity"] = equity
+    if gross_exposure > bucket["max_gross_exposure"]:
+        bucket["max_gross_exposure"] = gross_exposure
     net_exposure_abs = abs(net_exposure)
-    if net_exposure_abs > bucket['max_net_exposure_abs']:
-        bucket['max_net_exposure_abs'] = net_exposure_abs
-    if gross_exposure_pct_equity > bucket['max_gross_exposure_pct_equity']:
-        bucket['max_gross_exposure_pct_equity'] = gross_exposure_pct_equity
-    bucket['capital_snapshot_count'] += 1
+    if net_exposure_abs > bucket["max_net_exposure_abs"]:
+        bucket["max_net_exposure_abs"] = net_exposure_abs
+    if gross_exposure_pct_equity > bucket["max_gross_exposure_pct_equity"]:
+        bucket["max_gross_exposure_pct_equity"] = gross_exposure_pct_equity
+    bucket["capital_snapshot_count"] += 1
     if cash < 0:
-        bucket['negative_cash_observation_count'] += 1
+        bucket["negative_cash_observation_count"] += 1
     return equity
 
 
@@ -907,27 +934,29 @@ def _record_trace_for_funnel(
     stats: dict[str, Any],
     trace: StrategyTrace,
 ) -> None:
-    stats['strategy_evaluations'] += 1
+    stats["strategy_evaluations"] += 1
     if trace.passed:
-        stats['passed_trace_count'] += 1
+        stats["passed_trace_count"] += 1
     for gate in trace.gates:
         if not gate.passed:
             break
-        gate_key = f'{trace.strategy_type}:{gate.gate}'
-        stats['gate_pass_counts'][gate_key] += 1
+        gate_key = f"{trace.strategy_type}:{gate.gate}"
+        stats["gate_pass_counts"][gate_key] += 1
     if trace.first_failed_gate is None:
         return
-    failed_gate_key = f'{trace.strategy_type}:{trace.first_failed_gate}'
-    stats['first_failed_gate_counts'][failed_gate_key] += 1
+    failed_gate_key = f"{trace.strategy_type}:{trace.first_failed_gate}"
+    stats["first_failed_gate_counts"][failed_gate_key] += 1
     failed_gate = trace.failed_gate()
     if failed_gate is None:
         return
     for threshold in failed_gate.failing_thresholds():
-        threshold_key = f'{trace.strategy_type}:{failed_gate.gate}:{threshold.metric}'
-        stats['failing_threshold_counts'][threshold_key] += 1
+        threshold_key = f"{trace.strategy_type}:{failed_gate.gate}:{threshold.metric}"
+        stats["failing_threshold_counts"][threshold_key] += 1
 
 
-def _build_near_miss(trace: StrategyTrace, *, trading_day: str) -> NearMissRecord | None:
+def _build_near_miss(
+    trace: StrategyTrace, *, trading_day: str
+) -> NearMissRecord | None:
     if trace.passed or trace.first_failed_gate is None:
         return None
     failed_gate = trace.failed_gate()
@@ -969,26 +998,28 @@ def _insert_near_miss(
 
 
 def _decimal_text(value: Decimal) -> str:
-    return format(value, 'f')
+    return format(value, "f")
 
 
 def _log_decision_queued(decision: StrategyDecision, created_at: datetime) -> None:
     logger.info(
-        'replay_decision_queued ts=%s strategy_id=%s symbol=%s action=%s qty=%s order_type=%s limit_price=%s rationale=%s',
+        "replay_decision_queued ts=%s strategy_id=%s symbol=%s action=%s qty=%s order_type=%s limit_price=%s rationale=%s",
         created_at.isoformat(),
         decision.strategy_id,
         decision.symbol,
         decision.action,
         _decimal_text(decision.qty),
         decision.order_type,
-        _decimal_text(decision.limit_price) if decision.limit_price is not None else 'None',
-        decision.rationale or '',
+        _decimal_text(decision.limit_price)
+        if decision.limit_price is not None
+        else "None",
+        decision.rationale or "",
     )
 
 
 def _log_trade_closed(trade: ClosedTrade) -> None:
     logger.info(
-        'replay_trade_closed symbol=%s strategy_id=%s opened_at=%s closed_at=%s qty=%s entry=%s exit=%s gross_pnl=%s net_pnl=%s exit_reason=%s',
+        "replay_trade_closed symbol=%s strategy_id=%s opened_at=%s closed_at=%s qty=%s entry=%s exit=%s gross_pnl=%s net_pnl=%s exit_reason=%s",
         trade.symbol,
         trade.strategy_id,
         trade.opened_at.isoformat(),
@@ -1011,8 +1042,8 @@ def _resolve_pending_fill_price(
     ask = _extract_ask(signal)
     normalized_action = decision.action.strip().lower()
 
-    if decision.order_type == 'limit' and decision.limit_price is not None:
-        if normalized_action == 'buy':
+    if decision.order_type == "limit" and decision.limit_price is not None:
+        if normalized_action == "buy":
             executable_price = ask if ask is not None else price
             if executable_price > decision.limit_price:
                 return None
@@ -1022,28 +1053,36 @@ def _resolve_pending_fill_price(
             return None
         return executable_price
 
-    if normalized_action == 'buy':
+    if normalized_action == "buy":
         return ask if ask is not None else price
     return bid if bid is not None else price
 
 
 def _decision_exit_reason(decision: StrategyDecision) -> str:
-    position_exit = decision.params.get('position_exit')
+    position_exit = decision.params.get("position_exit")
     if isinstance(position_exit, dict):
-        exit_type = str(position_exit.get('type') or '').strip()
+        exit_type = str(position_exit.get("type") or "").strip()
         if exit_type:
             return exit_type
-    rationale = str(decision.rationale or '').strip()
+    rationale = str(decision.rationale or "").strip()
     if rationale:
-        return rationale.split(',')[0]
-    return 'signal_exit'
+        return rationale.split(",")[0]
+    return "signal_exit"
 
 
-def _decision_position_owner(decision: StrategyDecision) -> str:
-    runtime_payload = decision.params.get('strategy_runtime')
+def _decision_position_owner(
+    decision: StrategyDecision,
+    *,
+    force_position_isolation: bool = False,
+) -> str:
+    if force_position_isolation:
+        return decision.strategy_id
+    runtime_payload = decision.params.get("strategy_runtime")
     if isinstance(runtime_payload, dict):
-        isolation_mode = str(runtime_payload.get('position_isolation_mode') or '').strip().lower()
-        if isolation_mode == 'per_strategy':
+        isolation_mode = (
+            str(runtime_payload.get("position_isolation_mode") or "").strip().lower()
+        )
+        if isolation_mode == "per_strategy":
             return decision.strategy_id
     return _SHARED_POSITION_OWNER
 
@@ -1069,28 +1108,28 @@ def _resolve_passed_trace_block_reason(
     emitted_strategy_ids: set[str],
 ) -> str | None:
     if strategy_id not in raw_decision_strategy_ids:
-        return 'engine_runtime_filter_rejected'
+        return "engine_runtime_filter_rejected"
     if strategy_id in allocation_reject_reason_by_strategy_id:
         return allocation_reject_reason_by_strategy_id[strategy_id]
     if strategy_id in sizing_reject_reason_by_strategy_id:
         return sizing_reject_reason_by_strategy_id[strategy_id]
     if strategy_id not in emitted_strategy_ids:
-        return 'post_runtime_filter_rejected'
+        return "post_runtime_filter_rejected"
     return None
 
 
 def _pending_order_priority(decision: StrategyDecision) -> int:
-    if decision.action.strip().lower() != 'sell':
+    if decision.action.strip().lower() != "sell":
         return 0
-    position_exit = decision.params.get('position_exit')
-    exit_type = ''
+    position_exit = decision.params.get("position_exit")
+    exit_type = ""
     if isinstance(position_exit, dict):
-        exit_type = str(position_exit.get('type') or '').strip()
-    if exit_type == 'session_flatten_minute_utc':
+        exit_type = str(position_exit.get("type") or "").strip()
+    if exit_type == "session_flatten_minute_utc":
         return 5
-    if exit_type in {'long_stop_loss_bps', 'long_trailing_stop_bps'}:
+    if exit_type in {"long_stop_loss_bps", "long_trailing_stop_bps"}:
         return 4
-    if decision.order_type == 'market':
+    if decision.order_type == "market":
         return 3
     if exit_type:
         return 2
@@ -1113,9 +1152,9 @@ def _should_replace_pending_order(
         return False
 
     if existing.order_type != replacement.order_type:
-        return existing.order_type == 'limit' and replacement.order_type == 'market'
+        return existing.order_type == "limit" and replacement.order_type == "market"
 
-    if existing.order_type != 'limit':
+    if existing.order_type != "limit":
         return False
 
     existing_limit = existing.limit_price
@@ -1123,9 +1162,9 @@ def _should_replace_pending_order(
     if existing_limit is None or replacement_limit is None:
         return False
 
-    if replacement_action == 'sell':
+    if replacement_action == "sell":
         return replacement_limit < existing_limit
-    if replacement_action == 'buy':
+    if replacement_action == "buy":
         return replacement_limit > existing_limit
     return False
 
@@ -1135,16 +1174,20 @@ def _reconcile_pending_order_before_immediate_fill(
     decision: StrategyDecision,
     pending_orders: dict[tuple[str, str], PendingOrder],
     created_at: datetime,
+    force_position_isolation: bool = False,
 ) -> None:
     pending_key = _position_key(
         decision.symbol,
-        _decision_position_owner(decision),
+        _decision_position_owner(
+            decision,
+            force_position_isolation=force_position_isolation,
+        ),
     )
     existing_pending = pending_orders.pop(pending_key, None)
     if existing_pending is None:
         return
     logger.info(
-        'replay_pending_order_cleared_for_immediate_fill ts=%s symbol=%s existing_order_type=%s existing_limit=%s existing_exit=%s immediate_order_type=%s immediate_limit=%s immediate_exit=%s',
+        "replay_pending_order_cleared_for_immediate_fill ts=%s symbol=%s existing_order_type=%s existing_limit=%s existing_exit=%s immediate_order_type=%s immediate_limit=%s immediate_exit=%s",
         created_at.isoformat(),
         decision.symbol,
         existing_pending.decision.order_type,
@@ -1163,14 +1206,18 @@ def _log_pending_order_replaced(
     replacement: StrategyDecision,
 ) -> None:
     logger.info(
-        'replay_pending_order_replaced ts=%s symbol=%s existing_order_type=%s existing_limit=%s existing_exit=%s replacement_order_type=%s replacement_limit=%s replacement_exit=%s',
+        "replay_pending_order_replaced ts=%s symbol=%s existing_order_type=%s existing_limit=%s existing_exit=%s replacement_order_type=%s replacement_limit=%s replacement_exit=%s",
         created_at.isoformat(),
         replacement.symbol,
         existing.order_type,
-        _decimal_text(existing.limit_price) if existing.limit_price is not None else 'None',
+        _decimal_text(existing.limit_price)
+        if existing.limit_price is not None
+        else "None",
         _decision_exit_reason(existing),
         replacement.order_type,
-        _decimal_text(replacement.limit_price) if replacement.limit_price is not None else 'None',
+        _decimal_text(replacement.limit_price)
+        if replacement.limit_price is not None
+        else "None",
         _decision_exit_reason(replacement),
     )
 
@@ -1184,15 +1231,15 @@ def _log_day_summary(
     open_positions: int,
 ) -> None:
     logger.info(
-        'replay_day_complete day=%s decisions=%s fills=%s wins=%s losses=%s gross_pnl=%s net_pnl=%s cost_total=%s cash=%s equity=%s open_positions=%s',
+        "replay_day_complete day=%s decisions=%s fills=%s wins=%s losses=%s gross_pnl=%s net_pnl=%s cost_total=%s cash=%s equity=%s open_positions=%s",
         day.isoformat(),
-        stats['decision_count'],
-        stats['filled_count'],
-        stats['wins'],
-        stats['losses'],
-        _decimal_text(stats['gross_pnl']),
-        _decimal_text(stats['net_pnl']),
-        _decimal_text(stats['cost_total']),
+        stats["decision_count"],
+        stats["filled_count"],
+        stats["wins"],
+        stats["losses"],
+        _decimal_text(stats["gross_pnl"]),
+        _decimal_text(stats["net_pnl"]),
+        _decimal_text(stats["cost_total"]),
         _decimal_text(cash),
         _decimal_text(equity),
         open_positions,
@@ -1211,14 +1258,14 @@ def _log_progress(
     equity: Decimal,
 ) -> None:
     logger.info(
-        'replay_progress day=%s ts=%s signals=%s decisions=%s fills=%s wins=%s losses=%s pending_orders=%s open_positions=%s cash=%s equity=%s',
+        "replay_progress day=%s ts=%s signals=%s decisions=%s fills=%s wins=%s losses=%s pending_orders=%s open_positions=%s cash=%s equity=%s",
         signal_day.isoformat(),
         signal_ts.isoformat(),
         signals_seen,
-        day_bucket['decision_count'],
-        day_bucket['filled_count'],
-        day_bucket['wins'],
-        day_bucket['losses'],
+        day_bucket["decision_count"],
+        day_bucket["filled_count"],
+        day_bucket["wins"],
+        day_bucket["losses"],
         len(pending_orders),
         len(positions),
         _decimal_text(cash),
@@ -1283,31 +1330,37 @@ def _apply_filled_decision(
     cost_model: TransactionCostModel,
     cash: Decimal,
     all_closed_trades: list[ClosedTrade],
+    force_position_isolation: bool = False,
 ) -> Decimal:
     day_bucket = _ensure_replay_stats_bucket(day_bucket)
     if symbol_bucket is not None:
         symbol_bucket = _ensure_replay_stats_bucket(symbol_bucket)
 
     def _record_fill(fill_notional: Decimal, fill_cost: Decimal) -> None:
-        day_bucket['cost_total'] += fill_cost
-        day_bucket['filled_count'] += 1
-        day_bucket['filled_notional'] += fill_notional
+        day_bucket["cost_total"] += fill_cost
+        day_bucket["filled_count"] += 1
+        day_bucket["filled_notional"] += fill_notional
         if symbol_bucket is not None:
-            symbol_bucket['cost_total'] += fill_cost
-            symbol_bucket['filled_count'] += 1
-            symbol_bucket['filled_notional'] += fill_notional
+            symbol_bucket["cost_total"] += fill_cost
+            symbol_bucket["filled_count"] += 1
+            symbol_bucket["filled_notional"] += fill_notional
 
-    owner_strategy_id = _decision_position_owner(decision)
+    owner_strategy_id = _decision_position_owner(
+        decision,
+        force_position_isolation=force_position_isolation,
+    )
     position_key = _position_key(decision.symbol, owner_strategy_id)
     existing = positions.get(position_key)
     fill_cost = _estimate_trade_cost(model=cost_model, decision=decision, signal=signal)
-    if decision.action == 'buy':
+    if decision.action == "buy":
         if existing is not None and existing.qty < 0:
             cover_qty = min(decision.qty, abs(existing.qty))
             fill_notional = fill_price * cover_qty
             _record_fill(fill_notional, fill_cost)
             cash -= fill_notional + fill_cost
-            entry_cost_allocated = existing.entry_cost_total * (cover_qty / abs(existing.qty))
+            entry_cost_allocated = existing.entry_cost_total * (
+                cover_qty / abs(existing.qty)
+            )
             remaining, trade = _close_position(
                 symbol=decision.symbol,
                 position=existing,
@@ -1322,17 +1375,17 @@ def _apply_filled_decision(
                 positions.pop(position_key, None)
             else:
                 positions[position_key] = remaining
-            day_bucket['gross_pnl'] += trade.gross_pnl
-            day_bucket['net_pnl'] += trade.net_pnl
+            day_bucket["gross_pnl"] += trade.gross_pnl
+            day_bucket["net_pnl"] += trade.net_pnl
             if symbol_bucket is not None:
-                symbol_bucket['gross_pnl'] += trade.gross_pnl
-                symbol_bucket['net_pnl'] += trade.net_pnl
-                symbol_bucket['closed_trade_count'] += 1
+                symbol_bucket["gross_pnl"] += trade.gross_pnl
+                symbol_bucket["net_pnl"] += trade.net_pnl
+                symbol_bucket["closed_trade_count"] += 1
             if trade.net_pnl > 0:
-                day_bucket['wins'] += 1
+                day_bucket["wins"] += 1
             elif trade.net_pnl < 0:
-                day_bucket['losses'] += 1
-            day_bucket['closed_trades'].append(trade)
+                day_bucket["losses"] += 1
+            day_bucket["closed_trades"].append(trade)
             all_closed_trades.append(trade)
             _log_trade_closed(trade)
             return cash
@@ -1419,17 +1472,17 @@ def _apply_filled_decision(
         positions.pop(position_key, None)
     else:
         positions[position_key] = remaining
-    day_bucket['gross_pnl'] += trade.gross_pnl
-    day_bucket['net_pnl'] += trade.net_pnl
+    day_bucket["gross_pnl"] += trade.gross_pnl
+    day_bucket["net_pnl"] += trade.net_pnl
     if symbol_bucket is not None:
-        symbol_bucket['gross_pnl'] += trade.gross_pnl
-        symbol_bucket['net_pnl'] += trade.net_pnl
-        symbol_bucket['closed_trade_count'] += 1
+        symbol_bucket["gross_pnl"] += trade.gross_pnl
+        symbol_bucket["net_pnl"] += trade.net_pnl
+        symbol_bucket["closed_trade_count"] += 1
     if trade.net_pnl > 0:
-        day_bucket['wins'] += 1
+        day_bucket["wins"] += 1
     elif trade.net_pnl < 0:
-        day_bucket['losses'] += 1
-    day_bucket['closed_trades'].append(trade)
+        day_bucket["losses"] += 1
+    day_bucket["closed_trades"].append(trade)
     all_closed_trades.append(trade)
     _log_trade_closed(trade)
     return cash
@@ -1439,7 +1492,9 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
     strategies = _load_strategies(config.strategy_configmap_path)
     strategies_by_id = {str(strategy.id): strategy for strategy in strategies}
     capture_runtime_traces = config.capture_traces or config.capture_trace_funnel
-    engine = DecisionEngine(price_fetcher=None, runtime_trace_enabled=capture_runtime_traces)
+    engine = DecisionEngine(
+        price_fetcher=None, runtime_trace_enabled=capture_runtime_traces
+    )
     quote_quality = SignalQuoteQualityTracker(
         policy=QuoteQualityPolicy(
             max_executable_spread_bps=config.max_executable_spread_bps,
@@ -1467,27 +1522,29 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
     last_progress_at = replay_started_at
 
     logger.info(
-        'replay_start start_date=%s end_date=%s chunk_minutes=%s flatten_eod=%s start_equity=%s symbol_count=%s symbols=%s',
+        "replay_start start_date=%s end_date=%s chunk_minutes=%s flatten_eod=%s start_equity=%s symbol_count=%s symbols=%s",
         config.start_date.isoformat(),
         config.end_date.isoformat(),
         config.chunk_minutes,
         config.flatten_eod,
         _decimal_text(config.start_equity),
         len(config.symbols),
-        ','.join(config.symbols) if config.symbols else '*',
+        ",".join(config.symbols) if config.symbols else "*",
     )
 
     def _active_day_stats(target_day: date) -> dict[str, Any]:
         return day_stats.setdefault(target_day.isoformat(), _init_day_stats())
 
     def _active_symbol_funnel(target_day: date, symbol: str) -> dict[str, Any]:
-        return funnel_stats.setdefault((target_day.isoformat(), symbol), _init_funnel_stats())
+        return funnel_stats.setdefault(
+            (target_day.isoformat(), symbol), _init_funnel_stats()
+        )
 
     with (
-        patch.object(settings, 'trading_strategy_runtime_mode', 'scheduler_v3'),
-        patch.object(settings, 'trading_strategy_scheduler_enabled', True),
-        patch.object(settings, 'trading_allow_shorts', True),
-        patch.object(settings, 'trading_fractional_equities_enabled', True),
+        patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+        patch.object(settings, "trading_strategy_scheduler_enabled", True),
+        patch.object(settings, "trading_allow_shorts", True),
+        patch.object(settings, "trading_fractional_equities_enabled", True),
     ):
         for signal in _iter_signal_rows(config):
             signal = signal.model_copy(
@@ -1496,7 +1553,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             signal_day = signal.event_ts.date()
             if current_day is None:
                 current_day = signal_day
-                logger.info('replay_day_start day=%s', current_day.isoformat())
+                logger.info("replay_day_start day=%s", current_day.isoformat())
                 _record_capital_snapshot(
                     bucket=_active_day_stats(current_day),
                     cash=cash,
@@ -1534,7 +1591,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     open_positions=len(positions),
                 )
                 current_day = signal_day
-                logger.info('replay_day_start day=%s', current_day.isoformat())
+                logger.info("replay_day_start day=%s", current_day.isoformat())
                 _record_capital_snapshot(
                     bucket=_active_day_stats(current_day),
                     cash=cash,
@@ -1545,12 +1602,16 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             signals_seen += 1
             day_bucket = _active_day_stats(signal_day)
             symbol_bucket = _active_symbol_funnel(signal_day, signal.symbol)
-            symbol_bucket['retained_rows'] += 1
+            symbol_bucket["retained_rows"] += 1
             quote_status = quote_quality.assess(signal)
             if not quote_status.valid:
                 engine.observe_signal(signal)
-                has_open_position = any(symbol == signal.symbol for symbol, _ in positions)
-                has_pending_order = any(symbol == signal.symbol for symbol, _ in pending_orders)
+                has_open_position = any(
+                    symbol == signal.symbol for symbol, _ in positions
+                )
+                has_pending_order = any(
+                    symbol == signal.symbol for symbol, _ in pending_orders
+                )
                 if has_open_position or has_pending_order:
                     _log_quote_skipped(
                         signal=signal,
@@ -1561,7 +1622,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 continue
 
             price = _extract_price(signal)
-            symbol_bucket['quote_valid_rows'] += 1
+            symbol_bucket["quote_valid_rows"] += 1
             last_prices[signal.symbol] = price
             last_signals[signal.symbol] = signal
             equity = _record_capital_snapshot(
@@ -1597,6 +1658,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     cost_model=cost_model,
                     cash=cash,
                     all_closed_trades=all_closed_trades,
+                    force_position_isolation=config.force_position_isolation,
                 )
                 equity = _record_capital_snapshot(
                     bucket=day_bucket,
@@ -1615,6 +1677,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 positions,
                 last_prices,
                 pending_orders,
+                force_position_isolation=config.force_position_isolation,
             )
             raw_decisions = engine.evaluate(
                 signal,
@@ -1623,7 +1686,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 positions=live_positions,
             )
             telemetry = engine.consume_runtime_telemetry()
-            symbol_bucket['runtime_evaluable_rows'] += 1
+            symbol_bucket["runtime_evaluable_rows"] += 1
             telemetry_traces = telemetry.traces if capture_runtime_traces else ()
             for trace in telemetry_traces:
                 _record_trace_for_funnel(symbol_bucket, trace)
@@ -1632,9 +1695,11 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     _insert_near_miss(near_misses, near_miss)
             regime_label = _signal_regime_label(signal)
             allocator = allocator_from_settings(equity)
-            account = {'equity': str(equity)}
+            account = {"equity": str(equity)}
             executable_decisions: list[StrategyDecision] = []
-            raw_decision_strategy_ids = {decision.strategy_id for decision in raw_decisions}
+            raw_decision_strategy_ids = {
+                decision.strategy_id for decision in raw_decisions
+            }
             allocation_reject_reason_by_strategy_id: dict[str, str] = {}
             sizing_reject_reason_by_strategy_id: dict[str, str] = {}
             for allocation_result in allocator.allocate(
@@ -1649,7 +1714,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                         decision.strategy_id,
                         _first_reject_reason(
                             reason_codes=allocation_result.reason_codes,
-                            default_reason='allocator_rejected',
+                            default_reason="allocator_rejected",
                         ),
                     )
                     continue
@@ -1667,13 +1732,15 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                         decision.strategy_id,
                         _first_reject_reason(
                             reason_codes=sizing_result.reasons,
-                            default_reason='sizer_rejected',
+                            default_reason="sizer_rejected",
                         ),
                     )
                     continue
                 executable_decisions.append(sizing_result.decision)
 
-            emitted_strategy_ids = {decision.strategy_id for decision in executable_decisions}
+            emitted_strategy_ids = {
+                decision.strategy_id for decision in executable_decisions
+            }
             fill_status_by_strategy_id: dict[str, str] = {}
             block_reason_by_strategy_id: dict[str, str] = {}
             if config.capture_traces:
@@ -1687,15 +1754,21 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                             emitted_strategy_ids=emitted_strategy_ids,
                         )
                         if block_reason is not None:
-                            block_reason_by_strategy_id[trace.strategy_id] = block_reason
+                            block_reason_by_strategy_id[trace.strategy_id] = (
+                                block_reason
+                            )
                     elif not trace.passed and trace.first_failed_gate is not None:
-                        block_reason_by_strategy_id[trace.strategy_id] = trace.first_failed_gate
+                        block_reason_by_strategy_id[trace.strategy_id] = (
+                            trace.first_failed_gate
+                        )
 
             for decision in executable_decisions:
                 decision = _apply_order_preferences(decision, signal)
                 _record_decision(day_bucket, decision)
-                decision_symbol_bucket = _active_symbol_funnel(signal_day, decision.symbol)
-                decision_symbol_bucket['decision_count'] += 1
+                decision_symbol_bucket = _active_symbol_funnel(
+                    signal_day, decision.symbol
+                )
+                decision_symbol_bucket["decision_count"] += 1
                 if decision.qty <= 0:
                     continue
                 immediate_fill_price = _resolve_pending_fill_price(decision, signal)
@@ -1704,6 +1777,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                         decision=decision,
                         pending_orders=pending_orders,
                         created_at=signal.event_ts,
+                        force_position_isolation=config.force_position_isolation,
                     )
                     cash = _apply_filled_decision(
                         decision=decision,
@@ -1717,6 +1791,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                         cost_model=cost_model,
                         cash=cash,
                         all_closed_trades=all_closed_trades,
+                        force_position_isolation=config.force_position_isolation,
                     )
                     equity = _record_capital_snapshot(
                         bucket=day_bucket,
@@ -1724,11 +1799,14 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                         positions=positions,
                         last_prices=last_prices,
                     )
-                    fill_status_by_strategy_id[decision.strategy_id] = 'filled'
+                    fill_status_by_strategy_id[decision.strategy_id] = "filled"
                     continue
                 pending_key = _position_key(
                     decision.symbol,
-                    _decision_position_owner(decision),
+                    _decision_position_owner(
+                        decision,
+                        force_position_isolation=config.force_position_isolation,
+                    ),
                 )
                 existing_pending = pending_orders.get(pending_key)
                 if existing_pending is not None:
@@ -1747,7 +1825,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                             replacement=decision,
                         )
                         _log_decision_queued(decision, signal.event_ts)
-                        fill_status_by_strategy_id[decision.strategy_id] = 'pending'
+                        fill_status_by_strategy_id[decision.strategy_id] = "pending"
                     continue
                 pending_orders[pending_key] = PendingOrder(
                     decision=decision,
@@ -1755,7 +1833,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     signal=signal,
                 )
                 _log_decision_queued(decision, signal.event_ts)
-                fill_status_by_strategy_id[decision.strategy_id] = 'pending'
+                fill_status_by_strategy_id[decision.strategy_id] = "pending"
 
             if config.capture_traces:
                 for trace in telemetry_traces:
@@ -1764,9 +1842,15 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                             trading_day=signal_day.isoformat(),
                             strategy_trace=trace,
                             decision_emitted=trace.strategy_id in emitted_strategy_ids,
-                            fill_status=fill_status_by_strategy_id.get(trace.strategy_id, 'none'),
-                            decision_strategy_id=trace.strategy_id if trace.strategy_id in emitted_strategy_ids else None,
-                            block_reason=block_reason_by_strategy_id.get(trace.strategy_id),
+                            fill_status=fill_status_by_strategy_id.get(
+                                trace.strategy_id, "none"
+                            ),
+                            decision_strategy_id=trace.strategy_id
+                            if trace.strategy_id in emitted_strategy_ids
+                            else None,
+                            block_reason=block_reason_by_strategy_id.get(
+                                trace.strategy_id
+                            ),
                         )
                     )
 
@@ -1820,20 +1904,24 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 open_positions=len(positions),
             )
 
-    final_equity = _position_equity(cash=cash, positions=positions, last_prices=last_prices)
-    total_decisions = sum(item['decision_count'] for item in day_stats.values())
-    total_filled = sum(item['filled_count'] for item in day_stats.values())
-    total_filled_notional = sum((item['filled_notional'] for item in day_stats.values()), Decimal('0'))
-    total_gross = sum((item['gross_pnl'] for item in day_stats.values()), Decimal('0'))
+    final_equity = _position_equity(
+        cash=cash, positions=positions, last_prices=last_prices
+    )
+    total_decisions = sum(item["decision_count"] for item in day_stats.values())
+    total_filled = sum(item["filled_count"] for item in day_stats.values())
+    total_filled_notional = sum(
+        (item["filled_notional"] for item in day_stats.values()), Decimal("0")
+    )
+    total_gross = sum((item["gross_pnl"] for item in day_stats.values()), Decimal("0"))
     total_net = final_equity - config.start_equity
-    total_cost = sum((item['cost_total'] for item in day_stats.values()), Decimal('0'))
-    wins = sum(item['wins'] for item in day_stats.values())
-    losses = sum(item['losses'] for item in day_stats.values())
+    total_cost = sum((item["cost_total"] for item in day_stats.values()), Decimal("0"))
+    wins = sum(item["wins"] for item in day_stats.values())
+    losses = sum(item["losses"] for item in day_stats.values())
     min_cash = min(
         (
             value
             for item in day_stats.values()
-            for value in (item.get('min_cash'),)
+            for value in (item.get("min_cash"),)
             if isinstance(value, Decimal)
         ),
         default=cash,
@@ -1842,7 +1930,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         (
             value
             for item in day_stats.values()
-            for value in (item.get('min_equity'),)
+            for value in (item.get("min_equity"),)
             if isinstance(value, Decimal)
         ),
         default=final_equity,
@@ -1851,32 +1939,34 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         (
             value
             for item in day_stats.values()
-            for value in (item.get('max_gross_exposure'),)
+            for value in (item.get("max_gross_exposure"),)
             if isinstance(value, Decimal)
         ),
-        default=Decimal('0'),
+        default=Decimal("0"),
     )
     max_net_exposure_abs = max(
         (
             value
             for item in day_stats.values()
-            for value in (item.get('max_net_exposure_abs'),)
+            for value in (item.get("max_net_exposure_abs"),)
             if isinstance(value, Decimal)
         ),
-        default=Decimal('0'),
+        default=Decimal("0"),
     )
     max_gross_exposure_pct_equity = max(
         (
             value
             for item in day_stats.values()
-            for value in (item.get('max_gross_exposure_pct_equity'),)
+            for value in (item.get("max_gross_exposure_pct_equity"),)
             if isinstance(value, Decimal)
         ),
-        default=Decimal('0'),
+        default=Decimal("0"),
     )
-    capital_snapshot_count = sum(int(item.get('capital_snapshot_count') or 0) for item in day_stats.values())
+    capital_snapshot_count = sum(
+        int(item.get("capital_snapshot_count") or 0) for item in day_stats.values()
+    )
     negative_cash_observation_count = sum(
-        int(item.get('negative_cash_observation_count') or 0)
+        int(item.get("negative_cash_observation_count") or 0)
         for item in day_stats.values()
     )
     funnel_report = ReplayFunnelReport(
@@ -1886,21 +1976,21 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             ReplayFunnelBucket(
                 trading_day=trading_day,
                 symbol=symbol,
-                retained_rows=int(bucket['retained_rows']),
-                runtime_evaluable_rows=int(bucket['runtime_evaluable_rows']),
-                quote_valid_rows=int(bucket['quote_valid_rows']),
-                strategy_evaluations=int(bucket['strategy_evaluations']),
-                gate_pass_counts=dict(bucket['gate_pass_counts']),
-                first_failed_gate_counts=dict(bucket['first_failed_gate_counts']),
-                failing_threshold_counts=dict(bucket['failing_threshold_counts']),
-                passed_trace_count=int(bucket['passed_trace_count']),
-                decision_count=int(bucket['decision_count']),
-                filled_count=int(bucket['filled_count']),
-                filled_notional=bucket['filled_notional'],
-                closed_trade_count=int(bucket['closed_trade_count']),
-                gross_pnl=bucket['gross_pnl'],
-                net_pnl=bucket['net_pnl'],
-                cost_total=bucket['cost_total'],
+                retained_rows=int(bucket["retained_rows"]),
+                runtime_evaluable_rows=int(bucket["runtime_evaluable_rows"]),
+                quote_valid_rows=int(bucket["quote_valid_rows"]),
+                strategy_evaluations=int(bucket["strategy_evaluations"]),
+                gate_pass_counts=dict(bucket["gate_pass_counts"]),
+                first_failed_gate_counts=dict(bucket["first_failed_gate_counts"]),
+                failing_threshold_counts=dict(bucket["failing_threshold_counts"]),
+                passed_trace_count=int(bucket["passed_trace_count"]),
+                decision_count=int(bucket["decision_count"]),
+                filled_count=int(bucket["filled_count"]),
+                filled_notional=bucket["filled_notional"],
+                closed_trade_count=int(bucket["closed_trade_count"]),
+                gross_pnl=bucket["gross_pnl"],
+                net_pnl=bucket["net_pnl"],
+                cost_total=bucket["cost_total"],
             )
             for (trading_day, symbol), bucket in sorted(funnel_stats.items())
         ),
@@ -1915,7 +2005,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         key=lambda item: item.net_pnl,
     )
     logger.info(
-        'replay_complete elapsed_s=%.3f signals=%s decisions=%s fills=%s wins=%s losses=%s gross_pnl=%s net_pnl=%s total_cost=%s final_equity=%s',
+        "replay_complete elapsed_s=%.3f signals=%s decisions=%s fills=%s wins=%s losses=%s gross_pnl=%s net_pnl=%s total_cost=%s final_equity=%s",
         time_mod.monotonic() - replay_started_at,
         signals_seen,
         total_decisions,
@@ -1928,98 +2018,106 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         _decimal_text(final_equity),
     )
     return {
-        'start_date': config.start_date.isoformat(),
-        'end_date': config.end_date.isoformat(),
-        'start_equity': str(config.start_equity),
-        'final_cash': str(cash),
-        'final_equity': str(final_equity),
-        'net_pnl': str(total_net),
-        'gross_pnl': str(total_gross),
-        'total_cost': str(total_cost),
-        'decision_count': total_decisions,
-        'filled_count': total_filled,
-        'filled_notional': str(total_filled_notional),
-        'wins': wins,
-        'losses': losses,
-        'capital_snapshot_count': capital_snapshot_count,
-        'min_cash': str(min_cash),
-        'min_equity': str(min_equity),
-        'max_gross_exposure': str(max_gross_exposure),
-        'max_net_exposure_abs': str(max_net_exposure_abs),
-        'max_gross_exposure_pct_equity': str(max_gross_exposure_pct_equity),
-        'negative_cash_observation_count': negative_cash_observation_count,
-        'open_positions': {
-            f'{symbol}|{owner_strategy_id}': {
-                'strategy_id': position.strategy_id,
-                'qty': str(position.qty),
-                'avg_entry_price': str(position.avg_entry_price),
-                'last_price': str(last_prices.get(symbol, position.avg_entry_price)),
+        "start_date": config.start_date.isoformat(),
+        "end_date": config.end_date.isoformat(),
+        "start_equity": str(config.start_equity),
+        "final_cash": str(cash),
+        "final_equity": str(final_equity),
+        "net_pnl": str(total_net),
+        "gross_pnl": str(total_gross),
+        "total_cost": str(total_cost),
+        "decision_count": total_decisions,
+        "filled_count": total_filled,
+        "filled_notional": str(total_filled_notional),
+        "wins": wins,
+        "losses": losses,
+        "capital_snapshot_count": capital_snapshot_count,
+        "min_cash": str(min_cash),
+        "min_equity": str(min_equity),
+        "max_gross_exposure": str(max_gross_exposure),
+        "max_net_exposure_abs": str(max_net_exposure_abs),
+        "max_gross_exposure_pct_equity": str(max_gross_exposure_pct_equity),
+        "negative_cash_observation_count": negative_cash_observation_count,
+        "open_positions": {
+            f"{symbol}|{owner_strategy_id}": {
+                "strategy_id": position.strategy_id,
+                "qty": str(position.qty),
+                "avg_entry_price": str(position.avg_entry_price),
+                "last_price": str(last_prices.get(symbol, position.avg_entry_price)),
             }
             for (symbol, owner_strategy_id), position in positions.items()
         },
-        'daily': {
+        "daily": {
             key: {
-                'decision_count': value['decision_count'],
-                'filled_count': value['filled_count'],
-                'filled_notional': str(value['filled_notional']),
-                'gross_pnl': str(value['gross_pnl']),
-                'net_pnl': str(value['net_pnl']),
-                'cost_total': str(value['cost_total']),
-                'wins': value['wins'],
-                'losses': value['losses'],
-                'capital_snapshot_count': int(value.get('capital_snapshot_count') or 0),
-                'min_cash': str(value['min_cash']) if isinstance(value.get('min_cash'), Decimal) else None,
-                'min_equity': str(value['min_equity']) if isinstance(value.get('min_equity'), Decimal) else None,
-                'max_gross_exposure': str(value.get('max_gross_exposure', Decimal('0'))),
-                'max_net_exposure_abs': str(value.get('max_net_exposure_abs', Decimal('0'))),
-                'max_gross_exposure_pct_equity': str(
-                    value.get('max_gross_exposure_pct_equity', Decimal('0'))
+                "decision_count": value["decision_count"],
+                "filled_count": value["filled_count"],
+                "filled_notional": str(value["filled_notional"]),
+                "gross_pnl": str(value["gross_pnl"]),
+                "net_pnl": str(value["net_pnl"]),
+                "cost_total": str(value["cost_total"]),
+                "wins": value["wins"],
+                "losses": value["losses"],
+                "capital_snapshot_count": int(value.get("capital_snapshot_count") or 0),
+                "min_cash": str(value["min_cash"])
+                if isinstance(value.get("min_cash"), Decimal)
+                else None,
+                "min_equity": str(value["min_equity"])
+                if isinstance(value.get("min_equity"), Decimal)
+                else None,
+                "max_gross_exposure": str(
+                    value.get("max_gross_exposure", Decimal("0"))
                 ),
-                'negative_cash_observation_count': int(
-                    value.get('negative_cash_observation_count') or 0
+                "max_net_exposure_abs": str(
+                    value.get("max_net_exposure_abs", Decimal("0"))
+                ),
+                "max_gross_exposure_pct_equity": str(
+                    value.get("max_gross_exposure_pct_equity", Decimal("0"))
+                ),
+                "negative_cash_observation_count": int(
+                    value.get("negative_cash_observation_count") or 0
                 ),
             }
             for key, value in sorted(day_stats.items())
         },
-        'largest_losses': [
+        "largest_losses": [
             {
-                'symbol': item.symbol,
-                'strategy_id': item.strategy_id,
-                'decision_at': item.decision_at.isoformat(),
-                'opened_at': item.opened_at.isoformat(),
-                'closed_at': item.closed_at.isoformat(),
-                'qty': str(item.qty),
-                'entry_price': str(item.entry_price),
-                'exit_price': str(item.exit_price),
-                'net_pnl': str(item.net_pnl),
-                'exit_reason': item.exit_reason,
+                "symbol": item.symbol,
+                "strategy_id": item.strategy_id,
+                "decision_at": item.decision_at.isoformat(),
+                "opened_at": item.opened_at.isoformat(),
+                "closed_at": item.closed_at.isoformat(),
+                "qty": str(item.qty),
+                "entry_price": str(item.entry_price),
+                "exit_price": str(item.exit_price),
+                "net_pnl": str(item.net_pnl),
+                "exit_reason": item.exit_reason,
             }
             for item in closed_trade_payload[:10]
         ],
-        'largest_wins': [
+        "largest_wins": [
             {
-                'symbol': item.symbol,
-                'strategy_id': item.strategy_id,
-                'decision_at': item.decision_at.isoformat(),
-                'opened_at': item.opened_at.isoformat(),
-                'closed_at': item.closed_at.isoformat(),
-                'qty': str(item.qty),
-                'entry_price': str(item.entry_price),
-                'exit_price': str(item.exit_price),
-                'net_pnl': str(item.net_pnl),
-                'exit_reason': item.exit_reason,
+                "symbol": item.symbol,
+                "strategy_id": item.strategy_id,
+                "decision_at": item.decision_at.isoformat(),
+                "opened_at": item.opened_at.isoformat(),
+                "closed_at": item.closed_at.isoformat(),
+                "qty": str(item.qty),
+                "entry_price": str(item.entry_price),
+                "exit_price": str(item.exit_price),
+                "net_pnl": str(item.net_pnl),
+                "exit_reason": item.exit_reason,
             }
             for item in list(reversed(closed_trade_payload[-10:]))
         ],
-        'trace': [item.to_payload() for item in trace_records],
-        'funnel': funnel_report.to_payload(),
-        'near_misses': near_miss_payload,
+        "trace": [item.to_payload() for item in trace_records],
+        "funnel": funnel_report.to_payload(),
+        "near_misses": near_miss_payload,
     }
 
 
 def _signal_regime_label(signal: SignalEnvelope) -> str | None:
     payload = signal.payload or {}
-    for key in ('route_regime_label', 'regime_label'):
+    for key in ("route_regime_label", "regime_label"):
         raw = payload.get(key)
         if raw is None:
             continue
@@ -2052,17 +2150,19 @@ def _flatten_positions(
         if last_signal is None:
             continue
         fill_price = last_prices.get(symbol, position.avg_entry_price)
-        exit_action = 'buy' if position.qty < 0 else 'sell'
+        exit_action = "buy" if position.qty < 0 else "sell"
         exit_qty = abs(position.qty)
         synthetic_decision = StrategyDecision(
-            strategy_id=owner_strategy_id if owner_strategy_id != _SHARED_POSITION_OWNER else 'flatten',
+            strategy_id=owner_strategy_id
+            if owner_strategy_id != _SHARED_POSITION_OWNER
+            else "flatten",
             symbol=symbol,
             event_ts=last_signal.event_ts,
-            timeframe='1Sec',
+            timeframe="1Sec",
             action=exit_action,
             qty=exit_qty,
-            order_type='market',
-            time_in_force='day',
+            order_type="market",
+            time_in_force="day",
             params={},
         )
         exit_cost = _estimate_trade_cost(
@@ -2098,25 +2198,27 @@ def _flatten_positions(
                 - position.entry_cost_total
                 - exit_cost
             ),
-            exit_reason='eod_flatten',
+            exit_reason="eod_flatten",
         )
-        stats['gross_pnl'] += trade.gross_pnl
-        stats['net_pnl'] += trade.net_pnl
-        stats['cost_total'] += exit_cost
-        stats['filled_count'] += 1
-        stats['filled_notional'] += exit_notional
-        symbol_bucket = funnel_stats.setdefault((day.isoformat(), symbol), _init_funnel_stats())
-        symbol_bucket['gross_pnl'] += trade.gross_pnl
-        symbol_bucket['net_pnl'] += trade.net_pnl
-        symbol_bucket['cost_total'] += exit_cost
-        symbol_bucket['filled_count'] += 1
-        symbol_bucket['filled_notional'] += exit_notional
-        symbol_bucket['closed_trade_count'] += 1
+        stats["gross_pnl"] += trade.gross_pnl
+        stats["net_pnl"] += trade.net_pnl
+        stats["cost_total"] += exit_cost
+        stats["filled_count"] += 1
+        stats["filled_notional"] += exit_notional
+        symbol_bucket = funnel_stats.setdefault(
+            (day.isoformat(), symbol), _init_funnel_stats()
+        )
+        symbol_bucket["gross_pnl"] += trade.gross_pnl
+        symbol_bucket["net_pnl"] += trade.net_pnl
+        symbol_bucket["cost_total"] += exit_cost
+        symbol_bucket["filled_count"] += 1
+        symbol_bucket["filled_notional"] += exit_notional
+        symbol_bucket["closed_trade_count"] += 1
         if trade.net_pnl > 0:
-            stats['wins'] += 1
+            stats["wins"] += 1
         elif trade.net_pnl < 0:
-            stats['losses'] += 1
-        stats['closed_trades'].append(trade)
+            stats["losses"] += 1
+        stats["closed_trades"].append(trade)
         all_closed_trades.append(trade)
         _log_trade_closed(trade)
     cash_ref[0] = current_cash
@@ -2126,9 +2228,9 @@ def main() -> None:
     args = _parse_args()
     logging.basicConfig(
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
-        format='%(asctime)s %(levelname)s %(message)s',
+        format="%(asctime)s %(levelname)s %(message)s",
     )
-    logging.getLogger('alembic').setLevel(logging.WARNING)
+    logging.getLogger("alembic").setLevel(logging.WARNING)
     config = ReplayConfig(
         strategy_configmap_path=Path(args.strategy_configmap).resolve(),
         clickhouse_http_url=str(args.clickhouse_http_url),
@@ -2141,7 +2243,7 @@ def main() -> None:
         start_equity=Decimal(str(args.start_equity)),
         symbols=tuple(
             symbol.strip().upper()
-            for symbol in str(args.symbols or '').split(',')
+            for symbol in str(args.symbols or "").split(",")
             if symbol.strip()
         ),
         progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
@@ -2152,6 +2254,7 @@ def main() -> None:
             or args.near_misses_output is not None
         ),
         capture_trace_funnel=bool(getattr(args, "collect_trace_funnel", False)),
+        force_position_isolation=bool(getattr(args, "force_position_isolation", False)),
         max_executable_spread_bps=Decimal(str(args.max_executable_spread_bps)),
         max_quote_mid_jump_bps=Decimal(str(args.max_quote_mid_jump_bps)),
         max_jump_with_wide_spread_bps=Decimal(str(args.max_jump_with_wide_spread_bps)),
@@ -2159,24 +2262,26 @@ def main() -> None:
     payload = run_replay(config)
     if args.trace_output:
         args.trace_output.write_text(
-            ''.join(json.dumps(item, sort_keys=True) + '\n' for item in payload['trace']),
-            encoding='utf-8',
+            "".join(
+                json.dumps(item, sort_keys=True) + "\n" for item in payload["trace"]
+            ),
+            encoding="utf-8",
         )
     if args.funnel_output:
         args.funnel_output.write_text(
-            json.dumps(payload['funnel'], indent=2, sort_keys=True),
-            encoding='utf-8',
+            json.dumps(payload["funnel"], indent=2, sort_keys=True),
+            encoding="utf-8",
         )
     if args.near_misses_output:
         args.near_misses_output.write_text(
-            json.dumps(payload['near_misses'], indent=2, sort_keys=True),
-            encoding='utf-8',
+            json.dumps(payload["near_misses"], indent=2, sort_keys=True),
+            encoding="utf-8",
         )
     if args.json:
-        print(json.dumps(payload, sort_keys=True, separators=(',', ':')))
+        print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
         return
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

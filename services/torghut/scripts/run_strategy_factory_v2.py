@@ -180,6 +180,14 @@ def _coerce_ratio_days(*, ratio: Decimal, total_days: int) -> int:
     return max(1, int(scaled))
 
 
+def _force_standalone_research_replay(experiment_payload: Mapping[str, Any]) -> bool:
+    promotion_contract = _mapping(experiment_payload.get("promotion_contract"))
+    return (
+        str(promotion_contract.get("source") or "").strip()
+        == "whitepaper_autoresearch_profit_target"
+    )
+
+
 def _singleton_grid(value: Any) -> list[Any]:
     return [json.loads(json.dumps(value))]
 
@@ -297,6 +305,7 @@ def _compile_sweep_config(
     parameters = _mapping(seed_config.get("parameters"))
     for key, value in param_overrides.items():
         parameters[str(key)] = _singleton_grid(value)
+    parameters.setdefault("position_isolation_mode", ["per_strategy"])
 
     family = str(
         seed_config.get("family") or runtime_harness.get("family") or ""
@@ -359,7 +368,9 @@ def _compile_sweep_config(
         "family": family,
         "family_template_id": family_template.family_id,
         "strategy_name": strategy_name,
-        "disable_other_strategies": bool(
+        "disable_other_strategies": True
+        if _force_standalone_research_replay(experiment_payload)
+        else bool(
             seed_config.get(
                 "disable_other_strategies",
                 runtime_harness.get("disable_other_strategies", True),

@@ -25,6 +25,7 @@ from app.trading.discovery.mlx_features import (
 )
 from app.trading.discovery.mlx_proposal_models import (
     ProposalScore,
+    _candidate_target,
     build_proposal_diagnostics,
     rank_candidate_descriptors,
     select_proposal_batch,
@@ -121,6 +122,19 @@ def _program() -> StrategyAutoresearchProgram:
 
 
 class TestMlxAutoresearch(TestCase):
+    def test_candidate_target_penalizes_observed_notional_shortfall(self) -> None:
+        target = _candidate_target(
+            {
+                "net_pnl_per_day": "500",
+                "active_day_ratio": "1",
+                "positive_day_ratio": "1",
+                "avg_filled_notional_per_day": "250000",
+                "required_min_daily_notional": "500000",
+            }
+        )
+
+        self.assertEqual(target, 525.0)
+
     def test_descriptor_inference_covers_side_rank_and_universe_fallbacks(
         self,
     ) -> None:

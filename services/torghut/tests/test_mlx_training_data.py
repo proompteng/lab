@@ -114,6 +114,22 @@ class TestMlxTrainingData(TestCase):
         self.assertGreater(features["estimated_max_gross_exposure_pct_equity"], 1.0)
         self.assertEqual(features["capital_feasible_flag"], 0.0)
 
+    def test_observed_replay_viability_penalty_marks_zero_activity_notional_gap(
+        self,
+    ) -> None:
+        penalty = mlx_training_data_module._observed_replay_viability_penalty(
+            {
+                "active_day_ratio": "0",
+                "positive_day_ratio": "0",
+                "avg_filled_notional_per_day": "0",
+                "net_pnl_per_day": "0",
+            },
+            required_min_daily_notional=0.0,
+            target_net_pnl_per_day=500.0,
+        )
+
+        self.assertEqual(penalty, 2150.0)
+
     def test_training_rows_build_from_evidence_bundles_and_rank_deterministically(
         self,
     ) -> None:
@@ -259,4 +275,86 @@ class TestMlxTrainingData(TestCase):
         self.assertLess(
             row_by_spec[over_budget.candidate_spec_id].target,
             row_by_spec[feasible.candidate_spec_id].target,
+        )
+
+    def test_training_rows_penalize_flat_real_replay_evidence(self) -> None:
+        base_kwargs = {
+            "schema_version": "torghut.candidate-spec.v1",
+            "hypothesis_id": "H-FLAT",
+            "family_template_id": "momentum_pullback_v1",
+            "candidate_kind": "configuration",
+            "runtime_family": "momentum_pullback_consistent",
+            "runtime_strategy_name": "momentum-pullback-long-v1",
+            "feature_contract": {},
+            "parameter_space": {},
+            "strategy_overrides": {
+                "max_notional_per_trade": "7500",
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "capital_profile": "initial_equity_cash_constrained_1x",
+                    "max_entries_per_session": "1",
+                    "max_gross_exposure_pct_equity": "1.0",
+                },
+            },
+            "objective": {"target_net_pnl_per_day": "500"},
+            "hard_vetoes": {"required_min_daily_notional": "300000"},
+            "expected_failure_modes": (),
+            "promotion_contract": {},
+        }
+        flat = CandidateSpec(candidate_spec_id="spec-flat", **base_kwargs)
+        active = CandidateSpec(
+            candidate_spec_id="spec-active",
+            **{**base_kwargs, "hypothesis_id": "H-ACTIVE"},
+        )
+        bundles = [
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=flat.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-flat",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "0",
+                        "active_day_ratio": "0",
+                        "positive_day_ratio": "0",
+                        "avg_filled_notional_per_day": "0",
+                        "hard_vetoes": [
+                            "active_day_ratio_below_oracle",
+                            "avg_filled_notional_per_day_below_oracle",
+                        ],
+                    },
+                },
+                dataset_snapshot_id="snapshot-flat",
+                result_path="/tmp/cand-flat.json",
+            ),
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=active.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-active",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "25",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "0.8",
+                        "avg_filled_notional_per_day": "350000",
+                        "hard_vetoes": [],
+                    },
+                },
+                dataset_snapshot_id="snapshot-active",
+                result_path="/tmp/cand-active.json",
+            ),
+        ]
+
+        rows = build_mlx_training_rows(
+            candidate_specs=[flat, active],
+            evidence_bundles=bundles,
+        )
+        row_by_spec = {row.candidate_spec_id: row for row in rows}
+
+        self.assertGreater(
+            row_by_spec[flat.candidate_spec_id].to_payload()["features"][
+                "history_observed_replay_viability_penalty"
+            ],
+            0.0,
+        )
+        self.assertLess(
+            row_by_spec[flat.candidate_spec_id].target,
+            row_by_spec[active.candidate_spec_id].target - 1000.0,
         )

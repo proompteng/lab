@@ -488,7 +488,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(model["feedback_matched_spec_count"], 3)
         self.assertEqual(
             row_by_spec[string_veto_spec.candidate_spec_id]["feedback_replay_target"],
-            135.0,
+            85.0,
+        )
+        self.assertEqual(
+            row_by_spec[string_veto_spec.candidate_spec_id]["features"][
+                "history_observed_replay_viability_penalty"
+            ],
+            50.0,
         )
         self.assertEqual(
             row_by_spec[string_veto_spec.candidate_spec_id]["selection_reason"],

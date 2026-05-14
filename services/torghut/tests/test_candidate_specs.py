@@ -124,6 +124,10 @@ class TestCandidateSpecs(TestCase):
             self.assertIn("long_stop_loss_bps", params)
             self.assertIn("long_trailing_stop_drawdown_bps", params)
             self.assertIn("max_session_negative_exit_bps", params)
+        self.assertEqual(
+            first[0].strategy_overrides["params"]["position_isolation_mode"],
+            "per_strategy",
+        )
         self.assertNotIn("live_runtime_config_path", first[0].to_payload())
         reloaded = candidate_spec_from_payload(first[0].to_payload())
         self.assertEqual(reloaded.candidate_spec_id, first[0].candidate_spec_id)
@@ -219,6 +223,13 @@ class TestCandidateSpecs(TestCase):
             ),
         )
         self.assertGreater(len(portfolio_specs), 36)
+        self.assertTrue(
+            all(
+                spec.strategy_overrides["params"]["position_isolation_mode"]
+                == "per_strategy"
+                for spec in portfolio_specs
+            )
+        )
         self.assertGreater(len(portfolio_specs), len(baseline_specs))
         complementary_spec = next(
             spec
