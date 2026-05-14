@@ -9,6 +9,8 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SwarmsRouteImport } from './routes/swarms'
+import { Route as SpecsRouteImport } from './routes/specs'
 import { Route as RulesRouteImport } from './routes/rules'
 import { Route as EventsRouteImport } from './routes/events'
 import { Route as ConnectorsRouteImport } from './routes/connectors'
@@ -16,20 +18,40 @@ import { Route as ApprovalsRouteImport } from './routes/approvals'
 import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as AgentRunsRouteImport } from './routes/agent-runs'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as SwarmsNameRouteImport } from './routes/swarms_.$name'
+import { Route as SpecsNameRouteImport } from './routes/specs_.$name'
 import { Route as ApiTasksRouteImport } from './routes/api/tasks'
+import { Route as ApiSwarmsRouteImport } from './routes/api/swarms'
 import { Route as ApiSnapshotRouteImport } from './routes/api/snapshot'
 import { Route as ApiRulesRouteImport } from './routes/api/rules'
+import { Route as ApiImplementationSpecsRouteImport } from './routes/api/implementation-specs'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as ApiAgentsRouteImport } from './routes/api/agents'
 import { Route as ApiAgentRunsRouteImport } from './routes/api/agent-runs'
 import { Route as ApiAgentRunLogsRouteImport } from './routes/api/agent-run-logs'
+import { Route as AgentRunsNewRouteImport } from './routes/agent-runs_.new'
+import { Route as AgentRunsNameRouteImport } from './routes/agent-runs_.$name'
 import { Route as ApiWorkspaceClearRouteImport } from './routes/api/workspace/clear'
+import { Route as ApiSwarmsNameRouteImport } from './routes/api/swarms_.$name'
 import { Route as ApiInternalLegacyRouteImport } from './routes/api/internal/legacy'
 import { Route as ApiInternalGraphqlRouteImport } from './routes/api/internal/graphql'
+import { Route as ApiImplementationSpecsNameRouteImport } from './routes/api/implementation-specs_.$name'
 import { Route as ApiEventsExportRouteImport } from './routes/api/events/export'
 import { Route as ApiApprovalsApproveRouteImport } from './routes/api/approvals/approve'
 import { Route as ApiAgentsRunsRouteImport } from './routes/api/agents/runs'
+import { Route as ApiAgentRunLogsStreamRouteImport } from './routes/api/agent-run-logs/stream'
+import { Route as ApiAgentRunsNameDatabaseAccessRouteImport } from './routes/api/agent-runs_.$name.database-access'
 
+const SwarmsRoute = SwarmsRouteImport.update({
+  id: '/swarms',
+  path: '/swarms',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SpecsRoute = SpecsRouteImport.update({
+  id: '/specs',
+  path: '/specs',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const RulesRoute = RulesRouteImport.update({
   id: '/rules',
   path: '/rules',
@@ -65,9 +87,24 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SwarmsNameRoute = SwarmsNameRouteImport.update({
+  id: '/swarms_/$name',
+  path: '/swarms/$name',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SpecsNameRoute = SpecsNameRouteImport.update({
+  id: '/specs_/$name',
+  path: '/specs/$name',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiTasksRoute = ApiTasksRouteImport.update({
   id: '/api/tasks',
   path: '/api/tasks',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiSwarmsRoute = ApiSwarmsRouteImport.update({
+  id: '/api/swarms',
+  path: '/api/swarms',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiSnapshotRoute = ApiSnapshotRouteImport.update({
@@ -78,6 +115,11 @@ const ApiSnapshotRoute = ApiSnapshotRouteImport.update({
 const ApiRulesRoute = ApiRulesRouteImport.update({
   id: '/api/rules',
   path: '/api/rules',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiImplementationSpecsRoute = ApiImplementationSpecsRouteImport.update({
+  id: '/api/implementation-specs',
+  path: '/api/implementation-specs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiHealthRoute = ApiHealthRouteImport.update({
@@ -100,9 +142,24 @@ const ApiAgentRunLogsRoute = ApiAgentRunLogsRouteImport.update({
   path: '/api/agent-run-logs',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AgentRunsNewRoute = AgentRunsNewRouteImport.update({
+  id: '/agent-runs_/new',
+  path: '/agent-runs/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AgentRunsNameRoute = AgentRunsNameRouteImport.update({
+  id: '/agent-runs_/$name',
+  path: '/agent-runs/$name',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiWorkspaceClearRoute = ApiWorkspaceClearRouteImport.update({
   id: '/api/workspace/clear',
   path: '/api/workspace/clear',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiSwarmsNameRoute = ApiSwarmsNameRouteImport.update({
+  id: '/api/swarms_/$name',
+  path: '/api/swarms/$name',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiInternalLegacyRoute = ApiInternalLegacyRouteImport.update({
@@ -115,6 +172,12 @@ const ApiInternalGraphqlRoute = ApiInternalGraphqlRouteImport.update({
   path: '/api/internal/graphql',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiImplementationSpecsNameRoute =
+  ApiImplementationSpecsNameRouteImport.update({
+    id: '/api/implementation-specs_/$name',
+    path: '/api/implementation-specs/$name',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiEventsExportRoute = ApiEventsExportRouteImport.update({
   id: '/api/events/export',
   path: '/api/events/export',
@@ -130,6 +193,17 @@ const ApiAgentsRunsRoute = ApiAgentsRunsRouteImport.update({
   path: '/runs',
   getParentRoute: () => ApiAgentsRoute,
 } as any)
+const ApiAgentRunLogsStreamRoute = ApiAgentRunLogsStreamRouteImport.update({
+  id: '/stream',
+  path: '/stream',
+  getParentRoute: () => ApiAgentRunLogsRoute,
+} as any)
+const ApiAgentRunsNameDatabaseAccessRoute =
+  ApiAgentRunsNameDatabaseAccessRouteImport.update({
+    id: '/api/agent-runs_/$name/database-access',
+    path: '/api/agent-runs/$name/database-access',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -139,19 +213,31 @@ export interface FileRoutesByFullPath {
   '/connectors': typeof ConnectorsRoute
   '/events': typeof EventsRoute
   '/rules': typeof RulesRoute
-  '/api/agent-run-logs': typeof ApiAgentRunLogsRoute
+  '/specs': typeof SpecsRoute
+  '/swarms': typeof SwarmsRoute
+  '/agent-runs/$name': typeof AgentRunsNameRoute
+  '/agent-runs/new': typeof AgentRunsNewRoute
+  '/api/agent-run-logs': typeof ApiAgentRunLogsRouteWithChildren
   '/api/agent-runs': typeof ApiAgentRunsRoute
   '/api/agents': typeof ApiAgentsRouteWithChildren
   '/api/health': typeof ApiHealthRoute
+  '/api/implementation-specs': typeof ApiImplementationSpecsRoute
   '/api/rules': typeof ApiRulesRoute
   '/api/snapshot': typeof ApiSnapshotRoute
+  '/api/swarms': typeof ApiSwarmsRoute
   '/api/tasks': typeof ApiTasksRoute
+  '/specs/$name': typeof SpecsNameRoute
+  '/swarms/$name': typeof SwarmsNameRoute
+  '/api/agent-run-logs/stream': typeof ApiAgentRunLogsStreamRoute
   '/api/agents/runs': typeof ApiAgentsRunsRoute
   '/api/approvals/approve': typeof ApiApprovalsApproveRoute
   '/api/events/export': typeof ApiEventsExportRoute
+  '/api/implementation-specs/$name': typeof ApiImplementationSpecsNameRoute
   '/api/internal/graphql': typeof ApiInternalGraphqlRoute
   '/api/internal/legacy': typeof ApiInternalLegacyRoute
+  '/api/swarms/$name': typeof ApiSwarmsNameRoute
   '/api/workspace/clear': typeof ApiWorkspaceClearRoute
+  '/api/agent-runs/$name/database-access': typeof ApiAgentRunsNameDatabaseAccessRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -161,19 +247,31 @@ export interface FileRoutesByTo {
   '/connectors': typeof ConnectorsRoute
   '/events': typeof EventsRoute
   '/rules': typeof RulesRoute
-  '/api/agent-run-logs': typeof ApiAgentRunLogsRoute
+  '/specs': typeof SpecsRoute
+  '/swarms': typeof SwarmsRoute
+  '/agent-runs/$name': typeof AgentRunsNameRoute
+  '/agent-runs/new': typeof AgentRunsNewRoute
+  '/api/agent-run-logs': typeof ApiAgentRunLogsRouteWithChildren
   '/api/agent-runs': typeof ApiAgentRunsRoute
   '/api/agents': typeof ApiAgentsRouteWithChildren
   '/api/health': typeof ApiHealthRoute
+  '/api/implementation-specs': typeof ApiImplementationSpecsRoute
   '/api/rules': typeof ApiRulesRoute
   '/api/snapshot': typeof ApiSnapshotRoute
+  '/api/swarms': typeof ApiSwarmsRoute
   '/api/tasks': typeof ApiTasksRoute
+  '/specs/$name': typeof SpecsNameRoute
+  '/swarms/$name': typeof SwarmsNameRoute
+  '/api/agent-run-logs/stream': typeof ApiAgentRunLogsStreamRoute
   '/api/agents/runs': typeof ApiAgentsRunsRoute
   '/api/approvals/approve': typeof ApiApprovalsApproveRoute
   '/api/events/export': typeof ApiEventsExportRoute
+  '/api/implementation-specs/$name': typeof ApiImplementationSpecsNameRoute
   '/api/internal/graphql': typeof ApiInternalGraphqlRoute
   '/api/internal/legacy': typeof ApiInternalLegacyRoute
+  '/api/swarms/$name': typeof ApiSwarmsNameRoute
   '/api/workspace/clear': typeof ApiWorkspaceClearRoute
+  '/api/agent-runs/$name/database-access': typeof ApiAgentRunsNameDatabaseAccessRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -184,19 +282,31 @@ export interface FileRoutesById {
   '/connectors': typeof ConnectorsRoute
   '/events': typeof EventsRoute
   '/rules': typeof RulesRoute
-  '/api/agent-run-logs': typeof ApiAgentRunLogsRoute
+  '/specs': typeof SpecsRoute
+  '/swarms': typeof SwarmsRoute
+  '/agent-runs_/$name': typeof AgentRunsNameRoute
+  '/agent-runs_/new': typeof AgentRunsNewRoute
+  '/api/agent-run-logs': typeof ApiAgentRunLogsRouteWithChildren
   '/api/agent-runs': typeof ApiAgentRunsRoute
   '/api/agents': typeof ApiAgentsRouteWithChildren
   '/api/health': typeof ApiHealthRoute
+  '/api/implementation-specs': typeof ApiImplementationSpecsRoute
   '/api/rules': typeof ApiRulesRoute
   '/api/snapshot': typeof ApiSnapshotRoute
+  '/api/swarms': typeof ApiSwarmsRoute
   '/api/tasks': typeof ApiTasksRoute
+  '/specs_/$name': typeof SpecsNameRoute
+  '/swarms_/$name': typeof SwarmsNameRoute
+  '/api/agent-run-logs/stream': typeof ApiAgentRunLogsStreamRoute
   '/api/agents/runs': typeof ApiAgentsRunsRoute
   '/api/approvals/approve': typeof ApiApprovalsApproveRoute
   '/api/events/export': typeof ApiEventsExportRoute
+  '/api/implementation-specs_/$name': typeof ApiImplementationSpecsNameRoute
   '/api/internal/graphql': typeof ApiInternalGraphqlRoute
   '/api/internal/legacy': typeof ApiInternalLegacyRoute
+  '/api/swarms_/$name': typeof ApiSwarmsNameRoute
   '/api/workspace/clear': typeof ApiWorkspaceClearRoute
+  '/api/agent-runs_/$name/database-access': typeof ApiAgentRunsNameDatabaseAccessRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -208,19 +318,31 @@ export interface FileRouteTypes {
     | '/connectors'
     | '/events'
     | '/rules'
+    | '/specs'
+    | '/swarms'
+    | '/agent-runs/$name'
+    | '/agent-runs/new'
     | '/api/agent-run-logs'
     | '/api/agent-runs'
     | '/api/agents'
     | '/api/health'
+    | '/api/implementation-specs'
     | '/api/rules'
     | '/api/snapshot'
+    | '/api/swarms'
     | '/api/tasks'
+    | '/specs/$name'
+    | '/swarms/$name'
+    | '/api/agent-run-logs/stream'
     | '/api/agents/runs'
     | '/api/approvals/approve'
     | '/api/events/export'
+    | '/api/implementation-specs/$name'
     | '/api/internal/graphql'
     | '/api/internal/legacy'
+    | '/api/swarms/$name'
     | '/api/workspace/clear'
+    | '/api/agent-runs/$name/database-access'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -230,19 +352,31 @@ export interface FileRouteTypes {
     | '/connectors'
     | '/events'
     | '/rules'
+    | '/specs'
+    | '/swarms'
+    | '/agent-runs/$name'
+    | '/agent-runs/new'
     | '/api/agent-run-logs'
     | '/api/agent-runs'
     | '/api/agents'
     | '/api/health'
+    | '/api/implementation-specs'
     | '/api/rules'
     | '/api/snapshot'
+    | '/api/swarms'
     | '/api/tasks'
+    | '/specs/$name'
+    | '/swarms/$name'
+    | '/api/agent-run-logs/stream'
     | '/api/agents/runs'
     | '/api/approvals/approve'
     | '/api/events/export'
+    | '/api/implementation-specs/$name'
     | '/api/internal/graphql'
     | '/api/internal/legacy'
+    | '/api/swarms/$name'
     | '/api/workspace/clear'
+    | '/api/agent-runs/$name/database-access'
   id:
     | '__root__'
     | '/'
@@ -252,19 +386,31 @@ export interface FileRouteTypes {
     | '/connectors'
     | '/events'
     | '/rules'
+    | '/specs'
+    | '/swarms'
+    | '/agent-runs_/$name'
+    | '/agent-runs_/new'
     | '/api/agent-run-logs'
     | '/api/agent-runs'
     | '/api/agents'
     | '/api/health'
+    | '/api/implementation-specs'
     | '/api/rules'
     | '/api/snapshot'
+    | '/api/swarms'
     | '/api/tasks'
+    | '/specs_/$name'
+    | '/swarms_/$name'
+    | '/api/agent-run-logs/stream'
     | '/api/agents/runs'
     | '/api/approvals/approve'
     | '/api/events/export'
+    | '/api/implementation-specs_/$name'
     | '/api/internal/graphql'
     | '/api/internal/legacy'
+    | '/api/swarms_/$name'
     | '/api/workspace/clear'
+    | '/api/agent-runs_/$name/database-access'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -275,22 +421,47 @@ export interface RootRouteChildren {
   ConnectorsRoute: typeof ConnectorsRoute
   EventsRoute: typeof EventsRoute
   RulesRoute: typeof RulesRoute
-  ApiAgentRunLogsRoute: typeof ApiAgentRunLogsRoute
+  SpecsRoute: typeof SpecsRoute
+  SwarmsRoute: typeof SwarmsRoute
+  AgentRunsNameRoute: typeof AgentRunsNameRoute
+  AgentRunsNewRoute: typeof AgentRunsNewRoute
+  ApiAgentRunLogsRoute: typeof ApiAgentRunLogsRouteWithChildren
   ApiAgentRunsRoute: typeof ApiAgentRunsRoute
   ApiAgentsRoute: typeof ApiAgentsRouteWithChildren
   ApiHealthRoute: typeof ApiHealthRoute
+  ApiImplementationSpecsRoute: typeof ApiImplementationSpecsRoute
   ApiRulesRoute: typeof ApiRulesRoute
   ApiSnapshotRoute: typeof ApiSnapshotRoute
+  ApiSwarmsRoute: typeof ApiSwarmsRoute
   ApiTasksRoute: typeof ApiTasksRoute
+  SpecsNameRoute: typeof SpecsNameRoute
+  SwarmsNameRoute: typeof SwarmsNameRoute
   ApiApprovalsApproveRoute: typeof ApiApprovalsApproveRoute
   ApiEventsExportRoute: typeof ApiEventsExportRoute
+  ApiImplementationSpecsNameRoute: typeof ApiImplementationSpecsNameRoute
   ApiInternalGraphqlRoute: typeof ApiInternalGraphqlRoute
   ApiInternalLegacyRoute: typeof ApiInternalLegacyRoute
+  ApiSwarmsNameRoute: typeof ApiSwarmsNameRoute
   ApiWorkspaceClearRoute: typeof ApiWorkspaceClearRoute
+  ApiAgentRunsNameDatabaseAccessRoute: typeof ApiAgentRunsNameDatabaseAccessRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/swarms': {
+      id: '/swarms'
+      path: '/swarms'
+      fullPath: '/swarms'
+      preLoaderRoute: typeof SwarmsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/specs': {
+      id: '/specs'
+      path: '/specs'
+      fullPath: '/specs'
+      preLoaderRoute: typeof SpecsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/rules': {
       id: '/rules'
       path: '/rules'
@@ -340,11 +511,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/swarms_/$name': {
+      id: '/swarms_/$name'
+      path: '/swarms/$name'
+      fullPath: '/swarms/$name'
+      preLoaderRoute: typeof SwarmsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/specs_/$name': {
+      id: '/specs_/$name'
+      path: '/specs/$name'
+      fullPath: '/specs/$name'
+      preLoaderRoute: typeof SpecsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/tasks': {
       id: '/api/tasks'
       path: '/api/tasks'
       fullPath: '/api/tasks'
       preLoaderRoute: typeof ApiTasksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/swarms': {
+      id: '/api/swarms'
+      path: '/api/swarms'
+      fullPath: '/api/swarms'
+      preLoaderRoute: typeof ApiSwarmsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/snapshot': {
@@ -359,6 +551,13 @@ declare module '@tanstack/react-router' {
       path: '/api/rules'
       fullPath: '/api/rules'
       preLoaderRoute: typeof ApiRulesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/implementation-specs': {
+      id: '/api/implementation-specs'
+      path: '/api/implementation-specs'
+      fullPath: '/api/implementation-specs'
+      preLoaderRoute: typeof ApiImplementationSpecsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/health': {
@@ -389,11 +588,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAgentRunLogsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agent-runs_/new': {
+      id: '/agent-runs_/new'
+      path: '/agent-runs/new'
+      fullPath: '/agent-runs/new'
+      preLoaderRoute: typeof AgentRunsNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/agent-runs_/$name': {
+      id: '/agent-runs_/$name'
+      path: '/agent-runs/$name'
+      fullPath: '/agent-runs/$name'
+      preLoaderRoute: typeof AgentRunsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/workspace/clear': {
       id: '/api/workspace/clear'
       path: '/api/workspace/clear'
       fullPath: '/api/workspace/clear'
       preLoaderRoute: typeof ApiWorkspaceClearRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/swarms_/$name': {
+      id: '/api/swarms_/$name'
+      path: '/api/swarms/$name'
+      fullPath: '/api/swarms/$name'
+      preLoaderRoute: typeof ApiSwarmsNameRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/internal/legacy': {
@@ -408,6 +628,13 @@ declare module '@tanstack/react-router' {
       path: '/api/internal/graphql'
       fullPath: '/api/internal/graphql'
       preLoaderRoute: typeof ApiInternalGraphqlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/implementation-specs_/$name': {
+      id: '/api/implementation-specs_/$name'
+      path: '/api/implementation-specs/$name'
+      fullPath: '/api/implementation-specs/$name'
+      preLoaderRoute: typeof ApiImplementationSpecsNameRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/events/export': {
@@ -431,8 +658,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAgentsRunsRouteImport
       parentRoute: typeof ApiAgentsRoute
     }
+    '/api/agent-run-logs/stream': {
+      id: '/api/agent-run-logs/stream'
+      path: '/stream'
+      fullPath: '/api/agent-run-logs/stream'
+      preLoaderRoute: typeof ApiAgentRunLogsStreamRouteImport
+      parentRoute: typeof ApiAgentRunLogsRoute
+    }
+    '/api/agent-runs_/$name/database-access': {
+      id: '/api/agent-runs_/$name/database-access'
+      path: '/api/agent-runs/$name/database-access'
+      fullPath: '/api/agent-runs/$name/database-access'
+      preLoaderRoute: typeof ApiAgentRunsNameDatabaseAccessRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
+
+interface ApiAgentRunLogsRouteChildren {
+  ApiAgentRunLogsStreamRoute: typeof ApiAgentRunLogsStreamRoute
+}
+
+const ApiAgentRunLogsRouteChildren: ApiAgentRunLogsRouteChildren = {
+  ApiAgentRunLogsStreamRoute: ApiAgentRunLogsStreamRoute,
+}
+
+const ApiAgentRunLogsRouteWithChildren = ApiAgentRunLogsRoute._addFileChildren(
+  ApiAgentRunLogsRouteChildren,
+)
 
 interface ApiAgentsRouteChildren {
   ApiAgentsRunsRoute: typeof ApiAgentsRunsRoute
@@ -454,18 +707,29 @@ const rootRouteChildren: RootRouteChildren = {
   ConnectorsRoute: ConnectorsRoute,
   EventsRoute: EventsRoute,
   RulesRoute: RulesRoute,
-  ApiAgentRunLogsRoute: ApiAgentRunLogsRoute,
+  SpecsRoute: SpecsRoute,
+  SwarmsRoute: SwarmsRoute,
+  AgentRunsNameRoute: AgentRunsNameRoute,
+  AgentRunsNewRoute: AgentRunsNewRoute,
+  ApiAgentRunLogsRoute: ApiAgentRunLogsRouteWithChildren,
   ApiAgentRunsRoute: ApiAgentRunsRoute,
   ApiAgentsRoute: ApiAgentsRouteWithChildren,
   ApiHealthRoute: ApiHealthRoute,
+  ApiImplementationSpecsRoute: ApiImplementationSpecsRoute,
   ApiRulesRoute: ApiRulesRoute,
   ApiSnapshotRoute: ApiSnapshotRoute,
+  ApiSwarmsRoute: ApiSwarmsRoute,
   ApiTasksRoute: ApiTasksRoute,
+  SpecsNameRoute: SpecsNameRoute,
+  SwarmsNameRoute: SwarmsNameRoute,
   ApiApprovalsApproveRoute: ApiApprovalsApproveRoute,
   ApiEventsExportRoute: ApiEventsExportRoute,
+  ApiImplementationSpecsNameRoute: ApiImplementationSpecsNameRoute,
   ApiInternalGraphqlRoute: ApiInternalGraphqlRoute,
   ApiInternalLegacyRoute: ApiInternalLegacyRoute,
+  ApiSwarmsNameRoute: ApiSwarmsNameRoute,
   ApiWorkspaceClearRoute: ApiWorkspaceClearRoute,
+  ApiAgentRunsNameDatabaseAccessRoute: ApiAgentRunsNameDatabaseAccessRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

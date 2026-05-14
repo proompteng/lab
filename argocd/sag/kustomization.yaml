@@ -12,4 +12,4 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/sag
     newName: registry.ide-newton.ts.net/lab/sag
-    newTag: "e73a8149d"
+    newTag: "sag-20260514075617"

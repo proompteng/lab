@@ -6,7 +6,7 @@ import { loadGatewayState, saveGatewayState } from '~/server/persistence'
 export const Route = createFileRoute('/api/agent-runs')({
   server: {
     handlers: {
-      GET: async () => jsonResponse({ ok: true, runs: await listAgentRuns() }),
+      GET: async () => jsonResponse({ ok: true, runs: await listAgentRuns({ namespace: 'agents' }) }),
       POST: async ({ request }: SagServerRouteArgs) => {
         const payload = (await request.json().catch(() => null)) as CreateAgentRunPayload | null
         const task = payload?.task?.trim()

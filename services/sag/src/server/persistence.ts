@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import postgres, { type Sql, type TransactionSql } from 'postgres'
 import {
   actors,
@@ -199,6 +200,62 @@ const ensureSchema = async (client: Sql) => {
 }
 
 export const persistenceEnabled = () => Boolean(databaseUrl())
+
+export const listSagDatabaseTables = async () => {
+  const client = getSql()
+  if (!client) return listSagDatabaseTablesWithKubectl()
+  await ensureSchema(client)
+  const rows = await client<{ table_name: string }[]>`
+    select table_name
+    from information_schema.tables
+    where table_schema = 'public'
+      and table_name like 'sag_%'
+    order by table_name
+  `
+  return rows.map((row) => row.table_name)
+}
+
+const listSagDatabaseTablesWithKubectl = async () => {
+  const uri = Buffer.from(
+    (await kubectl(['get', 'secret', '-n', 'sag', 'sag-db-app', '-o', 'jsonpath={.data.uri}'])).stdout.trim(),
+    'base64',
+  ).toString('utf8')
+  const query = `
+    select table_name
+    from information_schema.tables
+    where table_schema = 'public'
+      and table_name like 'sag_%'
+    order by table_name
+  `
+  const result = await kubectl(['exec', '-n', 'sag', 'sag-db-1', '--', 'psql', uri, '-Atc', query])
+  return result.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+}
+
+const kubectl = (args: string[], input?: string): Promise<{ stdout: string; stderr: string }> =>
+  new Promise((resolve, reject) => {
+    const child = spawn('kubectl', args, { stdio: ['pipe', 'pipe', 'pipe'] })
+    const stdout: Buffer[] = []
+    const stderr: Buffer[] = []
+    child.stdout.on('data', (chunk) => stdout.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)))
+    child.stderr.on('data', (chunk) => stderr.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)))
+    child.on('error', reject)
+    child.on('close', (code) => {
+      const result = {
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+      }
+      if (code === 0) {
+        resolve(result)
+        return
+      }
+      reject(new Error(`kubectl ${args.join(' ')} failed: ${result.stderr || result.stdout}`))
+    })
+    if (input) child.stdin.write(input)
+    child.stdin.end()
+  })
 
 export const loadGatewayState = async () => {
   const client = getSql()

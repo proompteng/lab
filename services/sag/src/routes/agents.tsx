@@ -1,12 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { Badge } from '~/components/ui/badge'
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from '~/components/ui/card'
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '~/components/ui/empty'
-import { GatewayFrame, GatewayPageHeader } from '~/components/gateway-shell'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
-import { fetchLiveAgents, fetchSnapshot } from '~/lib/sag-client'
+import { GatewayFrame, GatewayPageHeader } from '~/components/gateway-shell'
+import { fetchLiveAgents } from '~/lib/sag-client'
 import { loadInitialSnapshot } from '~/lib/load-snapshot'
+import type { LiveAgent } from '~/server/kubernetes'
 
 export const Route = createFileRoute('/agents')({
   component: AgentsRoute,
@@ -15,11 +14,6 @@ export const Route = createFileRoute('/agents')({
 
 function AgentsRoute() {
   const initialSnapshot = Route.useLoaderData()
-  const snapshotQuery = useQuery({
-    queryKey: ['snapshot'],
-    queryFn: fetchSnapshot,
-    initialData: initialSnapshot,
-  })
   const agentsQuery = useQuery({
     queryKey: ['live-agents'],
     queryFn: fetchLiveAgents,
@@ -28,61 +22,49 @@ function AgentsRoute() {
   const agents = agentsQuery.data?.agents ?? []
 
   return (
-    <GatewayFrame active="/agents" snapshot={snapshotQuery.data ?? initialSnapshot}>
-      <GatewayPageHeader title="Agents" detail="Cluster executors." />
-
-      <main className="min-h-0 flex-1 overflow-hidden p-4">
-        <Card className="h-full rounded-lg" size="sm">
-          <CardHeader>
-            <CardTitle>Agents</CardTitle>
-            <CardAction>
-              <Badge variant="outline">{agents.length}</Badge>
-            </CardAction>
-          </CardHeader>
-          <CardContent className="min-h-0 overflow-auto">
-            {agents.length === 0 ? (
-              <Empty className="min-h-[320px] rounded-lg border">
-                <EmptyHeader>
-                  <EmptyTitle>No agents</EmptyTitle>
-                  <EmptyDescription>No Agent resources are visible to SAG.</EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Agent</TableHead>
-                    <TableHead>Namespace</TableHead>
-                    <TableHead>Runtime</TableHead>
-                    <TableHead>Model</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Created</TableHead>
+    <GatewayFrame active="/agents" snapshot={initialSnapshot}>
+      <GatewayPageHeader title="Agents" />
+      <main className="min-h-0 flex-1 p-4">
+        <div className="overflow-hidden rounded-lg border">
+          <Table>
+            <TableHeader className="[&_th]:text-muted-foreground">
+              <TableRow>
+                <TableHead>Agent</TableHead>
+                <TableHead>Phase</TableHead>
+                <TableHead>Runtime</TableHead>
+                <TableHead>Model</TableHead>
+                <TableHead>Created</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {agents.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
+                    {agentsQuery.isLoading ? 'Loading agents.' : 'No agents.'}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                agents.map((agent) => (
+                  <TableRow key={`${agent.namespace}/${agent.name}`}>
+                    <TableCell className="font-medium">{agent.name}</TableCell>
+                    <TableCell>
+                      <Badge variant={agent.ready ? 'secondary' : 'outline'}>{agent.phase}</Badge>
+                    </TableCell>
+                    <TableCell>{agent.runtime}</TableCell>
+                    <TableCell>{agent.model}</TableCell>
+                    <TableCell>{formatDate(agent.createdAt)}</TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {agents.map((agent) => (
-                    <TableRow key={`${agent.namespace}/${agent.name}`}>
-                      <TableCell className="font-medium">{agent.name}</TableCell>
-                      <TableCell>{agent.namespace}</TableCell>
-                      <TableCell>{agent.runtime}</TableCell>
-                      <TableCell>{agent.model}</TableCell>
-                      <TableCell>
-                        <Badge variant={agent.ready ? 'secondary' : 'outline'}>{agent.phase}</Badge>
-                      </TableCell>
-                      <TableCell>{formatDate(agent.createdAt)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
       </main>
     </GatewayFrame>
   )
 }
 
-const formatDate = (value: string) => {
+const formatDate = (value: LiveAgent['createdAt']) => {
   if (!value) return '-'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '-'

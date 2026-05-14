@@ -25,6 +25,12 @@ describe('SAG AgentRun manifests', () => {
       issueUrl: 'https://sag.proompteng.ai',
       stage: 'implementation',
     })
+    expect(manifest.spec.vcsRef).toEqual({ name: 'github' })
+    expect(manifest.spec.vcsPolicy).toEqual({
+      required: true,
+      mode: 'read-write',
+    })
+    expect(manifest.spec.secrets).toEqual(['github-token', 'codex-auth'])
     expect(manifest.spec.workflow.steps[0]?.parameters).toMatchObject({
       repository: 'proompteng/lab',
       base: 'main',

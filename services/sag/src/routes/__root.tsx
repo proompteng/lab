@@ -1,4 +1,5 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
+import appCss from '../styles.css?url'
 
 export const Route = createRootRoute({
   head: () => ({
@@ -9,7 +10,10 @@ export const Route = createRootRoute({
       { name: 'color-scheme', content: 'dark' },
       { title: 'Secure Action Gateway' },
     ],
-    links: [{ rel: 'icon', href: 'data:,' }],
+    links: [
+      { rel: 'stylesheet', href: appCss },
+      { rel: 'icon', href: 'data:,' },
+    ],
   }),
   component: RootDocument,
 })
@@ -18,6 +22,7 @@ function RootDocument() {
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className="dark h-full bg-zinc-950 text-zinc-100 [color-scheme:dark]"
       style={{ backgroundColor: '#09090b', color: '#f4f4f5', colorScheme: 'dark' }}
     >
