@@ -64,6 +64,24 @@ spec:
           manifestTargets:
             kustomize:
               name: registry.ide-newton.ts.net/lab/docs
+    - namePattern: sag
+      writeBackConfig:
+        method: git:secret:argocd/image-updater-git-ssh
+        gitConfig:
+          repository: git@github.com:proompteng/lab.git
+          branch: main:release/{{.SHA256}}
+          writeBackTarget: kustomization:/argocd/sag
+      images:
+        - alias: sag
+          imageName: registry.ide-newton.ts.net/lab/sag:latest
+          commonUpdateSettings:
+            updateStrategy: newest-build
+            allowTags: 'regexp:^(sag-[0-9]{14}|[0-9a-f]{7,40})$'
+            platforms:
+              - linux/amd64
+          manifestTargets:
+            kustomize:
+              name: registry.ide-newton.ts.net/lab/sag
     - namePattern: khoshut
       writeBackConfig:
         method: git:secret:argocd/image-updater-git-ssh
