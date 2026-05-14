@@ -104,6 +104,28 @@ _RUNTIME_CLOSURE_PROOF_ORACLE_BLOCKERS = frozenset(
         "executable_replay_notional_within_buying_power_failed",
     }
 )
+_FAMILY_PRIOR_HARD_BLOCK_ORACLE_BLOCKERS = frozenset(
+    {
+        "active_day_ratio_below_oracle",
+        "positive_day_ratio_below_oracle",
+        "best_day_share_above_oracle",
+    }
+)
+_RISK_PROFILE_FEEDBACK_ORACLE_BLOCKERS = frozenset(
+    {
+        "active_day_ratio_below_oracle",
+        "positive_day_ratio_below_oracle",
+        "best_day_share_above_oracle",
+        "active_day_ratio_failed",
+        "positive_day_ratio_failed",
+        "min_daily_net_pnl_failed",
+        "daily_net_observed_day_count_failed",
+        "best_day_share_failed",
+        "max_single_day_contribution_share_failed",
+        "max_single_symbol_contribution_share_failed",
+        "max_cluster_contribution_share_failed",
+    }
+)
 
 
 def _default_strategy_config_path() -> Path:
@@ -231,6 +253,30 @@ def _parse_args() -> argparse.Namespace:
             "Maximum number of bounded real-replay shards to run concurrently. "
             "Defaults to 1 for the legacy sequential behavior."
         ),
+    )
+    parser.add_argument(
+        "--real-replay-failed-spec-retries",
+        type=int,
+        default=1,
+        help=(
+            "Retry candidate specs from timed-out real-replay shards individually "
+            "before marking the epoch replay incomplete."
+        ),
+    )
+    parser.add_argument(
+        "--real-replay-retry-timeout-seconds",
+        type=int,
+        default=0,
+        help=(
+            "Timeout for missing-spec retry replays. Defaults to twice the shard "
+            "timeout when omitted."
+        ),
+    )
+    parser.add_argument(
+        "--real-replay-retry-max-frontier-candidates-per-spec",
+        type=int,
+        default=1,
+        help="Frontier candidate budget for each missing-spec retry replay.",
     )
     parser.add_argument("--train-days", type=int, default=6)
     parser.add_argument("--holdout-days", type=int, default=3)
@@ -2085,6 +2131,27 @@ def _profitability_next_epoch_plan(
     real_replay_shard_workers = _int_arg(args, "real_replay_shard_workers", 1)
     if real_replay_shard_workers > 1:
         flags["--real-replay-shard-workers"] = str(real_replay_shard_workers)
+    real_replay_failed_spec_retries = _int_arg(
+        args, "real_replay_failed_spec_retries", 1
+    )
+    if real_replay_failed_spec_retries > 0:
+        flags["--real-replay-failed-spec-retries"] = str(
+            real_replay_failed_spec_retries
+        )
+    real_replay_retry_timeout_seconds = _int_arg(
+        args, "real_replay_retry_timeout_seconds", 0
+    )
+    if real_replay_retry_timeout_seconds > 0:
+        flags["--real-replay-retry-timeout-seconds"] = str(
+            real_replay_retry_timeout_seconds
+        )
+    real_replay_retry_frontier_candidates = _int_arg(
+        args, "real_replay_retry_max_frontier_candidates_per_spec", 1
+    )
+    if real_replay_retry_frontier_candidates > 1:
+        flags["--real-replay-retry-max-frontier-candidates-per-spec"] = str(
+            real_replay_retry_frontier_candidates
+        )
     shadow_validation_artifact = getattr(args, "shadow_validation_artifact", None)
     if shadow_validation_artifact is not None:
         flags["--shadow-validation-artifact"] = str(shadow_validation_artifact)
@@ -2329,37 +2396,153 @@ def _pre_replay_candidate_score(spec: CandidateSpec) -> Decimal:
     return family_score + Decimal(feature_count) - failure_penalty - capital_penalty
 
 
+def _candidate_spec_universe_key(spec: CandidateSpec) -> str:
+    universe = spec.strategy_overrides.get("universe_symbols")
+    if not isinstance(universe, Sequence) or isinstance(universe, str):
+        return ""
+    return ",".join(sorted(_string(item).upper() for item in universe if _string(item)))
+
+
+def _candidate_spec_signal_key(spec: CandidateSpec) -> str:
+    params = _mapping(spec.strategy_overrides.get("params"))
+    return "|".join(
+        part
+        for part in (
+            _string(params.get("signal_motif")),
+            _string(params.get("selection_mode")),
+            _string(params.get("rank_feature")),
+        )
+        if part
+    )
+
+
+def _candidate_spec_execution_profile(spec: CandidateSpec) -> Mapping[str, Any]:
+    return _mapping(spec.feature_contract.get("execution_profile"))
+
+
+def _feedback_risk_profile_key_payload(
+    *,
+    family_template_id: str,
+    runtime_strategy_name: str,
+    execution_profile_id: str,
+    universe_key: str,
+    signal_key: str,
+) -> Mapping[str, Any]:
+    return {
+        "family_template_id": family_template_id,
+        "runtime_strategy_name": runtime_strategy_name,
+        "execution_profile_id": execution_profile_id,
+        "universe_key": universe_key,
+        "signal_key": signal_key,
+    }
+
+
+def _candidate_spec_feedback_risk_profile_key(spec: CandidateSpec) -> str:
+    execution_profile = _candidate_spec_execution_profile(spec)
+    return _stable_hash(
+        _feedback_risk_profile_key_payload(
+            family_template_id=spec.family_template_id,
+            runtime_strategy_name=spec.runtime_strategy_name,
+            execution_profile_id=_string(execution_profile.get("profile_id")),
+            universe_key=_candidate_spec_universe_key(spec),
+            signal_key=_candidate_spec_signal_key(spec),
+        )
+    )
+
+
+def _candidate_spec_feedback_shape_key(spec: CandidateSpec) -> str:
+    params = _mapping(spec.strategy_overrides.get("params"))
+    execution_profile = _candidate_spec_execution_profile(spec)
+    return _stable_hash(
+        {
+            "family_template_id": spec.family_template_id,
+            "runtime_family": spec.runtime_family,
+            "runtime_strategy_name": spec.runtime_strategy_name,
+            "execution_profile_id": _string(execution_profile.get("profile_id")),
+            "universe_key": _candidate_spec_universe_key(spec),
+            "signal_key": _candidate_spec_signal_key(spec),
+            "capital_profile": _string(params.get("capital_profile")),
+            "entry_minute_after_open": _string(params.get("entry_minute_after_open")),
+            "exit_minute_after_open": _string(params.get("exit_minute_after_open")),
+            "entry_start_minute_utc": _string(params.get("entry_start_minute_utc")),
+            "entry_end_minute_utc": _string(params.get("entry_end_minute_utc")),
+            "max_entries_per_session": _string(params.get("max_entries_per_session")),
+            "max_concurrent_positions": _string(params.get("max_concurrent_positions")),
+            "top_n": _string(params.get("top_n")),
+            "max_pair_legs": _string(params.get("max_pair_legs")),
+            "long_stop_loss_bps": _string(params.get("long_stop_loss_bps")),
+            "short_stop_loss_bps": _string(params.get("short_stop_loss_bps")),
+            "max_session_negative_exit_bps": _string(
+                params.get("max_session_negative_exit_bps")
+            ),
+        }
+    )
+
+
+def _candidate_spec_feedback_metadata(spec: CandidateSpec) -> dict[str, Any]:
+    execution_profile = _candidate_spec_execution_profile(spec)
+    return {
+        "family_template_id": spec.family_template_id,
+        "runtime_family": spec.runtime_family,
+        "runtime_strategy_name": spec.runtime_strategy_name,
+        "execution_signature": _candidate_spec_execution_signature(spec),
+        "execution_profile_id": _string(execution_profile.get("profile_id")),
+        "execution_profile_index": execution_profile.get("profile_index"),
+        "feedback_risk_profile_key": _candidate_spec_feedback_risk_profile_key(spec),
+        "feedback_shape_key": _candidate_spec_feedback_shape_key(spec),
+        "universe_key": _candidate_spec_universe_key(spec),
+        "signal_key": _candidate_spec_signal_key(spec),
+    }
+
+
+def _candidate_payload_with_feedback_metadata(
+    *, candidate: Mapping[str, Any], spec: CandidateSpec
+) -> dict[str, Any]:
+    metadata = _candidate_spec_feedback_metadata(spec)
+    next_candidate = {**dict(candidate), **metadata}
+    scorecard = _mapping(next_candidate.get("objective_scorecard"))
+    next_candidate["objective_scorecard"] = {
+        **metadata,
+        **scorecard,
+    }
+    return next_candidate
+
+
 def _pre_replay_prior_bundle(spec: CandidateSpec) -> CandidateEvidenceBundle:
     prior_score = _pre_replay_candidate_score(spec)
     return evidence_bundle_from_frontier_candidate(
         candidate_spec_id=spec.candidate_spec_id,
-        candidate={
-            "candidate_id": f"pre-replay-prior-{spec.candidate_spec_id}",
-            "family_template_id": spec.family_template_id,
-            "runtime_family": spec.runtime_family,
-            "runtime_strategy_name": spec.runtime_strategy_name,
-            "execution_signature": _candidate_spec_execution_signature(spec),
-            "objective_scorecard": {
-                "net_pnl_per_day": str(prior_score),
-                "active_day_ratio": "0.50",
-                "positive_day_ratio": "0.50",
-                "regime_slice_pass_rate": "0.45",
-                "posterior_edge_lower": "0.001",
-                "shadow_parity_status": "pending",
+        candidate=_candidate_payload_with_feedback_metadata(
+            spec=spec,
+            candidate={
+                "candidate_id": f"pre-replay-prior-{spec.candidate_spec_id}",
+                "objective_scorecard": {
+                    "net_pnl_per_day": str(prior_score),
+                    "active_day_ratio": "0.50",
+                    "positive_day_ratio": "0.50",
+                    "regime_slice_pass_rate": "0.45",
+                    "posterior_edge_lower": "0.001",
+                    "shadow_parity_status": "pending",
+                },
+                "promotion_readiness": {
+                    "stage": "research_candidate",
+                    "status": "pre_replay_prior",
+                    "promotable": False,
+                    "blockers": ["runtime_replay_required"],
+                },
             },
-            "promotion_readiness": {
-                "stage": "research_candidate",
-                "status": "pre_replay_prior",
-                "promotable": False,
-                "blockers": ["runtime_replay_required"],
-            },
-        },
+        ),
         dataset_snapshot_id="pre-replay-proposal-priors",
         result_path=f"pre-replay-proposal-priors://{spec.candidate_spec_id}",
     )
 
 
 def _feedback_scorecard_has_hard_veto(scorecard: Mapping[str, Any]) -> bool:
+    if _oracle_blockers(scorecard):
+        return True
+    oracle_passed = scorecard.get("oracle_passed")
+    if oracle_passed is not None and not _boolish(oracle_passed):
+        return True
     hard_vetoes = scorecard.get("hard_vetoes") or scorecard.get("veto_reasons")
     if isinstance(hard_vetoes, str):
         return bool(hard_vetoes.strip())
@@ -2369,8 +2552,47 @@ def _feedback_scorecard_has_hard_veto(scorecard: Mapping[str, Any]) -> bool:
 
 
 def _feedback_daily_net_has_loss(scorecard: Mapping[str, Any]) -> bool:
-    daily_net = _mapping(scorecard.get("daily_net"))
-    return any(_decimal(value) < Decimal("0") for value in daily_net.values())
+    daily_net = scorecard.get("daily_net")
+    if not isinstance(daily_net, Mapping):
+        return False
+    return any(
+        _decimal(value, default="0") <= Decimal("0")
+        for value in cast(Mapping[Any, Any], daily_net).values()
+    )
+
+
+def _feedback_family_prior_has_hard_block(scorecard: Mapping[str, Any]) -> bool:
+    oracle_blockers = _oracle_blockers(scorecard)
+    if oracle_blockers & _FAMILY_PRIOR_HARD_BLOCK_ORACLE_BLOCKERS:
+        return True
+    if _decimal(scorecard.get("active_day_ratio"), default="1") < Decimal("1"):
+        return True
+    if _decimal(scorecard.get("positive_day_ratio"), default="1") < Decimal("1"):
+        return True
+    if _decimal(scorecard.get("best_day_share")) > Decimal("0.50"):
+        return True
+    return _feedback_daily_net_has_loss(scorecard)
+
+
+def _feedback_risk_profile_has_penalty(scorecard: Mapping[str, Any]) -> bool:
+    oracle_blockers = _oracle_blockers(scorecard)
+    if oracle_blockers & _RISK_PROFILE_FEEDBACK_ORACLE_BLOCKERS:
+        return True
+    if _decimal(scorecard.get("active_day_ratio"), default="1") < Decimal("1"):
+        return True
+    if _decimal(scorecard.get("positive_day_ratio"), default="1") < Decimal("0.60"):
+        return True
+    if _decimal(scorecard.get("best_day_share")) > Decimal("0.35"):
+        return True
+    if _decimal(scorecard.get("max_single_day_contribution_share")) > Decimal("0.35"):
+        return True
+    if _decimal(scorecard.get("max_single_symbol_contribution_share")) > Decimal(
+        "0.35"
+    ):
+        return True
+    if _decimal(scorecard.get("max_cluster_contribution_share")) > Decimal("0.40"):
+        return True
+    return False
 
 
 def _feedback_is_blocked(scorecard: Mapping[str, Any]) -> bool:
@@ -2412,6 +2634,30 @@ def _feedback_execution_signature(bundle: CandidateEvidenceBundle) -> str:
     return _string(bundle.objective_scorecard.get("execution_signature"))
 
 
+def _feedback_shape_key(bundle: CandidateEvidenceBundle) -> str:
+    return _string(bundle.objective_scorecard.get("feedback_shape_key"))
+
+
+def _feedback_risk_profile_key_from_scorecard(scorecard: Mapping[str, Any]) -> str:
+    direct_key = _string(scorecard.get("feedback_risk_profile_key"))
+    if direct_key:
+        return direct_key
+    payload = _feedback_risk_profile_key_payload(
+        family_template_id=_string(scorecard.get("family_template_id")),
+        runtime_strategy_name=_string(scorecard.get("runtime_strategy_name")),
+        execution_profile_id=_string(scorecard.get("execution_profile_id")),
+        universe_key=_string(scorecard.get("universe_key")),
+        signal_key=_string(scorecard.get("signal_key")),
+    )
+    if not any(_string(value) for value in payload.values()):
+        return ""
+    return _stable_hash(payload)
+
+
+def _feedback_risk_profile_key(bundle: CandidateEvidenceBundle) -> str:
+    return _feedback_risk_profile_key_from_scorecard(bundle.objective_scorecard)
+
+
 def _execution_signature_feedback_bundle_for_spec(
     *,
     spec: CandidateSpec,
@@ -2419,16 +2665,52 @@ def _execution_signature_feedback_bundle_for_spec(
 ) -> CandidateEvidenceBundle:
     scorecard = {
         **dict(bundle.objective_scorecard),
+        **_candidate_spec_feedback_metadata(spec),
         "feedback_match_scope": "execution_signature",
         "feedback_source_candidate_spec_id": bundle.candidate_spec_id,
-        "family_template_id": spec.family_template_id,
-        "runtime_family": spec.runtime_family,
-        "runtime_strategy_name": spec.runtime_strategy_name,
-        "execution_signature": _candidate_spec_execution_signature(spec),
     }
     return replace(
         bundle,
         candidate_spec_id=spec.candidate_spec_id,
+        candidate_id=f"signature-feedback-{bundle.candidate_id}",
+        objective_scorecard=scorecard,
+    )
+
+
+def _shape_feedback_bundle_for_spec(
+    *,
+    spec: CandidateSpec,
+    bundle: CandidateEvidenceBundle,
+) -> CandidateEvidenceBundle:
+    scorecard = {
+        **dict(bundle.objective_scorecard),
+        **_candidate_spec_feedback_metadata(spec),
+        "feedback_match_scope": "feedback_shape_key",
+        "feedback_source_candidate_spec_id": bundle.candidate_spec_id,
+    }
+    return replace(
+        bundle,
+        candidate_spec_id=spec.candidate_spec_id,
+        candidate_id=f"shape-feedback-{bundle.candidate_id}",
+        objective_scorecard=scorecard,
+    )
+
+
+def _risk_profile_feedback_bundle_for_spec(
+    *,
+    spec: CandidateSpec,
+    bundle: CandidateEvidenceBundle,
+) -> CandidateEvidenceBundle:
+    scorecard = {
+        **dict(bundle.objective_scorecard),
+        **_candidate_spec_feedback_metadata(spec),
+        "feedback_match_scope": "feedback_risk_profile_key",
+        "feedback_source_candidate_spec_id": bundle.candidate_spec_id,
+    }
+    return replace(
+        bundle,
+        candidate_spec_id=spec.candidate_spec_id,
+        candidate_id=f"risk-profile-feedback-{bundle.candidate_id}",
         objective_scorecard=scorecard,
     )
 
@@ -2440,16 +2722,14 @@ def _family_feedback_bundle_for_spec(
 ) -> CandidateEvidenceBundle:
     scorecard = {
         **dict(bundle.objective_scorecard),
+        **_candidate_spec_feedback_metadata(spec),
         "feedback_match_scope": "family_template_id",
         "feedback_source_candidate_spec_id": bundle.candidate_spec_id,
-        "family_template_id": spec.family_template_id,
-        "runtime_family": spec.runtime_family,
-        "runtime_strategy_name": spec.runtime_strategy_name,
-        "execution_signature": _candidate_spec_execution_signature(spec),
     }
     return replace(
         bundle,
         candidate_spec_id=spec.candidate_spec_id,
+        candidate_id=f"family-feedback-{bundle.candidate_id}",
         objective_scorecard=scorecard,
     )
 
@@ -2460,6 +2740,18 @@ def _pre_replay_proposal_model_and_rows(
     feedback_evidence_bundles: Sequence[CandidateEvidenceBundle] = (),
 ) -> tuple[Mapping[str, Any], list[dict[str, Any]]]:
     spec_ids = {spec.candidate_spec_id for spec in specs}
+    execution_signature_by_spec = {
+        spec.candidate_spec_id: _candidate_spec_execution_signature(spec)
+        for spec in specs
+    }
+    feedback_shape_key_by_spec = {
+        spec.candidate_spec_id: _candidate_spec_feedback_shape_key(spec)
+        for spec in specs
+    }
+    feedback_risk_profile_key_by_spec = {
+        spec.candidate_spec_id: _candidate_spec_feedback_risk_profile_key(spec)
+        for spec in specs
+    }
     feedback_by_spec: dict[str, CandidateEvidenceBundle] = {}
     for bundle in feedback_evidence_bundles:
         if bundle.candidate_spec_id not in spec_ids:
@@ -2470,10 +2762,6 @@ def _pre_replay_proposal_model_and_rows(
         ) > _feedback_bundle_sort_value(current):
             feedback_by_spec[bundle.candidate_spec_id] = bundle
 
-    execution_signature_by_spec = {
-        spec.candidate_spec_id: _candidate_spec_execution_signature(spec)
-        for spec in specs
-    }
     feedback_by_execution_signature: dict[str, CandidateEvidenceBundle] = {}
     for bundle in feedback_evidence_bundles:
         execution_signature = _feedback_execution_signature(bundle)
@@ -2495,6 +2783,59 @@ def _pre_replay_proposal_model_and_rows(
                 _execution_signature_feedback_bundle_for_spec(spec=spec, bundle=bundle)
             )
 
+    feedback_by_shape: dict[str, CandidateEvidenceBundle] = {}
+    for bundle in feedback_evidence_bundles:
+        feedback_shape_key = _feedback_shape_key(bundle)
+        if not feedback_shape_key:
+            continue
+        current = feedback_by_shape.get(feedback_shape_key)
+        if current is None or _feedback_bundle_sort_value(
+            bundle
+        ) > _feedback_bundle_sort_value(current):
+            feedback_by_shape[feedback_shape_key] = bundle
+    shape_feedback_by_spec: dict[str, CandidateEvidenceBundle] = {}
+    for spec in specs:
+        if (
+            spec.candidate_spec_id in feedback_by_spec
+            or spec.candidate_spec_id in signature_feedback_by_spec
+        ):
+            continue
+        bundle = feedback_by_shape.get(
+            feedback_shape_key_by_spec[spec.candidate_spec_id]
+        )
+        if bundle is not None:
+            shape_feedback_by_spec[spec.candidate_spec_id] = (
+                _shape_feedback_bundle_for_spec(spec=spec, bundle=bundle)
+            )
+
+    feedback_by_risk_profile: dict[str, CandidateEvidenceBundle] = {}
+    for bundle in feedback_evidence_bundles:
+        if not _feedback_risk_profile_has_penalty(bundle.objective_scorecard):
+            continue
+        risk_profile_key = _feedback_risk_profile_key(bundle)
+        if not risk_profile_key:
+            continue
+        current = feedback_by_risk_profile.get(risk_profile_key)
+        if current is None or _feedback_bundle_sort_value(
+            bundle
+        ) > _feedback_bundle_sort_value(current):
+            feedback_by_risk_profile[risk_profile_key] = bundle
+    risk_profile_feedback_by_spec: dict[str, CandidateEvidenceBundle] = {}
+    for spec in specs:
+        if (
+            spec.candidate_spec_id in feedback_by_spec
+            or spec.candidate_spec_id in signature_feedback_by_spec
+            or spec.candidate_spec_id in shape_feedback_by_spec
+        ):
+            continue
+        bundle = feedback_by_risk_profile.get(
+            feedback_risk_profile_key_by_spec[spec.candidate_spec_id]
+        )
+        if bundle is not None:
+            risk_profile_feedback_by_spec[spec.candidate_spec_id] = (
+                _risk_profile_feedback_bundle_for_spec(spec=spec, bundle=bundle)
+            )
+
     feedback_by_family: dict[str, CandidateEvidenceBundle] = {}
     for bundle in feedback_evidence_bundles:
         family_template_id = _feedback_family_template_id(bundle)
@@ -2510,6 +2851,8 @@ def _pre_replay_proposal_model_and_rows(
         if (
             spec.candidate_spec_id in feedback_by_spec
             or spec.candidate_spec_id in signature_feedback_by_spec
+            or spec.candidate_spec_id in shape_feedback_by_spec
+            or spec.candidate_spec_id in risk_profile_feedback_by_spec
         ):
             continue
         bundle = feedback_by_family.get(spec.family_template_id)
@@ -2534,6 +2877,20 @@ def _pre_replay_proposal_model_and_rows(
             bundle = signature_feedback_by_spec[candidate_spec_id]
             training_source = "feedback_execution_signature_replay"
             match_scope = "execution_signature"
+            source_spec_id = _string(
+                bundle.objective_scorecard.get("feedback_source_candidate_spec_id")
+            )
+        elif candidate_spec_id in shape_feedback_by_spec:
+            bundle = shape_feedback_by_spec[candidate_spec_id]
+            training_source = "feedback_shape_prior"
+            match_scope = "feedback_shape_key"
+            source_spec_id = _string(
+                bundle.objective_scorecard.get("feedback_source_candidate_spec_id")
+            )
+        elif candidate_spec_id in risk_profile_feedback_by_spec:
+            bundle = risk_profile_feedback_by_spec[candidate_spec_id]
+            training_source = "feedback_risk_profile_prior"
+            match_scope = "feedback_risk_profile_key"
             source_spec_id = _string(
                 bundle.objective_scorecard.get("feedback_source_candidate_spec_id")
             )
@@ -2565,6 +2922,8 @@ def _pre_replay_proposal_model_and_rows(
     feedback_bundle_by_spec = {
         **feedback_by_spec,
         **signature_feedback_by_spec,
+        **shape_feedback_by_spec,
+        **risk_profile_feedback_by_spec,
         **family_feedback_by_spec,
     }
 
@@ -2590,6 +2949,17 @@ def _pre_replay_proposal_model_and_rows(
             ):
                 return "pre_replay_mlx_signature_feedback_blocked"
             return "pre_replay_mlx_signature_feedback_penalized"
+        if source == "feedback_shape_prior" and bundle is not None:
+            if _feedback_family_prior_has_hard_block(bundle.objective_scorecard):
+                return "pre_replay_mlx_shape_feedback_blocked"
+            if is_blocked:
+                return "pre_replay_mlx_family_feedback_penalized"
+        if (
+            source == "feedback_risk_profile_prior"
+            and bundle is not None
+            and _feedback_risk_profile_has_penalty(bundle.objective_scorecard)
+        ):
+            return "pre_replay_mlx_risk_profile_feedback_penalized"
         if (
             source == "feedback_family_replay"
             and bundle is not None
@@ -2615,6 +2985,24 @@ def _pre_replay_proposal_model_and_rows(
             and _feedback_has_nonpositive_expected_value(bundle.objective_scorecard)
         ):
             return min(-1_000_000.0, target_by_spec.get(candidate_spec_id, raw_score))
+        if (
+            source == "feedback_shape_prior"
+            and bundle is not None
+            and _feedback_family_prior_has_hard_block(bundle.objective_scorecard)
+        ):
+            return min(-1_000_000.0, target_by_spec.get(candidate_spec_id, raw_score))
+        if (
+            source == "feedback_risk_profile_prior"
+            and bundle is not None
+            and _feedback_risk_profile_has_penalty(bundle.objective_scorecard)
+        ):
+            return min(-500_000.0, target_by_spec.get(candidate_spec_id, raw_score))
+        if (
+            source == "feedback_family_replay"
+            and bundle is not None
+            and _feedback_is_blocked(bundle.objective_scorecard)
+        ):
+            return min(-100_000.0, target_by_spec.get(candidate_spec_id, raw_score))
         return raw_score
 
     rows_unranked = [
@@ -2662,6 +3050,8 @@ def _pre_replay_proposal_model_and_rows(
         "feedback_execution_signature_matched_spec_count": len(
             signature_feedback_by_spec
         ),
+        "feedback_shape_matched_spec_count": len(shape_feedback_by_spec),
+        "feedback_risk_profile_matched_spec_count": len(risk_profile_feedback_by_spec),
         "feedback_family_matched_spec_count": len(family_feedback_by_spec),
         "training_source_counts": training_source_counts,
     }, rows
@@ -2742,6 +3132,7 @@ def _select_candidate_specs_for_replay(
     feedback_block_reasons = {
         "pre_replay_mlx_feedback_blocked",
         "pre_replay_mlx_signature_feedback_blocked",
+        "pre_replay_mlx_shape_feedback_blocked",
         "pre_replay_mlx_family_feedback_blocked",
     }
 
@@ -2877,6 +3268,10 @@ def _select_candidate_specs_for_replay(
             if part
         )
 
+    def spec_param_text(spec: CandidateSpec, key: str) -> str:
+        params = _mapping(spec.strategy_overrides.get("params"))
+        return _string(params.get(key))
+
     def diversity_key(
         spec: CandidateSpec, selected_so_far: Sequence[CandidateSpec]
     ) -> tuple[bool, bool, bool, bool, bool, int, int, str]:
@@ -2987,6 +3382,11 @@ def _select_candidate_specs_for_replay(
             "family_template_id": spec.family_template_id,
             "runtime_family": spec.runtime_family,
             "runtime_strategy_name": spec.runtime_strategy_name,
+            "capital_profile": spec_param_text(spec, "capital_profile") or None,
+            "feedback_remediation_profile": spec_param_text(
+                spec, "feedback_remediation_profile"
+            )
+            or None,
             "universe_key": spec_universe_key(spec),
             "signal_key": spec_signal_key(spec),
             "execution_signature": execution_signature_by_spec[spec.candidate_spec_id],
@@ -3357,13 +3757,9 @@ def _real_replay_result_from_factory_payload(
                 candidate["candidate_spec_id"] = candidate_spec_id
             spec = specs_by_id.get(candidate_spec_id)
             if spec is not None:
-                candidate.setdefault("family_template_id", spec.family_template_id)
-                candidate.setdefault("runtime_family", spec.runtime_family)
-                candidate.setdefault(
-                    "runtime_strategy_name", spec.runtime_strategy_name
-                )
-                candidate.setdefault(
-                    "execution_signature", _candidate_spec_execution_signature(spec)
+                candidate = _candidate_payload_with_feedback_metadata(
+                    candidate=candidate,
+                    spec=spec,
                 )
             if (
                 not candidate.get("promotion_readiness")
@@ -3619,6 +4015,174 @@ def _execute_real_replay_shard(plan: _ReplayShardPlan) -> _ReplayShardOutcome:
     )
 
 
+def _failed_shard_spec_ids(
+    shard_failures: Sequence[Mapping[str, Any]],
+) -> tuple[str, ...]:
+    spec_ids: list[str] = []
+    seen: set[str] = set()
+    for failure in shard_failures:
+        raw_ids = failure.get("candidate_spec_ids")
+        if not isinstance(raw_ids, Sequence) or isinstance(raw_ids, str):
+            continue
+        for raw_id in raw_ids:
+            candidate_spec_id = _string(raw_id)
+            if not candidate_spec_id or candidate_spec_id in seen:
+                continue
+            seen.add(candidate_spec_id)
+            spec_ids.append(candidate_spec_id)
+    return tuple(spec_ids)
+
+
+def _evidenced_spec_ids(
+    evidence_bundles: Sequence[CandidateEvidenceBundle],
+) -> frozenset[str]:
+    return frozenset(
+        candidate_spec_id
+        for candidate_spec_id in (
+            _string(bundle.candidate_spec_id) for bundle in evidence_bundles
+        )
+        if candidate_spec_id
+    )
+
+
+def _retry_real_replay_failed_shard_specs(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+    specs: Sequence[CandidateSpec],
+    shard_failures: Sequence[Mapping[str, Any]],
+    shard_timeout_seconds: int,
+    starting_shard_index: int,
+) -> tuple[
+    tuple[CandidateEvidenceBundle, ...],
+    tuple[Mapping[str, Any], ...],
+    tuple[Mapping[str, Any], ...],
+    Mapping[str, Any] | None,
+]:
+    retry_limit = max(0, int(getattr(args, "real_replay_failed_spec_retries", 1) or 0))
+    failed_spec_ids = _failed_shard_spec_ids(shard_failures)
+    if retry_limit <= 0 or not failed_spec_ids:
+        return (), (), tuple(shard_failures), None
+
+    spec_by_id = {spec.candidate_spec_id: spec for spec in specs}
+    retry_specs = tuple(
+        spec_by_id[candidate_spec_id]
+        for candidate_spec_id in failed_spec_ids
+        if candidate_spec_id in spec_by_id
+    )
+    if not retry_specs:
+        return (), (), tuple(shard_failures), None
+
+    configured_timeout = max(
+        0, int(getattr(args, "real_replay_retry_timeout_seconds", 0) or 0)
+    )
+    retry_timeout_seconds = configured_timeout
+    if retry_timeout_seconds <= 0 and shard_timeout_seconds > 0:
+        retry_timeout_seconds = max(shard_timeout_seconds * 2, 900)
+    retry_frontier_budget = max(
+        1,
+        int(
+            getattr(args, "real_replay_retry_max_frontier_candidates_per_spec", 1) or 1
+        ),
+    )
+
+    evidence_bundles: list[CandidateEvidenceBundle] = []
+    replay_results: list[Mapping[str, Any]] = []
+    completed_spec_ids: set[str] = set()
+    last_failure_by_spec: dict[str, Mapping[str, Any]] = {}
+    attempt_summaries: list[dict[str, Any]] = []
+    next_shard_index = starting_shard_index
+
+    for attempt in range(1, retry_limit + 1):
+        pending_specs = tuple(
+            spec
+            for spec in retry_specs
+            if spec.candidate_spec_id not in completed_spec_ids
+        )
+        if not pending_specs:
+            break
+        attempt_failures: list[dict[str, Any]] = []
+        attempt_completed: list[str] = []
+        attempt_evidence_before = len(evidence_bundles)
+        for retry_index, spec in enumerate(pending_specs, start=1):
+            next_shard_index += 1
+            retry_args = argparse.Namespace(
+                **{
+                    **vars(args),
+                    "max_candidates": 1,
+                    "top_k": 1,
+                    "max_frontier_candidates_per_spec": retry_frontier_budget,
+                    "max_total_frontier_candidates": retry_frontier_budget,
+                }
+            )
+            outcome = _execute_real_replay_shard(
+                _ReplayShardPlan(
+                    shard_index=next_shard_index,
+                    args=retry_args,
+                    output_dir=output_dir
+                    / "strategy-factory-failed-spec-retries"
+                    / f"attempt-{attempt:02d}"
+                    / f"retry-{retry_index:03d}-{spec.candidate_spec_id}",
+                    specs=(spec,),
+                    timeout_seconds=retry_timeout_seconds,
+                )
+            )
+            evidence_bundles.extend(outcome.result.evidence_bundles)
+            replay_results.extend(outcome.result.replay_results)
+            if outcome.failure is not None:
+                failure = {
+                    **dict(outcome.failure),
+                    "retry_attempt": attempt,
+                    "retry_candidate_spec_id": spec.candidate_spec_id,
+                    "retry_timeout_seconds": retry_timeout_seconds,
+                    "retry_max_frontier_candidates_per_spec": retry_frontier_budget,
+                }
+                attempt_failures.append(failure)
+                last_failure_by_spec[spec.candidate_spec_id] = failure
+                continue
+            completed_spec_ids.add(spec.candidate_spec_id)
+            last_failure_by_spec.pop(spec.candidate_spec_id, None)
+            attempt_completed.append(spec.candidate_spec_id)
+        attempt_summaries.append(
+            {
+                "attempt": attempt,
+                "requested_candidate_spec_ids": [
+                    spec.candidate_spec_id for spec in pending_specs
+                ],
+                "completed_candidate_spec_ids": attempt_completed,
+                "failure_count": len(attempt_failures),
+                "failures": attempt_failures,
+                "new_evidence_bundle_count": len(evidence_bundles)
+                - attempt_evidence_before,
+            }
+        )
+
+    deduped_retry_evidence = _dedupe_replay_evidence(evidence_bundles)
+    remaining_failures = tuple(last_failure_by_spec.values())
+    summary = {
+        "status": "failed_shard_specs_retried",
+        "schema_version": "torghut.whitepaper-autoresearch-shard-retry.v1",
+        "retry_limit": retry_limit,
+        "retry_timeout_seconds": retry_timeout_seconds,
+        "retry_max_frontier_candidates_per_spec": retry_frontier_budget,
+        "original_failure_count": len(shard_failures),
+        "requested_candidate_spec_ids": [
+            spec.candidate_spec_id for spec in retry_specs
+        ],
+        "completed_candidate_spec_ids": sorted(completed_spec_ids),
+        "evidence_candidate_spec_ids": sorted(
+            _evidenced_spec_ids(deduped_retry_evidence)
+        ),
+        "remaining_failed_candidate_spec_ids": [
+            _string(failure.get("retry_candidate_spec_id"))
+            for failure in remaining_failures
+            if _string(failure.get("retry_candidate_spec_id"))
+        ],
+        "attempts": attempt_summaries,
+    }
+    return deduped_retry_evidence, tuple(replay_results), remaining_failures, summary
+
+
 def _run_real_replay_shards(
     *,
     args: argparse.Namespace,
@@ -3664,6 +4228,27 @@ def _run_real_replay_shards(
             shard_failures.append(dict(outcome.failure))
 
     deduped_evidence = _dedupe_replay_evidence(evidence_bundles)
+    if shard_failures:
+        (
+            retry_evidence,
+            retry_replay_results,
+            remaining_failures,
+            retry_summary,
+        ) = _retry_real_replay_failed_shard_specs(
+            args=args,
+            output_dir=output_dir,
+            specs=specs,
+            shard_failures=shard_failures,
+            shard_timeout_seconds=shard_timeout_seconds,
+            starting_shard_index=len(plans),
+        )
+        if retry_evidence:
+            evidence_bundles.extend(retry_evidence)
+            deduped_evidence = _dedupe_replay_evidence(evidence_bundles)
+        replay_results.extend(retry_replay_results)
+        if retry_summary is not None:
+            replay_results.append(dict(retry_summary))
+        shard_failures = [dict(item) for item in remaining_failures]
     if shard_failures and not deduped_evidence:
         raise TimeoutError(f"real_replay_shards_failed:{len(shard_failures)}")
     if shard_failures:
@@ -4684,6 +5269,16 @@ def run_whitepaper_autoresearch_profit_target(
             ),
             "real_replay_shard_workers": int(
                 getattr(args, "real_replay_shard_workers", 1) or 1
+            ),
+            "real_replay_failed_spec_retries": int(
+                getattr(args, "real_replay_failed_spec_retries", 1) or 0
+            ),
+            "real_replay_retry_timeout_seconds": int(
+                getattr(args, "real_replay_retry_timeout_seconds", 0) or 0
+            ),
+            "real_replay_retry_max_frontier_candidates_per_spec": int(
+                getattr(args, "real_replay_retry_max_frontier_candidates_per_spec", 1)
+                or 1
             ),
             "source_jsonl": [str(path) for path in getattr(args, "source_jsonl", [])],
         }

@@ -128,6 +128,12 @@ def evidence_bundle_from_frontier_candidate(
         "runtime_family",
         "runtime_strategy_name",
         "execution_signature",
+        "execution_profile_id",
+        "execution_profile_index",
+        "feedback_risk_profile_key",
+        "feedback_shape_key",
+        "universe_key",
+        "signal_key",
     ):
         value = _string(candidate.get(key))
         if value and key not in scorecard:

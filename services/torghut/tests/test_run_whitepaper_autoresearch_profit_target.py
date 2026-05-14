@@ -117,6 +117,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             real_replay_shard_size=0,
             real_replay_shard_timeout_seconds=0,
             real_replay_shard_workers=1,
+            real_replay_failed_spec_retries=1,
+            real_replay_retry_timeout_seconds=0,
+            real_replay_retry_max_frontier_candidates_per_spec=1,
             train_days=6,
             holdout_days=3,
             full_window_start_date="2026-02-23",
@@ -1164,6 +1167,295 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(selected, [matching_spec])
         self.assertEqual(selection["budget"]["selected_count"], 1)
         self.assertEqual(selection["budget"]["eligible_candidate_count"], 1)
+
+    def test_pre_replay_ranker_blocks_shape_and_penalizes_risk_profile_feedback(
+        self,
+    ) -> None:
+        failed_spec = self._candidate_spec("spec-daily-coverage-source")
+        same_shape_probe = replace(
+            failed_spec,
+            candidate_spec_id="spec-same-shape-probe",
+            hypothesis_id="hyp-spec-same-shape-probe",
+            hard_vetoes={"required_min_daily_notional": "400000"},
+        )
+        different_shape_same_risk_probe = replace(
+            failed_spec,
+            candidate_spec_id="spec-risk-profile-probe",
+            hypothesis_id="hyp-spec-risk-profile-probe",
+            hard_vetoes={"required_min_daily_notional": "450000"},
+            strategy_overrides={
+                **failed_spec.strategy_overrides,
+                "params": {
+                    **cast(dict[str, Any], failed_spec.strategy_overrides["params"]),
+                    "entry_minute_after_open": "90",
+                },
+            },
+        )
+        clean_probe = self._candidate_spec(
+            "spec-clean-probe",
+            family_template_id="breakout_reclaim_v2",
+            entry_minute_after_open="120",
+            selection_mode="continuation",
+        )
+        self.assertNotEqual(
+            runner._candidate_spec_execution_signature(failed_spec),
+            runner._candidate_spec_execution_signature(same_shape_probe),
+        )
+        self.assertEqual(
+            runner._candidate_spec_feedback_shape_key(failed_spec),
+            runner._candidate_spec_feedback_shape_key(same_shape_probe),
+        )
+        self.assertNotEqual(
+            runner._candidate_spec_feedback_shape_key(failed_spec),
+            runner._candidate_spec_feedback_shape_key(different_shape_same_risk_probe),
+        )
+        self.assertEqual(
+            runner._candidate_spec_feedback_risk_profile_key(failed_spec),
+            runner._candidate_spec_feedback_risk_profile_key(
+                different_shape_same_risk_probe
+            ),
+        )
+        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=failed_spec.candidate_spec_id,
+            candidate=runner._candidate_payload_with_feedback_metadata(
+                spec=failed_spec,
+                candidate={
+                    "candidate_id": "cand-daily-coverage-source",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "959.07",
+                        "active_day_ratio": "0.2",
+                        "positive_day_ratio": "0.2",
+                        "negative_day_count": 0,
+                        "best_day_share": "0.92",
+                        "daily_net": {
+                            "2026-05-01": "4795.37",
+                            "2026-05-04": "0",
+                        },
+                    },
+                },
+            ),
+            dataset_snapshot_id="snap-daily-coverage-feedback",
+            result_path="feedback://daily-coverage",
+        )
+
+        model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(same_shape_probe, different_shape_same_risk_probe, clean_probe),
+            feedback_evidence_bundles=(feedback_bundle,),
+        )
+
+        row_by_spec = {row["candidate_spec_id"]: row for row in rows}
+        self.assertEqual(model["feedback_shape_matched_spec_count"], 1)
+        self.assertEqual(model["feedback_risk_profile_matched_spec_count"], 1)
+        self.assertEqual(
+            row_by_spec[same_shape_probe.candidate_spec_id]["training_source"],
+            "feedback_shape_prior",
+        )
+        self.assertEqual(
+            row_by_spec[same_shape_probe.candidate_spec_id]["selection_reason"],
+            "pre_replay_mlx_shape_feedback_blocked",
+        )
+        self.assertLessEqual(
+            Decimal(
+                str(row_by_spec[same_shape_probe.candidate_spec_id]["proposal_score"])
+            ),
+            Decimal("-999999"),
+        )
+        self.assertEqual(
+            row_by_spec[different_shape_same_risk_probe.candidate_spec_id][
+                "training_source"
+            ],
+            "feedback_risk_profile_prior",
+        )
+        self.assertEqual(
+            row_by_spec[different_shape_same_risk_probe.candidate_spec_id][
+                "selection_reason"
+            ],
+            "pre_replay_mlx_risk_profile_feedback_penalized",
+        )
+        self.assertLessEqual(
+            Decimal(
+                str(
+                    row_by_spec[different_shape_same_risk_probe.candidate_spec_id][
+                        "proposal_score"
+                    ]
+                )
+            ),
+            Decimal("-500000"),
+        )
+        self.assertEqual(
+            row_by_spec[clean_probe.candidate_spec_id]["training_source"],
+            "synthetic_prior",
+        )
+
+    def test_feedback_shape_prior_penalizes_cash_blocks_without_family_veto(
+        self,
+    ) -> None:
+        failed_spec = self._candidate_spec("spec-shape-cash-source")
+        same_shape_probe = replace(
+            failed_spec,
+            candidate_spec_id="spec-shape-cash-probe",
+            hypothesis_id="hyp-spec-shape-cash-probe",
+            hard_vetoes={"required_min_daily_notional": "400000"},
+        )
+        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=failed_spec.candidate_spec_id,
+            candidate=runner._candidate_payload_with_feedback_metadata(
+                spec=failed_spec,
+                candidate={
+                    "candidate_id": "cand-shape-cash-source",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "250",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "1",
+                        "best_day_share": "0.25",
+                        "min_cash": "-1",
+                    },
+                },
+            ),
+            dataset_snapshot_id="snap-shape-cash-feedback",
+            result_path="feedback://shape-cash",
+        )
+
+        model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(same_shape_probe,),
+            feedback_evidence_bundles=(feedback_bundle,),
+        )
+
+        self.assertEqual(model["feedback_shape_matched_spec_count"], 1)
+        self.assertEqual(rows[0]["training_source"], "feedback_shape_prior")
+        self.assertEqual(
+            rows[0]["selection_reason"],
+            "pre_replay_mlx_family_feedback_penalized",
+        )
+
+    def test_feedback_scorecard_helpers_cover_veto_and_penalty_edges(self) -> None:
+        invalid_universe_spec = replace(
+            self._candidate_spec("spec-invalid-universe"),
+            strategy_overrides={
+                **self._candidate_spec("spec-invalid-universe").strategy_overrides,
+                "universe_symbols": "NVDA",
+            },
+        )
+        self.assertEqual(runner._candidate_spec_universe_key(invalid_universe_spec), "")
+        self.assertTrue(
+            runner._feedback_scorecard_has_hard_veto(
+                {
+                    "profit_target_oracle": {
+                        "blockers": ["positive_day_ratio_below_oracle"]
+                    }
+                }
+            )
+        )
+        self.assertTrue(
+            runner._feedback_scorecard_has_hard_veto({"oracle_passed": False})
+        )
+        self.assertFalse(runner._feedback_daily_net_has_loss({"daily_net": "bad"}))
+        self.assertTrue(
+            runner._feedback_family_prior_has_hard_block(
+                {
+                    "profit_target_oracle": {
+                        "blockers": ["active_day_ratio_below_oracle"]
+                    }
+                }
+            )
+        )
+        self.assertTrue(
+            runner._feedback_family_prior_has_hard_block({"positive_day_ratio": "0.5"})
+        )
+        self.assertTrue(
+            runner._feedback_family_prior_has_hard_block({"best_day_share": "0.51"})
+        )
+        self.assertTrue(
+            runner._feedback_family_prior_has_hard_block(
+                {
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "1",
+                    "best_day_share": "0.25",
+                    "daily_net": {"2026-05-01": "0"},
+                }
+            )
+        )
+        for scorecard in (
+            {
+                "profit_target_oracle": {
+                    "blockers": ["max_single_day_contribution_share_failed"]
+                }
+            },
+            {"best_day_share": "0.36"},
+            {"max_single_day_contribution_share": "0.36"},
+            {"max_single_symbol_contribution_share": "0.36"},
+            {"max_cluster_contribution_share": "0.41"},
+        ):
+            self.assertTrue(runner._feedback_risk_profile_has_penalty(scorecard))
+        self.assertEqual(runner._feedback_risk_profile_key_from_scorecard({}), "")
+
+        spec = self._candidate_spec("spec-empty-risk-key")
+        orphan_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-unmatched-risk-feedback",
+            candidate={
+                "candidate_id": "cand-unmatched-risk-feedback",
+                "objective_scorecard": {"positive_day_ratio": "0.5"},
+            },
+            dataset_snapshot_id="snap-empty-risk-key",
+            result_path="feedback://empty-risk-key",
+        )
+        model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(spec,),
+            feedback_evidence_bundles=(orphan_bundle,),
+        )
+
+        self.assertEqual(model["feedback_risk_profile_matched_spec_count"], 0)
+        self.assertEqual(rows[0]["training_source"], "synthetic_prior")
+
+    def test_real_replay_evidence_carries_feedback_shape_metadata(self) -> None:
+        spec = self._candidate_spec("spec-real-replay-shape-metadata")
+        with TemporaryDirectory() as tmpdir:
+            result_path = Path(tmpdir) / "result.json"
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "top": [
+                            {
+                                "candidate_id": "cand-real-replay-shape",
+                                "objective_scorecard": {
+                                    "net_pnl_per_day": "650",
+                                    "active_day_ratio": "1",
+                                    "positive_day_ratio": "1",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            replay = runner._real_replay_result_from_factory_payload(
+                {
+                    "experiments": [
+                        {
+                            "candidate_spec_id": spec.candidate_spec_id,
+                            "result_path": str(result_path),
+                            "dataset_snapshot_id": "snap-real-replay-shape",
+                        }
+                    ]
+                },
+                specs_by_id={spec.candidate_spec_id: spec},
+            )
+
+        self.assertEqual(len(replay.evidence_bundles), 1)
+        scorecard = replay.evidence_bundles[0].objective_scorecard
+        self.assertEqual(
+            scorecard["feedback_shape_key"],
+            runner._candidate_spec_feedback_shape_key(spec),
+        )
+        self.assertEqual(
+            scorecard["feedback_risk_profile_key"],
+            runner._candidate_spec_feedback_risk_profile_key(spec),
+        )
+        self.assertEqual(
+            scorecard["execution_signature"],
+            runner._candidate_spec_execution_signature(spec),
+        )
 
     def test_candidate_selection_blocks_synthetic_nonpositive_expected_value(
         self,
@@ -2798,6 +3090,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             args.real_replay_shard_size = 2
             args.real_replay_shard_timeout_seconds = 900
             args.real_replay_shard_workers = 3
+            args.real_replay_failed_spec_retries = 2
+            args.real_replay_retry_timeout_seconds = 1800
+            args.real_replay_retry_max_frontier_candidates_per_spec = 3
             args.shadow_validation_artifact = Path("/tmp/shadow-validation.json")
             remediation = {
                 "next_actions": [
@@ -2826,6 +3121,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(plan["flags"]["--real-replay-shard-size"], "2")
         self.assertEqual(plan["flags"]["--real-replay-shard-timeout-seconds"], "900")
         self.assertEqual(plan["flags"]["--real-replay-shard-workers"], "3")
+        self.assertEqual(plan["flags"]["--real-replay-failed-spec-retries"], "2")
+        self.assertEqual(plan["flags"]["--real-replay-retry-timeout-seconds"], "1800")
+        self.assertEqual(
+            plan["flags"]["--real-replay-retry-max-frontier-candidates-per-spec"],
+            "3",
+        )
         self.assertEqual(
             plan["flags"]["--shadow-validation-artifact"],
             "/tmp/shadow-validation.json",
@@ -3593,6 +3894,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             args.replay_mode = "real"
             args.real_replay_shard_size = 1
             args.real_replay_shard_timeout_seconds = 7
+            args.real_replay_failed_spec_retries = 0
             with patch.object(runner, "_run_real_replay", side_effect=fake_replay):
                 result = runner._run_replay_with_optional_timeout(
                     args=args,
@@ -3617,6 +3919,238 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(shard_summary["shard_workers"], 1)
         self.assertIn(
             "TimeoutError:real_replay_timeout_seconds:7", result.failure_reasons
+        )
+
+    def test_sharded_real_replay_retries_failed_specs_individually(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
+                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+            )
+            compilation = runner.compile_whitepaper_candidate_specs(
+                hypothesis_cards=cards,
+                family_template_dir=Path("config/trading/families"),
+                seed_sweep_dir=Path("config/trading"),
+            )
+            specs = compilation.executable_specs[:3]
+            calls: list[tuple[list[str], int, int, int]] = []
+
+            def fake_replay(
+                args: Namespace,
+                *,
+                output_dir: Path,
+                specs: Sequence[runner.CandidateSpec],
+            ) -> runner.EpochReplayResult:
+                spec_ids = [spec.candidate_spec_id for spec in specs]
+                calls.append(
+                    (
+                        spec_ids,
+                        int(args.max_candidates),
+                        int(args.top_k),
+                        int(args.max_total_frontier_candidates),
+                    )
+                )
+                if len(calls) == 2:
+                    raise TimeoutError("real_replay_timeout_seconds:7")
+                bundle = runner.evidence_bundle_from_frontier_candidate(
+                    candidate_spec_id=spec_ids[0],
+                    candidate={
+                        "candidate_id": f"cand-{spec_ids[0]}",
+                        "objective_scorecard": {
+                            "net_pnl_per_day": "10",
+                            "active_day_ratio": "1",
+                            "positive_day_ratio": "1",
+                        },
+                    },
+                    dataset_snapshot_id="snap-shard",
+                    result_path=str(output_dir / f"{spec_ids[0]}.json"),
+                )
+                return runner.EpochReplayResult(
+                    evidence_bundles=(bundle,),
+                    replay_results=({"status": "ok", "spec_ids": spec_ids},),
+                )
+
+            args = self._args(output_dir)
+            args.replay_mode = "real"
+            args.real_replay_shard_size = 1
+            args.real_replay_shard_timeout_seconds = 7
+            args.real_replay_failed_spec_retries = 1
+            args.real_replay_retry_timeout_seconds = 11
+            args.real_replay_retry_max_frontier_candidates_per_spec = 1
+            with patch.object(runner, "_run_real_replay", side_effect=fake_replay):
+                result = runner._run_replay_with_optional_timeout(
+                    args=args,
+                    output_dir=output_dir,
+                    specs=specs,
+                )
+
+        self.assertEqual(len(calls), 4)
+        self.assertFalse(result.incomplete)
+        self.assertEqual(len(result.evidence_bundles), 3)
+        self.assertEqual(calls[-1][1:], (1, 1, 1))
+        retry_summary = next(
+            item
+            for item in result.replay_results
+            if item.get("status") == "failed_shard_specs_retried"
+        )
+        self.assertEqual(retry_summary["retry_timeout_seconds"], 11)
+        self.assertEqual(
+            retry_summary["completed_candidate_spec_ids"],
+            [calls[1][0][0]],
+        )
+        self.assertEqual(result.failure_reasons, ())
+
+    def test_failed_shard_retry_skips_malformed_and_unknown_spec_ids(self) -> None:
+        self.assertEqual(
+            runner._failed_shard_spec_ids(
+                (
+                    {"candidate_spec_ids": "spec-not-a-list"},
+                    {"candidate_spec_ids": ["spec-a", "", "spec-a", "spec-b"]},
+                )
+            ),
+            ("spec-a", "spec-b"),
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            args = self._args(Path(tmpdir) / "epoch")
+            evidence, replay_results, failures, summary = (
+                runner._retry_real_replay_failed_shard_specs(
+                    args=args,
+                    output_dir=Path(tmpdir) / "epoch",
+                    specs=(self._candidate_spec("spec-known"),),
+                    shard_failures=({"candidate_spec_ids": ["spec-missing"]},),
+                    shard_timeout_seconds=7,
+                    starting_shard_index=1,
+                )
+            )
+
+        self.assertEqual(evidence, ())
+        self.assertEqual(replay_results, ())
+        self.assertEqual(failures, ({"candidate_spec_ids": ["spec-missing"]},))
+        self.assertIsNone(summary)
+
+    def test_failed_shard_retry_defaults_timeout_and_reports_retry_failures(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-retry-fails")
+        calls: list[tuple[int, int, int]] = []
+
+        def fake_execute(
+            plan: runner._ReplayShardPlan,
+        ) -> runner._ReplayShardOutcome:
+            calls.append(
+                (
+                    plan.shard_index,
+                    plan.timeout_seconds,
+                    int(plan.args.max_total_frontier_candidates),
+                )
+            )
+            return runner._ReplayShardOutcome(
+                shard_index=plan.shard_index,
+                candidate_spec_ids=(spec.candidate_spec_id,),
+                result=runner.EpochReplayResult(
+                    evidence_bundles=(),
+                    replay_results=(),
+                ),
+                failure={
+                    "shard_index": plan.shard_index,
+                    "candidate_spec_ids": [spec.candidate_spec_id],
+                    "reason": "nested_shard_incomplete",
+                },
+            )
+
+        with TemporaryDirectory() as tmpdir:
+            args = self._args(Path(tmpdir) / "epoch")
+            args.real_replay_failed_spec_retries = 2
+            args.real_replay_retry_timeout_seconds = 0
+            args.real_replay_retry_max_frontier_candidates_per_spec = 2
+            with patch.object(
+                runner, "_execute_real_replay_shard", side_effect=fake_execute
+            ):
+                evidence, replay_results, failures, summary = (
+                    runner._retry_real_replay_failed_shard_specs(
+                        args=args,
+                        output_dir=Path(tmpdir) / "epoch",
+                        specs=(spec,),
+                        shard_failures=(
+                            {"candidate_spec_ids": [spec.candidate_spec_id]},
+                        ),
+                        shard_timeout_seconds=7,
+                        starting_shard_index=3,
+                    )
+                )
+
+        self.assertEqual(evidence, ())
+        self.assertEqual(replay_results, ())
+        self.assertEqual(calls, [(4, 900, 2), (5, 900, 2)])
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0]["retry_attempt"], 2)
+        self.assertEqual(failures[0]["retry_candidate_spec_id"], spec.candidate_spec_id)
+        self.assertEqual(failures[0]["retry_timeout_seconds"], 900)
+        self.assertEqual(failures[0]["retry_max_frontier_candidates_per_spec"], 2)
+        assert summary is not None
+        self.assertEqual(len(summary["attempts"]), 2)
+        self.assertEqual(
+            summary["remaining_failed_candidate_spec_ids"], [spec.candidate_spec_id]
+        )
+
+    def test_failed_shard_retry_stops_after_all_specs_complete(self) -> None:
+        spec = self._candidate_spec("spec-retry-completes")
+        calls: list[int] = []
+
+        def fake_execute(
+            plan: runner._ReplayShardPlan,
+        ) -> runner._ReplayShardOutcome:
+            calls.append(plan.shard_index)
+            bundle = runner.evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=spec.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-retry-completes",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "10",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "1",
+                    },
+                },
+                dataset_snapshot_id="snap-retry-completes",
+                result_path="feedback://retry-completes",
+            )
+            return runner._ReplayShardOutcome(
+                shard_index=plan.shard_index,
+                candidate_spec_ids=(spec.candidate_spec_id,),
+                result=runner.EpochReplayResult(
+                    evidence_bundles=(bundle,),
+                    replay_results=({"status": "ok"},),
+                ),
+            )
+
+        with TemporaryDirectory() as tmpdir:
+            args = self._args(Path(tmpdir) / "epoch")
+            args.real_replay_failed_spec_retries = 2
+            with patch.object(
+                runner, "_execute_real_replay_shard", side_effect=fake_execute
+            ):
+                evidence, replay_results, failures, summary = (
+                    runner._retry_real_replay_failed_shard_specs(
+                        args=args,
+                        output_dir=Path(tmpdir) / "epoch",
+                        specs=(spec,),
+                        shard_failures=(
+                            {"candidate_spec_ids": [spec.candidate_spec_id]},
+                        ),
+                        shard_timeout_seconds=7,
+                        starting_shard_index=3,
+                    )
+                )
+
+        self.assertEqual(calls, [4])
+        self.assertEqual(evidence[0].candidate_spec_id, spec.candidate_spec_id)
+        self.assertEqual(replay_results, ({"status": "ok"},))
+        self.assertEqual(failures, ())
+        assert summary is not None
+        self.assertEqual(len(summary["attempts"]), 1)
+        self.assertEqual(
+            summary["completed_candidate_spec_ids"], [spec.candidate_spec_id]
         )
 
     def test_real_replay_shards_use_isolated_output_dirs_and_bounded_budget(

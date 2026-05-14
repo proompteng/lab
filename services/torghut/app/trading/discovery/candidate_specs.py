@@ -1951,6 +1951,188 @@ def _capital_limited_profile_values(profile: Mapping[str, Any]) -> tuple[str, st
     return _format_profile_budget(max_notional), _format_profile_budget(max_position)
 
 
+def _decimal_profile_param(
+    params: Mapping[str, Any],
+    key: str,
+    *,
+    default: Decimal,
+) -> Decimal:
+    try:
+        return Decimal(str(params.get(key) or default))
+    except Exception:
+        return default
+
+
+def _int_profile_param(params: Mapping[str, Any], key: str, *, default: int) -> int:
+    try:
+        return int(Decimal(str(params.get(key) or default)))
+    except Exception:
+        return default
+
+
+def _clamped_profile_decimal(
+    *,
+    params: Mapping[str, Any],
+    key: str,
+    default: Decimal,
+    delta: Decimal,
+    lower: Decimal,
+    upper: Decimal,
+    places: Decimal = Decimal("0.01"),
+) -> str:
+    value = _decimal_profile_param(params, key, default=default) + delta
+    return _format_profile_budget(min(upper, max(lower, value)).quantize(places))
+
+
+def _cash_constrain_profile(
+    profile: dict[str, Any],
+    *,
+    capital_profile: str,
+    label: str,
+) -> dict[str, Any]:
+    params = _mapping(profile.get("params"))
+    max_notional, max_position = _capital_limited_profile_values(profile)
+    profile["max_notional_per_trade"] = max_notional
+    profile["max_position_pct_equity"] = max_position
+    params["capital_profile"] = capital_profile
+    params["feedback_remediation_profile"] = label
+    params["max_gross_exposure_pct_equity"] = "1.0"
+    profile["params"] = params
+    return profile
+
+
+def _daily_coverage_feedback_escape_profile(
+    profile: Mapping[str, Any],
+) -> dict[str, Any]:
+    next_profile = json.loads(json.dumps(profile))
+    params = _mapping(next_profile.get("params"))
+    params["max_entries_per_session"] = str(
+        max(2, min(4, _int_profile_param(params, "max_entries_per_session", default=2)))
+    )
+    params["max_concurrent_positions"] = str(
+        max(1, min(3, _profile_rank_count_floor(next_profile)))
+    )
+    params["entry_cooldown_seconds"] = str(
+        max(300, _int_profile_param(params, "entry_cooldown_seconds", default=600))
+    )
+    params["long_stop_loss_bps"] = str(
+        min(8, max(4, _int_profile_param(params, "long_stop_loss_bps", default=6)))
+    )
+    params["short_stop_loss_bps"] = str(
+        min(8, max(4, _int_profile_param(params, "short_stop_loss_bps", default=6)))
+    )
+    params["max_session_negative_exit_bps"] = str(
+        min(
+            8,
+            max(
+                3,
+                _int_profile_param(params, "max_session_negative_exit_bps", default=4),
+            ),
+        )
+    )
+    next_profile["params"] = params
+    return _cash_constrain_profile(
+        next_profile,
+        capital_profile="feedback_daily_coverage_cash_constrained_1x",
+        label="daily_coverage_feedback_escape",
+    )
+
+
+def _consistency_guard_feedback_escape_profile(
+    profile: Mapping[str, Any],
+) -> dict[str, Any]:
+    next_profile = json.loads(json.dumps(profile))
+    params = _mapping(next_profile.get("params"))
+    params["entry_cooldown_seconds"] = str(
+        max(1200, _int_profile_param(params, "entry_cooldown_seconds", default=1200))
+    )
+    params["long_stop_loss_bps"] = str(
+        min(6, max(4, _int_profile_param(params, "long_stop_loss_bps", default=6)))
+    )
+    params["short_stop_loss_bps"] = str(
+        min(6, max(4, _int_profile_param(params, "short_stop_loss_bps", default=6)))
+    )
+    params["max_session_negative_exit_bps"] = str(
+        min(
+            5,
+            max(
+                2,
+                _int_profile_param(params, "max_session_negative_exit_bps", default=3),
+            ),
+        )
+    )
+    next_profile["max_position_pct_equity"] = _clamped_profile_decimal(
+        params=next_profile,
+        key="max_position_pct_equity",
+        default=Decimal("0.25"),
+        delta=Decimal("-0.05"),
+        lower=Decimal("0.05"),
+        upper=Decimal("0.35"),
+    )
+    next_profile["params"] = params
+    return _cash_constrain_profile(
+        next_profile,
+        capital_profile="feedback_consistency_guard_cash_constrained_1x",
+        label="consistency_guard_feedback_escape",
+    )
+
+
+def _turnover_coverage_feedback_escape_profile(
+    profile: Mapping[str, Any],
+) -> dict[str, Any]:
+    next_profile = json.loads(json.dumps(profile))
+    params = _mapping(next_profile.get("params"))
+    current_entries = _int_profile_param(params, "max_entries_per_session", default=3)
+    params["max_entries_per_session"] = str(max(2, min(5, current_entries + 1)))
+    params["max_concurrent_positions"] = str(
+        max(1, min(2, _profile_rank_count_floor(next_profile)))
+    )
+    current_cooldown = _int_profile_param(params, "entry_cooldown_seconds", default=480)
+    params["entry_cooldown_seconds"] = str(max(180, min(900, current_cooldown)))
+    current_hold_seconds = _int_profile_param(params, "max_hold_seconds", default=1800)
+    params["max_hold_seconds"] = str(max(300, min(2400, current_hold_seconds)))
+    params["long_stop_loss_bps"] = str(
+        min(6, max(3, _int_profile_param(params, "long_stop_loss_bps", default=5)))
+    )
+    params["short_stop_loss_bps"] = str(
+        min(6, max(3, _int_profile_param(params, "short_stop_loss_bps", default=5)))
+    )
+    params["max_session_negative_exit_bps"] = str(
+        min(
+            5,
+            max(
+                2,
+                _int_profile_param(params, "max_session_negative_exit_bps", default=3),
+            ),
+        )
+    )
+    next_profile["params"] = params
+    return _cash_constrain_profile(
+        next_profile,
+        capital_profile="feedback_turnover_coverage_cash_constrained_1x",
+        label="turnover_coverage_feedback_escape",
+    )
+
+
+def _portfolio_feedback_escape_execution_profiles(
+    profiles: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    expanded: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for profile in profiles:
+        for next_profile in (
+            _daily_coverage_feedback_escape_profile(profile),
+            _consistency_guard_feedback_escape_profile(profile),
+            _turnover_coverage_feedback_escape_profile(profile),
+        ):
+            key = _stable_hash(next_profile)
+            if key in seen:
+                continue
+            seen.add(key)
+            expanded.append(next_profile)
+    return tuple(expanded)
+
+
 def _capital_constrained_execution_profiles(
     profiles: Sequence[Mapping[str, Any]],
 ) -> tuple[dict[str, Any], ...]:
@@ -2297,9 +2479,16 @@ def _execution_profiles_for_target(
         family_template_id, ()
     )
     exploratory_profiles = (*base_profiles, *portfolio_profiles)
+    capital_constrained_profiles = _capital_constrained_execution_profiles(
+        exploratory_profiles
+    )
+    feedback_escape_profiles = _portfolio_feedback_escape_execution_profiles(
+        exploratory_profiles
+    )
     return (
         *exploratory_profiles,
-        *_capital_constrained_execution_profiles(exploratory_profiles),
+        *capital_constrained_profiles,
+        *feedback_escape_profiles,
     )
 
 
