@@ -1022,6 +1022,62 @@ class TestTradingApi(TestCase):
         self.assertIn("tca", call_order)
         jangar_status_fetch.assert_not_called()
 
+    def test_revenue_repair_hydrates_jangar_verify_foreclosure_board(self) -> None:
+        board = {
+            "schema_version": "jangar.verify-trust-foreclosure-board.v1",
+            "board_id": "verify-trust-foreclosure-board:agents:test",
+            "fresh_until": "2026-05-14T16:30:00Z",
+            "execution_trust_status": "degraded",
+            "source_rollout_truth_state": "converged",
+            "foreclosure_tickets": [
+                {
+                    "ticket_id": "verify-trust-foreclosure-ticket:test",
+                    "state": "open",
+                    "required_output_receipt": (
+                        "jangar.verify-trust-foreclosure-ticket.v1"
+                    ),
+                }
+            ],
+        }
+
+        def _build_digest(
+            *,
+            readyz_payload: dict[str, object],
+            status_payload: dict[str, object],
+        ) -> dict[str, object]:
+            self.assertEqual(readyz_payload["status"], "degraded")
+            return {
+                "schema_version": "torghut.revenue-repair-digest.v1",
+                "verify_trust_foreclosure_board": status_payload.get(
+                    "verify_trust_foreclosure_board"
+                ),
+            }
+
+        with (
+            patch(
+                "app.main._evaluate_trading_health_payload",
+                return_value=({"status": "degraded"}, 503),
+            ),
+            patch(
+                "app.main.trading_status",
+                return_value={
+                    "mode": "live",
+                    "pipeline_mode": "simple",
+                    "build": {"commit": "source-sha"},
+                },
+            ),
+            patch(
+                "app.main._load_jangar_verify_trust_foreclosure_board",
+                return_value=board,
+            ),
+            patch("app.main.build_revenue_repair_digest", side_effect=_build_digest),
+        ):
+            response = self.client.get("/trading/revenue-repair")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["verify_trust_foreclosure_board"], board)
+
     def test_trading_consumer_evidence_avoids_recursive_jangar_status_fetch(
         self,
     ) -> None:
