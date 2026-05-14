@@ -647,11 +647,19 @@ the closure board id, selected hypothesis, required settlement receipt, active d
 validation command, and rollback target so it matches `material_gate_digest.alpha_closure_carry` and denies duplicate
 closure launches before another runner pod is created.
 
+When Torghut publishes the newer `no_delta_repair_reentry_auction` ref, the verify-trust board uses that auction as the
+first alpha-repair reentry authority. The auction carries the active no-delta release key, selected hypothesis, selected
+value gate, selected ticket if a release condition changed, and the compact denial reason set from
+`docs/agents/designs/201-jangar-verify-trust-foreclosure-and-alpha-repair-reentry-2026-05-14.md`. This keeps `/ready`
+serving semantics unchanged while making material dispatch and handoff evidence name the same Torghut auction that
+`/trading/revenue-repair` exposes.
+
 Validation:
 
 ```bash
 curl -fsS http://localhost:8080/ready | jq '.verify_trust_foreclosure_board'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.verify_trust_foreclosure_board.alpha_repair_reentry_admission'
+curl -fsS http://torghut.torghut.svc.cluster.local/trading/consumer-evidence | jq '.no_delta_repair_reentry_auction'
 curl -fsS http://torghut.torghut.svc.cluster.local/trading/consumer-evidence | jq '.alpha_repair_closure_board'
 ```
 

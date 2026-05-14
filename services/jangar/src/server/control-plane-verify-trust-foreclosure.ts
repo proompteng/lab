@@ -89,6 +89,7 @@ const freshUntilFor = (input: VerifyTrustForeclosureInput) => {
     input.sourceServingContractVerdictExchange.fresh_until,
     input.torghutConsumerEvidence.fresh_until,
     input.torghutConsumerEvidence.alpha_repair_closure_board?.fresh_until,
+    input.torghutConsumerEvidence.no_delta_repair_reentry_auction?.fresh_until,
     input.torghutConsumerEvidence.alpha_readiness_settlement_conveyor?.fresh_until,
     input.torghutConsumerEvidence.alpha_repair_dividend_ledger?.fresh_until,
     input.revenueRepairSettlementCustody.fresh_until,
@@ -125,7 +126,10 @@ const topRepairQueueItemIsAlpha = (status: TorghutConsumerEvidenceStatus) => {
 
 const alphaClosureBoard = (status: TorghutConsumerEvidenceStatus) => status.alpha_repair_closure_board ?? null
 
+const noDeltaReentryAuction = (status: TorghutConsumerEvidenceStatus) => status.no_delta_repair_reentry_auction ?? null
+
 const selectedValueGate = (status: TorghutConsumerEvidenceStatus) =>
+  noDeltaReentryAuction(status)?.selected_value_gate ??
   alphaClosureBoard(status)?.selected_value_gate ??
   status.alpha_repair_dividend_ledger?.selected_value_gate ??
   status.alpha_readiness_settlement_conveyor?.selected_value_gate ??
@@ -133,12 +137,14 @@ const selectedValueGate = (status: TorghutConsumerEvidenceStatus) =>
   null
 
 const selectedHypothesisId = (status: TorghutConsumerEvidenceStatus) =>
+  noDeltaReentryAuction(status)?.selected_hypothesis_id ??
   alphaClosureBoard(status)?.selected_hypothesis_id ??
   status.alpha_repair_dividend_ledger?.selected_hypothesis_id ??
   status.alpha_readiness_settlement_conveyor?.selected_hypothesis_id ??
   null
 
 const requiredOutputReceipt = (status: TorghutConsumerEvidenceStatus) =>
+  noDeltaReentryAuction(status)?.required_output_receipt ??
   alphaClosureBoard(status)?.required_settlement_receipt ??
   alphaClosureBoard(status)?.required_output_receipt ??
   status.alpha_readiness_settlement_conveyor?.required_receipt ??
@@ -147,6 +153,8 @@ const requiredOutputReceipt = (status: TorghutConsumerEvidenceStatus) =>
   null
 
 const validationCommand = (status: TorghutConsumerEvidenceStatus) =>
+  noDeltaReentryAuction(status)?.validation_command ??
+  (noDeltaReentryAuction(status) ? `curl -fsS ${status.endpoint} | jq '.no_delta_repair_reentry_auction'` : null) ??
   alphaClosureBoard(status)?.validation_commands[0] ??
   (alphaClosureBoard(status) ? `curl -fsS ${status.endpoint} | jq '.alpha_repair_closure_board'` : null) ??
   status.alpha_repair_dividend_ledger?.validation_command ??
@@ -155,6 +163,7 @@ const validationCommand = (status: TorghutConsumerEvidenceStatus) =>
   null
 
 const alphaRollbackTarget = (status: TorghutConsumerEvidenceStatus) =>
+  noDeltaReentryAuction(status)?.rollback_target ??
   alphaClosureBoard(status)?.rollback_target ??
   status.alpha_repair_dividend_ledger?.rollback_target ??
   status.alpha_readiness_settlement_conveyor?.rollback_target ??
@@ -181,6 +190,14 @@ const alphaClosureReleaseKey = (status: TorghutConsumerEvidenceStatus) => {
 }
 
 const activeNoDeltaReleaseKey = (status: TorghutConsumerEvidenceStatus) => {
+  const auction = noDeltaReentryAuction(status)
+  if (
+    auction?.active_no_delta_release_key &&
+    (auction.reentry_decision === 'deny' || auction.reason_codes.includes('active_no_delta_release_key'))
+  ) {
+    return auction.active_no_delta_release_key
+  }
+
   const closureKey = alphaClosureReleaseKey(status)
   if (closureKey) return closureKey
 
@@ -193,6 +210,13 @@ const activeNoDeltaReleaseKey = (status: TorghutConsumerEvidenceStatus) => {
 }
 
 const releaseKeyState = (status: TorghutConsumerEvidenceStatus): AlphaRepairReentryReleaseKeyState => {
+  const auction = noDeltaReentryAuction(status)
+  if (auction?.active_no_delta_release_key) {
+    if (auction.reentry_decision === 'allow' || auction.selected_ticket_id) return 'changed'
+    if (activeNoDeltaReleaseKey(status)) return 'active'
+    return 'clear'
+  }
+
   const dividend = status.alpha_repair_dividend_ledger ?? null
   const conveyor = status.alpha_readiness_settlement_conveyor ?? null
   if (activeNoDeltaReleaseKey(status)) return 'active'
@@ -278,6 +302,24 @@ const alphaClosureNoDeltaReasons = (status: TorghutConsumerEvidenceStatus) => {
   ])
 }
 
+const noDeltaReentryAuctionReasons = (status: TorghutConsumerEvidenceStatus) => {
+  const auction = noDeltaReentryAuction(status)
+  if (!auction) return []
+
+  return uniqueStrings([
+    auction.reentry_decision === 'deny' ? 'no_delta_reentry_auction_denied' : null,
+    auction.reentry_decision === 'hold' ? 'no_delta_reentry_auction_hold' : null,
+    auction.reentry_decision === 'allow' ? null : `no_delta_reentry_decision_${auction.reentry_decision ?? 'missing'}`,
+    auction.active_no_delta_release_key && auction.reentry_decision !== 'allow' ? 'active_no_delta_release_key' : null,
+    auction.selected_ticket_id ? null : 'zero_notional_reentry_ticket_not_selected',
+    isZeroNotional(auction.max_notional) ? null : 'capital_notional_nonzero',
+    auction.capital_rule && auction.capital_rule !== 'zero_notional_repair_only'
+      ? 'capital_rule_not_zero_notional_repair_only'
+      : null,
+    ...auction.reason_codes,
+  ])
+}
+
 const alphaAdmissionReasons = (input: VerifyTrustForeclosureInput, debts: string[]) => {
   const status = input.torghutConsumerEvidence
   const reasons = [
@@ -309,6 +351,7 @@ const alphaAdmissionReasons = (input: VerifyTrustForeclosureInput, debts: string
     status.alpha_readiness_settlement_conveyor?.repeat_launch_decision === 'deny'
       ? 'alpha_readiness_repeat_launch_denied'
       : null,
+    ...noDeltaReentryAuctionReasons(status),
     ...alphaClosureNoDeltaReasons(status),
     input.revenueRepairSettlementCustody.decision === 'deny' ? 'revenue_repair_settlement_custody_deny' : null,
     input.revenueRepairSettlementCustody.decision === 'hold' ? 'revenue_repair_settlement_custody_hold' : null,
@@ -325,8 +368,11 @@ const alphaAdmissionDecision = (reasons: string[]): AlphaRepairReentryAdmissionD
         'alpha_closure_no_delta_budget_consumed',
         'alpha_closure_no_delta_debt_active',
         'capital_notional_nonzero',
+        'duplicate_no_delta_reentry_denied',
+        'no_delta_reentry_auction_denied',
         'revenue_repair_settlement_custody_deny',
         'torghut_no_delta_active',
+        'zero_notional_reentry_ticket_not_selected',
       ].includes(reason),
     )
   ) {
@@ -381,7 +427,8 @@ const ticketForDebt = (
 ): VerifyTrustForeclosureTicket => {
   const sourceRef =
     debtClass.startsWith('torghut') || debtClass.startsWith('revenue')
-      ? (input.torghutConsumerEvidence.alpha_repair_closure_board?.board_id ??
+      ? (input.torghutConsumerEvidence.no_delta_repair_reentry_auction?.auction_id ??
+        input.torghutConsumerEvidence.alpha_repair_closure_board?.board_id ??
         input.torghutConsumerEvidence.alpha_repair_dividend_ledger?.ledger_id ??
         input.torghutConsumerEvidence.alpha_readiness_settlement_conveyor?.conveyor_id ??
         input.torghutConsumerEvidence.receipt_id)
@@ -448,6 +495,7 @@ const actionDecisionFor = (
       evidence_refs: uniqueStrings([
         admission.admission_id,
         input.revenueRepairSettlementCustody.custody_id,
+        input.torghutConsumerEvidence.no_delta_repair_reentry_auction?.auction_id,
         input.torghutConsumerEvidence.alpha_repair_closure_board?.board_id,
         input.torghutConsumerEvidence.alpha_repair_dividend_ledger?.ledger_id,
         input.torghutConsumerEvidence.alpha_readiness_settlement_conveyor?.conveyor_id,
@@ -547,6 +595,8 @@ export const buildVerifyTrustForeclosureBoard = (
     torghut_consumer_evidence_ref: input.torghutConsumerEvidence.receipt_id,
     torghut_alpha_repair_closure_board_ref: input.torghutConsumerEvidence.alpha_repair_closure_board?.board_id ?? null,
     torghut_alpha_repair_dividend_ref: input.torghutConsumerEvidence.alpha_repair_dividend_ledger?.ledger_id ?? null,
+    torghut_no_delta_repair_reentry_auction_ref:
+      input.torghutConsumerEvidence.no_delta_repair_reentry_auction?.auction_id ?? null,
     active_no_delta_release_key: activeReleaseKey,
     debt_classes: debts,
     foreclosure_tickets: tickets,

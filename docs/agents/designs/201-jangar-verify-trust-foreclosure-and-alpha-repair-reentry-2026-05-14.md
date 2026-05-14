@@ -363,6 +363,15 @@ Engineer milestone 1:
 - Expose compact board refs on `/ready` and `/api/agents/control-plane/status`.
 - Keep enforcement in observe mode for one deploy.
 
+Implementation update on 2026-05-14:
+
+- Jangar now parses `torghut.no-delta-repair-reentry-auction-ref.v1` from Torghut consumer evidence.
+- `verify_trust_foreclosure_board.alpha_repair_reentry_admission` prefers the auction ref over older closure,
+  dividend, and conveyor refs when selecting the release key, selected hypothesis, selected value gate, denial reasons,
+  validation command, and Torghut evidence ref.
+- The behavior remains read-model only; `/ready` serving status and Torghut `max_notional=0` safety semantics are
+  unchanged.
+
 Engineer milestone 2:
 
 - Wire the board into material-action verdicts for `dispatch_repair`, `merge_ready`, `deploy_widen`, `paper_canary`,

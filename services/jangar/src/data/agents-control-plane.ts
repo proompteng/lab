@@ -919,6 +919,30 @@ export type TorghutAlphaRepairDividendLedgerRef = {
   rollback_target: string | null
 }
 
+export type TorghutNoDeltaRepairReentryAuctionRef = {
+  schema_version: 'torghut.no-delta-repair-reentry-auction-ref.v1'
+  auction_schema_version: string | null
+  auction_id: string | null
+  generated_at: string | null
+  fresh_until: string | null
+  reentry_decision: string | null
+  reason_codes: string[]
+  active_no_delta_release_key: string | null
+  selected_hypothesis_id: string | null
+  selected_value_gate: string | null
+  routeable_candidate_count_before: number | null
+  routeable_candidate_count_after: number | null
+  selected_ticket_id: string | null
+  selected_ticket_class: string | null
+  selected_release_condition: string | null
+  required_output_receipt: string | null
+  validation_command: string | null
+  enforcement_mode: string | null
+  max_notional: string | null
+  capital_rule: string | null
+  rollback_target: string | null
+}
+
 export type TorghutRevenueRepairQueueItem = {
   code: string | null
   reason: string | null
@@ -1689,6 +1713,7 @@ export type TorghutConsumerEvidenceStatus = {
   alpha_evidence_foundry?: TorghutAlphaEvidenceFoundryRef | null
   alpha_readiness_settlement_conveyor?: TorghutAlphaReadinessSettlementConveyorRef | null
   alpha_repair_dividend_ledger?: TorghutAlphaRepairDividendLedgerRef | null
+  no_delta_repair_reentry_auction?: TorghutNoDeltaRepairReentryAuctionRef | null
   repair_outcome_dividend_ledger_id?: string | null
   repair_outcome_receipt_ids?: string[]
   repair_outcome_open_escrow_ids?: string[]
@@ -2277,6 +2302,7 @@ export type VerifyTrustForeclosureBoard = {
   torghut_consumer_evidence_ref: string | null
   torghut_alpha_repair_closure_board_ref: string | null
   torghut_alpha_repair_dividend_ref: string | null
+  torghut_no_delta_repair_reentry_auction_ref: string | null
   active_no_delta_release_key: string | null
   debt_classes: string[]
   foreclosure_tickets: VerifyTrustForeclosureTicket[]

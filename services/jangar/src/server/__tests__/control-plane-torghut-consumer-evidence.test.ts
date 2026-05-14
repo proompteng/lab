@@ -1124,6 +1124,72 @@ describe('control-plane Torghut consumer evidence', () => {
     })
   })
 
+  it('maps compact no-delta repair reentry auction refs from consumer evidence', async () => {
+    process.env = {
+      ...originalEnv,
+      JANGAR_TORGHUT_STATUS_URL: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
+    }
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        buildJsonResponse({
+          schema_version: 'torghut.consumer-evidence-status.v1',
+          route_proven_profit_receipt: {
+            schema_version: 'torghut.route-proven-profit-receipt.v1',
+            receipt_id: 'torghut-route-proven-profit:no-delta-auction',
+            generated_at: '2026-05-14T09:15:00.000Z',
+            fresh_until: '2026-05-14T09:16:00.000Z',
+            paper_readiness_state: 'blocked',
+            live_readiness_state: 'blocked',
+            max_notional: '0',
+            reason_codes: [],
+          },
+          no_delta_repair_reentry_auction: {
+            schema_version: 'torghut.no-delta-repair-reentry-auction-ref.v1',
+            auction_schema_version: 'torghut.no-delta-repair-reentry-auction.v1',
+            auction_id: 'no-delta-repair-reentry-auction:test',
+            generated_at: '2026-05-14T09:15:00.000Z',
+            fresh_until: '2026-05-14T09:30:00.000Z',
+            reentry_decision: 'deny',
+            reason_codes: [
+              'active_no_delta_release_key',
+              'no_release_condition_changed',
+              'zero_notional_reentry_ticket_not_selected',
+              'duplicate_no_delta_reentry_denied',
+            ],
+            active_no_delta_release_key: 'alpha-readiness-no-delta:H-MICRO-01:window-a',
+            selected_hypothesis_id: 'H-MICRO-01',
+            selected_value_gate: 'routeable_candidate_count',
+            routeable_candidate_count_before: 0,
+            routeable_candidate_count_after: 0,
+            selected_ticket_id: null,
+            selected_ticket_class: null,
+            selected_release_condition: null,
+            required_output_receipt: null,
+            validation_command: null,
+            enforcement_mode: 'observe',
+            max_notional: '0',
+            capital_rule: 'zero_notional_repair_only',
+            rollback_target:
+              'stop emitting no_delta_repair_reentry_auction, keep alpha settlement and dividend evidence, and keep Torghut max_notional=0',
+          },
+        }),
+      ),
+    ) as unknown as typeof globalThis.fetch
+
+    const result = await resolveTorghutConsumerEvidence(new Date('2026-05-14T09:15:10.000Z'))
+
+    expect(result.status.observed_contracts).toEqual(expect.arrayContaining(['no_delta_repair_reentry_auction']))
+    expect(result.status.no_delta_repair_reentry_auction).toMatchObject({
+      auction_id: 'no-delta-repair-reentry-auction:test',
+      reentry_decision: 'deny',
+      active_no_delta_release_key: 'alpha-readiness-no-delta:H-MICRO-01:window-a',
+      selected_hypothesis_id: 'H-MICRO-01',
+      selected_value_gate: 'routeable_candidate_count',
+      reason_codes: expect.arrayContaining(['duplicate_no_delta_reentry_denied']),
+      max_notional: '0',
+    })
+  })
+
   it('maps status schema mismatch to schema_mismatch evidence', async () => {
     process.env = {
       ...originalEnv,
