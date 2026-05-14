@@ -1233,8 +1233,12 @@ class TestTradingApi(TestCase):
             patch("app.main.SessionLocal", self.session_local),
         ):
             response = self.client.get("/trading/consumer-evidence")
+            summary_response = self.client.get(
+                "/trading/consumer-evidence?view=summary"
+            )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(summary_response.status_code, 200)
         self.assertTrue(
             readiness_snapshot.call_args.kwargs["include_database_contract"]
         )
@@ -1249,6 +1253,19 @@ class TestTradingApi(TestCase):
         self.assertEqual(payload["dependency_quorum"]["decision"], "allow")
         self.assertEqual(payload["proof_floor"], proof_floor)
         self.assertNotIn("route_reacquisition_board", payload)
+        summary_payload = summary_response.json()
+        self.assertEqual(summary_payload["schema_version"], payload["schema_version"])
+        self.assertEqual(summary_payload["view"], "summary")
+        self.assertEqual(
+            summary_payload["control_plane_dependency_mode"], "caller_evaluated"
+        )
+        self.assertEqual(summary_payload["dependency_quorum"]["decision"], "allow")
+        self.assertEqual(summary_payload["proof_floor"], proof_floor)
+        self.assertIn("torghut_consumer_evidence_receipt", summary_payload)
+        self.assertIn("route_proven_profit_receipt", summary_payload)
+        self.assertNotIn("route_reacquisition_board", summary_payload)
+        self.assertNotIn("capital_reentry_cohort_ledger", summary_payload)
+        self.assertNotIn("profit_carry_passport_ledger", summary_payload)
         receipt = payload["torghut_consumer_evidence_receipt"]
         self.assertEqual(
             receipt["schema_version"],

@@ -285,6 +285,13 @@ describe('control-plane Torghut consumer evidence', () => {
 
     const result = await resolveTorghutConsumerEvidence(new Date('2026-05-08T02:30:10.000Z'))
 
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence?view=summary',
+      expect.objectContaining({
+        method: 'GET',
+        headers: { accept: 'application/json' },
+      }),
+    )
     expect(result.status).toMatchObject({
       status: 'current',
       receipt_id: 'torghut-route-proven-profit:test',
