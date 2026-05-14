@@ -431,7 +431,7 @@ jobs:
           set -euo pipefail
           mapfile -t TEST_IDS < <(
             uv run --frozen pytest --collect-only -q tests/test_run_whitepaper_autoresearch_profit_target.py |
-              awk '/^tests\// {print $1}' |
+              awk '/^tests\/.*::/ {print $1}' |
               awk -v slice="${SLICE_INDEX}" -v total="${SLICE_TOTAL}" '((NR - 1) % total) == slice'
           )
           printf 'Running %s autoresearch runner tests in slice %s/%s\n' "${#TEST_IDS[@]}" "${SLICE_INDEX}" "${SLICE_TOTAL}"
