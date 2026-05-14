@@ -10,6 +10,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '~/components/u
 import { Field, FieldGroup, FieldLabel } from '~/components/ui/field'
 import { Input } from '~/components/ui/input'
 import { GatewayFrame, GatewayPageHeader } from '~/components/gateway-shell'
+import { ScrollArea } from '~/components/ui/scroll-area'
 import { Spinner } from '~/components/ui/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { Textarea } from '~/components/ui/textarea'
@@ -80,7 +81,7 @@ function AgentRunsRoute() {
     <GatewayFrame active="/agent-runs" snapshot={snapshot}>
       <GatewayPageHeader title="Agent Runs" />
 
-      <main className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.45fr)]">
+      <main className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
         <section className="flex min-h-0 flex-col gap-4 overflow-hidden">
           <Card className="shrink-0 rounded-lg" size="sm">
             <CardHeader>
@@ -139,46 +140,50 @@ function AgentRunsRoute() {
                 <Badge variant="outline">{runs.length}</Badge>
               </CardAction>
             </CardHeader>
-            <CardContent className="min-h-0 overflow-auto">
+            <CardContent className="min-h-0 flex-1 overflow-hidden px-0">
               {runs.length === 0 ? (
-                <Empty className="min-h-[260px] rounded-lg border">
+                <Empty className="mx-4 min-h-[260px] rounded-lg border">
                   <EmptyHeader>
                     <EmptyTitle>No runs</EmptyTitle>
                     <EmptyDescription>Create one above.</EmptyDescription>
                   </EmptyHeader>
                 </Empty>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Run</TableHead>
-                      <TableHead>Agent</TableHead>
-                      <TableHead>Phase</TableHead>
-                      <TableHead>Created</TableHead>
-                      <TableHead>Pod</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {runs.map((run) => (
-                      <TableRow
-                        key={runKey(run)}
-                        data-state={selectedRun && runKey(run) === runKey(selectedRun) ? 'selected' : undefined}
-                        className="cursor-pointer"
-                        onClick={() => setSelectedRunKey(runKey(run))}
-                      >
-                        <TableCell className="max-w-[280px] truncate font-medium">{run.name}</TableCell>
-                        <TableCell>{run.agent}</TableCell>
-                        <TableCell>
-                          <Badge variant={phaseVariant(run.phase)}>{run.phase}</Badge>
-                        </TableCell>
-                        <TableCell>{formatDate(run.createdAt)}</TableCell>
-                        <TableCell className="max-w-[240px] truncate text-muted-foreground">
-                          {run.podName ?? '-'}
-                        </TableCell>
+                <ScrollArea className="h-full min-h-0">
+                  <Table className="table-fixed">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[38%] pl-4">Run</TableHead>
+                        <TableHead className="w-[24%]">Agent</TableHead>
+                        <TableHead className="w-[16%]">Phase</TableHead>
+                        <TableHead className="w-[22%] pr-4">Created</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {runs.map((run) => (
+                        <TableRow
+                          key={runKey(run)}
+                          data-state={selectedRun && runKey(run) === runKey(selectedRun) ? 'selected' : undefined}
+                          className="cursor-pointer"
+                          onClick={() => setSelectedRunKey(runKey(run))}
+                        >
+                          <TableCell className="pl-4 font-medium">
+                            <span className="block truncate">{run.name}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="block truncate">{run.agent}</span>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={phaseVariant(run.phase)}>{run.phase}</Badge>
+                          </TableCell>
+                          <TableCell className="pr-4">
+                            <span className="block truncate">{formatDate(run.createdAt)}</span>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </ScrollArea>
               )}
             </CardContent>
           </Card>
@@ -203,14 +208,13 @@ function AgentRunsRoute() {
                     {logsQuery.data?.podName ?? selectedRun.podName ?? 'pod pending'}
                   </div>
                 </div>
-                <pre
-                  className={cn(
-                    'min-h-0 flex-1 overflow-auto rounded-lg border bg-muted/30 p-3 font-mono text-xs leading-5 text-foreground',
-                    logsQuery.isFetching && 'opacity-80',
-                  )}
+                <ScrollArea
+                  className={cn('min-h-0 flex-1 rounded-lg border bg-muted/30', logsQuery.isFetching && 'opacity-80')}
                 >
-                  {logsQuery.data?.logs ?? 'Waiting for logs.'}
-                </pre>
+                  <pre className="min-h-full whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5 text-foreground">
+                    {logsQuery.data?.logs ?? 'Waiting for logs.'}
+                  </pre>
+                </ScrollArea>
               </>
             ) : (
               <Empty className="min-h-[360px] rounded-lg border">

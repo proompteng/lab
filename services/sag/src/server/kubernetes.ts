@@ -126,6 +126,9 @@ export type CreateLiveAgentRunInput = {
   repository?: string
   base?: string
   head?: string
+  issueNumber?: string
+  issueTitle?: string
+  issueUrl?: string
 }
 
 export type AgentRunLogResult = {
@@ -141,6 +144,9 @@ const defaultNamespace = process.env.SAG_AGENTRUN_NAMESPACE ?? 'agents'
 const defaultAgent = process.env.SAG_AGENTRUN_AGENT ?? 'codex-agent'
 const defaultRepository = process.env.SAG_AGENTRUN_REPOSITORY ?? 'proompteng/lab'
 const defaultBase = process.env.SAG_AGENTRUN_BASE ?? 'main'
+const defaultIssueNumber = normalizeIssueNumber(process.env.SAG_AGENTRUN_ISSUE_NUMBER) || '0'
+const defaultIssueTitle = process.env.SAG_AGENTRUN_ISSUE_TITLE ?? 'SAG AgentRun'
+const defaultIssueUrl = process.env.SAG_AGENTRUN_ISSUE_URL ?? 'https://sag.proompteng.ai'
 
 export const listLiveAgentRuns = async (limit = 25): Promise<AgentRunEvaluationInput[]> => {
   const client = kubernetesClient()
@@ -227,6 +233,10 @@ export const createLiveAgentRun = async (input: CreateLiveAgentRunInput): Promis
   const task = input.task.trim()
   if (!task) throw new Error('Task is required')
 
+  const issueNumber = normalizeIssueNumber(input.issueNumber) || defaultIssueNumber
+  const issueTitle = input.issueTitle?.trim() || defaultIssueTitle
+  const issueUrl = input.issueUrl?.trim() || defaultIssueUrl
+
   const manifest = buildAgentRunManifest({
     name,
     namespace,
@@ -235,6 +245,9 @@ export const createLiveAgentRun = async (input: CreateLiveAgentRunInput): Promis
     repository: input.repository?.trim() || defaultRepository,
     base: input.base?.trim() || defaultBase,
     head: input.head?.trim() || `codex/sag-${Date.now().toString(36)}`,
+    issueNumber,
+    issueTitle,
+    issueUrl,
   })
 
   const created = await requestJson<KubernetesAgentRun>(client, `${agentApiPrefix}/namespaces/${namespace}/agentruns`, {
@@ -404,7 +417,7 @@ const firstPodForJob = async (client: KubernetesClient, namespace: string, jobNa
   )[0]
 }
 
-const buildAgentRunManifest = ({
+export const buildAgentRunManifest = ({
   name,
   namespace,
   agent,
@@ -412,6 +425,9 @@ const buildAgentRunManifest = ({
   repository,
   base,
   head,
+  issueNumber,
+  issueTitle,
+  issueUrl,
 }: {
   name: string
   namespace: string
@@ -420,6 +436,9 @@ const buildAgentRunManifest = ({
   repository: string
   base: string
   head: string
+  issueNumber: string
+  issueTitle: string
+  issueUrl: string
 }) => ({
   apiVersion: 'agents.proompteng.ai/v1alpha1',
   kind: 'AgentRun',
@@ -443,9 +462,10 @@ const buildAgentRunManifest = ({
       repository,
       base,
       head,
+      issueNumber,
       stage: 'implementation',
-      issueTitle: 'SAG AgentRun',
-      issueUrl: 'https://sag.proompteng.ai',
+      issueTitle,
+      issueUrl,
     },
     runtime: {
       type: 'workflow',
@@ -455,7 +475,13 @@ const buildAgentRunManifest = ({
         {
           name: 'run',
           parameters: {
+            repository,
+            base,
+            head,
+            issueNumber,
             stage: 'implementation',
+            issueTitle,
+            issueUrl,
           },
           timeoutSeconds: 7200,
         },
@@ -564,5 +590,10 @@ const sanitizeDnsName = (value: string) =>
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, '-')
     .replace(/^-+|-+$/g, '')
+
+function normalizeIssueNumber(value: string | undefined) {
+  const normalized = value?.trim().replace(/^#/, '') ?? ''
+  return /^[0-9]+$/.test(normalized) ? normalized : ''
+}
 
 const titleCase = (value: string) => value.slice(0, 1).toUpperCase() + value.slice(1).toLowerCase()
