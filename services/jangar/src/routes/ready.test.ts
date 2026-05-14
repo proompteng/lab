@@ -1,5 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const originalEnv = { ...process.env }
+const originalFetch = globalThis.fetch
+
+const buildJsonResponse = (payload: unknown, status = 200) =>
+  new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  })
+
 const agentsControllerMocks = vi.hoisted(() => ({
   getAgentsControllerHealth: vi.fn(),
   assessAgentRunIngestion: vi.fn(),
@@ -207,6 +216,8 @@ const buildRuntimeAdmissionSnapshot = (
 
 describe('getReadyHandler', () => {
   beforeEach(() => {
+    process.env = { ...originalEnv }
+    globalThis.fetch = originalFetch
     vi.clearAllMocks()
     controlPlaneStatusMocks.buildExecutionTrust.mockReset()
     runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReset()
@@ -361,6 +372,72 @@ describe('getReadyHandler', () => {
     })
     expect(body.serving_recovery_warrant_id).toBe('recovery-warrant:serving:1')
     expect(body.serving_runtime_proof_cells_healthy).toBe(true)
+  })
+
+  it('projects Torghut revenue-repair business evidence at the ready boundary', async () => {
+    process.env.JANGAR_TORGHUT_STATUS_URL = 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence'
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        buildJsonResponse({
+          schema_version: 'torghut.consumer-evidence-status.v1',
+          route_proven_profit_receipt: {
+            schema_version: 'torghut.route-proven-profit-receipt.v1',
+            receipt_id: 'torghut-route-proven-profit:ready-test',
+            generated_at: '2026-05-14T00:23:00.000Z',
+            fresh_until: '2026-05-14T00:38:00.000Z',
+            paper_readiness_state: 'blocked',
+            live_readiness_state: 'blocked',
+            max_notional: '0',
+            reason_codes: [],
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        buildJsonResponse({
+          schema_version: 'torghut.revenue-repair-digest.v1',
+          business_state: 'repair_only',
+          revenue_ready: false,
+          repair_queue: [
+            {
+              code: 'repair_alpha_readiness',
+              reason: 'alpha_readiness_not_promotion_eligible',
+              dimension: 'alpha_readiness',
+              action: 'clear_hypothesis_blockers_before_capital',
+              priority: 70,
+              expected_unblock_value: 4,
+              source: 'proof_floor.repair_ladder',
+              value_gate: 'routeable_candidate_count',
+              required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+              required_receipts: ['alpha_readiness_receipt', 'hypothesis_promotion_receipt', 'capital_replay_board'],
+              max_notional: '0',
+              capital_rule: 'zero_notional_repair_only',
+              observed_count: 1,
+            },
+          ],
+        }),
+      ) as unknown as typeof globalThis.fetch
+
+    const { getReadyHandler } = await import('./ready')
+
+    const response = await getReadyHandler()
+
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body.status).toBe('ok')
+    expect(body.business_state).toBe('repair_only')
+    expect(body.revenue_ready).toBe(false)
+    expect(body.affected_value_gate).toBe('routeable_candidate_count')
+    expect(body.top_repair_queue_item).toMatchObject({
+      code: 'repair_alpha_readiness',
+      reason: 'alpha_readiness_not_promotion_eligible',
+      required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+    })
+    expect(body.repair_queue).toEqual([expect.objectContaining({ value_gate: 'routeable_candidate_count' })])
+    expect(body.torghut_consumer_evidence).toMatchObject({
+      revenue_repair_business_state: 'repair_only',
+      revenue_repair_ready: false,
+    })
   })
 
   it('returns 200 and exposes a serving passport when only collaboration runtime debt is blocked', async () => {

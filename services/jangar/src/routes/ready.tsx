@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import type { ExecutionTrustStatus } from '~/data/agents-control-plane'
+import type { ExecutionTrustStatus, TorghutRevenueRepairQueueItem } from '~/data/agents-control-plane'
 import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/agents-controller'
 import { buildRuntimeAdmissionSnapshot, findAdmissionPassport } from '~/server/control-plane-runtime-admission'
 import {
@@ -16,7 +16,10 @@ import { getMetricsSinkPressureSummary } from '~/server/metrics'
 import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
 import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
 import { buildExecutionTrust } from '~/server/control-plane-status'
-import { resolveTorghutConsumerEvidence } from '~/server/control-plane-torghut-consumer-evidence'
+import {
+  resolveTorghutConsumerEvidence,
+  type TorghutConsumerEvidenceStatus,
+} from '~/server/control-plane-torghut-consumer-evidence'
 import { getWatchReliabilitySummary } from '~/server/control-plane-watch-reliability'
 
 const isControllerHealthReady = (health: ReturnType<typeof getAgentsControllerHealth>) =>
@@ -102,6 +105,67 @@ const mergeExecutionTrustStatuses = (input: {
   }
 }
 
+const alphaReadinessQueueItem = (
+  torghutConsumerEvidence: TorghutConsumerEvidenceStatus,
+): TorghutRevenueRepairQueueItem | null => {
+  const blocker = torghutConsumerEvidence.alpha_readiness_strike_ledger?.selected_business_blocker
+  if (!blocker) return null
+  return {
+    code: blocker.code,
+    reason: blocker.reason,
+    dimension: null,
+    action: null,
+    priority: null,
+    expected_unblock_value: null,
+    source: torghutConsumerEvidence.alpha_readiness_strike_ledger?.revenue_repair_digest_ref ?? null,
+    value_gate: blocker.value_gate,
+    required_output_receipt: blocker.required_output_receipt,
+    required_receipts: torghutConsumerEvidence.alpha_readiness_strike_ledger?.required_after_receipts ?? [],
+    max_notional: torghutConsumerEvidence.alpha_readiness_strike_ledger?.max_notional ?? null,
+    capital_rule: torghutConsumerEvidence.alpha_readiness_strike_ledger?.strike_slots[0]?.capital_rule ?? null,
+    observed_count: torghutConsumerEvidence.alpha_readiness_strike_ledger?.routeable_candidate_count_before ?? null,
+  }
+}
+
+const deriveRevenueReady = (businessState: string | null, topRepairQueueItem: TorghutRevenueRepairQueueItem | null) => {
+  if (!businessState) return null
+  if (businessState === 'ready' || businessState === 'revenue_ready' || businessState === 'live_ready') return true
+  if (businessState === 'repair_only' || businessState === 'repair' || businessState === 'hold') return false
+  if (businessState === 'blocked' || businessState === 'degraded') return false
+  return topRepairQueueItem ? false : null
+}
+
+const buildBusinessEvidence = (
+  torghutConsumerEvidence: TorghutConsumerEvidenceStatus,
+  repairBidAdmission: ReturnType<typeof buildRepairBidAdmissionState>,
+) => {
+  const fallbackQueueItem = alphaReadinessQueueItem(torghutConsumerEvidence)
+  const repairQueue =
+    torghutConsumerEvidence.revenue_repair_queue && torghutConsumerEvidence.revenue_repair_queue.length > 0
+      ? torghutConsumerEvidence.revenue_repair_queue
+      : fallbackQueueItem
+        ? [fallbackQueueItem]
+        : []
+  const topRepairQueueItem = repairQueue[0] ?? null
+  const businessState =
+    torghutConsumerEvidence.revenue_repair_business_state ??
+    (topRepairQueueItem || torghutConsumerEvidence.max_notional === '0' ? 'repair_only' : null)
+  const affectedValueGate =
+    topRepairQueueItem?.value_gate ??
+    torghutConsumerEvidence.executable_alpha_repair_receipts?.target_value_gate ??
+    repairBidAdmission.dispatch_tickets.find((ticket) => ticket.launch_allowed)?.target_value_gate ??
+    null
+
+  return {
+    business_state: businessState,
+    revenue_ready:
+      torghutConsumerEvidence.revenue_repair_ready ?? deriveRevenueReady(businessState, topRepairQueueItem),
+    repair_queue: repairQueue,
+    top_repair_queue_item: topRepairQueueItem,
+    affected_value_gate: affectedValueGate,
+  }
+}
+
 const executionTrustStatus = async (namespaces: string[]) => {
   const now = new Date()
   const resolvedNamespaces = uniqueStrings(namespaces.length > 0 ? namespaces : ['agents'])
@@ -160,6 +224,7 @@ export const getReadyHandler = async () => {
     stage: process.env.SWARM_STAGE ?? process.env.CODEX_STAGE,
     torghutConsumerEvidence: torghutConsumerEvidence.status,
   })
+  const businessEvidence = buildBusinessEvidence(torghutConsumerEvidence.status, repairBidAdmission)
   const memoryProvider = getMemoryProviderHealth()
   const runtimeAdmission = buildRuntimeAdmissionSnapshot({
     now,
@@ -222,6 +287,7 @@ export const getReadyHandler = async () => {
     orchestrationController,
     supportingController,
     execution_trust: trust,
+    ...businessEvidence,
     torghut_consumer_evidence: torghutConsumerEvidence.status,
     repair_bid_admission: repairBidAdmission,
     evidence_pressure_ledger: evidencePressureLedger,

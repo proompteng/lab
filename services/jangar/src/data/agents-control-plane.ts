@@ -823,6 +823,22 @@ export type TorghutExecutableAlphaRepairReceiptSet = {
   rollback_target: string | null
 }
 
+export type TorghutRevenueRepairQueueItem = {
+  code: string | null
+  reason: string | null
+  dimension: string | null
+  action: string | null
+  priority: number | null
+  expected_unblock_value: number | null
+  source: string | null
+  value_gate: string | null
+  required_output_receipt: string | null
+  required_receipts: string[]
+  max_notional: string | null
+  capital_rule: string | null
+  observed_count: number | null
+}
+
 export type TorghutRepairOutcomeEscrow = {
   escrow_id: string
   dispatch_ticket_id: string | null
@@ -1351,6 +1367,9 @@ export type TorghutConsumerEvidenceStatus = {
   candidate_id: string | null
   dataset_snapshot_ref: string | null
   max_notional: string | null
+  revenue_repair_business_state?: string | null
+  revenue_repair_ready?: boolean | null
+  revenue_repair_queue?: TorghutRevenueRepairQueueItem[]
   route_canary_id?: string | null
   jangar_parity_escrow_ref?: string | null
   serving_revision?: string | null

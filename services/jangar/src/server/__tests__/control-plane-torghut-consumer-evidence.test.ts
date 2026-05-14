@@ -440,6 +440,25 @@ describe('control-plane Torghut consumer evidence', () => {
       .mockResolvedValueOnce(
         buildJsonResponse({
           schema_version: 'torghut.revenue-repair-digest.v1',
+          business_state: 'repair_only',
+          revenue_ready: false,
+          repair_queue: [
+            {
+              code: 'repair_alpha_readiness',
+              reason: 'alpha_readiness_not_promotion_eligible',
+              dimension: 'alpha_readiness',
+              action: 'clear_hypothesis_blockers_before_capital',
+              priority: 70,
+              expected_unblock_value: 4,
+              source: 'proof_floor.repair_ladder',
+              value_gate: 'routeable_candidate_count',
+              required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+              required_receipts: ['alpha_readiness_receipt', 'hypothesis_promotion_receipt'],
+              max_notional: '0',
+              capital_rule: 'zero_notional_repair_only',
+              observed_count: 1,
+            },
+          ],
           executable_alpha_repair_receipts: {
             schema_version: 'torghut.executable-alpha-repair-receipts.v1',
             generated_at: '2026-05-14T00:23:00.000Z',
@@ -498,6 +517,18 @@ describe('control-plane Torghut consumer evidence', () => {
     const result = await resolveTorghutConsumerEvidence(new Date('2026-05-14T00:23:10.000Z'))
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+    expect(result.status).toMatchObject({
+      revenue_repair_business_state: 'repair_only',
+      revenue_repair_ready: false,
+      revenue_repair_queue: [
+        expect.objectContaining({
+          code: 'repair_alpha_readiness',
+          value_gate: 'routeable_candidate_count',
+          required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+          required_receipts: ['alpha_readiness_receipt', 'hypothesis_promotion_receipt'],
+        }),
+      ],
+    })
     expect(result.status.executable_alpha_repair_receipts).toMatchObject({
       schema_version: 'torghut.executable-alpha-repair-receipts.v1',
       selected_receipt_id: 'executable-alpha-repair-receipt:current',
