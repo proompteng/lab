@@ -26,6 +26,7 @@ import type {
   ProjectionForeclosureNotary,
   ReadyActionExchange,
   ReconciledActionClock,
+  RepairSlotEscrow,
   RecoveryWarrantStatus,
   RevenueRepairSettlementCustody,
   ReadyTruthArbiter,
@@ -215,6 +216,7 @@ export type ControlPlaneStatus = {
   repair_bid_admission: RepairBidAdmissionState
   material_gate_digest: MaterialGateDigest
   material_reentry_clearinghouse: MaterialReentryClearinghouse
+  repair_slot_escrow: RepairSlotEscrow | null
   repair_warrant_exchange: RepairWarrantExchange
   consumer_evidence_leases: ConsumerEvidenceLeaseSet
   clearance_market_ledger: ClearanceMarketLedger | null

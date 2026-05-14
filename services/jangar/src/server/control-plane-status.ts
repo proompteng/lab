@@ -30,6 +30,11 @@ import {
 import { buildMaterialGateDigest } from '~/server/control-plane-material-gate-digest'
 import { buildMaterialReentryClearinghouse } from '~/server/control-plane-material-reentry-clearinghouse'
 import {
+  buildRepairSlotEscrow,
+  isRepairSlotEscrowEnabled,
+  resolveRepairSlotEscrowMode,
+} from '~/server/control-plane-repair-slot-escrow'
+import {
   createControlPlaneHeartbeatStore,
   type ControlPlaneHeartbeatRow,
   type ControlPlaneHeartbeatStoreGetInput,
@@ -705,6 +710,17 @@ export const buildControlPlaneStatus = async (
     databaseWitnessRef: database.migration_consistency.latest_applied,
     workflows,
   })
+  const repairSlotEscrow = isRepairSlotEscrowEnabled()
+    ? buildRepairSlotEscrow({
+        now,
+        namespace: options.namespace,
+        torghutConsumerEvidence: torghutConsumerEvidence.status,
+        materialReentryClearinghouse,
+        stageCreditLedger,
+        evidencePressureLedger,
+        mode: resolveRepairSlotEscrowMode(),
+      })
+    : null
 
   const degradedComponents = buildControlPlaneDegradedComponents({
     agentRunIngestion,
@@ -769,6 +785,7 @@ export const buildControlPlaneStatus = async (
     repair_bid_admission: repairBidAdmission,
     material_gate_digest: materialGateDigest,
     material_reentry_clearinghouse: materialReentryClearinghouse,
+    repair_slot_escrow: repairSlotEscrow,
     repair_warrant_exchange: repairWarrantExchange,
     consumer_evidence_leases: consumerEvidenceLeases,
     clearance_market_ledger: clearanceMarketLedger,
