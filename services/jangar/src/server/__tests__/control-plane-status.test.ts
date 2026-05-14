@@ -7,6 +7,7 @@ import {
   type DatabaseStatus as ControlPlaneDatabaseStatus,
 } from '~/server/control-plane-status'
 import { CLEARANCE_MARKET_DESIGN_ARTIFACT } from '~/server/control-plane-clearance-market'
+import { CONTROLLER_INGESTION_SETTLEMENT_DESIGN_ARTIFACT } from '~/server/control-plane-controller-ingestion-settlement'
 import { CONSUMER_EVIDENCE_LEASES_DESIGN_ARTIFACT } from '~/server/control-plane-consumer-evidence-leases'
 import { EVIDENCE_PRESSURE_LEDGER_DESIGN_ARTIFACT } from '~/server/control-plane-evidence-pressure-ledger'
 import { MATERIAL_REENTRY_CLEARINGHOUSE_DESIGN_ARTIFACT } from '~/server/control-plane-material-reentry-clearinghouse'
@@ -841,6 +842,16 @@ describe('control-plane status', () => {
       deployment_available: true,
       watch_epoch_current: true,
       controller_self_report_current: true,
+    })
+    expect(status.controller_ingestion_settlement).toMatchObject({
+      schema_version: 'jangar.controller-ingestion-settlement.v1',
+      mode: 'observe',
+      governing_design_refs: expect.arrayContaining([CONTROLLER_INGESTION_SETTLEMENT_DESIGN_ARTIFACT]),
+      controller_witness_ref: status.control_plane_controller_witness.quorum_id,
+      source_serving_verdict_ref: expect.any(String),
+      selected_repair_ticket: {
+        max_notional: '0',
+      },
     })
     expect(status.action_slo_budgets).toEqual(
       expect.arrayContaining([

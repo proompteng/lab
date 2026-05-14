@@ -667,6 +667,31 @@ Rollback: set `JANGAR_VERIFY_TRUST_FORECLOSURE_MODE=observe` or ignore `verify_t
 Keep ready truth, revenue-repair settlement custody, material gate digest, and Torghut `max_notional=0` as the active
 safety authorities.
 
+## Controller-ingestion settlement
+
+`/api/agents/control-plane/status` emits the observe-mode `controller_ingestion_settlement` from
+`docs/agents/designs/205-jangar-controller-ingestion-settlement-and-verification-carry-cutover-2026-05-14.md`. The
+settlement joins controller witness quorum, AgentRun ingestion, database and rollout health, execution trust,
+source-serving verdicts, verify-trust foreclosure, repair-slot escrow, and Torghut no-delta carry evidence into one
+material action decision. It keeps `/ready` as serving truth while full status names whether broad dispatch is allowed,
+one controller-ingestion repair is admissible, or source-to-live carry must hold.
+
+The first rollout is read-model only. `decision=repair_only` selects at most one zero-notional
+`controller_ingestion` ticket when the controller witness is the only missing proof. Source-serving lag, missing
+verify-carry fields, or Torghut `jangar_verification_carry_unavailable` stay `hold`; contradictory carry evidence or
+nonzero notional stays `block`.
+
+Validation:
+
+```bash
+curl -fsS 'http://localhost:8080/api/agents/control-plane/status?namespace=agents' | jq '.controller_ingestion_settlement'
+curl -fsS http://torghut.torghut.svc.cluster.local/trading/revenue-repair | jq '.no_delta_repair_reentry_auction'
+```
+
+Rollback: ignore `controller_ingestion_settlement` consumers and keep ready truth, stage credit,
+source-serving verdicts, verify-trust foreclosure, and Torghut no-delta/max-notional guards as the active safety
+boundary. No database migration or scheduler enforcement is introduced by this projection.
+
 ## Torghut stage-custody evidence
 
 Design doc `docs/agents/designs/188-jangar-typed-torghut-evidence-admission-and-repair-dispatch-2026-05-13.md`

@@ -7,6 +7,7 @@ import {
   buildRuntimeAdapterStatusFromSource,
 } from '~/server/control-plane-authority-status'
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
+import { buildControllerIngestionSettlement } from '~/server/control-plane-controller-ingestion-settlement'
 import { buildControllerWitnessQuorum } from '~/server/control-plane-controller-witness'
 import { buildConsumerEvidenceLeaseSet } from '~/server/control-plane-consumer-evidence-leases'
 import {
@@ -721,6 +722,20 @@ export const buildControlPlaneStatus = async (
         mode: resolveRepairSlotEscrowMode(),
       })
     : null
+  const controllerIngestionSettlement = buildControllerIngestionSettlement({
+    now,
+    namespace: options.namespace,
+    servingReadiness: readyTruthArbiter.serving_readiness,
+    controllerWitness,
+    agentRunIngestion,
+    executionTrust: executionTrust.executionTrust,
+    database,
+    rolloutHealth,
+    sourceServingContractVerdictExchange,
+    verifyTrustForeclosureBoard,
+    repairSlotEscrow,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+  })
 
   const degradedComponents = buildControlPlaneDegradedComponents({
     agentRunIngestion,
@@ -767,6 +782,7 @@ export const buildControlPlaneStatus = async (
     dependency_verdict_exchange: dependencyVerdictExchange,
     source_serving_contract_verdict_exchange: sourceServingContractVerdictExchange,
     control_plane_controller_witness: controllerWitness,
+    controller_ingestion_settlement: controllerIngestionSettlement,
     material_action_verdict_epoch: materialActionVerdictEpoch,
     material_action_verdicts: materialActionVerdictEpoch.final_verdicts,
     material_action_activation_receipts: materialActionActivationReceipts,
