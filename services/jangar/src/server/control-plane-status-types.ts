@@ -42,6 +42,7 @@ import type {
   StageCreditLedger,
   StageLaunchTicket,
   TerminalDebtCompactionLedger,
+  VerifyTrustForeclosureBoard,
   WorkflowsReliabilityStatus,
 } from '~/data/agents-control-plane'
 
@@ -203,6 +204,7 @@ export type ControlPlaneStatus = {
   stage_credit_ledger: StageCreditLedger | null
   ready_truth_arbiter: ReadyTruthArbiter
   revenue_repair_settlement_custody: RevenueRepairSettlementCustody
+  verify_trust_foreclosure_board: VerifyTrustForeclosureBoard
   rollout_proof_passport: RolloutProofPassport
   runner_capacity_futures: RunnerCapacityFuture[]
   stage_launch_tickets: StageLaunchTicket[]

@@ -518,6 +518,48 @@ describe('getReadyHandler', () => {
       validation_command: 'uv run --frozen pytest services/torghut/tests/test_alpha_readiness_settlement_conveyor.py',
       rollback_target: 'stop emitting alpha_readiness_settlement_conveyor and keep Torghut max_notional=0',
     })
+    expect(body.verify_trust_foreclosure_board).toMatchObject({
+      schema_version: 'jangar.verify-trust-foreclosure-board.v1',
+      mode: 'observe',
+      torghut_consumer_evidence_ref: 'torghut-route-proven-profit:ready-test',
+      active_no_delta_release_key: 'alpha-readiness-no-delta:ready-test',
+      debt_classes: expect.arrayContaining([
+        'source_rollout_truth_split',
+        'controller_witness_unavailable_on_hot_path',
+        'database_projection_unavailable_on_hot_path',
+        'torghut_business_repair_only',
+        'torghut_no_delta_active',
+        'revenue_repair_settlement_custody_deny',
+      ]),
+      alpha_repair_reentry_admission: {
+        schema_version: 'jangar.alpha-repair-reentry-admission.v1',
+        mode: 'observe',
+        admission_id: expect.any(String),
+        generated_at: expect.any(String),
+        fresh_until: expect.any(String),
+        selected_value_gate: 'routeable_candidate_count',
+        selected_hypothesis_id: 'H-MICRO-01',
+        release_key_state: 'active',
+        material_action_class: 'dispatch_repair',
+        decision: 'deny',
+        reason_codes: expect.arrayContaining([
+          'source_rollout_truth_split',
+          'torghut_no_delta_active',
+          'alpha_readiness_repeat_launch_denied',
+          'revenue_repair_settlement_custody_deny',
+        ]),
+        required_output_receipt: 'torghut.alpha-readiness-settlement-receipt.v1',
+        validation_command: 'uv run --frozen pytest services/torghut/tests/test_alpha_readiness_settlement_conveyor.py',
+        rollback_target: 'stop emitting alpha_readiness_settlement_conveyor and keep Torghut max_notional=0',
+      },
+    })
+    expect(body.verify_trust_foreclosure_board.action_decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action_class: 'serve_readonly', decision: 'allow' }),
+        expect.objectContaining({ action_class: 'torghut_observe', decision: 'hold' }),
+        expect.objectContaining({ action_class: 'dispatch_repair', decision: 'block' }),
+      ]),
+    )
     expect(body.material_gate_digest).toMatchObject({
       schema_version: 'jangar.material-gate-digest.v1',
       material_readiness: 'repair_only',

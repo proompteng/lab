@@ -1064,6 +1064,66 @@ describe('control-plane Torghut consumer evidence', () => {
     })
   })
 
+  it('maps compact alpha repair dividend ledger refs from consumer evidence', async () => {
+    process.env = {
+      ...originalEnv,
+      JANGAR_TORGHUT_STATUS_URL: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
+    }
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        buildJsonResponse({
+          schema_version: 'torghut.consumer-evidence-status.v1',
+          route_proven_profit_receipt: {
+            schema_version: 'torghut.route-proven-profit-receipt.v1',
+            receipt_id: 'torghut-route-proven-profit:alpha-dividend',
+            generated_at: '2026-05-14T09:15:00.000Z',
+            fresh_until: '2026-05-14T09:16:00.000Z',
+            paper_readiness_state: 'blocked',
+            live_readiness_state: 'blocked',
+            max_notional: '0',
+            reason_codes: [],
+          },
+          alpha_repair_dividend_ledger: {
+            schema_version: 'torghut.alpha-repair-dividend-ledger-ref.v1',
+            ledger_schema_version: 'torghut.alpha-repair-dividend-ledger.v1',
+            ledger_id: 'alpha-repair-dividend-ledger:test',
+            generated_at: '2026-05-14T09:15:00.000Z',
+            fresh_until: '2026-05-14T09:30:00.000Z',
+            status: 'current',
+            dividend_state: 'no_delta',
+            reason_codes: ['active_no_delta_release_key'],
+            selected_hypothesis_id: 'H-MICRO-01',
+            selected_value_gate: 'routeable_candidate_count',
+            routeable_candidate_count_before: 0,
+            routeable_candidate_count_after: 0,
+            measured_delta: 0,
+            no_delta_release_key: 'alpha-readiness-no-delta:H-MICRO-01:window-a',
+            launch_decision: 'deny',
+            required_recorder_schema: 'jangar.material-action-custody-flight-recorder.v1',
+            validation_command: 'uv run --frozen pytest services/torghut/tests/test_alpha_repair_dividend_ledger.py',
+            enforcement_mode: 'observe',
+            max_notional: '0',
+            capital_rule: 'zero_notional_repair_only',
+            rollback_target: 'stop emitting alpha_repair_dividend_ledger and keep Torghut max_notional=0',
+          },
+        }),
+      ),
+    ) as unknown as typeof globalThis.fetch
+
+    const result = await resolveTorghutConsumerEvidence(new Date('2026-05-14T09:15:10.000Z'))
+
+    expect(result.status.observed_contracts).toEqual(expect.arrayContaining(['alpha_repair_dividend_ledger']))
+    expect(result.status.alpha_repair_dividend_ledger).toMatchObject({
+      ledger_id: 'alpha-repair-dividend-ledger:test',
+      selected_hypothesis_id: 'H-MICRO-01',
+      selected_value_gate: 'routeable_candidate_count',
+      dividend_state: 'no_delta',
+      launch_decision: 'deny',
+      no_delta_release_key: 'alpha-readiness-no-delta:H-MICRO-01:window-a',
+      max_notional: '0',
+    })
+  })
+
   it('maps status schema mismatch to schema_mismatch evidence', async () => {
     process.env = {
       ...originalEnv,

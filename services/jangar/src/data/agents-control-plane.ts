@@ -895,6 +895,30 @@ export type TorghutAlphaReadinessSettlementConveyorRef = {
   rollback_target: string | null
 }
 
+export type TorghutAlphaRepairDividendLedgerRef = {
+  schema_version: 'torghut.alpha-repair-dividend-ledger-ref.v1'
+  ledger_schema_version: string | null
+  ledger_id: string | null
+  generated_at: string | null
+  fresh_until: string | null
+  status: string | null
+  dividend_state: string | null
+  reason_codes: string[]
+  selected_hypothesis_id: string | null
+  selected_value_gate: string | null
+  routeable_candidate_count_before: number | null
+  routeable_candidate_count_after: number | null
+  measured_delta: number | null
+  no_delta_release_key: string | null
+  launch_decision: string | null
+  required_recorder_schema: string | null
+  validation_command: string | null
+  enforcement_mode: string | null
+  max_notional: string | null
+  capital_rule: string | null
+  rollback_target: string | null
+}
+
 export type TorghutRevenueRepairQueueItem = {
   code: string | null
   reason: string | null
@@ -1584,6 +1608,7 @@ export type TorghutConsumerEvidenceStatus = {
   alpha_repair_closure_board?: TorghutAlphaRepairClosureBoardRef | null
   alpha_evidence_foundry?: TorghutAlphaEvidenceFoundryRef | null
   alpha_readiness_settlement_conveyor?: TorghutAlphaReadinessSettlementConveyorRef | null
+  alpha_repair_dividend_ledger?: TorghutAlphaRepairDividendLedgerRef | null
   repair_outcome_dividend_ledger_id?: string | null
   repair_outcome_receipt_ids?: string[]
   repair_outcome_open_escrow_ids?: string[]
@@ -2109,6 +2134,89 @@ export type RevenueRepairSettlementCustody = {
     reason_codes: string[]
   }
   validation_command: string | null
+  rollback_target: string
+}
+
+export type AlphaRepairReentryReleaseKeyState = 'clear' | 'active' | 'changed' | 'missing'
+
+export type AlphaRepairReentryAdmissionDecision = 'allow' | 'hold' | 'deny'
+
+export type AlphaRepairReentryAdmission = {
+  schema_version: 'jangar.alpha-repair-reentry-admission.v1'
+  mode: ReadyTruthArbiterMode
+  admission_id: string
+  generated_at: string
+  fresh_until: string
+  selected_value_gate: string | null
+  selected_hypothesis_id: string | null
+  release_key_state: AlphaRepairReentryReleaseKeyState
+  material_action_class: 'dispatch_repair'
+  decision: AlphaRepairReentryAdmissionDecision
+  reason_codes: string[]
+  required_output_receipt: string | null
+  validation_command: string | null
+  rollback_target: string
+}
+
+export type VerifyTrustForeclosureTicket = {
+  ticket_id: string
+  debt_class: string
+  source_ref: string | null
+  expected_delta: string
+  required_output_receipt: string | null
+  validation_commands: string[]
+  max_runtime_seconds: number
+  max_parallelism: number
+  ttl_seconds: number
+  dedupe_key: string
+  state: 'open' | 'closed' | 'denied' | 'expired'
+}
+
+export type VerifyTrustForeclosureActionDecision = {
+  action_class: ActionSloBudgetActionClass
+  decision: ReadyTruthActionDecision
+  reason_codes: string[]
+  evidence_refs: string[]
+}
+
+export type VerifyTrustForeclosureBoard = {
+  schema_version: 'jangar.verify-trust-foreclosure-board.v1'
+  mode: ReadyTruthArbiterMode
+  board_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  governing_design_refs: string[]
+  execution_trust_ref: string
+  execution_trust_status: ExecutionTrustStatus['status']
+  source_rollout_truth_ref: string | null
+  source_rollout_truth_state: string | null
+  controller_witness_ref: string | null
+  database_projection_ref: string | null
+  route_stability_ref: string | null
+  torghut_consumer_evidence_ref: string | null
+  torghut_alpha_repair_dividend_ref: string | null
+  active_no_delta_release_key: string | null
+  debt_classes: string[]
+  foreclosure_tickets: VerifyTrustForeclosureTicket[]
+  action_decisions: VerifyTrustForeclosureActionDecision[]
+  alpha_repair_reentry_admission: AlphaRepairReentryAdmission
+  deployer_packet: {
+    source_head_sha: string | null
+    serving_build_commit: string | null
+    manifest_image_digest: string | null
+    serving_image_digest: string | null
+    argo_sync_revision: string | null
+    argo_health: ControlPlaneRolloutHealth['status']
+    workload_ready: boolean
+    service_health: ReadyTruthServingReadiness | null
+    torghut_business_state: string | null
+    revenue_ready: boolean | null
+    top_repair_queue_item_code: string | null
+    selected_value_gate: string | null
+    validation_command: string | null
+    rollback_target: string
+  }
   rollback_target: string
 }
 
@@ -2645,6 +2753,7 @@ export type ControlPlaneStatus = {
   stage_credit_ledger: StageCreditLedger | null
   ready_truth_arbiter: ReadyTruthArbiter
   revenue_repair_settlement_custody: RevenueRepairSettlementCustody
+  verify_trust_foreclosure_board: VerifyTrustForeclosureBoard
   rollout_proof_passport: RolloutProofPassport
   runner_capacity_futures: RunnerCapacityFuture[]
   stage_launch_tickets: StageLaunchTicket[]

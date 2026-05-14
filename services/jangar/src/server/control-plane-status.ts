@@ -71,6 +71,7 @@ import {
   buildRevenueRepairSettlementCustody,
   deriveRevenueRepairReadiness,
 } from '~/server/control-plane-revenue-repair-settlement-custody'
+import { buildVerifyTrustForeclosureBoard } from '~/server/control-plane-verify-trust-foreclosure'
 import { buildDefaultRepairBidAdmissionState } from '~/server/control-plane-repair-bid-admission'
 import { buildRolloutProofStatusFields } from '~/server/control-plane-rollout-proof-passport'
 import {
@@ -578,6 +579,19 @@ export const buildControlPlaneStatus = async (
     projectionForeclosureNotary,
     revenueRepairSettlementCustody,
   })
+  const verifyTrustForeclosureBoard = buildVerifyTrustForeclosureBoard({
+    now,
+    namespace: options.namespace,
+    executionTrust: executionTrust.executionTrust,
+    sourceServingContractVerdictExchange,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+    revenueRepairSettlementCustody,
+    rolloutHealth,
+    controllerWitness,
+    database,
+    routeStabilityEscrow,
+    serviceHealth: readyTruthArbiter.serving_readiness,
+  })
   const rolloutProofStatusFields = buildRolloutProofStatusFields({
     now,
     namespace: options.namespace,
@@ -746,6 +760,7 @@ export const buildControlPlaneStatus = async (
     stage_credit_ledger: stageCreditLedger,
     ready_truth_arbiter: readyTruthArbiter,
     revenue_repair_settlement_custody: revenueRepairSettlementCustody,
+    verify_trust_foreclosure_board: verifyTrustForeclosureBoard,
     ...rolloutProofStatusFields,
     authority_provenance_settlement: authorityProvenanceSettlement,
     evidence_pressure_ledger: evidencePressureLedger,
