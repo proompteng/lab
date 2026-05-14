@@ -218,7 +218,7 @@ const buildTorghutRepairPlan = (input: {
     ],
     rollbackTarget:
       input.torghutConsumerEvidence.alpha_readiness_strike_ledger?.rollback_target ??
-    input.repairBidAdmission.rollback_target,
+      input.repairBidAdmission.rollback_target,
   })
 }
 
@@ -231,7 +231,9 @@ const buildTorghutExecutableAlphaRepairPlan = (input: {
   const jangarReentry = input.selectedReceipt.jangar_reentry
   const allowsRepairAction = isTorghutRepairAction(input.actionClass)
   const requiredOutputReceipt =
-    input.selectedReceipt.required_output_receipts.find((receipt) => receipt === 'torghut.executable-alpha-receipts.v1') ??
+    input.selectedReceipt.required_output_receipts.find(
+      (receipt) => receipt === 'torghut.executable-alpha-receipts.v1',
+    ) ??
     input.selectedReceipt.required_output_receipts[0] ??
     topTorghutRequiredOutput(input.torghutConsumerEvidence) ??
     null
@@ -244,11 +246,11 @@ const buildTorghutExecutableAlphaRepairPlan = (input: {
       "curl -fsS http://torghut.torghut.svc.cluster.local/trading/revenue-repair | jq '.executable_alpha_repair_receipts.selected_receipt'",
       'uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py',
     ],
-    valueGates: [
+    valueGates: uniqueStrings([
       ...(jangarReentry?.value_gates ?? []),
       input.selectedReceipt.target_value_gate,
       set?.target_value_gate,
-    ],
+    ]),
     expectedGateDelta: input.selectedReceipt.expected_gate_delta,
     maxParallelism: allowsRepairAction ? (jangarReentry?.max_parallelism ?? 1) : 0,
     maxRuntimeSeconds: allowsRepairAction ? (jangarReentry?.max_runtime_seconds ?? DEFAULT_MAX_RUNTIME_SECONDS) : 0,
