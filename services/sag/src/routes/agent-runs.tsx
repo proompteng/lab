@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { RefreshCw, Send } from 'lucide-react'
+import { Send } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, AlertDescription, AlertTitle } from '~/components/ui/alert'
 import { Badge } from '~/components/ui/badge'
@@ -78,16 +78,7 @@ function AgentRunsRoute() {
 
   return (
     <GatewayFrame active="/agent-runs" snapshot={snapshot}>
-      <GatewayPageHeader
-        title="Agent Runs"
-        detail="Create, inspect, follow logs."
-        action={
-          <Button variant="outline" size="sm" onClick={() => runsQuery.refetch()} disabled={runsQuery.isFetching}>
-            {runsQuery.isFetching ? <Spinner data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
-            Refresh
-          </Button>
-        }
-      />
+      <GatewayPageHeader title="Agent Runs" detail="Create, inspect, follow logs." />
 
       <main className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.45fr)]">
         <section className="flex min-h-0 flex-col gap-4 overflow-hidden">

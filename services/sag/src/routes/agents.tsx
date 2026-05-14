@@ -1,12 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { RefreshCw } from 'lucide-react'
 import { Badge } from '~/components/ui/badge'
-import { Button } from '~/components/ui/button'
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '~/components/ui/card'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '~/components/ui/empty'
 import { GatewayFrame, GatewayPageHeader } from '~/components/gateway-shell'
-import { Spinner } from '~/components/ui/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { fetchLiveAgents, fetchSnapshot } from '~/lib/sag-client'
 import { loadInitialSnapshot } from '~/lib/load-snapshot'
@@ -32,16 +29,7 @@ function AgentsRoute() {
 
   return (
     <GatewayFrame active="/agents" snapshot={snapshotQuery.data ?? initialSnapshot}>
-      <GatewayPageHeader
-        title="Agents"
-        detail="Cluster executors."
-        action={
-          <Button variant="outline" size="sm" onClick={() => agentsQuery.refetch()} disabled={agentsQuery.isFetching}>
-            {agentsQuery.isFetching ? <Spinner data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
-            Refresh
-          </Button>
-        }
-      />
+      <GatewayPageHeader title="Agents" detail="Cluster executors." />
 
       <main className="min-h-0 flex-1 overflow-hidden p-4">
         <Card className="h-full rounded-lg" size="sm">
