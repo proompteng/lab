@@ -1391,6 +1391,19 @@ class Settings(BaseSettings):
         alias="TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED",
         description="In simple mode, keep Kafka order-feed ingestion only as optional telemetry.",
     )
+    trading_simple_paper_route_probe_enabled: bool = Field(
+        default=False,
+        alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED",
+        description=(
+            "Permit bounded paper-only route-acquisition probes when the proof floor "
+            "is zero-notional because route/TCA evidence must be rebuilt."
+        ),
+    )
+    trading_simple_paper_route_probe_max_notional: float = Field(
+        default=25.0,
+        alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL",
+        description="Maximum notional per paper route-acquisition probe order.",
+    )
     trading_emergency_stop_enabled: bool = Field(
         default=False,
         alias="TRADING_EMERGENCY_STOP_ENABLED",
@@ -2286,6 +2299,10 @@ class Settings(BaseSettings):
             (
                 self.trading_simple_buying_power_reserve_bps,
                 "TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS must be >= 0",
+            ),
+            (
+                self.trading_simple_paper_route_probe_max_notional,
+                "TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL must be >= 0",
             ),
             (
                 self.trading_readiness_dependency_cache_stale_tolerance_seconds,

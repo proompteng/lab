@@ -89,6 +89,8 @@ spec:
               value: "false"
             - name: TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED
               value: "false"
+            - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED
+              value: "false"
             - name: TRADING_MARKET_CONTEXT_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context
             - name: TRADING_JANGAR_CONTROL_PLANE_STATUS_URL

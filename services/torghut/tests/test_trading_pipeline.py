@@ -759,6 +759,8 @@ class TestTradingPipeline(TestCase):
                 "trading_simple_max_notional_per_order",
                 "trading_simple_max_notional_per_symbol",
                 "trading_simple_order_feed_telemetry_enabled",
+                "trading_simple_paper_route_probe_enabled",
+                "trading_simple_paper_route_probe_max_notional",
                 "trading_universe_static_fallback_enabled",
                 "trading_universe_static_fallback_symbols_raw",
                 "trading_market_context_url",
@@ -2264,6 +2266,302 @@ class TestTradingPipeline(TestCase):
             )
             self.assertEqual(proof_floor.get("capital_state"), "zero_notional")
             self.assertEqual(control_plane.get("execution_lane"), "simple")
+
+    def test_simple_pipeline_allows_bounded_paper_route_probe_for_tca_repair(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_fractional_equities_enabled = True
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_max_notional = 25.0
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "NVDA"
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="simple-paper-route-probe",
+                description="simple paper lane route probe",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["NVDA"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 13, 30, 5, tzinfo=timezone.utc),
+            symbol="NVDA",
+            timeframe="1Min",
+            seq=1,
+            payload={
+                "feature_schema_version": "3.0.0",
+                "macd": {"macd": 1.2, "signal": 0.5},
+                "rsi14": 25,
+                "price": 100,
+            },
+        )
+
+        alpaca_client = FakeAlpacaClient()
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([signal]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        proof_floor = {
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "market_window": {"session_open": True},
+            "blocking_reasons": [
+                "alpha_readiness_not_promotion_eligible",
+                "execution_tca_route_universe_empty",
+            ],
+            "route_reacquisition_book": {
+                "summary": {
+                    "candidate_symbols": [],
+                    "repair_candidate_symbols": ["NVDA"],
+                }
+            },
+        }
+        with patch.object(
+            SimpleTradingPipeline,
+            "_profitability_proof_floor",
+            return_value=proof_floor,
+        ):
+            pipeline.run_once()
+
+        self.assertEqual(len(alpaca_client.submitted), 1)
+        self.assertEqual(alpaca_client.submitted[0]["qty"], "0.25")
+        with self.session_local() as session:
+            decision = session.execute(select(TradeDecision)).scalar_one()
+            execution = session.execute(select(Execution)).scalar_one()
+            decision_json = cast(dict[str, Any], decision.decision_json)
+            params = cast(dict[str, Any], decision_json.get("params"))
+            paper_route_probe = cast(dict[str, Any], params.get("paper_route_probe"))
+            simple_lane = cast(dict[str, Any], params.get("simple_lane"))
+
+            self.assertEqual(decision.status, "submitted")
+            self.assertEqual(execution.submitted_qty, Decimal("0.25000000"))
+            self.assertEqual(paper_route_probe.get("mode"), "paper_route_acquisition")
+            self.assertEqual(paper_route_probe.get("max_notional"), "25.0")
+            self.assertEqual(paper_route_probe.get("capped_qty"), "0.2500")
+            self.assertEqual(simple_lane.get("paper_route_probe_cap_applied"), True)
+
+    def test_paper_route_probe_helpers_handle_missing_repair_metadata(self) -> None:
+        self.assertFalse(SimpleTradingPipeline._proof_floor_market_session_open({}))
+        self.assertEqual(
+            SimpleTradingPipeline._proof_floor_route_repair_symbols({}), set()
+        )
+        self.assertEqual(
+            SimpleTradingPipeline._proof_floor_route_repair_symbols(
+                {"route_reacquisition_book": {}}
+            ),
+            set(),
+        )
+        self.assertEqual(
+            SimpleTradingPipeline._proof_floor_route_repair_symbols(
+                {
+                    "route_reacquisition_book": {
+                        "summary": {
+                            "repair_candidate_symbols": "NVDA",
+                            "candidate_symbols": [" nvda ", "", "MU"],
+                        }
+                    }
+                }
+            ),
+            {"NVDA", "MU"},
+        )
+
+        decision = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="NVDA",
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="missing-reference-price",
+            params={},
+        )
+
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_probe_reference_price(decision)
+        )
+
+    def test_paper_route_probe_context_rejects_unsafe_profiles(self) -> None:
+        from app import config
+
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="NVDA",
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="route-probe-context",
+            params={"price": "100"},
+        )
+        proof_floor = {
+            "market_window": {"session_open": True},
+            "blocking_reasons": ["execution_tca_route_universe_empty"],
+            "route_reacquisition_book": {
+                "summary": {"repair_candidate_symbols": ["NVDA"]}
+            },
+        }
+
+        config.settings.trading_mode = "live"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_simple_paper_route_probe_max_notional = 25.0
+        self.assertIsNone(
+            pipeline._paper_route_probe_context(
+                proof_floor=proof_floor,
+                decision=decision,
+            )
+        )
+
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_submit_enabled = False
+        self.assertIsNone(
+            pipeline._paper_route_probe_context(
+                proof_floor=proof_floor,
+                decision=decision,
+            )
+        )
+
+        config.settings.trading_simple_submit_enabled = True
+        sell_decision = decision.model_copy(update={"action": "sell"})
+        self.assertIsNone(
+            pipeline._paper_route_probe_context(
+                proof_floor=proof_floor,
+                decision=sell_decision,
+            )
+        )
+
+        config.settings.trading_simple_paper_route_probe_max_notional = 0.0
+        self.assertIsNone(
+            pipeline._paper_route_probe_context(
+                proof_floor=proof_floor,
+                decision=decision,
+            )
+        )
+
+        config.settings.trading_simple_paper_route_probe_max_notional = 25.0
+        closed_floor = {**proof_floor, "market_window": {"session_open": False}}
+        self.assertIsNone(
+            pipeline._paper_route_probe_context(
+                proof_floor=closed_floor,
+                decision=decision,
+            )
+        )
+
+        no_route_reason_floor = {
+            **proof_floor,
+            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+        }
+        self.assertIsNone(
+            pipeline._paper_route_probe_context(
+                proof_floor=no_route_reason_floor,
+                decision=decision,
+            )
+        )
+
+        wrong_symbol_floor = {
+            **proof_floor,
+            "route_reacquisition_book": {
+                "summary": {"repair_candidate_symbols": ["MU"]}
+            },
+        }
+        self.assertIsNone(
+            pipeline._paper_route_probe_context(
+                proof_floor=wrong_symbol_floor,
+                decision=decision,
+            )
+        )
+
+    def test_paper_route_probe_cap_rejects_missing_or_tiny_quantity(
+        self,
+    ) -> None:
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        missing_price_decision = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="NVDA",
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="missing-price",
+            params={},
+        )
+        priced_decision = missing_price_decision.model_copy(
+            update={"params": {"price": "100"}}
+        )
+
+        self.assertFalse(
+            pipeline._apply_paper_route_probe_cap(
+                session=cast(Session, None),
+                decision=missing_price_decision,
+                decision_row=cast(TradeDecision, object()),
+                proof_floor={},
+                context={"max_notional": "25"},
+            )
+        )
+        self.assertFalse(
+            pipeline._apply_paper_route_probe_cap(
+                session=cast(Session, None),
+                decision=priced_decision,
+                decision_row=cast(TradeDecision, object()),
+                proof_floor={},
+                context={"max_notional": "0.00001"},
+            )
+        )
 
     def test_simple_pipeline_blocks_symbol_excluded_from_route_candidates(
         self,
