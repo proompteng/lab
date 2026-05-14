@@ -35,6 +35,8 @@ The v1 documents are written to stay consistent with:
 If you are trying to decide which docs are current contract truth versus historical milestone records, start with:
 
 - `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md`
+- `docs/agents/designs/203-jangar-foreclosure-carry-rollout-witness-and-stage-debt-repair-2026-05-14.md`
+- `docs/torghut/design-system/v6/209-torghut-verification-carry-import-and-alpha-repair-release-2026-05-14.md`
 - `docs/torghut/design-system/v6/208-torghut-jangar-verification-carry-bridge-and-no-delta-reentry-market-2026-05-14.md`
 - `docs/agents/designs/202-jangar-verification-carry-export-and-repair-slot-reconciliation-2026-05-14.md`
 - `docs/torghut/design-system/v6/207-torghut-quant-plan-closeout-and-alpha-repair-reentry-handoff-2026-05-14.md`
