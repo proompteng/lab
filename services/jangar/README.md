@@ -252,7 +252,9 @@ parameters to the current passport, warrant, and proof-cell ids before launch. E
 check only is
 `JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false`; setting
 `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` also disables generated runner admission and proof checks so advisory
-rollback schedules do not fail because they intentionally lack passport stamps.
+rollback schedules do not fail because they intentionally lack passport stamps. Generated runner pods also carry the
+top-level runtime-admission enforcement flag, and the fire-time runner command treats that flag as the primary rollback
+switch before it performs passport or proof lookups.
 The fire-time status timeout defaults to `15000` ms via `JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS`. If the
 full status projection is too slow for the runtime-admission check, the runner retries against the same service's
 `/ready` authority projection, which carries the admission passports, recovery warrants, runtime kits, and proof cells

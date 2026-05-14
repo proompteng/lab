@@ -1563,8 +1563,9 @@ const reconcileSchedule = async (
     await applyResourceIfChanged(kube, configMap)
 
     const supportingConfig = resolveSupportingPrimitivesConfig(process.env)
-    const scheduleRunnerAdmissionCheck =
-      shouldEnforceSwarmRuntimeAdmission() && supportingConfig.scheduleRunnerAdmissionCheck
+    const admissionEnforced = shouldEnforceSwarmRuntimeAdmission()
+    const admissionEnforcementEnv = 'JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT'
+    const scheduleRunnerAdmissionCheck = admissionEnforced && supportingConfig.scheduleRunnerAdmissionCheck
     const scheduleRunnerRuntimeProofCheck = scheduleRunnerAdmissionCheck && shouldEnforceSwarmRuntimeProof()
     const stageClearanceEnforcement = supportingConfig.stageClearanceEnforcement
     const image = supportingConfig.scheduleRunnerImage
@@ -1609,6 +1610,7 @@ const reconcileSchedule = async (
                     command: ['bun', '-e', buildScheduleRunnerCommand()],
                     env: [
                       { name: SCHEDULE_RUNNER_SCHEDULE_NAMESPACE_ENV, value: namespace },
+                      { name: admissionEnforcementEnv, value: admissionEnforced ? 'true' : 'false' },
                       {
                         name: SCHEDULE_RUNNER_ADMISSION_CHECK_ENV,
                         value: scheduleRunnerAdmissionCheck ? 'true' : 'false',

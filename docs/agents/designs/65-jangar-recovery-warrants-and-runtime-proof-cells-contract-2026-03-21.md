@@ -419,6 +419,8 @@ Implementation note: launch runtime-proof enforcement (2026-05-07).
   proof content, or decision changes materially.
 - emergency rollback for the proof layer is `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=false`; this returns launchers to
   passport-only enforcement while preserving runtime-kit, passport, warrant, proof-cell, and watermark projection.
+- emergency rollback for the full launcher gate is still `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false`; generated
+  schedule runners carry that value and skip proof checks when runtime-admission enforcement is off.
 
 Phase 3. Enforce rollout parity.
 

@@ -569,6 +569,7 @@ describe('supporting primitives controller', () => {
       "  const { request } = await import('node:https');",
     ])
     expect(command).toContain("replaceAll('__JANGAR_DELIVERY_ID__', randomUUID())")
+    expect(command).toContain('JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT')
     expect(command).toContain('JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK')
     expect(command).toContain('JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT')
     expect(command).toContain('JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL')
@@ -577,6 +578,12 @@ describe('supporting primitives controller', () => {
     expect(command).toContain('return Number.isFinite(parsed) && parsed > 0 ? parsed : 15000;')
     expect(command).toContain('readyStatusUrlFor')
     expect(command).toContain('falling back to ready authority projection')
+    expect(command).toContain(
+      'const runtimeAdmissionEnforced = parseBoolean(readEnv(runtimeAdmissionEnforcementEnv), true);',
+    )
+    expect(command).toContain(
+      'const scheduleAdmissionCheckEnabled = runtimeAdmissionEnforced && parseBoolean(readEnv(admissionCheckEnv), true);',
+    )
     expect(command).toContain('missing schedule admission passport annotation for')
     expect(command).toContain('runtime-admission-design-ref')
     expect(command).toContain('runtime-proof-design-ref')
@@ -1248,6 +1255,7 @@ describe('supporting primitives controller', () => {
     expect(env).toEqual(
       expect.arrayContaining([
         { name: 'JANGAR_SCHEDULE_NAMESPACE', value: 'agents' },
+        { name: 'JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT', value: 'false' },
         { name: 'JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK', value: 'false' },
         { name: 'JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT', value: 'false' },
         {
@@ -1418,6 +1426,7 @@ describe('supporting primitives controller', () => {
 
     expect(env).toEqual(
       expect.arrayContaining([
+        { name: 'JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT', value: 'false' },
         { name: 'JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK', value: 'false' },
         { name: 'JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT', value: 'false' },
       ]),
