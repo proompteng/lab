@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { buildRuntimeAdmissionSnapshot } from '~/server/control-plane-runtime-admission'
+import { resolveRuntimeAdmissionConfig } from '~/server/runtime-tooling-config'
 
 const REPO_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url))
 
@@ -33,6 +34,14 @@ describe('buildRuntimeAdmissionSnapshot', () => {
       tempDir = undefined
     }
     resetEnv()
+  })
+
+  it('uses the deployed Jangar image as the runtime image fallback', () => {
+    delete process.env.JANGAR_RUNTIME_IMAGE
+    delete process.env.IMAGE_REF
+    process.env.JANGAR_IMAGE = 'registry.example.com/lab/jangar-control-plane:abc123@sha256:'.concat('a'.repeat(64))
+
+    expect(resolveRuntimeAdmissionConfig().runtimeImage).toBe(process.env.JANGAR_IMAGE)
   })
 
   it('accepts NATS_URL and NATS helper runtime components for collaboration admission', async () => {
