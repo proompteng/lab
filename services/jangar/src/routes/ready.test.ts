@@ -415,6 +415,29 @@ describe('getReadyHandler', () => {
               observed_count: 1,
             },
           ],
+          alpha_repair_closure_board: {
+            schema_version: 'torghut.alpha-repair-closure-board.v1',
+            board_id: 'alpha-repair-closure-board:ready-test',
+            generated_at: '2026-05-14T00:23:00.000Z',
+            fresh_until: '2026-05-14T00:38:00.000Z',
+            status: 'selected',
+            selected_value_gate: 'routeable_candidate_count',
+            max_notional: '0',
+            capital_rule: 'zero_notional_repair_only',
+            alpha_closure_settlement_market: {
+              market_id: 'alpha-closure-settlement-market:ready-test',
+              status: 'pending_no_delta',
+              selected_hypothesis_id: 'H-MICRO-01',
+              selected_repair_class: 'feature_replay_closure',
+              required_output_receipt: 'torghut.alpha-closure-settlement-receipt.v1',
+              active_dedupe_key: 'alpha-window:ready-test',
+              no_delta_budget: {
+                state: 'consumed',
+                used_attempts: 1,
+                release_conditions: ['evidence_window_changes'],
+              },
+            },
+          },
         }),
       ) as unknown as typeof globalThis.fetch
 
@@ -438,6 +461,24 @@ describe('getReadyHandler', () => {
       revenue_repair_business_state: 'repair_only',
       revenue_repair_ready: false,
     })
+    expect(body.material_gate_digest).toMatchObject({
+      schema_version: 'jangar.material-gate-digest.v1',
+      material_readiness: 'repair_only',
+      alpha_closure_carry: {
+        board_id: 'alpha-repair-closure-board:ready-test',
+        settlement_market_id: 'alpha-closure-settlement-market:ready-test',
+        decision: 'deny',
+        reason_codes: expect.arrayContaining(['alpha_closure_no_delta_budget_consumed']),
+      },
+    })
+    expect(body.material_gate_digest.action_class_decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'dispatch_repair',
+          decision: 'deny',
+        }),
+      ]),
+    )
   })
 
   it('returns 200 and exposes a serving passport when only collaboration runtime debt is blocked', async () => {

@@ -823,6 +823,54 @@ export type TorghutExecutableAlphaRepairReceiptSet = {
   rollback_target: string | null
 }
 
+export type TorghutAlphaRepairClosureBoardRef = {
+  schema_version: 'torghut.alpha-repair-closure-board-ref.v1' | 'torghut.alpha-repair-closure-board.v1'
+  board_id: string
+  generated_at: string | null
+  fresh_until: string | null
+  status: string | null
+  reason_codes: string[]
+  top_closure_id: string | null
+  selected_value_gate: string | null
+  required_output_receipt: string | null
+  settlement_market_id: string | null
+  settlement_market_status: string | null
+  selected_hypothesis_id: string | null
+  selected_repair_class: string | null
+  required_settlement_receipt: string | null
+  active_dedupe_key: string | null
+  no_delta_budget_state: string | null
+  no_delta_debt_count: number | null
+  next_allowed_attempt_after: string | null
+  max_notional: string | null
+  capital_rule: string | null
+  release_conditions: string[]
+  validation_commands: string[]
+  rollback_target: string | null
+}
+
+export type TorghutAlphaEvidenceFoundryRef = {
+  schema_version: 'torghut.alpha-evidence-foundry-ref.v1' | 'torghut.alpha-evidence-foundry.v1'
+  foundry_id: string
+  generated_at: string | null
+  fresh_until: string | null
+  status: string | null
+  reason_codes: string[]
+  selected_queue_code: string | null
+  selected_value_gate: string | null
+  required_output_receipt: string | null
+  receipt_count: number | null
+  selected_receipt_id: string | null
+  selected_hypothesis_id: string | null
+  hypothesis_ids: string[]
+  no_delta_debt_count: number | null
+  routeable_candidate_count_before: number | null
+  max_notional: string | null
+  capital_state: string | null
+  capital_rule: string | null
+  rollback_target: string | null
+}
+
 export type TorghutRevenueRepairQueueItem = {
   code: string | null
   reason: string | null
@@ -910,6 +958,65 @@ export type RepairBidAdmissionState = {
   admitted_lot_ids: string[]
   held_lot_ids: string[]
   active_dedupe_keys: string[]
+  reason_codes: string[]
+  rollback_target: string
+}
+
+export type MaterialGateDigestDecision = 'allow' | 'hold' | 'deny' | 'block'
+
+export type MaterialGateDigestReadiness = 'allow' | 'repair_only' | 'hold' | 'block'
+
+export type AlphaClosureCarry = {
+  schema_version: 'jangar.alpha-closure-carry.v1'
+  source: 'torghut.consumer-evidence'
+  board_id: string | null
+  settlement_market_id: string | null
+  selected_hypothesis_id: string | null
+  selected_value_gate: string | null
+  required_settlement_receipt: string | null
+  active_dedupe_key: string | null
+  no_delta_budget_state: string | null
+  no_delta_debt_count: number | null
+  next_allowed_attempt_after: string | null
+  max_notional: string | null
+  capital_rule: string | null
+  decision: MaterialGateDigestDecision
+  reason_codes: string[]
+  release_conditions: string[]
+  validation_refs: string[]
+  rollback_target: string | null
+}
+
+export type MaterialGateActionDecision = {
+  action_class: ActionSloBudgetActionClass
+  decision: MaterialGateDigestDecision
+  reason_codes: string[]
+  source_refs: string[]
+  validation_refs: string[]
+  rollback_target: string
+}
+
+export type MaterialGateDigest = {
+  schema_version: 'jangar.material-gate-digest.v1'
+  digest_id: string
+  generated_at: string
+  fresh_until: string
+  mode: 'observe' | 'enforce'
+  design_artifact: string
+  producer_revision: string | null
+  namespace: string
+  serving_readiness: 'ok' | 'degraded' | 'down'
+  material_readiness: MaterialGateDigestReadiness
+  action_class_decisions: MaterialGateActionDecision[]
+  alpha_closure_carry: AlphaClosureCarry
+  alpha_evidence_foundry_ref: TorghutAlphaEvidenceFoundryRef | null
+  rollout_truth_ref: string | null
+  database_witness_ref: string | null
+  runner_debt_summary: {
+    recent_failed_jobs: number | null
+    backoff_limit_exceeded_jobs: number | null
+    source: string
+  }
   reason_codes: string[]
   rollback_target: string
 }
@@ -2472,6 +2579,7 @@ export type ControlPlaneStatus = {
   terminal_debt_compaction_ledger: TerminalDebtCompactionLedger | null
   ready_action_exchange: ReadyActionExchange
   repair_bid_admission: RepairBidAdmissionState
+  material_gate_digest: MaterialGateDigest
   material_reentry_clearinghouse: MaterialReentryClearinghouse
   repair_warrant_exchange: RepairWarrantExchange
   consumer_evidence_leases: ConsumerEvidenceLeaseSet

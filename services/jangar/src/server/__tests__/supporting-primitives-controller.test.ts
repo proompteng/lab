@@ -574,6 +574,9 @@ describe('supporting primitives controller', () => {
     expect(command).toContain('JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL')
     expect(command).toContain('JANGAR_STAGE_CLEARANCE_ENFORCEMENT')
     expect(command).toContain('JANGAR_EVIDENCE_PRESSURE_LEDGER_MODE')
+    expect(command).toContain('return Number.isFinite(parsed) && parsed > 0 ? parsed : 15000;')
+    expect(command).toContain('readyStatusUrlFor')
+    expect(command).toContain('falling back to ready authority projection')
     expect(command).toContain('missing schedule admission passport annotation for')
     expect(command).toContain('runtime-admission-design-ref')
     expect(command).toContain('runtime-proof-design-ref')
@@ -1131,6 +1134,11 @@ describe('supporting primitives controller', () => {
       ((cronJob?.spec?.jobTemplate as Record<string, unknown> | undefined)?.spec as Record<string, unknown> | undefined)
         ?.template as Record<string, unknown> | undefined
     )?.spec as Record<string, unknown> | undefined
+    const jobSpec = (cronJob?.spec?.jobTemplate as Record<string, unknown> | undefined)?.spec as
+      | Record<string, unknown>
+      | undefined
+    const containers = Array.isArray(podSpec?.containers) ? (podSpec.containers as Record<string, unknown>[]) : []
+    const env = containers.find((container) => container.name === 'schedule-runner')?.env
 
     expect(
       (cronJob?.metadata?.labels as Record<string, unknown> | undefined)?.['schedules.proompteng.ai/schedule'],
@@ -1138,7 +1146,11 @@ describe('supporting primitives controller', () => {
     expect(
       (jobTemplateMetadata?.labels as Record<string, unknown> | undefined)?.['schedules.proompteng.ai/schedule'],
     ).toBe('jangar-control-plane-plan-sched')
+    expect(jobSpec?.backoffLimit).toBe(1)
     expect(podSpec?.nodeSelector).toEqual({ 'kubernetes.io/arch': 'arm64' })
+    expect(env).toEqual(
+      expect.arrayContaining([{ name: 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS', value: '15000' }]),
+    )
   })
 
   it('labels cronjob job templates with the schedule selector used for repair debt collection', async () => {

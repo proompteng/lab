@@ -28,6 +28,7 @@ import {
   buildControlPlaneMaterialActionArtifacts,
   type RepairScheduleAttemptResolver,
 } from '~/server/control-plane-material-action-artifacts'
+import { buildMaterialGateDigest } from '~/server/control-plane-material-gate-digest'
 import { buildMaterialReentryClearinghouse } from '~/server/control-plane-material-reentry-clearinghouse'
 import {
   createControlPlaneHeartbeatStore,
@@ -684,6 +685,37 @@ export const buildControlPlaneStatus = async (
     materialActionVerdictEpoch,
     empiricalServices,
   })
+  const topRepairQueueItem = torghutConsumerEvidence.status.revenue_repair_queue?.[0] ?? null
+  const businessState =
+    torghutConsumerEvidence.status.revenue_repair_business_state ??
+    (topRepairQueueItem || torghutConsumerEvidence.status.max_notional === '0' ? 'repair_only' : null)
+  let revenueReady = torghutConsumerEvidence.status.revenue_repair_ready ?? null
+  if (revenueReady === null) {
+    if (businessState === 'ready' || businessState === 'revenue_ready' || businessState === 'live_ready') {
+      revenueReady = true
+    } else if (businessState === 'repair_only' || businessState === 'repair' || businessState === 'hold') {
+      revenueReady = false
+    }
+  }
+  const materialGateDigest = buildMaterialGateDigest({
+    now,
+    namespace: options.namespace,
+    servingReadiness: rolloutHealth.status === 'healthy' && database.status !== 'degraded' ? 'ok' : 'degraded',
+    businessState,
+    revenueReady,
+    affectedValueGate:
+      topRepairQueueItem?.value_gate ??
+      torghutConsumerEvidence.status.executable_alpha_repair_receipts?.target_value_gate ??
+      repairBidAdmission.dispatch_tickets.find((ticket) => ticket.launch_allowed)?.target_value_gate ??
+      null,
+    torghutConsumerEvidence: torghutConsumerEvidence.status,
+    repairBidAdmission,
+    fullStatusAvailable: true,
+    producerRevision: runtimeAdmission.runtimeKits[0]?.producer_revision ?? null,
+    rolloutTruthRef: sourceRolloutTruthExchange.exchange_id,
+    databaseWitnessRef: database.migration_consistency.latest_applied,
+    workflows,
+  })
 
   const degradedComponents = buildControlPlaneDegradedComponents({
     agentRunIngestion,
@@ -744,6 +776,7 @@ export const buildControlPlaneStatus = async (
     terminal_debt_compaction_ledger: terminalDebtCompactionLedger,
     ready_action_exchange: readyActionExchange,
     repair_bid_admission: repairBidAdmission,
+    material_gate_digest: materialGateDigest,
     material_reentry_clearinghouse: materialReentryClearinghouse,
     repair_warrant_exchange: repairWarrantExchange,
     consumer_evidence_leases: consumerEvidenceLeases,

@@ -98,7 +98,7 @@ export const resolveSupportingPrimitivesConfig = (env: EnvSource = process.env):
     'http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status',
   scheduleRunnerAdmissionStatusTimeoutMs: parsePositiveInt(
     env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS,
-    5_000,
+    15_000,
   ),
   swarmDefaultNatsUrl:
     normalizeNonEmpty(env.JANGAR_SWARM_NATS_URL) ??

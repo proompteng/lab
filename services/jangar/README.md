@@ -253,6 +253,12 @@ check only is
 `JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false`; setting
 `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` also disables generated runner admission and proof checks so advisory
 rollback schedules do not fail because they intentionally lack passport stamps.
+The fire-time status timeout defaults to `15000` ms via `JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS`. If the
+full status projection is too slow for the runtime-admission check, the runner retries against the same service's
+`/ready` authority projection, which carries the admission passports, recovery warrants, runtime kits, and proof cells
+needed for the passport/proof gate. Stage-clearance hold mode still requires the full status projection because `/ready`
+does not carry clearance packets. Generated runner CronJobs use `backoffLimit: 1` to avoid turning one slow projection
+into a burst of repeated failed runner pods.
 
 Binary runtime-kit components must be executable, not just present on disk. The source Codex NATS helpers and the
 installed `/usr/local/bin/codex-nats-*` wrappers both satisfy that command-path contract; a non-executable helper keeps
@@ -599,6 +605,32 @@ curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents
 Rollback: ignore `ready_action_exchange` and `action_custody_receipts` consumers, or remove the projection. Existing
 material-action verdicts, route-stability escrow, repair-warrant exchange, runtime-admission passports, and Torghut
 proof-floor/notional gates remain the fallback safety boundary.
+
+## Material gate digest
+
+`/ready` and `/api/agents/control-plane/status` emit the observe-mode `material_gate_digest` from
+`docs/agents/designs/198-jangar-material-gate-digest-and-alpha-closure-carry-2026-05-14.md`. The digest is the bounded
+material-readiness proof for launchers and deployers: serving readiness can remain `ok`, while material actions carry
+their own `allow`, `hold`, `deny`, or `block` decision.
+
+The digest carries `alpha_closure_carry` from Torghut's compact `alpha_repair_closure_board` consumer-evidence ref,
+including board id, settlement market, selected hypothesis, active dedupe key, no-delta budget state, no-delta debt,
+max notional, capital rule, release conditions, and validation refs. A consumed no-delta budget denies
+`dispatch_repair` before another runner pod is created. `dispatch_normal`, deploy, merge, paper, and live action
+classes remain held or blocked while Torghut reports `business_state=repair_only`, `revenue_ready=false`, or
+`max_notional=0`.
+
+Validation:
+
+```bash
+curl -fsS http://localhost:8080/ready | jq '.material_gate_digest'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.material_gate_digest'
+curl -fsS http://torghut.torghut.svc.cluster.local/trading/consumer-evidence | jq '.alpha_repair_closure_board'
+```
+
+Rollback: ignore `material_gate_digest` consumers and keep existing ready truth, stage clearance, repair-bid admission,
+and material-action verdict consumers in control. Do not enable paper or live submission while Torghut remains
+repair-only or the repair queue is non-empty.
 
 ## Torghut stage-custody evidence
 
