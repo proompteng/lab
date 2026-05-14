@@ -103,6 +103,11 @@ _ROUTEABILITY_TCA_REPAIR_LOT_TYPES = {"route_universe_tca_repair"}
 _ROUTEABILITY_TCA_REPAIR_ACTION = "recompute_route_tca_and_fill_quality"
 _ROUTEABILITY_TCA_REPAIR_REASON_PREFIXES = ("execution_tca_", "route_tca_")
 _ROUTEABILITY_TCA_REPAIR_REASON_FRAGMENTS = ("slippage", "route_universe")
+_ALPHA_FEATURE_REPLAY_REASON_CODES = {
+    "feature_rows_missing",
+    "required_feature_set_unavailable",
+}
+_ALPHA_FEATURE_REPLAY_PRIORITY_BONUS = Decimal("3")
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -971,6 +976,14 @@ def _repair_lot(
     state = _text(dimension.get("state"), "unknown")
     repair_cost_class = _DIMENSION_REPAIR_COST.get(dimension_name, "medium")
     expected_bps = _DIMENSION_EXPECTED_BPS.get(dimension_name, Decimal("5"))
+    reason_codes = _strings(dimension.get("reason_codes"))
+    priority_adjustments: list[str] = []
+    priority_bonus = Decimal("0")
+    if dimension_name == "feature_coverage" and set(reason_codes).intersection(
+        _ALPHA_FEATURE_REPLAY_REASON_CODES
+    ):
+        priority_adjustments.append("alpha_feature_replay_closure")
+        priority_bonus += _ALPHA_FEATURE_REPLAY_PRIORITY_BONUS
     blocking_hypotheses = _strings(dimension.get("blocking_hypotheses"))
     candidate_ids = _strings(empirical_jobs_status.get("candidate_ids"))
     symbol_set = _route_symbols(route_reacquisition_board)
@@ -982,12 +995,14 @@ def _repair_lot(
         symbol_set=symbol_set,
     )
     expected_profit = expected_daily_net_pnl_unlock or expected_bps
-    repair_priority = expected_profit * _confidence_for_state(
-        state
-    ) * _routeability_confidence(routeability_ledger) * _jangar_confidence(
-        jangar_reliability_settlement_ref
-    ) - _REPAIR_COST_PENALTY.get(repair_cost_class, Decimal("5"))
-    reason_codes = _strings(dimension.get("reason_codes"))
+    repair_priority = (
+        expected_profit
+        * _confidence_for_state(state)
+        * _routeability_confidence(routeability_ledger)
+        * _jangar_confidence(jangar_reliability_settlement_ref)
+        - _REPAIR_COST_PENALTY.get(repair_cost_class, Decimal("5"))
+        + priority_bonus
+    )
     lot_id = _stable_ref(
         "profit-freshness-repair-lot",
         {
@@ -1013,6 +1028,7 @@ def _repair_lot(
         "expected_daily_net_pnl_unlock": _decimal_text(expected_daily_net_pnl_unlock),
         "profit_unlock_refs": profit_unlock_refs,
         "repair_priority": round(float(repair_priority), 4),
+        "priority_adjustments": priority_adjustments,
         "repair_priority_basis": (
             "expected_daily_net_pnl_unlock"
             if expected_daily_net_pnl_unlock is not None

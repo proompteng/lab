@@ -215,7 +215,9 @@ Testing rules for the trading core:
   `repair_alpha_readiness` is the live top queue item, the market reserves the first zero-notional closure slot for
   lineage-ready `H-MICRO-01` feature replay when drift checks, feature rows, or required feature-set evidence remain
   missing. The compact board ref exposes the market id, selected hypothesis, settlement receipt requirement, active
-  dedupe key, and no-delta budget state without enabling paper or live notional.
+  dedupe key, and no-delta budget state without enabling paper or live notional. The profit-freshness frontier applies
+  the same alpha feature-replay priority when required feature rows or feature-set evidence are missing, so the default
+  zero-notional repair action aligns with the closure market before lower-value drift-only repair.
 - `GET /trading/revenue-repair` also emits the May 14 doc 200 `torghut.alpha-evidence-foundry.v1` read-model. The
   foundry turns the current `repair_alpha_readiness` queue item into hypothesis-scoped
   `torghut.alpha-evidence-window-receipt.v1` receipts with feature, drift, post-cost, market-context, TCA,
