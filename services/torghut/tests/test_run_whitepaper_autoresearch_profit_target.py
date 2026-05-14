@@ -489,6 +489,97 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(manifest["persisted"]["status"], "unavailable")
         self.assertIn("db unavailable", manifest["persisted"]["error"])
 
+    def test_feedback_evidence_persisted_loader_reconstructs_summary_scorecards(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-summary-scorecard")
+        scorecard = {
+            "candidate_id": "cand-summary-scorecard",
+            "execution_signature": runner._candidate_spec_execution_signature(spec),
+            "family_template_id": spec.family_template_id,
+            "runtime_family": spec.runtime_family,
+            "runtime_strategy_name": spec.runtime_strategy_name,
+            "net_pnl_per_day": "-121.10",
+            "negative_day_count": "6",
+            "daily_net": {"2026-05-01": "-90.25"},
+            "hard_vetoes": ["train_net_per_day_below_screen"],
+        }
+
+        with (
+            Session(self.engine) as session,
+            patch(
+                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                side_effect=lambda: Session(self.engine),
+            ),
+        ):
+            session.add(
+                AutoresearchEpoch(
+                    epoch_id="summary-feedback-epoch",
+                    status="no_profit_target_candidate",
+                    target_net_pnl_per_day=Decimal("500"),
+                    paper_run_ids_json=[],
+                    snapshot_manifest_json={},
+                    runner_config_json={},
+                    summary_json={
+                        "build": {"commit": "abc123"},
+                        "candidate_search_remediation": {
+                            "partial_scorecards": [
+                                {
+                                    **scorecard,
+                                    "execution_signature": "unmatched-signature",
+                                },
+                                scorecard,
+                            ]
+                        },
+                    },
+                    started_at=datetime(2026, 5, 12, 14, 0, 0),
+                    completed_at=datetime(2026, 5, 12, 14, 5, 0),
+                    failure_reason=None,
+                )
+            )
+            session.add(
+                AutoresearchCandidateSpec(
+                    candidate_spec_id=spec.candidate_spec_id,
+                    epoch_id="summary-feedback-epoch",
+                    hypothesis_id=spec.hypothesis_id,
+                    candidate_kind=spec.candidate_kind,
+                    family_template_id=spec.family_template_id,
+                    payload_json=spec.to_payload(),
+                    payload_hash="summary-feedback-hash",
+                    status="eligible",
+                    blockers_json=None,
+                )
+            )
+            session.commit()
+
+            loaded, manifest = runner._load_recent_persisted_feedback_evidence_bundles()
+
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0].candidate_spec_id, spec.candidate_spec_id)
+        self.assertEqual(loaded[0].candidate_id, "cand-summary-scorecard")
+        self.assertEqual(
+            loaded[0].dataset_snapshot_id,
+            "autoresearch-epoch:summary-feedback-epoch:summary-scorecards",
+        )
+        self.assertEqual(manifest["status"], "loaded")
+        self.assertEqual(manifest["source_epoch_ids"], [])
+        self.assertEqual(
+            manifest["legacy_summary_source_epoch_ids"], ["summary-feedback-epoch"]
+        )
+        self.assertEqual(manifest["legacy_summary_scorecard_count"], 2)
+        self.assertEqual(manifest["legacy_summary_matched_scorecard_count"], 1)
+        self.assertEqual(manifest["legacy_summary_unmatched_scorecard_count"], 1)
+        self.assertEqual(manifest["legacy_summary_bundle_count"], 1)
+
+        model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(spec,), feedback_evidence_bundles=loaded
+        )
+
+        self.assertEqual(model["feedback_evidence_bundle_count"], 1)
+        self.assertEqual(model["feedback_matched_spec_count"], 1)
+        self.assertEqual(rows[0]["training_source"], "feedback_real_replay")
+        self.assertEqual(rows[0]["selection_reason"], "pre_replay_mlx_feedback_blocked")
+
     def test_feedback_evidence_persisted_loader_skips_empty_invalid_and_limited_payloads(
         self,
     ) -> None:
