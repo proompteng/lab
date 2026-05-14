@@ -87,6 +87,35 @@ def test_controller_ingestion_carry_classifies_repairable_ticket() -> None:
     assert carry["validation_commands"]
 
 
+def test_controller_ingestion_carry_rejects_unrelated_repair_ticket() -> None:
+    carry = build_jangar_controller_ingestion_carry(
+        generated_at=NOW,
+        dependency_quorum={
+            "controller_ingestion_settlement": {
+                "settlement_id": "controller-ingestion-settlement:unrelated",
+                "decision": "repair_only",
+                "controller_ingestion_current": False,
+                "selected_repair_ticket": {
+                    "ticket_id": "alpha-evidence-window-ticket:repair",
+                    "ticket_class": "alpha_evidence_window",
+                    "required_output_receipt": (
+                        "torghut.alpha-evidence-window-receipt.v1"
+                    ),
+                    "validation_commands": [
+                        "uv run --frozen pytest services/torghut/tests/test_alpha_evidence_foundry.py"
+                    ],
+                },
+            },
+        },
+    )
+
+    assert carry["carry_state"] == "unavailable"
+    assert carry["selected_ticket_class"] == "alpha_evidence_window"
+    assert carry["selected_ticket_id"] == "alpha-evidence-window-ticket:repair"
+    assert "jangar_controller_ingestion_repairable" not in carry["reason_codes"]
+    assert "jangar_verify_foreclosure_board_missing" in carry["reason_codes"]
+
+
 def test_controller_ingestion_carry_classifies_lagging_source_claim() -> None:
     carry = build_jangar_controller_ingestion_carry(
         generated_at=NOW,
