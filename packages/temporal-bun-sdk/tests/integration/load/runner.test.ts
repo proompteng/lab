@@ -89,3 +89,66 @@ test('worker load update termination keeps unrelated not-found failures fatal', 
     ),
   ).toBe(false)
 })
+
+test('worker load failure cleanup terminates only non-terminal submitted workflows', async () => {
+  const terminatedWorkflowIds: string[] = []
+  type CleanupClient = Parameters<typeof __workerLoadTestHooks.cleanupSubmittedWorkflows>[0]
+  const client = {
+    workflow: {
+      terminate: async (handle: { workflowId: string; runId: string }, options: { reason: string }) => {
+        expect(options.reason).toBe('test-cleanup')
+        terminatedWorkflowIds.push(handle.workflowId)
+      },
+    },
+  } as unknown as CleanupClient
+
+  const events = await __workerLoadTestHooks.cleanupSubmittedWorkflows(
+    client,
+    [
+      { workflowId: 'completed', runId: 'run-completed' },
+      { workflowId: 'running', runId: 'run-running' },
+      { workflowId: 'unobserved', runId: 'run-unobserved' },
+      { workflowId: 'canceled', runId: 'run-canceled' },
+    ],
+    [
+      { workflowId: 'completed', runId: 'run-completed', status: 'COMPLETED' },
+      { workflowId: 'running', runId: 'run-running', status: 'RUNNING' },
+      { workflowId: 'canceled', runId: 'run-canceled', status: 'CANCELED' },
+    ],
+    'test-cleanup',
+    2,
+  )
+
+  expect(terminatedWorkflowIds.sort()).toEqual(['running', 'unobserved'])
+  expect(events.map((event) => event.status).sort()).toEqual(['terminated', 'terminated'])
+})
+
+test('worker load failure cleanup reports already-completed and failed terminations', async () => {
+  type CleanupClient = Parameters<typeof __workerLoadTestHooks.cleanupSubmittedWorkflows>[0]
+  const client = {
+    workflow: {
+      terminate: async (handle: { workflowId: string }) => {
+        if (handle.workflowId === 'already-completed') {
+          throw new ConnectError('workflow execution already completed', Code.NotFound)
+        }
+        throw new Error('backend unavailable')
+      },
+    },
+  } as unknown as CleanupClient
+
+  const events = await __workerLoadTestHooks.cleanupSubmittedWorkflows(
+    client,
+    [
+      { workflowId: 'already-completed', runId: 'run-already-completed' },
+      { workflowId: 'failed', runId: 'run-failed' },
+    ],
+    [],
+    'test-cleanup',
+    1,
+  )
+
+  expect(events.map((event) => [event.workflowId, event.status]).sort()).toEqual([
+    ['already-completed', 'already-completed'],
+    ['failed', 'failed'],
+  ])
+})
