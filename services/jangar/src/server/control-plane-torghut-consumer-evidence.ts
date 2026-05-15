@@ -40,6 +40,20 @@ import {
 } from '~/server/control-plane-torghut-revenue-repair'
 import type { TorghutNegativeEvidenceInput } from '~/server/control-plane-negative-evidence-router-torghut'
 import {
+  CONTRACT_TRANSPORT_UNAVAILABLE_REASON,
+  REPAIR_BID_SETTLEMENT_LEDGER_SCHEMA_VERSION,
+  ROUTE_WARRANT_EXCHANGE_SCHEMA_VERSION,
+  contractRef,
+  hasRouteWarrantPayload,
+  payloadHasSourceServingContractRefs,
+  readContractCanary,
+  readMarketContext,
+} from '~/server/control-plane-torghut-consumer-evidence-contracts'
+import {
+  compactConsumerEvidenceEndpoint,
+  requestJson,
+} from '~/server/control-plane-torghut-consumer-evidence-transport'
+import {
   normalizeNonEmpty,
   normalizeNumber,
   normalizeReason,
@@ -67,83 +81,6 @@ const paperActionStates = new Set(['allow', 'allowed', 'current', 'paper_canary'
 const CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION = 'torghut.consumer-evidence-status.v1'
 const CONSUMER_EVIDENCE_RECEIPT_SCHEMA_VERSION = 'torghut.consumer-evidence-receipt.v1'
 const ROUTE_PROVEN_PROFIT_RECEIPT_SCHEMA_VERSION = 'torghut.route-proven-profit-receipt.v1'
-const ROUTE_WARRANT_EXCHANGE_SCHEMA_VERSION = 'torghut.route-warrant-exchange.v1'
-const REPAIR_BID_SETTLEMENT_LEDGER_SCHEMA_VERSION = 'torghut.repair-bid-settlement-ledger.v1'
-
-type JsonRouteResult = {
-  ok: boolean
-  statusCode: number | null
-  payload: Record<string, unknown> | null
-}
-
-const requestJson = async (url: string, timeoutMs: number): Promise<JsonRouteResult> => {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { accept: 'application/json' },
-      signal: controller.signal,
-    })
-    const payload = (await response.json().catch(() => null)) as unknown
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-      return { ok: response.ok, statusCode: response.status, payload: null }
-    }
-    return { ok: response.ok, statusCode: response.status, payload: payload as Record<string, unknown> }
-  } catch {
-    return { ok: false, statusCode: null, payload: null }
-  } finally {
-    clearTimeout(timeout)
-  }
-}
-
-const hasRouteWarrantPayload = (payload: Record<string, unknown> | null | undefined) =>
-  Boolean(
-    payload && asRecord(payload.route_warrant_exchange ?? payload.route_warrant_exchange_v1 ?? payload.route_warrant),
-  )
-
-const compactConsumerEvidenceEndpoint = (endpoint: string): string => {
-  try {
-    const url = new URL(endpoint)
-    const path = url.pathname.replace(/\/+$/, '')
-    if (path.endsWith('/trading/consumer-evidence') && !url.searchParams.has('view')) {
-      url.searchParams.set('view', 'summary')
-      return url.toString()
-    }
-  } catch {
-    return endpoint
-  }
-  return endpoint
-}
-
-const readMarketContext = (
-  payload: Record<string, unknown>,
-): Pick<TorghutNegativeEvidenceInput, 'market_context_status' | 'market_context_stale_domains'> => {
-  const marketContext = asRecord(payload.market_context)
-  const health = asRecord(marketContext?.health)
-  const status = normalizeNonEmpty(health?.status ?? marketContext?.status ?? marketContext?.last_reason)
-  const domains = asRecord(marketContext?.last_domain_states)
-  const staleDomains =
-    domains && typeof domains === 'object'
-      ? Object.entries(domains)
-          .filter(([, value]) => {
-            const domain = asRecord(value)
-            return normalizeNonEmpty(domain?.status) === 'stale' || domain?.stale === true
-          })
-          .map(([key]) => key)
-      : []
-
-  if (status === 'ok' || status === 'healthy') {
-    return { market_context_status: 'healthy', market_context_stale_domains: staleDomains }
-  }
-  if (status === 'stale') {
-    return { market_context_status: 'stale', market_context_stale_domains: staleDomains }
-  }
-  if (status === 'degraded') {
-    return { market_context_status: 'degraded', market_context_stale_domains: staleDomains }
-  }
-  return { market_context_status: undefined, market_context_stale_domains: staleDomains }
-}
 
 export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<TorghutConsumerEvidenceResolution> => {
   const config = resolveControlPlaneStatusConfig(process.env)
@@ -165,8 +102,8 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     }
   }
 
-  const compactEndpoint = compactConsumerEvidenceEndpoint(endpoint)
-  const routeResult = await requestJson(compactEndpoint, config.torghutStatusTimeoutMs)
+  const summaryEndpoint = compactConsumerEvidenceEndpoint(endpoint)
+  const routeResult = await requestJson(summaryEndpoint, config.torghutStatusTimeoutMs)
   if (!routeResult.ok) {
     const routeMissing = routeResult.statusCode === 404
     const status = routeMissing ? 'route_missing' : 'unavailable'
@@ -216,11 +153,19 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   const revenueRepairBusinessState = normalizeReason(revenueRepairPayload?.business_state)
   const revenueRepairReady = normalizeRevenueRepairBoolean(revenueRepairPayload?.revenue_ready)
   const revenueRepairQueue = readRevenueRepairQueue(revenueRepairPayload)
-  const fullConsumerEvidenceResult =
-    compactEndpoint !== endpoint && !hasRouteWarrantPayload(payload) && !hasRouteWarrantPayload(revenueRepairPayload)
-      ? await requestJson(endpoint, config.torghutStatusTimeoutMs)
-      : null
-  const sourceServingContractPayload =
+  const shouldFetchFullConsumerEvidence =
+    summaryEndpoint !== endpoint &&
+    !payloadHasSourceServingContractRefs(payload) &&
+    !hasRouteWarrantPayload(payload) &&
+    !hasRouteWarrantPayload(revenueRepairPayload)
+  const fullConsumerEvidenceResult = shouldFetchFullConsumerEvidence
+    ? await requestJson(endpoint, config.torghutStatusTimeoutMs)
+    : null
+  const contractTransportReasonCodes =
+    shouldFetchFullConsumerEvidence && (!fullConsumerEvidenceResult?.ok || !fullConsumerEvidenceResult.payload)
+      ? [CONTRACT_TRANSPORT_UNAVAILABLE_REASON]
+      : []
+  const contractPayload =
     fullConsumerEvidenceResult?.ok && fullConsumerEvidenceResult.payload ? fullConsumerEvidenceResult.payload : payload
   const alphaRepairClosureBoard =
     readAlphaRepairClosureBoard(payload) ?? readAlphaRepairClosureBoard(revenueRepairPayload)
@@ -469,26 +414,40 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     parseNumber(normalizeNonEmpty(routeableExchangeSummary?.rejected_candidate_count)) ?? rejectedCandidates.length
   const topClockSplit = evidenceClockSplits[0]
   const selectedEvidenceClockRepair = zeroNotionalRepairLots[0]
+  const contractCanary = readContractCanary(payload) ?? readContractCanary(contractPayload)
+  const routeWarrantCanaryRef =
+    contractRef(payload, 'route_warrant_exchange') ?? contractRef(contractPayload, 'route_warrant_exchange')
+  const repairBidCanaryRef =
+    contractRef(payload, 'repair_bid_settlement_ledger') ?? contractRef(contractPayload, 'repair_bid_settlement_ledger')
   const routeWarrant = asRecord(
-    sourceServingContractPayload.route_warrant_exchange ??
-      sourceServingContractPayload.route_warrant_exchange_v1 ??
-      sourceServingContractPayload.route_warrant ??
+    contractPayload.route_warrant_exchange ??
+      contractPayload.route_warrant_exchange_v1 ??
+      contractPayload.route_warrant ??
       payload.route_warrant_exchange ??
       payload.route_warrant_exchange_v1 ??
       payload.route_warrant,
   )
   const repairBidSettlement =
-    asRecord(sourceServingContractPayload.repair_bid_settlement_ledger) ??
+    asRecord(contractPayload.repair_bid_settlement_ledger) ??
     asRecord(payload.repair_bid_settlement_ledger) ??
     asRecord(revenueRepairPayload?.repair_bid_settlement_ledger)
-  const repairOutcome = readTorghutRepairOutcomeEvidence(payload)
+  const repairOutcome = readTorghutRepairOutcomeEvidence(contractPayload)
   const sourceServingRepairReceiptLedger =
-    asRecord(sourceServingContractPayload.source_serving_repair_receipt_ledger) ??
+    asRecord(contractPayload.source_serving_repair_receipt_ledger) ??
     asRecord(payload.source_serving_repair_receipt_ledger) ??
     asRecord(revenueRepairPayload?.source_serving_repair_receipt_ledger)
-  const freshnessCarry = readTorghutFreshnessCarryEvidence(payload)
-  const reasonCodes = uniqueStrings([...receiptReasonCodes, ...freshnessCarry.reasonCodes])
+  const freshnessCarry = readTorghutFreshnessCarryEvidence(contractPayload)
+  const reasonCodes = uniqueStrings([
+    ...receiptReasonCodes,
+    ...contractTransportReasonCodes,
+    ...freshnessCarry.reasonCodes,
+  ])
   const observedContracts = uniqueStrings([
+    ...stringValues(payload.observed_contracts),
+    ...stringValues(contractPayload.observed_contracts),
+    ...stringValues(contractCanary?.observed_contracts),
+    routeWarrantCanaryRef ? 'route_warrant_exchange' : null,
+    repairBidCanaryRef ? 'repair_bid_settlement_ledger' : null,
     routeWarrant ? 'route_warrant_exchange' : null,
     repairBidSettlement ? 'repair_bid_settlement_ledger' : null,
     repairOutcome.present ? 'repair_outcome_dividend_ledger' : null,
@@ -507,6 +466,9 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     noDeltaRepairReentryAuction ? 'no_delta_repair_reentry_auction' : null,
   ])
   const contractSchemaMismatches = uniqueStrings([
+    ...stringValues(payload.contract_schema_mismatches),
+    ...stringValues(contractPayload.contract_schema_mismatches),
+    ...stringValues(contractCanary?.contract_schema_mismatches),
     routeWarrant &&
     normalizeNonEmpty(routeWarrant.schema_version) &&
     normalizeNonEmpty(routeWarrant.schema_version) !== ROUTE_WARRANT_EXCHANGE_SCHEMA_VERSION
@@ -524,7 +486,9 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     alphaClosureDividendSloSchemaMismatch(payload),
     noDeltaRepairReentryAuctionRefSchemaMismatch(payload),
   ])
-  const routeWarrantId = normalizeNonEmpty(routeWarrant?.warrant_id ?? routeWarrant?.exchange_id)
+  const routeWarrantId = normalizeNonEmpty(
+    routeWarrant?.warrant_id ?? routeWarrant?.exchange_id ?? payload.route_warrant_id ?? routeWarrantCanaryRef?.ref,
+  )
   const routeWarrantRepairPackets = Array.isArray(routeWarrant?.repair_packets)
     ? routeWarrant.repair_packets
         .map((packet) => asRecord(packet))
@@ -551,14 +515,17 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     )
     return Boolean(state && !['accepted', 'current', 'fresh', 'healthy', 'ok', 'pass', 'ready'].includes(state))
   })
-  const routeWarrantRepairPacketIds = uniqueStrings(
-    routeWarrantRepairPackets.map((packet) => normalizeNonEmpty(packet.packet_id ?? packet.repair_packet_id)),
-  )
-  const routeWarrantRepairTargetValueGates = uniqueStrings(
-    routeWarrantRepairPackets.map((packet) => normalizeReason(packet.target_value_gate)),
-  )
+  const routeWarrantRepairPacketIds = uniqueStrings([
+    ...routeWarrantRepairPackets.map((packet) => normalizeNonEmpty(packet.packet_id ?? packet.repair_packet_id)),
+    ...stringValues(payload.route_warrant_repair_packet_ids),
+  ])
+  const routeWarrantRepairTargetValueGates = uniqueStrings([
+    ...routeWarrantRepairPackets.map((packet) => normalizeReason(packet.target_value_gate)),
+    ...stringValues(payload.route_warrant_repair_target_value_gates),
+  ])
   const routeWarrantBlockingDependencies = uniqueStrings([
     ...stringList(routeWarrant?.blocking_dependency_names),
+    ...stringValues(payload.route_warrant_blocking_dependency_names),
     ...routeWarrantRepairPackets.map((packet) => normalizeReason(packet.target_dependency)),
     ...staleWitnesses.map((witness) =>
       normalizeReason(
@@ -568,6 +535,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   ])
   const routeWarrantBlockingReasonCodes = uniqueStrings([
     ...stringList(routeWarrant?.blocking_reason_codes),
+    ...stringValues(payload.route_warrant_blocking_reason_codes),
     ...routeWarrantRepairPackets.flatMap((packet) => stringList(packet.blocking_reason_codes)),
     ...staleWitnesses.flatMap((witness) => [
       ...stringList(witness.reason_codes),
@@ -575,16 +543,29 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     ]),
   ])
   const repairBidSettlementSchema = normalizeNonEmpty(repairBidSettlement?.schema_version)
-  const repairBidSettlementLedgerId = normalizeNonEmpty(repairBidSettlement?.ledger_id)
-  const repairBidSettlementFreshUntil = normalizeNonEmpty(repairBidSettlement?.fresh_until)
+  const repairBidSettlementLedgerId = normalizeNonEmpty(
+    repairBidSettlement?.ledger_id ?? payload.repair_bid_settlement_ledger_id ?? repairBidCanaryRef?.ref,
+  )
+  const repairBidSettlementFreshUntil = normalizeNonEmpty(
+    repairBidSettlement?.fresh_until ?? payload.repair_bid_settlement_fresh_until ?? repairBidCanaryRef?.fresh_until,
+  )
   const repairBidSettlementFreshUntilMs = parseTimestampMs(repairBidSettlementFreshUntil)
   const repairBidSettlementLots = Array.isArray(repairBidSettlement?.compacted_lots)
     ? repairBidSettlement.compacted_lots
         .map((lot) => normalizeRepairBidSettlementLot(lot))
         .filter((lot): lot is TorghutRepairBidSettlementLot => Boolean(lot))
     : []
+  const flatRepairBidSettlementStatus = normalizeReason(
+    payload.repair_bid_settlement_status ?? repairBidCanaryRef?.state,
+  )
   const repairBidSettlementStatus: TorghutRepairBidSettlementStatus = !repairBidSettlement
-    ? 'missing'
+    ? flatRepairBidSettlementStatus === 'current' ||
+      flatRepairBidSettlementStatus === 'stale' ||
+      flatRepairBidSettlementStatus === 'missing' ||
+      flatRepairBidSettlementStatus === 'schema_mismatch' ||
+      flatRepairBidSettlementStatus === 'malformed'
+      ? flatRepairBidSettlementStatus
+      : 'missing'
     : repairBidSettlementSchema !== REPAIR_BID_SETTLEMENT_LEDGER_SCHEMA_VERSION
       ? 'schema_mismatch'
       : !repairBidSettlementLedgerId || !repairBidSettlementFreshUntil
@@ -656,30 +637,61 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       routeable_exchange_rejected_candidate_count: routeableExchangeRejectedCandidateCount,
       route_warrant_id: routeWarrantId,
       route_warrant_state: normalizeReason(
-        routeWarrant?.warrant_state ?? routeWarrant?.state ?? routeWarrant?.decision,
+        routeWarrant?.warrant_state ??
+          routeWarrant?.state ??
+          routeWarrant?.decision ??
+          payload.route_warrant_state ??
+          routeWarrantCanaryRef?.state,
       ),
-      route_warrant_fresh_until: normalizeNonEmpty(routeWarrant?.fresh_until),
+      route_warrant_fresh_until: normalizeNonEmpty(
+        routeWarrant?.fresh_until ?? payload.route_warrant_fresh_until ?? routeWarrantCanaryRef?.fresh_until,
+      ),
       route_warrant_repair_packet_ids: routeWarrantRepairPacketIds,
       route_warrant_repair_target_value_gates: routeWarrantRepairTargetValueGates,
       route_warrant_blocking_dependency_names: routeWarrantBlockingDependencies,
       route_warrant_blocking_reason_codes: routeWarrantBlockingReasonCodes,
       route_warrant_zero_notional_or_stale_evidence_rate: normalizeNumber(
-        routeWarrant?.zero_notional_or_stale_evidence_rate,
+        routeWarrant?.zero_notional_or_stale_evidence_rate ??
+          payload.route_warrant_zero_notional_or_stale_evidence_rate,
       ),
-      route_warrant_fill_tca_or_slippage_quality: normalizeReason(routeWarrant?.fill_tca_or_slippage_quality),
-      route_warrant_capital_gate_safety: normalizeReason(routeWarrant?.capital_gate_safety),
-      route_warrant_post_cost_daily_net_pnl_state: normalizeReason(routeWarrant?.post_cost_daily_net_pnl_state),
+      route_warrant_fill_tca_or_slippage_quality: normalizeReason(
+        routeWarrant?.fill_tca_or_slippage_quality ?? payload.route_warrant_fill_tca_or_slippage_quality,
+      ),
+      route_warrant_capital_gate_safety: normalizeReason(
+        routeWarrant?.capital_gate_safety ?? payload.route_warrant_capital_gate_safety,
+      ),
+      route_warrant_post_cost_daily_net_pnl_state: normalizeReason(
+        routeWarrant?.post_cost_daily_net_pnl_state ?? payload.route_warrant_post_cost_daily_net_pnl_state,
+      ),
       repair_bid_settlement_ledger_id: repairBidSettlementLedgerId,
       repair_bid_settlement_status: repairBidSettlementStatus,
-      repair_bid_settlement_generated_at: normalizeNonEmpty(repairBidSettlement?.generated_at),
+      repair_bid_settlement_generated_at: normalizeNonEmpty(
+        repairBidSettlement?.generated_at ?? payload.repair_bid_settlement_generated_at,
+      ),
       repair_bid_settlement_fresh_until: repairBidSettlementFreshUntil,
-      repair_bid_settlement_capital_decision: normalizeReason(repairBidSettlement?.capital_decision),
-      repair_bid_settlement_max_notional: normalizeNonEmpty(repairBidSettlement?.max_notional),
-      repair_bid_settlement_routeable_candidate_count: normalizeNumber(repairBidSettlement?.routeable_candidate_count),
-      repair_bid_settlement_selected_lot_ids: stringValues(repairBidSettlement?.selected_lot_ids),
-      repair_bid_settlement_dispatchable_lot_ids: stringValues(repairBidSettlement?.dispatchable_lot_ids),
-      repair_bid_settlement_held_lot_ids: stringValues(repairBidSettlement?.held_lot_ids),
-      repair_bid_settlement_active_dedupe_keys: stringValues(repairBidSettlement?.active_dedupe_keys),
+      repair_bid_settlement_capital_decision: normalizeReason(
+        repairBidSettlement?.capital_decision ?? payload.repair_bid_settlement_capital_decision,
+      ),
+      repair_bid_settlement_max_notional: normalizeNonEmpty(
+        repairBidSettlement?.max_notional ??
+          payload.repair_bid_settlement_max_notional ??
+          repairBidCanaryRef?.max_notional,
+      ),
+      repair_bid_settlement_routeable_candidate_count: normalizeNumber(
+        repairBidSettlement?.routeable_candidate_count ?? payload.repair_bid_settlement_routeable_candidate_count,
+      ),
+      repair_bid_settlement_selected_lot_ids: stringValues(
+        repairBidSettlement?.selected_lot_ids ?? payload.repair_bid_settlement_selected_lot_ids,
+      ),
+      repair_bid_settlement_dispatchable_lot_ids: stringValues(
+        repairBidSettlement?.dispatchable_lot_ids ?? payload.repair_bid_settlement_dispatchable_lot_ids,
+      ),
+      repair_bid_settlement_held_lot_ids: stringValues(
+        repairBidSettlement?.held_lot_ids ?? payload.repair_bid_settlement_held_lot_ids,
+      ),
+      repair_bid_settlement_active_dedupe_keys: stringValues(
+        repairBidSettlement?.active_dedupe_keys ?? payload.repair_bid_settlement_active_dedupe_keys,
+      ),
       repair_bid_settlement_compacted_lots: repairBidSettlementLots,
       repair_bid_settlement_reason_codes: repairBidSettlementReasonCodes,
       alpha_readiness_strike_ledger: alphaReadinessStrikeLedger,
@@ -754,16 +766,26 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       routeable_exchange_rejected_candidate_count: routeableExchangeRejectedCandidateCount,
       route_warrant_id: routeWarrantId,
       route_warrant_state: normalizeReason(
-        routeWarrant?.warrant_state ?? routeWarrant?.state ?? routeWarrant?.decision,
+        routeWarrant?.warrant_state ??
+          routeWarrant?.state ??
+          routeWarrant?.decision ??
+          payload.route_warrant_state ??
+          routeWarrantCanaryRef?.state,
       ),
       route_warrant_repair_packet_ids: routeWarrantRepairPacketIds,
       route_warrant_blocking_dependency_names: routeWarrantBlockingDependencies,
       route_warrant_blocking_reason_codes: routeWarrantBlockingReasonCodes,
       repair_bid_settlement_ledger_id: repairBidSettlementLedgerId,
       repair_bid_settlement_status: repairBidSettlementStatus,
-      repair_bid_settlement_selected_lot_ids: stringValues(repairBidSettlement?.selected_lot_ids),
-      repair_bid_settlement_dispatchable_lot_ids: stringValues(repairBidSettlement?.dispatchable_lot_ids),
-      repair_bid_settlement_held_lot_ids: stringValues(repairBidSettlement?.held_lot_ids),
+      repair_bid_settlement_selected_lot_ids: stringValues(
+        repairBidSettlement?.selected_lot_ids ?? payload.repair_bid_settlement_selected_lot_ids,
+      ),
+      repair_bid_settlement_dispatchable_lot_ids: stringValues(
+        repairBidSettlement?.dispatchable_lot_ids ?? payload.repair_bid_settlement_dispatchable_lot_ids,
+      ),
+      repair_bid_settlement_held_lot_ids: stringValues(
+        repairBidSettlement?.held_lot_ids ?? payload.repair_bid_settlement_held_lot_ids,
+      ),
       repair_bid_settlement_blocking_reason_codes: repairBidSettlementReasonCodes,
     },
   }

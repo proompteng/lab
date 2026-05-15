@@ -1273,6 +1273,39 @@ class TestTradingApi(TestCase):
         self.assertEqual(summary_payload["proof_floor"], proof_floor)
         self.assertIn("torghut_consumer_evidence_receipt", summary_payload)
         self.assertIn("route_proven_profit_receipt", summary_payload)
+        self.assertIn("contract_canary_refs", summary_payload)
+        self.assertEqual(
+            summary_payload["contract_canary_refs"]["schema_version"],
+            "torghut.consumer-evidence-contract-canary.v1",
+        )
+        self.assertEqual(
+            summary_payload["contract_canary_refs"]["decision"],
+            "current",
+        )
+        self.assertEqual(
+            summary_payload["observed_contracts"],
+            ["route_warrant_exchange", "repair_bid_settlement_ledger"],
+        )
+        self.assertEqual(summary_payload["contract_schema_mismatches"], [])
+        self.assertTrue(
+            str(summary_payload["route_warrant_id"]).startswith(
+                "route-warrant-exchange:"
+            )
+        )
+        self.assertTrue(
+            str(summary_payload["repair_bid_settlement_ledger_id"]).startswith(
+                "repair-bid-settlement-ledger:"
+            )
+        )
+        self.assertEqual(summary_payload["repair_bid_settlement_status"], "current")
+        self.assertEqual(
+            summary_payload["repair_bid_settlement_routeable_candidate_count"], 0
+        )
+        self.assertEqual(summary_payload["repair_bid_settlement_max_notional"], "0")
+        self.assertLess(len(summary_response.content), 65_536)
+        self.assertNotIn("route_warrant_exchange", summary_payload)
+        self.assertNotIn("repair_bid_settlement_ledger", summary_payload)
+        self.assertNotIn("source_serving_repair_receipt_ledger", summary_payload)
         self.assertNotIn("route_reacquisition_board", summary_payload)
         self.assertNotIn("capital_reentry_cohort_ledger", summary_payload)
         self.assertNotIn("profit_carry_passport_ledger", summary_payload)

@@ -66,6 +66,7 @@ from .trading.autoresearch_routes import router as autoresearch_router
 from .trading.capital_reentry_cohorts import build_capital_reentry_cohort_ledger
 from .trading.completion import build_doc29_completion_status
 from .trading.consumer_evidence import (
+    build_consumer_evidence_contract_canary,
     build_route_proven_profit_receipt,
     build_torghut_consumer_evidence_receipt,
 )
@@ -3100,6 +3101,129 @@ def _consumer_evidence_summary_view(view: str | None) -> bool:
     return (view or "").strip().lower() in {"compact", "summary", "jangar"}
 
 
+def _summary_mapping(value: object) -> Mapping[str, Any]:
+    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
+
+
+def _summary_sequence(value: object) -> Sequence[object]:
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return cast(Sequence[object], value)
+    return ()
+
+
+def _summary_text(value: object, default: str | None = None) -> str | None:
+    if value is None:
+        return default
+    normalized = str(value).strip()
+    return normalized or default
+
+
+def _summary_strings(value: object) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in _summary_sequence(value):
+        normalized = _summary_text(item)
+        if normalized and normalized not in seen:
+            result.append(normalized)
+            seen.add(normalized)
+    return result
+
+
+def _consumer_evidence_contract_summary_fields(
+    *,
+    contract_canary_refs: Mapping[str, Any],
+    route_warrant_exchange: Mapping[str, Any],
+    repair_bid_settlement_ledger: Mapping[str, Any],
+) -> dict[str, object]:
+    contract_refs = _summary_mapping(contract_canary_refs.get("contract_refs"))
+    route_warrant_ref = _summary_mapping(contract_refs.get("route_warrant_exchange"))
+    repair_bid_ref = _summary_mapping(contract_refs.get("repair_bid_settlement_ledger"))
+    repair_packets = [
+        _summary_mapping(packet)
+        for packet in _summary_sequence(route_warrant_exchange.get("repair_packets"))
+    ]
+
+    return {
+        "contract_canary_refs": contract_canary_refs,
+        "observed_contracts": _summary_strings(
+            contract_canary_refs.get("observed_contracts")
+        ),
+        "contract_schema_mismatches": _summary_strings(
+            contract_canary_refs.get("contract_schema_mismatches")
+        ),
+        "route_warrant_id": _summary_text(route_warrant_ref.get("ref")),
+        "route_warrant_fresh_until": _summary_text(
+            route_warrant_ref.get("fresh_until")
+        ),
+        "route_warrant_state": _summary_text(
+            route_warrant_exchange.get("warrant_state")
+            or route_warrant_exchange.get("state")
+            or route_warrant_ref.get("state")
+        ),
+        "route_warrant_repair_packet_ids": _summary_strings(
+            [packet.get("packet_id") for packet in repair_packets]
+        ),
+        "route_warrant_repair_target_value_gates": _summary_strings(
+            [packet.get("target_value_gate") for packet in repair_packets]
+        ),
+        "route_warrant_blocking_dependency_names": _summary_strings(
+            [
+                *[
+                    dependency
+                    for dependency in _summary_sequence(
+                        route_warrant_exchange.get("blocking_dependency_names")
+                    )
+                ],
+                *[packet.get("target_dependency") for packet in repair_packets],
+            ]
+        ),
+        "route_warrant_blocking_reason_codes": _summary_strings(
+            route_warrant_exchange.get("blocking_reason_codes")
+        ),
+        "route_warrant_zero_notional_or_stale_evidence_rate": route_warrant_exchange.get(
+            "zero_notional_or_stale_evidence_rate"
+        ),
+        "route_warrant_fill_tca_or_slippage_quality": route_warrant_exchange.get(
+            "fill_tca_or_slippage_quality"
+        ),
+        "route_warrant_capital_gate_safety": route_warrant_exchange.get(
+            "capital_gate_safety"
+        ),
+        "route_warrant_post_cost_daily_net_pnl_state": route_warrant_exchange.get(
+            "post_cost_daily_net_pnl_state"
+        ),
+        "repair_bid_settlement_ledger_id": _summary_text(repair_bid_ref.get("ref")),
+        "repair_bid_settlement_status": _summary_text(repair_bid_ref.get("state")),
+        "repair_bid_settlement_generated_at": _summary_text(
+            repair_bid_settlement_ledger.get("generated_at")
+        ),
+        "repair_bid_settlement_fresh_until": _summary_text(
+            repair_bid_ref.get("fresh_until")
+        ),
+        "repair_bid_settlement_capital_decision": _summary_text(
+            repair_bid_settlement_ledger.get("capital_decision")
+        ),
+        "repair_bid_settlement_max_notional": _summary_text(
+            repair_bid_settlement_ledger.get("max_notional"), "0"
+        ),
+        "repair_bid_settlement_routeable_candidate_count": repair_bid_settlement_ledger.get(
+            "routeable_candidate_count"
+        ),
+        "repair_bid_settlement_selected_lot_ids": _summary_strings(
+            repair_bid_settlement_ledger.get("selected_lot_ids")
+        ),
+        "repair_bid_settlement_dispatchable_lot_ids": _summary_strings(
+            repair_bid_settlement_ledger.get("dispatchable_lot_ids")
+        ),
+        "repair_bid_settlement_held_lot_ids": _summary_strings(
+            repair_bid_settlement_ledger.get("held_lot_ids")
+        ),
+        "repair_bid_settlement_active_dedupe_keys": _summary_strings(
+            repair_bid_settlement_ledger.get("active_dedupe_keys")
+        ),
+    }
+
+
 def _revenue_repair_topline_fields(
     revenue_repair_digest: Mapping[str, Any],
 ) -> dict[str, object]:
@@ -3213,29 +3337,6 @@ def _build_trading_consumer_evidence_payload(
         == CONSUMER_EVIDENCE_CONTROL_PLANE_DEPENDENCY_MESSAGE
         else "jangar_status_non_recursive"
     )
-    if summary:
-        return {
-            "schema_version": "torghut.consumer-evidence-status.v1",
-            "view": "summary",
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "enabled": settings.trading_enabled,
-            "mode": settings.trading_mode,
-            "running": state.running,
-            "build": build_payload,
-            "control_plane_dependency_mode": control_plane_dependency_mode,
-            "dependency_quorum": dependency_quorum.as_payload(),
-            "forecast_service": forecast_service_status,
-            "lean_authority": lean_authority_status,
-            "empirical_jobs": empirical_jobs,
-            "market_context": market_context_status,
-            "quant_evidence": quant_evidence,
-            "live_submission_gate": live_submission_gate,
-            "proof_floor": proof_floor,
-            "simple_lane_status": simple_lane_status,
-            "torghut_consumer_evidence_receipt": consumer_evidence_receipt,
-            "route_proven_profit_receipt": route_proven_profit_receipt,
-            "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
-        }
     route_reacquisition_board = build_route_reacquisition_board(
         proof_floor_receipt=proof_floor,
         route_reacquisition_book=cast(
@@ -3446,6 +3547,41 @@ def _build_trading_consumer_evidence_payload(
         empirical_jobs_status=empirical_jobs,
         market_context_status=market_context_status,
     )
+    contract_canary_refs = build_consumer_evidence_contract_canary(
+        source_commit=BUILD_COMMIT,
+        serving_revision=cast(str | None, shadow_first_runtime["active_revision"]),
+        image_digest=BUILD_IMAGE_DIGEST,
+        route_warrant_exchange=route_warrant_exchange,
+        repair_bid_settlement_ledger=repair_bid_settlement_ledger,
+    )
+    if summary:
+        return {
+            "schema_version": "torghut.consumer-evidence-status.v1",
+            "view": "summary",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "enabled": settings.trading_enabled,
+            "mode": settings.trading_mode,
+            "running": state.running,
+            "build": build_payload,
+            "control_plane_dependency_mode": control_plane_dependency_mode,
+            "dependency_quorum": dependency_quorum.as_payload(),
+            "forecast_service": forecast_service_status,
+            "lean_authority": lean_authority_status,
+            "empirical_jobs": empirical_jobs,
+            "market_context": market_context_status,
+            "quant_evidence": quant_evidence,
+            "live_submission_gate": live_submission_gate,
+            "proof_floor": proof_floor,
+            "simple_lane_status": simple_lane_status,
+            "torghut_consumer_evidence_receipt": consumer_evidence_receipt,
+            "route_proven_profit_receipt": route_proven_profit_receipt,
+            "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
+            **_consumer_evidence_contract_summary_fields(
+                contract_canary_refs=contract_canary_refs,
+                route_warrant_exchange=route_warrant_exchange,
+                repair_bid_settlement_ledger=repair_bid_settlement_ledger,
+            ),
+        }
     source_serving_repair_receipt_ledger = _build_source_serving_repair_receipt_payload(
         source_commit=BUILD_COMMIT,
         build=build_payload,

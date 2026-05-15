@@ -263,6 +263,12 @@ Testing rules for the trading core:
   consumer-evidence expansion explicitly omitted, so the route can mirror current Jangar carry without recursively
   calling itself through Jangar.
   A `jangar_verify_carry` ticket is selectable only for `repairable` carry and always keeps `max_notional=0`.
+- `GET /trading/consumer-evidence?view=summary` also emits the May 15 doc 213
+  `torghut.consumer-evidence-contract-canary.v1` compact canary. It names the summary and full route refs, observed
+  `route_warrant_exchange` and `repair_bid_settlement_ledger` contracts, schema mismatches, ids, fresh-until values,
+  current/stale/missing/schema states, and `max_notional=0`. The full `/trading/consumer-evidence` route remains the
+  authority for complete contract bodies; summary carries refs only so Jangar can avoid false source-serving
+  missing-contract holds without widening the hot readiness payload.
 - `GET /trading/status` and `GET /readyz` now include the May 8 doc 181
   `quality_adjusted_profit_frontier` shadow projection. The reducer ranks zero-notional repair packets from quant
   quality, market-context risk flags, route/TCA state, simulation-cache freshness, and Jangar evidence-quality refs
