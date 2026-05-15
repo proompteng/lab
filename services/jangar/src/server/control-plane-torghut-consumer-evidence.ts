@@ -38,6 +38,7 @@ import {
   normalizeRevenueRepairBoolean,
   readRevenueRepairQueue,
 } from '~/server/control-plane-torghut-revenue-repair'
+import { buildUnavailableStatusFromRevenueRepair } from '~/server/control-plane-torghut-revenue-repair-fallback'
 import type { TorghutNegativeEvidenceInput } from '~/server/control-plane-negative-evidence-router-torghut'
 import {
   normalizeNonEmpty,
@@ -171,21 +172,24 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     const routeMissing = routeResult.statusCode === 404
     const status = routeMissing ? 'route_missing' : 'unavailable'
     const reason = routeMissing ? 'torghut_consumer_evidence_route_missing' : 'torghut_consumer_evidence_unavailable'
+    const revenueRepairEndpoint = deriveRevenueRepairEndpoint(endpoint)
+    const revenueRepairResult =
+      revenueRepairEndpoint && revenueRepairEndpoint !== endpoint
+        ? await requestJson(revenueRepairEndpoint, config.torghutStatusTimeoutMs)
+        : null
+    const revenueRepairPayload = hasRevenueRepairSummary(revenueRepairResult?.payload ?? {})
+      ? (revenueRepairResult?.payload ?? null)
+      : null
     return {
-      status: {
-        status,
+      status: buildUnavailableStatusFromRevenueRepair({
         endpoint,
-        receipt_id: null,
-        generated_at: null,
-        fresh_until: null,
-        candidate_id: null,
-        dataset_snapshot_ref: null,
-        max_notional: null,
-        reason_codes: [reason],
+        status,
+        reason,
+        payload: revenueRepairPayload,
         message: routeMissing
           ? 'torghut consumer evidence route returned 404'
           : 'torghut consumer evidence endpoint unavailable',
-      },
+      }),
       negativeEvidence: {
         readiness_status: 'degraded',
         readyz_status_code: routeResult.statusCode,
