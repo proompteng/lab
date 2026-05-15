@@ -199,10 +199,23 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   }
 
   const payload = routeResult.payload ?? {}
-  const inlineAlphaReadinessStrikeLedger = readAlphaReadinessStrikeLedger(payload)
-  const inlineExecutableAlphaRepairReceipts = readExecutableAlphaRepairReceipts(payload)
+  const fullConsumerEvidenceResult =
+    compactEndpoint !== endpoint &&
+    (!hasRouteWarrantPayload(payload) ||
+      !hasRevenueRepairSummary(payload) ||
+      !readAlphaReadinessSettlementConveyorRef(payload))
+      ? await requestJson(endpoint, config.torghutStatusTimeoutMs)
+      : null
+  const fullConsumerEvidencePayload =
+    fullConsumerEvidenceResult?.ok && fullConsumerEvidenceResult.payload ? fullConsumerEvidenceResult.payload : null
+  const primaryEvidencePayload = fullConsumerEvidencePayload ?? payload
+  const inlineAlphaReadinessStrikeLedger =
+    readAlphaReadinessStrikeLedger(primaryEvidencePayload) ?? readAlphaReadinessStrikeLedger(payload)
+  const inlineExecutableAlphaRepairReceipts =
+    readExecutableAlphaRepairReceipts(primaryEvidencePayload) ?? readExecutableAlphaRepairReceipts(payload)
   const revenueRepairEndpoint = deriveRevenueRepairEndpoint(endpoint)
   const revenueRepairResult =
+    !fullConsumerEvidencePayload &&
     revenueRepairEndpoint &&
     revenueRepairEndpoint !== endpoint &&
     (!hasRevenueRepairSummary(payload) || !inlineAlphaReadinessStrikeLedger || !inlineExecutableAlphaRepairReceipts)
@@ -212,27 +225,37 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     inlineAlphaReadinessStrikeLedger ?? readAlphaReadinessStrikeLedger(revenueRepairResult?.payload ?? null)
   const executableAlphaRepairReceipts =
     inlineExecutableAlphaRepairReceipts ?? readExecutableAlphaRepairReceipts(revenueRepairResult?.payload ?? null)
-  const revenueRepairPayload = hasRevenueRepairSummary(payload) ? payload : (revenueRepairResult?.payload ?? null)
+  const revenueRepairPayload = hasRevenueRepairSummary(primaryEvidencePayload)
+    ? primaryEvidencePayload
+    : (revenueRepairResult?.payload ?? null)
   const revenueRepairBusinessState = normalizeReason(revenueRepairPayload?.business_state)
   const revenueRepairReady = normalizeRevenueRepairBoolean(revenueRepairPayload?.revenue_ready)
   const revenueRepairQueue = readRevenueRepairQueue(revenueRepairPayload)
-  const fullConsumerEvidenceResult =
-    compactEndpoint !== endpoint && !hasRouteWarrantPayload(payload) && !hasRouteWarrantPayload(revenueRepairPayload)
-      ? await requestJson(endpoint, config.torghutStatusTimeoutMs)
-      : null
-  const sourceServingContractPayload =
-    fullConsumerEvidenceResult?.ok && fullConsumerEvidenceResult.payload ? fullConsumerEvidenceResult.payload : payload
+  const sourceServingContractPayload = fullConsumerEvidencePayload ?? payload
   const alphaRepairClosureBoard =
-    readAlphaRepairClosureBoard(payload) ?? readAlphaRepairClosureBoard(revenueRepairPayload)
-  const alphaEvidenceFoundry = readAlphaEvidenceFoundry(payload) ?? readAlphaEvidenceFoundry(revenueRepairPayload)
+    readAlphaRepairClosureBoard(primaryEvidencePayload) ??
+    readAlphaRepairClosureBoard(payload) ??
+    readAlphaRepairClosureBoard(revenueRepairPayload)
+  const alphaEvidenceFoundry =
+    readAlphaEvidenceFoundry(primaryEvidencePayload) ??
+    readAlphaEvidenceFoundry(payload) ??
+    readAlphaEvidenceFoundry(revenueRepairPayload)
   const alphaReadinessSettlementConveyor =
-    readAlphaReadinessSettlementConveyorRef(payload) ?? readAlphaReadinessSettlementConveyorRef(revenueRepairPayload)
+    readAlphaReadinessSettlementConveyorRef(primaryEvidencePayload) ??
+    readAlphaReadinessSettlementConveyorRef(payload) ??
+    readAlphaReadinessSettlementConveyorRef(revenueRepairPayload)
   const alphaRepairDividendLedger =
-    readAlphaRepairDividendLedgerRef(payload) ?? readAlphaRepairDividendLedgerRef(revenueRepairPayload)
+    readAlphaRepairDividendLedgerRef(primaryEvidencePayload) ??
+    readAlphaRepairDividendLedgerRef(payload) ??
+    readAlphaRepairDividendLedgerRef(revenueRepairPayload)
   const alphaClosureDividendSlo =
-    readAlphaClosureDividendSlo(payload) ?? readAlphaClosureDividendSlo(revenueRepairPayload)
+    readAlphaClosureDividendSlo(primaryEvidencePayload) ??
+    readAlphaClosureDividendSlo(payload) ??
+    readAlphaClosureDividendSlo(revenueRepairPayload)
   const noDeltaRepairReentryAuction =
-    readNoDeltaRepairReentryAuctionRef(payload) ?? readNoDeltaRepairReentryAuctionRef(revenueRepairPayload)
+    readNoDeltaRepairReentryAuctionRef(primaryEvidencePayload) ??
+    readNoDeltaRepairReentryAuctionRef(payload) ??
+    readNoDeltaRepairReentryAuctionRef(revenueRepairPayload)
   const payloadSchema = normalizeNonEmpty(payload.schema_version)
   if (payloadSchema && payloadSchema !== CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION) {
     return {
@@ -344,7 +367,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   const liveReadinessState = normalizeNonEmpty(receipt.live_readiness_state)
   const readyzStatusCode = normalizeNonEmpty(asRecord(payload.readiness)?.status_code)
   const marketContext = readMarketContext(payload)
-  const cohortLedger = asRecord(payload.capital_reentry_cohort_ledger)
+  const cohortLedger = asRecord(primaryEvidencePayload.capital_reentry_cohort_ledger)
   const cohortRows = Array.isArray(cohortLedger?.cohorts)
     ? cohortLedger.cohorts
         .map((cohort) => asRecord(cohort))
@@ -357,7 +380,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   ])
   const capitalReentryAggregateState = normalizeNonEmpty(cohortLedger?.aggregate_state)
   const capitalReentryLedgerId = normalizeNonEmpty(cohortLedger?.ledger_id)
-  const profitRepairLedger = asRecord(payload.profit_repair_settlement_ledger)
+  const profitRepairLedger = asRecord(primaryEvidencePayload.profit_repair_settlement_ledger)
   const profitRepairLots = Array.isArray(profitRepairLedger?.repair_lots)
     ? profitRepairLedger.repair_lots
         .map((lot) => asRecord(lot))
@@ -370,7 +393,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   ])
   const profitRepairAggregateState = normalizeNonEmpty(profitRepairLedger?.aggregate_state)
   const profitRepairLedgerId = normalizeNonEmpty(profitRepairLedger?.ledger_id)
-  const routeabilityLedger = asRecord(payload.routeability_repair_acceptance_ledger)
+  const routeabilityLedger = asRecord(primaryEvidencePayload.routeability_repair_acceptance_ledger)
   const routeabilityLots = Array.isArray(routeabilityLedger?.lots)
     ? routeabilityLedger.lots.map((lot) => asRecord(lot)).filter((lot): lot is Record<string, unknown> => Boolean(lot))
     : []
@@ -384,7 +407,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   const acceptedRouteableCandidateCount = parseNumber(
     normalizeNonEmpty(routeabilityLedger?.accepted_routeable_candidate_count),
   )
-  const profitFreshnessFrontier = asRecord(payload.profit_freshness_frontier)
+  const profitFreshnessFrontier = asRecord(primaryEvidencePayload.profit_freshness_frontier)
   const profitFreshnessLots = Array.isArray(profitFreshnessFrontier?.repair_lots)
     ? profitFreshnessFrontier.repair_lots
         .map((lot) => asRecord(lot))
@@ -407,7 +430,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     profitFreshnessFrontier?.frontier_state ?? profitFreshnessFrontier?.aggregate_state,
   )
   const profitFreshnessFrontierId = normalizeNonEmpty(profitFreshnessFrontier?.frontier_id)
-  const evidenceClockArbiter = asRecord(payload.evidence_clock_arbiter)
+  const evidenceClockArbiter = asRecord(primaryEvidencePayload.evidence_clock_arbiter)
   const evidenceClockSplits = Array.isArray(evidenceClockArbiter?.clock_splits)
     ? evidenceClockArbiter.clock_splits
         .map((split) => asRecord(split))
@@ -444,7 +467,7 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       : []),
     ...(evidenceClockCustodyStatus === 'blocked' ? [`evidence_clock_custody_${custodyDecision ?? 'blocked'}`] : []),
   ])
-  const routeableExchange = asRecord(payload.routeable_profit_candidate_exchange)
+  const routeableExchange = asRecord(primaryEvidencePayload.routeable_profit_candidate_exchange)
   const routeableExchangeSummary = asRecord(routeableExchange?.summary)
   const zeroNotionalRepairLots = Array.isArray(routeableExchange?.zero_notional_repair_lots)
     ? routeableExchange.zero_notional_repair_lots
@@ -473,20 +496,20 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     sourceServingContractPayload.route_warrant_exchange ??
       sourceServingContractPayload.route_warrant_exchange_v1 ??
       sourceServingContractPayload.route_warrant ??
-      payload.route_warrant_exchange ??
-      payload.route_warrant_exchange_v1 ??
-      payload.route_warrant,
+      primaryEvidencePayload.route_warrant_exchange ??
+      primaryEvidencePayload.route_warrant_exchange_v1 ??
+      primaryEvidencePayload.route_warrant,
   )
   const repairBidSettlement =
     asRecord(sourceServingContractPayload.repair_bid_settlement_ledger) ??
-    asRecord(payload.repair_bid_settlement_ledger) ??
+    asRecord(primaryEvidencePayload.repair_bid_settlement_ledger) ??
     asRecord(revenueRepairPayload?.repair_bid_settlement_ledger)
-  const repairOutcome = readTorghutRepairOutcomeEvidence(payload)
+  const repairOutcome = readTorghutRepairOutcomeEvidence(primaryEvidencePayload)
   const sourceServingRepairReceiptLedger =
     asRecord(sourceServingContractPayload.source_serving_repair_receipt_ledger) ??
-    asRecord(payload.source_serving_repair_receipt_ledger) ??
+    asRecord(primaryEvidencePayload.source_serving_repair_receipt_ledger) ??
     asRecord(revenueRepairPayload?.source_serving_repair_receipt_ledger)
-  const freshnessCarry = readTorghutFreshnessCarryEvidence(payload)
+  const freshnessCarry = readTorghutFreshnessCarryEvidence(primaryEvidencePayload)
   const reasonCodes = uniqueStrings([...receiptReasonCodes, ...freshnessCarry.reasonCodes])
   const observedContracts = uniqueStrings([
     routeWarrant ? 'route_warrant_exchange' : null,
@@ -519,10 +542,10 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
       : null,
     repairOutcome.contractSchemaMismatch,
     freshnessCarry.contractSchemaMismatch,
-    alphaReadinessSettlementConveyorRefSchemaMismatch(payload),
-    alphaRepairDividendLedgerRefSchemaMismatch(payload),
-    alphaClosureDividendSloSchemaMismatch(payload),
-    noDeltaRepairReentryAuctionRefSchemaMismatch(payload),
+    alphaReadinessSettlementConveyorRefSchemaMismatch(primaryEvidencePayload),
+    alphaRepairDividendLedgerRefSchemaMismatch(primaryEvidencePayload),
+    alphaClosureDividendSloSchemaMismatch(primaryEvidencePayload),
+    noDeltaRepairReentryAuctionRefSchemaMismatch(primaryEvidencePayload),
   ])
   const routeWarrantId = normalizeNonEmpty(routeWarrant?.warrant_id ?? routeWarrant?.exchange_id)
   const routeWarrantRepairPackets = Array.isArray(routeWarrant?.repair_packets)

@@ -17,7 +17,7 @@ controlPlane:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
       JANGAR_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence
-      JANGAR_TORGHUT_STATUS_TIMEOUT_MS: "3000"
+      JANGAR_TORGHUT_STATUS_TIMEOUT_MS: "12000"
       JANGAR_SOURCE_HEAD_SHA: c5e3acea7c9d411a6af4d89ad5f37707a041e181
       JANGAR_GITOPS_REVISION: c5e3acea7c9d411a6af4d89ad5f37707a041e181
       JANGAR_SOURCE_CI_RUN_ID: "25895083407"
