@@ -5,7 +5,7 @@ import { Effect, Exit } from 'effect'
 import * as Schema from 'effect/Schema'
 
 import { buildTransportOptions, createTemporalClient, normalizeTemporalAddress } from '../../src/client'
-import { loadTemporalConfig, type TemporalConfig } from '../../src/config'
+import { loadTemporalConfig } from '../../src/config'
 import { TaskQueueKind } from '../../src/proto/temporal/api/enums/v1/task_queue_pb'
 import { WorkerVersioningMode } from '../../src/proto/temporal/api/enums/v1/deployment_pb'
 import { VersioningBehavior } from '../../src/proto/temporal/api/enums/v1/workflow_pb'
@@ -169,6 +169,7 @@ describeIntegration('Temporal worker runtime integration', () => {
                 args: [iterations],
                 workflowTaskTimeoutMs: 120_000,
               })
+              harness.trackWorkflow(result)
               executions.push({ workflowId: result.workflowId, runId: result.runId })
             }
 
@@ -334,6 +335,7 @@ describeIntegration('Temporal worker runtime integration', () => {
               workflowType: 'stickyMetadataWorkflow',
               taskQueue,
             })
+            harness.trackWorkflow(execution)
 
             const waitStart = Date.now()
             while (completions.length === 0) {
@@ -466,6 +468,7 @@ describeIntegration('Temporal worker runtime integration', () => {
               taskQueue,
               args: [{ initial: 'boot' }],
             })
+            harness.trackWorkflow(started)
 
             const result = await temporalClient.workflow.result(started.handle)
             expect(result).toBe('boot:done')

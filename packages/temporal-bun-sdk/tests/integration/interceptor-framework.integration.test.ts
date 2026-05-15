@@ -129,18 +129,20 @@ describeIntegration('interceptor framework wiring', () => {
       clientEvents.length = 0
       workerEvents.length = 0
 
-      await client!.startWorkflow({
+      const activityWorkflowHandle = await client!.startWorkflow({
         workflowType: 'integrationActivityWorkflow',
         workflowId: `int-activity-${crypto.randomUUID()}`,
         taskQueue: interceptorTaskQueue,
         args: [{ value: 'ok' }],
       })
+      integrationEnv?.harness?.trackWorkflow(activityWorkflowHandle)
 
       const signalWorkflowHandle = await client!.startWorkflow({
         workflowType: 'integrationSignalQueryWorkflow',
         workflowId: `int-signal-${crypto.randomUUID()}`,
         taskQueue: interceptorTaskQueue,
       })
+      integrationEnv?.harness?.trackWorkflow(signalWorkflowHandle)
 
       await client!.signalWorkflow(signalWorkflowHandle.handle, 'unblock', 'go')
       await client!.queryWorkflow(signalWorkflowHandle.handle, 'state', {})
@@ -151,6 +153,7 @@ describeIntegration('interceptor framework wiring', () => {
         taskQueue: interceptorTaskQueue,
         args: [{ initialMessage: 'boot' }],
       })
+      integrationEnv?.harness?.trackWorkflow(updateWorkflowHandle)
 
       await client!.updateWorkflow(updateWorkflowHandle.handle, {
         updateName: 'integrationUpdate.setMessage',

@@ -33,6 +33,14 @@ export interface WorkflowExecutionHandle {
 export interface IntegrationHarness {
   readonly setup: Effect.Effect<void, TemporalCliError, never>
   readonly teardown: Effect.Effect<void, TemporalCliError, never>
+  readonly trackWorkflow: (handle: WorkflowExecutionHandle) => WorkflowExecutionHandle
+  readonly terminateWorkflow: (
+    handle: WorkflowExecutionHandle,
+    options?: { readonly reason?: string },
+  ) => Effect.Effect<void, TemporalCliError, never>
+  readonly cleanupTrackedWorkflows: (
+    options?: { readonly reason?: string },
+  ) => Effect.Effect<void, TemporalCliError, never>
   readonly runScenario: <A>(
     name: string,
     scenario: () => Effect.Effect<A, TemporalCliError, never>,
@@ -180,6 +188,12 @@ export const createIntegrationHarness = (
     const cliExecutable = yield* resolveTemporalCliExecutable(config.cliBinaryPath)
 
     let started = false
+    const trackedWorkflows = new Map<string, WorkflowExecutionHandle>()
+    const workflowKey = (handle: WorkflowExecutionHandle) => `${handle.workflowId}:${handle.runId}`
+    const trackWorkflow = (handle: WorkflowExecutionHandle): WorkflowExecutionHandle => {
+      trackedWorkflows.set(workflowKey(handle), handle)
+      return handle
+    }
 
     const scenarioEnv: Record<string, string | undefined> = {
       TEMPORAL_ADDRESS: config.address,
@@ -263,6 +277,45 @@ export const createIntegrationHarness = (
         },
       })
     }
+
+    const terminateWorkflow = (
+      handle: WorkflowExecutionHandle,
+      options?: { readonly reason?: string },
+    ): Effect.Effect<void, TemporalCliError, never> => {
+      const command = [
+        'workflow',
+        'terminate',
+        '--workflow-id',
+        handle.workflowId,
+        '--run-id',
+        handle.runId,
+        '--namespace',
+        config.namespace,
+        '--reason',
+        options?.reason ?? 'integration-test-cleanup',
+      ] as const
+
+      return runTemporalCli(command).pipe(
+        Effect.asVoid,
+        Effect.tap(() => Effect.sync(() => trackedWorkflows.delete(workflowKey(handle)))),
+        Effect.catchAll((error) => {
+          if (isWorkflowAlreadyClosedCliError(error)) {
+            trackedWorkflows.delete(workflowKey(handle))
+            return Effect.void
+          }
+          return Effect.fail(error)
+        }),
+      )
+    }
+
+    const cleanupTrackedWorkflows = (
+      options?: { readonly reason?: string },
+    ): Effect.Effect<void, TemporalCliError, never> =>
+      Effect.forEach(
+        Array.from(trackedWorkflows.values()).reverse(),
+        (handle) => terminateWorkflow(handle, { reason: options?.reason ?? 'integration-test-cleanup' }),
+        { concurrency: 4, discard: true },
+      )
 
     const waitForNamespaceReady = async () => {
       // Keep readiness retries below the default 60s bun hook timeout so suites can catch and skip cleanly.
@@ -356,6 +409,7 @@ export const createIntegrationHarness = (
         if (!started) {
           return
         }
+        await Effect.runPromise(cleanupTrackedWorkflows({ reason: 'integration-harness-teardown' }))
         await withTestLock(lockDir, testLockFile, async () => {
           const currentRef = readRefcount(testRefcountFile)
           const nextRef = Math.max(0, currentRef - 1)
@@ -430,12 +484,14 @@ export const createIntegrationHarness = (
       const describeCommand = [cliExecutable, ...describeArgs] as const
       return runTemporalCli(command).pipe(
         Effect.flatMap((stdout) => parseWorkflowExecutionHandle(stdout, workflowId, cliCommand)),
+        Effect.map(trackWorkflow),
         Effect.catchAll((error) => {
           if (error instanceof TemporalCliCommandError) {
             console.warn('[temporal-bun-sdk:test] CLI command failed, stdout:', error.stdout)
             console.warn('[temporal-bun-sdk:test] CLI command failed, stderr:', error.stderr)
             return runTemporalCli(describeArgs).pipe(
               Effect.flatMap((stdout) => parseWorkflowDescribeHandle(stdout, workflowId, describeCommand)),
+              Effect.map(trackWorkflow),
             )
           }
           return Effect.fail(error)
@@ -475,6 +531,9 @@ export const createIntegrationHarness = (
     return {
       setup,
       teardown,
+      trackWorkflow,
+      terminateWorkflow,
+      cleanupTrackedWorkflows,
       runScenario,
       executeWorkflow,
       fetchWorkflowHistory,
@@ -530,6 +589,20 @@ export const isTemporalEndpointUnavailable = (error: unknown): boolean => {
     normalized.includes('getaddrinfo') ||
     normalized.includes('transport: error while dialing') ||
     normalized.includes('unavailable')
+  )
+}
+
+const isWorkflowAlreadyClosedCliError = (error: unknown): boolean => {
+  if (!(error instanceof TemporalCliCommandError)) {
+    return false
+  }
+  const detail = `${error.stderr}\n${error.stdout}\n${error.message}`.toLowerCase()
+  return (
+    detail.includes('workflow execution already completed') ||
+    detail.includes('workflow execution already terminated') ||
+    detail.includes('workflow execution already closed') ||
+    detail.includes('workflow not found') ||
+    detail.includes('not found')
   )
 }
 

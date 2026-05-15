@@ -107,6 +107,11 @@ jobs:
             exit 1
           fi
 
+      - name: Clean stale Temporal Bun SDK integration workflows
+        run: |
+          bun packages/temporal-bun-sdk/scripts/cleanup-integration-workflows.ts --terminate \
+            --reason "pre-test cleanup for GitHub Actions run ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
       - name: Run Oxfmt check (temporal-bun-sdk)
         run: bunx oxfmt --check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests packages/temporal-bun-sdk/scripts packages/temporal-bun-sdk/docs
 
@@ -126,6 +131,9 @@ jobs:
         run: |
           cd packages/temporal-bun-sdk
           TEMPORAL_TEST_SERVER=1 bun test --timeout=30000 --max-concurrency=1
+
+      - name: Verify Temporal Bun SDK integration cleanup
+        run: bun packages/temporal-bun-sdk/scripts/cleanup-integration-workflows.ts --verify
 
       - name: Verify replay corpus
         run: bun run --filter @proompteng/temporal-bun-sdk verify:replay-corpus
@@ -155,6 +163,9 @@ jobs:
             --workflow-concurrency 50 \
             --activity-concurrency 80 \
             --failure-modes "${TEMPORAL_SOAK_FAILURE_MODES}"
+
+      - name: Verify Temporal Bun SDK load cleanup
+        run: bun packages/temporal-bun-sdk/scripts/cleanup-integration-workflows.ts --verify
 
       - name: Verify production package boundary
         run: bun run --filter @proompteng/temporal-bun-sdk verify:production

@@ -46,6 +46,7 @@ test('TestWorkflowEnvironment runs a worker end-to-end', { timeout: 30_000 }, as
         taskQueue,
         args: [{ value: 'ok' }],
       })
+      env.harness?.trackWorkflow(handle)
       const result = await testEnv.client.workflow.result(handle)
       expect(result).toBe('ok')
     } finally {
