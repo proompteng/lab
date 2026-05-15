@@ -7,6 +7,7 @@ The current home lab Kubernetes cluster is Talos-based and documented under `dev
 Start here:
 
 1. `devices/galactic/README.md`
+1. `docs/runbooks/galactic-kubernetes-access.md`
 1. `devices/galactic/docs/bootstrap-argocd.md`
 1. `devices/galactic/docs/tailscale.md` (required if you reference `*.ts.net` registries in image references)
 1. `docs/runbooks/rook-ceph-on-talos.md`

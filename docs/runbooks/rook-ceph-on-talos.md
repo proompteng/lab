@@ -2,6 +2,11 @@
 
 This runbook documents the current Rook-Ceph configuration for the Talos-based `galactic` cluster.
 
+Current Kubernetes and Talos access endpoints are tracked in
+`docs/runbooks/galactic-kubernetes-access.md`. The Kubernetes node names below
+still contain old `192.168.1.*` addresses, but the current LAN reachability path
+uses the provider-managed `100.100.244.*` segment.
+
 ## Safety
 
 Ceph will **wipe** any disks listed under `cephClusterSpec.storage.nodes[].devices`.
