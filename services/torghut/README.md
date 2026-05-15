@@ -245,6 +245,12 @@ Testing rules for the trading core:
   source, evidence-window, blocker, receipt, selected-hypothesis, or Jangar verify-carry release condition changes, and
   mirrors a compact `torghut.no-delta-repair-reentry-auction-ref.v1` through `/readyz` and
   `/trading/consumer-evidence`. It does not enable paper or live submission.
+- `GET /trading/revenue-repair` now also exposes the May 14 doc 212 top-line business contract fields directly:
+  `top_repair_queue_item`, `selected_value_gate`, `required_output_receipt`, routeable-candidate before/after counts,
+  no-delta reentry decision, repair-bid lot summaries, typed unavailable reason codes, validation commands, and a
+  rollback target. `/trading/status` and `/trading/consumer-evidence` mirror the compact top-line fields so Jangar can
+  compare the direct revenue-repair source with the consumer-evidence action boundary without inferring
+  `repair_queue[0]`. These fields remain additive and keep `max_notional=0`.
 - `GET /trading/revenue-repair` also emits the May 14 doc 211
   `torghut.jangar-controller-ingestion-carry.v1` import reducer. It classifies Jangar controller-ingestion carry as
   `current`, `repairable`, `lagging`, `unavailable`, `stale`, or `contradicted`, feeds that state into the no-delta

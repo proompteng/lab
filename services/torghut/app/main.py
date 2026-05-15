@@ -1151,6 +1151,7 @@ def _evaluate_trading_health_payload(
             "clock_settlement_receipt": clock_settlement_receipt,
             "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
             "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
+            **_revenue_repair_topline_fields(revenue_repair_digest),
             "route_warrant_exchange": route_warrant_exchange,
             "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
             "freshness_carry_ledger": freshness_carry_ledger,
@@ -3099,6 +3100,37 @@ def _consumer_evidence_summary_view(view: str | None) -> bool:
     return (view or "").strip().lower() in {"compact", "summary", "jangar"}
 
 
+def _revenue_repair_topline_fields(
+    revenue_repair_digest: Mapping[str, Any],
+) -> dict[str, object]:
+    keys = (
+        "business_state",
+        "revenue_ready",
+        "capital_state",
+        "capital_stage",
+        "live_submission_allowed",
+        "max_notional",
+        "top_repair_queue_item",
+        "selected_value_gate",
+        "required_output_receipt",
+        "required_receipts",
+        "routeable_candidate_count_before",
+        "routeable_candidate_count_after",
+        "accepted_routeable_candidate_count",
+        "routeable_candidate_delta",
+        "alpha_no_delta_release_key",
+        "no_delta_reentry_decision",
+        "no_delta_reentry_reason_codes",
+        "field_unavailable_reason_codes",
+        "validation_commands",
+        "rollback_target",
+    )
+    return {
+        "revenue_repair_digest_ref": "/trading/revenue-repair",
+        **{key: revenue_repair_digest.get(key) for key in keys},
+    }
+
+
 def _build_trading_consumer_evidence_payload(
     *, summary: bool = False
 ) -> dict[str, object]:
@@ -3492,6 +3524,7 @@ def _build_trading_consumer_evidence_payload(
         "clock_settlement_receipt": clock_settlement_receipt,
         "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
         "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
+        **_revenue_repair_topline_fields(revenue_repair_digest),
         "alpha_readiness_strike_ledger": revenue_repair_digest.get(
             "alpha_readiness_strike_ledger"
         ),

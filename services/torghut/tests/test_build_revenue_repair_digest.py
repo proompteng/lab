@@ -365,6 +365,55 @@ class TestBuildRevenueRepairDigest(TestCase):
             repair_queue[0]["capital_rule"],
             "zero_notional_repair_only",
         )
+        self.assertEqual(digest["top_repair_queue_item"], repair_queue[0])
+        self.assertEqual(digest["selected_value_gate"], "routeable_candidate_count")
+        self.assertEqual(
+            digest["required_output_receipt"],
+            "torghut.executable-alpha-receipts.v1",
+        )
+        self.assertEqual(
+            digest["required_receipts"],
+            [
+                "alpha_readiness_receipt",
+                "hypothesis_promotion_receipt",
+                "capital_replay_board",
+            ],
+        )
+        self.assertEqual(digest["capital_state"], "zero_notional")
+        self.assertEqual(digest["capital_stage"], "shadow")
+        self.assertFalse(digest["live_submission_allowed"])
+        self.assertEqual(digest["max_notional"], "0")
+        self.assertEqual(
+            digest["selected_hypothesis_id"],
+            "H-AAPL-ROUTE-REHAB",
+        )
+        self.assertEqual(
+            digest["selected_candidate_id"],
+            "chip-paper-microbar-composite@execution-proof",
+        )
+        self.assertEqual(digest["selected_strategy_id"], "intraday_tsmom_v1@paper")
+        self.assertEqual(digest["routeable_candidate_count_before"], 0)
+        self.assertEqual(digest["routeable_candidate_count_after"], 0)
+        self.assertEqual(digest["accepted_routeable_candidate_count"], 0)
+        self.assertEqual(digest["routeable_candidate_delta"], 0)
+        self.assertEqual(digest["no_delta_reentry_decision"], "deny")
+        self.assertEqual(
+            digest["repair_bid_settlement_status"],
+            "repair_only",
+        )
+        self.assertEqual(
+            digest["repair_bid_settlement_held_lot_ids"],
+            ["compacted-repair-lot:promotion"],
+        )
+        self.assertIn(
+            "jangar_material_evidence_settlement_ref_unavailable",
+            digest["field_unavailable_reason_codes"],
+        )
+        self.assertIn(
+            "uv run --frozen pytest tests/test_build_revenue_repair_digest.py -k revenue_repair",
+            digest["validation_commands"],
+        )
+        self.assertIn("max_notional=0", str(digest["rollback_target"]))
         strike_ledger = digest["alpha_readiness_strike_ledger"]
         self.assertIsInstance(strike_ledger, dict)
         self.assertEqual(

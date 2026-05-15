@@ -840,6 +840,296 @@ def _summarize_repair_outcome_dividend(
     }
 
 
+def _first_mapping_item(value: object) -> dict[str, Any]:
+    for raw_item in _sequence(value):
+        item = _mapping(raw_item)
+        if item:
+            return item
+    return {}
+
+
+def _first_text(*values: object) -> str | None:
+    for value in values:
+        text = _text(value)
+        if text:
+            return text
+    return None
+
+
+def _top_repair_queue_item(repair_queue: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    for raw_item in repair_queue:
+        item = _mapping(raw_item)
+        if item:
+            return dict(item)
+    return {}
+
+
+def _routeable_candidate_count_from_evidence(evidence: Mapping[str, Any]) -> int:
+    routeability_acceptance = _mapping(evidence.get("routeability_acceptance"))
+    route_evidence_clearinghouse = _mapping(
+        evidence.get("route_evidence_clearinghouse")
+    )
+    repair_bid_settlement = _mapping(evidence.get("repair_bid_settlement"))
+    return max(
+        _int(routeability_acceptance.get("accepted_routeable_candidate_count")),
+        _int(route_evidence_clearinghouse.get("accepted_routeable_candidate_count")),
+        _int(repair_bid_settlement.get("routeable_candidate_count")),
+    )
+
+
+def _repair_bid_settlement_held_lot_ids(
+    repair_bid_settlement: Mapping[str, Any],
+) -> list[str]:
+    held_lot_ids: list[str] = []
+    for raw_lot in _sequence(repair_bid_settlement.get("compacted_lots")):
+        lot = _mapping(raw_lot)
+        lot_id = _text(lot.get("lot_id"))
+        if not lot_id:
+            continue
+        lot_state = _text(lot.get("state")).lower()
+        if lot_state == "held" or lot.get("dispatchable") is False:
+            held_lot_ids.append(lot_id)
+    if held_lot_ids:
+        return _dedupe(held_lot_ids)
+
+    selected = set(_string_items(repair_bid_settlement.get("selected_lot_ids")))
+    dispatchable = set(_string_items(repair_bid_settlement.get("dispatchable_lot_ids")))
+    return sorted(selected - dispatchable)
+
+
+def _state_from_mapping(payload: Mapping[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        text = _text(payload.get(key))
+        if text:
+            return text
+    return None
+
+
+def _jangar_material_evidence_settlement_ref(
+    status_payload: Mapping[str, Any],
+) -> object | None:
+    dependency_quorum = _mapping(status_payload.get("dependency_quorum"))
+    for source in (
+        status_payload,
+        dependency_quorum,
+        _mapping(dependency_quorum.get("control_plane_status")),
+    ):
+        settlement = _mapping(source.get("material_evidence_settlement_spine"))
+        if settlement:
+            return (
+                settlement.get("settlement_id")
+                or settlement.get("spine_id")
+                or settlement.get("id")
+                or dict(settlement)
+            )
+    return None
+
+
+def _validation_commands(
+    *,
+    top_item: Mapping[str, Any],
+    no_delta_repair_reentry_auction: Mapping[str, Any],
+) -> list[str]:
+    selected_ticket = _mapping(no_delta_repair_reentry_auction.get("selected_ticket"))
+    ticket_commands = _string_items(selected_ticket.get("validation_commands"))
+    if ticket_commands:
+        return ticket_commands
+    if _text(top_item.get("code")) == "repair_alpha_readiness":
+        return [
+            "uv run --frozen pytest tests/test_build_revenue_repair_digest.py -k revenue_repair",
+            "uv run --frozen pytest tests/test_no_delta_repair_reentry_auction.py",
+            "uv run --frozen pytest tests/test_consumer_evidence.py -k revenue",
+        ]
+    return [
+        "uv run --frozen pytest tests/test_build_revenue_repair_digest.py -k revenue_repair"
+    ]
+
+
+def _field_unavailable_reason_codes(fields: Mapping[str, object]) -> list[str]:
+    reasons: list[str] = []
+    for field_name, value in fields.items():
+        if value is None:
+            reasons.append(f"{field_name}_unavailable")
+        elif isinstance(value, list) and not value:
+            reasons.append(f"{field_name}_empty")
+    return reasons
+
+
+def _build_topline_contract(
+    *,
+    status_payload: Mapping[str, Any],
+    repair_queue: Sequence[Mapping[str, Any]],
+    capital: Mapping[str, Any],
+    evidence: Mapping[str, Any],
+    repair_bid_settlement: Mapping[str, Any],
+    alpha_evidence_foundry: Mapping[str, Any],
+    alpha_readiness_settlement_conveyor: Mapping[str, Any],
+    alpha_repair_dividend_ledger: Mapping[str, Any],
+    no_delta_repair_reentry_auction: Mapping[str, Any],
+) -> dict[str, object]:
+    top_item = _top_repair_queue_item(repair_queue)
+    first_foundry_receipt = _first_mapping_item(alpha_evidence_foundry.get("receipts"))
+    selected_lane = _mapping(alpha_readiness_settlement_conveyor.get("selected_lane"))
+    selected_target = _first_mapping_item(
+        _mapping(evidence.get("alpha_readiness")).get("repair_targets")
+    )
+    routeable_before = _int(
+        no_delta_repair_reentry_auction.get("routeable_candidate_count_before"),
+        _int(
+            alpha_evidence_foundry.get("routeable_candidate_count_before"),
+            _routeable_candidate_count_from_evidence(evidence),
+        ),
+    )
+    routeable_after = _int(
+        no_delta_repair_reentry_auction.get("routeable_candidate_count_after"),
+        _int(
+            alpha_readiness_settlement_conveyor.get("routeable_candidate_count_after"),
+            _int(
+                alpha_repair_dividend_ledger.get("routeable_candidate_count_after"),
+                routeable_before,
+            ),
+        ),
+    )
+    evidence_clock = _choose_mapping(
+        status_payload.get("evidence_clock_arbiter"),
+        status_payload.get("evidence_clock"),
+    )
+    required_custody = _mapping(evidence_clock.get("required_torghut_custody_ref"))
+    route_warrant = _choose_mapping(
+        status_payload.get("route_warrant_exchange"),
+        status_payload.get("route_warrant"),
+    )
+    jangar_material_ref = _jangar_material_evidence_settlement_ref(status_payload)
+    selected_hypothesis_id = _first_text(
+        no_delta_repair_reentry_auction.get("selected_hypothesis_id"),
+        alpha_repair_dividend_ledger.get("selected_hypothesis_id"),
+        selected_lane.get("hypothesis_id"),
+        first_foundry_receipt.get("hypothesis_id"),
+        selected_target.get("hypothesis_id"),
+    )
+    selected_candidate_id = _first_text(
+        first_foundry_receipt.get("candidate_id"),
+        selected_lane.get("candidate_id"),
+        selected_target.get("candidate_id"),
+    )
+    selected_strategy_id = _first_text(
+        first_foundry_receipt.get("strategy_id"),
+        selected_lane.get("strategy_id"),
+        selected_target.get("strategy_id"),
+    )
+    selected_dataset_snapshot_ref = _first_text(
+        first_foundry_receipt.get("dataset_snapshot_ref"),
+        first_foundry_receipt.get("dataset_snapshot_id"),
+        selected_lane.get("dataset_snapshot_ref"),
+        selected_lane.get("dataset_snapshot_id"),
+        alpha_repair_dividend_ledger.get("dataset_snapshot_ref"),
+    )
+    selected_value_gate = _first_text(
+        no_delta_repair_reentry_auction.get("selected_value_gate"),
+        alpha_evidence_foundry.get("selected_value_gate"),
+        top_item.get("value_gate"),
+    )
+    required_output_receipt = _first_text(
+        top_item.get("required_output_receipt"),
+        no_delta_repair_reentry_auction.get("required_output_receipt"),
+    )
+    top_line: dict[str, object] = {
+        "capital_state": _text(capital.get("capital_state"), "unknown"),
+        "capital_stage": _text(capital.get("capital_stage"), "unknown"),
+        "live_submission_allowed": _bool(capital.get("live_submission_allowed")),
+        "max_notional": _text(capital.get("max_notional"), "0"),
+        "top_repair_queue_item": top_item or None,
+        "selected_value_gate": selected_value_gate,
+        "required_output_receipt": required_output_receipt,
+        "required_receipts": _string_items(top_item.get("required_receipts")),
+        "selected_hypothesis_id": selected_hypothesis_id,
+        "selected_candidate_id": selected_candidate_id,
+        "selected_strategy_id": selected_strategy_id,
+        "selected_dataset_snapshot_ref": selected_dataset_snapshot_ref,
+        "routeable_candidate_count_before": routeable_before,
+        "routeable_candidate_count_after": routeable_after,
+        "accepted_routeable_candidate_count": _routeable_candidate_count_from_evidence(
+            evidence
+        ),
+        "routeable_candidate_delta": routeable_after - routeable_before,
+        "alpha_no_delta_release_key": no_delta_repair_reentry_auction.get(
+            "active_no_delta_release_key"
+        ),
+        "no_delta_reentry_decision": no_delta_repair_reentry_auction.get(
+            "reentry_decision"
+        ),
+        "no_delta_reentry_reason_codes": _string_items(
+            no_delta_repair_reentry_auction.get("reason_codes")
+        ),
+        "repair_bid_settlement_status": _first_text(
+            repair_bid_settlement.get("status"),
+            repair_bid_settlement.get("capital_decision"),
+        ),
+        "repair_bid_settlement_selected_lot_ids": _string_items(
+            repair_bid_settlement.get("selected_lot_ids")
+        ),
+        "repair_bid_settlement_dispatchable_lot_ids": _string_items(
+            repair_bid_settlement.get("dispatchable_lot_ids")
+        ),
+        "repair_bid_settlement_held_lot_ids": _repair_bid_settlement_held_lot_ids(
+            repair_bid_settlement
+        ),
+        "evidence_clock_state": _state_from_mapping(
+            evidence_clock, "capital_decision", "state", "status"
+        ),
+        "evidence_clock_custody_status": _state_from_mapping(
+            required_custody, "decision", "state", "status"
+        ),
+        "route_warrant_state": _state_from_mapping(
+            route_warrant, "warrant_state", "state", "status"
+        ),
+        "jangar_material_evidence_settlement_ref": jangar_material_ref,
+        "validation_commands": _validation_commands(
+            top_item=top_item,
+            no_delta_repair_reentry_auction=no_delta_repair_reentry_auction,
+        ),
+        "rollback_target": _first_text(
+            no_delta_repair_reentry_auction.get("rollback_target"),
+            alpha_evidence_foundry.get("rollback_target"),
+            "ignore revenue-repair top-line fields and keep Torghut max_notional=0",
+        ),
+    }
+    top_line["field_unavailable_reason_codes"] = _field_unavailable_reason_codes(
+        {
+            "top_repair_queue_item": top_line["top_repair_queue_item"],
+            "selected_value_gate": top_line["selected_value_gate"],
+            "required_output_receipt": top_line["required_output_receipt"],
+            "selected_hypothesis_id": top_line["selected_hypothesis_id"],
+            "selected_candidate_id": top_line["selected_candidate_id"],
+            "selected_strategy_id": top_line["selected_strategy_id"],
+            "selected_dataset_snapshot_ref": top_line["selected_dataset_snapshot_ref"],
+            "evidence_clock_state": top_line["evidence_clock_state"],
+            "evidence_clock_custody_status": top_line["evidence_clock_custody_status"],
+            "route_warrant_state": top_line["route_warrant_state"],
+            "jangar_material_evidence_settlement_ref": top_line[
+                "jangar_material_evidence_settlement_ref"
+            ],
+        }
+    )
+    top_line["transport_evidence_refs"] = {
+        "route_evidence_clearinghouse_packet": _mapping(
+            evidence.get("route_evidence_clearinghouse")
+        ).get("packet_id"),
+        "repair_bid_settlement_ledger": repair_bid_settlement.get("ledger_id"),
+        "alpha_evidence_foundry": alpha_evidence_foundry.get("foundry_id"),
+        "no_delta_repair_reentry_auction": no_delta_repair_reentry_auction.get(
+            "auction_id"
+        ),
+        "evidence_clock_arbiter": evidence_clock.get("arbiter_id"),
+        "route_warrant_exchange": route_warrant.get("warrant_id"),
+    }
+    top_line["producer_component"] = "services/torghut/app/trading/revenue_repair.py"
+    top_line["expected_repair_action"] = _text(
+        top_item.get("action"), "no_repair_queue_item_selected"
+    )
+    return top_line
+
+
 def _business_state(
     *,
     revenue_ready: bool,
@@ -1097,6 +1387,17 @@ def build_revenue_repair_digest(
         ),
         jangar_controller_ingestion_carry=jangar_controller_ingestion_carry,
     )
+    topline_contract = _build_topline_contract(
+        status_payload=status_payload,
+        repair_queue=cast(Sequence[Mapping[str, Any]], repair_queue),
+        capital=capital,
+        evidence=evidence,
+        repair_bid_settlement=repair_bid_settlement,
+        alpha_evidence_foundry=alpha_evidence_foundry,
+        alpha_readiness_settlement_conveyor=alpha_readiness_settlement_conveyor,
+        alpha_repair_dividend_ledger=alpha_repair_dividend_ledger,
+        no_delta_repair_reentry_auction=no_delta_repair_reentry_auction,
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated.isoformat(),
@@ -1116,6 +1417,7 @@ def build_revenue_repair_digest(
         "no_delta_repair_reentry_auction": no_delta_repair_reentry_auction,
         "business_state": business_state,
         "revenue_ready": revenue_ready,
+        **topline_contract,
         "health": {
             "readyz_status": readyz_status,
             "readyz_ok": readiness_ok,
