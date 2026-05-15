@@ -647,6 +647,91 @@ describe('control-plane Torghut consumer evidence', () => {
     })
   })
 
+  it('fetches full consumer evidence when compact evidence only has the repair queue topline', async () => {
+    process.env = {
+      ...originalEnv,
+      JANGAR_TORGHUT_STATUS_URL: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
+    }
+    const routeProvenProfitReceipt = {
+      schema_version: 'torghut.route-proven-profit-receipt.v1',
+      receipt_id: 'torghut-route-proven-profit:topline-summary',
+      generated_at: '2026-05-15T01:10:00.000Z',
+      fresh_until: '2026-05-15T01:11:00.000Z',
+      paper_readiness_state: 'blocked',
+      live_readiness_state: 'blocked',
+      max_notional: '0',
+      reason_codes: [],
+    }
+    const routeWarrantExchange = {
+      schema_version: 'torghut.route-warrant-exchange.v1',
+      warrant_id: 'route-warrant-exchange:topline-summary',
+      generated_at: '2026-05-15T01:10:00.000Z',
+      fresh_until: '2026-05-15T01:11:00.000Z',
+      warrant_state: 'repair_only',
+      max_notional: '0',
+    }
+    const alphaReadinessSettlementConveyor = {
+      schema_version: 'torghut.alpha-readiness-settlement-conveyor-ref.v1',
+      conveyor_schema_version: 'torghut.alpha-readiness-settlement-conveyor.v1',
+      conveyor_id: 'alpha-readiness-settlement-conveyor:topline-summary',
+      generated_at: '2026-05-15T01:10:00.000Z',
+      fresh_until: '2026-05-15T01:25:00.000Z',
+      status: 'current',
+      settlement_state: 'no_delta',
+      selected_value_gate: 'routeable_candidate_count',
+      max_notional: '0',
+    }
+    const topRepairQueueItem = {
+      code: 'repair_alpha_readiness',
+      reason: 'alpha_readiness_not_promotion_eligible',
+      value_gate: 'routeable_candidate_count',
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        buildJsonResponse({
+          schema_version: 'torghut.consumer-evidence-status.v1',
+          route_proven_profit_receipt: routeProvenProfitReceipt,
+          route_warrant_exchange: routeWarrantExchange,
+          alpha_readiness_settlement_conveyor: alphaReadinessSettlementConveyor,
+          top_repair_queue_item: topRepairQueueItem,
+        }),
+      )
+      .mockResolvedValueOnce(
+        buildJsonResponse({
+          schema_version: 'torghut.consumer-evidence-status.v1',
+          route_proven_profit_receipt: routeProvenProfitReceipt,
+          route_warrant_exchange: routeWarrantExchange,
+          alpha_readiness_settlement_conveyor: alphaReadinessSettlementConveyor,
+          business_state: 'repair_only',
+          revenue_ready: false,
+          top_repair_queue_item: topRepairQueueItem,
+        }),
+      )
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await resolveTorghutConsumerEvidence(new Date('2026-05-15T01:10:10.000Z'))
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence?view=summary',
+    )
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
+    )
+    expect(result.status).toMatchObject({
+      revenue_repair_business_state: 'repair_only',
+      revenue_repair_ready: false,
+      revenue_repair_queue: [
+        expect.objectContaining({
+          code: 'repair_alpha_readiness',
+          reason: 'alpha_readiness_not_promotion_eligible',
+          value_gate: 'routeable_candidate_count',
+        }),
+      ],
+    })
+  })
+
   it('maps Torghut evidence-clock splits and missing custody into action-boundary evidence', async () => {
     process.env = {
       ...originalEnv,
