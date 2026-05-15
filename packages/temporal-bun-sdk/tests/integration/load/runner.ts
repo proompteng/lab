@@ -60,6 +60,16 @@ type ActivityCancellationEvent = {
   readonly error?: string
 }
 
+type WorkflowCleanupEvent = {
+  readonly workflowId: string
+  readonly runId: string
+  readonly requestedAt: string
+  readonly completedAt: string
+  readonly status: 'terminated' | 'already-completed' | 'failed'
+  readonly reason: string
+  readonly error?: string
+}
+
 type SerializedError = {
   readonly name: string
   readonly message: string
@@ -96,10 +106,13 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
   const stats = createRuntimeStats(plans.length)
   const restartEvents: RuntimeRestartEvent[] = []
   const activityCancellationEvents: ActivityCancellationEvent[] = []
+  const workflowCleanupEvents: WorkflowCleanupEvent[] = []
   let runtimeGeneration = 0
   let managedRuntime: ManagedWorkerRuntime | null = null
   let completionResults: WorkflowCompletionResult[] = []
   let completionFailure: SerializedError | undefined
+  let submittedHandles: WorkflowHandle[] = []
+  let cleanupSubmittedWorkflowsAfterFailure = false
   const completionBudgetMs = calculateLoadCompletionBudgetMs(loadConfig)
 
   const startRuntime = async (reason: string): Promise<ManagedWorkerRuntime> => {
@@ -130,11 +143,24 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
     }
   }
 
-  const shutdownRuntime = async (current: ManagedWorkerRuntime, reason: string): Promise<void> => {
+  const shutdownRuntime = async (
+    current: ManagedWorkerRuntime,
+    reason: string,
+    options: { readonly suppressRunFailure?: boolean } = {},
+  ): Promise<SerializedError | undefined> => {
     await memoryRecorder.sample('before-runtime-shutdown', { generation: current.generation, reason })
     await current.runtime.shutdown()
-    await current.runPromise
+    let runFailure: SerializedError | undefined
+    try {
+      await current.runPromise
+    } catch (error) {
+      runFailure = serializeError(error)
+      if (!options.suppressRunFailure) {
+        throw error
+      }
+    }
     await memoryRecorder.sample('after-runtime-shutdown', { generation: current.generation, reason })
+    return runFailure
   }
 
   managedRuntime = await startRuntime('initial')
@@ -148,6 +174,7 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
       const submissions = await submitWorkflows(temporalClient, plans, taskQueue, loadConfig)
       await memoryRecorder.sample('workflows-submitted', { submitted: submissions.length })
       const handles = submissions.map((submission) => submission.handle)
+      submittedHandles = handles
       if (loadConfig.restartAfterSubmit && managedRuntime) {
         const restartStartedAt = new Date().toISOString()
         const previousGeneration = managedRuntime.generation
@@ -181,17 +208,21 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
       }
       const observedCompletionResults: WorkflowCompletionResult[] = []
       try {
+        const workflowCompletions = waitForWorkflowCompletionsRpc({
+          client: temporalClient,
+          handles,
+          namespace: resolvedConfig.namespace,
+          timeoutMs: completionBudgetMs,
+          describeConcurrency: loadConfig.workflowDescribeConcurrency,
+          onCompletion: (result) => {
+            observedCompletionResults.push(result)
+          },
+        })
+        const runtimeCompletionGuard = managedRuntime
+          ? failOnRuntimeExitDuringCompletion(managedRuntime)
+          : new Promise<never>(() => {})
         completionResults = await runWithTimeout(
-          waitForWorkflowCompletionsRpc({
-            client: temporalClient,
-            handles,
-            namespace: resolvedConfig.namespace,
-            timeoutMs: completionBudgetMs,
-            describeConcurrency: loadConfig.workflowDescribeConcurrency,
-            onCompletion: (result) => {
-              observedCompletionResults.push(result)
-            },
-          }),
+          Promise.race([workflowCompletions, runtimeCompletionGuard]),
           completionBudgetMs,
           `Worker load suite exceeded ${completionBudgetMs}ms without completing`,
         )
@@ -200,19 +231,53 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
       } catch (error) {
         completionResults = [...observedCompletionResults]
         completionFailure = serializeError(error)
+        cleanupSubmittedWorkflowsAfterFailure = true
         await memoryRecorder.sample('workflow-completion-failed', {
           completed: stats.completed,
           observedTerminalStatuses: completionResults.length,
           error: completionFailure.message,
         })
       }
+    } catch (error) {
+      cleanupSubmittedWorkflowsAfterFailure = true
+      await memoryRecorder.sample('worker-load-failed-before-completion', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+      throw error
     } finally {
+      if (cleanupSubmittedWorkflowsAfterFailure && submittedHandles.length > 0) {
+        const cleanupStartedAt = new Date().toISOString()
+        await memoryRecorder.sample('failure-cleanup-started', {
+          submitted: submittedHandles.length,
+          observedTerminalStatuses: completionResults.length,
+        })
+        const cleanupEvents = await cleanupSubmittedWorkflows(
+          temporalClient,
+          submittedHandles,
+          completionResults,
+          'worker-load-cleanup-after-failure',
+          loadConfig.workflowDescribeConcurrency,
+        )
+        workflowCleanupEvents.push(...cleanupEvents)
+        await memoryRecorder.sample('failure-cleanup-completed', {
+          startedAt: cleanupStartedAt,
+          attempted: cleanupEvents.length,
+          terminated: cleanupEvents.filter((event) => event.status === 'terminated').length,
+          alreadyCompleted: cleanupEvents.filter((event) => event.status === 'already-completed').length,
+          failed: cleanupEvents.filter((event) => event.status === 'failed').length,
+        })
+      }
       await temporalClient.shutdown()
       await memoryRecorder.sample('client-shutdown')
     }
   } finally {
     if (managedRuntime) {
-      await shutdownRuntime(managedRuntime, 'final')
+      const shutdownFailure = await shutdownRuntime(managedRuntime, 'final', {
+        suppressRunFailure: completionFailure !== undefined,
+      })
+      if (shutdownFailure && !completionFailure) {
+        completionFailure = shutdownFailure
+      }
       managedRuntime = null
     }
     stopMemorySampling()
@@ -293,6 +358,11 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
           activityCancellationSuccessCount: activityCancellationEvents.filter((event) => event.status === 'requested').length,
           activityCancellationFinalCanceledCount,
           activityCancellationEvents,
+          failureCleanupAttemptCount: workflowCleanupEvents.length,
+          failureCleanupTerminatedCount: workflowCleanupEvents.filter((event) => event.status === 'terminated').length,
+          failureCleanupAlreadyCompletedCount: workflowCleanupEvents.filter((event) => event.status === 'already-completed').length,
+          failureCleanupFailedCount: workflowCleanupEvents.filter((event) => event.status === 'failed').length,
+          workflowCleanupEvents,
         },
         environment: {
           bunVersion: Bun.version,
@@ -615,6 +685,74 @@ const cancelActivityWorkflows = async (
   )
 }
 
+const cleanupSubmittedWorkflows = async (
+  client: TemporalClient,
+  handles: readonly WorkflowHandle[],
+  completionResults: readonly WorkflowCompletionResult[],
+  reason: string,
+  concurrency: number,
+): Promise<WorkflowCleanupEvent[]> => {
+  const terminalWorkflowKeys = new Set(
+    completionResults.filter((result) => isAcceptedTerminalWorkflowStatus(result.status)).map(workflowHandleKey),
+  )
+  const targets = handles.filter((handle) => !terminalWorkflowKeys.has(workflowHandleKey(handle)))
+  if (targets.length === 0) {
+    return []
+  }
+
+  const queue = [...targets]
+  const workerCount = Math.min(Math.max(1, concurrency), queue.length)
+  const events: WorkflowCleanupEvent[] = []
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (queue.length > 0) {
+        const handle = queue.shift()
+        if (!handle) {
+          return
+        }
+
+        const requestedAt = new Date().toISOString()
+        try {
+          await client.workflow.terminate(handle, { reason })
+          events.push({
+            workflowId: handle.workflowId,
+            runId: handle.runId,
+            requestedAt,
+            completedAt: new Date().toISOString(),
+            status: 'terminated',
+            reason,
+          })
+        } catch (error) {
+          if (isWorkflowAlreadyCompletedForTermination(error)) {
+            events.push({
+              workflowId: handle.workflowId,
+              runId: handle.runId,
+              requestedAt,
+              completedAt: new Date().toISOString(),
+              status: 'already-completed',
+              reason,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          } else {
+            events.push({
+              workflowId: handle.workflowId,
+              runId: handle.runId,
+              requestedAt,
+              completedAt: new Date().toISOString(),
+              status: 'failed',
+              reason,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          }
+        }
+      }
+    }),
+  )
+  return events
+}
+
+const workflowHandleKey = (handle: WorkflowHandle): string => `${handle.workflowId}/${handle.runId}`
+
 type WorkflowHandle = {
   readonly workflowId: string
   readonly runId: string
@@ -644,6 +782,17 @@ const runWithTimeout = async <T>(promise: Promise<T>, timeoutMs: number, message
         reject(error)
       })
   })
+
+const failOnRuntimeExitDuringCompletion = async (managedRuntime: ManagedWorkerRuntime): Promise<never> => {
+  try {
+    await managedRuntime.runPromise
+  } catch (error) {
+    throw new Error(`Worker runtime exited before load workflows completed: ${formatErrorMessage(error)}`, {
+      cause: error,
+    })
+  }
+  throw new Error(`Worker runtime stopped before load workflows completed`)
+}
 
 const waitForWorkflowCompletionsRpc = async ({
   client,
@@ -896,6 +1045,13 @@ const serializeError = (error: unknown): SerializedError => {
   }
 }
 
+const formatErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message
+  }
+  return String(error)
+}
+
 const workflowExecutionStatusNames: Record<number, string> = {
   [WorkflowExecutionStatus.RUNNING]: 'RUNNING',
   [WorkflowExecutionStatus.COMPLETED]: 'COMPLETED',
@@ -910,6 +1066,7 @@ const workflowExecutionStatusNames: Record<number, string> = {
 export const __workerLoadTestHooks = {
   calculateLoadCompletionBudgetMs,
   calculateWorkerLoadTestTimeoutBudgetMs,
+  cleanupSubmittedWorkflows,
   isWorkflowAlreadyCompletedForTermination,
   normalizeWorkflowStatus,
 }
