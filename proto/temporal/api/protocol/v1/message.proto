@@ -28,7 +28,7 @@ message Message {
         int64 event_id = 3;
         int64 command_index = 4;
     };
-    
+
     // The opaque data carried by this message. The protocol type can be
     // extracted from the package name of the message carried inside the Any.
     google.protobuf.Any body = 5;

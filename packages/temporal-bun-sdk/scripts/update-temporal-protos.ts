@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { cp, mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
@@ -9,17 +9,26 @@ import { $ } from 'bun'
 type CliOptions = {
   version?: string
   repo: string
+  cloudVersion?: string
+  cloudRepo: string
+  includeCloud: boolean
 }
 
 const REPO_ROOT = path.resolve(import.meta.dir, '..', '..', '..')
 const TEMPORAL_PROTO_DIR = path.join(REPO_ROOT, 'proto', 'temporal')
+const TEMPORAL_CLOUD_PROTO_DIR = path.join(TEMPORAL_PROTO_DIR, 'api', 'cloud')
+const GENERATED_PROTO_DIR = path.join(REPO_ROOT, 'packages', 'temporal-bun-sdk', 'src', 'proto')
 const VERSION_FILE = path.join(TEMPORAL_PROTO_DIR, 'VERSION')
+const CLOUD_VERSION_FILE = path.join(TEMPORAL_PROTO_DIR, 'CLOUD_VERSION')
 
 const main = async () => {
   const { values } = parseArgs({
     options: {
       version: { type: 'string' },
       repo: { type: 'string', default: 'temporalio/api' },
+      'cloud-version': { type: 'string' },
+      'cloud-repo': { type: 'string', default: 'temporalio/api-cloud' },
+      'no-cloud': { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
   })
@@ -34,6 +43,9 @@ const main = async () => {
   const options: CliOptions = {
     version: values.version,
     repo: values.repo,
+    cloudVersion: values['cloud-version'],
+    cloudRepo: values['cloud-repo'],
+    includeCloud: !values['no-cloud'],
   }
 
   const tag = await resolveTag(options)
@@ -42,7 +54,24 @@ const main = async () => {
   await regenerateFromTag(tag, options.repo)
   await writeFile(VERSION_FILE, `${tag}\n`, 'utf8')
 
+  if (options.includeCloud) {
+    const cloudTag = await resolveTag({
+      repo: options.cloudRepo,
+      version: options.cloudVersion,
+      cloudRepo: options.cloudRepo,
+      includeCloud: false,
+    })
+    console.log(`[temporal-bun-sdk] Updating Temporal Cloud protos to ${cloudTag}`)
+    await regenerateCloudFromTag(cloudTag, options.cloudRepo)
+    await writeFile(CLOUD_VERSION_FILE, `${cloudTag}\n`, 'utf8')
+  } else {
+    await rm(TEMPORAL_CLOUD_PROTO_DIR, { recursive: true, force: true })
+    await rm(CLOUD_VERSION_FILE, { force: true })
+  }
+
+  await normalizeTrailingWhitespace(TEMPORAL_PROTO_DIR, new Set(['.proto']))
   await generateTypeScript()
+  await normalizeTrailingWhitespace(GENERATED_PROTO_DIR, new Set(['.ts']))
 
   console.log('[temporal-bun-sdk] Temporal protos regenerated successfully.')
 }
@@ -51,12 +80,15 @@ const printHelp = () => {
   console.log(`Update Temporal protobuf definitions and generated TypeScript stubs.
 
 Usage:
-  bun scripts/update-temporal-protos.ts [--version <tag>] [--repo <owner/name>]
+  bun scripts/update-temporal-protos.ts [--version <tag>] [--repo <owner/name>] [--cloud-version <tag>]
 
 Options:
-  --version   Temporal API release tag (default: latest GitHub release)
-  --repo      GitHub repo containing the proto sources (default: temporalio/api)
-  --help      Show this help message
+  --version         Temporal API release tag (default: latest GitHub release)
+  --repo            GitHub repo containing Temporal API proto sources (default: temporalio/api)
+  --cloud-version   Temporal Cloud API release tag (default: latest GitHub release)
+  --cloud-repo      GitHub repo containing Temporal Cloud proto sources (default: temporalio/api-cloud)
+  --no-cloud        Remove Temporal Cloud protos instead of overlaying them
+  --help            Show this help message
 `)
 }
 
@@ -108,6 +140,33 @@ const regenerateFromTag = async (tag: string, repo: string) => {
   }
 }
 
+const regenerateCloudFromTag = async (tag: string, repo: string) => {
+  const tmp = await mkdtemp(path.join(tmpdir(), 'temporal-cloud-protos-'))
+  const archivePath = path.join(tmp, `${tag}.tar.gz`)
+  const extractDir = path.join(tmp, 'extract')
+  await mkdir(extractDir, { recursive: true })
+
+  try {
+    const archiveUrl = `https://github.com/${repo}/archive/refs/tags/${tag}.tar.gz`
+    console.log(`[temporal-bun-sdk] Downloading ${archiveUrl}`)
+    const response = await fetchWithError(archiveUrl, 'application/octet-stream')
+    await Bun.write(archivePath, response)
+
+    await $`tar -xzf ${archivePath} -C ${extractDir}`
+
+    const sourceDir = await findTemporalCloudDir(extractDir)
+    if (!sourceDir) {
+      throw new Error('Extracted archive did not contain a temporal/api/cloud/ directory.')
+    }
+
+    await rm(TEMPORAL_CLOUD_PROTO_DIR, { recursive: true, force: true })
+    await mkdir(path.dirname(TEMPORAL_CLOUD_PROTO_DIR), { recursive: true })
+    await cp(sourceDir, TEMPORAL_CLOUD_PROTO_DIR, { recursive: true })
+  } finally {
+    await rm(tmp, { recursive: true, force: true })
+  }
+}
+
 const findTemporalDir = async (extractDir: string) => {
   const entries = await readdir(extractDir)
   for (const entry of entries) {
@@ -120,6 +179,43 @@ const findTemporalDir = async (extractDir: string) => {
     } catch {}
   }
   return undefined
+}
+
+const findTemporalCloudDir = async (extractDir: string) => {
+  const entries = await readdir(extractDir)
+  for (const entry of entries) {
+    const candidate = path.join(extractDir, entry, 'temporal', 'api', 'cloud')
+    try {
+      const stats = await stat(candidate)
+      if (stats.isDirectory()) {
+        return candidate
+      }
+    } catch {}
+  }
+  return undefined
+}
+
+const normalizeTrailingWhitespace = async (root: string, extensions: ReadonlySet<string>) => {
+  const entries = await readdir(root, { withFileTypes: true })
+  await Promise.all(
+    entries.map(async (entry) => {
+      const entryPath = path.join(root, entry.name)
+      if (entry.isDirectory()) {
+        await normalizeTrailingWhitespace(entryPath, extensions)
+        return
+      }
+
+      if (!entry.isFile() || !extensions.has(path.extname(entry.name))) {
+        return
+      }
+
+      const content = await readFile(entryPath, 'utf8')
+      const normalized = content.replace(/[ \t]+$/gm, '')
+      if (normalized !== content) {
+        await writeFile(entryPath, normalized, 'utf8')
+      }
+    }),
+  )
 }
 
 const fetchJson = async <T>(url: string): Promise<T> => {
@@ -143,7 +239,12 @@ const fetchWithError = async (url: string, accept: string) => {
 
 const generateTypeScript = async () => {
   console.log('[temporal-bun-sdk] Generating TypeScript stubs via buf...')
-  await $`cd ${REPO_ROOT} && buf generate --template buf.temporal.gen.yaml --path proto/temporal`
+  const bufHome = await mkdtemp(path.join(tmpdir(), 'temporal-buf-home-'))
+  try {
+    await $`cd ${REPO_ROOT} && env HOME=${bufHome} BUF_TOKEN= buf generate --template buf.temporal.gen.yaml --path proto/temporal`
+  } finally {
+    await rm(bufHome, { recursive: true, force: true })
+  }
 }
 
 await main()

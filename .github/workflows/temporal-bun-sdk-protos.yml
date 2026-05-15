@@ -14,7 +14,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Node.js 22
+      - name: Set up Node.js 24
         uses: actions/setup-node@v6
         with:
           node-version: '24.11.1'
@@ -23,14 +23,6 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.13
-
-      - name: Cache Bun install
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.3.13-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-1.3.13-
 
       - name: Install Buf CLI
         uses: bufbuild/buf-setup-action@v1
@@ -44,7 +36,7 @@ jobs:
       - name: Check for proto changes
         id: proto_changes
         run: |
-          if git status --short packages/temporal-bun-sdk/src/proto | grep -q .; then
+          if git status --short proto/temporal packages/temporal-bun-sdk/src/proto | grep -q .; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -62,7 +54,7 @@ jobs:
             Automated Temporal proto regeneration for `@proompteng/temporal-bun-sdk`.
 
             - Ran `bun packages/temporal-bun-sdk/scripts/update-temporal-protos.ts`
-            - Rebuilt SDK and executed Oxfmt + test + load suites
+            - Updated vendored proto sources and generated TypeScript stubs
 
             Merge after verifying CI to keep generated protos aligned with upstream Temporal APIs.
 

@@ -20,11 +20,13 @@ import "temporal/api/enums/v1/task_queue.proto";
 import "temporal/api/enums/v1/deployment.proto";
 import "temporal/api/enums/v1/update.proto";
 import "temporal/api/enums/v1/activity.proto";
+import "temporal/api/enums/v1/nexus.proto";
 import "temporal/api/activity/v1/message.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/history/v1/message.proto";
 import "temporal/api/workflow/v1/message.proto";
 import "temporal/api/command/v1/message.proto";
+import "temporal/api/compute/v1/config.proto";
 import "temporal/api/deployment/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
 import "temporal/api/filter/v1/message.proto";
@@ -197,6 +199,8 @@ message StartWorkflowExecutionRequest {
     temporal.api.common.v1.Priority priority = 27;
     // Deployment Options of the worker who will process the eager task. Passed when `request_eager_execution=true`.
     temporal.api.deployment.v1.WorkerDeploymentOptions eager_worker_deployment_options = 28;
+    // Time-skipping configuration. If not set, time skipping is disabled.
+    temporal.api.workflow.v1.TimeSkippingConfig time_skipping_config = 29;
 }
 
 message StartWorkflowExecutionResponse {
@@ -257,8 +261,21 @@ message GetWorkflowExecutionHistoryReverseResponse {
 message PollWorkflowTaskQueueRequest {
     string namespace = 1;
     temporal.api.taskqueue.v1.TaskQueue task_queue = 2;
+    // Unless this is the first poll, the client must pass one of the poller group IDs received in
+    // `poller_group_infos` of the last the PollWorkflowTaskQueueResponse according to the
+    // instructions. If not set, the poll is routed randomly which can cause it being blocked
+    // without receiving a task while the queue actually has tasks in another server location.
+    string poller_group_id = 10;
     // The identity of the worker/client who is polling this task queue
     string identity = 3;
+    // A unique key for this worker instance, used for tracking worker lifecycle.
+    // This is guaranteed to be unique, whereas identity is not guaranteed to be unique.
+    string worker_instance_key = 8;
+
+    // A dedicated per-worker Nexus task queue on which the server sends control
+    // tasks (e.g. activity cancellation) to this specific worker instance.
+    string worker_control_task_queue = 9;
+
     // Deprecated. Use deployment_options instead.
     // Each worker process should provide an ID unique to the specific set of code it is running
     // "checksum" in this field name isn't very accurate, it should be though of as an id.
@@ -268,8 +285,11 @@ message PollWorkflowTaskQueueRequest {
     // feature. See the `WorkerVersionCapabilities` docstring for more.
     temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 5 [deprecated = true];
     // Worker deployment options that user has set in the worker.
-    // Experimental. Worker Deployments are experimental and might significantly change in the future.
     temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 6;
+
+    // Removed in 1.55.0; was temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat
+    reserved 7;
+    reserved "worker_heartbeat";
 }
 
 message PollWorkflowTaskQueueResponse {
@@ -324,6 +344,16 @@ message PollWorkflowTaskQueueResponse {
     repeated temporal.api.protocol.v1.Message messages = 15;
     // Server-advised information the SDK may use to adjust its poller count.
     temporal.api.taskqueue.v1.PollerScalingDecision poller_scaling_decision = 16;
+    // This poller group ID identifies the owner of the workflow task awaiting for query response.
+    // Corresponding RespondQueryTaskCompleted should pass this value for proper routing.
+    string poller_group_id = 17;
+    // The weighted list of poller groups IDs that client should use for future polls to this task
+    // queue. Client is expected to:
+    //   1. Maintain minimum number of pollers no less than the number of groups.
+    //   2. Try to assign the next poll to a group without any pending polls,
+    //   3. If every group has some pending polls, assign the next poll to a group randomly
+    //     according to the weights.
+    repeated temporal.api.taskqueue.v1.PollerGroupInfo poller_group_infos = 18;
 }
 
 message RespondWorkflowTaskCompletedRequest {
@@ -350,6 +380,8 @@ message RespondWorkflowTaskCompletedRequest {
     // Responses to the `queries` field in the task being responded to
     map<string, temporal.api.query.v1.WorkflowQueryResult> query_results = 8;
     string namespace = 9;
+    // Resource ID for routing. Contains the workflow ID from the original task.
+    string resource_id = 18;
     // Version info of the worker who processed this task. This message's `build_id` field should
     // always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
     // field to true. See message docstrings for more.
@@ -373,6 +405,14 @@ message RespondWorkflowTaskCompletedRequest {
     temporal.api.enums.v1.VersioningBehavior versioning_behavior = 16;
     // Worker deployment options that user has set in the worker.
     temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 17;
+
+    // A unique key for this worker instance, used for tracking worker lifecycle.
+    // This is guaranteed to be unique, whereas identity is not guaranteed to be unique.
+    string worker_instance_key = 19;
+
+    // A dedicated per-worker Nexus task queue on which the server sends control
+    // tasks (e.g. activity cancellation) to this specific worker instance.
+    string worker_control_task_queue = 20;
 
     // SDK capability details.
     message Capabilities {
@@ -411,6 +451,8 @@ message RespondWorkflowTaskFailedRequest {
     // Worker process' unique binary id
     string binary_checksum = 5 [deprecated = true];
     string namespace = 6;
+    // Resource ID for routing. Contains the workflow ID from the original task.
+    string resource_id = 11;
     // Protocol messages piggybacking on a WFT as a transport
     repeated temporal.api.protocol.v1.Message messages = 7;
     // Version info of the worker who processed this task. This message's `build_id` field should
@@ -432,8 +474,21 @@ message RespondWorkflowTaskFailedResponse {
 message PollActivityTaskQueueRequest {
     string namespace = 1;
     temporal.api.taskqueue.v1.TaskQueue task_queue = 2;
+    // Unless this is the first poll, the client must pass one of the poller group IDs received in
+    // `poller_group_infos` of the last the PollActivityTaskQueueResponse according to the
+    // instructions. If not set, the poll is routed randomly which can cause it being blocked
+    // without receiving a task while the queue actually has tasks in another server location.
+    string poller_group_id = 10;
     // The identity of the worker/client
     string identity = 3;
+    // A unique key for this worker instance, used for tracking worker lifecycle.
+    // This is guaranteed to be unique, whereas identity is not guaranteed to be unique.
+    string worker_instance_key = 8;
+
+    // A dedicated per-worker Nexus task queue on which the server sends control
+    // tasks (e.g. activity cancellation) to this specific worker instance.
+    string worker_control_task_queue = 9;
+
     temporal.api.taskqueue.v1.TaskQueueMetadata task_queue_metadata = 4;
     // Information about this worker's build identifier and if it is choosing to use the versioning
     // feature. See the `WorkerVersionCapabilities` docstring for more.
@@ -441,16 +496,22 @@ message PollActivityTaskQueueRequest {
     temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 5 [deprecated = true];
     // Worker deployment options that user has set in the worker.
     temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 6;
+
+    // Removed in 1.55.0; was temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat
+    reserved 7;
+    reserved "worker_heartbeat";
 }
 
 message PollActivityTaskQueueResponse {
     // A unique identifier for this task
     bytes task_token = 1;
-    // The namespace the workflow which requested this activity lives in
+    // The namespace of the activity. If this is a workflow activity then this is the namespace of
+    // the workflow also. If this is a standalone activity then the name of this field is
+    // misleading, but retained for compatibility with workflow activities.
     string workflow_namespace = 2;
-    // Type of the requesting workflow
+    // Type of the requesting workflow (if this is a workflow activity).
     temporal.api.common.v1.WorkflowType workflow_type = 3;
-    // Execution info of the requesting workflow
+    // Execution info of the requesting workflow (if this is a workflow activity)
     temporal.api.common.v1.WorkflowExecution workflow_execution = 4;
     temporal.api.common.v1.ActivityType activity_type = 5;
     // The autogenerated or user specified identifier of this activity. Can be used to complete the
@@ -496,6 +557,13 @@ message PollActivityTaskQueueResponse {
     temporal.api.common.v1.Priority priority = 19;
     // The run ID of the activity execution, only set for standalone activities.
     string activity_run_id = 20;
+    // The weighted list of poller groups IDs that client should use for future polls to this task
+    // queue. Client is expected to:
+    //   1. Maintain minimum number of pollers no less than the number of groups.
+    //   2. Try to assign the next poll to a group without any pending polls,
+    //   3. If every group has some pending polls, assign the next poll to a group randomly
+    //     according to the weights.
+    repeated temporal.api.taskqueue.v1.PollerGroupInfo poller_group_infos = 21;
 }
 
 message RecordActivityTaskHeartbeatRequest {
@@ -506,6 +574,8 @@ message RecordActivityTaskHeartbeatRequest {
     // The identity of the worker/client
     string identity = 3;
     string namespace = 4;
+    // Resource ID for routing. Contains the workflow ID or activity ID for standalone activities.
+    string resource_id = 5;
 }
 
 message RecordActivityTaskHeartbeatResponse {
@@ -535,6 +605,8 @@ message RecordActivityTaskHeartbeatByIdRequest {
     temporal.api.common.v1.Payloads details = 5;
     // The identity of the worker/client
     string identity = 6;
+    // Resource ID for routing. Contains "workflow:workflow_id" or "activity:activity_id" for standalone activities.
+    string resource_id = 7;
 }
 
 message RecordActivityTaskHeartbeatByIdResponse {
@@ -558,6 +630,8 @@ message RespondActivityTaskCompletedRequest {
     // The identity of the worker/client
     string identity = 3;
     string namespace = 4;
+    // Resource ID for routing. Contains the workflow ID or activity ID for standalone activities.
+    string resource_id = 8;
     // Version info of the worker who processed this task. This message's `build_id` field should
     // always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
     // field to true. See message docstrings for more.
@@ -588,6 +662,8 @@ message RespondActivityTaskCompletedByIdRequest {
     temporal.api.common.v1.Payloads result = 5;
     // The identity of the worker/client
     string identity = 6;
+    // Resource ID for routing. Contains "workflow:workflow_id" or "activity:activity_id" for standalone activities.
+    string resource_id = 7;
 }
 
 message RespondActivityTaskCompletedByIdResponse {
@@ -601,6 +677,8 @@ message RespondActivityTaskFailedRequest {
     // The identity of the worker/client
     string identity = 3;
     string namespace = 4;
+    // Resource ID for routing. Contains the workflow ID or activity ID for standalone activities.
+    string resource_id = 9;
     // Additional details to be stored as last activity heartbeat
     temporal.api.common.v1.Payloads last_heartbeat_details = 5;
     // Version info of the worker who processed this task. This message's `build_id` field should
@@ -638,6 +716,8 @@ message RespondActivityTaskFailedByIdRequest {
     string identity = 6;
     // Additional details to be stored as last activity heartbeat
     temporal.api.common.v1.Payloads last_heartbeat_details = 7;
+    // Resource ID for routing. Contains "workflow:workflow_id" or "activity:activity_id" for standalone activities.
+    string resource_id = 8;
 }
 
 message RespondActivityTaskFailedByIdResponse {
@@ -654,6 +734,8 @@ message RespondActivityTaskCanceledRequest {
     // The identity of the worker/client
     string identity = 3;
     string namespace = 4;
+    // Resource ID for routing. Contains the workflow ID or activity ID for standalone activities.
+    string resource_id = 8;
     // Version info of the worker who processed this task. This message's `build_id` field should
     // always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
     // field to true. See message docstrings for more.
@@ -686,6 +768,8 @@ message RespondActivityTaskCanceledByIdRequest {
     string identity = 6;
     // Worker deployment options that user has set in the worker.
     temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 7;
+    // Resource ID for routing. Contains "workflow:workflow_id" or "activity:activity_id" for standalone activities.
+    string resource_id = 8;
 }
 
 message RespondActivityTaskCanceledByIdResponse {
@@ -737,6 +821,10 @@ message SignalWorkflowExecutionRequest {
 }
 
 message SignalWorkflowExecutionResponse {
+    // Link to be associated with the WorkflowExecutionSignaled event.
+    // Added on the response to propagate the backlink.
+    // Available from Temporal server 1.31 and up.
+    temporal.api.common.v1.Link link = 1;
 }
 
 message SignalWithStartWorkflowExecutionRequest {
@@ -800,6 +888,8 @@ message SignalWithStartWorkflowExecutionRequest {
     temporal.api.workflow.v1.VersioningOverride versioning_override = 25;
     // Priority metadata
     temporal.api.common.v1.Priority priority = 26;
+    // Time-skipping configuration. If not set, time skipping is disabled.
+    temporal.api.workflow.v1.TimeSkippingConfig time_skipping_config = 27;
 }
 
 message SignalWithStartWorkflowExecutionResponse {
@@ -807,6 +897,10 @@ message SignalWithStartWorkflowExecutionResponse {
     string run_id = 1;
     // If true, a new workflow was started.
     bool started = 2;
+    // Link to be associated with the WorkflowExecutionSignaled event.
+    // Added on the response to propagate the backlink.
+    // Available from Temporal server 1.31 and up.
+    temporal.api.common.v1.Link signal_link = 3;
 }
 
 message ResetWorkflowExecutionRequest {
@@ -992,6 +1086,9 @@ message RespondQueryTaskCompletedRequest {
     // Why did the task fail? It's important to note that many of the variants in this enum cannot
     // apply to worker responses. See the type's doc for more.
     temporal.api.enums.v1.WorkflowTaskFailedCause cause = 8;
+    // Client must forward the poller_group_id received in PollWorkflowTaskQueueResponse for proper
+    // routing of the response.
+    string poller_group_id = 9;
 }
 
 message RespondQueryTaskCompletedResponse {
@@ -1007,11 +1104,24 @@ message ResetStickyTaskQueueResponse {
 
 message ShutdownWorkerRequest {
     string namespace = 1;
+    // sticky_task_queue may not always be populated. We want to ensure all workers
+    // send a shutdown request to update worker state for heartbeating, as well
+    // as cancel pending poll calls early, instead of waiting for timeouts.
     string sticky_task_queue = 2;
     string identity = 3;
     string reason = 4;
-
     temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat = 5;
+    // Technically this is also sent in the WorkerHeartbeat, but
+    // since worker heartbeating can be turned off, this needs
+    // to be a separate, top-level field.
+    string worker_instance_key = 6;
+    // Task queue name the worker is polling on. This allows server to cancel
+    // all outstanding poll RPC calls from SDK. This avoids a race condition that
+    // can lead to tasks being lost.
+    string task_queue = 7;
+    // Task queue types that help server cancel outstanding poll RPC
+    // calls from SDK. This avoids a race condition that can lead to tasks being lost.
+    repeated temporal.api.enums.v1.TaskQueueType task_queue_types = 8;
 }
 
 message ShutdownWorkerResponse {
@@ -1218,6 +1328,11 @@ message GetSystemInfoResponse {
         // This flag is dependent both on server version and for Nexus to be enabled via server configuration.
         bool nexus = 11;
 
+        // True if the server supports server-scaled deployments.
+        // This flag is dependent both on server version and for server-scaled deployments
+        // to be enabled via server configuration.
+        bool server_scaled_deployments = 12;
+
     }
 }
 
@@ -1306,6 +1421,10 @@ message UpdateScheduleRequest {
     // Note: you cannot only update the search attributes with `UpdateScheduleRequest`,
     // you must also set the `schedule` field; otherwise, it will unset the schedule.
     temporal.api.common.v1.SearchAttributes search_attributes = 7;
+    // Schedule memo to replace. If set, replaces the entire memo.
+    // Do not set this field if you do not want to update the memo.
+    // A non-null empty object will clear the memo.
+    temporal.api.common.v1.Memo memo = 8;
 }
 
 message UpdateScheduleResponse {
@@ -1366,6 +1485,30 @@ message ListSchedulesRequest {
 message ListSchedulesResponse {
     repeated temporal.api.schedule.v1.ScheduleListEntry schedules = 1;
     bytes next_page_token = 2;
+}
+
+message CountSchedulesRequest {
+    string namespace = 1;
+    // Visibility query, see https://docs.temporal.io/list-filter for the syntax.
+    string query = 2;
+}
+
+message CountSchedulesResponse {
+    // If `query` is not grouping by any field, the count is an approximate number
+    // of schedules that match the query.
+    // If `query` is grouping by a field, the count is simply the sum of the counts
+    // of the groups returned in the response. This number can be smaller than the
+    // total number of schedules matching the query.
+    int64 count = 1;
+
+    // Contains the groups if the request is grouping by a field.
+    // The list might not be complete, and the counts of each group is approximate.
+    repeated AggregationGroup groups = 2;
+
+    message AggregationGroup {
+        repeated temporal.api.common.v1.Payload group_values = 1;
+        int64 count = 2;
+    }
 }
 
 // [cleanup-wv-pre-release]
@@ -1795,9 +1938,17 @@ message PollWorkflowExecutionUpdateResponse {
 
 message PollNexusTaskQueueRequest {
     string namespace = 1;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 3;
+    // Unless this is the first poll, the client must pass one of the poller group IDs received in
+    // `poller_group_infos` of the last the PollNexusTaskQueueResponse according to the
+    // instructions. If not set, the poll is routed randomly which can cause it being blocked
+    // without receiving a task while the queue actually has tasks in another server location.
+    string poller_group_id = 9;
     // The identity of the client who initiated this request.
     string identity = 2;
-    temporal.api.taskqueue.v1.TaskQueue task_queue = 3;
+    // A unique key for this worker instance, used for tracking worker lifecycle.
+    // This is guaranteed to be unique, whereas identity is not guaranteed to be unique.
+    string worker_instance_key = 8;
     // Information about this worker's build identifier and if it is choosing to use the versioning
     // feature. See the `WorkerVersionCapabilities` docstring for more.
     // Deprecated. Replaced by deployment_options.
@@ -1816,6 +1967,18 @@ message PollNexusTaskQueueResponse {
     temporal.api.nexus.v1.Request request = 2;
     // Server-advised information the SDK may use to adjust its poller count.
     temporal.api.taskqueue.v1.PollerScalingDecision poller_scaling_decision = 3;
+    // This poller group ID identifies the owner of the nexus task awaiting for synchronous
+    // response.
+    // Corresponding `RespondNexusTaskCompleted` and `RespondNexusTaskFailed` calls should pass this
+    // value for proper response routing.
+    string poller_group_id = 4;
+    // The weighted list of poller groups IDs that client should use for future polls to this task
+    // queue. Client is expected to:
+    //   1. Maintain minimum number of pollers no less than the number of groups.
+    //   2. Try to assign the next poll to a group without any pending polls,
+    //   3. If every group has some pending polls, assign the next poll to a group randomly
+    //     according to the weights.
+    repeated temporal.api.taskqueue.v1.PollerGroupInfo poller_group_infos = 5;
 }
 
 message RespondNexusTaskCompletedRequest {
@@ -1826,6 +1989,9 @@ message RespondNexusTaskCompletedRequest {
     bytes task_token = 3;
     // Embedded response to be translated into a frontend response.
     temporal.api.nexus.v1.Response response = 4;
+    // Client must forward the poller_group_id received in PollNexusTaskQueueResponse for proper
+    // routing of the response.
+    string poller_group_id = 5;
 }
 
 message RespondNexusTaskCompletedResponse {
@@ -1837,8 +2003,13 @@ message RespondNexusTaskFailedRequest {
     string identity = 2;
     // A unique identifier for this task.
     bytes task_token = 3;
-    // The error the handler failed with.
-    temporal.api.nexus.v1.HandlerError error = 4;
+    // Deprecated. Use the failure field instead.
+    temporal.api.nexus.v1.HandlerError error = 4 [deprecated = true];
+    // The error the handler failed with. Must contain a NexusHandlerFailureInfo object.
+    temporal.api.failure.v1.Failure failure = 5;
+    // Client must forward the poller_group_id received in PollNexusTaskQueueResponse for proper
+    // routing of the response.
+    string poller_group_id = 6;
 }
 
 message RespondNexusTaskFailedResponse {
@@ -1856,6 +2027,9 @@ message ExecuteMultiOperationRequest {
     //
     // Note that additional operation-specific restrictions have to be considered.
     repeated Operation operations = 2;
+
+    // Resource ID for routing. Should match operations[0].start_workflow.workflow_id
+    string resource_id = 3;
 
     message Operation {
         oneof operation {
@@ -2259,6 +2433,26 @@ message SetWorkerDeploymentRampingVersionResponse {
     float previous_percentage = 3 [deprecated = true];
 }
 
+// Creates a new WorkerDeployment.
+message CreateWorkerDeploymentRequest {
+    string namespace = 1;
+    // The name of the Worker Deployment to create. If a Worker Deployment with
+    // this name already exists, an error will be returned.
+    string deployment_name = 2;
+
+    // Optional. The identity of the client who initiated this request.
+    string identity = 4;
+    // A unique identifier for this create request for idempotence. Typically UUIDv4.
+    string request_id = 5;
+}
+
+message CreateWorkerDeploymentResponse {
+    // This value is returned so that it can be optionally passed to APIs that
+    // write to the WorkerDeployment state to ensure that the state did not
+    // change between this API call and a future write.
+    bytes conflict_token = 1;
+}
+
 message ListWorkerDeploymentsRequest {
     string namespace = 1;
     int32 page_size = 2;
@@ -2283,6 +2477,28 @@ message ListWorkerDeploymentsResponse {
         // Summary of the ramping version of the Worker Deployment.
         temporal.api.deployment.v1.WorkerDeploymentInfo.WorkerDeploymentVersionSummary ramping_version_summary = 6;
     }
+}
+
+// Creates a new WorkerDeploymentVersion.
+message CreateWorkerDeploymentVersionRequest {
+    string namespace = 1;
+    // Required.
+    temporal.api.deployment.v1.WorkerDeploymentVersion deployment_version = 2;
+
+    // Optional. Contains the new worker compute configuration for the Worker
+    // Deployment. Used for worker scale management.
+    temporal.api.compute.v1.ComputeConfig compute_config = 4;
+
+    // Optional. The identity of the client who initiated this request.
+    string identity = 3;
+
+    // A unique identifier for this create request for idempotence. Typically UUIDv4.
+    // If a second request with the same ID is recieved, it is considered a successful no-op.
+    // Retrying with a different request ID for the same deployment name + build ID is an error.
+    string request_id = 5;
+}
+
+message CreateWorkerDeploymentVersionResponse {
 }
 
 // Used for manual deletion of Versions. User can delete a Version only when all the
@@ -2317,6 +2533,53 @@ message DeleteWorkerDeploymentRequest {
 }
 
 message DeleteWorkerDeploymentResponse {
+}
+
+// Used to update the compute config of a Worker Deployment Version.
+message UpdateWorkerDeploymentVersionComputeConfigRequest {
+    string namespace = 1;
+
+    // Required.
+    temporal.api.deployment.v1.WorkerDeploymentVersion deployment_version = 2;
+
+    // Optional. Contains the compute config scaling groups to add or update for the Worker
+    // Deployment.
+    map<string, temporal.api.compute.v1.ComputeConfigScalingGroupUpdate> compute_config_scaling_groups = 6;
+
+    // Optional. Contains the compute config scaling groups to remove from the Worker Deployment.
+    repeated string remove_compute_config_scaling_groups = 7;
+
+    // Optional. The identity of the client who initiated this request.
+    string identity = 3;
+
+    // A unique identifier for this create request for idempotence. Typically UUIDv4.
+    // If a second request with the same ID is recieved, it is considered a successful no-op.
+    // Retrying with a different request ID for the same deployment name + build ID is an error.
+    string request_id = 4;
+}
+
+message UpdateWorkerDeploymentVersionComputeConfigResponse {
+}
+
+// Used to validate the compute config without attaching it to a Worker Deployment Version.
+message ValidateWorkerDeploymentVersionComputeConfigRequest {
+    string namespace = 1;
+
+    // Required.
+    temporal.api.deployment.v1.WorkerDeploymentVersion deployment_version = 2;
+
+    // Optional. Contains the compute config scaling groups to add or update for the Worker
+    // Deployment.
+    map<string, temporal.api.compute.v1.ComputeConfigScalingGroupUpdate> compute_config_scaling_groups = 6;
+
+    // Optional. Contains the compute config scaling groups to remove from the Worker Deployment.
+    repeated string remove_compute_config_scaling_groups = 7;
+
+    // Optional. The identity of the client who initiated this request.
+    string identity = 3;
+}
+
+message ValidateWorkerDeploymentVersionComputeConfigResponse {
 }
 
 // Used to update the user-defined metadata of a Worker Deployment Version.
@@ -2491,6 +2754,9 @@ message RecordWorkerHeartbeatRequest {
     string identity = 2;
 
     repeated temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat = 3;
+
+    // Resource ID for routing. Contains the worker grouping key.
+    string resource_id = 4;
 }
 
 message RecordWorkerHeartbeatResponse {
@@ -2502,8 +2768,8 @@ message ListWorkersRequest {
     int32 page_size = 2;
     bytes next_page_token = 3;
 
-    // `query` in ListWorkers is used to filter workers based on worker status info.
-    // The following worker status attributes are expected are supported as part of the query:
+    // `query` in ListWorkers is used to filter workers based on worker attributes.
+    // Supported attributes:
     //* WorkerInstanceKey
     //* WorkerIdentity
     //* HostName
@@ -2513,14 +2779,17 @@ message ListWorkersRequest {
     //* SdkName
     //* SdkVersion
     //* StartTime
-    //* LastHeartbeatTime
     //* Status
-    // Currently metrics are not supported as a part of ListWorkers query.
     string query = 4;
 }
 
 message ListWorkersResponse {
-    repeated temporal.api.worker.v1.WorkerInfo workers_info = 1;
+    // Deprecated: Use workers instead. This field returns full WorkerInfo which
+    // includes expensive runtime metrics. We will stop populating this field in the future.
+    repeated temporal.api.worker.v1.WorkerInfo workers_info = 1 [deprecated = true];
+
+    // Limited worker information.
+    repeated temporal.api.worker.v1.WorkerListInfo workers = 3;
 
     // Next page token
     bytes next_page_token = 2;
@@ -2574,6 +2843,8 @@ message FetchWorkerConfigRequest {
     // Defines which workers should receive this command.
     // only single worker is supported at this time.
     temporal.api.common.v1.WorkerSelector selector = 6;
+    // Resource ID for routing. Contains the worker grouping key.
+    string resource_id = 7;
 }
 
 message FetchWorkerConfigResponse {
@@ -2600,6 +2871,8 @@ message UpdateWorkerConfigRequest {
 
     // Defines which workers should receive this command.
     temporal.api.common.v1.WorkerSelector selector = 6;
+    // Resource ID for routing. Contains the worker grouping key.
+    string resource_id = 7;
 }
 
 message UpdateWorkerConfigResponse {
@@ -2720,6 +2993,16 @@ message StartActivityExecutionRequest {
     temporal.api.sdk.v1.UserMetadata user_metadata = 17;
     // Priority metadata.
     temporal.api.common.v1.Priority priority = 18;
+    // Callbacks to be called by the server when this activity reaches a terminal state.
+    // Callback addresses must be whitelisted in the server's dynamic configuration.
+    repeated temporal.api.common.v1.Callback completion_callbacks = 19;
+    // Links to be associated with the activity. Callbacks may also have associated links;
+    // links already included with a callback should not be duplicated here.
+    repeated temporal.api.common.v1.Link links = 20;
+    // Options for handling conflicts when using ACTIVITY_ID_CONFLICT_POLICY_USE_EXISTING.
+    temporal.api.common.v1.OnConflictOptions on_conflict_options = 21;
+    // Time to wait before dispatching the first activity task. This delay is not applied to retry attempts.
+    google.protobuf.Duration start_delay = 22;
 }
 
 message StartActivityExecutionResponse {
@@ -2727,6 +3010,8 @@ message StartActivityExecutionResponse {
     string run_id = 1;
     // If true, a new activity was started.
     bool started = 2;
+    // Link to the started activity.
+    temporal.api.common.v1.Link link = 3;
 }
 
 message DescribeActivityExecutionRequest {
@@ -2763,6 +3048,9 @@ message DescribeActivityExecutionResponse {
 
     // Token for follow-on long-poll requests. Absent only if the activity is complete.
     bytes long_poll_token = 5;
+
+    // Callbacks attached to this activity execution and their current state.
+    repeated temporal.api.activity.v1.CallbackInfo callbacks = 6;
 }
 
 message PollActivityExecutionRequest {
@@ -2795,6 +3083,176 @@ message ListActivityExecutionsResponse {
     bytes next_page_token = 2;
 }
 
+message StartNexusOperationExecutionRequest {
+    string namespace = 1;
+    // The identity of the client who initiated this request.
+    string identity = 2;
+    // A unique identifier for this caller-side start request. Typically UUIDv4.
+    // StartOperation requests sent to the handler will use a server-generated request ID.
+    string request_id = 3;
+    // Identifier for this operation. This is a caller-side ID, distinct from any internal
+    // operation identifiers generated by the handler. Must be unique among operations in the
+    // same namespace, subject to the rules imposed by id_reuse_policy and id_conflict_policy.
+    string operation_id = 4;
+    // Endpoint name, resolved to a URL via the cluster's endpoint registry.
+    string endpoint = 5;
+    // Service name.
+    string service = 6;
+    // Operation name.
+    string operation = 7;
+
+    // Schedule-to-close timeout for this operation.
+    // Indicates how long the caller is willing to wait for operation completion.
+    // Calls are retried internally by the server.
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration schedule_to_close_timeout = 8;
+
+    // Schedule-to-start timeout for this operation.
+    // Indicates how long the caller is willing to wait for the operation to be started (or completed if synchronous)
+    // by the handler.
+    // If not set or zero, no schedule-to-start timeout is enforced.
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration schedule_to_start_timeout = 9;
+
+    // Start-to-close timeout for this operation.
+    // Indicates how long the caller is willing to wait for an asynchronous operation to complete after it has been
+    // started. Synchronous operations ignore this timeout.
+    // If not set or zero, no start-to-close timeout is enforced.
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration start_to_close_timeout = 10;
+
+    // Serialized input to the operation. Passed as the request payload.
+    temporal.api.common.v1.Payload input = 11;
+
+    // Defines whether to allow re-using the operation id from a previously *closed* operation.
+    // The default policy is NEXUS_OPERATION_ID_REUSE_POLICY_ALLOW_DUPLICATE.
+    temporal.api.enums.v1.NexusOperationIdReusePolicy id_reuse_policy = 12;
+    // Defines how to resolve an operation id conflict with a *running* operation.
+    // The default policy is NEXUS_OPERATION_ID_CONFLICT_POLICY_FAIL.
+    temporal.api.enums.v1.NexusOperationIdConflictPolicy id_conflict_policy = 13;
+
+    // Search attributes for indexing.
+    temporal.api.common.v1.SearchAttributes search_attributes = 14;
+    // Header to attach to the Nexus request.
+    // Users are responsible for encrypting sensitive data in this header as it is stored in workflow history and
+    // transmitted to external services as-is.
+    // This is useful for propagating tracing information.
+    // Note these headers are not the same as Temporal headers on internal activities and child workflows, these are
+    // transmitted to Nexus operations that may be external and are not traditional payloads.
+    map<string, string> nexus_header = 15;
+    // Metadata for use by user interfaces to display the fixed as-of-start summary and details of the operation.
+    temporal.api.sdk.v1.UserMetadata user_metadata = 16;
+}
+
+message StartNexusOperationExecutionResponse {
+    // The run ID of the operation that was started - or used (via NEXUS_OPERATION_ID_CONFLICT_POLICY_USE_EXISTING).
+    string run_id = 1;
+    // If true, a new operation was started.
+    bool started = 2;
+}
+
+message DescribeNexusOperationExecutionRequest {
+    string namespace = 1;
+    string operation_id = 2;
+    // Operation run ID. If empty the request targets the latest run.
+    string run_id = 3;
+    // Include the input field in the response.
+    bool include_input = 4;
+    // Include the outcome (result/failure) in the response if the operation has completed.
+    bool include_outcome = 5;
+    // Token from a previous DescribeNexusOperationExecutionResponse. If present, this RPC will long-poll until operation
+    // state changes from the state encoded in this token. If absent, return current state immediately.
+    // If present, run_id must also be present.
+    // Note that operation state may change multiple times between requests, therefore it is not
+    // guaranteed that a client making a sequence of long-poll requests will see a complete
+    // sequence of state changes.
+    bytes long_poll_token = 6;
+}
+
+message DescribeNexusOperationExecutionResponse {
+    // The run ID of the operation, useful when run_id was not specified in the request.
+    string run_id = 1;
+
+    // Information about the operation.
+    temporal.api.nexus.v1.NexusOperationExecutionInfo info = 2;
+
+    // Serialized operation input, passed as the request payload.
+    // Only set if include_input was true in the request.
+    temporal.api.common.v1.Payload input = 3;
+
+    // Only set if the operation is completed and include_outcome was true in the request.
+    oneof outcome {
+        // The result if the operation completed successfully.
+        temporal.api.common.v1.Payload result = 4;
+        // The failure if the operation completed unsuccessfully.
+        temporal.api.failure.v1.Failure failure = 5;
+    }
+
+    // Token for follow-on long-poll requests. Absent only if the operation is complete.
+    bytes long_poll_token = 6;
+}
+
+message PollNexusOperationExecutionRequest {
+    string namespace = 1;
+    string operation_id = 2;
+    // Operation run ID. If empty the request targets the latest run.
+    string run_id = 3;
+
+    // Stage to wait for. The operation may be in a more advanced stage when the poll is unblocked.
+    temporal.api.enums.v1.NexusOperationWaitStage wait_stage = 4;
+}
+
+message PollNexusOperationExecutionResponse {
+    // The run ID of the operation, useful when run_id was not specified in the request.
+    string run_id = 1;
+
+    // The current stage of the operation. May be more advanced than the stage requested in the poll.
+    temporal.api.enums.v1.NexusOperationWaitStage wait_stage = 2;
+
+    // Operation token. Only populated for asynchronous operations after a successful StartOperation call.
+    string operation_token = 3;
+
+    // The operation outcome, available if the operation is in a closed state.
+    oneof outcome {
+        // The result if the operation completed successfully.
+        temporal.api.common.v1.Payload result = 4;
+        // The failure if the operation completed unsuccessfully.
+        temporal.api.failure.v1.Failure failure = 5;
+    }
+}
+
+message ListNexusOperationExecutionsRequest {
+    string namespace = 1;
+    // Max number of operations to return per page.
+    int32 page_size = 2;
+    // Token returned in ListNexusOperationExecutionsResponse.
+    bytes next_page_token = 3;
+    // Visibility query, see https://docs.temporal.io/list-filter for the syntax.
+    // Search attributes that are avaialble for Nexus operations include:
+    // - OperationId
+    // - RunId
+    // - Endpoint
+    // - Service
+    // - Operation
+    // - RequestId
+    // - StartTime
+    // - ExecutionTime
+    // - CloseTime
+    // - ExecutionStatus
+    // - ExecutionDuration
+    // - StateTransitionCount
+    string query = 4;
+}
+
+message ListNexusOperationExecutionsResponse {
+    repeated temporal.api.nexus.v1.NexusOperationExecutionListInfo operations = 1;
+    // Token to use to fetch the next page. If empty, there is no next page.
+    bytes next_page_token = 2;
+}
+
 message CountActivityExecutionsRequest {
     string namespace = 1;
     // Visibility query, see https://docs.temporal.io/list-filter for the syntax.
@@ -2807,6 +3265,31 @@ message CountActivityExecutionsResponse {
     // If `query` is grouping by a field, the count is simply the sum of the counts
     // of the groups returned in the response. This number can be smaller than the
     // total number of activities matching the query.
+    int64 count = 1;
+
+    // Contains the groups if the request is grouping by a field.
+    // The list might not be complete, and the counts of each group is approximate.
+    repeated AggregationGroup groups = 2;
+
+    message AggregationGroup {
+        repeated temporal.api.common.v1.Payload group_values = 1;
+        int64 count = 2;
+    }
+}
+
+message CountNexusOperationExecutionsRequest {
+    string namespace = 1;
+    // Visibility query, see https://docs.temporal.io/list-filter for the syntax.
+    // See also ListNexusOperationExecutionsRequest for search attributes available for Nexus operations.
+    string query = 2;
+}
+
+message CountNexusOperationExecutionsResponse {
+    // If `query` is not grouping by any field, the count is an approximate number
+    // of operations that match the query.
+    // If `query` is grouping by a field, the count is simply the sum of the counts
+    // of the groups returned in the response. This number can be smaller than the
+    // total number of operations matching the query.
     int64 count = 1;
 
     // Contains the groups if the request is grouping by a field.
@@ -2860,4 +3343,46 @@ message DeleteActivityExecutionRequest {
 }
 
 message DeleteActivityExecutionResponse {
+}
+
+message RequestCancelNexusOperationExecutionRequest {
+    string namespace = 1;
+    string operation_id = 2;
+    // Operation run ID, targets the latest run if empty.
+    string run_id = 3;
+    // The identity of the client who initiated this request.
+    string identity = 4;
+    // Used to de-dupe cancellation requests.
+    string request_id = 5;
+    // Reason for requesting the cancellation, recorded and available via the DescribeNexusOperationExecution API.
+    string reason = 6;
+}
+
+message RequestCancelNexusOperationExecutionResponse {
+}
+
+message TerminateNexusOperationExecutionRequest {
+    string namespace = 1;
+    string operation_id = 2;
+    // Operation run ID, targets the latest run if empty.
+    string run_id = 3;
+    // The identity of the client who initiated this request.
+    string identity = 4;
+    // Used to de-dupe termination requests.
+    string request_id = 5;
+    // Reason for requesting the termination, recorded in the operation's result failure outcome.
+    string reason = 6;
+}
+
+message TerminateNexusOperationExecutionResponse {
+}
+
+message DeleteNexusOperationExecutionRequest {
+    string namespace = 1;
+    string operation_id = 2;
+    // Operation run ID, targets the latest run if empty.
+    string run_id = 3;
+}
+
+message DeleteNexusOperationExecutionResponse {
 }
