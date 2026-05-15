@@ -3,7 +3,7 @@ import { Effect, Exit } from 'effect'
 
 import { createIntegrationHarness, findTemporalCliUnavailableError, type IntegrationHarness, type TemporalDevServerConfig } from './harness'
 import { readWorkerLoadConfig } from './load/config'
-import { runWorkerLoad } from './load/runner'
+import { calculateWorkerLoadTestTimeoutBudgetMs, runWorkerLoad } from './load/runner'
 
 const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
 const describeIntegration = shouldRunIntegration ? describe : describe.skip
@@ -14,10 +14,7 @@ const devServerDefaults: TemporalDevServerConfig = {
 }
 
 const loadSuiteDefaults = readWorkerLoadConfig()
-const testTimeoutBudgetMs =
-  loadSuiteDefaults.workflowDurationBudgetMs +
-  Math.max(loadSuiteDefaults.metricsFlushTimeoutMs, 5_000) +
-  15_000
+const testTimeoutBudgetMs = calculateWorkerLoadTestTimeoutBudgetMs(loadSuiteDefaults)
 const hookTimeoutMs = 60_000
 
 describeIntegration('worker runtime load/perf suite', () => {
