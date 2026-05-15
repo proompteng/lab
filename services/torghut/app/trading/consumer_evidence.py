@@ -10,10 +10,16 @@ from typing import Any, Mapping, Sequence, cast
 CONSUMER_EVIDENCE_SCHEMA_VERSION = "torghut.consumer-evidence-receipt.v1"
 CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION = "torghut.consumer-evidence-status.v1"
 CONSUMER_EVIDENCE_CANARY_SCHEMA_VERSION = "torghut.consumer-evidence-canary.v1"
+CONSUMER_EVIDENCE_CONTRACT_CANARY_SCHEMA_VERSION = (
+    "torghut.consumer-evidence-contract-canary.v1"
+)
 ROUTE_PROVEN_PROFIT_RECEIPT_SCHEMA_VERSION = "torghut.route-proven-profit-receipt.v1"
 CONSUMER_EVIDENCE_ROUTE_REF = "/trading/consumer-evidence"
+CONSUMER_EVIDENCE_SUMMARY_ROUTE_REF = "/trading/consumer-evidence?view=summary"
 CONSUMER_EVIDENCE_CANARY_MAX_PAYLOAD_BYTES = 65_536
 CONSUMER_EVIDENCE_CANARY_MAX_LATENCY_MS = 3_000
+ROUTE_WARRANT_EXCHANGE_SCHEMA_VERSION = "torghut.route-warrant-exchange.v1"
+REPAIR_BID_SETTLEMENT_LEDGER_SCHEMA_VERSION = "torghut.repair-bid-settlement-ledger.v1"
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -71,6 +77,20 @@ def _int(value: object, default: int = 0) -> int:
         return int(Decimal(str(value)))
     except (InvalidOperation, ValueError):
         return default
+
+
+def _timestamp(value: object) -> datetime | None:
+    raw = _text(value)
+    if not raw:
+        return None
+    normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
 def _dimension(proof_floor: Mapping[str, Any], name: str) -> Mapping[str, Any]:
@@ -273,6 +293,156 @@ def build_consumer_evidence_canary(
     }
 
 
+def _contract_state(
+    *,
+    payload: Mapping[str, Any],
+    expected_schema: str,
+    ref_keys: Sequence[str],
+    now: datetime,
+) -> str:
+    schema = _text(payload.get("schema_version"))
+    ref = next(
+        (_text(payload.get(key)) for key in ref_keys if _text(payload.get(key))), ""
+    )
+    if not payload or not ref:
+        return "missing"
+    if schema != expected_schema:
+        return "schema_mismatch"
+    fresh_until = _timestamp(payload.get("fresh_until"))
+    if fresh_until is not None and fresh_until <= now:
+        return "stale"
+    return "current"
+
+
+def _contract_ref(
+    *,
+    payload: Mapping[str, Any],
+    expected_schema: str,
+    ref_keys: Sequence[str],
+    now: datetime,
+) -> dict[str, object]:
+    ref = next(
+        (_text(payload.get(key)) for key in ref_keys if _text(payload.get(key))),
+        None,
+    )
+    return {
+        "schema_version": expected_schema,
+        "ref": ref,
+        "fresh_until": payload.get("fresh_until"),
+        "state": _contract_state(
+            payload=payload,
+            expected_schema=expected_schema,
+            ref_keys=ref_keys,
+            now=now,
+        ),
+        "max_notional": _text(payload.get("max_notional"), "0"),
+    }
+
+
+def build_consumer_evidence_contract_canary(
+    *,
+    source_commit: str,
+    serving_revision: str | None,
+    image_digest: str | None,
+    route_warrant_exchange: Mapping[str, Any] | None,
+    repair_bid_settlement_ledger: Mapping[str, Any] | None,
+    now: datetime | None = None,
+    freshness_seconds: int = 60,
+) -> dict[str, object]:
+    """Build compact source-serving contract refs for the summary route."""
+
+    generated_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    fresh_until = generated_at + timedelta(seconds=max(1, freshness_seconds))
+    route_warrant = _mapping(route_warrant_exchange)
+    repair_bid = _mapping(repair_bid_settlement_ledger)
+    route_warrant_ref = _contract_ref(
+        payload=route_warrant,
+        expected_schema=ROUTE_WARRANT_EXCHANGE_SCHEMA_VERSION,
+        ref_keys=("warrant_id", "exchange_id"),
+        now=generated_at,
+    )
+    repair_bid_ref = _contract_ref(
+        payload=repair_bid,
+        expected_schema=REPAIR_BID_SETTLEMENT_LEDGER_SCHEMA_VERSION,
+        ref_keys=("ledger_id",),
+        now=generated_at,
+    )
+    contract_refs = {
+        "route_warrant_exchange": route_warrant_ref,
+        "repair_bid_settlement_ledger": repair_bid_ref,
+    }
+    observed_contracts = [
+        name
+        for name, ref in contract_refs.items()
+        if _text(_mapping(ref).get("state")) in {"current", "stale"}
+    ]
+    schema_mismatches = [
+        name
+        for name, ref in contract_refs.items()
+        if _text(_mapping(ref).get("state")) == "schema_mismatch"
+    ]
+    missing_contracts = [
+        name
+        for name, ref in contract_refs.items()
+        if _text(_mapping(ref).get("state")) == "missing"
+    ]
+    stale_contracts = [
+        name
+        for name, ref in contract_refs.items()
+        if _text(_mapping(ref).get("state")) == "stale"
+    ]
+
+    decision = "current"
+    if schema_mismatches:
+        decision = "block"
+    elif missing_contracts or stale_contracts:
+        decision = "hold"
+
+    reason_codes = _unique(
+        [
+            *[
+                f"consumer_evidence_contract_missing:{contract}"
+                for contract in missing_contracts
+            ],
+            *[
+                f"consumer_evidence_contract_stale:{contract}"
+                for contract in stale_contracts
+            ],
+            *[
+                f"consumer_evidence_contract_schema_mismatch:{contract}"
+                for contract in schema_mismatches
+            ],
+        ]
+    )
+    canary_payload = {
+        "schema_version": CONSUMER_EVIDENCE_CONTRACT_CANARY_SCHEMA_VERSION,
+        "generated_at": generated_at.isoformat(),
+        "fresh_until": fresh_until.isoformat(),
+        "source_commit": source_commit,
+        "serving_revision": serving_revision,
+        "image_digest": image_digest,
+        "summary_route_ref": CONSUMER_EVIDENCE_SUMMARY_ROUTE_REF,
+        "full_route_ref": CONSUMER_EVIDENCE_ROUTE_REF,
+        "observed_contracts": observed_contracts,
+        "contract_schema_mismatches": schema_mismatches,
+        "contract_refs": contract_refs,
+        "decision": decision,
+        "reason_codes": reason_codes,
+    }
+
+    return {
+        **canary_payload,
+        "canary_id": _stable_ref(
+            "consumer-evidence-contract-canary",
+            canary_payload,
+        ),
+        "rollback_target": (
+            "omit contract_canary_refs from summary and keep full consumer "
+            "evidence as authority"
+        ),
+    }
+
+
 def build_route_proven_profit_receipt(
     *,
     consumer_evidence_receipt: Mapping[str, Any],
@@ -397,10 +567,12 @@ def build_torghut_consumer_evidence_receipt(
 
 
 __all__ = [
+    "CONSUMER_EVIDENCE_CONTRACT_CANARY_SCHEMA_VERSION",
     "CONSUMER_EVIDENCE_SCHEMA_VERSION",
     "CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION",
     "ROUTE_PROVEN_PROFIT_RECEIPT_SCHEMA_VERSION",
     "build_consumer_evidence_canary",
+    "build_consumer_evidence_contract_canary",
     "build_route_proven_profit_receipt",
     "build_torghut_consumer_evidence_receipt",
 ]

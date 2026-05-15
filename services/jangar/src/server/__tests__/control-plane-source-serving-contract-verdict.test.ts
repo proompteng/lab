@@ -118,6 +118,45 @@ describe('control-plane source-serving contract verdict', () => {
     })
   })
 
+  it('uses compact Torghut contract refs when observed contract names are omitted', () => {
+    const exchange = build({
+      torghutConsumerEvidence: torghutEvidence({
+        observed_contracts: [],
+        route_warrant_id: 'route-warrant-exchange:summary',
+        repair_bid_settlement_ledger_id: 'repair-bid-settlement-ledger:summary',
+      }),
+    })
+
+    expect(exchange.observed_contracts).toEqual(['route_warrant_exchange', 'repair_bid_settlement_ledger'])
+    expect(exchange.missing_contracts).toEqual([])
+    expect(verdict(exchange, 'dispatch_repair')).toMatchObject({
+      decision: 'repair_only',
+      torghut_route_warrant_ref: 'route-warrant-exchange:summary',
+      torghut_repair_bid_settlement_ref: 'repair-bid-settlement-ledger:summary',
+    })
+  })
+
+  it('holds on transport unavailable without declaring source contracts absent', () => {
+    const exchange = build({
+      torghutConsumerEvidence: torghutEvidence({
+        observed_contracts: [],
+        route_warrant_id: null,
+        repair_bid_settlement_ledger_id: null,
+        reason_codes: ['torghut_contract_transport_unavailable'],
+      }),
+    })
+
+    expect(exchange.missing_contracts).toEqual([])
+    expect(exchange.reason_codes).toContain('torghut_contract_transport_unavailable')
+    expect(exchange.reason_codes).not.toContain('source_serving_contract_missing:route_warrant_exchange')
+    expect(exchange.reason_codes).not.toContain('source_serving_contract_missing:repair_bid_settlement_ledger')
+    expect(verdict(exchange, 'dispatch_repair')).toMatchObject({
+      decision: 'hold',
+      source_serving_state: 'unknown',
+      blocking_reason_codes: expect.arrayContaining(['torghut_contract_transport_unavailable']),
+    })
+  })
+
   it('allows deploy, merge, paper, and live only when source CI, build, digest, and contracts converge', () => {
     const digest = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
     const exchange = build({

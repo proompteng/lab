@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from app.trading.consumer_evidence import (
     build_consumer_evidence_canary,
+    build_consumer_evidence_contract_canary,
     build_route_proven_profit_receipt,
     build_torghut_consumer_evidence_receipt,
 )
@@ -141,3 +142,76 @@ def test_consumer_evidence_receipt_marks_ready_without_notional_blockers() -> No
     assert receipt["forecast_registry_state"] == "ready"
     assert receipt["paper_readiness_state"] == "ready"
     assert receipt["reason_codes"] == []
+
+
+def test_consumer_evidence_contract_canary_exports_summary_refs() -> None:
+    canary = build_consumer_evidence_contract_canary(
+        now=datetime(2026, 5, 15, 0, 30, tzinfo=timezone.utc),
+        source_commit="abc123",
+        serving_revision="torghut-00434",
+        image_digest="sha256:test",
+        route_warrant_exchange={
+            "schema_version": "torghut.route-warrant-exchange.v1",
+            "warrant_id": "route-warrant-exchange:test",
+            "fresh_until": "2026-05-15T00:31:00+00:00",
+            "warrant_state": "repair_only",
+            "max_notional": "0",
+        },
+        repair_bid_settlement_ledger={
+            "schema_version": "torghut.repair-bid-settlement-ledger.v1",
+            "ledger_id": "repair-bid-settlement-ledger:test",
+            "fresh_until": "2026-05-15T00:31:00+00:00",
+            "capital_decision": "repair_only",
+            "max_notional": "0",
+        },
+    )
+
+    assert canary["schema_version"] == "torghut.consumer-evidence-contract-canary.v1"
+    assert str(canary["canary_id"]).startswith("consumer-evidence-contract-canary:")
+    assert canary["summary_route_ref"] == "/trading/consumer-evidence?view=summary"
+    assert canary["full_route_ref"] == "/trading/consumer-evidence"
+    assert canary["decision"] == "current"
+    assert canary["observed_contracts"] == [
+        "route_warrant_exchange",
+        "repair_bid_settlement_ledger",
+    ]
+    assert canary["contract_schema_mismatches"] == []
+    assert canary["reason_codes"] == []
+    refs = canary["contract_refs"]
+    assert refs["route_warrant_exchange"] == {
+        "schema_version": "torghut.route-warrant-exchange.v1",
+        "ref": "route-warrant-exchange:test",
+        "fresh_until": "2026-05-15T00:31:00+00:00",
+        "state": "current",
+        "max_notional": "0",
+    }
+    assert refs["repair_bid_settlement_ledger"] == {
+        "schema_version": "torghut.repair-bid-settlement-ledger.v1",
+        "ref": "repair-bid-settlement-ledger:test",
+        "fresh_until": "2026-05-15T00:31:00+00:00",
+        "state": "current",
+        "max_notional": "0",
+    }
+
+
+def test_consumer_evidence_contract_canary_holds_missing_contracts() -> None:
+    canary = build_consumer_evidence_contract_canary(
+        now=datetime(2026, 5, 15, 0, 30, tzinfo=timezone.utc),
+        source_commit="abc123",
+        serving_revision="torghut-00434",
+        image_digest="sha256:test",
+        route_warrant_exchange=None,
+        repair_bid_settlement_ledger={
+            "schema_version": "torghut.repair-bid-settlement-ledger.v1",
+            "ledger_id": "repair-bid-settlement-ledger:test",
+            "fresh_until": "2026-05-15T00:29:59+00:00",
+            "max_notional": "0",
+        },
+    )
+
+    assert canary["decision"] == "hold"
+    assert canary["observed_contracts"] == ["repair_bid_settlement_ledger"]
+    assert canary["reason_codes"] == [
+        "consumer_evidence_contract_missing:route_warrant_exchange",
+        "consumer_evidence_contract_stale:repair_bid_settlement_ledger",
+    ]

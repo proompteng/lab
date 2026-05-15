@@ -721,6 +721,12 @@ requires Jangar to expose typed Torghut custody evidence from the non-recursive 
 Jangar requests `/trading/consumer-evidence?view=summary` when the configured Torghut status URL points at the
 consumer-evidence route, so readiness gets the compact status, receipt, route-profit, and canary fields without
 pulling the full operator ledger payload through the control-plane hot path.
+For the May 15 transport split in
+`docs/agents/designs/207-jangar-consumer-evidence-transport-split-and-source-serving-contract-canary-2026-05-15.md`,
+Jangar reads Torghut's compact `contract_canary_refs` for `route_warrant_exchange` and
+`repair_bid_settlement_ledger`. If compact refs are missing, it performs one bounded full consumer-evidence fetch
+before source-serving verdicts decide contract presence. If that fallback is unavailable while summary is current,
+Jangar records `torghut_contract_transport_unavailable` instead of declaring the source-serving contracts absent.
 When Torghut imports Jangar carry for that route, it calls `/api/agents/control-plane/status` with
 `x-torghut-consumer-evidence-mode: omit`; Jangar then computes the local control-plane status without fetching Torghut
 consumer evidence, which prevents a Torghut -> Jangar -> Torghut status loop.

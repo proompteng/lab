@@ -393,6 +393,28 @@ describe('getReadyHandler', () => {
             max_notional: '0',
             reason_codes: [],
           },
+          contract_canary_refs: {
+            schema_version: 'torghut.consumer-evidence-contract-canary.v1',
+            canary_id: 'consumer-evidence-contract-canary:ready-test',
+            observed_contracts: ['route_warrant_exchange', 'repair_bid_settlement_ledger'],
+            contract_schema_mismatches: [],
+            contract_refs: {
+              route_warrant_exchange: {
+                schema_version: 'torghut.route-warrant-exchange.v1',
+                ref: 'route-warrant-exchange:ready-test',
+                fresh_until: '2026-05-14T00:38:00.000Z',
+                state: 'current',
+                max_notional: '0',
+              },
+              repair_bid_settlement_ledger: {
+                schema_version: 'torghut.repair-bid-settlement-ledger.v1',
+                ref: 'repair-bid-settlement-ledger:ready-test',
+                fresh_until: '2026-05-14T00:38:00.000Z',
+                state: 'current',
+                max_notional: '0',
+              },
+            },
+          },
           alpha_readiness_settlement_conveyor: {
             schema_version: 'torghut.alpha-readiness-settlement-conveyor-ref.v1',
             conveyor_schema_version: 'torghut.alpha-readiness-settlement-conveyor.v1',

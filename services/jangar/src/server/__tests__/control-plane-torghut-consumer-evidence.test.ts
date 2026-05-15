@@ -422,6 +422,150 @@ describe('control-plane Torghut consumer evidence', () => {
     })
   })
 
+  it('reads compact source-serving contract refs from summary consumer evidence', async () => {
+    process.env = {
+      ...originalEnv,
+      JANGAR_TORGHUT_STATUS_URL: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
+    }
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        buildJsonResponse({
+          schema_version: 'torghut.consumer-evidence-status.v1',
+          view: 'summary',
+          route_proven_profit_receipt: {
+            schema_version: 'torghut.route-proven-profit-receipt.v1',
+            receipt_id: 'torghut-route-proven-profit:summary',
+            generated_at: '2026-05-15T00:30:00.000Z',
+            fresh_until: '2026-05-15T00:31:00.000Z',
+            paper_readiness_state: 'blocked',
+            live_readiness_state: 'blocked',
+            max_notional: '0',
+            reason_codes: [],
+          },
+          build: {
+            commit: '4dfa7c70771f3f8d6f3884c52a77c41e5e851638',
+            active_revision: 'torghut-00434',
+            image_digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          },
+          contract_canary_refs: {
+            schema_version: 'torghut.consumer-evidence-contract-canary.v1',
+            canary_id: 'consumer-evidence-contract-canary:summary',
+            generated_at: '2026-05-15T00:30:00.000Z',
+            fresh_until: '2026-05-15T00:31:00.000Z',
+            observed_contracts: ['route_warrant_exchange', 'repair_bid_settlement_ledger'],
+            contract_schema_mismatches: [],
+            decision: 'current',
+            contract_refs: {
+              route_warrant_exchange: {
+                schema_version: 'torghut.route-warrant-exchange.v1',
+                ref: 'route-warrant-exchange:summary',
+                fresh_until: '2026-05-15T00:31:00.000Z',
+                state: 'current',
+                max_notional: '0',
+              },
+              repair_bid_settlement_ledger: {
+                schema_version: 'torghut.repair-bid-settlement-ledger.v1',
+                ref: 'repair-bid-settlement-ledger:summary',
+                fresh_until: '2026-05-15T00:31:00.000Z',
+                state: 'current',
+                max_notional: '0',
+              },
+            },
+          },
+          business_state: 'repair_only',
+          revenue_ready: false,
+          alpha_readiness_strike_ledger: {
+            schema_version: 'torghut.alpha-readiness-strike-ledger.v1',
+            ledger_id: 'alpha-readiness-strike-ledger:summary',
+          },
+          executable_alpha_repair_receipts: {
+            schema_version: 'torghut.executable-alpha-repair-receipts.v1',
+            status: 'selected',
+            receipt_count: 0,
+            receipts: [],
+          },
+          route_warrant_id: 'route-warrant-exchange:summary',
+          route_warrant_state: 'repair_only',
+          route_warrant_fresh_until: '2026-05-15T00:31:00.000Z',
+          repair_bid_settlement_ledger_id: 'repair-bid-settlement-ledger:summary',
+          repair_bid_settlement_status: 'current',
+          repair_bid_settlement_fresh_until: '2026-05-15T00:31:00.000Z',
+          repair_bid_settlement_max_notional: '0',
+          repair_bid_settlement_routeable_candidate_count: 0,
+          repair_bid_settlement_selected_lot_ids: ['compacted-repair-lot:summary'],
+        }),
+      ),
+    ) as unknown as typeof globalThis.fetch
+
+    const result = await resolveTorghutConsumerEvidence(new Date('2026-05-15T00:30:10.000Z'))
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect(result.status).toMatchObject({
+      status: 'current',
+      observed_contracts: expect.arrayContaining(['route_warrant_exchange', 'repair_bid_settlement_ledger']),
+      contract_schema_mismatches: [],
+      route_warrant_id: 'route-warrant-exchange:summary',
+      route_warrant_state: 'repair_only',
+      repair_bid_settlement_ledger_id: 'repair-bid-settlement-ledger:summary',
+      repair_bid_settlement_status: 'current',
+      repair_bid_settlement_selected_lot_ids: ['compacted-repair-lot:summary'],
+      max_notional: '0',
+    })
+  })
+
+  it('marks contract transport unavailable when summary is current but bounded full fetch fails', async () => {
+    process.env = {
+      ...originalEnv,
+      JANGAR_TORGHUT_STATUS_URL: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
+    }
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        buildJsonResponse({
+          schema_version: 'torghut.consumer-evidence-status.v1',
+          view: 'summary',
+          business_state: 'repair_only',
+          revenue_ready: false,
+          route_proven_profit_receipt: {
+            schema_version: 'torghut.route-proven-profit-receipt.v1',
+            receipt_id: 'torghut-route-proven-profit:summary-only',
+            generated_at: '2026-05-15T00:30:00.000Z',
+            fresh_until: '2026-05-15T00:31:00.000Z',
+            paper_readiness_state: 'blocked',
+            live_readiness_state: 'blocked',
+            max_notional: '0',
+            reason_codes: [],
+          },
+          alpha_readiness_strike_ledger: {
+            schema_version: 'torghut.alpha-readiness-strike-ledger.v1',
+            ledger_id: 'alpha-readiness-strike-ledger:summary-only',
+          },
+          executable_alpha_repair_receipts: {
+            schema_version: 'torghut.executable-alpha-repair-receipts.v1',
+            status: 'selected',
+            receipt_count: 0,
+            receipts: [],
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        buildJsonResponse({ error: 'full payload unavailable' }, 503),
+      ) as unknown as typeof globalThis.fetch
+
+    const result = await resolveTorghutConsumerEvidence(new Date('2026-05-15T00:30:10.000Z'))
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+    expect(result.status).toMatchObject({
+      status: 'current',
+      receipt_id: 'torghut-route-proven-profit:summary-only',
+      route_warrant_id: null,
+      repair_bid_settlement_ledger_id: null,
+      reason_codes: ['torghut_contract_transport_unavailable'],
+    })
+    expect(result.status.observed_contracts).not.toContain('route_warrant_exchange')
+    expect(result.status.observed_contracts).not.toContain('repair_bid_settlement_ledger')
+  })
+
   it('hydrates executable alpha repair receipts from revenue-repair for material reentry', async () => {
     process.env = {
       ...originalEnv,
@@ -441,6 +585,28 @@ describe('control-plane Torghut consumer evidence', () => {
             live_readiness_state: 'blocked',
             max_notional: '0',
             reason_codes: [],
+          },
+          contract_canary_refs: {
+            schema_version: 'torghut.consumer-evidence-contract-canary.v1',
+            canary_id: 'consumer-evidence-contract-canary:repair',
+            observed_contracts: ['route_warrant_exchange', 'repair_bid_settlement_ledger'],
+            contract_schema_mismatches: [],
+            contract_refs: {
+              route_warrant_exchange: {
+                schema_version: 'torghut.route-warrant-exchange.v1',
+                ref: 'route-warrant-exchange:repair',
+                fresh_until: '2026-05-14T00:38:00.000Z',
+                state: 'current',
+                max_notional: '0',
+              },
+              repair_bid_settlement_ledger: {
+                schema_version: 'torghut.repair-bid-settlement-ledger.v1',
+                ref: 'repair-bid-settlement-ledger:repair',
+                fresh_until: '2026-05-14T00:38:00.000Z',
+                state: 'current',
+                max_notional: '0',
+              },
+            },
           },
         }),
       )
@@ -536,7 +702,7 @@ describe('control-plane Torghut consumer evidence', () => {
 
     const result = await resolveTorghutConsumerEvidence(new Date('2026-05-14T00:23:10.000Z'))
 
-    expect(globalThis.fetch).toHaveBeenCalledTimes(3)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
     expect(result.status).toMatchObject({
       revenue_repair_business_state: 'repair_only',
       revenue_repair_ready: false,
@@ -1234,6 +1400,28 @@ describe('control-plane Torghut consumer evidence', () => {
             max_notional: '0',
             reason_codes: [],
           },
+          contract_canary_refs: {
+            schema_version: 'torghut.consumer-evidence-contract-canary.v1',
+            canary_id: 'consumer-evidence-contract-canary:settlement-conveyor-fallback',
+            observed_contracts: ['route_warrant_exchange', 'repair_bid_settlement_ledger'],
+            contract_schema_mismatches: [],
+            contract_refs: {
+              route_warrant_exchange: {
+                schema_version: 'torghut.route-warrant-exchange.v1',
+                ref: 'route-warrant-exchange:settlement-conveyor-fallback',
+                fresh_until: '2026-05-14T09:16:00.000Z',
+                state: 'current',
+                max_notional: '0',
+              },
+              repair_bid_settlement_ledger: {
+                schema_version: 'torghut.repair-bid-settlement-ledger.v1',
+                ref: 'repair-bid-settlement-ledger:settlement-conveyor-fallback',
+                fresh_until: '2026-05-14T09:16:00.000Z',
+                state: 'current',
+                max_notional: '0',
+              },
+            },
+          },
         }),
       )
       .mockResolvedValueOnce(
@@ -1292,14 +1480,11 @@ describe('control-plane Torghut consumer evidence', () => {
 
     const result = await resolveTorghutConsumerEvidence(new Date('2026-05-14T09:15:10.000Z'))
 
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence?view=summary',
     )
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe('http://torghut.torghut.svc.cluster.local/trading/revenue-repair')
-    expect(String(fetchMock.mock.calls[2]?.[0])).toBe(
-      'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
-    )
     expect(result.status.observed_contracts).toEqual(expect.arrayContaining(['alpha_readiness_settlement_conveyor']))
     expect(result.status.contract_schema_mismatches).not.toEqual(
       expect.arrayContaining(['alpha_readiness_settlement_conveyor:torghut.alpha-readiness-settlement-conveyor.v1']),

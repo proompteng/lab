@@ -19,6 +19,7 @@ const PRODUCER_REVISION = '2026-05-13-source-serving-contract-verdict-observe-v1
 const VERDICT_SCHEMA_VERSION = 'jangar.source-serving-contract-verdict.v1' as const
 const DEFAULT_REPOSITORY = 'proompteng/lab'
 const DEFAULT_REQUIRED_CONTRACTS = ['route_warrant_exchange', 'repair_bid_settlement_ledger']
+const TORGHUT_CONTRACT_TRANSPORT_UNAVAILABLE_REASON = 'torghut_contract_transport_unavailable'
 
 const ACTION_CLASSES: SourceServingContractActionClass[] = [
   'serve_readonly',
@@ -171,8 +172,17 @@ const resolveSourceServingSummary = (input: SourceServingContractVerdictInput): 
     evidence.requiredContracts && evidence.requiredContracts.length > 0
       ? evidence.requiredContracts
       : DEFAULT_REQUIRED_CONTRACTS
-  const observedContracts = compactStrings(torghut.observed_contracts ?? [])
-  const missingContracts = requiredContracts.filter((contract) => !observedContracts.includes(contract))
+  const observedContracts = compactStrings([
+    ...(torghut.observed_contracts ?? []),
+    torghut.route_warrant_id ? 'route_warrant_exchange' : null,
+    torghut.repair_bid_settlement_ledger_id ? 'repair_bid_settlement_ledger' : null,
+  ])
+  const contractTransportUnavailable = Boolean(
+    torghut.reason_codes?.includes(TORGHUT_CONTRACT_TRANSPORT_UNAVAILABLE_REASON),
+  )
+  const missingContracts = contractTransportUnavailable
+    ? []
+    : requiredContracts.filter((contract) => !observedContracts.includes(contract))
   const contractSchemaMismatches = compactStrings(torghut.contract_schema_mismatches ?? [])
   const manifestImageDigest = normalizeNonEmpty(evidence.manifestImageDigest)
   const servingImageDigest =
@@ -193,8 +203,9 @@ const resolveSourceServingSummary = (input: SourceServingContractVerdictInput): 
   const routeRef = routeWarrantRef(torghut)
   const repairBidRef = normalizeNonEmpty(torghut.repair_bid_settlement_ledger_id)
   const ciPassed = sourceCiPassed(sourceCiConclusion)
-  const state: SourceServingContractState =
-    missingContracts.length > 0 || contractSchemaMismatches.length > 0
+  const state: SourceServingContractState = contractTransportUnavailable
+    ? 'unknown'
+    : missingContracts.length > 0 || contractSchemaMismatches.length > 0
       ? 'contract_missing'
       : sourceRevisionMissing || servingBuildMissing
         ? 'unknown'
@@ -215,10 +226,11 @@ const resolveSourceServingSummary = (input: SourceServingContractVerdictInput): 
     ...(servingDigestMissing ? ['serving_image_digest_missing'] : []),
     ...(manifestServingDigestMismatch ? ['manifest_serving_image_digest_mismatch'] : []),
     ...(argoHealthy ? [] : [`argo_health_${input.rolloutHealth.status}`]),
+    ...(contractTransportUnavailable ? [TORGHUT_CONTRACT_TRANSPORT_UNAVAILABLE_REASON] : []),
     ...missingContracts.map((contract) => `source_serving_contract_missing:${contract}`),
     ...contractSchemaMismatches.map((contract) => `source_serving_contract_schema_mismatch:${contract}`),
-    ...(routeRef ? [] : ['torghut_route_warrant_missing']),
-    ...(repairBidRef ? [] : ['repair_bid_settlement_ledger_missing']),
+    ...(routeRef || contractTransportUnavailable ? [] : ['torghut_route_warrant_missing']),
+    ...(repairBidRef || contractTransportUnavailable ? [] : ['repair_bid_settlement_ledger_missing']),
   ])
 
   return {
@@ -315,6 +327,9 @@ const requiredRepairReceipts = (summary: SourceServingSummary) =>
       : []),
     ...(summary.manifestDigestMissing || summary.servingDigestMissing || summary.manifestServingDigestMismatch
       ? ['source-serving-image-digest-reconcile-receipt']
+      : []),
+    ...(summary.reasonCodes.includes(TORGHUT_CONTRACT_TRANSPORT_UNAVAILABLE_REASON)
+      ? ['torghut-contract-transport-canary']
       : []),
     ...summary.missingContracts.map((contract) => `source-serving-contract-canary:${contract}`),
     ...summary.contractSchemaMismatches.map((contract) => `source-serving-contract-schema-repair:${contract}`),
