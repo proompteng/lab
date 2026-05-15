@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: 6e4f7781
-  digest: sha256:1dd2a70030b16b84d6f91b41cf85db7690189cad8e4d630361e98b7252ba6445
+  tag: 8bdb7043
+  digest: sha256:980fc07b0ecb972383464e5c0f8102dd38c9ef5b058d47d5bdcc74ee91778204
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,25 +11,25 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: 6e4f7781
-    digest: sha256:823dc66de05be65719d728fa77b967046a27c402e2e9b14162ba35bc762ba5e8
+    tag: 8bdb7043
+    digest: sha256:d8c0766059bd1b4ef2cbc79dd278e3c34d43ec3da7033e76427bdc36dbaafa2d
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
       JANGAR_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence
       JANGAR_TORGHUT_STATUS_TIMEOUT_MS: "12000"
-      JANGAR_SOURCE_HEAD_SHA: 6e4f778103c86751ac10af9d1812c5f48a10e20a
-      JANGAR_GITOPS_REVISION: 6e4f778103c86751ac10af9d1812c5f48a10e20a
-      JANGAR_SOURCE_CI_RUN_ID: "25897885296"
+      JANGAR_SOURCE_HEAD_SHA: 8bdb704321fa3448ee93b5b4e377cdb6c21e9025
+      JANGAR_GITOPS_REVISION: 8bdb704321fa3448ee93b5b4e377cdb6c21e9025
+      JANGAR_SOURCE_CI_RUN_ID: "25899327929"
       JANGAR_SOURCE_CI_CONCLUSION: success
-      JANGAR_MANIFEST_IMAGE_DIGEST: sha256:823dc66de05be65719d728fa77b967046a27c402e2e9b14162ba35bc762ba5e8
-      JANGAR_SERVING_BUILD_COMMIT: 6e4f778103c86751ac10af9d1812c5f48a10e20a
-      JANGAR_SERVING_IMAGE_DIGEST: sha256:823dc66de05be65719d728fa77b967046a27c402e2e9b14162ba35bc762ba5e8
+      JANGAR_MANIFEST_IMAGE_DIGEST: sha256:d8c0766059bd1b4ef2cbc79dd278e3c34d43ec3da7033e76427bdc36dbaafa2d
+      JANGAR_SERVING_BUILD_COMMIT: 8bdb704321fa3448ee93b5b4e377cdb6c21e9025
+      JANGAR_SERVING_IMAGE_DIGEST: sha256:d8c0766059bd1b4ef2cbc79dd278e3c34d43ec3da7033e76427bdc36dbaafa2d
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: 6e4f7781
-    digest: sha256:1dd2a70030b16b84d6f91b41cf85db7690189cad8e4d630361e98b7252ba6445
+    tag: 8bdb7043
+    digest: sha256:980fc07b0ecb972383464e5c0f8102dd38c9ef5b058d47d5bdcc74ee91778204
 argocdHooks:
   enabled: true
   image:
