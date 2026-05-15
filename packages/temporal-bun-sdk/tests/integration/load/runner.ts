@@ -720,7 +720,7 @@ const waitForWorkflowCompletionsRpc = async ({
   return completions
 }
 
-type LoadCompletionBudgetConfig = Pick<WorkerLoadConfig, 'workflowDurationBudgetMs' | 'metricsFlushTimeoutMs'> &
+export type LoadCompletionBudgetConfig = Pick<WorkerLoadConfig, 'workflowDurationBudgetMs' | 'metricsFlushTimeoutMs'> &
   Partial<
     Pick<
       WorkerLoadConfig,
@@ -732,7 +732,7 @@ type LoadCompletionBudgetConfig = Pick<WorkerLoadConfig, 'workflowDurationBudget
     >
   >
 
-const calculateLoadCompletionBudgetMs = (config: LoadCompletionBudgetConfig): number => {
+export const calculateLoadCompletionBudgetMs = (config: LoadCompletionBudgetConfig): number => {
   const activityTimeoutBudgetMs = Math.max(
     config.activityScheduleToCloseTimeoutMs ?? 0,
     (config.activityScheduleToStartTimeoutMs ?? 0) + (config.activityStartToCloseTimeoutMs ?? 0),
@@ -748,6 +748,11 @@ const calculateLoadCompletionBudgetMs = (config: LoadCompletionBudgetConfig): nu
   const flushAndDescribeBudgetMs = Math.max(config.metricsFlushTimeoutMs, 5_000, describeDrainBudgetMs)
   return workflowCompletionBudgetMs + flushAndDescribeBudgetMs
 }
+
+export const calculateWorkerLoadTestTimeoutBudgetMs = (
+  config: LoadCompletionBudgetConfig,
+  harnessMarginMs = 15_000,
+): number => calculateLoadCompletionBudgetMs(config) + harnessMarginMs
 
 const isAcceptedTerminalWorkflowStatus = (status: string): boolean =>
   status === 'COMPLETED' || status === 'TERMINATED' || status === 'CANCELED'
@@ -904,6 +909,7 @@ const workflowExecutionStatusNames: Record<number, string> = {
 
 export const __workerLoadTestHooks = {
   calculateLoadCompletionBudgetMs,
+  calculateWorkerLoadTestTimeoutBudgetMs,
   isWorkflowAlreadyCompletedForTermination,
   normalizeWorkflowStatus,
 }

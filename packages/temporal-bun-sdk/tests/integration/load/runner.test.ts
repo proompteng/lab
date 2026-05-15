@@ -47,6 +47,22 @@ test('worker load completion budget covers activity timeout envelope and describ
   ).toBe(160_000)
 })
 
+test('worker load Bun test timeout budget covers completion budget plus harness margin', () => {
+  const config = {
+    workflowDurationBudgetMs: 105_000,
+    activityScheduleToStartTimeoutMs: 90_000,
+    activityStartToCloseTimeoutMs: 60_000,
+    activityScheduleToCloseTimeoutMs: 150_000,
+    workflowCount: 64,
+    workflowDescribeConcurrency: 32,
+    metricsFlushTimeoutMs: 5_000,
+  }
+  const completionBudgetMs = __workerLoadTestHooks.calculateLoadCompletionBudgetMs(config)
+
+  expect(completionBudgetMs).toBe(170_000)
+  expect(__workerLoadTestHooks.calculateWorkerLoadTestTimeoutBudgetMs(config)).toBe(completionBudgetMs + 15_000)
+})
+
 test('worker load update termination treats already-completed races as terminal success', () => {
   expect(
     __workerLoadTestHooks.isWorkflowAlreadyCompletedForTermination(
