@@ -4,6 +4,10 @@
 
 Start here:
 
+- `docs/agents/designs/207-jangar-consumer-evidence-transport-split-and-source-serving-contract-canary-2026-05-15.md`
+  (current Jangar consumer-evidence transport split and source-serving contract canary contract)
+- `docs/torghut/design-system/v6/213-torghut-consumer-evidence-contract-canary-and-alpha-reentry-transport-2026-05-15.md`
+  (current Torghut consumer-evidence contract canary and alpha reentry transport contract)
 - `docs/agents/designs/206-jangar-route-adjacent-proof-custody-and-torghut-reentry-admission-2026-05-14.md`
   (current Jangar route-adjacent proof custody and Torghut reentry admission contract)
 - `docs/torghut/design-system/v6/212-torghut-route-adjacent-proof-and-execution-freshness-reentry-2026-05-14.md`
