@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: 4947b00e
-  digest: sha256:03bcb2e644758aa745117dd70e94293c4c11ff64b64febc098a87727a2aad44b
+  tag: daa3db54
+  digest: sha256:d1041f92455a0790ae0198d9ab007da6b7f85e535b5dc00cb61ff78726116773
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,25 +11,25 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: 4947b00e
-    digest: sha256:59ceafa05c1b4d1051b26a87f5fc73a4fe468009776b1aeb6af69bbdf096d348
+    tag: daa3db54
+    digest: sha256:605e2bc949a9ffac1232fac516c10dcfdef2437ef3b221d157cbc487e66a052b
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
       JANGAR_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence
       JANGAR_TORGHUT_STATUS_TIMEOUT_MS: "3000"
-      JANGAR_SOURCE_HEAD_SHA: 4947b00e52c41dc0822db45bc45ed44dc696dad7
-      JANGAR_GITOPS_REVISION: 4947b00e52c41dc0822db45bc45ed44dc696dad7
-      JANGAR_SOURCE_CI_RUN_ID: "25891490939"
+      JANGAR_SOURCE_HEAD_SHA: daa3db545ebb27234bedb1e081186c0fcd59ef8a
+      JANGAR_GITOPS_REVISION: daa3db545ebb27234bedb1e081186c0fcd59ef8a
+      JANGAR_SOURCE_CI_RUN_ID: "25893037050"
       JANGAR_SOURCE_CI_CONCLUSION: success
-      JANGAR_MANIFEST_IMAGE_DIGEST: sha256:59ceafa05c1b4d1051b26a87f5fc73a4fe468009776b1aeb6af69bbdf096d348
-      JANGAR_SERVING_BUILD_COMMIT: 4947b00e52c41dc0822db45bc45ed44dc696dad7
-      JANGAR_SERVING_IMAGE_DIGEST: sha256:59ceafa05c1b4d1051b26a87f5fc73a4fe468009776b1aeb6af69bbdf096d348
+      JANGAR_MANIFEST_IMAGE_DIGEST: sha256:605e2bc949a9ffac1232fac516c10dcfdef2437ef3b221d157cbc487e66a052b
+      JANGAR_SERVING_BUILD_COMMIT: daa3db545ebb27234bedb1e081186c0fcd59ef8a
+      JANGAR_SERVING_IMAGE_DIGEST: sha256:605e2bc949a9ffac1232fac516c10dcfdef2437ef3b221d157cbc487e66a052b
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: 4947b00e
-    digest: sha256:03bcb2e644758aa745117dd70e94293c4c11ff64b64febc098a87727a2aad44b
+    tag: daa3db54
+    digest: sha256:d1041f92455a0790ae0198d9ab007da6b7f85e535b5dc00cb61ff78726116773
 argocdHooks:
   enabled: true
   image:
