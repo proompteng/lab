@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: 1f5a08e8
-  digest: sha256:618adc50ce0541e4b2c103da29805be0ea6cd16c352a828afff5585c6f74af63
+  tag: 6e4f7781
+  digest: sha256:1dd2a70030b16b84d6f91b41cf85db7690189cad8e4d630361e98b7252ba6445
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,25 +11,25 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: 1f5a08e8
-    digest: sha256:1c4b8db3edff8dc131e651d35443221de63e02cfc1afcdf89d5ff28bdd53fe3d
+    tag: 6e4f7781
+    digest: sha256:823dc66de05be65719d728fa77b967046a27c402e2e9b14162ba35bc762ba5e8
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
       JANGAR_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence
       JANGAR_TORGHUT_STATUS_TIMEOUT_MS: "12000"
-      JANGAR_SOURCE_HEAD_SHA: 1f5a08e85a6cc2d1192674234ff8fa88ef32a5f3
-      JANGAR_GITOPS_REVISION: 1f5a08e85a6cc2d1192674234ff8fa88ef32a5f3
-      JANGAR_SOURCE_CI_RUN_ID: "25896889670"
+      JANGAR_SOURCE_HEAD_SHA: 6e4f778103c86751ac10af9d1812c5f48a10e20a
+      JANGAR_GITOPS_REVISION: 6e4f778103c86751ac10af9d1812c5f48a10e20a
+      JANGAR_SOURCE_CI_RUN_ID: "25897885296"
       JANGAR_SOURCE_CI_CONCLUSION: success
-      JANGAR_MANIFEST_IMAGE_DIGEST: sha256:1c4b8db3edff8dc131e651d35443221de63e02cfc1afcdf89d5ff28bdd53fe3d
-      JANGAR_SERVING_BUILD_COMMIT: 1f5a08e85a6cc2d1192674234ff8fa88ef32a5f3
-      JANGAR_SERVING_IMAGE_DIGEST: sha256:1c4b8db3edff8dc131e651d35443221de63e02cfc1afcdf89d5ff28bdd53fe3d
+      JANGAR_MANIFEST_IMAGE_DIGEST: sha256:823dc66de05be65719d728fa77b967046a27c402e2e9b14162ba35bc762ba5e8
+      JANGAR_SERVING_BUILD_COMMIT: 6e4f778103c86751ac10af9d1812c5f48a10e20a
+      JANGAR_SERVING_IMAGE_DIGEST: sha256:823dc66de05be65719d728fa77b967046a27c402e2e9b14162ba35bc762ba5e8
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: 1f5a08e8
-    digest: sha256:618adc50ce0541e4b2c103da29805be0ea6cd16c352a828afff5585c6f74af63
+    tag: 6e4f7781
+    digest: sha256:1dd2a70030b16b84d6f91b41cf85db7690189cad8e4d630361e98b7252ba6445
 argocdHooks:
   enabled: true
   image:
