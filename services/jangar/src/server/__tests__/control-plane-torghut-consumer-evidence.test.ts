@@ -422,7 +422,7 @@ describe('control-plane Torghut consumer evidence', () => {
     })
   })
 
-  it('hydrates executable alpha repair receipts from revenue-repair for material reentry', async () => {
+  it('hydrates executable alpha repair receipts from the full consumer-evidence fallback for material reentry', async () => {
     process.env = {
       ...originalEnv,
       JANGAR_TORGHUT_STATUS_URL: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
@@ -446,7 +446,7 @@ describe('control-plane Torghut consumer evidence', () => {
       )
       .mockResolvedValueOnce(
         buildJsonResponse({
-          schema_version: 'torghut.revenue-repair-digest.v1',
+          schema_version: 'torghut.consumer-evidence-status.v1',
           business_state: 'repair_only',
           revenue_ready: false,
           repair_queue: [
@@ -518,11 +518,6 @@ describe('control-plane Torghut consumer evidence', () => {
             },
             receipts: [],
           },
-        }),
-      )
-      .mockResolvedValueOnce(
-        buildJsonResponse({
-          schema_version: 'torghut.consumer-evidence-status.v1',
           route_warrant_exchange: {
             schema_version: 'torghut.route-warrant-exchange.v1',
             warrant_id: 'route-warrant-exchange:repair',
@@ -536,7 +531,7 @@ describe('control-plane Torghut consumer evidence', () => {
 
     const result = await resolveTorghutConsumerEvidence(new Date('2026-05-14T00:23:10.000Z'))
 
-    expect(globalThis.fetch).toHaveBeenCalledTimes(3)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
     expect(result.status).toMatchObject({
       revenue_repair_business_state: 'repair_only',
       revenue_repair_ready: false,
@@ -591,7 +586,7 @@ describe('control-plane Torghut consumer evidence', () => {
       )
       .mockResolvedValueOnce(
         buildJsonResponse({
-          schema_version: 'torghut.revenue-repair-digest.v1',
+          schema_version: 'torghut.consumer-evidence-status.v1',
           business_state: 'repair_only',
           revenue_ready: false,
           repair_queue: [
@@ -603,11 +598,6 @@ describe('control-plane Torghut consumer evidence', () => {
               max_notional: '0',
             },
           ],
-        }),
-      )
-      .mockResolvedValueOnce(
-        buildJsonResponse({
-          schema_version: 'torghut.consumer-evidence-status.v1',
           route_warrant_exchange: {
             schema_version: 'torghut.route-warrant-exchange.v1',
             warrant_id: 'route-warrant-exchange:full',
@@ -641,11 +631,6 @@ describe('control-plane Torghut consumer evidence', () => {
     )
     expect(globalThis.fetch).toHaveBeenNthCalledWith(
       2,
-      'http://torghut.torghut.svc.cluster.local/trading/revenue-repair',
-      expect.objectContaining({ method: 'GET' }),
-    )
-    expect(globalThis.fetch).toHaveBeenNthCalledWith(
-      3,
       'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
       expect.objectContaining({ method: 'GET' }),
     )
@@ -1214,7 +1199,7 @@ describe('control-plane Torghut consumer evidence', () => {
     })
   })
 
-  it('normalizes full alpha-readiness settlement conveyors from the revenue-repair fallback', async () => {
+  it('normalizes full alpha-readiness settlement conveyors from the full consumer-evidence fallback', async () => {
     process.env = {
       ...originalEnv,
       JANGAR_TORGHUT_STATUS_URL: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
@@ -1238,6 +1223,7 @@ describe('control-plane Torghut consumer evidence', () => {
       )
       .mockResolvedValueOnce(
         buildJsonResponse({
+          schema_version: 'torghut.consumer-evidence-status.v1',
           business_state: 'repair_only',
           revenue_ready: false,
           repair_queue: [
@@ -1273,11 +1259,6 @@ describe('control-plane Torghut consumer evidence', () => {
             capital_rule: 'zero_notional_repair_only',
             rollback_target: 'stop emitting alpha_readiness_settlement_conveyor and keep Torghut max_notional=0',
           },
-        }),
-      )
-      .mockResolvedValueOnce(
-        buildJsonResponse({
-          schema_version: 'torghut.consumer-evidence-status.v1',
           route_warrant_exchange: {
             schema_version: 'torghut.route-warrant-exchange.v1',
             warrant_id: 'route-warrant-exchange:settlement-conveyor',
@@ -1292,12 +1273,11 @@ describe('control-plane Torghut consumer evidence', () => {
 
     const result = await resolveTorghutConsumerEvidence(new Date('2026-05-14T09:15:10.000Z'))
 
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence?view=summary',
     )
-    expect(String(fetchMock.mock.calls[1]?.[0])).toBe('http://torghut.torghut.svc.cluster.local/trading/revenue-repair')
-    expect(String(fetchMock.mock.calls[2]?.[0])).toBe(
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
       'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
     )
     expect(result.status.observed_contracts).toEqual(expect.arrayContaining(['alpha_readiness_settlement_conveyor']))
