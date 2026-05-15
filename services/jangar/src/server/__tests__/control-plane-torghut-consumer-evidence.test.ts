@@ -1106,6 +1106,92 @@ describe('control-plane Torghut consumer evidence', () => {
     })
   })
 
+  it('normalizes full alpha-readiness settlement conveyors from the revenue-repair fallback', async () => {
+    process.env = {
+      ...originalEnv,
+      JANGAR_TORGHUT_STATUS_URL: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        buildJsonResponse({
+          schema_version: 'torghut.consumer-evidence-status.v1',
+          route_proven_profit_receipt: {
+            schema_version: 'torghut.route-proven-profit-receipt.v1',
+            receipt_id: 'torghut-route-proven-profit:settlement-conveyor-fallback',
+            generated_at: '2026-05-14T09:15:00.000Z',
+            fresh_until: '2026-05-14T09:16:00.000Z',
+            paper_readiness_state: 'blocked',
+            live_readiness_state: 'blocked',
+            max_notional: '0',
+            reason_codes: [],
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        buildJsonResponse({
+          business_state: 'repair_only',
+          revenue_ready: false,
+          repair_queue: [
+            {
+              code: 'repair_alpha_readiness',
+              reason: 'alpha_readiness_not_promotion_eligible',
+              value_gate: 'routeable_candidate_count',
+            },
+          ],
+          alpha_readiness_settlement_conveyor: {
+            schema_version: 'torghut.alpha-readiness-settlement-conveyor.v1',
+            conveyor_id: 'alpha-readiness-settlement-conveyor:full',
+            generated_at: '2026-05-14T09:15:00.000Z',
+            fresh_until: '2026-05-14T09:30:00.000Z',
+            status: 'no_delta',
+            settlement_state: 'no_delta',
+            reason_codes: ['active_no_delta_lease'],
+            selected_lane: {
+              hypothesis_id: 'H-MICRO-01',
+              no_delta_release_key: 'alpha-readiness-no-delta:H-MICRO-01:window-a',
+              repeat_launch_decision: 'deny',
+            },
+            selected_value_gate: 'routeable_candidate_count',
+            routeable_candidate_count_before: 0,
+            routeable_candidate_count_after: 0,
+            measured_routeable_candidate_delta: 0,
+            active_no_delta_leases: [{ lease_id: 'alpha-readiness-no-delta-lease:test' }],
+            required_output_receipt: 'torghut.alpha-readiness-settlement-receipt.v1',
+            validation_commands: [
+              'uv run --frozen pytest services/torghut/tests/test_alpha_readiness_settlement_conveyor.py',
+            ],
+            max_notional: '0',
+            capital_rule: 'zero_notional_repair_only',
+            rollback_target: 'stop emitting alpha_readiness_settlement_conveyor and keep Torghut max_notional=0',
+          },
+        }),
+      )
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await resolveTorghutConsumerEvidence(new Date('2026-05-14T09:15:10.000Z'))
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence?view=summary',
+    )
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe('http://torghut.torghut.svc.cluster.local/trading/revenue-repair')
+    expect(result.status.observed_contracts).toEqual(expect.arrayContaining(['alpha_readiness_settlement_conveyor']))
+    expect(result.status.contract_schema_mismatches).not.toEqual(
+      expect.arrayContaining(['alpha_readiness_settlement_conveyor:torghut.alpha-readiness-settlement-conveyor.v1']),
+    )
+    expect(result.status.alpha_readiness_settlement_conveyor).toMatchObject({
+      conveyor_schema_version: 'torghut.alpha-readiness-settlement-conveyor.v1',
+      conveyor_id: 'alpha-readiness-settlement-conveyor:full',
+      selected_hypothesis_id: 'H-MICRO-01',
+      selected_value_gate: 'routeable_candidate_count',
+      active_no_delta_lease_count: 1,
+      required_receipt: 'torghut.alpha-readiness-settlement-receipt.v1',
+      repeat_launch_decision: 'deny',
+      max_notional: '0',
+    })
+  })
+
   it('maps compact alpha repair dividend ledger refs from consumer evidence', async () => {
     process.env = {
       ...originalEnv,
