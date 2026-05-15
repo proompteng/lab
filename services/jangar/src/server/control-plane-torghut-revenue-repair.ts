@@ -19,7 +19,8 @@ export const normalizeRevenueRepairBoolean = (value: unknown): boolean | null =>
 export const hasRevenueRepairSummary = (payload: Record<string, unknown>) =>
   normalizeNonEmpty(payload.business_state) !== null ||
   normalizeRevenueRepairBoolean(payload.revenue_ready) !== null ||
-  Array.isArray(payload.repair_queue)
+  Array.isArray(payload.repair_queue) ||
+  asRecord(payload.top_repair_queue_item) !== null
 
 const readRevenueRepairQueueItem = (rawItem: unknown): TorghutRevenueRepairQueueItem | null => {
   const item = asRecord(rawItem)
@@ -46,8 +47,13 @@ const readRevenueRepairQueueItem = (rawItem: unknown): TorghutRevenueRepairQueue
 }
 
 export const readRevenueRepairQueue = (payload: Record<string, unknown> | null): TorghutRevenueRepairQueueItem[] => {
-  if (!payload || !Array.isArray(payload.repair_queue)) return []
-  return payload.repair_queue
-    .map(readRevenueRepairQueueItem)
-    .filter((item): item is TorghutRevenueRepairQueueItem => Boolean(item))
+  if (!payload) return []
+  const repairQueue = Array.isArray(payload.repair_queue)
+    ? payload.repair_queue
+        .map(readRevenueRepairQueueItem)
+        .filter((item): item is TorghutRevenueRepairQueueItem => Boolean(item))
+    : []
+  if (repairQueue.length > 0) return repairQueue
+  const topItem = readRevenueRepairQueueItem(payload.top_repair_queue_item)
+  return topItem ? [topItem] : []
 }

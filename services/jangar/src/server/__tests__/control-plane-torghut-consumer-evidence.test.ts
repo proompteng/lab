@@ -1226,13 +1226,11 @@ describe('control-plane Torghut consumer evidence', () => {
           schema_version: 'torghut.consumer-evidence-status.v1',
           business_state: 'repair_only',
           revenue_ready: false,
-          repair_queue: [
-            {
-              code: 'repair_alpha_readiness',
-              reason: 'alpha_readiness_not_promotion_eligible',
-              value_gate: 'routeable_candidate_count',
-            },
-          ],
+          top_repair_queue_item: {
+            code: 'repair_alpha_readiness',
+            reason: 'alpha_readiness_not_promotion_eligible',
+            value_gate: 'routeable_candidate_count',
+          },
           alpha_readiness_settlement_conveyor: {
             schema_version: 'torghut.alpha-readiness-settlement-conveyor.v1',
             conveyor_id: 'alpha-readiness-settlement-conveyor:full',
@@ -1281,6 +1279,11 @@ describe('control-plane Torghut consumer evidence', () => {
       'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
     )
     expect(result.status.observed_contracts).toEqual(expect.arrayContaining(['alpha_readiness_settlement_conveyor']))
+    expect(result.status.revenue_repair_queue?.[0]).toMatchObject({
+      code: 'repair_alpha_readiness',
+      reason: 'alpha_readiness_not_promotion_eligible',
+      value_gate: 'routeable_candidate_count',
+    })
     expect(result.status.contract_schema_mismatches).not.toEqual(
       expect.arrayContaining(['alpha_readiness_settlement_conveyor:torghut.alpha-readiness-settlement-conveyor.v1']),
     )
