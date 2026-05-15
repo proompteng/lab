@@ -186,6 +186,7 @@ describeIntegration('payload codec E2E', () => {
       ],
       memo: { env: 'codec-e2e' },
     })
+    harness?.trackWorkflow(start)
 
     const handle = start.handle
     const updateResult = await temporalClient.updateWorkflow(handle, {

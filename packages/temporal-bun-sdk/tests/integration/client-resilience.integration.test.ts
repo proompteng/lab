@@ -142,7 +142,7 @@ describeIntegration('Temporal client resilience', () => {
 
   const startWorkflow = async (callOptions?: Parameters<TemporalClient['startWorkflow']>[1]) => {
     if (!client) throw new Error('client not initialised')
-    return client.startWorkflow(
+    const result = await client.startWorkflow(
       {
         workflowType: 'integrationActivityWorkflow',
         workflowId: `resilience-${crypto.randomUUID()}`,
@@ -151,6 +151,8 @@ describeIntegration('Temporal client resilience', () => {
       },
       callOptions,
     )
+    harness?.trackWorkflow(result)
+    return result
   }
 
   test('retries transient WorkflowService failures', async () => {
