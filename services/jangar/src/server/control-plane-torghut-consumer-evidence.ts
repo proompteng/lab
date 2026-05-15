@@ -97,6 +97,11 @@ const requestJson = async (url: string, timeoutMs: number): Promise<JsonRouteRes
   }
 }
 
+const hasRouteWarrantPayload = (payload: Record<string, unknown> | null | undefined) =>
+  Boolean(
+    payload && asRecord(payload.route_warrant_exchange ?? payload.route_warrant_exchange_v1 ?? payload.route_warrant),
+  )
+
 const compactConsumerEvidenceEndpoint = (endpoint: string): string => {
   try {
     const url = new URL(endpoint)
@@ -160,7 +165,8 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
     }
   }
 
-  const routeResult = await requestJson(compactConsumerEvidenceEndpoint(endpoint), config.torghutStatusTimeoutMs)
+  const compactEndpoint = compactConsumerEvidenceEndpoint(endpoint)
+  const routeResult = await requestJson(compactEndpoint, config.torghutStatusTimeoutMs)
   if (!routeResult.ok) {
     const routeMissing = routeResult.statusCode === 404
     const status = routeMissing ? 'route_missing' : 'unavailable'
@@ -210,6 +216,12 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   const revenueRepairBusinessState = normalizeReason(revenueRepairPayload?.business_state)
   const revenueRepairReady = normalizeRevenueRepairBoolean(revenueRepairPayload?.revenue_ready)
   const revenueRepairQueue = readRevenueRepairQueue(revenueRepairPayload)
+  const fullConsumerEvidenceResult =
+    compactEndpoint !== endpoint && !hasRouteWarrantPayload(payload) && !hasRouteWarrantPayload(revenueRepairPayload)
+      ? await requestJson(endpoint, config.torghutStatusTimeoutMs)
+      : null
+  const sourceServingContractPayload =
+    fullConsumerEvidenceResult?.ok && fullConsumerEvidenceResult.payload ? fullConsumerEvidenceResult.payload : payload
   const alphaRepairClosureBoard =
     readAlphaRepairClosureBoard(payload) ?? readAlphaRepairClosureBoard(revenueRepairPayload)
   const alphaEvidenceFoundry = readAlphaEvidenceFoundry(payload) ?? readAlphaEvidenceFoundry(revenueRepairPayload)
@@ -458,11 +470,22 @@ export const resolveTorghutConsumerEvidence = async (now = new Date()): Promise<
   const topClockSplit = evidenceClockSplits[0]
   const selectedEvidenceClockRepair = zeroNotionalRepairLots[0]
   const routeWarrant = asRecord(
-    payload.route_warrant_exchange ?? payload.route_warrant_exchange_v1 ?? payload.route_warrant,
+    sourceServingContractPayload.route_warrant_exchange ??
+      sourceServingContractPayload.route_warrant_exchange_v1 ??
+      sourceServingContractPayload.route_warrant ??
+      payload.route_warrant_exchange ??
+      payload.route_warrant_exchange_v1 ??
+      payload.route_warrant,
   )
-  const repairBidSettlement = asRecord(payload.repair_bid_settlement_ledger)
+  const repairBidSettlement =
+    asRecord(sourceServingContractPayload.repair_bid_settlement_ledger) ??
+    asRecord(payload.repair_bid_settlement_ledger) ??
+    asRecord(revenueRepairPayload?.repair_bid_settlement_ledger)
   const repairOutcome = readTorghutRepairOutcomeEvidence(payload)
-  const sourceServingRepairReceiptLedger = asRecord(payload.source_serving_repair_receipt_ledger)
+  const sourceServingRepairReceiptLedger =
+    asRecord(sourceServingContractPayload.source_serving_repair_receipt_ledger) ??
+    asRecord(payload.source_serving_repair_receipt_ledger) ??
+    asRecord(revenueRepairPayload?.source_serving_repair_receipt_ledger)
   const freshnessCarry = readTorghutFreshnessCarryEvidence(payload)
   const reasonCodes = uniqueStrings([...receiptReasonCodes, ...freshnessCarry.reasonCodes])
   const observedContracts = uniqueStrings([

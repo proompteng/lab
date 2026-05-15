@@ -230,6 +230,32 @@ describe('control-plane controller ingestion settlement', () => {
     )
   })
 
+  it('does not treat zero-notional live support as a controller-ingestion source carry blocker', () => {
+    const settlement = buildSettlement({
+      sourceServingContractVerdictExchange: sourceServing({
+        status: 'block',
+        allowed_action_classes: [
+          'serve_readonly',
+          'dispatch_repair',
+          'dispatch_normal',
+          'deploy_widen',
+          'merge_ready',
+          'paper_support',
+        ],
+        repair_only_action_classes: [],
+        held_action_classes: [],
+        blocked_action_classes: ['live_support'],
+        reason_codes: [],
+      }),
+    })
+
+    expect(settlement).toMatchObject({
+      decision: 'allow',
+      source_serving_status: 'block',
+      reason_codes: [],
+    })
+  })
+
   it('selects one controller-ingestion repair ticket when ingestion is the only missing witness', () => {
     const settlement = buildSettlement({
       controllerWitness: controllerWitness({

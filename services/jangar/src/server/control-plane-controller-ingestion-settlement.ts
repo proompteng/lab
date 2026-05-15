@@ -29,6 +29,12 @@ export const CONTROLLER_INGESTION_SETTLEMENT_TORGHUT_DESIGN_ARTIFACT =
 const SCHEMA_VERSION = 'jangar.controller-ingestion-settlement.v1' as const
 const DEFAULT_TTL_SECONDS = 60
 const ZERO_NOTIONAL_VALUES = new Set(['0', '0.0', '0.00', '0.0000'])
+const MATERIAL_SOURCE_SERVING_ACTION_CLASSES = [
+  'dispatch_repair',
+  'dispatch_normal',
+  'deploy_widen',
+  'merge_ready',
+] as const
 const ROLLBACK_TARGET =
   'ignore controller_ingestion_settlement consumers and keep ready truth, stage credit, source-serving verdicts, and Torghut max_notional=0 as authorities'
 
@@ -142,15 +148,37 @@ const controllerWitnessReasons = (input: BuildControllerIngestionSettlementInput
     ...input.controllerWitness.reason_codes,
   ]).map((reason) => normalizeReason(reason) ?? reason)
 
+const sourceServingMaterialDecision = (
+  exchange: SourceServingContractVerdictExchange,
+): SourceServingContractVerdictExchange['status'] => {
+  if (
+    MATERIAL_SOURCE_SERVING_ACTION_CLASSES.some((actionClass) => exchange.blocked_action_classes.includes(actionClass))
+  ) {
+    return 'block'
+  }
+  if (
+    MATERIAL_SOURCE_SERVING_ACTION_CLASSES.some((actionClass) => exchange.held_action_classes.includes(actionClass))
+  ) {
+    return 'hold'
+  }
+  if (
+    MATERIAL_SOURCE_SERVING_ACTION_CLASSES.some((actionClass) =>
+      exchange.repair_only_action_classes.includes(actionClass),
+    )
+  ) {
+    return 'repair_only'
+  }
+  return 'allow'
+}
+
 const sourceCarryReasons = (
   input: BuildControllerIngestionSettlementInput,
   carryStatus: ControllerIngestionSettlementTorghutCarryStatus,
-) =>
-  uniqueStrings([
+) => {
+  const materialDecision = sourceServingMaterialDecision(input.sourceServingContractVerdictExchange)
+  return uniqueStrings([
     isFresh(input.sourceServingContractVerdictExchange.fresh_until, input.now) ? null : 'source_serving_verdict_stale',
-    input.sourceServingContractVerdictExchange.status === 'allow'
-      ? null
-      : `source_serving_${input.sourceServingContractVerdictExchange.status}`,
+    materialDecision === 'allow' ? null : `source_serving_${materialDecision}`,
     ...input.sourceServingContractVerdictExchange.reason_codes,
     input.verifyTrustForeclosureBoard
       ? isFresh(input.verifyTrustForeclosureBoard.fresh_until, input.now)
@@ -162,6 +190,7 @@ const sourceCarryReasons = (
       : null,
     carryStatus === 'current' || carryStatus === 'unknown' ? null : `torghut_verification_carry_${carryStatus}`,
   ]).map((reason) => normalizeReason(reason) ?? reason)
+}
 
 const platformReasons = (input: BuildControllerIngestionSettlementInput) =>
   uniqueStrings([
