@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: 8bdb7043
-  digest: sha256:980fc07b0ecb972383464e5c0f8102dd38c9ef5b058d47d5bdcc74ee91778204
+  tag: 822b5b6c
+  digest: sha256:ecbbe6cfcc0d0f4daa84366071496f64d80eaf09dc5408788baa94a5925e66f2
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,25 +11,25 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: 8bdb7043
-    digest: sha256:d8c0766059bd1b4ef2cbc79dd278e3c34d43ec3da7033e76427bdc36dbaafa2d
+    tag: 822b5b6c
+    digest: sha256:f834448be1dbfb451dad39f5e94eae13987f6860ac25406080c13e84393f8194
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
       JANGAR_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence
       JANGAR_TORGHUT_STATUS_TIMEOUT_MS: "12000"
-      JANGAR_SOURCE_HEAD_SHA: 8bdb704321fa3448ee93b5b4e377cdb6c21e9025
-      JANGAR_GITOPS_REVISION: 8bdb704321fa3448ee93b5b4e377cdb6c21e9025
-      JANGAR_SOURCE_CI_RUN_ID: "25899327929"
+      JANGAR_SOURCE_HEAD_SHA: 822b5b6cb47d849b67b388cb56c00ebffffe6db9
+      JANGAR_GITOPS_REVISION: 822b5b6cb47d849b67b388cb56c00ebffffe6db9
+      JANGAR_SOURCE_CI_RUN_ID: "25900337559"
       JANGAR_SOURCE_CI_CONCLUSION: success
-      JANGAR_MANIFEST_IMAGE_DIGEST: sha256:d8c0766059bd1b4ef2cbc79dd278e3c34d43ec3da7033e76427bdc36dbaafa2d
-      JANGAR_SERVING_BUILD_COMMIT: 8bdb704321fa3448ee93b5b4e377cdb6c21e9025
-      JANGAR_SERVING_IMAGE_DIGEST: sha256:d8c0766059bd1b4ef2cbc79dd278e3c34d43ec3da7033e76427bdc36dbaafa2d
+      JANGAR_MANIFEST_IMAGE_DIGEST: sha256:f834448be1dbfb451dad39f5e94eae13987f6860ac25406080c13e84393f8194
+      JANGAR_SERVING_BUILD_COMMIT: 822b5b6cb47d849b67b388cb56c00ebffffe6db9
+      JANGAR_SERVING_IMAGE_DIGEST: sha256:f834448be1dbfb451dad39f5e94eae13987f6860ac25406080c13e84393f8194
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: 8bdb7043
-    digest: sha256:980fc07b0ecb972383464e5c0f8102dd38c9ef5b058d47d5bdcc74ee91778204
+    tag: 822b5b6c
+    digest: sha256:ecbbe6cfcc0d0f4daa84366071496f64d80eaf09dc5408788baa94a5925e66f2
 argocdHooks:
   enabled: true
   image:
