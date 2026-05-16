@@ -366,18 +366,27 @@ describe('scheduled AgentRun templates', () => {
       (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/provider-codex-spark.json',
     )
     const providerCommand = JSON.parse(String(objectAt(providerConfig, 'content'))).argsTemplate[1]
+    const logSanitizer = inputFiles?.find(
+      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/sanitize-codex-log.py',
+    )
     const fallbackScript = inputFiles?.find(
       (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/swarm-hf-codex-fallback.py',
     )
+    const sanitizerContent = objectAt(logSanitizer, 'content')
     const content = objectAt(fallbackScript, 'content')
 
-    expect(providerCommand).toContain('2>&1 | tee "$LOG_PATH"')
+    expect(providerCommand).toContain('2>&1 | python3 /root/.codex/sanitize-codex-log.py | tee "$LOG_PATH"')
     expect(providerCommand).toContain('status=${PIPESTATUS[0]}')
     expect(providerCommand).not.toContain('> >(tee')
     expect(objectAt(envTemplate, 'AGENT_RUN_NAME')).toBe('{{agentRun.name}}')
     expect(objectAt(envTemplate, 'AGENT_RUN_NAMESPACE')).toBe('{{agentRun.namespace}}')
+    expect(sanitizerContent).toContain('SUPPRESSED_PROVIDER_HTML = "[suppressed provider HTML response body]"')
+    expect(sanitizerContent).toContain('HTML_START_PATTERN = re.compile(')
     expect(content).toContain('def summarize_upstream(upstream: str) -> str:')
     expect(content).toContain('def summarize_failure_tail(log_text: str) -> str:')
+    expect(content).toContain('return summarize_failure_tail(log_text)')
+    expect(content).toContain('if not line.strip() and (run or stage):')
+    expect(content).toContain('if line.startswith("Auto-discovered upstream run:") and not run:')
     expect(content).toContain(
       'def handoff_subject(payload: dict, swarm_name: str, role: str, run_name: str, suffix: str = "") -> str:',
     )
@@ -393,6 +402,39 @@ describe('scheduled AgentRun templates', () => {
     )
     expect(content).not.toContain('Primary Codex failure tail:')
     expect(content).not.toContain('publish_handoff(f"swarm.')
+  })
+
+  it('redacts provider HTML before Codex runner logs become swarm evidence', () => {
+    const manifests = readYamlObjects('argocd/applications/agents/codex-spark-agentprovider.yaml')
+    const provider = manifests.find((manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'codex-spark')
+    const inputFiles = objectAt(objectAt(provider, 'spec'), 'inputFiles') as Record<string, unknown>[] | undefined
+    const logSanitizer = inputFiles?.find(
+      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/sanitize-codex-log.py',
+    )
+    const tempDir = mkdtempSync(join(tmpdir(), 'codex-log-sanitizer-'))
+    const scriptPath = join(tempDir, 'sanitize-codex-log.py')
+
+    writeFileSync(scriptPath, String(objectAt(logSanitizer, 'content')))
+
+    const result = spawnSync('python3', [scriptPath], {
+      input: [
+        'Running Codex implementation for proompteng/lab#swarm-jangar-control-plane',
+        'Failure reason: codex exited with status 1: failed to warm featured plugin ids cache error=remote plugin sync request failed with status 403 Forbidden: <html>',
+        '<head><style global>body{font-family:Arial}.challenge-error-text{display:block}</style></head>',
+        '<body><svg width="41" height="41" viewBox="0 0 41 41"><path d="M37.5324 16.8707"/></svg></body></html>',
+        'Turn failed -> Quota exceeded. Check your plan and billing details.',
+      ].join('\n'),
+      encoding: 'utf8',
+    })
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('failed to warm featured plugin ids cache')
+    expect(result.stdout).toContain('[suppressed provider HTML response body]')
+    expect(result.stdout).toContain('Quota exceeded')
+    expect(result.stdout).not.toContain('<html')
+    expect(result.stdout).not.toContain('<style')
+    expect(result.stdout).not.toContain('viewBox')
+    expect(result.stdout).not.toContain('challenge-error-text')
   })
 
   it('classifies current Codex quota logs as HF fallback eligible', () => {
