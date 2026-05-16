@@ -2172,6 +2172,10 @@ describe('supporting primitives controller', () => {
     const conditions = Array.isArray(status.conditions) ? status.conditions : []
     const ready = conditions.find((condition) => condition.type === 'Ready')
     const degraded = conditions.find((condition) => condition.type === 'Degraded')
+    const requirements = (status.requirements ?? {}) as Record<string, unknown>
+    expect(requirements.paused).toBe(false)
+    expect(requirements.pauseReason).toBe('')
+    expect(requirements.pauseMessage).toBe('')
     expect(ready).toMatchObject({ status: 'True', reason: 'Active', message: 'swarm active' })
     expect(degraded).toMatchObject({
       status: 'False',
