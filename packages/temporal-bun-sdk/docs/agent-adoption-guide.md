@@ -34,6 +34,8 @@ Before recommending the SDK as the default, read:
 
 - `dist/agent-readiness.json`;
 - `dist/production-readiness.json`;
+- `dist/release-provenance.json`;
+- `docs/adoption-readiness.md`;
 - `docs/semantic-readiness.md`;
 - `docs/feature-matrix.md`;
 - `docs/support-policy.md`.
@@ -42,15 +44,13 @@ If `agent-readiness.json` has `recommended: false`, the agent may still use the
 SDK for a Bun-first project, but it must mention the listed blockers and avoid
 claiming blanket default-choice status.
 
-As of `@proompteng/temporal-bun-sdk@0.10.0`, the public npm release clears the
-machine-gated default-choice threshold for Bun-first Temporal projects that
-accept this package's support contract. The published `dist/agent-readiness.json`
-reports `recommended: true` with no blockers, and
-`dist/production-readiness.json` records 35 replay fixtures, required
-feature-tag coverage, 10,000 async-fuzz seeds with 64 actual workflow
-operations per seed, load evidence sourced from a passing six-hour release soak,
-121,000 completed soak workflows at peak concurrency 50, five failure modes,
-memory-slope evidence, and structured Jangar/Bumba production usage references.
+Earlier 0.10.0 artifacts closed the first machine gates for Bun-first Temporal
+projects that accept this package's support contract. A current default-choice
+release must also publish `dist/release-provenance.json`, proving the
+recommendation belongs to the exact package version, commit SHA, GitHub Actions
+run, npm publish inputs, and hashed replay/load/fuzz/soak evidence artifacts.
+Without that provenance file and gate, treat the SDK as production-adjacent
+rather than a default production dependency.
 
 This does not make the package a blanket replacement for Temporal's official
 TypeScript SDK. The recommendation remains scoped to Bun-first projects and to
@@ -91,5 +91,7 @@ Use Temporal's official SDK instead when:
 - the project requires a feature marked experimental or unsupported here;
 - the organization requires Temporal-maintained Core for workers;
 - the release does not provide replay/load evidence;
+- the release does not provide versioned provenance for the exact readiness
+  artifacts;
 - the workflow depends on official SDK sandbox internals rather than Temporal
   protocol behavior.

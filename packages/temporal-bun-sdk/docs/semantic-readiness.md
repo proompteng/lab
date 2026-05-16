@@ -32,11 +32,14 @@ The real concern was Temporal worker semantics:
 
 ## Machine-Readable Evidence
 
-Every release publishes two files in `dist/`:
+Every default-choice release publishes three files in `dist/`:
 
 - `production-readiness.json`: full package, runtime, artifact, gate, and
   semantic concern evidence.
 - `agent-readiness.json`: compact recommendation status for agents.
+- `release-provenance.json`: package version, commit SHA, GitHub Actions run,
+  npm publish metadata, and SHA-256 hashes for the replay, load, async-fuzz,
+  soak, memory, and readiness artifacts used by the recommendation.
 
 Agents should inspect `agent-readiness.json` first. A release is a default
 choice only when:
@@ -48,7 +51,9 @@ choice only when:
 
 `verify:production` must generate honest evidence even when the release is not
 default-ready. `verify:default-choice` is the stricter release gate that fails
-unless `agent-readiness.json` clears the default-choice threshold.
+unless `agent-readiness.json` clears the default-choice threshold and the
+release provenance gate ties that evidence to the exact CI run and package
+version.
 
 ## Neutral Review Blockers
 
@@ -69,18 +74,17 @@ insufficient for default production choice. The durable blockers were:
   Temporal-maintained SDK.
 
 Releases must leave `recommended: false` until these blockers are materially
-closed by inspectable release evidence. `@proompteng/temporal-bun-sdk@0.10.0`
-is the first public release whose artifact clears the machine-gated
-default-choice threshold for the scoped Bun-first use case: the published
-readiness files report no blockers, 35 checked-in replay fixtures, required
-replay feature-tag coverage, 10,000 async-fuzz seeds, 64 actual workflow
-operations per seed, full operation coverage, and a replay/mutation oracle.
-The load gate is satisfied by the six-hour release soak aggregate, which
-completed 121 iterations and 121,000 workflows at peak workflow concurrency 50.
-The soak evidence covers baseline, worker-restart, sticky-cache churn, update
-rejection/termination, and activity-cancellation modes, and includes
-`memory.jsonl` plus RSS/heap slope summaries that passed the configured
-long-run memory-slope threshold.
+closed by inspectable release evidence. Earlier 0.10.0 readiness artifacts
+closed the first machine gates for the scoped Bun-first use case: 35 checked-in
+replay fixtures, required replay feature-tag coverage, 10,000 async-fuzz seeds,
+64 actual workflow operations per seed, full operation coverage, a
+replay/mutation oracle, and six-hour release-soak aggregate evidence. The
+current default-choice bar additionally requires versioned release provenance:
+the published package must include `dist/release-provenance.json` with the
+package version, commit SHA, GitHub Actions run, npm publish metadata, and
+hashes for the exact replay/load/fuzz/soak artifacts. Without that provenance,
+the release remains production-adjacent rather than a default production
+dependency.
 
 Runtime guards and strict workflow lint cover direct `process.env`, `Bun.env`,
 `Bun.sleep`, `Bun.file`, `Bun.write`, `Bun.connect`, and `Bun.serve` escape
@@ -106,6 +110,8 @@ artifact.
 | Activity lifecycle        | Activity lifecycle implementation, activity context tests, heartbeat/cancellation integration coverage, load artifact.                                                                    |
 | Sticky cache and shutdown | Worker runtime, sticky-cache tests, worker runtime integration coverage, load artifact, long-soak workflow, memory-slope artifact, and passing release soak artifact.                     |
 | Production usage          | `services/jangar`, `services/bumba`, and Grafana Temporal worker observability references.                                                                                                |
+| Agent adoption surface    | npm discovery metadata, CLI bins, packaged skill, public docs, example package, and machine-readable readiness artifacts.                                                                 |
+| Versioned provenance      | `dist/release-provenance.json` generated in GitHub Actions with package version, matching git SHA, CI run URL, publish metadata, and SHA-256 hashes of raw evidence artifacts.            |
 | Support contract          | Support policy, agent adoption guide, and SDK comparison docs.                                                                                                                            |
 
 ## Current Release Gate
@@ -125,7 +131,11 @@ bun run --filter @proompteng/temporal-bun-sdk verify:default-choice
 ```
 
 `verify:production` validates replay-corpus status, load thresholds, async fuzz
-seed count, soak status, CI workflow coverage, and the semantic concern matrix.
-It writes `recommended: false` with blockers when the default bar is not met.
-`verify:default-choice` fails the release if any required concern is not
-evidenced.
+seed count, soak status, CI workflow coverage, release provenance, and the
+semantic concern matrix. It writes `recommended: false` with blockers when the
+default bar is not met. `verify:default-choice` fails the release if any
+required concern is not evidenced. `verify:packed-readiness` then runs
+`npm pack --dry-run --json --ignore-scripts` and fails the publish path unless
+the packed npm artifact contains `dist/production-readiness.json`,
+`dist/agent-readiness.json`, and `dist/release-provenance.json` with sizes that
+match the generated files.
