@@ -107,6 +107,53 @@ test('startWorkflow uses one generated request id across retries', async () => {
   }
 })
 
+test('startWorkflow retries server-hinted unknown errors with the same request id', async () => {
+  const config = await loadTemporalConfig()
+  type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
+  const calls = new Map<string, CallRecord[]>()
+  let attempts = 0
+
+  const workflowService = {
+    startWorkflowExecution: async (request, options) => {
+      attempts += 1
+      recordCall(calls, 'startWorkflowExecution', request, options)
+      if (attempts < 3) {
+        throw new ConnectError('something went wrong, please retry (2f921658)', Code.Unknown)
+      }
+      return { runId: 'run-retry-unknown', started: true }
+    },
+  } as unknown as WorkflowServiceClient
+
+  const { client } = await createTemporalClient({ config, workflowService })
+  const callOptions = temporalCallOptions({
+    retryPolicy: {
+      maxAttempts: 3,
+      initialDelayMs: 1,
+      maxDelayMs: 1,
+      jitterFactor: 0,
+    },
+  })
+
+  try {
+    const result = await client.startWorkflow(
+      {
+        workflowId: 'start-retry-request-id-unknown',
+        workflowType: 'testWorkflow',
+      },
+      callOptions,
+    )
+
+    const entries = calls.get('startWorkflowExecution') ?? []
+    expect(result.runId).toBe('run-retry-unknown')
+    expect(entries).toHaveLength(3)
+    expect(entries[0]?.request.requestId).toMatch(uuidRegex)
+    expect(entries[1]?.request.requestId).toBe(entries[0]?.request.requestId)
+    expect(entries[2]?.request.requestId).toBe(entries[0]?.request.requestId)
+  } finally {
+    await client.shutdown()
+  }
+})
+
 test('startWorkflow recovers already-started errors for the same request id', async () => {
   const config = await loadTemporalConfig()
   type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
