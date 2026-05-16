@@ -181,7 +181,7 @@ spec:
           runs = k8s_request(f"/apis/agents.proompteng.ai/v1alpha1/namespaces/{namespace}/agentruns?labelSelector={selector}")
           if not isinstance(runs, dict):
             return "None"
-          candidates = []
+          candidates_by_predecessor = {predecessor: [] for predecessor in predecessors}
           for item in runs.get("items", []):
             if not isinstance(item, dict):
               continue
@@ -207,18 +207,23 @@ spec:
             if not job_name:
               continue
             finished = as_text(status.get("finishedAt")) or as_text(status.get("updatedAt")) or as_text(metadata.get("creationTimestamp"))
-            candidates.append({"name": name, "stage": item_stage or item_role, "finished": finished, "job": job_name})
-          candidates.sort(key=lambda item: item["finished"], reverse=True)
-          for candidate in candidates:
-            log_text = read_pod_log(namespace, candidate["job"])
-            result = extract_hf_result(log_text)
-            if result:
-              return "\n".join([
-                f"Auto-discovered upstream run: {candidate['name']}",
-                f"Auto-discovered upstream stage: {candidate['stage']}",
-                "",
-                result,
-              ])
+            candidate = {"name": name, "stage": item_stage or item_role, "finished": finished, "job": job_name}
+            for predecessor in predecessors:
+              if item_stage == predecessor or item_role == predecessor:
+                candidates_by_predecessor[predecessor].append(candidate)
+          for predecessor in predecessors:
+            candidates = candidates_by_predecessor[predecessor]
+            candidates.sort(key=lambda item: item["finished"], reverse=True)
+            for candidate in candidates:
+              log_text = read_pod_log(namespace, candidate["job"])
+              result = extract_hf_result(log_text)
+              if result:
+                return "\n".join([
+                  f"Auto-discovered upstream run: {candidate['name']}",
+                  f"Auto-discovered upstream stage: {candidate['stage']}",
+                  "",
+                  result,
+                ])
           return "None"
 
         def role_guidance(role: str, stage: str) -> str:
@@ -273,6 +278,9 @@ spec:
           upstream = read_field(payload, "upstreamArtifact", "None")
           if upstream.lower() in {"", "none", "auto"}:
             upstream = resolve_auto_upstream(payload, swarm_name, stage, role, run_name)
+          print("SWARM_HF_UPSTREAM_BEGIN")
+          print(upstream)
+          print("SWARM_HF_UPSTREAM_END")
           expected_output = read_field(payload, "expectedOutput", "a concise production-quality handoff")
           model = os.environ.get("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct:novita").strip()
           base_url = os.environ.get("HF_BASE_URL", "https://router.huggingface.co/v1").strip()
