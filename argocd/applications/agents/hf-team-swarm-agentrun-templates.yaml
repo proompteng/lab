@@ -1,0 +1,147 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: hf-team-swarm-discover-template
+  namespace: agents
+  annotations:
+    agents.proompteng.ai/template: "true"
+spec:
+  agentRef:
+    name: hf-team-scout-agent
+  implementationSpecRef:
+    name: hf-team-collaboration-v1
+  runtime:
+    type: workflow
+    config:
+      serviceAccountName: agents-sa
+  ttlSecondsAfterFinished: 3600
+  workflow:
+    steps:
+      - name: discover
+        timeoutSeconds: 300
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/swarm-hf-team-e2e
+    swarmName: hf-team-e2e
+    swarmStage: discover
+    swarmAgentRole: scout
+    swarmAgentIdentity: mira-scout
+    swarmTeamName: HF Team E2E
+    objective: identify the smallest grounded blocker or opportunity for proving native Swarm-managed teammate collaboration
+    upstreamArtifact: AUTO
+    expectedOutput: grounded discover handoff with evidence and exact next action
+  secrets:
+    - hf-router-token
+    - nats-agents-credentials
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: hf-team-swarm-plan-template
+  namespace: agents
+  annotations:
+    agents.proompteng.ai/template: "true"
+spec:
+  agentRef:
+    name: hf-team-scout-agent
+  implementationSpecRef:
+    name: hf-team-collaboration-v1
+  runtime:
+    type: workflow
+    config:
+      serviceAccountName: agents-sa
+  ttlSecondsAfterFinished: 3600
+  workflow:
+    steps:
+      - name: plan
+        timeoutSeconds: 300
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/swarm-hf-team-e2e
+    swarmName: hf-team-e2e
+    swarmStage: plan
+    swarmAgentRole: planner
+    swarmAgentIdentity: paige-planner
+    swarmTeamName: HF Team E2E
+    objective: turn the discovered blocker or opportunity into an implementable Swarm proof plan with acceptance criteria
+    upstreamArtifact: AUTO
+    expectedOutput: grounded plan handoff that consumes discover output and names implementation proof criteria
+  secrets:
+    - hf-router-token
+    - nats-agents-credentials
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: hf-team-swarm-implement-template
+  namespace: agents
+  annotations:
+    agents.proompteng.ai/template: "true"
+spec:
+  agentRef:
+    name: hf-team-builder-agent
+  implementationSpecRef:
+    name: hf-team-collaboration-v1
+  runtime:
+    type: workflow
+    config:
+      serviceAccountName: agents-sa
+  ttlSecondsAfterFinished: 3600
+  workflow:
+    steps:
+      - name: implement
+        timeoutSeconds: 300
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/swarm-hf-team-e2e
+    swarmName: hf-team-e2e
+    swarmStage: implement
+    swarmAgentRole: builder
+    swarmAgentIdentity: devon-builder
+    swarmTeamName: HF Team E2E
+    objective: create the concrete proof artifact or next implementation action from the Swarm plan handoff
+    upstreamArtifact: AUTO
+    expectedOutput: grounded implementation handoff that consumes plan output and creates measurable next-step value
+  secrets:
+    - hf-router-token
+    - nats-agents-credentials
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: hf-team-swarm-verify-template
+  namespace: agents
+  annotations:
+    agents.proompteng.ai/template: "true"
+spec:
+  agentRef:
+    name: hf-team-reviewer-agent
+  implementationSpecRef:
+    name: hf-team-collaboration-v1
+  runtime:
+    type: workflow
+    config:
+      serviceAccountName: agents-sa
+  ttlSecondsAfterFinished: 3600
+  workflow:
+    steps:
+      - name: verify
+        timeoutSeconds: 300
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/swarm-hf-team-e2e
+    swarmName: hf-team-e2e
+    swarmStage: verify
+    swarmAgentRole: reviewer
+    swarmAgentIdentity: rhea-reviewer
+    swarmTeamName: HF Team E2E
+    objective: verify whether the implementation handoff proves native Swarm-managed teammate collaboration and name remaining gaps
+    upstreamArtifact: AUTO
+    expectedOutput: grounded verification handoff with go/no-go decision, risks, and exact next action
+  secrets:
+    - hf-router-token
+    - nats-agents-credentials

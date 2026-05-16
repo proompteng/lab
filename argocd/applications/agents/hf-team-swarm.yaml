@@ -1,0 +1,103 @@
+apiVersion: swarm.proompteng.ai/v1alpha1
+kind: Swarm
+metadata:
+  name: hf-team-e2e
+  namespace: agents
+spec:
+  owner:
+    id: hf-team-owner
+    channel: swarm://owner/hf-team-e2e
+  domains:
+    - swarm-reliability
+    - collaboration-proof
+  objectives:
+    - operate as a Swarm-managed HF fallback team when Codex/OpenAI capacity is unavailable
+    - prove teammate handoffs through discover, plan, implement, and verify stages
+    - create grounded next-step value without inventing evidence
+  mission:
+    ledgerRef: /workspace/.agentrun/swarm/hf-team-e2e-mission-ledger.md
+    sourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md
+    businessMetric: successful Swarm-managed teammate handoff chain across all stages
+    validationContract:
+      - every stage must consume the prior stage handoff when one exists
+      - every stage must cite only supplied runtime or upstream evidence
+      - implement stages must create a concrete next-step artifact or repair path
+      - verify stages must name remaining gaps and an exact next action
+    valueGates:
+      - native_swarm_schedule_created
+      - prior_handoff_consumed
+      - stage_success_rate
+      - grounded_evidence_quality
+      - exact_next_action_quality
+    handoffRequiredFields:
+      - objective
+      - upstream_read
+      - contribution
+      - evidence
+      - unresolved_issues
+      - exact_next_action
+  mode: lights-out
+  timezone: UTC
+  cadence:
+    discoverEvery: 1h
+    planEvery: 1h
+    implementEvery: 1h
+    verifyEvery: 1h
+  integrations:
+    nats:
+      url: nats://nats.nats.svc.cluster.local:4222
+      subjectPrefix: workflow
+      channel: general
+      personas:
+        architect:
+          humanName: Mira Scout
+          workerIdentity: mira-scout
+        engineer:
+          humanName: Devon Builder
+          workerIdentity: devon-builder
+        deployer:
+          humanName: Rhea Reviewer
+          workerIdentity: rhea-reviewer
+  discovery:
+    minCitations: 1
+    minConfidence: 0.7
+    sources:
+      - name: runtime-handoff-artifacts
+      - name: swarm-status
+  delivery:
+    repoAllowlist:
+      - proompteng/lab
+    requiredChecks:
+      - lint
+      - validate
+    mergePolicy: merge-queue
+    deploymentTargets:
+      - agents
+    rollout:
+      strategy: canary
+      steps:
+        - setWeight: 100
+          pause: 0m
+      analysisTemplateRef: hf-team-e2e-proof
+  risk:
+    budgetRef: default-budget
+    approvalPolicyRef: default-approval
+    freezeAfterFailures: 3
+    freezeDuration: 60m
+  execution:
+    discover:
+      targetRef:
+        kind: AgentRun
+        name: hf-team-swarm-discover-template
+    plan:
+      targetRef:
+        kind: AgentRun
+        name: hf-team-swarm-plan-template
+    implement:
+      targetRef:
+        kind: AgentRun
+        name: hf-team-swarm-implement-template
+    verify:
+      targetRef:
+        kind: AgentRun
+        name: hf-team-swarm-verify-template

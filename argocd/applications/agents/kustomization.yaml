@@ -10,6 +10,8 @@ resources:
   - hf-team-agentprovider.yaml
   - hf-team-agents.yaml
   - hf-team-implspec.yaml
+  - hf-team-swarm-agentrun-templates.yaml
+  - hf-team-swarm.yaml
   - hf-team-secretbinding.yaml
   - codex-secretbinding.yaml
   - codex-agent.yaml
