@@ -35,6 +35,7 @@ const maxAttempts = normalizePositiveInteger(process.env.TEMPORAL_CLEANUP_MAX_AT
 const retryDelayMs = normalizePositiveInteger(process.env.TEMPORAL_CLEANUP_RETRY_MS, 1_000)
 
 async function main(): Promise<void> {
+  let foundVisibleWorkflows = false
   let leaked = false
 
   for (const workflowType of workflowTypes) {
@@ -44,16 +45,22 @@ async function main(): Promise<void> {
       continue
     }
 
-    leaked = true
+    foundVisibleWorkflows = true
     console.warn(`[temporal-bun-sdk] ${workflowType} has ${before} running workflow(s)`)
     const listOutput = await list(query, before)
 
     if (mode === 'terminate') {
       await terminate(query, workflowType, listOutput)
-      const after = await count(query)
-      if (after > 0) {
-        throw new Error(`${workflowType} still has ${after} running workflow(s) after cleanup`)
+      const onlyStaleVisibilityRemains = await terminateRemainingWorkflows(query, workflowType)
+      if (!onlyStaleVisibilityRemains) {
+        await waitForNoRunningWorkflows(query, workflowType)
       }
+      continue
+    }
+
+    const onlyStaleVisibilityRemains = await verifyOnlyStaleVisibility(query, workflowType, listOutput)
+    if (!onlyStaleVisibilityRemains) {
+      leaked = true
     }
   }
 
@@ -61,7 +68,7 @@ async function main(): Promise<void> {
     throw new Error('Temporal Bun SDK integration workflows leaked after test cleanup')
   }
 
-  if (!leaked) {
+  if (!foundVisibleWorkflows) {
     console.info('[temporal-bun-sdk] no running integration workflow leaks found')
   }
 }
@@ -125,7 +132,7 @@ async function terminate(query: string, workflowType: string, listOutput: string
       throw error
     }
 
-    await terminateIndividually(workflowType, listOutput)
+    await terminateIndividually(workflowType, listOutput, 'Temporal batch termination is unavailable')
     return
   }
 
@@ -135,28 +142,146 @@ async function terminate(query: string, workflowType: string, listOutput: string
   }
 }
 
-async function terminateIndividually(workflowType: string, listOutput: string): Promise<void> {
+type IndividualTerminationResult = {
+  readonly alreadyResolvedWorkflowIds: readonly string[]
+  readonly terminatedWorkflowIds: readonly string[]
+}
+
+async function terminateIndividually(
+  workflowType: string,
+  listOutput: string,
+  context: string,
+): Promise<IndividualTerminationResult> {
   const workflowIds = parseWorkflowIdsFromListOutput(listOutput, workflowType)
   if (workflowIds.length === 0) {
     throw new Error(`Unable to parse ${workflowType} workflow IDs from Temporal list output:\n${listOutput}`)
   }
+  const alreadyResolvedWorkflowIds: string[] = []
+  const terminatedWorkflowIds: string[] = []
 
   console.warn(
-    `[temporal-bun-sdk] Temporal batch termination is unavailable; terminating ${workflowIds.length} ${workflowType} workflow(s) individually`,
+    `[temporal-bun-sdk] ${context}; terminating ${workflowIds.length} ${workflowType} workflow(s) individually`,
   )
 
   for (const workflowId of workflowIds) {
-    await temporalCli([
-      'workflow',
-      'terminate',
-      '--namespace',
-      namespace,
-      '--workflow-id',
-      workflowId,
-      '--reason',
-      reason,
-    ])
+    try {
+      await temporalCli([
+        'workflow',
+        'terminate',
+        '--namespace',
+        namespace,
+        '--workflow-id',
+        workflowId,
+        '--reason',
+        reason,
+      ])
+      terminatedWorkflowIds.push(workflowId)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!isWorkflowAlreadyCompleted(message)) {
+        throw error
+      }
+      alreadyResolvedWorkflowIds.push(workflowId)
+      console.warn(`[temporal-bun-sdk] ${workflowId} completed before individual cleanup could terminate it`)
+    }
   }
+
+  return { alreadyResolvedWorkflowIds, terminatedWorkflowIds }
+}
+
+async function terminateRemainingWorkflows(query: string, workflowType: string): Promise<boolean> {
+  const after = await waitForNoRunningWorkflowCount(query)
+  if (after === 0) {
+    return false
+  }
+
+  console.warn(
+    `[temporal-bun-sdk] ${workflowType} still has ${after} running workflow(s) after batch cleanup; retrying individually`,
+  )
+  const listOutput = await list(query, after)
+  const result = await terminateIndividually(
+    workflowType,
+    listOutput,
+    'remaining workflows are still visible after batch cleanup',
+  )
+  if (result.alreadyResolvedWorkflowIds.length === 0) {
+    return false
+  }
+
+  const remainingAfterIndividual = await waitForNoRunningWorkflowCount(query)
+  if (remainingAfterIndividual === 0) {
+    return false
+  }
+
+  const remainingListOutput = await list(query, remainingAfterIndividual)
+  const onlyStaleVisibilityRemains = onlyAlreadyResolvedWorkflowsRemainVisible(
+    remainingListOutput,
+    workflowType,
+    result.alreadyResolvedWorkflowIds,
+  )
+  if (!onlyStaleVisibilityRemains) {
+    return false
+  }
+
+  console.warn(
+    `[temporal-bun-sdk] ${workflowType} has ${remainingAfterIndividual} stale visibility record(s) for workflow(s) already reported terminal or missing`,
+  )
+  return true
+}
+
+type VerifyOnlyStaleVisibilityOptions = {
+  readonly terminateVisibleWorkflows?: (
+    workflowType: string,
+    listOutput: string,
+    context: string,
+  ) => Promise<IndividualTerminationResult>
+  readonly waitForNoRunningCount?: (query: string) => Promise<number>
+  readonly listRunning?: (query: string, limit?: number) => Promise<string>
+}
+
+export async function verifyOnlyStaleVisibility(
+  query: string,
+  workflowType: string,
+  listOutput: string,
+  options: VerifyOnlyStaleVisibilityOptions = {},
+): Promise<boolean> {
+  const terminateVisibleWorkflows = options.terminateVisibleWorkflows ?? terminateIndividually
+  const waitForNoRunningCount = options.waitForNoRunningCount ?? waitForNoRunningWorkflowCount
+  const listRunning = options.listRunning ?? list
+
+  const result = await terminateVisibleWorkflows(
+    workflowType,
+    listOutput,
+    'verify detected running workflows after test cleanup',
+  )
+  if (result.terminatedWorkflowIds.length > 0) {
+    console.error(
+      `[temporal-bun-sdk] ${workflowType} leaked ${result.terminatedWorkflowIds.length} workflow(s) that required termination during verification`,
+    )
+    return false
+  }
+
+  if (result.alreadyResolvedWorkflowIds.length === 0) {
+    return false
+  }
+
+  const remaining = await waitForNoRunningCount(query)
+  if (remaining === 0) {
+    return true
+  }
+
+  const remainingListOutput = await listRunning(query, remaining)
+  const onlyStaleVisibilityRemains = onlyAlreadyResolvedWorkflowsRemainVisible(
+    remainingListOutput,
+    workflowType,
+    result.alreadyResolvedWorkflowIds,
+  )
+  if (onlyStaleVisibilityRemains) {
+    console.warn(
+      `[temporal-bun-sdk] ${workflowType} has ${remaining} stale visibility record(s) during verification for workflow(s) already reported terminal or missing`,
+    )
+  }
+  return onlyStaleVisibilityRemains
 }
 
 async function waitForBatch(jobId: string): Promise<void> {
@@ -172,6 +297,48 @@ async function waitForBatch(jobId: string): Promise<void> {
     await Bun.sleep(retryDelayMs * attempt)
   }
   throw new Error(`Timed out waiting for Temporal batch ${jobId} to complete`)
+}
+
+type WaitForNoRunningWorkflowsOptions = {
+  readonly countRunning?: (query: string) => Promise<number>
+  readonly sleep?: (ms: number) => Promise<void>
+  readonly maxAttempts?: number
+  readonly retryDelayMs?: number
+}
+
+export async function waitForNoRunningWorkflowCount(
+  query: string,
+  options: WaitForNoRunningWorkflowsOptions = {},
+): Promise<number> {
+  const countRunning = options.countRunning ?? count
+  const sleep = options.sleep ?? Bun.sleep
+  const attempts = options.maxAttempts ?? maxAttempts
+  const delayMs = options.retryDelayMs ?? retryDelayMs
+  let after = 0
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    after = await countRunning(query)
+    if (after === 0) {
+      return 0
+    }
+    if (attempt < attempts) {
+      await sleep(delayMs * attempt)
+    }
+  }
+
+  return after
+}
+
+export async function waitForNoRunningWorkflows(
+  query: string,
+  workflowType: string,
+  options: WaitForNoRunningWorkflowsOptions = {},
+): Promise<void> {
+  const after = await waitForNoRunningWorkflowCount(query, options)
+  if (after === 0) {
+    return
+  }
+  throw new Error(`${workflowType} still has ${after} running workflow(s) after cleanup`)
 }
 
 async function temporalCli(args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
@@ -202,9 +369,26 @@ async function temporalCli(args: readonly string[]): Promise<{ stdout: string; s
 }
 
 export function isRetryableTemporalCliError(output: string): boolean {
-  return /namespace rate limit exceeded|context deadline exceeded|transport: error while dialing|unavailable|not enough hosts to serve the request|please retry|temporarily unavailable/i.test(
+  return /namespace rate limit exceeded|context deadline exceeded|transport: error while dialing|unavailable|not enough hosts to serve the request|please retry|temporarily unavailable|workflow is busy/i.test(
     output,
   )
+}
+
+export function isWorkflowAlreadyCompleted(output: string): boolean {
+  return /workflow execution already completed|workflow not found for ID/i.test(output)
+}
+
+export function onlyAlreadyResolvedWorkflowsRemainVisible(
+  output: string,
+  workflowType: string,
+  alreadyResolvedWorkflowIds: readonly string[],
+): boolean {
+  const workflowIds = parseWorkflowIdsFromListOutput(output, workflowType)
+  if (workflowIds.length === 0) {
+    return false
+  }
+  const alreadyResolved = new Set(alreadyResolvedWorkflowIds)
+  return workflowIds.every((workflowId) => alreadyResolved.has(workflowId))
 }
 
 export function parseWorkflowIdsFromListOutput(output: string, workflowType: string): string[] {
