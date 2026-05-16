@@ -110,7 +110,7 @@ describe('activity lifecycle helpers', () => {
     expect(stub.calls[0]?.details).toBeUndefined()
   })
 
-  test('records heartbeat failures once when retries are exhausted', async () => {
+  test('records and suppresses retryable heartbeat failures when retries are exhausted', async () => {
     const failureCounter = createTestCounter()
 
     const lifecycle = await Effect.runPromise(
@@ -147,27 +147,11 @@ describe('activity lifecycle helpers', () => {
       }),
     )
 
-    let caught = false
-    await Effect.runPromise(
-      registration
-        .heartbeat(['boom'])
-        .pipe(
-          Effect.catchAll((error) =>
-            Effect.sync(() => {
-              caught = true
-              const root =
-                typeof error === 'object' && error && 'cause' in error
-                  ? ((error as { cause?: unknown }).cause ?? error)
-                  : error
-              expect(root).toBeInstanceOf(ConnectError)
-            }),
-          ),
-        ),
-    )
-    expect(caught).toBe(true)
+    await Effect.runPromise(registration.heartbeat(['boom']))
     await Effect.runPromise(registration.shutdown)
 
     expect(failureCounter.getCount()).toBe(1)
+    expect(context.info.lastHeartbeatDetails).toEqual(['boom'])
   })
 
   test('heartbeat not-found aborts the activity instead of surfacing an RPC failure', async () => {

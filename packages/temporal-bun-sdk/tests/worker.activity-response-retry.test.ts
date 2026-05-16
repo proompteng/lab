@@ -286,3 +286,99 @@ test('worker treats heartbeat not-found as activity cancellation', async () => {
   expect(completions).toBe(0)
   expect(failures).toBe(0)
 })
+
+test('worker suppresses retryable heartbeat RPC failures so activity retry policy remains server-owned', async () => {
+  const config: TemporalConfig = createTestTemporalConfig({
+    taskQueue: 'activity-heartbeat-transient',
+    stickySchedulingEnabled: false,
+    rpcRetryPolicy: {
+      maxAttempts: 2,
+      initialDelayMs: 1,
+      maxDelayMs: 1,
+      backoffCoefficient: 1,
+      jitterFactor: 0,
+      retryableStatusCodes: [Code.DeadlineExceeded],
+    },
+  })
+  const observability = createObservabilityStub()
+  let activityPolls = 0
+  let heartbeats = 0
+  let cancellations = 0
+  let completions = 0
+  let failures = 0
+
+  const workflowService: WorkflowServiceClient = {
+    pollWorkflowTaskQueue: async (_request, { signal }: { signal?: AbortSignal }) => await waitForAbort(signal),
+    pollActivityTaskQueue: async (_request, { signal }: { signal?: AbortSignal }) => {
+      activityPolls += 1
+      if (activityPolls === 1) {
+        return {
+          taskToken: new Uint8Array([10, 11, 12]),
+          workflowExecution: { workflowId: 'wf-heartbeat-transient', runId: 'run-heartbeat-transient' },
+          workflowNamespace: config.namespace,
+          workflowType: { name: 'activityHeartbeatTransientWorkflow' },
+          activityId: 'activity-1',
+          activityType: { name: 'heartbeatTransientActivity' },
+          attempt: 1,
+        }
+      }
+      return await waitForAbort(signal)
+    },
+    getWorkflowExecutionHistory: async () => ({ history: { events: [] }, nextPageToken: new Uint8Array() }),
+    recordActivityTaskHeartbeat: async () => {
+      heartbeats += 1
+      throw new ConnectError('[unavailable] shard status unknown', Code.Unavailable)
+    },
+    respondQueryTaskCompleted: async () => ({}),
+    respondWorkflowTaskCompleted: async () => ({}),
+    respondWorkflowTaskFailed: async () => ({}),
+    respondActivityTaskCompleted: async () => {
+      completions += 1
+      return {}
+    },
+    respondActivityTaskFailed: async () => {
+      failures += 1
+      return {}
+    },
+    respondActivityTaskCanceled: async () => {
+      cancellations += 1
+      return {}
+    },
+    requestCancelWorkflowExecution: async () => ({}),
+    pollWorkflowExecutionUpdate: async () => ({ messages: [] }),
+  } as unknown as WorkflowServiceClient
+
+  const runtime = await WorkerRuntime.create({
+    config,
+    taskQueue: config.taskQueue,
+    namespace: config.namespace,
+    workflows: [defineWorkflow('activityHeartbeatTransientWorkflow', () => Effect.succeed('ok'))],
+    activities: {
+      heartbeatTransientActivity: async () => {
+        const context = currentActivityContext()
+        if (!context) {
+          throw new Error('missing activity context')
+        }
+        await context.heartbeat({ step: 'heartbeat-transient' })
+        return 'completed-after-transient-heartbeat'
+      },
+    },
+    workflowService,
+    logger: observability.services.logger,
+    metrics: observability.services.metricsRegistry,
+    metricsExporter: observability.services.metricsExporter,
+    stickyScheduling: false,
+    pollers: { workflow: 0 },
+    concurrency: { workflow: 1, activity: 1 },
+  })
+
+  const runPromise = runtime.run()
+  await waitFor(() => completions >= 1 || failures >= 1 || cancellations >= 1, 7_000)
+  await runtime.shutdown()
+  await runPromise
+
+  expect(heartbeats).toBeGreaterThanOrEqual(1)
+  expect(completions).toBe(1)
+  expect(cancellations).toBe(0)
+  expect(failures).toBe(0)
+})

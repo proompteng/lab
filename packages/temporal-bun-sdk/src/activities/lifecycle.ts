@@ -270,11 +270,21 @@ class ActivityHeartbeatDriver {
       details: payloads.length > 0 ? create(PayloadsSchema, { payloads }) : undefined,
     })
 
-    const response = await this.#executeWithRetry(async () => {
-      return await this.#options.workflowService.recordActivityTaskHeartbeat(request, {
-        timeoutMs: this.#config.heartbeatRpcTimeoutMs,
+    let response: { cancelRequested?: boolean }
+    try {
+      response = await this.#executeWithRetry(async () => {
+        return await this.#options.workflowService.recordActivityTaskHeartbeat(request, {
+          timeoutMs: this.#config.heartbeatRpcTimeoutMs,
+        })
       })
-    })
+    } catch (error) {
+      if (!isRetriableHeartbeatError(error)) {
+        throw error
+      }
+      this.#recordHeartbeatFailure(error)
+      this.#options.context.info.lastHeartbeatDetails = details
+      return
+    }
 
     this.#options.context.info.lastHeartbeatDetails = details
     this.#options.context.info.lastHeartbeatTime = new Date()
