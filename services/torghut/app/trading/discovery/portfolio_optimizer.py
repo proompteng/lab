@@ -914,8 +914,9 @@ def optimize_portfolio_candidate(
     )
     max_drawdown = _decimal(objective_scorecard.get("max_drawdown"))
     sleeves: list[Mapping[str, Any]] = []
-    equal_weight = Decimal("1") / Decimal(len(selected))
+    weights = _portfolio_weights(selected)
     for sleeve_index, bundle in enumerate(selected, start=1):
+        weight = weights[sleeve_index - 1]
         base_runtime_strategy_name = (
             _string(_scorecard(bundle).get("runtime_strategy_name"))
             or f"whitepaper-autoresearch-sleeve-{sleeve_index}"
@@ -929,10 +930,10 @@ def optimize_portfolio_candidate(
                 ),
                 "runtime_family": _string(_scorecard(bundle).get("runtime_family")),
                 "runtime_strategy_name": f"{base_runtime_strategy_name}-sleeve-{sleeve_index}",
-                "weight": str(equal_weight),
-                "expected_net_pnl_per_day": str(_net_per_day(bundle) * equal_weight),
+                "weight": str(weight),
+                "expected_net_pnl_per_day": str(_net_per_day(bundle) * weight),
                 "source_expected_net_pnl_per_day": str(_net_per_day(bundle)),
-                "risk_contribution": str(_max_drawdown(bundle) * equal_weight),
+                "risk_contribution": str(_max_drawdown(bundle) * weight),
                 "source_risk_contribution": str(_max_drawdown(bundle)),
                 "correlation_cluster": _string(
                     _scorecard(bundle).get("correlation_cluster")
@@ -988,8 +989,12 @@ def optimize_portfolio_candidate(
         target_net_pnl_per_day=target_net_pnl_per_day,
         sleeves=tuple(sleeves),
         capital_budget={
-            "mode": "equal_weight_initial",
+            "mode": _portfolio_weighting_mode(selected),
             "max_sleeves": portfolio_size_max,
+            "sleeve_weights": {
+                bundle.candidate_id: str(weight)
+                for bundle, weight in zip(selected, weights, strict=True)
+            },
         },
         correlation_budget={
             "mode": "cluster_cap",
