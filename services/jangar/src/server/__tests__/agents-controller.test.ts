@@ -1545,6 +1545,44 @@ describe('agents controller reconcileAgentRun', () => {
     }
   }, 15_000)
 
+  it('does not fail terminal AgentRuns when an older stored immutable spec hash differs', async () => {
+    const previousEnforcement = process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED
+    process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED = 'true'
+    try {
+      const kube = buildKube()
+      const terminalRun = buildAgentRun({
+        status: {
+          phase: 'Succeeded',
+          finishedAt: new Date().toISOString(),
+          specHash: 'legacy-hash-from-older-controller',
+          conditions: [
+            { type: 'Accepted', status: 'True', reason: 'Submitted' },
+            { type: 'Succeeded', status: 'True', reason: 'Completed' },
+          ],
+        },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        terminalRun,
+        'agents',
+        [],
+        [],
+        defaultConcurrency,
+        buildInFlight(),
+        0,
+      )
+
+      expect(kube.applyStatus).not.toHaveBeenCalled()
+    } finally {
+      if (previousEnforcement === undefined) {
+        delete process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED
+      } else {
+        process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED = previousEnforcement
+      }
+    }
+  })
+
   it('blocks AgentRun when repository concurrency limit is reached', async () => {
     const kube = buildKube()
 
