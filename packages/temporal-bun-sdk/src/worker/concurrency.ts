@@ -136,6 +136,10 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
       Effect.gen(function* () {
         while (true) {
           const task = yield* Queue.take(queue)
+          const running = yield* Ref.get(runningRef)
+          if (!running) {
+            break
+          }
           yield* Ref.update(activeRef, (count) => count + 1)
           const execute = Effect.scoped(
             TSemaphore.withPermitScoped(semaphore).pipe(
@@ -155,6 +159,10 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
 
     const enqueueWorkflow: WorkerScheduler['enqueueWorkflow'] = (task) =>
       Effect.gen(function* () {
+        const running = yield* Ref.get(runningRef)
+        if (!running) {
+          yield* Effect.fail(new Error('Workflow scheduler is no longer accepting tasks'))
+        }
         const offered = yield* workflowQueue.offer(task)
         if (!offered) {
           yield* Effect.fail(new Error('Workflow scheduler is no longer accepting tasks'))
@@ -163,6 +171,10 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
 
     const enqueueActivity: WorkerScheduler['enqueueActivity'] = (task) =>
       Effect.gen(function* () {
+        const running = yield* Ref.get(runningRef)
+        if (!running) {
+          yield* Effect.fail(new Error('Activity scheduler is no longer accepting tasks'))
+        }
         const offered = yield* activityQueue.offer(task)
         if (!offered) {
           yield* Effect.fail(new Error('Activity scheduler is no longer accepting tasks'))
