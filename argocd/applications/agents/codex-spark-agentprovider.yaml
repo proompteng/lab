@@ -187,14 +187,16 @@ spec:
 
         SUPPRESSED_PROVIDER_HTML = "[suppressed provider HTML response body]"
         HTML_START_PATTERN = re.compile(
-          r"<!doctype|<html\b|<head\b|<body\b|<style\b|<script\b|<svg\b|<path\b|viewBox=|challenge-error-text",
+          r"<!doctype|<html\b|<head\b|<body\b|<style\b|<script\b|<svg\b|<path\b|<meta\b|<link\b|<div\b|<span\b|viewBox=|challenge-error-text",
           re.IGNORECASE,
         )
-        HTML_END_PATTERN = re.compile(r"</html>|</body>|</style>|</script>|</svg>", re.IGNORECASE)
+        HTML_END_PATTERN = re.compile(r"</html>|</head>|</body>|</style>|</script>|</svg>|</div>|</span>", re.IGNORECASE)
         TAG_PATTERN = re.compile(r"<[^>\n]{1,400}>")
+        DANGLING_TAG_FRAGMENT_PATTERN = re.compile(r"<[^>\n]*$")
 
         def strip_short_tags(text: str) -> str:
-          return TAG_PATTERN.sub("", text)
+          without_tags = TAG_PATTERN.sub("", text)
+          return DANGLING_TAG_FRAGMENT_PATTERN.sub("", without_tags)
 
         def main() -> int:
           suppressing_html = False
@@ -280,7 +282,10 @@ spec:
           return default
 
         SUPPRESSED_PROVIDER_HTML = "[suppressed provider HTML response body]"
-        HTML_DOCUMENT_FRAGMENT = re.compile(r"(?:<!doctype|<html\b|<head\b|<body\b|<style\b|<script\b|<svg\b|<path\b)", re.IGNORECASE)
+        HTML_DOCUMENT_FRAGMENT = re.compile(
+          r"(?:<!doctype|<html\b|<head\b|<body\b|<style\b|<script\b|<svg\b|<path\b|<meta\b|<link\b|<div\b|<span\b|viewBox=|challenge-error-text)",
+          re.IGNORECASE,
+        )
 
         def summarize_text(value: str, max_chars: int = 600) -> str:
           text = value.strip()
@@ -300,7 +305,12 @@ spec:
             sanitized = re.sub(r"\s*<style[\s\S]*$", f" {SUPPRESSED_PROVIDER_HTML}", sanitized, flags=re.IGNORECASE)
             sanitized = re.sub(r"\s*<script[\s\S]*$", f" {SUPPRESSED_PROVIDER_HTML}", sanitized, flags=re.IGNORECASE)
             sanitized = re.sub(r"\s*<svg[\s\S]*$", f" {SUPPRESSED_PROVIDER_HTML}", sanitized, flags=re.IGNORECASE)
+            sanitized = re.sub(r"\s*<meta[\s\S]*$", f" {SUPPRESSED_PROVIDER_HTML}", sanitized, flags=re.IGNORECASE)
+            sanitized = re.sub(r"\s*<link[\s\S]*$", f" {SUPPRESSED_PROVIDER_HTML}", sanitized, flags=re.IGNORECASE)
+            sanitized = re.sub(r"\s*<div[\s\S]*$", f" {SUPPRESSED_PROVIDER_HTML}", sanitized, flags=re.IGNORECASE)
+            sanitized = re.sub(r"\s*<span[\s\S]*$", f" {SUPPRESSED_PROVIDER_HTML}", sanitized, flags=re.IGNORECASE)
           sanitized = re.sub(r"<[^>\n]{1,500}>", " ", sanitized)
+          sanitized = re.sub(r"<[^>\n]*$", " ", sanitized)
           sanitized = re.sub(r"\s+", " ", sanitized).strip()
           return summarize_text(sanitized or SUPPRESSED_PROVIDER_HTML, max_chars)
 

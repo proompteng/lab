@@ -421,6 +421,8 @@ describe('scheduled AgentRun templates', () => {
         'Running Codex implementation for proompteng/lab#swarm-jangar-control-plane',
         'Failure reason: codex exited with status 1: failed to warm featured plugin ids cache error=remote plugin sync request failed with status 403 Forbidden: <html>',
         '<head><style global>body{font-family:Arial}.challenge-error-text{display:block}</style></head>',
+        '<span id="challenge-error-text"',
+        'data-cf-error="403">Enable JavaScript and cookies to continue</span>',
         '<body><svg width="41" height="41" viewBox="0 0 41 41"><path d="M37.5324 16.8707"/></svg></body></html>',
         'Turn failed -> Quota exceeded. Check your plan and billing details.',
       ].join('\n'),
@@ -433,8 +435,10 @@ describe('scheduled AgentRun templates', () => {
     expect(result.stdout).toContain('Quota exceeded')
     expect(result.stdout).not.toContain('<html')
     expect(result.stdout).not.toContain('<style')
+    expect(result.stdout).not.toContain('<span')
     expect(result.stdout).not.toContain('viewBox')
     expect(result.stdout).not.toContain('challenge-error-text')
+    expect(result.stdout).not.toMatch(/<[A-Za-z]/)
   })
 
   it('classifies current Codex quota logs as HF fallback eligible', () => {

@@ -962,8 +962,10 @@ describe('runCodexImplementation', () => {
     expect(handoffContent).toContain('[suppressed provider HTML response body]')
     expect(handoffContent).not.toContain('<html')
     expect(handoffContent).not.toContain('<style')
+    expect(handoffContent).not.toContain('<span')
     expect(handoffContent).not.toContain('viewBox')
     expect(handoffAttrs).not.toContain('<html')
+    expect(handoffAttrs).not.toContain('<span')
     expect(handoffAttrs).not.toContain('viewBox')
 
     const runGaps = findCapturedNatsPublish(captured, 'run-gaps')
@@ -972,6 +974,7 @@ describe('runCodexImplementation', () => {
     const runGapContent = contentFromCapturedNatsPublish(runGaps)
     expect(runGapContent).toContain('[suppressed provider HTML response body]')
     expect(runGapContent).not.toContain('<html')
+    expect(runGapContent).not.toContain('<span')
     expect(runGapContent).not.toContain('viewBox')
   }, 40_000)
 

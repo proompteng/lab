@@ -289,7 +289,8 @@ const summarizeText = (value: string | undefined, max = 260) => {
 }
 
 const SUPPRESSED_PROVIDER_HTML = '[suppressed provider HTML response body]'
-const HTML_DOCUMENT_FRAGMENT = /(?:<!doctype|<html\b|<head\b|<body\b|<style\b|<script\b|<svg\b|<path\b)/i
+const HTML_DOCUMENT_FRAGMENT =
+  /(?:<!doctype|<html\b|<head\b|<body\b|<style\b|<script\b|<svg\b|<path\b|<meta\b|<link\b|<div\b|<span\b|viewBox=|challenge-error-text)/i
 
 const sanitizeHumanFacingLogText = (value: string | null | undefined, max = 600) => {
   if (!value) return ''
@@ -306,10 +307,15 @@ const sanitizeHumanFacingLogText = (value: string | null | undefined, max = 600)
       .replace(/\s*<style[\s\S]*$/i, ` ${SUPPRESSED_PROVIDER_HTML}`)
       .replace(/\s*<script[\s\S]*$/i, ` ${SUPPRESSED_PROVIDER_HTML}`)
       .replace(/\s*<svg[\s\S]*$/i, ` ${SUPPRESSED_PROVIDER_HTML}`)
+      .replace(/\s*<meta[\s\S]*$/i, ` ${SUPPRESSED_PROVIDER_HTML}`)
+      .replace(/\s*<link[\s\S]*$/i, ` ${SUPPRESSED_PROVIDER_HTML}`)
+      .replace(/\s*<div[\s\S]*$/i, ` ${SUPPRESSED_PROVIDER_HTML}`)
+      .replace(/\s*<span[\s\S]*$/i, ` ${SUPPRESSED_PROVIDER_HTML}`)
   }
 
   sanitized = sanitized
     .replace(/<[^>\n]{1,500}>/g, ' ')
+    .replace(/<[^>\n]*$/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 
