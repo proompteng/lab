@@ -9,7 +9,7 @@ spec:
     - exec python3 /root/.codex/hf-team-worker.py /workspace/run.json
   envTemplate:
     HF_BASE_URL: https://router.huggingface.co/v1
-    HF_MODEL: Qwen/Qwen2.5-7B-Instruct
+    HF_MODEL: meta-llama/Llama-3.1-8B-Instruct:novita
     NATS_URL: nats://nats.nats.svc.cluster.local:4222
   inputFiles:
     - path: /root/.codex/hf-team-worker.py
@@ -127,7 +127,7 @@ spec:
           objective = read_field(payload, "objective", "create measurable value with the team")
           upstream = read_field(payload, "upstreamArtifact", "None")
           expected_output = read_field(payload, "expectedOutput", "a concise production-quality handoff")
-          model = os.environ.get("HF_MODEL", "Qwen/Qwen2.5-7B-Instruct").strip()
+          model = os.environ.get("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct:novita").strip()
           base_url = os.environ.get("HF_BASE_URL", "https://router.huggingface.co/v1").strip()
 
           messages = [
