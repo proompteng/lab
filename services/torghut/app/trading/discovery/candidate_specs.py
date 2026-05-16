@@ -44,6 +44,10 @@ _FAMILY_RUNTIME = {
         "breakout_continuation_consistent",
         "breakout-continuation-long-v1",
     ),
+    "opening_drive_leader_reclaim_v1": (
+        "breakout_continuation_consistent",
+        "breakout-continuation-long-v1",
+    ),
     "intraday_tsmom_v2": ("intraday_tsmom_consistent", "intraday-tsmom-profit-v3"),
     "late_day_continuation_v1": (
         "late_day_continuation_consistent",
@@ -60,6 +64,7 @@ _FAMILY_TIEBREAK = {
     for index, family_template_id in enumerate(
         (
             "microstructure_continuation_matched_filter_v1",
+            "opening_drive_leader_reclaim_v1",
             "microbar_cross_sectional_pairs_v1",
             "intraday_tsmom_v2",
             "momentum_pullback_v1",
@@ -77,6 +82,7 @@ _PORTFOLIO_TARGET_NET_PNL_PER_DAY = Decimal("500")
 _PORTFOLIO_SLEEVE_FAMILY_TARGET = len(_FAMILY_RUNTIME)
 _PORTFOLIO_SLEEVE_FAMILY_ORDER = (
     "microstructure_continuation_matched_filter_v1",
+    "opening_drive_leader_reclaim_v1",
     "microbar_cross_sectional_pairs_v1",
     "intraday_tsmom_v2",
     "momentum_pullback_v1",
@@ -375,6 +381,76 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
                 "long_stop_loss_bps": "10",
                 "long_trailing_stop_activation_profit_bps": "10",
                 "long_trailing_stop_drawdown_bps": "4",
+            },
+        },
+    ),
+    "opening_drive_leader_reclaim_v1": (
+        {
+            "universe_symbols": list(_PORTFOLIO_COVERAGE_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "6.0",
+            "max_notional_per_trade": "189540",
+            "params": {
+                "min_cross_section_continuation_rank": "0.58",
+                "min_cross_section_opening_window_return_rank": "0.54",
+                "max_gross_exposure_pct_equity": "6.0",
+                "entry_notional_max_multiplier": "1.00",
+                "max_entries_per_session": "2",
+                "entry_cooldown_seconds": "600",
+                "leader_reclaim_start_minutes_since_open": "20",
+                "leader_reclaim_min_recent_imbalance_pressure": "0.06",
+                "leader_reclaim_min_recent_microprice_bias_bps": "0.12",
+                "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.54",
+                "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.52",
+                "max_session_negative_exit_bps": "6",
+                "long_stop_loss_bps": "8",
+                "long_trailing_stop_activation_profit_bps": "6",
+                "long_trailing_stop_drawdown_bps": "3",
+            },
+        },
+        {
+            "universe_symbols": list(
+                _PORTFOLIO_AI_ACCELERATOR_COVERAGE_UNIVERSE_PROFILE
+            ),
+            "max_position_pct_equity": "5.0",
+            "max_notional_per_trade": "157950",
+            "params": {
+                "min_cross_section_continuation_rank": "0.64",
+                "min_cross_section_opening_window_return_rank": "0.60",
+                "max_gross_exposure_pct_equity": "5.0",
+                "entry_notional_max_multiplier": "0.90",
+                "max_entries_per_session": "2",
+                "entry_cooldown_seconds": "900",
+                "leader_reclaim_start_minutes_since_open": "30",
+                "leader_reclaim_min_recent_imbalance_pressure": "0.08",
+                "leader_reclaim_min_recent_microprice_bias_bps": "0.16",
+                "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.58",
+                "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.56",
+                "max_session_negative_exit_bps": "5",
+                "long_stop_loss_bps": "7",
+                "long_trailing_stop_activation_profit_bps": "6",
+                "long_trailing_stop_drawdown_bps": "3",
+            },
+        },
+        {
+            "universe_symbols": list(_PORTFOLIO_PLATFORM_COVERAGE_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "4.0",
+            "max_notional_per_trade": "126360",
+            "params": {
+                "min_cross_section_continuation_rank": "0.52",
+                "min_cross_section_opening_window_return_rank": "0.48",
+                "max_gross_exposure_pct_equity": "4.0",
+                "entry_notional_max_multiplier": "0.80",
+                "max_entries_per_session": "3",
+                "entry_cooldown_seconds": "600",
+                "leader_reclaim_start_minutes_since_open": "15",
+                "leader_reclaim_min_recent_imbalance_pressure": "0.04",
+                "leader_reclaim_min_recent_microprice_bias_bps": "0.08",
+                "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.50",
+                "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.48",
+                "max_session_negative_exit_bps": "4",
+                "long_stop_loss_bps": "6",
+                "long_trailing_stop_activation_profit_bps": "5",
+                "long_trailing_stop_drawdown_bps": "2",
             },
         },
     ),
@@ -1237,6 +1313,76 @@ _PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], .
                 "leader_reclaim_min_recent_microprice_bias_bps": "0.04",
                 "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.48",
                 "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.48",
+                "max_session_negative_exit_bps": "3",
+                "long_stop_loss_bps": "4",
+                "long_trailing_stop_activation_profit_bps": "4",
+                "long_trailing_stop_drawdown_bps": "2",
+            },
+        },
+    ),
+    "opening_drive_leader_reclaim_v1": (
+        {
+            "universe_symbols": list(_PORTFOLIO_COVERAGE_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "3.0",
+            "max_notional_per_trade": "94770",
+            "params": {
+                "min_cross_section_continuation_rank": "0.48",
+                "min_cross_section_opening_window_return_rank": "0.44",
+                "max_gross_exposure_pct_equity": "4.0",
+                "entry_notional_max_multiplier": "0.70",
+                "max_entries_per_session": "4",
+                "entry_cooldown_seconds": "300",
+                "leader_reclaim_start_minutes_since_open": "15",
+                "leader_reclaim_min_recent_imbalance_pressure": "0.03",
+                "leader_reclaim_min_recent_microprice_bias_bps": "0.06",
+                "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.48",
+                "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.46",
+                "max_session_negative_exit_bps": "3",
+                "long_stop_loss_bps": "5",
+                "long_trailing_stop_activation_profit_bps": "4",
+                "long_trailing_stop_drawdown_bps": "2",
+            },
+        },
+        {
+            "universe_symbols": list(
+                _PORTFOLIO_AI_ACCELERATOR_COVERAGE_UNIVERSE_PROFILE
+            ),
+            "max_position_pct_equity": "2.5",
+            "max_notional_per_trade": "78975",
+            "params": {
+                "min_cross_section_continuation_rank": "0.56",
+                "min_cross_section_opening_window_return_rank": "0.52",
+                "max_gross_exposure_pct_equity": "4.0",
+                "entry_notional_max_multiplier": "0.60",
+                "max_entries_per_session": "3",
+                "entry_cooldown_seconds": "600",
+                "leader_reclaim_start_minutes_since_open": "25",
+                "leader_reclaim_min_recent_imbalance_pressure": "0.05",
+                "leader_reclaim_min_recent_microprice_bias_bps": "0.10",
+                "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.54",
+                "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.52",
+                "max_session_negative_exit_bps": "3",
+                "long_stop_loss_bps": "5",
+                "long_trailing_stop_activation_profit_bps": "5",
+                "long_trailing_stop_drawdown_bps": "2",
+            },
+        },
+        {
+            "universe_symbols": list(_PORTFOLIO_PLATFORM_COVERAGE_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "2.0",
+            "max_notional_per_trade": "63180",
+            "params": {
+                "min_cross_section_continuation_rank": "0.42",
+                "min_cross_section_opening_window_return_rank": "0.38",
+                "max_gross_exposure_pct_equity": "3.0",
+                "entry_notional_max_multiplier": "0.50",
+                "max_entries_per_session": "4",
+                "entry_cooldown_seconds": "600",
+                "leader_reclaim_start_minutes_since_open": "15",
+                "leader_reclaim_min_recent_imbalance_pressure": "0.02",
+                "leader_reclaim_min_recent_microprice_bias_bps": "0.04",
+                "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.46",
+                "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.44",
                 "max_session_negative_exit_bps": "3",
                 "long_stop_loss_bps": "4",
                 "long_trailing_stop_activation_profit_bps": "4",
@@ -2280,9 +2426,11 @@ def _family_scores_for_hypothesis(
     if has_any(("volatility", "regime", "stress window", "nearly unstable")):
         bump("intraday_tsmom_v2", 4, "volatility_or_regime_state")
         bump("momentum_pullback_v1", 2, "volatility_or_regime_state")
+        bump("opening_drive_leader_reclaim_v1", 2, "volatility_or_regime_state")
     if has_any(("momentum", "trend", "pullback", "trend persistence")):
         bump("momentum_pullback_v1", 5, "momentum_or_pullback")
         bump("intraday_tsmom_v2", 4, "momentum_or_pullback")
+        bump("opening_drive_leader_reclaim_v1", 3, "momentum_or_pullback")
     if has_any(
         (
             "weighted microprice",
@@ -2337,6 +2485,25 @@ def _family_scores_for_hypothesis(
             2,
             "continuation_or_reclaim",
         )
+    if has_any(
+        (
+            "first half-hour",
+            "first half hour",
+            "first 30",
+            "morning momentum",
+            "opening drive",
+            "opening-drive",
+            "opening window",
+            "open window",
+            "leader reclaim",
+            "macro announcement",
+            "announcement",
+            "information discreteness",
+        )
+    ):
+        bump("opening_drive_leader_reclaim_v1", 7, "morning_or_announcement_momentum")
+        bump("late_day_continuation_v1", 3, "morning_or_announcement_momentum")
+        bump("intraday_tsmom_v2", 2, "morning_or_announcement_momentum")
     if has_any(("washout", "reversal", "rebound", "mean reversion", "dislocation")):
         bump("washout_rebound_v2", 5, "reversal_or_rebound")
         bump("mean_reversion_rebound_v1", 5, "reversal_or_rebound")

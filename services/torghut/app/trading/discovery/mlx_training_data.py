@@ -316,10 +316,11 @@ def _family_code(family_template_id: str) -> float:
         "mean_reversion_rebound_v1": 4.0,
         "microbar_cross_sectional_pairs_v1": 5.0,
         "microstructure_continuation_matched_filter_v1": 6.0,
-        "intraday_tsmom_v2": 7.0,
-        "late_day_continuation_v1": 8.0,
-        "end_of_day_reversal_v1": 9.0,
-        "mean_reversion_exhaustion_short_v1": 10.0,
+        "opening_drive_leader_reclaim_v1": 7.0,
+        "intraday_tsmom_v2": 8.0,
+        "late_day_continuation_v1": 9.0,
+        "end_of_day_reversal_v1": 10.0,
+        "mean_reversion_exhaustion_short_v1": 11.0,
     }
     return families.get(family_template_id, 0.0)
 

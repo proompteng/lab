@@ -132,6 +132,41 @@ class TestCandidateSpecs(TestCase):
         reloaded = candidate_spec_from_payload(first[0].to_payload())
         self.assertEqual(reloaded.candidate_spec_id, first[0].candidate_spec_id)
 
+    def test_morning_momentum_claim_selects_opening_drive_family(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-morning-momentum",
+            claims=[
+                {
+                    "claim_id": "claim-first-half-hour",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "First half-hour return and opening drive leader reclaim "
+                        "predict intraday momentum when information is discrete."
+                    ),
+                    "confidence": "0.83",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        opening_specs = [
+            spec
+            for spec in specs
+            if spec.family_template_id == "opening_drive_leader_reclaim_v1"
+        ]
+        self.assertTrue(opening_specs)
+        self.assertEqual(
+            opening_specs[0].runtime_strategy_name,
+            "breakout-continuation-long-v1",
+        )
+        self.assertIn(
+            "morning_or_announcement_momentum",
+            opening_specs[0].feature_contract["family_selection"]["reasons"],
+        )
+
     def test_unpinned_hypotheses_expand_all_family_execution_profiles(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-profile-breadth",
