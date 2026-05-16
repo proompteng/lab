@@ -21,6 +21,26 @@ const workflowEnvelope = (
     }),
 })
 
+const activityEnvelope = (
+  start: Deferred.Deferred<void>,
+  complete: Deferred.Deferred<void>,
+  release?: Deferred.Deferred<void>,
+) => ({
+  taskToken: new Uint8Array([2]),
+  args: [],
+  handler: async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* Deferred.succeed(start, undefined)
+        if (release) {
+          yield* Deferred.await(release)
+        }
+        yield* Deferred.succeed(complete, undefined)
+      }),
+    )
+  },
+})
+
 test('workflow scheduler enforces concurrency limits', async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -94,6 +114,76 @@ test('stop waits for in-flight workflow tasks to finish', async () => {
       const isCompleted = yield* Deferred.isDone(completed)
       yield* Effect.sync(() => {
         expect(isCompleted).toBeTrue()
+      })
+    }),
+  )
+})
+
+test('stop skips queued workflow tasks that have not started', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const scheduler = yield* makeWorkerScheduler({ workflowConcurrency: 1, activityConcurrency: 1 })
+      const firstStarted = yield* Deferred.make<void>()
+      const firstCompleted = yield* Deferred.make<void>()
+      const releaseFirst = yield* Deferred.make<void>()
+      const secondStarted = yield* Deferred.make<void>()
+
+      yield* scheduler.start
+      yield* scheduler.enqueueWorkflow(workflowEnvelope(firstStarted, firstCompleted, releaseFirst))
+      yield* scheduler.enqueueWorkflow(workflowEnvelope(secondStarted, yield* Deferred.make<void>()))
+
+      yield* Deferred.await(firstStarted)
+
+      const stopFiber = yield* Effect.fork(scheduler.stop)
+      yield* Effect.sleep('20 millis')
+
+      const secondStartedBeforeRelease = yield* Deferred.isDone(secondStarted)
+      yield* Effect.sync(() => {
+        expect(secondStartedBeforeRelease).toBeFalse()
+      })
+
+      yield* Deferred.succeed(releaseFirst, undefined)
+      yield* Deferred.await(firstCompleted)
+      yield* Fiber.await(stopFiber)
+
+      const secondStartedAfterStop = yield* Deferred.isDone(secondStarted)
+      yield* Effect.sync(() => {
+        expect(secondStartedAfterStop).toBeFalse()
+      })
+    }),
+  )
+})
+
+test('stop skips queued activity tasks that have not started', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const scheduler = yield* makeWorkerScheduler({ workflowConcurrency: 1, activityConcurrency: 1 })
+      const firstStarted = yield* Deferred.make<void>()
+      const firstCompleted = yield* Deferred.make<void>()
+      const releaseFirst = yield* Deferred.make<void>()
+      const secondStarted = yield* Deferred.make<void>()
+
+      yield* scheduler.start
+      yield* scheduler.enqueueActivity(activityEnvelope(firstStarted, firstCompleted, releaseFirst))
+      yield* scheduler.enqueueActivity(activityEnvelope(secondStarted, yield* Deferred.make<void>()))
+
+      yield* Deferred.await(firstStarted)
+
+      const stopFiber = yield* Effect.fork(scheduler.stop)
+      yield* Effect.sleep('20 millis')
+
+      const secondStartedBeforeRelease = yield* Deferred.isDone(secondStarted)
+      yield* Effect.sync(() => {
+        expect(secondStartedBeforeRelease).toBeFalse()
+      })
+
+      yield* Deferred.succeed(releaseFirst, undefined)
+      yield* Deferred.await(firstCompleted)
+      yield* Fiber.await(stopFiber)
+
+      const secondStartedAfterStop = yield* Deferred.isDone(secondStarted)
+      yield* Effect.sync(() => {
+        expect(secondStartedAfterStop).toBeFalse()
       })
     }),
   )
