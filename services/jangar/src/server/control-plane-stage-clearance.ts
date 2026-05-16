@@ -145,6 +145,7 @@ const requiredRepairForReason = (reason: string) => {
   if (reason.includes('controller') || reason.includes('agentrun_ingestion')) {
     return 'publish fresh AgentRun ingestion and controller witness'
   }
+  if (reason.includes('provider_auth') || reason.includes('providerauth')) return 'restore provider auth before launch'
   if (reason.includes('provider_capacity')) return 'reduce provider capacity debt before launch'
   if (reason.includes('workflow') || reason.includes('backoff')) return 'retire workflow failure debt'
   if (reason.includes('market_context')) return 'refresh Torghut market-context evidence'
@@ -221,7 +222,11 @@ const workflowDebtForPacket = (
   const providerCapacityActive = workflows.top_failure_reasons.some((entry) =>
     normalizeReason(entry.reason).includes('providercapacityexhausted'),
   )
+  const providerAuthActive = workflows.top_failure_reasons.some((entry) =>
+    normalizeReason(entry.reason).includes('providerauthunavailable'),
+  )
   const reasonCodes = uniqueStrings([
+    ...(providerAuthActive ? ['provider_auth_debt_active'] : []),
     ...(workflows.data_confidence !== 'high' ? [`workflow_data_${workflows.data_confidence}`] : []),
     ...(workflows.recent_failed_jobs > 0 ? ['workflow_recent_failed_jobs'] : []),
     ...(workflows.backoff_limit_exceeded_jobs > 0 ? ['workflow_backoff_limit_exceeded_jobs'] : []),

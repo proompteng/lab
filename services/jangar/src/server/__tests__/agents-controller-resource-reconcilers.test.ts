@@ -3,13 +3,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { createResourceReconcilers } from '~/server/agents-controller/resource-reconcilers'
 import { validateAutonomousCodexAuthSecret } from '~/server/agents-controller/policy'
 
-const makeDeps = () => {
+const makeDeps = (now = '2026-01-01T00:00:00.000Z') => {
   const setStatus = vi.fn<
     (kube: unknown, resource: Record<string, unknown>, status: Record<string, unknown>) => Promise<void>
   >(async () => undefined)
   const deps = {
     setStatus,
-    nowIso: () => '2026-01-01T00:00:00.000Z',
+    nowIso: () => now,
     implementationTextLimit: 128 * 1024,
     resolveVcsAuthMethod: () => 'none',
     validateVcsAuthConfig: () => ({ ok: true as const, warnings: [] as Array<{ reason: string; message: string }> }),
@@ -159,6 +159,118 @@ describe('agents controller resource reconcilers module', () => {
           },
         },
       },
+    )
+
+    const [, , status] = setStatus.mock.calls[0]
+    expect(status.conditions).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: 'Ready', status: 'True', reason: 'ValidSpec' })]),
+    )
+  })
+
+  it('marks autonomous codex providers not ready when recent agent runs prove auth is unavailable', async () => {
+    const { deps, setStatus } = makeDeps('2026-01-01T00:10:00.000Z')
+    const { reconcileAgentProvider } = createResourceReconcilers(deps)
+
+    await reconcileAgentProvider(
+      {
+        get: vi.fn(async () => ({
+          data: {
+            'auth.json': Buffer.from(JSON.stringify({ auth_mode: 'chatgpt' })).toString('base64'),
+          },
+        })),
+      },
+      {
+        metadata: { name: 'codex-spark', generation: 1, namespace: 'agents' },
+        spec: {
+          binary: '/usr/local/bin/agent-runner',
+          envTemplate: {
+            AGENT_PROVIDER_PATH: '/root/.codex/provider-codex-spark.json',
+          },
+        },
+      },
+      [
+        {
+          metadata: { name: 'codex-spark-agent' },
+          spec: { providerRef: { name: 'codex-spark' } },
+        },
+      ],
+      [
+        {
+          metadata: { name: 'swarm-verify-failed', creationTimestamp: '2026-01-01T00:04:00.000Z' },
+          spec: { agentRef: { name: 'codex-spark-agent' } },
+          status: {
+            phase: 'Failed',
+            reason: 'ProviderAuthUnavailable',
+            message:
+              'workflow step verify: provider auth unavailable: access token could not be refreshed because refresh token was already used',
+            workflow: {
+              lastTransitionTime: '2026-01-01T00:05:00.000Z',
+            },
+          },
+        },
+      ],
+    )
+
+    const [, , status] = setStatus.mock.calls[0]
+    expect(status.conditions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'InvalidSpec', status: 'False', reason: 'ValidSpec' }),
+        expect.objectContaining({ type: 'Unreachable', status: 'True', reason: 'ProviderAuthUnavailable' }),
+        expect.objectContaining({ type: 'Ready', status: 'False', reason: 'ProviderAuthUnavailable' }),
+      ]),
+    )
+  })
+
+  it('marks autonomous codex providers ready after a newer agent run succeeds', async () => {
+    const { deps, setStatus } = makeDeps('2026-01-01T00:10:00.000Z')
+    const { reconcileAgentProvider } = createResourceReconcilers(deps)
+
+    await reconcileAgentProvider(
+      {
+        get: vi.fn(async () => ({
+          data: {
+            'auth.json': Buffer.from(JSON.stringify({ auth_mode: 'chatgpt' })).toString('base64'),
+          },
+        })),
+      },
+      {
+        metadata: { name: 'codex-spark', generation: 1, namespace: 'agents' },
+        spec: {
+          binary: '/usr/local/bin/agent-runner',
+          envTemplate: {
+            AGENT_PROVIDER_PATH: '/root/.codex/provider-codex-spark.json',
+          },
+        },
+      },
+      [
+        {
+          metadata: { name: 'codex-spark-agent' },
+          spec: { providerRef: { name: 'codex-spark' } },
+        },
+      ],
+      [
+        {
+          metadata: { name: 'swarm-verify-failed', creationTimestamp: '2026-01-01T00:04:00.000Z' },
+          spec: { agentRef: { name: 'codex-spark-agent' } },
+          status: {
+            phase: 'Failed',
+            reason: 'ProviderAuthUnavailable',
+            message:
+              'workflow step verify: provider auth unavailable: access token could not be refreshed because refresh token was already used',
+            workflow: {
+              lastTransitionTime: '2026-01-01T00:05:00.000Z',
+            },
+          },
+        },
+        {
+          metadata: { name: 'swarm-smoke-succeeded', creationTimestamp: '2026-01-01T00:06:00.000Z' },
+          spec: { agentRef: { name: 'codex-spark-agent' } },
+          status: {
+            phase: 'Succeeded',
+            completedAt: '2026-01-01T00:07:00.000Z',
+          },
+        },
+      ],
     )
 
     const [, , status] = setStatus.mock.calls[0]

@@ -8,7 +8,7 @@ import { parseStringList } from './env-config'
 import { hashAgentRunImmutableSpec } from './immutable-spec'
 import { resolveMemory } from './namespace-state'
 import { type ImagePolicyCandidate, validateAuthSecretPolicy, validateImagePolicy } from './policy'
-import { extractProviderAwareJobFailure } from './provider-capacity'
+import { extractProviderAwareJobFailure, isNonRetryableProviderFailure } from './provider-capacity'
 import { resolveImplementation, resolveParameters } from './run-utils'
 import { buildRuntimeRef, parseRuntimeRef, type RuntimeRef } from './runtime-resources'
 import { resolveSystemPrompt } from './system-prompt'
@@ -1020,7 +1020,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
             reason: 'WorkflowStepFailed',
             message: `workflow step ${stepSpec.name} failed`,
           })
-          if (failureDetail.reason !== 'ProviderCapacityExhausted' && stepStatus.attempt < maxAttempts) {
+          if (!isNonRetryableProviderFailure(failureDetail.reason) && stepStatus.attempt < maxAttempts) {
             const retryMessage =
               failureDetail.message === `workflow step ${stepSpec.name} failed`
                 ? 'Step failed; retrying'

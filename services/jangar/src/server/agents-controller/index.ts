@@ -1314,12 +1314,12 @@ const reconcileNamespaceSnapshot = async (
     await reconcileMemory(kube, memory, namespace)
   }
 
-  for (const agent of agents) {
-    await reconcileAgent(kube, agent, namespace, providers, memories)
+  for (const provider of providers) {
+    await reconcileAgentProvider(kube, provider, agents, runs)
   }
 
-  for (const provider of providers) {
-    await reconcileAgentProvider(kube, provider)
+  for (const agent of agents) {
+    await reconcileAgent(kube, agent, namespace, providers, memories)
   }
 
   for (const spec of specs) {
