@@ -28,6 +28,20 @@ def _executable_scorecard_fields(index: int | str = 0) -> dict[str, object]:
 
 
 class TestPortfolioOptimizer(TestCase):
+    def test_oracle_blocker_count_treats_malformed_payloads_as_unblocked(
+        self,
+    ) -> None:
+        self.assertEqual(
+            portfolio_optimizer_module._oracle_blocker_count({}),
+            Decimal("0"),
+        )
+        self.assertEqual(
+            portfolio_optimizer_module._oracle_blocker_count(
+                {"profit_target_oracle": {"blockers": "missing_daily_net"}}
+            ),
+            Decimal("0"),
+        )
+
     def test_capital_safety_rejection_reasons_block_minimums(self) -> None:
         def bundle(
             candidate_id: str,
