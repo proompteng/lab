@@ -148,6 +148,8 @@ jobs:
 
       - name: Verify release default-choice evidence
         if: steps.soak.outputs.mode == 'release'
+        env:
+          TEMPORAL_BUN_EVIDENCE_PURPOSE: release-soak
         run: bun run --filter @proompteng/temporal-bun-sdk verify:default-choice
 
       - name: Generate nightly evidence snapshot
@@ -169,3 +171,4 @@ jobs:
             packages/temporal-bun-sdk/.artifacts/worker-soak/iteration-*/memory.jsonl
             packages/temporal-bun-sdk/dist/production-readiness.json
             packages/temporal-bun-sdk/dist/agent-readiness.json
+            packages/temporal-bun-sdk/dist/release-provenance.json

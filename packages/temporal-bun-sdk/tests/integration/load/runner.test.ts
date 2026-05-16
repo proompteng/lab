@@ -90,6 +90,33 @@ test('worker load update termination keeps unrelated not-found failures fatal', 
   ).toBe(false)
 })
 
+test('worker load update termination classifies shard-status cleanup transients', () => {
+  expect(
+    __workerLoadTestHooks.isTransientWorkflowTerminationCleanupFailure(
+      new ConnectError('[unavailable] shard status unknown', Code.Unavailable),
+    ),
+  ).toBe(true)
+  expect(
+    __workerLoadTestHooks.isTransientWorkflowTerminationCleanupFailure({
+      _tag: 'UnknownException',
+      cause: new ConnectError('[unavailable] shard status unknown', Code.Unavailable),
+    }),
+  ).toBe(true)
+})
+
+test('worker load update termination keeps non-unavailable cleanup failures fatal', () => {
+  expect(
+    __workerLoadTestHooks.isTransientWorkflowTerminationCleanupFailure(
+      new ConnectError('[not_found] workflow execution already completed', Code.NotFound),
+    ),
+  ).toBe(false)
+  expect(
+    __workerLoadTestHooks.isTransientWorkflowTerminationCleanupFailure(
+      new ConnectError('[internal] shard status unknown', Code.Internal),
+    ),
+  ).toBe(false)
+})
+
 test('worker load failure cleanup terminates only non-terminal submitted workflows', async () => {
   const terminatedWorkflowIds: string[] = []
   type CleanupClient = Parameters<typeof __workerLoadTestHooks.cleanupSubmittedWorkflows>[0]

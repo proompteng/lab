@@ -70,6 +70,15 @@ type WorkflowCleanupEvent = {
   readonly error?: string
 }
 
+type WorkflowUpdateTerminationEvent = {
+  readonly workflowId: string
+  readonly runId: string
+  readonly requestedAt: string
+  readonly completedAt: string
+  readonly status: 'terminated' | 'already-completed' | 'transient-cleanup-failed'
+  readonly error?: string
+}
+
 type SerializedError = {
   readonly name: string
   readonly message: string
@@ -107,6 +116,7 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
   const restartEvents: RuntimeRestartEvent[] = []
   const activityCancellationEvents: ActivityCancellationEvent[] = []
   const workflowCleanupEvents: WorkflowCleanupEvent[] = []
+  const updateTerminationEvents: WorkflowUpdateTerminationEvent[] = []
   let runtimeGeneration = 0
   let managedRuntime: ManagedWorkerRuntime | null = null
   let completionResults: WorkflowCompletionResult[] = []
@@ -203,7 +213,8 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
         (submission) => submission.plan.workflowType === 'workerLoadUpdateWorkflow',
       )
       if (updateSubmissions.length > 0) {
-        await driveWorkflowUpdates(temporalClient, updateSubmissions, loadConfig)
+        const terminationEvents = await driveWorkflowUpdates(temporalClient, updateSubmissions, loadConfig)
+        updateTerminationEvents.push(...terminationEvents)
         await memoryRecorder.sample('updates-driven', { updateWorkflows: updateSubmissions.length })
       }
       const observedCompletionResults: WorkflowCompletionResult[] = []
@@ -358,6 +369,15 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
           activityCancellationSuccessCount: activityCancellationEvents.filter((event) => event.status === 'requested').length,
           activityCancellationFinalCanceledCount,
           activityCancellationEvents,
+          updateTerminationAttemptCount: updateTerminationEvents.length,
+          updateTerminationSuccessCount: updateTerminationEvents.filter((event) => event.status === 'terminated').length,
+          updateTerminationAlreadyCompletedCount: updateTerminationEvents.filter(
+            (event) => event.status === 'already-completed',
+          ).length,
+          updateTerminationTransientCleanupFailureCount: updateTerminationEvents.filter(
+            (event) => event.status === 'transient-cleanup-failed',
+          ).length,
+          updateTerminationEvents,
           failureCleanupAttemptCount: workflowCleanupEvents.length,
           failureCleanupTerminatedCount: workflowCleanupEvents.filter((event) => event.status === 'terminated').length,
           failureCleanupAlreadyCompletedCount: workflowCleanupEvents.filter((event) => event.status === 'already-completed').length,
@@ -558,11 +578,11 @@ const driveWorkflowUpdates = async (
   client: TemporalClient,
   submissions: SubmittedWorkflow[],
   config: WorkerLoadConfig,
-): Promise<void> => {
+): Promise<WorkflowUpdateTerminationEvent[]> => {
   if (submissions.length === 0 || config.updatesPerWorkflow <= 0) {
-    return
+    return []
   }
-  await Promise.all(
+  const terminationEvents = await Promise.all(
     submissions.map(async ({ handle }) => {
       const workflowHandle = { workflowId: handle.workflowId, runId: handle.runId }
       for (let index = 0; index < config.updatesPerWorkflow; index += 1) {
@@ -592,15 +612,42 @@ const driveWorkflowUpdates = async (
         waitForStage: 'completed',
       })
       // After exercising update flows, terminate to keep the load suite bounded.
+      const requestedAt = new Date().toISOString()
       try {
         await client.workflow.terminate(workflowHandle, { reason: 'worker-load-finish' })
-      } catch (error) {
-        if (!isWorkflowAlreadyCompletedForTermination(error)) {
-          throw error
+        return {
+          workflowId: handle.workflowId,
+          runId: handle.runId,
+          requestedAt,
+          completedAt: new Date().toISOString(),
+          status: 'terminated' as const,
         }
+      } catch (error) {
+        if (isWorkflowAlreadyCompletedForTermination(error)) {
+          return {
+            workflowId: handle.workflowId,
+            runId: handle.runId,
+            requestedAt,
+            completedAt: new Date().toISOString(),
+            status: 'already-completed' as const,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        }
+        if (isTransientWorkflowTerminationCleanupFailure(error)) {
+          return {
+            workflowId: handle.workflowId,
+            runId: handle.runId,
+            requestedAt,
+            completedAt: new Date().toISOString(),
+            status: 'transient-cleanup-failed' as const,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        }
+        throw error
       }
     }),
   )
+  return terminationEvents
 }
 
 const unwrapErrorChain = (error: unknown, seen = new Set<unknown>()): unknown[] => {
@@ -643,6 +690,23 @@ const isWorkflowAlreadyCompletedForTermination = (error: unknown): boolean =>
       return false
     }
     return !(candidate instanceof ConnectError) || candidate.code === Code.NotFound
+  })
+
+const isTransientWorkflowTerminationCleanupFailure = (error: unknown): boolean =>
+  unwrapErrorChain(error).some((candidate) => {
+    let message: string
+    if (candidate instanceof Error) {
+      message = candidate.message
+    } else if (typeof candidate === 'object' && candidate && 'message' in candidate) {
+      message = String((candidate as { message?: unknown }).message)
+    } else {
+      message = String(candidate)
+    }
+
+    if (!/shard status unknown|service unavailable|temporarily unavailable/i.test(message)) {
+      return false
+    }
+    return candidate instanceof ConnectError ? candidate.code === Code.Unavailable : true
   })
 
 const cancelActivityWorkflows = async (
@@ -1068,6 +1132,7 @@ export const __workerLoadTestHooks = {
   calculateWorkerLoadTestTimeoutBudgetMs,
   cleanupSubmittedWorkflows,
   isWorkflowAlreadyCompletedForTermination,
+  isTransientWorkflowTerminationCleanupFailure,
   normalizeWorkflowStatus,
 }
 

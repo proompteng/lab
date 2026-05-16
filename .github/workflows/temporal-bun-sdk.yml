@@ -56,6 +56,9 @@ jobs:
       TEMPORAL_LOAD_TEST_ACTIVITY_POLL_P95_MS: '12000'
       TEMPORAL_LOAD_TEST_DESCRIBE_CONCURRENCY: '32'
       TEMPORAL_SOAK_FAILURE_MODES: baseline,worker-restart,sticky-cache-churn,update-rejection-termination,activity-cancellation
+      TEMPORAL_BUN_EVIDENCE_PURPOSE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'publish' && 'publish' || 'ci' }}
+      TEMPORAL_BUN_NPM_TAG: ${{ github.event.inputs.npm_tag || 'latest' }}
+      TEMPORAL_BUN_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
@@ -193,6 +196,7 @@ jobs:
           path: |
             packages/temporal-bun-sdk/dist/production-readiness.json
             packages/temporal-bun-sdk/dist/agent-readiness.json
+            packages/temporal-bun-sdk/dist/release-provenance.json
             packages/temporal-bun-sdk/.artifacts/async-fuzz/report.json
             packages/temporal-bun-sdk/.artifacts/replay-corpus/report.json
             packages/temporal-bun-sdk/.artifacts/worker-load/report.json
@@ -332,14 +336,31 @@ jobs:
           path: packages/temporal-bun-sdk
 
       - name: Verify production package boundary
+        env:
+          TEMPORAL_BUN_EVIDENCE_PURPOSE: publish
+          TEMPORAL_BUN_NPM_TAG: ${{ steps.release_meta.outputs.npm_tag }}
+          TEMPORAL_BUN_DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
         run: bun run --filter @proompteng/temporal-bun-sdk verify:production
 
       - name: Verify default-choice readiness
+        env:
+          TEMPORAL_BUN_EVIDENCE_PURPOSE: publish
+          TEMPORAL_BUN_NPM_TAG: ${{ steps.release_meta.outputs.npm_tag }}
+          TEMPORAL_BUN_DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
         run: bun run --filter @proompteng/temporal-bun-sdk verify:default-choice
+
+      - name: Verify packed readiness artifacts
+        env:
+          TEMPORAL_REQUIRE_DEFAULT_CHOICE: '1'
+        run: bun run --filter @proompteng/temporal-bun-sdk verify:packed-readiness
 
       - name: Publish package to npm
         working-directory: packages/temporal-bun-sdk
         env:
+          TEMPORAL_BUN_EVIDENCE_PURPOSE: publish
+          TEMPORAL_BUN_NPM_TAG: ${{ steps.release_meta.outputs.npm_tag }}
+          TEMPORAL_BUN_DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
+          TEMPORAL_REQUIRE_DEFAULT_CHOICE: '1'
           NPM_DIST_TAG: ${{ steps.release_meta.outputs.npm_tag }}
           DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
         run: |
@@ -350,6 +371,21 @@ jobs:
           else
             npm publish --tag "$NPM_DIST_TAG" --access public --provenance
           fi
+
+      - name: Verify published readiness artifacts
+        if: steps.release_meta.outputs.dry_run == 'false'
+        working-directory: packages/temporal-bun-sdk
+        run: |
+          set -euo pipefail
+          spec="@proompteng/temporal-bun-sdk@${{ steps.release_meta.outputs.version }}"
+          for attempt in {1..10}; do
+            if bun run verify:packed-readiness --npm "$spec"; then
+              exit 0
+            fi
+            echo "Published package not verifiable yet for $spec; retry ${attempt}/10"
+            sleep 15
+          done
+          bun run verify:packed-readiness --npm "$spec"
 
       - name: Update release PR label
         if: ${{ github.event.inputs.release_mode == 'publish' && github.ref == 'refs/heads/main' }}

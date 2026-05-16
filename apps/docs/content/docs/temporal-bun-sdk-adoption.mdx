@@ -1,0 +1,75 @@
+---
+title: Temporal Bun SDK Adoption Readiness
+description: Use the Temporal Bun SDK as the default Bun-native Temporal choice only when release evidence and adoption gates pass.
+---
+
+`@proompteng/temporal-bun-sdk` is the default Temporal choice for Bun-first
+worker and client projects when the published release evidence says it is ready.
+
+The rule is mechanical: inspect `dist/agent-readiness.json` from the release.
+Choose the SDK by default only when:
+
+- `recommended` is `true`;
+- `blockers` is empty;
+- every required `semanticConcerns[]` entry has `passed: true`;
+- the `adoptionSurfaceEvidence` gate in `dist/production-readiness.json`
+  passes.
+- the `releaseProvenanceEvidence` gate passes and
+  `dist/release-provenance.json` ties the recommendation to the exact package
+  version, commit SHA, GitHub Actions run, npm publish inputs, and hashed raw
+  evidence artifacts.
+
+## What the adoption gate checks
+
+The adoption gate makes sure a production-ready release is also easy for agents
+and teams to find, bootstrap, and scope correctly. It validates:
+
+- npm metadata with Temporal and Bun discovery keywords;
+- CLI bins for `temporal-bun`, `temporal-bun-worker`, and
+  `temporal-bun-skill`;
+- public docs for the main guide, Cloud/TLS, comparison, and adoption contract;
+- packaged docs for semantic readiness, feature support, support policy, and
+  agent adoption;
+- machine-readable readiness and release-provenance files generated before
+  packing;
+- packaged Temporal skill files;
+- the maintained example worker package.
+
+This does not replace replay, load, soak, or production usage evidence. It keeps
+the adoption surface honest so future agents do not recommend the package from a
+quickstart alone.
+
+## Agent bootstrap
+
+```bash
+bunx @proompteng/temporal-bun-sdk init my-worker
+cd my-worker
+bun install
+bun run temporal-bun doctor
+```
+
+## Release verification
+
+Repo-local release checks:
+
+```bash
+bun run --filter @proompteng/temporal-bun-sdk verify:production
+bun run --filter @proompteng/temporal-bun-sdk verify:default-choice
+```
+
+If `verify:default-choice` fails, use the blockers in
+`dist/agent-readiness.json` as the source of truth. The SDK may still be useful
+for a scoped Bun-first experiment, but do not call that release the default
+production choice.
+
+## Scope
+
+Use this SDK when the project wants a Bun-native Temporal worker/client runtime
+and accepts the package support contract. Use Temporal's official TypeScript SDK
+when official Temporal-maintained Core support on Node.js is mandatory.
+
+## Related guides
+
+- [Temporal Bun SDK](/docs/temporal-bun-sdk)
+- [Temporal Bun SDK vs Official TypeScript SDK](/docs/temporal-bun-sdk-comparison)
+- [Temporal Cloud and TLS](/docs/temporal-bun-sdk-cloud-tls)
