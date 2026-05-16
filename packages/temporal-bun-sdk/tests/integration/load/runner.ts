@@ -65,7 +65,7 @@ type WorkflowCleanupEvent = {
   readonly runId: string
   readonly requestedAt: string
   readonly completedAt: string
-  readonly status: 'terminated' | 'already-completed' | 'failed'
+  readonly status: 'terminated' | 'already-completed' | 'transient-cleanup-failed' | 'failed'
   readonly reason: string
   readonly error?: string
 }
@@ -156,7 +156,10 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
   const shutdownRuntime = async (
     current: ManagedWorkerRuntime,
     reason: string,
-    options: { readonly suppressRunFailure?: boolean } = {},
+    options: {
+      readonly suppressRunFailure?: boolean
+      readonly suppressTransientRunFailure?: boolean
+    } = {},
   ): Promise<SerializedError | undefined> => {
     await memoryRecorder.sample('before-runtime-shutdown', { generation: current.generation, reason })
     await current.runtime.shutdown()
@@ -164,9 +167,16 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
     try {
       await current.runPromise
     } catch (error) {
-      runFailure = serializeError(error)
-      if (!options.suppressRunFailure) {
+      if (options.suppressTransientRunFailure && isTransientTemporalUnavailableFailure(error)) {
+        await memoryRecorder.sample('runtime-shutdown-transient-failure', {
+          generation: current.generation,
+          reason,
+          error: formatErrorMessage(error),
+        })
+      } else if (!options.suppressRunFailure) {
         throw error
+      } else {
+        runFailure = serializeError(error)
       }
     }
     await memoryRecorder.sample('after-runtime-shutdown', { generation: current.generation, reason })
@@ -275,6 +285,7 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
           attempted: cleanupEvents.length,
           terminated: cleanupEvents.filter((event) => event.status === 'terminated').length,
           alreadyCompleted: cleanupEvents.filter((event) => event.status === 'already-completed').length,
+          transientCleanupFailed: cleanupEvents.filter((event) => event.status === 'transient-cleanup-failed').length,
           failed: cleanupEvents.filter((event) => event.status === 'failed').length,
         })
       }
@@ -285,6 +296,7 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
     if (managedRuntime) {
       const shutdownFailure = await shutdownRuntime(managedRuntime, 'final', {
         suppressRunFailure: completionFailure !== undefined,
+        suppressTransientRunFailure: true,
       })
       if (shutdownFailure && !completionFailure) {
         completionFailure = shutdownFailure
@@ -381,6 +393,9 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
           failureCleanupAttemptCount: workflowCleanupEvents.length,
           failureCleanupTerminatedCount: workflowCleanupEvents.filter((event) => event.status === 'terminated').length,
           failureCleanupAlreadyCompletedCount: workflowCleanupEvents.filter((event) => event.status === 'already-completed').length,
+          failureCleanupTransientCleanupFailureCount: workflowCleanupEvents.filter(
+            (event) => event.status === 'transient-cleanup-failed',
+          ).length,
           failureCleanupFailedCount: workflowCleanupEvents.filter((event) => event.status === 'failed').length,
           workflowCleanupEvents,
         },
@@ -693,6 +708,9 @@ const isWorkflowAlreadyCompletedForTermination = (error: unknown): boolean =>
   })
 
 const isTransientWorkflowTerminationCleanupFailure = (error: unknown): boolean =>
+  isTransientTemporalUnavailableFailure(error)
+
+const isTransientTemporalUnavailableFailure = (error: unknown): boolean =>
   unwrapErrorChain(error).some((candidate) => {
     let message: string
     if (candidate instanceof Error) {
@@ -794,6 +812,16 @@ const cleanupSubmittedWorkflows = async (
               requestedAt,
               completedAt: new Date().toISOString(),
               status: 'already-completed',
+              reason,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          } else if (isTransientWorkflowTerminationCleanupFailure(error)) {
+            events.push({
+              workflowId: handle.workflowId,
+              runId: handle.runId,
+              requestedAt,
+              completedAt: new Date().toISOString(),
+              status: 'transient-cleanup-failed',
               reason,
               error: error instanceof Error ? error.message : String(error),
             })
