@@ -23,7 +23,7 @@ const DEFAULT_RETRYABLE_CODES: number[] = [
 ]
 
 export const defaultRetryPolicy: TemporalRpcRetryPolicy = {
-  maxAttempts: 5,
+  maxAttempts: 8,
   initialDelayMs: 200,
   maxDelayMs: 5_000,
   backoffCoefficient: 2,
@@ -55,6 +55,9 @@ const unwrapRetryError = (error: unknown): unknown => {
   return error
 }
 
+const isRetryHintedUnknown = (error: ConnectError): boolean =>
+  error.code === Code.Unknown && /\bplease retry\b|temporarily unavailable|try again/i.test(error.message)
+
 const shouldRetryError = (policy: TemporalRpcRetryPolicy) => {
   const retryable = new Set(policy.retryableStatusCodes.length ? policy.retryableStatusCodes : DEFAULT_RETRYABLE_CODES)
 
@@ -63,6 +66,9 @@ const shouldRetryError = (policy: TemporalRpcRetryPolicy) => {
     if (underlying instanceof ConnectError) {
       if (underlying.code === Code.Canceled) {
         return false
+      }
+      if (isRetryHintedUnknown(underlying)) {
+        return true
       }
       return retryable.has(underlying.code)
     }

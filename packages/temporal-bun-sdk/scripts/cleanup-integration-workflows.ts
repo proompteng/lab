@@ -31,37 +31,43 @@ const namespace = process.env.TEMPORAL_NAMESPACE ?? 'default'
 const temporal = process.env.TEMPORAL_CLI_PATH ?? 'temporal'
 const reason = readArg('--reason') ?? 'temporal-bun-sdk integration cleanup'
 const terminateRps = process.env.TEMPORAL_CLEANUP_RPS ?? '5'
-const maxAttempts = normalizePositiveInteger(process.env.TEMPORAL_CLEANUP_MAX_ATTEMPTS, 8)
+const maxAttempts = normalizePositiveInteger(process.env.TEMPORAL_CLEANUP_MAX_ATTEMPTS, 12)
 const retryDelayMs = normalizePositiveInteger(process.env.TEMPORAL_CLEANUP_RETRY_MS, 1_000)
 
-let leaked = false
+async function main(): Promise<void> {
+  let leaked = false
 
-for (const workflowType of workflowTypes) {
-  const query = `WorkflowType="${workflowType}" and ExecutionStatus="Running"`
-  const before = await count(query)
-  if (before === 0) {
-    continue
-  }
+  for (const workflowType of workflowTypes) {
+    const query = `WorkflowType="${workflowType}" and ExecutionStatus="Running"`
+    const before = await count(query)
+    if (before === 0) {
+      continue
+    }
 
-  leaked = true
-  console.warn(`[temporal-bun-sdk] ${workflowType} has ${before} running workflow(s)`)
-  await list(query)
+    leaked = true
+    console.warn(`[temporal-bun-sdk] ${workflowType} has ${before} running workflow(s)`)
+    const listOutput = await list(query, before)
 
-  if (mode === 'terminate') {
-    await terminate(query)
-    const after = await count(query)
-    if (after > 0) {
-      throw new Error(`${workflowType} still has ${after} running workflow(s) after cleanup`)
+    if (mode === 'terminate') {
+      await terminate(query, workflowType, listOutput)
+      const after = await count(query)
+      if (after > 0) {
+        throw new Error(`${workflowType} still has ${after} running workflow(s) after cleanup`)
+      }
     }
   }
+
+  if (leaked && mode === 'verify') {
+    throw new Error('Temporal Bun SDK integration workflows leaked after test cleanup')
+  }
+
+  if (!leaked) {
+    console.info('[temporal-bun-sdk] no running integration workflow leaks found')
+  }
 }
 
-if (leaked && mode === 'verify') {
-  throw new Error('Temporal Bun SDK integration workflows leaked after test cleanup')
-}
-
-if (!leaked) {
-  console.info('[temporal-bun-sdk] no running integration workflow leaks found')
+if (import.meta.main) {
+  await main()
 }
 
 function readArg(name: string): string | undefined {
@@ -82,28 +88,74 @@ async function count(query: string): Promise<number> {
   return Number.parseInt(match[1] ?? '0', 10)
 }
 
-async function list(query: string): Promise<void> {
-  const output = await temporalCli(['workflow', 'list', '--namespace', namespace, '--query', query, '--limit', '20'])
-  console.warn(output.stdout.trim())
-}
-
-async function terminate(query: string): Promise<void> {
+async function list(query: string, limit = 20): Promise<string> {
   const output = await temporalCli([
     'workflow',
-    'terminate',
+    'list',
     '--namespace',
     namespace,
     '--query',
     query,
-    '--reason',
-    reason,
-    '--rps',
-    terminateRps,
-    '--yes',
+    '--limit',
+    String(Math.max(limit, 20)),
   ])
+  console.warn(output.stdout.trim())
+  return output.stdout
+}
+
+async function terminate(query: string, workflowType: string, listOutput: string): Promise<void> {
+  let output: { stdout: string; stderr: string }
+  try {
+    output = await temporalCli([
+      'workflow',
+      'terminate',
+      '--namespace',
+      namespace,
+      '--query',
+      query,
+      '--reason',
+      reason,
+      '--rps',
+      terminateRps,
+      '--yes',
+    ])
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!isRetryableTemporalCliError(message)) {
+      throw error
+    }
+
+    await terminateIndividually(workflowType, listOutput)
+    return
+  }
+
   const jobId = /Started batch for job ID:\s*([0-9a-f-]+)/i.exec(output.stdout)?.[1]
   if (jobId) {
     await waitForBatch(jobId)
+  }
+}
+
+async function terminateIndividually(workflowType: string, listOutput: string): Promise<void> {
+  const workflowIds = parseWorkflowIdsFromListOutput(listOutput, workflowType)
+  if (workflowIds.length === 0) {
+    throw new Error(`Unable to parse ${workflowType} workflow IDs from Temporal list output:\n${listOutput}`)
+  }
+
+  console.warn(
+    `[temporal-bun-sdk] Temporal batch termination is unavailable; terminating ${workflowIds.length} ${workflowType} workflow(s) individually`,
+  )
+
+  for (const workflowId of workflowIds) {
+    await temporalCli([
+      'workflow',
+      'terminate',
+      '--namespace',
+      namespace,
+      '--workflow-id',
+      workflowId,
+      '--reason',
+      reason,
+    ])
   }
 }
 
@@ -149,10 +201,25 @@ async function temporalCli(args: readonly string[]): Promise<{ stdout: string; s
   throw new Error(`temporal ${args.join(' ')} failed: ${lastOutput}`)
 }
 
-function isRetryableTemporalCliError(output: string): boolean {
-  return /namespace rate limit exceeded|context deadline exceeded|transport: error while dialing|unavailable/i.test(
+export function isRetryableTemporalCliError(output: string): boolean {
+  return /namespace rate limit exceeded|context deadline exceeded|transport: error while dialing|unavailable|not enough hosts to serve the request|please retry|temporarily unavailable/i.test(
     output,
   )
+}
+
+export function parseWorkflowIdsFromListOutput(output: string, workflowType: string): string[] {
+  const workflowIds: string[] = []
+  for (const line of output.split('\n')) {
+    const columns = line.trim().split(/\s+/)
+    if (columns.length < 3 || columns[0] !== 'Running' || columns[2] !== workflowType) {
+      continue
+    }
+    const workflowId = columns[1]
+    if (workflowId) {
+      workflowIds.push(workflowId)
+    }
+  }
+  return workflowIds
 }
 
 function normalizePositiveInteger(value: string | undefined, fallback: number): number {
