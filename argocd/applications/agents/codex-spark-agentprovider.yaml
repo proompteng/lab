@@ -10,6 +10,8 @@ spec:
     NATS_URL: nats://nats.nats.svc.cluster.local:4222
     AGENT_PROVIDER_PATH: /root/.codex/provider-codex-spark.json
     CODEX_MODEL: gpt-5.5
+    HF_BASE_URL: https://router.huggingface.co/v1
+    HF_MODEL: meta-llama/Llama-3.1-8B-Instruct:novita
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
@@ -49,7 +51,7 @@ spec:
           "binary": "/bin/bash",
           "argsTemplate": [
             "-lc",
-            "EVENT_FILE=$(mktemp /tmp/codex-event.XXXXXX.json) && cp \"$1\" \"$EVENT_FILE\" && python3 /root/.codex/ensure-market-context-issue-number.py \"$EVENT_FILE\" && exec /usr/local/bin/codex-implement \"$EVENT_FILE\"",
+            "set -o pipefail; EVENT_FILE=$(mktemp /tmp/codex-event.XXXXXX.json) && cp \"$1\" \"$EVENT_FILE\" && python3 /root/.codex/ensure-market-context-issue-number.py \"$EVENT_FILE\" && mkdir -p /workspace/.agent && LOG_PATH=/workspace/.agent/runner.log && if /usr/local/bin/codex-implement \"$EVENT_FILE\" > >(tee \"$LOG_PATH\") 2> >(tee -a \"$LOG_PATH\" >&2); then exit 0; fi; status=$?; if python3 /root/.codex/should-hf-swarm-fallback.py \"$LOG_PATH\"; then exec python3 /root/.codex/swarm-hf-codex-fallback.py \"$EVENT_FILE\" \"$LOG_PATH\"; fi; exit \"$status\"",
             "--",
             "{{payloads.eventFilePath}}"
           ],
@@ -175,6 +177,342 @@ spec:
 
         if __name__ == '__main__':
           raise SystemExit(main())
+    - path: /root/.codex/should-hf-swarm-fallback.py
+      content: |-
+        #!/usr/bin/env python3
+        import re
+        import sys
+        from pathlib import Path
+
+        FALLBACK_PATTERNS = (
+          r'provider capacity exhausted',
+          r'ProviderCapacityExhausted',
+          r'quota exceeded',
+          r'usage limit',
+          r'insufficient_quota',
+          r'provider auth unavailable',
+          r'ProviderAuthUnavailable',
+          r'access token could not be refreshed',
+          r'refresh token was already used',
+          r'please log out and sign in again',
+        )
+
+        def main() -> int:
+          if len(sys.argv) < 2:
+            return 1
+          text = Path(sys.argv[1]).read_text(encoding='utf-8', errors='replace') if Path(sys.argv[1]).exists() else ''
+          return 0 if any(re.search(pattern, text, re.IGNORECASE) for pattern in FALLBACK_PATTERNS) else 1
+
+        if __name__ == '__main__':
+          raise SystemExit(main())
+    - path: /root/.codex/swarm-hf-codex-fallback.py
+      content: |-
+        #!/usr/bin/env python3
+        import json
+        import os
+        import subprocess
+        import sys
+        import urllib.error
+        import urllib.request
+        from datetime import datetime, timezone
+        from pathlib import Path
+
+        def now_iso() -> str:
+          return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+        def as_text(value, default: str = "") -> str:
+          if isinstance(value, str):
+            return value.strip()
+          if isinstance(value, (int, float, bool)):
+            return str(value)
+          return default
+
+        def read_field(payload: dict, key: str, default: str = "") -> str:
+          value = as_text(payload.get(key))
+          if value:
+            return value
+          parameters = payload.get("parameters")
+          if isinstance(parameters, dict):
+            value = as_text(parameters.get(key))
+            if value:
+              return value
+          return default
+
+        def chat_completion(base_url: str, token: str, model: str, messages: list[dict]) -> str:
+          request = urllib.request.Request(
+            f"{base_url.rstrip('/')}/chat/completions",
+            data=json.dumps({
+              "model": model,
+              "messages": messages,
+              "temperature": 0.2,
+              "max_tokens": 900,
+            }).encode("utf-8"),
+            headers={
+              "Authorization": f"Bearer {token}",
+              "Content-Type": "application/json",
+            },
+            method="POST",
+          )
+          try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+              payload = json.loads(response.read().decode("utf-8"))
+          except urllib.error.HTTPError as error:
+            body_text = error.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"HF router returned HTTP {error.code}: {body_text}") from error
+          choices = payload.get("choices")
+          if not isinstance(choices, list) or not choices:
+            raise RuntimeError(f"HF router response missing choices: {json.dumps(payload)[:1000]}")
+          message = choices[0].get("message") if isinstance(choices[0], dict) else None
+          content = message.get("content") if isinstance(message, dict) else None
+          if not isinstance(content, str) or not content.strip():
+            raise RuntimeError(f"HF router response missing message content: {json.dumps(payload)[:1000]}")
+          return content.strip()
+
+        def k8s_request(path: str) -> dict | str | None:
+          host = os.environ.get("KUBERNETES_SERVICE_HOST", "").strip()
+          port = os.environ.get("KUBERNETES_SERVICE_PORT", "443").strip()
+          token_path = Path("/var/run/secrets/kubernetes.io/serviceaccount/token")
+          ca_path = Path("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+          if not host or not token_path.exists():
+            return None
+          request = urllib.request.Request(
+            f"https://{host}:{port}{path}",
+            headers={"Authorization": f"Bearer {token_path.read_text(encoding='utf-8').strip()}"},
+          )
+          context = None
+          if ca_path.exists():
+            import ssl
+
+            context = ssl.create_default_context(cafile=str(ca_path))
+          with urllib.request.urlopen(request, timeout=20, context=context) as response:
+            body = response.read().decode("utf-8", errors="replace")
+            return json.loads(body) if "application/json" in response.headers.get("content-type", "") else body
+
+        def extract_result(log_text: str) -> str:
+          markers = (
+            ("SWARM_CODEX_HF_FALLBACK_RESULT_BEGIN", "SWARM_CODEX_HF_FALLBACK_RESULT_END"),
+            ("SWARM_HF_RESULT_BEGIN", "SWARM_HF_RESULT_END"),
+          )
+          for start_marker, end_marker in markers:
+            start = log_text.find(start_marker)
+            end = log_text.find(end_marker)
+            if start >= 0 and end > start:
+              return log_text[start + len(start_marker) : end].strip()
+          return log_text.strip()[-4000:]
+
+        def read_pod_log(namespace: str, job_name: str) -> str:
+          from urllib.parse import quote
+
+          pods = k8s_request(f"/api/v1/namespaces/{namespace}/pods?labelSelector={quote(f'job-name={job_name}', safe='')}")
+          if not isinstance(pods, dict):
+            return ""
+          items = pods.get("items")
+          if not isinstance(items, list) or not items:
+            return ""
+          metadata = items[0].get("metadata") if isinstance(items[0], dict) else {}
+          pod_name = as_text(metadata.get("name")) if isinstance(metadata, dict) else ""
+          if not pod_name:
+            return ""
+          log = k8s_request(f"/api/v1/namespaces/{namespace}/pods/{pod_name}/log?container=agent-runner")
+          return log if isinstance(log, str) else ""
+
+        def stage_predecessors(stage: str, role: str) -> list[str]:
+          normalized_stage = stage.lower().strip()
+          normalized_role = role.lower().strip()
+          if normalized_stage == "verify":
+            return ["implement", "plan", "discover"]
+          if normalized_stage == "implement":
+            return ["plan", "discover"]
+          if normalized_stage == "plan":
+            return ["discover"]
+          if normalized_role in {"deployer", "reviewer"}:
+            return ["engineer", "architect"]
+          if normalized_role in {"engineer", "builder"}:
+            return ["architect"]
+          return []
+
+        def resolve_auto_upstream(payload: dict, swarm_name: str, stage: str, role: str, run_name: str) -> str:
+          predecessors = stage_predecessors(stage, role)
+          if not predecessors:
+            return "None"
+          from urllib.parse import quote
+
+          namespace = as_text(payload.get("metadata", {}).get("namespace"), "agents") if isinstance(payload.get("metadata"), dict) else "agents"
+          runs = k8s_request(f"/apis/agents.proompteng.ai/v1alpha1/namespaces/{namespace}/agentruns?labelSelector={quote(f'swarm.proompteng.ai/name={swarm_name}', safe='')}")
+          if not isinstance(runs, dict):
+            return "None"
+          candidates_by_predecessor = {predecessor: [] for predecessor in predecessors}
+          for item in runs.get("items", []):
+            if not isinstance(item, dict):
+              continue
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            name = as_text(metadata.get("name"))
+            if not name or name == run_name:
+              continue
+            labels = metadata.get("labels") if isinstance(metadata.get("labels"), dict) else {}
+            item_stage = as_text(labels.get("swarm.proompteng.ai/stage"))
+            item_role = read_field(item, "swarmAgentRole")
+            if item_stage not in predecessors and item_role not in predecessors:
+              continue
+            status = item.get("status") if isinstance(item.get("status"), dict) else {}
+            if as_text(status.get("phase")).lower() != "succeeded":
+              continue
+            workflow = status.get("workflow") if isinstance(status.get("workflow"), dict) else {}
+            steps = workflow.get("steps") if isinstance(workflow.get("steps"), list) else []
+            last_step = steps[-1] if steps and isinstance(steps[-1], dict) else {}
+            job_ref = last_step.get("jobRef") if isinstance(last_step.get("jobRef"), dict) else {}
+            job_name = as_text(job_ref.get("name"))
+            if not job_name:
+              continue
+            finished = as_text(status.get("finishedAt")) or as_text(status.get("updatedAt")) or as_text(metadata.get("creationTimestamp"))
+            candidate = {"name": name, "stage": item_stage or item_role, "finished": finished, "job": job_name}
+            for predecessor in predecessors:
+              if item_stage == predecessor or item_role == predecessor:
+                candidates_by_predecessor[predecessor].append(candidate)
+          for predecessor in predecessors:
+            candidates = candidates_by_predecessor[predecessor]
+            candidates.sort(key=lambda item: item["finished"], reverse=True)
+            for candidate in candidates:
+              result = extract_result(read_pod_log(namespace, candidate["job"]))
+              if result:
+                return "\n".join([
+                  f"Auto-discovered upstream run: {candidate['name']}",
+                  f"Auto-discovered upstream stage: {candidate['stage']}",
+                  "",
+                  result,
+                ])
+          return "None"
+
+        def publish_handoff(subject: str, handoff: dict) -> None:
+          nats_path = "/usr/local/bin/nats"
+          nats_url = os.environ.get("NATS_URL", "").strip()
+          if not nats_url or not Path(nats_path).exists():
+            return
+          command = [nats_path, "--server", nats_url]
+          user = os.environ.get("NATS_USER", "").strip()
+          password = os.environ.get("NATS_PASSWORD", "").strip()
+          if user:
+            command.extend(["--user", user])
+          if password:
+            command.extend(["--password", password])
+          command.extend(["pub", subject, json.dumps(handoff, sort_keys=True)])
+          subprocess.run(command, check=False, timeout=20)
+
+        def role_guidance(role: str, stage: str) -> str:
+          normalized_stage = stage.lower().strip()
+          normalized_role = role.lower().strip()
+          if normalized_stage in {"discover", "plan"} or normalized_role == "architect":
+            return "Architect duty: preserve team momentum by turning runtime evidence into a precise blocker, plan, or next action."
+          if normalized_stage == "implement" or normalized_role == "engineer":
+            return "Engineer duty: consume the prior handoff and produce a concrete repair path or implementation checklist that a code-capable worker can execute."
+          if normalized_stage == "verify" or normalized_role == "deployer":
+            return "Deployer duty: consume the implementation handoff, give a go/no-go, identify rollout risk, and name the exact next verification action."
+          return "Worker duty: consume upstream context, add one useful contribution, and hand off the exact next action."
+
+        def main() -> int:
+          event_path = Path(sys.argv[1] if len(sys.argv) > 1 else "/workspace/run.json")
+          log_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("/workspace/.agent/runner.log")
+          payload = json.loads(event_path.read_text(encoding="utf-8"))
+          token = os.environ.get("HF_TOKEN", "").strip()
+          if not token:
+            raise RuntimeError("HF_TOKEN is required for Codex provider fallback")
+
+          run_name = read_field(payload, "name", as_text(payload.get("metadata", {}).get("name"), "unknown-run"))
+          repository = read_field(payload, "repository", "unknown")
+          base = read_field(payload, "base", "main")
+          head = read_field(payload, "head", "unknown")
+          swarm_name = read_field(payload, "swarmName", "unknown-swarm")
+          team_name = read_field(payload, "swarmTeamName", swarm_name)
+          stage = read_field(payload, "swarmStage", read_field(payload, "stage", "unknown"))
+          role = read_field(payload, "swarmAgentRole", "worker")
+          identity = read_field(payload, "swarmAgentIdentity", role)
+          objective = read_field(payload, "objective", "preserve swarm collaboration while primary provider is unavailable")
+          business_metric = read_field(payload, "swarmBusinessMetric", "unavailable")
+          evidence_url = read_field(payload, "swarmBusinessEvidenceUrl", "")
+          failure_tail = log_path.read_text(encoding="utf-8", errors="replace")[-4000:] if log_path.exists() else ""
+          upstream = resolve_auto_upstream(payload, swarm_name, stage, role, run_name)
+
+          print("SWARM_CODEX_HF_FALLBACK_UPSTREAM_BEGIN")
+          print(upstream)
+          print("SWARM_CODEX_HF_FALLBACK_UPSTREAM_END")
+
+          messages = [
+            {
+              "role": "system",
+              "content": (
+                "You are a fallback swarm teammate activated only because the primary Codex worker "
+                "hit provider auth or capacity failure before completing work. Be explicit that this "
+                "is a fallback coordination artifact, not a completed code change. Do not invent file "
+                "inspections, commands, PRs, tests, or rollout proof. Create useful team value by "
+                "preserving context, consuming upstream handoff, identifying the blocker, and naming "
+                "the exact next action for a code-capable worker."
+              ),
+            },
+            {
+              "role": "user",
+              "content": "\n".join([
+                f"Repository: {repository}",
+                f"Base branch: {base}",
+                f"Head branch: {head}",
+                f"Swarm: {swarm_name}",
+                f"Team: {team_name}",
+                f"Worker identity: {identity}",
+                f"Stage: {stage}",
+                f"Role: {role}",
+                role_guidance(role, stage),
+                f"Objective: {objective}",
+                f"Business metric: {business_metric}",
+                f"Business evidence URL: {evidence_url}",
+                "",
+                "Primary Codex failure tail:",
+                failure_tail,
+                "",
+                "Upstream handoff:",
+                upstream,
+                "",
+                "Return markdown with exactly these sections:",
+                "## Role",
+                "## Primary Provider Blocker",
+                "## Upstream Read",
+                "## Contribution",
+                "## Evidence",
+                "## Handoff",
+                "## Value Created",
+              ]),
+            },
+          ]
+
+          model = os.environ.get("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct:novita").strip()
+          content = chat_completion(os.environ.get("HF_BASE_URL", "https://router.huggingface.co/v1"), token, model, messages)
+          output_dir = Path("/workspace/.agent")
+          output_dir.mkdir(parents=True, exist_ok=True)
+          (output_dir / "hf-fallback-result.md").write_text(content + "\n", encoding="utf-8")
+          handoff = {
+            "schema_version": "swarm.codex-hf-fallback.v1",
+            "generated_at": now_iso(),
+            "run": run_name,
+            "repository": repository,
+            "swarm": swarm_name,
+            "stage": stage,
+            "role": role,
+            "identity": identity,
+            "model": model,
+            "primary_failure_tail": failure_tail,
+            "content": content,
+          }
+          (output_dir / "status.json").write_text(json.dumps({"status": "hf_fallback_succeeded", **handoff}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          publish_handoff(f"swarm.{swarm_name}.{role}.{run_name}.fallback".replace("/", "."), handoff)
+          print("SWARM_CODEX_HF_FALLBACK_RESULT_BEGIN")
+          print(content)
+          print("SWARM_CODEX_HF_FALLBACK_RESULT_END")
+          return 0
+
+        if __name__ == "__main__":
+          try:
+            raise SystemExit(main())
+          except Exception as error:
+            print(f"Codex HF fallback failed: {error}", file=sys.stderr)
+            raise SystemExit(1)
   outputArtifacts:
     - name: runner-log
       path: /workspace/.agent/runner.log
