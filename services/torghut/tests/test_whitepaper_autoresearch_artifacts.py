@@ -122,7 +122,7 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                 candidate={
                     "candidate_id": f"cand-{index}",
                     "objective_scorecard": {
-                        "net_pnl_per_day": str(300 - (index * 25)),
+                        "net_pnl_per_day": str(625 - (index * 25)),
                         "active_day_ratio": "0.92",
                         "positive_day_ratio": "0.64",
                         "worst_day_loss": "150",
@@ -403,7 +403,7 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                 candidate={
                     "candidate_id": "cand-a",
                     "objective_scorecard": {
-                        "net_pnl_per_day": "300",
+                        "net_pnl_per_day": "900",
                         "active_day_ratio": "1.0",
                         "positive_day_ratio": "1.0",
                         "worst_day_loss": "0",
@@ -412,9 +412,9 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                     },
                     "full_window": {
                         "daily_net": {
-                            "2026-02-23": "200",
-                            "2026-02-24": "400",
-                            "2026-02-25": "300",
+                            "2026-02-23": "600",
+                            "2026-02-24": "1200",
+                            "2026-02-25": "900",
                         }
                     },
                 },
@@ -426,7 +426,7 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                 candidate={
                     "candidate_id": "cand-b",
                     "objective_scorecard": {
-                        "net_pnl_per_day": "270",
+                        "net_pnl_per_day": "810",
                         "active_day_ratio": "1.0",
                         "positive_day_ratio": "1.0",
                         "worst_day_loss": "0",
@@ -435,9 +435,9 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                     },
                     "full_window": {
                         "daily_net": {
-                            "2026-02-23": "100",
-                            "2026-02-24": "350",
-                            "2026-02-25": "360",
+                            "2026-02-23": "300",
+                            "2026-02-24": "1050",
+                            "2026-02-25": "1080",
                         }
                     },
                 },
@@ -449,7 +449,7 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                 candidate={
                     "candidate_id": "cand-c",
                     "objective_scorecard": {
-                        "net_pnl_per_day": "260",
+                        "net_pnl_per_day": "780",
                         "active_day_ratio": "1.0",
                         "positive_day_ratio": "1.0",
                         "worst_day_loss": "0",
@@ -458,9 +458,9 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                     },
                     "full_window": {
                         "daily_net": {
-                            "2026-02-23": "180",
-                            "2026-02-24": "360",
-                            "2026-02-25": "270",
+                            "2026-02-23": "540",
+                            "2026-02-24": "1080",
+                            "2026-02-25": "720",
                         }
                     },
                 },
@@ -479,14 +479,14 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         self.assertIsNotNone(portfolio)
         assert portfolio is not None
         self.assertEqual(portfolio.source_candidate_ids, ("cand-a", "cand-b"))
-        self.assertEqual(portfolio.objective_scorecard["net_pnl_per_day"], "570")
+        self.assertEqual(portfolio.objective_scorecard["net_pnl_per_day"], "855.0")
         self.assertEqual(portfolio.objective_scorecard["worst_day_loss"], "0")
         self.assertEqual(
             portfolio.objective_scorecard["daily_net"],
             {
-                "2026-02-23": "300",
-                "2026-02-24": "750",
-                "2026-02-25": "660",
+                "2026-02-23": "450.0",
+                "2026-02-24": "1125.0",
+                "2026-02-25": "990.0",
             },
         )
         rejection_reasons = [

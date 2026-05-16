@@ -37,11 +37,11 @@ spec:
       - name: targetNetPnlPerDay
         value: '500'
       - name: maxCandidates
-        value: '96'
+        value: '136'
       - name: topK
-        value: '24'
+        value: '72'
       - name: explorationSlots
-        value: '16'
+        value: '64'
       - name: portfolioSizeMin
         value: '3'
       - name: portfolioSizeMax
@@ -49,13 +49,13 @@ spec:
       - name: maxFrontierCandidatesPerSpec
         value: '2'
       - name: maxTotalFrontierCandidates
-        value: '48'
+        value: '128'
       - name: realReplayTimeoutSeconds
-        value: '7200'
+        value: '10000'
       - name: realReplayShardSize
         value: '1'
       - name: realReplayShardTimeoutSeconds
-        value: '900'
+        value: '1800'
       - name: realReplayShardWorkers
         value: '6'
       - name: prefetchFullWindowRows
@@ -68,7 +68,7 @@ spec:
     - name: run
       nodeSelector:
         kubernetes.io/arch: arm64
-      activeDeadlineSeconds: 10800
+      activeDeadlineSeconds: 21600
       inputs:
         parameters:
           - name: runId
