@@ -377,16 +377,21 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(envTemplate, 'AGENT_RUN_NAME')).toBe('{{agentRun.name}}')
     expect(objectAt(envTemplate, 'AGENT_RUN_NAMESPACE')).toBe('{{agentRun.namespace}}')
     expect(content).toContain('def summarize_upstream(upstream: str) -> str:')
+    expect(content).toContain('def summarize_failure_tail(log_text: str) -> str:')
     expect(content).toContain(
       'def handoff_subject(payload: dict, swarm_name: str, role: str, run_name: str, suffix: str = "") -> str:',
     )
     expect(content).toContain('def render_fallback_result(')
     expect(content).toContain('Auto-discovered upstream run:')
     expect(content).toContain('The wrapper will render authoritative upstream run and stage facts.')
+    expect(content).toContain('Primary Codex failure summary:')
+    expect(content).toContain('"primary_failure_tail": failure_summary')
+    expect(content).toContain('"primary_failure_summary": failure_summary')
     expect(content).toContain('\"upstream_read\": summarize_upstream(upstream)')
     expect(content).toContain(
       'publish_handoff(handoff_subject(payload, swarm_name, role, run_name, "fallback"), handoff)',
     )
+    expect(content).not.toContain('Primary Codex failure tail:')
     expect(content).not.toContain('publish_handoff(f"swarm.')
   })
 
