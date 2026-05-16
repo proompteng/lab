@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: openclaw
 resources:
   - cloud-init-secret.yaml
+  - datavolume-rootdisk-rbd.yaml
   - virtualmachine.yaml
   - service-ssh.yaml
   - openclaw-vm-rbac.yaml

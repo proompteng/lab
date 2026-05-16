@@ -5,7 +5,7 @@ metadata:
 data:
   git.email: noreply@proompteng.ai
   git.user: Proompt Eng
-  log.level: debug
+  log.level: info
   registries.conf: |
     registries:
     - name: registry

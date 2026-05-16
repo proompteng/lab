@@ -9,21 +9,6 @@ metadata:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   running: true
-  dataVolumeTemplates:
-    - metadata:
-        name: openclaw-rootdisk
-        creationTimestamp: null
-      spec:
-        source:
-          http:
-            url: https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img
-        pvc:
-          accessModes:
-            - ReadWriteOnce
-          resources:
-            requests:
-              storage: 80Gi
-          storageClassName: local-path
   template:
     metadata:
       labels:
@@ -69,7 +54,7 @@ spec:
       volumes:
         - name: rootdisk
           dataVolume:
-            name: openclaw-rootdisk
+            name: openclaw-rootdisk-rbd
         - name: cloudinitdisk
           cloudInitNoCloud:
             secretRef:

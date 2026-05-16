@@ -33,6 +33,10 @@ patches:
       kind: Deployment
       name: argocd-repo-server
   - path: overlays/argocd-image-updater-config.yaml
+  - path: overlays/argocd-image-updater-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-image-updater-controller
   - path: overlays/argocd-server-deployment.yaml
     target:
       kind: Deployment

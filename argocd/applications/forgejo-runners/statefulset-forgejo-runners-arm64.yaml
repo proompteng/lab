@@ -104,9 +104,11 @@ spec:
             requests:
               cpu: 500m
               memory: 1Gi
+              ephemeral-storage: 2Gi
             limits:
               cpu: '2'
               memory: 4Gi
+              ephemeral-storage: 4Gi
           volumeMounts:
             - name: config
               mountPath: /config
@@ -131,9 +133,11 @@ spec:
             requests:
               cpu: 500m
               memory: 1Gi
+              ephemeral-storage: 8Gi
             limits:
               cpu: '3'
               memory: 6Gi
+              ephemeral-storage: 20Gi
           volumeMounts:
             - name: dind-sock
               mountPath: /var/run
@@ -149,7 +153,8 @@ spec:
         - name: dind-sock
           emptyDir: {}
         - name: docker-graph
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 20Gi
   volumeClaimTemplates:
     - metadata:
         name: data
