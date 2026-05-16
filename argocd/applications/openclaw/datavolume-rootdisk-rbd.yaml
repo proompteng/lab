@@ -1,0 +1,18 @@
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataVolume
+metadata:
+  name: openclaw-rootdisk-rbd
+  namespace: openclaw
+spec:
+  source:
+    pvc:
+      namespace: openclaw
+      name: openclaw-rootdisk
+  storage:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 80Gi
+    storageClassName: rook-ceph-block
+    volumeMode: Filesystem
