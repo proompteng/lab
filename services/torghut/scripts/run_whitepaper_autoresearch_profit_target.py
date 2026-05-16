@@ -2375,6 +2375,7 @@ def _pre_replay_candidate_score(spec: CandidateSpec) -> Decimal:
     family_score = {
         "microbar_cross_sectional_pairs_v1": Decimal("70"),
         "microstructure_continuation_matched_filter_v1": Decimal("65"),
+        "opening_drive_leader_reclaim_v1": Decimal("63"),
         "momentum_pullback_v1": Decimal("60"),
         "washout_rebound_v2": Decimal("55"),
         "breakout_reclaim_v2": Decimal("50"),
@@ -3509,6 +3510,7 @@ def _synthetic_net_for_spec(spec: CandidateSpec, *, rank: int) -> Decimal:
     family_bonus = {
         "microbar_cross_sectional_pairs_v1": Decimal("215"),
         "microstructure_continuation_matched_filter_v1": Decimal("190"),
+        "opening_drive_leader_reclaim_v1": Decimal("185"),
         "momentum_pullback_v1": Decimal("175"),
         "washout_rebound_v2": Decimal("165"),
         "breakout_reclaim_v2": Decimal("155"),

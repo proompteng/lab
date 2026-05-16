@@ -28,6 +28,20 @@ def _executable_scorecard_fields(index: int | str = 0) -> dict[str, object]:
 
 
 class TestPortfolioOptimizer(TestCase):
+    def test_oracle_blocker_count_treats_malformed_payloads_as_unblocked(
+        self,
+    ) -> None:
+        self.assertEqual(
+            portfolio_optimizer_module._oracle_blocker_count({}),
+            Decimal("0"),
+        )
+        self.assertEqual(
+            portfolio_optimizer_module._oracle_blocker_count(
+                {"profit_target_oracle": {"blockers": "missing_daily_net"}}
+            ),
+            Decimal("0"),
+        )
+
     def test_capital_safety_rejection_reasons_block_minimums(self) -> None:
         def bundle(
             candidate_id: str,
@@ -999,6 +1013,118 @@ class TestPortfolioOptimizer(TestCase):
             "deterministic_beam_oracle_search_v1",
         )
         self.assertGreater(portfolio.optimizer_report["finalist_state_count"], 1)
+
+    def test_optimizer_prefers_fewer_oracle_blockers_over_average_only(
+        self,
+    ) -> None:
+        def bundle(
+            *,
+            candidate_id: str,
+            net_pnl_per_day: str,
+            symbol: str,
+            cluster: str,
+            daily_net: tuple[str, str, str, str, str],
+        ) -> CandidateEvidenceBundle:
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "runtime_family": "microbar_cross_sectional_pairs",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "family_template_id": "microbar_cross_sectional_pairs_v1",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": net_pnl_per_day,
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "best_day_share": "0.2",
+                        "avg_filled_notional_per_day": "350000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "correlation_cluster": cluster,
+                        "symbol_contribution_shares": {symbol: "1.0"},
+                        **_executable_scorecard_fields(candidate_id),
+                    },
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": daily_net[0],
+                            "2026-02-24": daily_net[1],
+                            "2026-02-25": daily_net[2],
+                            "2026-02-26": daily_net[3],
+                            "2026-02-27": daily_net[4],
+                        },
+                        "daily_filled_notional": {
+                            "2026-02-23": "350000",
+                            "2026-02-24": "350000",
+                            "2026-02-25": "350000",
+                            "2026-02-26": "350000",
+                            "2026-02-27": "350000",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-oracle-aware-fallback",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[
+                bundle(
+                    candidate_id="cand-sparse-intc",
+                    net_pnl_per_day="540",
+                    symbol="INTC",
+                    cluster="sparse-intc",
+                    daily_net=("2700", "0", "0", "0", "0"),
+                ),
+                bundle(
+                    candidate_id="cand-steady-aapl",
+                    net_pnl_per_day="480",
+                    symbol="AAPL",
+                    cluster="steady-aapl",
+                    daily_net=("480", "480", "480", "480", "480"),
+                ),
+                bundle(
+                    candidate_id="cand-steady-amzn",
+                    net_pnl_per_day="480",
+                    symbol="AMZN",
+                    cluster="steady-amzn",
+                    daily_net=("480", "480", "480", "480", "480"),
+                ),
+                bundle(
+                    candidate_id="cand-steady-googl",
+                    net_pnl_per_day="480",
+                    symbol="GOOGL",
+                    cluster="steady-googl",
+                    daily_net=("480", "480", "480", "480", "480"),
+                ),
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            portfolio_size_min=3,
+            portfolio_size_max=3,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertCountEqual(
+            portfolio.source_candidate_ids,
+            ("cand-steady-aapl", "cand-steady-amzn", "cand-steady-googl"),
+        )
+        self.assertFalse(portfolio.objective_scorecard["oracle_passed"])
+        self.assertEqual(
+            portfolio.objective_scorecard["min_daily_net_pnl"],
+            "480.0000000000000000000000000",
+        )
+        self.assertLessEqual(
+            Decimal(
+                portfolio.objective_scorecard["max_single_symbol_contribution_share"]
+            ),
+            Decimal("0.35"),
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
+            ["portfolio_post_cost_net_pnl_per_day_failed"],
+        )
 
     def test_optimizer_rejects_correlated_sleeves_before_minimum_size(
         self,

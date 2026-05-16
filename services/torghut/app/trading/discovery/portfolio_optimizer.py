@@ -526,6 +526,7 @@ def _portfolio_scorecard(
         "target_met": net_per_day >= target_net_pnl_per_day,
         "active_day_ratio": str(active_day_ratio),
         "positive_day_ratio": str(positive_day_ratio),
+        "min_daily_net_pnl": str(min_day),
         "worst_day_loss": str(worst_day_loss),
         "max_drawdown": str(_max_drawdown_from_daily(daily_net)),
         "max_gross_exposure_pct_equity": str(
@@ -597,6 +598,17 @@ def _scorecard_decimal(scorecard: Mapping[str, Any], field: str) -> Decimal:
     return _decimal(scorecard.get(field))
 
 
+def _oracle_blocker_count(scorecard: Mapping[str, Any]) -> Decimal:
+    oracle = scorecard.get("profit_target_oracle")
+    if not isinstance(oracle, Mapping):
+        return Decimal("0")
+    oracle_mapping = cast(Mapping[Any, Any], oracle)
+    blockers = oracle_mapping.get("blockers")
+    if isinstance(blockers, Sequence) and not isinstance(blockers, str):
+        return Decimal(len(cast(Sequence[Any], blockers)))
+    return Decimal("0")
+
+
 def _portfolio_selection_key(
     *,
     selected: Sequence[CandidateEvidenceBundle],
@@ -604,10 +616,14 @@ def _portfolio_selection_key(
 ) -> tuple[Decimal, ...]:
     return (
         Decimal(1 if bool(scorecard.get("oracle_passed")) else 0),
+        -_oracle_blocker_count(scorecard),
         Decimal(1 if bool(scorecard.get("target_met")) else 0),
-        _scorecard_decimal(scorecard, "net_pnl_per_day"),
         _scorecard_decimal(scorecard, "active_day_ratio"),
         _scorecard_decimal(scorecard, "positive_day_ratio"),
+        _scorecard_decimal(scorecard, "min_daily_net_pnl"),
+        _scorecard_decimal(scorecard, "net_pnl_per_day"),
+        -_scorecard_decimal(scorecard, "missing_sleeve_daily_net_count"),
+        _scorecard_decimal(scorecard, "avg_filled_notional_per_day"),
         -_scorecard_decimal(scorecard, "best_day_share"),
         -_scorecard_decimal(scorecard, "max_single_symbol_contribution_share"),
         -_scorecard_decimal(scorecard, "max_cluster_contribution_share"),
@@ -621,43 +637,27 @@ def _portfolio_selection_key(
     )
 
 
-def _partial_selection_key(
-    selected: Sequence[CandidateEvidenceBundle],
-) -> tuple[Decimal, ...]:
-    if not selected:
-        return (
-            Decimal("0"),
-            Decimal("0"),
-            Decimal("0"),
-            Decimal("0"),
-            Decimal("0"),
-            Decimal("0"),
-            Decimal("0"),
-            Decimal("0"),
-            Decimal("0"),
-            Decimal("0"),
-            Decimal("0"),
-            Decimal("0"),
-            Decimal("0"),
-            Decimal("0"),
-            Decimal("0"),
-        )
+def _empty_selection_key() -> tuple[Decimal, ...]:
     return (
         Decimal("0"),
         Decimal("0"),
-        sum((_net_per_day(bundle) for bundle in selected), Decimal("0")),
-        _mean([_active_ratio(bundle) for bundle in selected]),
-        _mean([_positive_ratio(bundle) for bundle in selected]),
-        -max((_best_day_share(bundle) for bundle in selected), default=Decimal("0")),
-        -_max_share(_symbol_contribution_shares(selected)),
-        -_max_share(_cluster_contribution_shares(selected)),
-        -_portfolio_max_gross_exposure_pct_equity(selected),
-        _portfolio_min_cash(selected),
-        Decimal(-_portfolio_negative_cash_observation_count(selected)),
-        -max((_worst_day_loss(bundle) for bundle in selected), default=Decimal("0")),
-        -max((_max_drawdown(bundle) for bundle in selected), default=Decimal("0")),
-        Decimal(len(selected)),
-        sum((_sleeve_score(bundle) for bundle in selected), Decimal("0")),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
     )
 
 
@@ -738,13 +738,13 @@ def _select_portfolio_bundles(
 
     def state_sort_key(state: tuple[int, ...]) -> tuple[tuple[Decimal, ...], str]:
         selected = _selected_from_state(ordered, state)
-        if len(state) >= requested_portfolio_size_min:
+        if not selected:
+            quality_key = _empty_selection_key()
+        else:
             quality_key = _portfolio_selection_key(
                 selected=selected,
                 scorecard=state_scorecard(state),
             )
-        else:
-            quality_key = _partial_selection_key(selected)
         return (quality_key, "|".join(bundle.candidate_id for bundle in selected))
 
     beam: list[tuple[int, ...]] = [()]
