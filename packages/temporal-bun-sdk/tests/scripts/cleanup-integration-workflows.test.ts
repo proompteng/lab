@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
+  isTemporalBatchCapacityError,
   isRetryableTemporalCliError,
   isWorkflowAlreadyCompleted,
   onlyAlreadyResolvedWorkflowsRemainVisible,
   parseWorkflowIdsFromListOutput,
+  shouldFallbackToIndividualTermination,
   verifyOnlyStaleVisibility,
   waitForNoRunningWorkflowCount,
   waitForNoRunningWorkflows,
@@ -18,8 +20,17 @@ describe('cleanup integration workflow retries', () => {
     expect(isRetryableTemporalCliError('Error: failed to describe batch job: Workflow is busy.')).toBe(true)
   })
 
+  test('falls back to individual termination when Temporal batch capacity is saturated', () => {
+    const output = 'Error: failed starting batch operation: Max concurrent batch operations is reached'
+
+    expect(isTemporalBatchCapacityError(output)).toBe(true)
+    expect(isRetryableTemporalCliError(output)).toBe(false)
+    expect(shouldFallbackToIndividualTermination(output)).toBe(true)
+  })
+
   test('does not retry validation failures', () => {
     expect(isRetryableTemporalCliError('Error: invalid search attribute query syntax')).toBe(false)
+    expect(shouldFallbackToIndividualTermination('Error: invalid search attribute query syntax')).toBe(false)
   })
 
   test('treats already completed or missing workflow termination as cleanup success', () => {

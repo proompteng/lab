@@ -23,7 +23,7 @@ const DEFAULT_RETRYABLE_CODES: number[] = [
 ]
 
 export const defaultRetryPolicy: TemporalRpcRetryPolicy = {
-  maxAttempts: 16,
+  maxAttempts: 32,
   initialDelayMs: 200,
   maxDelayMs: 10_000,
   backoffCoefficient: 2,
