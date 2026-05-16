@@ -616,8 +616,8 @@ def _portfolio_selection_key(
 ) -> tuple[Decimal, ...]:
     return (
         Decimal(1 if bool(scorecard.get("oracle_passed")) else 0),
-        -_oracle_blocker_count(scorecard),
         Decimal(1 if bool(scorecard.get("target_met")) else 0),
+        -_oracle_blocker_count(scorecard),
         _scorecard_decimal(scorecard, "active_day_ratio"),
         _scorecard_decimal(scorecard, "positive_day_ratio"),
         _scorecard_decimal(scorecard, "min_daily_net_pnl"),
