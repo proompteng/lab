@@ -12,10 +12,12 @@ from unittest.mock import patch
 
 import yaml
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 import scripts.run_strategy_factory_v2 as runner
 from app.models import Base, VNextExperimentRun, VNextExperimentSpec
+from app.trading.discovery.family_templates import FamilyTemplate
 
 
 class TestRunStrategyFactoryV2(TestCase):
@@ -127,6 +129,29 @@ class TestRunStrategyFactoryV2(TestCase):
             encoding="utf-8",
         )
         return seed_dir
+
+    def _family_template_fixture(self) -> FamilyTemplate:
+        return FamilyTemplate(
+            family_id="breakout_reclaim_v2",
+            economic_mechanism="Breakout reclaim.",
+            supported_markets=("us_equities_intraday",),
+            required_features=("quote_quality",),
+            allowed_normalizations=("price_scaled",),
+            entry_motifs=("breakout_reclaim",),
+            exit_motifs=("trailing_stop",),
+            risk_controls=("stop_loss",),
+            activity_model={},
+            liquidity_assumptions={},
+            regime_activation_rules=(),
+            day_veto_rules=(),
+            default_hard_vetoes={},
+            default_selection_objectives={},
+            runtime_harness={
+                "family": "breakout_continuation_consistent",
+                "strategy_name": "breakout-continuation-long-v1",
+                "disable_other_strategies": True,
+            },
+        )
 
     def _args(
         self,
@@ -621,6 +646,110 @@ class TestRunStrategyFactoryV2(TestCase):
                     )
                 ).scalar_one()
                 self.assertEqual(run_row.experiment_id, "exp-breakout-2")
+
+    def test_persist_result_retries_transient_sqlalchemy_failure(self) -> None:
+        transient_error = OperationalError(
+            "insert into vnext_experiment_specs",
+            {},
+            Exception("server closed the connection unexpectedly"),
+        )
+
+        with (
+            patch.object(
+                runner,
+                "_persist_result_once",
+                side_effect=[transient_error, None],
+            ) as mock_persist_once,
+            patch("scripts.run_strategy_factory_v2.time.sleep") as mock_sleep,
+        ):
+            result = runner._persist_result(
+                runner_run_id="strategy-factory-v2-retry",
+                experiment=runner.CompiledExperimentSweep(
+                    source_run_id="paper-run-1",
+                    experiment_id="exp-breakout-1",
+                    family_template=self._family_template_fixture(),
+                    experiment_payload={"family_template_id": "breakout_reclaim_v2"},
+                    sweep_config={},
+                ),
+                result_payload={"top": []},
+                compiled_sweep_path=Path("compiled-sweep.yaml"),
+                result_path=Path("result.json"),
+            )
+
+        self.assertEqual(result, {"status": "persisted", "attempt": 2})
+        self.assertEqual(mock_persist_once.call_count, 2)
+        mock_sleep.assert_called_once()
+
+    def test_run_strategy_factory_v2_reports_persistence_warning_without_dropping_replay(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            family_template_dir = self._write_family_template(root)
+            seed_sweep_dir = self._write_seed_sweep(root)
+            output_dir = root / "artifacts"
+            output_dir.mkdir()
+
+            experiment_row = VNextExperimentSpec(
+                run_id="paper-run-1",
+                candidate_id=None,
+                experiment_id="exp-breakout-1",
+                payload_json={"family_template_id": "breakout_reclaim_v2"},
+            )
+            fake_payload = {
+                "dataset_snapshot_receipt": {"snapshot_id": "snap-1"},
+                "top": [
+                    {
+                        "candidate_id": "cand-1",
+                        "full_window": {"net_per_day": "321.5"},
+                    }
+                ],
+            }
+            persistence_failure = {
+                "status": "failed",
+                "attempts": 3,
+                "error_type": "OperationalError",
+                "error": "server closed the connection unexpectedly",
+            }
+
+            with (
+                patch(
+                    "scripts.run_strategy_factory_v2.SessionLocal",
+                    side_effect=lambda: Session(self.engine),
+                ),
+                patch(
+                    "scripts.run_strategy_factory_v2._load_source_experiment_specs",
+                    return_value=[experiment_row],
+                ),
+                patch(
+                    "scripts.run_strategy_factory_v2.run_consistent_profitability_frontier",
+                    return_value=fake_payload,
+                ),
+                patch(
+                    "scripts.run_strategy_factory_v2._persist_result",
+                    return_value=persistence_failure,
+                ),
+            ):
+                result = runner.run_strategy_factory_v2(
+                    self._args(
+                        output_dir=output_dir,
+                        strategy_configmap=strategy_configmap,
+                        family_template_dir=family_template_dir,
+                        seed_sweep_dir=seed_sweep_dir,
+                    )
+                )
+
+        self.assertEqual(result["status"], "ok_with_persistence_warnings")
+        self.assertFalse(result["persisted"])
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["experiments"][0]["top_candidate_id"], "cand-1")
+        self.assertEqual(
+            result["experiments"][0]["persistence_status"], persistence_failure
+        )
+        self.assertEqual(
+            result["persistence_failures"][0]["candidate_spec_id"], "exp-breakout-1"
+        )
 
     def test_run_strategy_factory_v2_respects_global_candidate_budget(self) -> None:
         with TemporaryDirectory() as tmpdir:

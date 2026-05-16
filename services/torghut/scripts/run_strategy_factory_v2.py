@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, ROUND_CEILING
@@ -14,6 +15,7 @@ from typing import Any, Mapping, Sequence, cast
 
 import yaml
 from sqlalchemy import delete, select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.db import SessionLocal
 from app.models import VNextExperimentRun, VNextExperimentSpec
@@ -463,7 +465,7 @@ def _load_source_experiment_specs(
         return list(rows)
 
 
-def _persist_result(
+def _persist_result_once(
     *,
     runner_run_id: str,
     experiment: CompiledExperimentSweep,
@@ -558,6 +560,40 @@ def _persist_result(
         session.commit()
 
 
+def _persist_result(
+    *,
+    runner_run_id: str,
+    experiment: CompiledExperimentSweep,
+    result_payload: Mapping[str, Any],
+    compiled_sweep_path: Path,
+    result_path: Path,
+    max_attempts: int = 3,
+) -> dict[str, Any]:
+    bounded_attempts = max(1, int(max_attempts))
+    last_error: SQLAlchemyError | None = None
+    for attempt in range(1, bounded_attempts + 1):
+        try:
+            _persist_result_once(
+                runner_run_id=runner_run_id,
+                experiment=experiment,
+                result_payload=result_payload,
+                compiled_sweep_path=compiled_sweep_path,
+                result_path=result_path,
+            )
+            return {"status": "persisted", "attempt": attempt}
+        except SQLAlchemyError as exc:
+            last_error = exc
+            if attempt >= bounded_attempts:
+                break
+            time.sleep(min(2.0, 0.25 * attempt))
+    return {
+        "status": "failed",
+        "attempts": bounded_attempts,
+        "error_type": type(last_error).__name__ if last_error is not None else "",
+        "error": str(last_error) if last_error is not None else "",
+    }
+
+
 def run_strategy_factory_v2(args: argparse.Namespace) -> dict[str, Any]:
     return run_strategy_factory_v2_from_specs(args)
 
@@ -585,6 +621,7 @@ def run_strategy_factory_v2_from_specs(
         f"strategy-factory-v2-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
     )
     results: list[dict[str, Any]] = []
+    persistence_failures: list[dict[str, Any]] = []
     max_total_candidates_to_evaluate = max(
         0, int(getattr(args, "max_total_candidates_to_evaluate", 0) or 0)
     )
@@ -638,14 +675,26 @@ def run_strategy_factory_v2_from_specs(
             json.dumps(frontier_payload, indent=2, sort_keys=True),
             encoding="utf-8",
         )
+        persistence_status: Mapping[str, Any] | None = None
         if args.persist_results:
-            _persist_result(
+            persistence_status = _persist_result(
                 runner_run_id=runner_run_id,
                 experiment=compiled,
                 result_payload=frontier_payload,
                 compiled_sweep_path=compiled_sweep_path,
                 result_path=result_path,
             )
+            if persistence_status.get("status") != "persisted":
+                persistence_failures.append(
+                    {
+                        "experiment_id": compiled.experiment_id,
+                        "candidate_spec_id": _mapping(
+                            compiled.experiment_payload.get("candidate_spec")
+                        ).get("candidate_spec_id")
+                        or compiled.experiment_id,
+                        **dict(persistence_status),
+                    }
+                )
         top_candidates = cast(list[dict[str, Any]], frontier_payload.get("top") or [])
         top_candidate_id = (
             str(top_candidates[0].get("candidate_id") or "").strip()
@@ -691,6 +740,9 @@ def run_strategy_factory_v2_from_specs(
                     else ""
                 ),
                 "promotion_readiness": promotion_readiness,
+                "persistence_status": dict(persistence_status)
+                if persistence_status is not None
+                else None,
             }
         )
         if (
@@ -704,12 +756,15 @@ def run_strategy_factory_v2_from_specs(
         "status": (
             "total_candidate_budget_exhausted"
             if total_candidate_budget_exhausted
+            else "ok_with_persistence_warnings"
+            if persistence_failures
             else "ok"
         ),
         "runner_run_id": runner_run_id,
         "count": len(results),
         "max_total_candidates_to_evaluate": max_total_candidates_to_evaluate,
-        "persisted": bool(args.persist_results),
+        "persisted": bool(args.persist_results) and not persistence_failures,
+        "persistence_failures": persistence_failures,
         "total_candidate_count": total_candidate_count,
         "experiments": results,
     }
