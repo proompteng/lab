@@ -551,6 +551,10 @@ class TestPortfolioOptimizer(TestCase):
         missing_cost_payload["cost_calibration"] = {}
         missing_cost = evidence_bundle_from_payload(missing_cost_payload)
 
+        valid_daily_profiles = [
+            ("250", "260", "270", "280", "315"),
+            ("315", "280", "270", "260", "250"),
+        ]
         valid_bundles = [
             evidence_bundle_from_frontier_candidate(
                 candidate_spec_id=f"spec-valid-{index}",
@@ -578,11 +582,11 @@ class TestPortfolioOptimizer(TestCase):
                     },
                     "full_window": {
                         "daily_net": {
-                            "2026-02-23": "250",
-                            "2026-02-24": "260",
-                            "2026-02-25": "270",
-                            "2026-02-26": "280",
-                            "2026-02-27": "315",
+                            "2026-02-23": valid_daily_profiles[index][0],
+                            "2026-02-24": valid_daily_profiles[index][1],
+                            "2026-02-25": valid_daily_profiles[index][2],
+                            "2026-02-26": valid_daily_profiles[index][3],
+                            "2026-02-27": valid_daily_profiles[index][4],
                         },
                         "daily_filled_notional": {
                             "2026-02-23": "350000",
@@ -995,3 +999,127 @@ class TestPortfolioOptimizer(TestCase):
             "deterministic_beam_oracle_search_v1",
         )
         self.assertGreater(portfolio.optimizer_report["finalist_state_count"], 1)
+
+    def test_optimizer_rejects_correlated_sleeves_before_minimum_size(
+        self,
+    ) -> None:
+        def bundle(
+            *,
+            candidate_id: str,
+            net_pnl_per_day: str,
+            symbol: str,
+            cluster: str,
+            daily_net: tuple[str, str, str, str, str],
+        ) -> CandidateEvidenceBundle:
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "runtime_family": "microbar_cross_sectional_pairs",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "family_template_id": "microbar_cross_sectional_pairs_v1",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": net_pnl_per_day,
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "best_day_share": "0.2",
+                        "avg_filled_notional_per_day": "350000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "correlation_cluster": cluster,
+                        "symbol_contribution_shares": {symbol: "1.0"},
+                        **_executable_scorecard_fields(candidate_id),
+                    },
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": daily_net[0],
+                            "2026-02-24": daily_net[1],
+                            "2026-02-25": daily_net[2],
+                            "2026-02-26": daily_net[3],
+                            "2026-02-27": daily_net[4],
+                        },
+                        "daily_filled_notional": {
+                            "2026-02-23": "350000",
+                            "2026-02-24": "350000",
+                            "2026-02-25": "350000",
+                            "2026-02-26": "350000",
+                            "2026-02-27": "350000",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-correlated-search",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        correlated_daily_net = ("0", "900", "0", "0", "0")
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[
+                bundle(
+                    candidate_id="cand-correlated-a",
+                    net_pnl_per_day="180",
+                    symbol="INTC",
+                    cluster="correlated-a",
+                    daily_net=correlated_daily_net,
+                ),
+                bundle(
+                    candidate_id="cand-correlated-b",
+                    net_pnl_per_day="180",
+                    symbol="INTC",
+                    cluster="correlated-b",
+                    daily_net=correlated_daily_net,
+                ),
+                bundle(
+                    candidate_id="cand-correlated-c",
+                    net_pnl_per_day="180",
+                    symbol="INTC",
+                    cluster="correlated-c",
+                    daily_net=correlated_daily_net,
+                ),
+                bundle(
+                    candidate_id="cand-diverse-a",
+                    net_pnl_per_day="650",
+                    symbol="AAPL",
+                    cluster="diverse-a",
+                    daily_net=("650", "650", "650", "650", "650"),
+                ),
+                bundle(
+                    candidate_id="cand-diverse-b",
+                    net_pnl_per_day="650",
+                    symbol="AMZN",
+                    cluster="diverse-b",
+                    daily_net=("650", "650", "650", "650", "650"),
+                ),
+                bundle(
+                    candidate_id="cand-diverse-c",
+                    net_pnl_per_day="650",
+                    symbol="GOOGL",
+                    cluster="diverse-c",
+                    daily_net=("650", "650", "650", "650", "650"),
+                ),
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            portfolio_size_min=3,
+            portfolio_size_max=3,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertFalse(
+            {
+                "cand-correlated-a",
+                "cand-correlated-b",
+                "cand-correlated-c",
+            }.issubset(set(portfolio.source_candidate_ids))
+        )
+        self.assertCountEqual(
+            portfolio.source_candidate_ids,
+            ("cand-diverse-a", "cand-diverse-b", "cand-diverse-c"),
+        )
+        self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
+        self.assertIn(
+            "correlation_cap",
+            {item["reason"] for item in portfolio.optimizer_report["rejections"]},
+        )

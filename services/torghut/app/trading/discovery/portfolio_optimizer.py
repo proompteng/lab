@@ -670,17 +670,14 @@ def _portfolio_addition_rejection(
 ) -> dict[str, Any] | None:
     cluster = _cluster_id(bundle)
     selected_clusters = {_cluster_id(item) for item in selected}
-    if cluster in selected_clusters and len(selected) >= requested_portfolio_size_min:
+    if cluster in selected_clusters:
         return {
             "candidate_id": bundle.candidate_id,
             "reason": "cluster_cap",
             "cluster": cluster,
         }
     max_correlation = _max_pairwise_correlation(bundle, selected)
-    if (
-        max_correlation > max_allowed_correlation
-        and len(selected) >= requested_portfolio_size_min
-    ):
+    if selected and max_correlation > max_allowed_correlation:
         return {
             "candidate_id": bundle.candidate_id,
             "reason": "correlation_cap",
