@@ -215,13 +215,8 @@ spec:
             if match:
               prefix = strip_short_tags(line[: match.start()]).rstrip()
               suffix = line[match.end() :]
-              end = HTML_END_PATTERN.search(suffix)
-              if end:
-                suffix = strip_short_tags(suffix[end.end() :]).strip()
-              else:
-                suffix = ""
-                suppressing_html = True
-              parts = [part for part in (prefix, SUPPRESSED_PROVIDER_HTML, suffix) if part]
+              suppressing_html = HTML_END_PATTERN.search(suffix) is None
+              parts = [part for part in (prefix, SUPPRESSED_PROVIDER_HTML) if part]
               print(" ".join(parts), flush=True)
               continue
 

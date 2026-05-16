@@ -424,6 +424,7 @@ describe('scheduled AgentRun templates', () => {
         '<span id="challenge-error-text"',
         'data-cf-error="403">Enable JavaScript and cookies to continue</span>',
         '<body><svg width="41" height="41" viewBox="0 0 41 41"><path d="M37.5324 16.8707"/></svg></body></html>',
+        '<script>(function(){window._cf_chl_opt={cRay:"9fc9c7b1bfd6fdda",fa:"/backend-api/plugins/featured?platform=codex&__cf_chl_tk=token"}})();</script>',
         'Turn failed -> Quota exceeded. Check your plan and billing details.',
       ].join('\n'),
       encoding: 'utf8',
@@ -438,6 +439,9 @@ describe('scheduled AgentRun templates', () => {
     expect(result.stdout).not.toContain('<span')
     expect(result.stdout).not.toContain('viewBox')
     expect(result.stdout).not.toContain('challenge-error-text')
+    expect(result.stdout).not.toContain('window._cf_chl_opt')
+    expect(result.stdout).not.toContain('__cf_chl')
+    expect(result.stdout).not.toContain('backend-api/plugins/featured?platform=codex')
     expect(result.stdout).not.toMatch(/<[A-Za-z]/)
   })
 
