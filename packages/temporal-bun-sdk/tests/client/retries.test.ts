@@ -8,7 +8,7 @@ const run = <A>(effect: Effect.Effect<A, unknown, never>) => Effect.runPromise(e
 
 describe('Temporal RPC retries', () => {
   test('default policy survives short Temporal frontend disruption windows', () => {
-    expect(defaultRetryPolicy.maxAttempts).toBeGreaterThanOrEqual(16)
+    expect(defaultRetryPolicy.maxAttempts).toBeGreaterThanOrEqual(32)
     expect(defaultRetryPolicy.initialDelayMs).toBeLessThanOrEqual(250)
     expect(defaultRetryPolicy.maxDelayMs).toBeGreaterThanOrEqual(10_000)
     expect(defaultRetryPolicy.retryableStatusCodes).toEqual(
@@ -40,6 +40,32 @@ describe('Temporal RPC retries', () => {
 
     expect(result).toBe('ok')
     expect(attempts).toBe(3)
+  })
+
+  test('retries Temporal shard-unavailable windows without special-casing the message', async () => {
+    let attempts = 0
+    const effect = Effect.tryPromise({
+      try: async () => {
+        attempts += 1
+        if (attempts < 24) {
+          throw new ConnectError('[unavailable] shard status unknown', Code.Unavailable)
+        }
+        return 'ok'
+      },
+      catch: (error) => error,
+    })
+
+    const result = await run(
+      withTemporalRetry(effect, {
+        ...defaultRetryPolicy,
+        initialDelayMs: 1,
+        maxDelayMs: 1,
+        jitterFactor: 0,
+      }),
+    )
+
+    expect(result).toBe('ok')
+    expect(attempts).toBe(24)
   })
 
   test('retries Temporal server unknown errors when the message says to retry', async () => {

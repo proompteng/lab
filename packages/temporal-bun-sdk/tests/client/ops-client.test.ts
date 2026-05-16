@@ -154,6 +154,53 @@ test('startWorkflow retries server-hinted unknown errors with the same request i
   }
 })
 
+test('startWorkflow survives extended shard-unavailable retries with the same request id', async () => {
+  const config = await loadTemporalConfig()
+  type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
+  const calls = new Map<string, CallRecord[]>()
+  let attempts = 0
+
+  const workflowService = {
+    startWorkflowExecution: async (request, options) => {
+      attempts += 1
+      recordCall(calls, 'startWorkflowExecution', request, options)
+      if (attempts < 24) {
+        throw new ConnectError('[unavailable] shard status unknown', Code.Unavailable)
+      }
+      return { runId: 'run-shard-retry', started: true }
+    },
+  } as unknown as WorkflowServiceClient
+
+  const { client } = await createTemporalClient({ config, workflowService })
+  const callOptions = temporalCallOptions({
+    retryPolicy: {
+      initialDelayMs: 1,
+      maxDelayMs: 1,
+      jitterFactor: 0,
+    },
+  })
+
+  try {
+    const result = await client.startWorkflow(
+      {
+        workflowId: 'start-retry-shard-unavailable',
+        workflowType: 'testWorkflow',
+      },
+      callOptions,
+    )
+
+    const entries = calls.get('startWorkflowExecution') ?? []
+    expect(result.runId).toBe('run-shard-retry')
+    expect(entries).toHaveLength(24)
+    expect(entries[0]?.request.requestId).toMatch(uuidRegex)
+    for (const entry of entries) {
+      expect(entry.request.requestId).toBe(entries[0]?.request.requestId)
+    }
+  } finally {
+    await client.shutdown()
+  }
+})
+
 test('startWorkflow recovers already-started errors for the same request id', async () => {
   const config = await loadTemporalConfig()
   type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>

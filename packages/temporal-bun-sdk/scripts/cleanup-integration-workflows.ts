@@ -128,7 +128,7 @@ async function terminate(query: string, workflowType: string, listOutput: string
     ])
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    if (!isRetryableTemporalCliError(message)) {
+    if (!shouldFallbackToIndividualTermination(message)) {
       throw error
     }
 
@@ -372,6 +372,16 @@ export function isRetryableTemporalCliError(output: string): boolean {
   return /namespace rate limit exceeded|context deadline exceeded|transport: error while dialing|unavailable|not enough hosts to serve the request|please retry|temporarily unavailable|workflow is busy/i.test(
     output,
   )
+}
+
+export function isTemporalBatchCapacityError(output: string): boolean {
+  return /failed starting batch operation:.*max concurrent batch operations is reached|max concurrent batch operations is reached/i.test(
+    output,
+  )
+}
+
+export function shouldFallbackToIndividualTermination(output: string): boolean {
+  return isRetryableTemporalCliError(output) || isTemporalBatchCapacityError(output)
 }
 
 export function isWorkflowAlreadyCompleted(output: string): boolean {
