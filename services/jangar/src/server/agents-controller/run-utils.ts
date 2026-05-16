@@ -16,12 +16,46 @@ export const resolveParameters = (agentRun: Record<string, unknown>) => {
   return params
 }
 
+const parsePositiveInteger = (value: unknown): number | undefined => {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.trim()) : Number.NaN
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined
+  return Math.trunc(parsed)
+}
+
 export const resolveParam = (params: Record<string, string>, keys: string[]) => {
   for (const key of keys) {
     const value = params[key]
     if (typeof value === 'string' && value.trim().length > 0) return value.trim()
   }
   return ''
+}
+
+export type RunGoal = {
+  objective: string
+  tokenBudget?: number
+}
+
+export const resolveRunGoal = (
+  run: Record<string, unknown>,
+  parameters: Record<string, string> = resolveParameters(run),
+): RunGoal | null => {
+  const specGoal = asRecord(readNested(run, ['spec', 'goal']))
+  const specObjective = asString(specGoal?.objective)?.trim()
+  if (specObjective) {
+    const tokenBudget = parsePositiveInteger(specGoal?.tokenBudget)
+    return {
+      objective: specObjective,
+      ...(tokenBudget !== undefined ? { tokenBudget } : {}),
+    }
+  }
+
+  const objective = resolveParam(parameters, ['goalObjective', 'objective', 'swarmRequirementObjective'])
+  if (!objective) return null
+  const tokenBudget = parsePositiveInteger(parameters.goalTokenBudget ?? parameters.tokenBudget)
+  return {
+    objective,
+    ...(tokenBudget !== undefined ? { tokenBudget } : {}),
+  }
 }
 
 export const resolveRunParam = (run: Record<string, unknown>, keys: string[]) => {

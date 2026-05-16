@@ -44,6 +44,9 @@ spec:
   implementationSpecRef:
     name: leader-election-design-20260207
   ttlSecondsAfterFinished: 7200
+  goal:
+    objective: Implement leader election end to end and verify the chart/runtime rollout path.
+    tokenBudget: 64000
   parameters:
     repository: proompteng/lab
     base: main
@@ -78,8 +81,13 @@ Notes:
   when you need a distinct planning artifact.
 - Secrets are cluster- and provider-specific. If you reference a Secret (directly or via `systemPromptRef`) it must be
   allowed by policy and often must be listed in `spec.secrets` (see `docs/agents/rbac-matrix.md`).
+- Codex provider images include the official Alpaca MCP server. Runs that need Alpaca tools should list an allowed
+  secret such as `alpaca-mcp` in `spec.secrets`; the secret must provide `ALPACA_API_KEY` and `ALPACA_SECRET_KEY`.
 - `ttlSecondsAfterFinished` is a top-level `AgentRun.spec` field (see `charts/agents/crds/agents.proompteng.ai_agentruns.yaml`).
   Do not put TTL under `spec.runtime.config` unless a specific runtime explicitly documents it.
+- `goal` is a top-level `AgentRun.spec` object. Use `goal.objective` for the persistent Codex goal and optional
+  `goal.tokenBudget` for an explicit positive token budget. Do not encode the first-class goal as
+  `parameters.prompt`.
 - Keep `metadata.name` short enough for label propagation. The controller writes
   `agents.proompteng.ai/agent-run=<run-name>` labels, so names longer than 63 characters can fail reconciliation.
 - Prefer omitting `spec.workload.image` unless you intentionally pin a known-good runner image.
@@ -158,6 +166,7 @@ kubectl get cm -n agents <run-spec-configmap> -o yaml | rg -n 'run.json:|\"promp
 ```
 
 If `run.json.prompt` contains your ImplementationSpec `text`, you did not override the prompt.
+If `spec.goal` is set, `run.json.goal.objective` should contain the goal text.
 
 If `run.json.prompt` does not contain the expected ImplementationSpec text, fail the run setup and fix the spec.
 

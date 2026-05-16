@@ -38,7 +38,10 @@ describe('agents controller job-runtime module', () => {
 
   it('builds run spec with rendered event payload and optional vcs/system prompt', () => {
     const runSpec = buildRunSpec(
-      { metadata: { name: 'run-1', uid: 'uid-1', namespace: 'agents' }, spec: {} },
+      {
+        metadata: { name: 'run-1', uid: 'uid-1', namespace: 'agents' },
+        spec: { goal: { objective: 'Complete the rollout', tokenBudget: 5000 } },
+      },
       { metadata: { name: 'agent-a' }, spec: {} },
       { source: { provider: 'github' }, summary: 'Fix issue' },
       { repository: 'owner/repo', issueNumber: '42' },
@@ -52,6 +55,7 @@ describe('agents controller job-runtime module', () => {
     expect(runSpec.provider).toBe('provider-a')
     expect(runSpec.agentRun).toEqual({ name: 'run-1', uid: 'uid-1', namespace: 'agents' })
     expect(runSpec.parameters).toEqual({ repository: 'owner/repo', issueNumber: '42' })
+    expect(runSpec.goal).toEqual({ objective: 'Complete the rollout', tokenBudget: 5000 })
     expect(runSpec.artifacts).toEqual([{ name: 'artifact.log' }])
     expect(runSpec.vcs).toEqual({ repository: 'owner/repo' })
     expect(runSpec.systemPrompt).toBe('system prompt')

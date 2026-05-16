@@ -50,6 +50,9 @@ workspace_dependencies = true
 [mcp_servers.memories]
 url = "http://127.0.0.1:8080/mcp"
 
+[mcp_servers.alpaca]
+command = "/usr/local/bin/alpaca-mcp-server"
+
 [shell_environment_policy]
 ignore_default_excludes = true
 

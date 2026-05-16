@@ -90,6 +90,27 @@ const respondToTurnStart = async (
   })
 }
 
+const respondToGoalSet = async (child: FakeChildProcess, inspect?: (request: JsonRpcRequest) => void) => {
+  const request = await nextRequest(child)
+  expect(request.method).toBe('thread/goal/set')
+  inspect?.(request)
+  writeLine(child, {
+    id: request.id,
+    result: {
+      goal: {
+        threadId: 'thread-1',
+        objective: 'ship AgentRun goals',
+        status: 'active',
+        tokenBudget: 5000,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    },
+  })
+}
+
 const setupClient = (options: ConstructorParameters<typeof CodexAppServerClient>[0] = {}) => {
   const child = new FakeChildProcess()
   spawnMock.mockReturnValue(child as unknown as ReturnType<typeof spawn>)
@@ -239,6 +260,36 @@ describe('CodexAppServerClient v2 notifications', () => {
       const params = request.params as Record<string, unknown>
       expect(params).not.toHaveProperty('summary')
     })
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', items: [], error: null } },
+    })
+    await drainStream(stream as unknown as AsyncGenerator<unknown, unknown, void>)
+  })
+
+  it('sets a thread goal before starting a turn when a goal is provided', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello', {
+      goal: {
+        objective: ' ship AgentRun goals ',
+        tokenBudget: 5000,
+      },
+    })
+    await respondToThreadStart(child, 'thread-1')
+    await respondToGoalSet(child, (request) => {
+      expect(request.params).toEqual({
+        threadId: 'thread-1',
+        objective: 'ship AgentRun goals',
+        status: 'active',
+        tokenBudget: 5000,
+      })
+    })
+    await respondToTurnStart(child, 'turn-1')
     const { stream } = await runPromise
 
     writeLine(child, {

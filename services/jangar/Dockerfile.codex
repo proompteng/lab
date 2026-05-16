@@ -6,8 +6,10 @@ ARG KUBECONFORM_VERSION=v0.6.7
 ARG NATSCLI_VERSION=v0.3.0
 ARG TARGETARCH=arm64
 ARG TEMPORAL_VERSION=v1.5.1
+ARG UV_VERSION=0.11.14
 ARG CODEX_AUTH_CHECKSUM=unspecified
 ARG CODEX_VERSION=0.130.0
+ARG ALPACA_MCP_SERVER_VERSION=2.0.1
 
 ENV DEBIAN_FRONTEND=noninteractive \
     WORKSPACE=/workspace \
@@ -42,6 +44,7 @@ RUN set -eux; \
 RUN CODEX_ENV_NODE_VERSION="$CODEX_ENV_NODE_VERSION" CODEX_ENV_GO_VERSION="$CODEX_ENV_GO_VERSION" /opt/codex/setup_universal.sh
 
 RUN mise use --global "bun@${BUN_VERSION}" \
+    && mise use --global "uv@${UV_VERSION}" \
     && mise cache clear \
     && rm -rf "$HOME/.cache/mise" "$HOME/.local/share/mise/downloads"
 
@@ -100,6 +103,8 @@ RUN set -eux; \
     rm -rf "${TEMPORAL_TMPDIR}"
 
 RUN bash -lc 'source /root/.nvm/nvm.sh && npm install -g "@openai/codex@${CODEX_VERSION}" node-gyp && ln -sf "$(command -v codex)" /usr/local/bin/codex && ln -sf "$(command -v node)" /usr/local/bin/node && ln -sf "$(command -v npm)" /usr/local/bin/npm && ln -sf "$(command -v node-gyp)" /usr/local/bin/node-gyp'
+
+RUN bash -lc 'uv tool install "alpaca-mcp-server==${ALPACA_MCP_SERVER_VERSION}" && ln -sf /root/.local/bin/alpaca-mcp-server /usr/local/bin/alpaca-mcp-server'
 
 RUN mkdir -p "$WORKSPACE" /root/.codex "$BUN_INSTALL_CACHE_DIR"
 

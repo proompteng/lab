@@ -34,6 +34,36 @@ const parseMetadata = async (path?: string): Promise<MetadataRecord> => {
 
 const getMetadataString = (metadata: MetadataRecord, key: string) => pickString(metadata[key])
 
+const getMetadataRecord = (metadata: MetadataRecord, key: string) => {
+  const value = metadata[key]
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as MetadataRecord) : {}
+}
+
+const getMetadataPositiveInt = (metadata: MetadataRecord, key: string) => {
+  const value = metadata[key]
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number.parseInt(value, 10) : Number.NaN
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined
+}
+
+const resolveGoal = (metadata: MetadataRecord) => {
+  const goal = getMetadataRecord(metadata, 'goal')
+  const objective =
+    getMetadataString(goal, 'objective') ??
+    getMetadataString(metadata, 'goalObjective') ??
+    getMetadataString(metadata, 'objective')
+  if (!objective) {
+    return null
+  }
+  const tokenBudget =
+    getMetadataPositiveInt(goal, 'tokenBudget') ??
+    getMetadataPositiveInt(metadata, 'goalTokenBudget') ??
+    getMetadataPositiveInt(metadata, 'tokenBudget')
+  return {
+    objective,
+    ...(tokenBudget ? { tokenBudget } : {}),
+  }
+}
+
 const describeMetadata = (metadata: MetadataRecord) => {
   const keys = Object.keys(metadata)
   if (keys.length === 0) {
@@ -59,6 +89,7 @@ export const runCodexResearch = async () => {
 
   const metadataPath = metadataPathArg ?? process.env.AUTO_RESEARCH_METADATA_PATH
   const metadata = await parseMetadata(metadataPath)
+  const goal = resolveGoal(metadata)
 
   const worktree = process.env.WORKTREE ?? '/workspace/lab'
   const artifactPath = process.env.AUTO_RESEARCH_ARTIFACT_PATH ?? `${worktree}/codex-artifact.json`
@@ -102,6 +133,7 @@ export const runCodexResearch = async () => {
     const sessionResult = await runCodexSession({
       stage: 'research',
       prompt,
+      goal,
       outputPath: artifactPath,
       jsonOutputPath,
       agentOutputPath,

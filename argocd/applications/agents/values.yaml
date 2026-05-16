@@ -49,6 +49,9 @@ argocdHooks:
           name: codex-spark-smoke-agent
         implementationSpecRef:
           name: codex-spark-smoke-implspec
+        goal:
+          objective: Verify Codex goal support, provider startup, and the promoted runner image without external side effects.
+          tokenBudget: 8000
         runtime:
           type: workflow
           config:

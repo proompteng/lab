@@ -42,6 +42,7 @@ type AgentRunPayload = {
   idempotencyKey?: string
   implementationSpecRef?: { name: string }
   implementation?: Record<string, unknown>
+  goal?: { objective: string; tokenBudget?: number }
   runtime: { type: string; config?: Record<string, unknown> }
   workflow?: { steps: WorkflowStepPayload[] }
   workload?: Record<string, unknown>
@@ -87,6 +88,25 @@ const parseOptionalNumber = (value: unknown): number | undefined => {
     if (Number.isFinite(parsed)) return parsed
   }
   return undefined
+}
+
+const parseGoal = (value: Record<string, unknown> | null): AgentRunPayload['goal'] => {
+  if (!value) return undefined
+  const objective = asString(value.objective)
+  if (!objective) {
+    throw new Error('goal.objective is required')
+  }
+  const tokenBudget = parseOptionalNumber(value.tokenBudget)
+  if (value.tokenBudget != null && tokenBudget === undefined) {
+    throw new Error('goal.tokenBudget must be a number')
+  }
+  if (tokenBudget !== undefined && tokenBudget <= 0) {
+    throw new Error('goal.tokenBudget must be > 0')
+  }
+  return {
+    objective,
+    ...(tokenBudget !== undefined ? { tokenBudget: Math.trunc(tokenBudget) } : {}),
+  }
 }
 
 const normalizeVcsMode = (value?: string | null) => {
@@ -271,6 +291,7 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
   const implementationSpecName = asString(implementationSpecRef?.name)
 
   const inline = asRecord(payload.implementation)
+  const goal = parseGoal(asRecord(payload.goal))
   const runtime = asRecord(payload.runtime)
   if (!runtime) throw new Error('runtime is required')
   const runtimeType = asString(runtime.type)
@@ -323,6 +344,7 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
     idempotencyKey,
     implementationSpecRef: implementationSpecName ? { name: implementationSpecName } : undefined,
     implementation: inline ?? undefined,
+    goal,
     runtime: { type: runtimeType, config: asRecord(runtime.config) ?? undefined },
     workflow: workflowSteps ? { steps: workflowSteps } : undefined,
     workload,
@@ -801,6 +823,7 @@ export const postAgentRunsHandler = async (
         agentRef: parsed.agentRef,
         implementationSpecRef: parsed.implementationSpecRef ?? undefined,
         implementation: parsed.implementation ? { inline: parsed.implementation } : undefined,
+        goal: parsed.goal ?? undefined,
         runtime: parsed.runtime,
         workflow: parsed.workflow
           ? {

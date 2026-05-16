@@ -26,6 +26,8 @@ ARG TEMURIN25_JDK_TAG=jdk-25.0.1+8
 ARG TEMURIN25_JDK_VERSION=25.0.1_8
 ARG GRADLE_VERSION=9.2.1
 ARG CODEX_VERSION=0.130.0
+ARG UV_VERSION=0.11.14
+ARG ALPACA_MCP_SERVER_VERSION=2.0.1
 ARG JANGAR_BUILD_CI=false
 
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS tools
@@ -45,6 +47,8 @@ ARG TEMURIN25_JDK_TAG
 ARG TEMURIN25_JDK_VERSION
 ARG GRADLE_VERSION
 ARG CODEX_VERSION
+ARG UV_VERSION
+ARG ALPACA_MCP_SERVER_VERSION
 ARG JANGAR_BUILD_CI
 WORKDIR /app
 
@@ -390,6 +394,10 @@ RUN set -eux; \
 # Install Codex CLI with Bun so the app-server binary is available at runtime
 RUN --mount=type=cache,id=bun-install-cache-codex-cli,target=/root/.bun/install/cache \
   bun add -g "@openai/codex@${CODEX_VERSION}"
+
+RUN python3 -m pip install --break-system-packages "uv==${UV_VERSION}" \
+  && uv tool install "alpaca-mcp-server==${ALPACA_MCP_SERVER_VERSION}" \
+  && ln -sf /root/.local/bin/alpaca-mcp-server /usr/local/bin/alpaca-mcp-server
 
 # Install openvscode-server (upstream VS Code server build from gitpod-io)
 RUN set -eux; \

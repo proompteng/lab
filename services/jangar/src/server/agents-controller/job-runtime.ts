@@ -5,7 +5,7 @@ import type { createKubernetesClient } from '~/server/primitives-kube'
 
 import { parseEnvArray, parseEnvRecord, parseOptionalNumber, parseStringList } from './env-config'
 import { createImplementationContractTools } from './implementation-contract'
-import { resolveParam, resolveParameters } from './run-utils'
+import { resolveParam, resolveParameters, resolveRunGoal } from './run-utils'
 import { buildRuntimeRef } from './runtime-resources'
 import type { SystemPromptRef } from './system-prompt'
 import { renderTemplate } from './template-hash'
@@ -159,11 +159,13 @@ export const buildRunSpec = (
 ) => {
   const context = buildRunSpecContext(agentRun, agent, implementation, parameters, memory, vcs ?? null)
   const eventPayload = buildEventPayload(implementation, parameters)
+  const goal = resolveRunGoal(agentRun, parameters)
   return {
     provider: providerName ?? asString(readNested(agent, ['spec', 'providerRef', 'name'])) ?? '',
     agentRun: context.agentRun,
     implementation,
     parameters,
+    ...(goal ? { goal } : {}),
     memory:
       memory == null
         ? null
@@ -308,13 +310,14 @@ const createRunSpecConfigMap = async (
 }
 
 const buildAgentRunnerSpec = (
-  _runSpec: Record<string, unknown>,
+  runSpec: Record<string, unknown>,
   parameters: Record<string, string>,
   providerName: string,
   logRetentionSeconds: number,
 ) => ({
   provider: providerName,
   inputs: parameters,
+  ...(asRecord(runSpec.goal) ? { goal: runSpec.goal } : {}),
   payloads: {
     eventFilePath: '/workspace/run.json',
     // Keep legacy key as an alias so older provider templates keep working.

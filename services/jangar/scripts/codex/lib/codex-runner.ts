@@ -15,12 +15,18 @@ export interface RunCodexSessionOptions {
   stage: 'planning' | 'implementation' | 'review' | 'research' | 'verify'
   prompt: string
   systemPrompt?: string
+  goal?: CodexGoalOptions | null
   outputPath: string
   jsonOutputPath: string
   agentOutputPath: string
   discordChannel?: DiscordChannelOptions
   resumeSessionId?: string
   logger?: CodexLogger
+}
+
+export interface CodexGoalOptions {
+  objective: string
+  tokenBudget?: number
 }
 
 export interface RunCodexSessionResult {
@@ -160,6 +166,7 @@ export const runCodexSession = async ({
   stage,
   prompt,
   systemPrompt,
+  goal,
   outputPath,
   jsonOutputPath,
   agentOutputPath,
@@ -169,6 +176,15 @@ export const runCodexSession = async ({
 }: RunCodexSessionOptions): Promise<RunCodexSessionResult> => {
   const log = logger ?? consoleLogger
   const resumeArg = resumeSessionId?.trim()
+  const normalizedGoal =
+    goal?.objective && goal.objective.trim().length > 0
+      ? {
+          objective: goal.objective.trim(),
+          ...(typeof goal.tokenBudget === 'number' && Number.isFinite(goal.tokenBudget) && goal.tokenBudget > 0
+            ? { tokenBudget: Math.trunc(goal.tokenBudget) }
+            : {}),
+        }
+      : null
 
   const parsePositiveMs = (value: string | undefined, fallback: number) => {
     const parsed = Number(value)
@@ -580,6 +596,13 @@ export const runCodexSession = async ({
     }
   }
 
+  if (normalizedGoal) {
+    log.info('Codex goal metadata configured for session', {
+      objectiveBytes: normalizedGoal.objective.length,
+      tokenBudget: normalizedGoal.tokenBudget,
+    })
+  }
+
   const runResult = await runner.run({
     input: prompt,
     systemPrompt,
@@ -598,7 +621,15 @@ export const runCodexSession = async ({
     resumeSessionId: resumeArg === '--last' ? 'last' : resumeArg,
     idleTimeoutMs,
     completedGraceMs,
-    env: { CODEX_STAGE: stage },
+    env: {
+      CODEX_STAGE: stage,
+      ...(normalizedGoal
+        ? {
+            CODEX_GOAL_OBJECTIVE: normalizedGoal.objective,
+            ...(normalizedGoal.tokenBudget ? { CODEX_GOAL_TOKEN_BUDGET: String(normalizedGoal.tokenBudget) } : {}),
+          }
+        : {}),
+    },
     allowEmptyEventsOnExitCode: 1,
     logger: log,
     onSessionId: (id) => {

@@ -33,6 +33,7 @@ Docs index: [README](README.md)
 - AgentRun:
   - `spec.runtime.config` (map)
   - `spec.parameters` (map)
+  - `spec.goal` is structured, not schemaless.
 - ImplementationSpec:
   - no schemaless fields (plain strings only)
 
@@ -73,6 +74,8 @@ Docs index: [README](README.md)
   - Memory: `spec.type`, `spec.connection.secretRef`
 - Optional fields:
   - AgentRun: `spec.ttlSecondsAfterFinished` (integer seconds, >= 0) to override controller retention (0 disables).
+  - AgentRun: `spec.goal.objective` (string) and optional `spec.goal.tokenBudget` (integer, >= 1) to expose a
+    first-class Codex goal in generated run payloads.
 
 ## Status Conditions (standard)
 

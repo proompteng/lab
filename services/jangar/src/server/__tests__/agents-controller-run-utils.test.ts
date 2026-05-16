@@ -13,6 +13,7 @@ import {
   resolveParam,
   resolveParameters,
   resolveRepositoryFromParameters,
+  resolveRunGoal,
   resolveRunHeadBranch,
   resolveRunParam,
   resolveRunRepository,
@@ -72,6 +73,27 @@ describe('agents controller run-utils module', () => {
     }
 
     expect(resolveRunParam(run, ['head', 'head_ref'])).toBe('feature/one')
+  })
+
+  it('resolves typed AgentRun goals before legacy objective parameters', () => {
+    expect(
+      resolveRunGoal({
+        spec: {
+          goal: { objective: ' Ship the goal feature ', tokenBudget: 9000 },
+          parameters: { objective: 'fallback' },
+        },
+      }),
+    ).toEqual({ objective: 'Ship the goal feature', tokenBudget: 9000 })
+
+    expect(
+      resolveRunGoal({
+        spec: {
+          parameters: { objective: 'legacy goal', goalTokenBudget: '1200' },
+        },
+      }),
+    ).toEqual({ objective: 'legacy goal', tokenBudget: 1200 })
+
+    expect(resolveRunGoal({ spec: { parameters: {} } })).toBeNull()
   })
 
   it('normalizes repo/branch, active phases, and queued phases', () => {
