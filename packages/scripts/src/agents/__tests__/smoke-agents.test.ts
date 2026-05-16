@@ -329,6 +329,32 @@ describe('scheduled AgentRun templates', () => {
     }
   })
 
+  it('mounts HF fallback secrets for Codex-backed swarm templates', () => {
+    const manifests = readYamlObjects('argocd/applications/agents/swarm-agentrun-templates.yaml')
+    const agentRunTemplates = manifests.filter((manifest) => manifest.kind === 'AgentRun')
+
+    for (const template of agentRunTemplates) {
+      const name = objectAt(objectAt(template, 'metadata'), 'name')
+      const agentRef = objectAt(objectAt(objectAt(template, 'spec'), 'agentRef'), 'name')
+      if (typeof name !== 'string' || agentRef !== 'codex-spark-agent') continue
+      const secrets = objectAt(objectAt(template, 'spec'), 'secrets') as string[] | undefined
+
+      expect(secrets).toContain('github-token')
+      expect(secrets).toContain('codex-auth')
+      expect(secrets).toContain('hf-router-token')
+      expect(secrets).toContain('nats-agents-credentials')
+    }
+
+    const secretBindings = readYamlObjects('argocd/applications/agents/codex-secretbinding.yaml')
+    const codexBinding = secretBindings.find(
+      (manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'codex-github-token',
+    )
+    const allowedSecrets = objectAt(objectAt(codexBinding, 'spec'), 'allowedSecrets') as string[] | undefined
+
+    expect(allowedSecrets).toContain('hf-router-token')
+    expect(allowedSecrets).toContain('nats-agents-credentials')
+  })
+
   it('keeps the deployer implementation spec focused on a bounded release slice', () => {
     const manifests = readYamlObjects('argocd/applications/agents/swarm-implspecs.yaml')
     const deployerSpec = manifests.find(
