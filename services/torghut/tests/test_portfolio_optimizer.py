@@ -1014,7 +1014,7 @@ class TestPortfolioOptimizer(TestCase):
         )
         self.assertGreater(portfolio.optimizer_report["finalist_state_count"], 1)
 
-    def test_optimizer_prefers_fewer_oracle_blockers_over_average_only(
+    def test_optimizer_prefers_target_met_before_fewer_oracle_blockers(
         self,
     ) -> None:
         def bundle(
@@ -1106,24 +1106,25 @@ class TestPortfolioOptimizer(TestCase):
 
         self.assertIsNotNone(portfolio)
         assert portfolio is not None
-        self.assertCountEqual(
-            portfolio.source_candidate_ids,
-            ("cand-steady-aapl", "cand-steady-amzn", "cand-steady-googl"),
-        )
+        self.assertIn("cand-sparse-intc", portfolio.source_candidate_ids)
+        self.assertEqual(len(portfolio.source_candidate_ids), 3)
         self.assertFalse(portfolio.objective_scorecard["oracle_passed"])
+        self.assertTrue(portfolio.objective_scorecard["target_met"])
         self.assertEqual(
             portfolio.objective_scorecard["min_daily_net_pnl"],
-            "480.0000000000000000000000000",
+            "320.0000000000000000000000000",
         )
-        self.assertLessEqual(
-            Decimal(
-                portfolio.objective_scorecard["max_single_symbol_contribution_share"]
-            ),
-            Decimal("0.35"),
+        self.assertGreater(
+            Decimal(portfolio.objective_scorecard["max_single_day_contribution_share"]),
+            Decimal("0.25"),
         )
         self.assertEqual(
             portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
-            ["portfolio_post_cost_net_pnl_per_day_failed"],
+            [
+                "best_day_share_failed",
+                "max_single_day_contribution_share_failed",
+                "max_single_symbol_contribution_share_failed",
+            ],
         )
 
     def test_optimizer_rejects_correlated_sleeves_before_minimum_size(
