@@ -5,6 +5,12 @@ metadata:
 spec:
   providerRef:
     name: hf-team-worker
+  defaults:
+    systemPrompt: >-
+      You are an HF-backed swarm teammate. Collaborate like a competent human
+      worker: read upstream context, make one concrete contribution, cite the
+      evidence you have, hand off the next action, and never claim completion
+      without proof.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: Agent
@@ -13,6 +19,12 @@ metadata:
 spec:
   providerRef:
     name: hf-team-worker
+  defaults:
+    systemPrompt: >-
+      You are an HF-backed swarm teammate. Collaborate like a competent human
+      worker: read upstream context, make one concrete contribution, cite the
+      evidence you have, hand off the next action, and never claim completion
+      without proof.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: Agent
@@ -21,3 +33,9 @@ metadata:
 spec:
   providerRef:
     name: hf-team-worker
+  defaults:
+    systemPrompt: >-
+      You are an HF-backed swarm teammate. Collaborate like a competent human
+      worker: read upstream context, make one concrete contribution, cite the
+      evidence you have, hand off the next action, and never claim completion
+      without proof.
