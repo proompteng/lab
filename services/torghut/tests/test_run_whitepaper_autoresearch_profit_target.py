@@ -362,13 +362,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(
             row_by_spec[capital_unsafe_spec.candidate_spec_id]["selection_reason"],
-            "pre_replay_mlx_feedback_penalized",
+            "pre_replay_mlx_feedback_blocked",
         )
         self.assertGreater(
             row_by_spec[losing_spec.candidate_spec_id]["rank"],
             row_by_spec[unexplored_spec.candidate_spec_id]["rank"],
         )
-        self.assertGreater(
+        self.assertLessEqual(
             row_by_spec[capital_unsafe_spec.candidate_spec_id]["proposal_score"],
             -999999,
         )
@@ -842,11 +842,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(
             row_by_spec[min_cash_spec.candidate_spec_id]["selection_reason"],
-            "pre_replay_mlx_feedback_penalized",
+            "pre_replay_mlx_feedback_blocked",
         )
         self.assertEqual(
             row_by_spec[negative_cash_spec.candidate_spec_id]["selection_reason"],
-            "pre_replay_mlx_feedback_penalized",
+            "pre_replay_mlx_feedback_blocked",
         )
         self.assertEqual(
             row_by_spec[unexplored_spec.candidate_spec_id]["training_source"],
@@ -1084,8 +1084,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "active_day_ratio": "0.2",
                     "positive_day_ratio": "0.2",
                     "negative_day_count": 2,
-                    "min_cash": "-100",
-                    "negative_cash_observation_count": 8,
+                    "min_cash": "0",
+                    "negative_cash_observation_count": 0,
                     "daily_net": {
                         "2026-05-01": "4795.37",
                         "2026-05-04": "-980.59",
@@ -1240,6 +1240,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "positive_day_ratio": "0.2",
                         "negative_day_count": 0,
                         "best_day_share": "0.92",
+                        "max_drawdown": "997",
                         "daily_net": {
                             "2026-05-01": "4795.37",
                             "2026-05-04": "0",
@@ -1300,6 +1301,69 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "synthetic_prior",
         )
 
+    def test_positive_feedback_with_small_down_days_stays_repair_candidate(
+        self,
+    ) -> None:
+        source_spec = self._candidate_spec("spec-small-down-source")
+        matching_spec = self._candidate_spec("spec-small-down-match")
+        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=source_spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-small-down-source",
+                "family_template_id": source_spec.family_template_id,
+                "runtime_family": source_spec.runtime_family,
+                "runtime_strategy_name": source_spec.runtime_strategy_name,
+                "execution_signature": runner._candidate_spec_execution_signature(
+                    source_spec
+                ),
+                "objective_scorecard": {
+                    "net_pnl_per_day": "180",
+                    "active_day_ratio": "0.8",
+                    "positive_day_ratio": "0.6",
+                    "negative_day_count": 1,
+                    "best_day_share": "0.34",
+                    "worst_day_loss": "120",
+                    "max_drawdown": "240",
+                    "max_gross_exposure_pct_equity": "0.8",
+                    "min_cash": "1200",
+                    "negative_cash_observation_count": 0,
+                    "daily_net": {
+                        "2026-05-01": "300",
+                        "2026-05-04": "-120",
+                        "2026-05-05": "220",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-small-down-feedback",
+            result_path="feedback://small-down",
+        )
+
+        _model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(matching_spec,),
+            feedback_evidence_bundles=(feedback_bundle,),
+        )
+
+        self.assertEqual(
+            rows[0]["training_source"], "feedback_execution_signature_replay"
+        )
+        self.assertEqual(
+            rows[0]["selection_reason"],
+            "pre_replay_mlx_signature_feedback_penalized",
+        )
+        self.assertGreater(Decimal(str(rows[0]["proposal_score"])), Decimal("-999999"))
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(matching_spec,),
+            proposal_rows=rows,
+            top_k=1,
+            exploration_slots=0,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [matching_spec])
+        self.assertEqual(selection["budget"]["selected_count"], 1)
+
     def test_feedback_shape_prior_penalizes_cash_blocks_without_family_veto(
         self,
     ) -> None:
@@ -1338,7 +1402,83 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(rows[0]["training_source"], "feedback_shape_prior")
         self.assertEqual(
             rows[0]["selection_reason"],
-            "pre_replay_mlx_family_feedback_penalized",
+            "pre_replay_mlx_shape_feedback_blocked",
+        )
+
+    def test_risk_profile_feedback_blocks_realized_capital_breach(self) -> None:
+        failed_spec = self._candidate_spec("spec-capital-risk-source")
+        same_risk_probe = replace(
+            failed_spec,
+            candidate_spec_id="spec-capital-risk-probe",
+            hypothesis_id="hyp-spec-capital-risk-probe",
+            strategy_overrides={
+                **failed_spec.strategy_overrides,
+                "params": {
+                    **cast(dict[str, Any], failed_spec.strategy_overrides["params"]),
+                    "entry_minute_after_open": "105",
+                },
+            },
+        )
+        self.assertEqual(
+            runner._candidate_spec_feedback_risk_profile_key(failed_spec),
+            runner._candidate_spec_feedback_risk_profile_key(same_risk_probe),
+        )
+        self.assertNotEqual(
+            runner._candidate_spec_feedback_shape_key(failed_spec),
+            runner._candidate_spec_feedback_shape_key(same_risk_probe),
+        )
+        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=failed_spec.candidate_spec_id,
+            candidate=runner._candidate_payload_with_feedback_metadata(
+                spec=failed_spec,
+                candidate={
+                    "candidate_id": "cand-capital-risk-source",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "991.10",
+                        "active_day_ratio": "0.75",
+                        "positive_day_ratio": "0.25",
+                        "negative_day_count": 1,
+                        "best_day_share": "1.52",
+                        "max_gross_exposure_pct_equity": "6.19",
+                        "min_cash": "-193080.92",
+                        "negative_cash_observation_count": 101,
+                    },
+                },
+            ),
+            dataset_snapshot_id="snap-capital-risk-feedback",
+            result_path="feedback://capital-risk",
+        )
+
+        model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(same_risk_probe,),
+            feedback_evidence_bundles=(feedback_bundle,),
+        )
+
+        self.assertEqual(model["feedback_risk_profile_matched_spec_count"], 1)
+        self.assertEqual(rows[0]["training_source"], "feedback_risk_profile_prior")
+        self.assertEqual(
+            rows[0]["selection_reason"],
+            "pre_replay_mlx_risk_profile_feedback_blocked",
+        )
+        self.assertLessEqual(
+            Decimal(str(rows[0]["proposal_score"])), Decimal("-999999")
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(same_risk_probe,),
+            proposal_rows=rows,
+            top_k=1,
+            exploration_slots=0,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(selection["budget"]["selected_count"], 0)
+        self.assertEqual(selection["budget"]["eligible_candidate_count"], 0)
+        self.assertEqual(
+            selection["rows"][0]["selection_reason"],
+            "pre_replay_mlx_risk_profile_feedback_blocked",
         )
 
     def test_feedback_scorecard_helpers_cover_veto_and_penalty_edges(self) -> None:
@@ -1384,7 +1524,37 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "active_day_ratio": "1",
                     "positive_day_ratio": "1",
                     "best_day_share": "0.25",
-                    "daily_net": {"2026-05-01": "0"},
+                    "max_drawdown": "901",
+                }
+            )
+        )
+        self.assertTrue(
+            runner._feedback_has_excessive_drawdown(
+                {"profit_target_oracle": {"blockers": ["max_drawdown_above_oracle"]}}
+            )
+        )
+        self.assertTrue(
+            runner._feedback_has_excessive_drawdown({"worst_day_loss": "351"})
+        )
+        self.assertFalse(
+            runner._feedback_family_prior_has_hard_block(
+                {
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "1",
+                    "best_day_share": "0.25",
+                    "worst_day_loss": "120",
+                    "max_drawdown": "240",
+                    "daily_net": {"2026-05-01": "-120"},
+                }
+            )
+        )
+        self.assertTrue(
+            runner._feedback_risk_profile_has_penalty(
+                {
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "0.60",
+                    "best_day_share": "0.25",
+                    "max_drawdown": "901",
                 }
             )
         )
