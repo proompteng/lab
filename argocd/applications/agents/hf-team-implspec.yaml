@@ -1,0 +1,26 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: hf-team-collaboration-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - swarmName
+      - swarmTeamName
+      - swarmAgentRole
+      - swarmAgentIdentity
+      - objective
+  summary: "HF-backed swarm teammate handoff."
+  text: |
+    Produce one role-specific swarm handoff for ${swarmName}.
+
+    The worker must:
+    - read the objective and upstream artifact;
+    - make a concrete contribution appropriate to its role;
+    - write a markdown result artifact;
+    - publish a NATS handoff when the runtime has NATS credentials;
+    - state the value created and exact next action.

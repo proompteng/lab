@@ -1,0 +1,23 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Agent
+metadata:
+  name: hf-team-scout-agent
+spec:
+  providerRef:
+    name: hf-team-worker
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Agent
+metadata:
+  name: hf-team-builder-agent
+spec:
+  providerRef:
+    name: hf-team-worker
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Agent
+metadata:
+  name: hf-team-reviewer-agent
+spec:
+  providerRef:
+    name: hf-team-worker
