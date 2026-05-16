@@ -184,6 +184,19 @@ class TestPortfolioOptimizer(TestCase):
             portfolio.objective_scorecard["max_gross_exposure_pct_equity"],
             "1.0",
         )
+        self.assertEqual(portfolio.capital_budget["mode"], "gross_exposure_budget")
+        self.assertEqual(
+            portfolio.capital_budget["sleeve_weights"],
+            {"cand-half-gross-a": "1", "cand-half-gross-b": "1"},
+        )
+        self.assertEqual(
+            [sleeve["weight"] for sleeve in portfolio.sleeves],
+            ["1", "1"],
+        )
+        self.assertEqual(
+            [sleeve["expected_net_pnl_per_day"] for sleeve in portfolio.sleeves],
+            ["300", "300"],
+        )
         self.assertTrue(portfolio.objective_scorecard["target_met"])
         self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
 
