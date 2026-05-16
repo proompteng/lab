@@ -102,6 +102,11 @@ test('worker load update termination classifies shard-status cleanup transients'
       cause: new ConnectError('[unavailable] shard status unknown', Code.Unavailable),
     }),
   ).toBe(true)
+  expect(
+    __workerLoadTestHooks.isTransientWorkflowTerminationCleanupFailure(
+      new ConnectError('[unavailable] Not enough hosts to serve the request', Code.Unavailable),
+    ),
+  ).toBe(true)
 })
 
 test('worker load update termination keeps non-unavailable cleanup failures fatal', () => {

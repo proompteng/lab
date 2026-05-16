@@ -703,7 +703,7 @@ const isTransientWorkflowTerminationCleanupFailure = (error: unknown): boolean =
       message = String(candidate)
     }
 
-    if (!/shard status unknown|service unavailable|temporarily unavailable/i.test(message)) {
+    if (!/shard status unknown|service unavailable|temporarily unavailable|not enough hosts to serve the request/i.test(message)) {
       return false
     }
     return candidate instanceof ConnectError ? candidate.code === Code.Unavailable : true
