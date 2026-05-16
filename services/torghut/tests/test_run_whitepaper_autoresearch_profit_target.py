@@ -97,7 +97,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             portfolio_size_max=4,
             replay_mode="synthetic",
             program=Path(
-                "config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml"
+                "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
             ),
             strategy_configmap=Path(
                 "argocd/applications/torghut/strategy-configmap.yaml"
@@ -127,6 +127,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             expected_last_trading_day="",
             allow_stale_tape=False,
             prefetch_full_window_rows=False,
+            min_daily_net_pnl=None,
             persist_results=False,
         )
 
@@ -212,9 +213,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             args.program,
             Path(
-                "config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml"
+                "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
             ),
         )
+        self.assertIsNone(args.min_daily_net_pnl)
         self.assertEqual(args.symbols.split(","), _CHIP_UNIVERSE)
         self.assertEqual(args.feedback_evidence_jsonl, [])
 
@@ -265,6 +267,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertIn(
             "name: realReplayShardTimeoutSeconds\n        value: '1800'", template
+        )
+        self.assertIn(
+            "--program config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml",
+            template,
+        )
+        self.assertNotIn("--require-no-flat-days", template)
+        self.assertNotIn(
+            '--min-daily-net-pnl "{{inputs.parameters.targetNetPnlPerDay}}"', template
         )
         self.assertIn("activeDeadlineSeconds: 21600", template)
         self.assertIn("name: allowStaleTape\n        value: 'false'", template)
@@ -1779,9 +1789,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "portfolio_post_cost_net_pnl_per_day_failed",
                 payload["profit_target_oracle"]["blockers"],
             )
-            self.assertIn(
+            self.assertNotIn(
                 "min_daily_net_pnl_failed",
                 payload["profit_target_oracle"]["blockers"],
+            )
+            self.assertEqual(
+                payload["profit_target_oracle_policy"]["min_daily_net_pnl"],
+                "-350",
             )
             self.assertIn(
                 "executable_replay_passed_failed",
@@ -1819,7 +1833,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         with TemporaryDirectory() as tmpdir:
             args = self._args(Path(tmpdir) / "epoch")
             args.program = Path(
-                "config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml"
+                "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
             )
             program = runner._load_epoch_program(args)
             sources = runner._program_whitepaper_sources(program)
@@ -1846,7 +1860,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         with TemporaryDirectory() as tmpdir:
             args = self._args(Path(tmpdir) / "epoch")
             args.program = Path(
-                "config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml"
+                "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
             )
             program = runner._load_epoch_program(args)
 
@@ -1899,7 +1913,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         with TemporaryDirectory() as tmpdir:
             args = self._args(Path(tmpdir) / "epoch")
             args.program = Path(
-                "config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml"
+                "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
             )
             args.replay_mode = "real"
             program = runner._load_epoch_program(args)
@@ -2247,6 +2261,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ]
 
         self.assertEqual(payload["status"], "no_profit_target_candidate")
+        self.assertEqual(
+            payload["profit_target_oracle_policy"]["min_daily_net_pnl"], "-350"
+        )
         self.assertEqual(selection["budget"]["exploration_slots_requested"], 1)
         self.assertGreaterEqual(selection["budget"]["exploration_slots_effective"], 1)
         self.assertEqual(selection["budget"]["selected_count"], 3)
@@ -3472,6 +3489,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(parsed.real_replay_shard_timeout_seconds, 0)
         self.assertEqual(parsed.real_replay_shard_workers, 1)
         self.assertFalse(parsed.persist_results)
+
+    def test_decimal_arg_or_default_uses_explicit_cli_override(self) -> None:
+        value = runner._decimal_arg_or_default(
+            Namespace(min_daily_net_pnl="-125.50"),
+            "min_daily_net_pnl",
+            Decimal("-350"),
+        )
+
+        self.assertEqual(value, Decimal("-125.50"))
 
     def test_clickhouse_password_env_resolution_keeps_secret_out_of_argv(
         self,

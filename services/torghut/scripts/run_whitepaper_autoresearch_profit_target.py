@@ -86,8 +86,8 @@ import scripts.run_strategy_factory_v2 as strategy_factory_runner
 
 _DEFAULT_CHIP_UNIVERSE_CSV = ",".join(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
 _DEFAULT_DAILY_PROFIT_TARGET = "500"
-_DEFAULT_STRICT_DAILY_PROFIT_PROGRAM = Path(
-    "config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml"
+_DEFAULT_PORTFOLIO_PROFIT_PROGRAM = Path(
+    "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
 )
 _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC = 8
 _MAX_PERSISTED_FEEDBACK_EVIDENCE_BUNDLES = 512
@@ -171,7 +171,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--program",
         type=Path,
-        default=_DEFAULT_STRICT_DAILY_PROFIT_PROGRAM,
+        default=_DEFAULT_PORTFOLIO_PROFIT_PROGRAM,
     )
     parser.add_argument(
         "--strategy-configmap",
@@ -299,7 +299,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--min-active-day-ratio", default="0.90")
     parser.add_argument("--min-positive-day-ratio", default="0.60")
-    parser.add_argument("--min-daily-net-pnl", default="0")
+    parser.add_argument("--min-daily-net-pnl", default=None)
     parser.add_argument("--max-worst-day-loss", default="350")
     parser.add_argument("--max-drawdown", default="900")
     parser.add_argument("--max-best-day-share", default="0.25")
@@ -2084,6 +2084,17 @@ def _flag_int(value: Any) -> int | None:
         return None
 
 
+def _decimal_arg_or_default(
+    args: argparse.Namespace,
+    name: str,
+    default: Decimal,
+) -> Decimal:
+    raw_value = getattr(args, name, None)
+    if raw_value is None or _string(raw_value) == "":
+        return default
+    return _decimal(raw_value, default=str(default))
+
+
 def _profitability_next_epoch_plan(
     *,
     args: argparse.Namespace,
@@ -2092,9 +2103,7 @@ def _profitability_next_epoch_plan(
 ) -> dict[str, Any]:
     flags: dict[str, str] = {
         "--target-net-pnl-per-day": str(target),
-        "--program": str(
-            getattr(args, "program", _DEFAULT_STRICT_DAILY_PROFIT_PROGRAM)
-        ),
+        "--program": str(getattr(args, "program", _DEFAULT_PORTFOLIO_PROFIT_PROGRAM)),
         "--replay-mode": "real",
         "--max-candidates": str(max(64, _int_arg(args, "max_candidates", 64))),
         "--top-k": str(max(16, _int_arg(args, "top_k", 16))),
@@ -2287,7 +2296,7 @@ def _profitability_search_goal(
         "candidate_framework": {
             "program_id": program.program_id,
             "program_path": str(
-                getattr(args, "program", _DEFAULT_STRICT_DAILY_PROFIT_PROGRAM)
+                getattr(args, "program", _DEFAULT_PORTFOLIO_PROFIT_PROGRAM)
             ),
             "replay_mode": replay_mode,
             "source_count": len(sources),
@@ -4659,7 +4668,11 @@ def run_whitepaper_autoresearch_profit_target(
             ),
             "min_daily_net_pnl": str(
                 max(
-                    _decimal(getattr(args, "min_daily_net_pnl", "0")),
+                    _decimal_arg_or_default(
+                        args,
+                        "min_daily_net_pnl",
+                        objective.min_daily_net_pnl,
+                    ),
                     objective.min_daily_net_pnl,
                 )
             ),

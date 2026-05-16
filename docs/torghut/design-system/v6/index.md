@@ -1167,3 +1167,8 @@ This pack is positioned as the next architecture layer above:
   and Torghut remains zero-notional. It makes each market-context, empirical, route/TCA, promotion-table, and quant
   pipeline repair cite an expected unblock value, freshness SLO, Jangar packet ref, and zero-notional guardrail before
   the repair can spend launch capacity.
+- `214-torghut-current-whitepaper-to-profitable-strategy-workflow-2026-05-16.md` is the current operator-facing
+  workflow from whitepaper to live-eligible sleeve. It consolidates the active process into Mermaid diagrams and a
+  stage-by-stage writeup: claims, hypothesis cards, checked `CandidateSpec`s, MLX ranking-only proposal authority,
+  real replay evidence, portfolio optimization, profit oracle gates, runtime closure, paper/shadow proof, and live
+  promotion constraints.

@@ -401,11 +401,11 @@ class TestStrategyAutoresearch(TestCase):
             )
         )
 
-    def test_checked_in_500_daily_profit_program_enforces_cash_capital_realism(
+    def test_checked_in_500_portfolio_profit_program_allows_bounded_down_days(
         self,
     ) -> None:
         program_path = Path(
-            "config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml"
+            "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
         )
 
         program = load_strategy_autoresearch_program(
@@ -413,7 +413,14 @@ class TestStrategyAutoresearch(TestCase):
             family_dir=Path("config/trading/families"),
         )
 
+        self.assertEqual(program.program_id, "portfolio_profit_autoresearch_500_v1")
         self.assertEqual(program.objective.target_net_pnl_per_day, Decimal("500"))
+        self.assertEqual(program.objective.min_daily_net_pnl, Decimal("-350"))
+        self.assertEqual(program.objective.min_active_day_ratio, Decimal("0.90"))
+        self.assertEqual(program.objective.min_positive_day_ratio, Decimal("0.60"))
+        self.assertEqual(program.objective.max_worst_day_loss, Decimal("350"))
+        self.assertEqual(program.objective.max_drawdown, Decimal("900"))
+        self.assertFalse(program.objective.require_every_day_active)
         self.assertEqual(
             program.objective.max_gross_exposure_pct_equity, Decimal("1.0")
         )
