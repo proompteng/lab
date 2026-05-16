@@ -1,9 +1,10 @@
 schema_version: torghut.strategy-autoresearch.v1
-program_id: strict_daily_profit_autoresearch_500_v1
+program_id: portfolio_profit_autoresearch_500_v1
 description: >
-  Strict outer loop for a $500/day post-cost net profit target. This profile keeps
-  the objective explicitly daily, not cumulative, and uses runtime-closure gates before
-  any promotion beyond research-candidate artifacts.
+  Portfolio outer loop for a $500/day post-cost net profit target. This profile keeps
+  the objective explicitly daily, not cumulative, allows ordinary down days, and uses
+  worst-day, drawdown, cash, exposure, replay, and runtime-closure gates before any
+  promotion beyond research-candidate artifacts.
 snapshot_policy:
   bar_interval: PT1S
   feature_set_id: torghut.mlx-autoresearch.v1
@@ -44,14 +45,14 @@ ledger_policy:
   append_only: true
 objective:
   target_net_pnl_per_day: '500'
-  min_daily_net_pnl: '500'
-  min_active_day_ratio: '1.0'
-  min_positive_day_ratio: '1.0'
+  min_daily_net_pnl: '-350'
+  min_active_day_ratio: '0.90'
+  min_positive_day_ratio: '0.60'
   min_daily_notional: '300000'
-  max_best_day_share: '0.30'
-  max_worst_day_loss: '0'
+  max_best_day_share: '0.25'
+  max_worst_day_loss: '350'
   max_drawdown: '900'
-  require_every_day_active: true
+  require_every_day_active: false
   min_regime_slice_pass_rate: '0.45'
   max_gross_exposure_pct_equity: '1.0'
   min_cash: '0'

@@ -166,7 +166,7 @@ spec:
               --portfolio-size-min "{{inputs.parameters.portfolioSizeMin}}"
               --portfolio-size-max "{{inputs.parameters.portfolioSizeMax}}"
               --replay-mode real
-              --program config/trading/research-programs/strict-daily-profit-autoresearch-500-v1.yaml
+              --program config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml
               --strategy-configmap /etc/torghut/strategies.yaml
               --clickhouse-http-url "${TA_CLICKHOUSE_URL}"
               --clickhouse-username "${TA_CLICKHOUSE_USERNAME}"
@@ -183,10 +183,6 @@ spec:
               --real-replay-shard-workers "{{inputs.parameters.realReplayShardWorkers}}"
               --train-days 6
               --holdout-days 3
-              --min-active-day-ratio 1
-              --min-positive-day-ratio 1
-              --min-daily-net-pnl "{{inputs.parameters.targetNetPnlPerDay}}"
-              --require-no-flat-days
             )
 
             if [ "{{inputs.parameters.seedRecentWhitepapers}}" = "true" ]; then
