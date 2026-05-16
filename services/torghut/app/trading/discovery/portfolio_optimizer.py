@@ -242,20 +242,22 @@ def _correlation(left: Mapping[str, Decimal], right: Mapping[str, Decimal]) -> D
 def _portfolio_daily_net(
     selected: Sequence[CandidateEvidenceBundle],
 ) -> dict[str, Decimal]:
+    weights = _equal_weights(selected)
     daily_totals: dict[str, Decimal] = {}
-    for bundle in selected:
+    for bundle, weight in zip(selected, weights, strict=True):
         for day, value in _daily_net(bundle).items():
-            daily_totals[day] = daily_totals.get(day, Decimal("0")) + value
+            daily_totals[day] = daily_totals.get(day, Decimal("0")) + (value * weight)
     return daily_totals
 
 
 def _portfolio_daily_filled_notional(
     selected: Sequence[CandidateEvidenceBundle],
 ) -> dict[str, Decimal]:
+    weights = _equal_weights(selected)
     daily_totals: dict[str, Decimal] = {}
-    for bundle in selected:
+    for bundle, weight in zip(selected, weights, strict=True):
         for day, value in _daily_filled_notional(bundle).items():
-            daily_totals[day] = daily_totals.get(day, Decimal("0")) + value
+            daily_totals[day] = daily_totals.get(day, Decimal("0")) + (value * weight)
     return daily_totals
 
 
@@ -322,12 +324,13 @@ def _contribution_shares(values: Mapping[str, Decimal]) -> dict[str, Decimal]:
 def _cluster_contribution_shares(
     selected: Sequence[CandidateEvidenceBundle],
 ) -> dict[str, Decimal]:
+    weights = _equal_weights(selected)
     contributions: dict[str, Decimal] = {}
-    for bundle in selected:
+    for bundle, weight in zip(selected, weights, strict=True):
         cluster = _cluster_id(bundle)
-        contributions[cluster] = contributions.get(
-            cluster, Decimal("0")
-        ) + _positive_net_contribution(bundle)
+        contributions[cluster] = contributions.get(cluster, Decimal("0")) + (
+            _positive_net_contribution(bundle) * weight
+        )
     return _contribution_shares(contributions)
 
 
@@ -351,9 +354,10 @@ def _bundle_symbol_shares(bundle: CandidateEvidenceBundle) -> dict[str, Decimal]
 def _symbol_contribution_shares(
     selected: Sequence[CandidateEvidenceBundle],
 ) -> dict[str, Decimal]:
+    weights = _equal_weights(selected)
     contributions: dict[str, Decimal] = {}
-    for bundle in selected:
-        bundle_positive_net = _positive_net_contribution(bundle)
+    for bundle, weight in zip(selected, weights, strict=True):
+        bundle_positive_net = _positive_net_contribution(bundle) * weight
         for symbol, share in _bundle_symbol_shares(bundle).items():
             contributions[symbol] = contributions.get(symbol, Decimal("0")) + (
                 bundle_positive_net * share
@@ -389,23 +393,57 @@ def _max_drawdown_from_daily(daily_net: Mapping[str, Decimal]) -> Decimal:
     return drawdown
 
 
+def _equal_weights(selected: Sequence[CandidateEvidenceBundle]) -> tuple[Decimal, ...]:
+    if not selected:
+        return ()
+    weight = Decimal("1") / Decimal(len(selected))
+    return tuple(weight for _ in selected)
+
+
 def _portfolio_max_gross_exposure_pct_equity(
     selected: Sequence[CandidateEvidenceBundle],
 ) -> Decimal:
+    weights = _equal_weights(selected)
     return sum(
-        (_max_gross_exposure_pct_equity(bundle) for bundle in selected),
+        (
+            _max_gross_exposure_pct_equity(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
         Decimal("0"),
     )
 
 
 def _portfolio_min_cash(selected: Sequence[CandidateEvidenceBundle]) -> Decimal:
-    return min((_min_cash(bundle) for bundle in selected), default=Decimal("0"))
+    weights = _equal_weights(selected)
+    return sum(
+        (
+            _min_cash(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
 
 
 def _portfolio_negative_cash_observation_count(
     selected: Sequence[CandidateEvidenceBundle],
 ) -> int:
     return sum(_negative_cash_observation_count(bundle) for bundle in selected)
+
+
+def _missing_sleeve_daily_net_count(
+    selected: Sequence[CandidateEvidenceBundle],
+    daily_net: Mapping[str, Decimal],
+) -> int:
+    if not selected:
+        return 0
+    portfolio_days = set(daily_net)
+    missing = 0
+    for bundle in selected:
+        bundle_daily = _daily_net(bundle)
+        expected_count = max(_trading_day_count(bundle), len(portfolio_days))
+        missing += len(portfolio_days.difference(bundle_daily))
+        missing += max(0, expected_count - len(portfolio_days))
+    return missing
 
 
 def _portfolio_trading_day_count(
@@ -425,6 +463,9 @@ def _portfolio_scorecard(
     daily_net = _portfolio_daily_net(selected)
     trading_day_count = _portfolio_trading_day_count(selected, daily_net)
     missing_day_count = max(0, trading_day_count - len(daily_net))
+    missing_sleeve_daily_net_count = _missing_sleeve_daily_net_count(
+        selected, daily_net
+    )
     values = [daily_net[day] for day in sorted(daily_net)] + (
         [Decimal("0")] * missing_day_count
     )
@@ -508,6 +549,7 @@ def _portfolio_scorecard(
         "trading_day_count": trading_day_count,
         "daily_net_observed_day_count": len(daily_net),
         "missing_daily_net_count": missing_day_count,
+        "missing_sleeve_daily_net_count": missing_sleeve_daily_net_count,
         "regime_slice_pass_rate": str(_mean(regime_pass_rates)),
         "posterior_edge_lower": str(min(posterior_lowers, default=Decimal("0"))),
         "shadow_parity_status": "within_budget"
@@ -852,8 +894,10 @@ def optimize_portfolio_candidate(
                 "runtime_family": _string(_scorecard(bundle).get("runtime_family")),
                 "runtime_strategy_name": f"{base_runtime_strategy_name}-sleeve-{sleeve_index}",
                 "weight": str(equal_weight),
-                "expected_net_pnl_per_day": str(_net_per_day(bundle)),
-                "risk_contribution": str(_max_drawdown(bundle)),
+                "expected_net_pnl_per_day": str(_net_per_day(bundle) * equal_weight),
+                "source_expected_net_pnl_per_day": str(_net_per_day(bundle)),
+                "risk_contribution": str(_max_drawdown(bundle) * equal_weight),
+                "source_risk_contribution": str(_max_drawdown(bundle)),
                 "correlation_cluster": _string(
                     _scorecard(bundle).get("correlation_cluster")
                 )

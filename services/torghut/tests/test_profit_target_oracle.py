@@ -119,6 +119,31 @@ class TestProfitTargetOracle(TestCase):
         self.assertIn("min_daily_net_pnl_failed", result["blockers"])
         self.assertIn("daily_net_observed_day_count_failed", result["blockers"])
 
+    def test_profit_target_oracle_fails_missing_sleeve_daily_coverage(self) -> None:
+        result = evaluate_profit_target_oracle(
+            {
+                "net_pnl_per_day": "700",
+                "active_day_ratio": "1",
+                "positive_day_ratio": "1",
+                "best_day_share": "0.25",
+                "max_single_day_contribution_share": "0.25",
+                "max_cluster_contribution_share": "0.34",
+                "max_single_symbol_contribution_share": "0.25",
+                "worst_day_loss": "0",
+                "max_drawdown": "0",
+                "avg_filled_notional_per_day": "700000",
+                "regime_slice_pass_rate": "0.55",
+                "posterior_edge_lower": "0.01",
+                "shadow_parity_status": "within_budget",
+                "missing_sleeve_daily_net_count": 1,
+                **_executable_scorecard_fields(),
+            },
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("missing_sleeve_daily_net_count_failed", result["blockers"])
+
     def test_profit_target_oracle_reports_failed_criteria(self) -> None:
         result = evaluate_profit_target_oracle(
             {

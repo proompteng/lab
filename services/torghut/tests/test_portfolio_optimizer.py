@@ -95,9 +95,9 @@ class TestPortfolioOptimizer(TestCase):
 
     def test_portfolio_candidate_round_trips_from_optimizer_payload(self) -> None:
         daily_profiles = [
-            ("210", "220", "230", "240", "250"),
-            ("240", "230", "220", "210", "200"),
-            ("230", "210", "250", "220", "240"),
+            ("610", "620", "630", "640", "650"),
+            ("640", "630", "620", "610", "600"),
+            ("630", "610", "650", "620", "640"),
         ]
         bundles = [
             evidence_bundle_from_frontier_candidate(
@@ -108,7 +108,7 @@ class TestPortfolioOptimizer(TestCase):
                     "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
                     "family_template_id": "microbar_cross_sectional_pairs_v1",
                     "objective_scorecard": {
-                        "net_pnl_per_day": "275",
+                        "net_pnl_per_day": "625",
                         "active_day_ratio": "1.0",
                         "positive_day_ratio": "0.8",
                         "worst_day_loss": "0",
@@ -165,6 +165,10 @@ class TestPortfolioOptimizer(TestCase):
         )
         self.assertTrue(reloaded.objective_scorecard["target_met"])
         self.assertTrue(reloaded.objective_scorecard["oracle_passed"])
+        self.assertEqual(
+            reloaded.objective_scorecard["net_pnl_per_day"],
+            "626.6666666666666666666666664",
+        )
         self.assertLessEqual(
             Decimal(reloaded.objective_scorecard["max_cluster_contribution_share"]),
             Decimal("0.40"),
@@ -433,6 +437,96 @@ class TestPortfolioOptimizer(TestCase):
             scorecard["profit_target_oracle"]["blockers"],
         )
 
+    def test_portfolio_optimizer_blocks_missing_sleeve_daily_net_coverage(
+        self,
+    ) -> None:
+        def bundle(
+            *,
+            candidate_id: str,
+            daily_net: dict[str, str],
+            cluster: str,
+            symbol: str,
+        ) -> CandidateEvidenceBundle:
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "runtime_family": "microbar_cross_sectional_pairs",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "family_template_id": "microbar_cross_sectional_pairs_v1",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "900",
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "best_day_share": "0.25",
+                        "avg_filled_notional_per_day": "350000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "correlation_cluster": cluster,
+                        "symbol_contribution_shares": {symbol: "1.0"},
+                        **_executable_scorecard_fields(candidate_id),
+                    },
+                    "full_window": {
+                        "trading_day_count": 3,
+                        "daily_net": daily_net,
+                        "daily_filled_notional": {
+                            "2026-02-23": "350000",
+                            "2026-02-24": "350000",
+                            "2026-02-25": "350000",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-missing-sleeve-day",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[
+                bundle(
+                    candidate_id="cand-full",
+                    daily_net={
+                        "2026-02-23": "1000",
+                        "2026-02-24": "1000",
+                        "2026-02-25": "1000",
+                    },
+                    cluster="missing-sleeve-a",
+                    symbol="AAPL",
+                ),
+                bundle(
+                    candidate_id="cand-partial",
+                    daily_net={
+                        "2026-02-23": "1000",
+                        "2026-02-25": "1000",
+                    },
+                    cluster="missing-sleeve-b",
+                    symbol="AMZN",
+                ),
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            oracle_policy=ProfitTargetOraclePolicy(
+                max_best_day_share=Decimal("0.50"),
+                max_cluster_contribution_share=Decimal("0.60"),
+                max_single_symbol_contribution_share=Decimal("0.60"),
+            ),
+            portfolio_size_min=2,
+            portfolio_size_max=2,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        scorecard = portfolio.objective_scorecard
+        self.assertEqual(scorecard["daily_net_observed_day_count"], 3)
+        self.assertEqual(scorecard["missing_daily_net_count"], 0)
+        self.assertEqual(scorecard["missing_sleeve_daily_net_count"], 1)
+        self.assertFalse(scorecard["oracle_passed"])
+        self.assertIn(
+            "missing_sleeve_daily_net_count_failed",
+            scorecard["profit_target_oracle"]["blockers"],
+        )
+
     def test_invalid_evidence_bundles_are_not_admitted_to_portfolios(self) -> None:
         invalid = evidence_bundle_from_frontier_candidate(
             candidate_spec_id="spec-invalid",
@@ -595,19 +689,19 @@ class TestPortfolioOptimizer(TestCase):
                 vetoed,
                 bundle(
                     candidate_id="cand-clean-a",
-                    net_pnl_per_day="200",
+                    net_pnl_per_day="600",
                     symbol="AAPL",
                     cluster="clean-a",
                 ),
                 bundle(
                     candidate_id="cand-clean-b",
-                    net_pnl_per_day="200",
+                    net_pnl_per_day="600",
                     symbol="AMZN",
                     cluster="clean-b",
                 ),
                 bundle(
                     candidate_id="cand-clean-c",
-                    net_pnl_per_day="200",
+                    net_pnl_per_day="600",
                     symbol="GOOGL",
                     cluster="clean-c",
                 ),
@@ -660,7 +754,7 @@ class TestPortfolioOptimizer(TestCase):
                         "positive_day_ratio_below_oracle",
                     ],
                     "objective_scorecard": {
-                        "net_pnl_per_day": "190",
+                        "net_pnl_per_day": "570",
                         "active_day_ratio": "1.0",
                         "positive_day_ratio": "0.67",
                         "worst_day_loss": "40",
@@ -669,7 +763,7 @@ class TestPortfolioOptimizer(TestCase):
                         "min_cash": "12000",
                         "negative_cash_observation_count": 0,
                         "best_day_share": "0.80",
-                        "avg_filled_notional_per_day": "120000",
+                        "avg_filled_notional_per_day": "300000",
                         "regime_slice_pass_rate": "0.55",
                         "posterior_edge_lower": "0.01",
                         "shadow_parity_status": "within_budget",
@@ -684,9 +778,9 @@ class TestPortfolioOptimizer(TestCase):
                             "2026-02-25": daily_net[2],
                         },
                         "daily_filled_notional": {
-                            "2026-02-23": "120000",
-                            "2026-02-24": "120000",
-                            "2026-02-25": "120000",
+                            "2026-02-23": "300000",
+                            "2026-02-24": "300000",
+                            "2026-02-25": "300000",
                         },
                     },
                 },
@@ -700,19 +794,19 @@ class TestPortfolioOptimizer(TestCase):
                     candidate_id="cand-offset-a",
                     symbol="AAPL",
                     cluster="offset-a",
-                    daily_net=("300", "-40", "310"),
+                    daily_net=("900", "-120", "930"),
                 ),
                 bundle(
                     candidate_id="cand-offset-b",
                     symbol="AMZN",
                     cluster="offset-b",
-                    daily_net=("-40", "310", "300"),
+                    daily_net=("-120", "930", "900"),
                 ),
                 bundle(
                     candidate_id="cand-offset-c",
                     symbol="GOOGL",
                     cluster="offset-c",
-                    daily_net=("310", "300", "-40"),
+                    daily_net=("930", "900", "-120"),
                 ),
             ],
             target_net_pnl_per_day=Decimal("500"),
@@ -729,7 +823,7 @@ class TestPortfolioOptimizer(TestCase):
         )
         self.assertEqual(
             portfolio.objective_scorecard["max_gross_exposure_pct_equity"],
-            "0.75",
+            "0.2499999999999999999999999999",
         )
         self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
 
@@ -859,19 +953,19 @@ class TestPortfolioOptimizer(TestCase):
                 ),
                 bundle(
                     candidate_id="cand-diverse-a",
-                    net_pnl_per_day="200",
+                    net_pnl_per_day="600",
                     symbol="AAPL",
                     cluster="diverse-a",
                 ),
                 bundle(
                     candidate_id="cand-diverse-b",
-                    net_pnl_per_day="200",
+                    net_pnl_per_day="600",
                     symbol="AMZN",
                     cluster="diverse-b",
                 ),
                 bundle(
                     candidate_id="cand-diverse-c",
-                    net_pnl_per_day="200",
+                    net_pnl_per_day="600",
                     symbol="GOOGL",
                     cluster="diverse-c",
                 ),

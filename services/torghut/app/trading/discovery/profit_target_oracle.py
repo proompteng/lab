@@ -30,6 +30,7 @@ class ProfitTargetOraclePolicy:
     require_executable_replay: bool = True
     min_executable_order_count: int = 1
     require_executable_replay_notional_within_buying_power: bool = True
+    max_missing_sleeve_daily_net_count: int = 0
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -55,6 +56,7 @@ class ProfitTargetOraclePolicy:
             "require_executable_replay": self.require_executable_replay,
             "min_executable_order_count": self.min_executable_order_count,
             "require_executable_replay_notional_within_buying_power": self.require_executable_replay_notional_within_buying_power,
+            "max_missing_sleeve_daily_net_count": self.max_missing_sleeve_daily_net_count,
         }
 
 
@@ -170,6 +172,14 @@ def evaluate_profit_target_oracle(
             observed=Decimal(daily_net_observed_day_count),
             operator="gte",
             threshold=Decimal(trading_day_count),
+        ),
+        _numeric_check(
+            metric="missing_sleeve_daily_net_count",
+            observed=Decimal(
+                _nonnegative_int(scorecard.get("missing_sleeve_daily_net_count"))
+            ),
+            operator="lte",
+            threshold=Decimal(max(0, policy.max_missing_sleeve_daily_net_count)),
         ),
         _numeric_check(
             metric="best_day_share",

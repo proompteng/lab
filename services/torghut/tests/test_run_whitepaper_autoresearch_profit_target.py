@@ -254,6 +254,19 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             'if [ -n "{{inputs.parameters.expectedLastTradingDay}}" ]; then',
             template,
         )
+        self.assertIn("name: maxCandidates\n        value: '136'", template)
+        self.assertIn("name: topK\n        value: '72'", template)
+        self.assertIn("name: explorationSlots\n        value: '64'", template)
+        self.assertIn(
+            "name: maxTotalFrontierCandidates\n        value: '128'", template
+        )
+        self.assertIn(
+            "name: realReplayTimeoutSeconds\n        value: '10000'", template
+        )
+        self.assertIn(
+            "name: realReplayShardTimeoutSeconds\n        value: '1800'", template
+        )
+        self.assertIn("activeDeadlineSeconds: 21600", template)
         self.assertIn("name: allowStaleTape\n        value: 'false'", template)
         self.assertNotIn("value: '2026-04-24'", template)
         self.assertNotIn("value: '2026-05-01'", template)
@@ -1759,14 +1772,22 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             )
 
             portfolio = payload["best_portfolio_candidate"]
-            self.assertTrue(portfolio["objective_scorecard"]["target_met"])
+            self.assertFalse(portfolio["objective_scorecard"]["target_met"])
             self.assertFalse(portfolio["objective_scorecard"]["oracle_passed"])
             self.assertFalse(payload["oracle_candidate_found"])
+            self.assertIn(
+                "portfolio_post_cost_net_pnl_per_day_failed",
+                payload["profit_target_oracle"]["blockers"],
+            )
+            self.assertIn(
+                "min_daily_net_pnl_failed",
+                payload["profit_target_oracle"]["blockers"],
+            )
             self.assertIn(
                 "executable_replay_passed_failed",
                 payload["profit_target_oracle"]["blockers"],
             )
-            self.assertGreaterEqual(
+            self.assertLess(
                 float(portfolio["objective_scorecard"]["net_pnl_per_day"]), 500.0
             )
             self.assertTrue(payload["false_positive_table"])
