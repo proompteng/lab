@@ -117,15 +117,26 @@ _RISK_PROFILE_FEEDBACK_ORACLE_BLOCKERS = frozenset(
         "positive_day_ratio_below_oracle",
         "best_day_share_above_oracle",
         "active_day_ratio_failed",
-        "positive_day_ratio_failed",
-        "min_daily_net_pnl_failed",
         "daily_net_observed_day_count_failed",
         "best_day_share_failed",
         "max_single_day_contribution_share_failed",
         "max_single_symbol_contribution_share_failed",
         "max_cluster_contribution_share_failed",
+        "worst_day_loss_above_oracle",
+        "max_drawdown_above_oracle",
     }
 )
+_REALIZED_CAPITAL_HARD_BLOCK_ORACLE_BLOCKERS = frozenset(
+    {
+        "max_gross_exposure_above_oracle",
+        "min_cash_below_oracle",
+        "negative_cash_observed",
+        "executable_replay_account_buying_power_failed",
+        "executable_replay_max_notional_per_trade_failed",
+        "executable_replay_notional_within_buying_power_failed",
+    }
+)
+_DEFAULT_FEEDBACK_ORACLE_POLICY = ProfitTargetOraclePolicy()
 
 
 def _default_strategy_config_path() -> Path:
@@ -2562,6 +2573,21 @@ def _feedback_daily_net_has_loss(scorecard: Mapping[str, Any]) -> bool:
     )
 
 
+def _feedback_has_excessive_drawdown(scorecard: Mapping[str, Any]) -> bool:
+    oracle_blockers = _oracle_blockers(scorecard)
+    if oracle_blockers & {"worst_day_loss_above_oracle", "max_drawdown_above_oracle"}:
+        return True
+    if (
+        _decimal(scorecard.get("worst_day_loss"))
+        > _DEFAULT_FEEDBACK_ORACLE_POLICY.max_worst_day_loss
+    ):
+        return True
+    return (
+        _decimal(scorecard.get("max_drawdown"))
+        > _DEFAULT_FEEDBACK_ORACLE_POLICY.max_drawdown
+    )
+
+
 def _feedback_family_prior_has_hard_block(scorecard: Mapping[str, Any]) -> bool:
     oracle_blockers = _oracle_blockers(scorecard)
     if oracle_blockers & _FAMILY_PRIOR_HARD_BLOCK_ORACLE_BLOCKERS:
@@ -2572,18 +2598,22 @@ def _feedback_family_prior_has_hard_block(scorecard: Mapping[str, Any]) -> bool:
         return True
     if _decimal(scorecard.get("best_day_share")) > Decimal("0.50"):
         return True
-    return _feedback_daily_net_has_loss(scorecard)
+    return _feedback_has_excessive_drawdown(scorecard)
 
 
 def _feedback_risk_profile_has_penalty(scorecard: Mapping[str, Any]) -> bool:
     oracle_blockers = _oracle_blockers(scorecard)
     if oracle_blockers & _RISK_PROFILE_FEEDBACK_ORACLE_BLOCKERS:
         return True
+    if _feedback_has_realized_capital_hard_block(scorecard):
+        return True
     if _decimal(scorecard.get("active_day_ratio"), default="1") < Decimal("1"):
         return True
     if _decimal(scorecard.get("positive_day_ratio"), default="1") < Decimal("0.60"):
         return True
     if _decimal(scorecard.get("best_day_share")) > Decimal("0.35"):
+        return True
+    if _feedback_has_excessive_drawdown(scorecard):
         return True
     if _decimal(scorecard.get("max_single_day_contribution_share")) > Decimal("0.35"):
         return True
@@ -2596,14 +2626,21 @@ def _feedback_risk_profile_has_penalty(scorecard: Mapping[str, Any]) -> bool:
     return False
 
 
-def _feedback_is_blocked(scorecard: Mapping[str, Any]) -> bool:
-    if _feedback_scorecard_has_hard_veto(scorecard):
+def _feedback_has_realized_capital_hard_block(scorecard: Mapping[str, Any]) -> bool:
+    oracle_blockers = _oracle_blockers(scorecard)
+    if oracle_blockers & _REALIZED_CAPITAL_HARD_BLOCK_ORACLE_BLOCKERS:
         return True
     if _decimal(scorecard.get("max_gross_exposure_pct_equity")) > Decimal("1.0"):
         return True
     if _decimal(scorecard.get("min_cash")) < Decimal("0"):
         return True
-    if _decimal(scorecard.get("negative_cash_observation_count")) > Decimal("0"):
+    return _decimal(scorecard.get("negative_cash_observation_count")) > Decimal("0")
+
+
+def _feedback_is_blocked(scorecard: Mapping[str, Any]) -> bool:
+    if _feedback_scorecard_has_hard_veto(scorecard):
+        return True
+    if _feedback_has_realized_capital_hard_block(scorecard):
         return True
     return (
         _decimal(scorecard.get("net_pnl_per_day")) <= Decimal("0")
@@ -2939,19 +2976,23 @@ def _pre_replay_proposal_model_and_rows(
             bundle.objective_scorecard
         )
         if source == "feedback_real_replay" and is_blocked:
-            if bundle is not None and _feedback_has_nonpositive_expected_value(
-                bundle.objective_scorecard
+            if bundle is not None and (
+                _feedback_has_nonpositive_expected_value(bundle.objective_scorecard)
+                or _feedback_has_realized_capital_hard_block(bundle.objective_scorecard)
             ):
                 return "pre_replay_mlx_feedback_blocked"
             return "pre_replay_mlx_feedback_penalized"
         if source == "feedback_execution_signature_replay" and is_blocked:
-            if bundle is not None and _feedback_has_nonpositive_expected_value(
-                bundle.objective_scorecard
+            if bundle is not None and (
+                _feedback_has_nonpositive_expected_value(bundle.objective_scorecard)
+                or _feedback_has_realized_capital_hard_block(bundle.objective_scorecard)
             ):
                 return "pre_replay_mlx_signature_feedback_blocked"
             return "pre_replay_mlx_signature_feedback_penalized"
         if source == "feedback_shape_prior" and bundle is not None:
-            if _feedback_family_prior_has_hard_block(bundle.objective_scorecard):
+            if _feedback_family_prior_has_hard_block(
+                bundle.objective_scorecard
+            ) or _feedback_has_realized_capital_hard_block(bundle.objective_scorecard):
                 return "pre_replay_mlx_shape_feedback_blocked"
             if is_blocked:
                 return "pre_replay_mlx_family_feedback_penalized"
@@ -2960,6 +3001,8 @@ def _pre_replay_proposal_model_and_rows(
             and bundle is not None
             and _feedback_risk_profile_has_penalty(bundle.objective_scorecard)
         ):
+            if _feedback_has_realized_capital_hard_block(bundle.objective_scorecard):
+                return "pre_replay_mlx_risk_profile_feedback_blocked"
             return "pre_replay_mlx_risk_profile_feedback_penalized"
         if (
             source == "feedback_family_replay"
@@ -2977,7 +3020,10 @@ def _pre_replay_proposal_model_and_rows(
         if (
             source in {"feedback_real_replay", "feedback_execution_signature_replay"}
             and bundle is not None
-            and _feedback_has_nonpositive_expected_value(bundle.objective_scorecard)
+            and (
+                _feedback_has_nonpositive_expected_value(bundle.objective_scorecard)
+                or _feedback_has_realized_capital_hard_block(bundle.objective_scorecard)
+            )
         ):
             return min(-1_000_000.0, target_by_spec.get(candidate_spec_id, raw_score))
         if (
@@ -2989,7 +3035,10 @@ def _pre_replay_proposal_model_and_rows(
         if (
             source == "feedback_shape_prior"
             and bundle is not None
-            and _feedback_family_prior_has_hard_block(bundle.objective_scorecard)
+            and (
+                _feedback_family_prior_has_hard_block(bundle.objective_scorecard)
+                or _feedback_has_realized_capital_hard_block(bundle.objective_scorecard)
+            )
         ):
             return min(-1_000_000.0, target_by_spec.get(candidate_spec_id, raw_score))
         if (
@@ -2997,6 +3046,10 @@ def _pre_replay_proposal_model_and_rows(
             and bundle is not None
             and _feedback_risk_profile_has_penalty(bundle.objective_scorecard)
         ):
+            if _feedback_has_realized_capital_hard_block(bundle.objective_scorecard):
+                return min(
+                    -1_000_000.0, target_by_spec.get(candidate_spec_id, raw_score)
+                )
             return min(-500_000.0, target_by_spec.get(candidate_spec_id, raw_score))
         if (
             source == "feedback_family_replay"
@@ -3134,6 +3187,7 @@ def _select_candidate_specs_for_replay(
         "pre_replay_mlx_feedback_blocked",
         "pre_replay_mlx_signature_feedback_blocked",
         "pre_replay_mlx_shape_feedback_blocked",
+        "pre_replay_mlx_risk_profile_feedback_blocked",
         "pre_replay_mlx_family_feedback_blocked",
     }
 
