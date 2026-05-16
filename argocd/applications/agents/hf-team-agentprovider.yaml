@@ -525,7 +525,8 @@ spec:
             "content": content,
           }
           status_path.write_text(json.dumps(handoff, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-          publish_handoff(handoff_subject(payload, swarm_name, role, run_name), handoff)
+          subject = handoff_subject(payload, swarm_name, role, run_name)
+          publish_handoff(subject, handoff)
 
           print("SWARM_HF_RESULT_BEGIN")
           print(content)
