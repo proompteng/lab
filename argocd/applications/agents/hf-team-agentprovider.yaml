@@ -1,0 +1,213 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: hf-team-worker
+spec:
+  binary: /bin/bash
+  argsTemplate:
+    - -lc
+    - exec python3 /root/.codex/hf-team-worker.py /workspace/run.json
+  envTemplate:
+    HF_BASE_URL: https://router.huggingface.co/v1
+    HF_MODEL: Qwen/Qwen2.5-7B-Instruct
+    NATS_URL: nats://nats.nats.svc.cluster.local:4222
+  inputFiles:
+    - path: /root/.codex/hf-team-worker.py
+      content: |-
+        #!/usr/bin/env python3
+        import json
+        import os
+        import subprocess
+        import sys
+        import urllib.error
+        import urllib.request
+        from datetime import datetime, timezone
+        from pathlib import Path
+
+        def now_iso() -> str:
+          return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+        def as_text(value, default: str = "") -> str:
+          if isinstance(value, str):
+            return value.strip()
+          if isinstance(value, (int, float, bool)):
+            return str(value)
+          return default
+
+        def read_field(payload: dict, key: str, default: str = "") -> str:
+          value = as_text(payload.get(key))
+          if value:
+            return value
+          parameters = payload.get("parameters")
+          if isinstance(parameters, dict):
+            value = as_text(parameters.get(key))
+            if value:
+              return value
+          return default
+
+        def read_payload(path: Path) -> dict:
+          try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+          except Exception as error:
+            raise RuntimeError(f"unable to read AgentRun payload: {error}") from error
+          if not isinstance(data, dict):
+            raise RuntimeError("AgentRun payload must be a JSON object")
+          return data
+
+        def chat_completion(base_url: str, token: str, model: str, messages: list[dict]) -> str:
+          url = f"{base_url.rstrip('/')}/chat/completions"
+          body = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.2,
+            "max_tokens": 900,
+          }
+          request = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+              "Authorization": f"Bearer {token}",
+              "Content-Type": "application/json",
+            },
+            method="POST",
+          )
+          try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+              payload = json.loads(response.read().decode("utf-8"))
+          except urllib.error.HTTPError as error:
+            body_text = error.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"HF router returned HTTP {error.code}: {body_text}") from error
+          except Exception as error:
+            raise RuntimeError(f"HF router request failed: {error}") from error
+
+          choices = payload.get("choices")
+          if not isinstance(choices, list) or not choices:
+            raise RuntimeError(f"HF router response missing choices: {json.dumps(payload)[:1000]}")
+          message = choices[0].get("message") if isinstance(choices[0], dict) else None
+          content = message.get("content") if isinstance(message, dict) else None
+          if not isinstance(content, str) or not content.strip():
+            raise RuntimeError(f"HF router response missing message content: {json.dumps(payload)[:1000]}")
+          return content.strip()
+
+        def publish_handoff(subject: str, handoff: dict) -> None:
+          nats_url = os.environ.get("NATS_URL", "").strip()
+          if not nats_url:
+            return
+          nats_path = "/usr/local/bin/nats"
+          if not Path(nats_path).exists():
+            return
+          command = [nats_path, "--server", nats_url]
+          user = os.environ.get("NATS_USER", "").strip()
+          password = os.environ.get("NATS_PASSWORD", "").strip()
+          if user:
+            command.extend(["--user", user])
+          if password:
+            command.extend(["--password", password])
+          command.extend(["pub", subject, json.dumps(handoff, sort_keys=True)])
+          try:
+            subprocess.run(command, check=False, timeout=20)
+          except Exception as error:
+            print(f"NATS handoff publish skipped: {error}", file=sys.stderr)
+
+        def main() -> int:
+          event_path = Path(sys.argv[1] if len(sys.argv) > 1 else "/workspace/run.json")
+          payload = read_payload(event_path)
+          token = os.environ.get("HF_TOKEN", "").strip()
+          if not token:
+            raise RuntimeError("HF_TOKEN is required")
+
+          run_name = read_field(payload, "name", as_text(payload.get("metadata", {}).get("name"), "unknown-run"))
+          repository = read_field(payload, "repository", "unknown")
+          base = read_field(payload, "base", "main")
+          head = read_field(payload, "head", "unknown")
+          swarm_name = read_field(payload, "swarmName", "hf-team")
+          team_name = read_field(payload, "swarmTeamName", "HF Team")
+          role = read_field(payload, "swarmAgentRole", "worker")
+          identity = read_field(payload, "swarmAgentIdentity", role)
+          objective = read_field(payload, "objective", "create measurable value with the team")
+          upstream = read_field(payload, "upstreamArtifact", "None")
+          expected_output = read_field(payload, "expectedOutput", "a concise production-quality handoff")
+          model = os.environ.get("HF_MODEL", "Qwen/Qwen2.5-7B-Instruct").strip()
+          base_url = os.environ.get("HF_BASE_URL", "https://router.huggingface.co/v1").strip()
+
+          messages = [
+            {
+              "role": "system",
+              "content": (
+                "You are an intelligent swarm teammate. Work like a competent human colleague: "
+                "read the upstream handoff, make one concrete contribution, state evidence, "
+                "handoff the next action, and avoid pretending work is complete without proof."
+              ),
+            },
+            {
+              "role": "user",
+              "content": "\n".join([
+                f"Repository: {repository}",
+                f"Base branch: {base}",
+                f"Head branch: {head}",
+                f"Swarm: {swarm_name}",
+                f"Team: {team_name}",
+                f"Worker identity: {identity}",
+                f"Role: {role}",
+                f"Objective: {objective}",
+                f"Expected output: {expected_output}",
+                "",
+                "Upstream artifact:",
+                upstream,
+                "",
+                "Return markdown with exactly these sections:",
+                "## Role",
+                "## Upstream Read",
+                "## Contribution",
+                "## Evidence",
+                "## Handoff",
+                "## Value Created",
+                "",
+                "Keep it specific and useful for the next worker.",
+              ]),
+            },
+          ]
+
+          content = chat_completion(base_url, token, model, messages)
+          output_dir = Path("/workspace/.agentrun/hf-team")
+          output_dir.mkdir(parents=True, exist_ok=True)
+          result_path = output_dir / "result.md"
+          status_path = output_dir / "status.json"
+          result_path.write_text(content + "\n", encoding="utf-8")
+
+          handoff = {
+            "schema_version": "swarm.hf-team-handoff.v1",
+            "generated_at": now_iso(),
+            "run": run_name,
+            "repository": repository,
+            "base": base,
+            "head": head,
+            "swarm": swarm_name,
+            "team": team_name,
+            "identity": identity,
+            "role": role,
+            "model": model,
+            "result_path": str(result_path),
+            "content": content,
+          }
+          status_path.write_text(json.dumps(handoff, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          subject = f"swarm.{swarm_name}.{role}.{run_name}".replace("/", ".")
+          publish_handoff(subject, handoff)
+
+          print("SWARM_HF_RESULT_BEGIN")
+          print(content)
+          print("SWARM_HF_RESULT_END")
+          print(json.dumps({"status": "succeeded", "subject": subject, "result_path": str(result_path)}))
+          return 0
+
+        if __name__ == "__main__":
+          try:
+            raise SystemExit(main())
+          except Exception as error:
+            print(f"HF team worker failed: {error}", file=sys.stderr)
+            raise SystemExit(1)
+  outputArtifacts:
+    - name: hf-team-result
+      path: /workspace/.agentrun/hf-team/result.md
+    - name: hf-team-status
+      path: /workspace/.agentrun/hf-team/status.json

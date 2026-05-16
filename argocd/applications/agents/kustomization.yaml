@@ -3,9 +3,14 @@ kind: Kustomization
 namespace: agents
 resources:
   - codex-auth-sealedsecret.yaml
+  - hf-router-token-sealedsecret.yaml
   - swarm-implspecs.yaml
   - swarm-agentrun-templates.yaml
   - swarm-instances.yaml
+  - hf-team-agentprovider.yaml
+  - hf-team-agents.yaml
+  - hf-team-implspec.yaml
+  - hf-team-secretbinding.yaml
   - codex-secretbinding.yaml
   - codex-agent.yaml
   - codex-spark-agent.yaml
