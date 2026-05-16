@@ -53,7 +53,7 @@ spec:
           "binary": "/bin/bash",
           "argsTemplate": [
             "-lc",
-            "set -o pipefail; EVENT_FILE=$(mktemp /tmp/codex-event.XXXXXX.json) && cp \"$1\" \"$EVENT_FILE\" && python3 /root/.codex/ensure-market-context-issue-number.py \"$EVENT_FILE\" && mkdir -p /workspace/.agent && LOG_PATH=/workspace/.agent/runner.log && /usr/local/bin/codex-implement \"$EVENT_FILE\" 2>&1 | tee \"$LOG_PATH\"; status=${PIPESTATUS[0]}; if [ \"$status\" -eq 0 ]; then exit 0; fi; if python3 /root/.codex/should-hf-swarm-fallback.py \"$LOG_PATH\"; then exec python3 /root/.codex/swarm-hf-codex-fallback.py \"$EVENT_FILE\" \"$LOG_PATH\"; fi; exit \"$status\"",
+            "set -o pipefail; EVENT_FILE=$(mktemp /tmp/codex-event.XXXXXX.json) && cp \"$1\" \"$EVENT_FILE\" && python3 /root/.codex/ensure-market-context-issue-number.py \"$EVENT_FILE\" && mkdir -p /workspace/.agent && LOG_PATH=/workspace/.agent/runner.log && /usr/local/bin/codex-implement \"$EVENT_FILE\" 2>&1 | python3 /root/.codex/sanitize-codex-log.py | tee \"$LOG_PATH\"; status=${PIPESTATUS[0]}; if [ \"$status\" -eq 0 ]; then exit 0; fi; if python3 /root/.codex/should-hf-swarm-fallback.py \"$LOG_PATH\"; then exec python3 /root/.codex/swarm-hf-codex-fallback.py \"$EVENT_FILE\" \"$LOG_PATH\"; fi; exit \"$status\"",
             "--",
             "{{payloads.eventFilePath}}"
           ],
@@ -178,6 +178,55 @@ spec:
           return 0
 
         if __name__ == '__main__':
+          raise SystemExit(main())
+    - path: /root/.codex/sanitize-codex-log.py
+      content: |-
+        #!/usr/bin/env python3
+        import re
+        import sys
+
+        SUPPRESSED_PROVIDER_HTML = "[suppressed provider HTML response body]"
+        HTML_START_PATTERN = re.compile(
+          r"<!doctype|<html\b|<head\b|<body\b|<style\b|<script\b|<svg\b|<path\b|viewBox=|challenge-error-text",
+          re.IGNORECASE,
+        )
+        HTML_END_PATTERN = re.compile(r"</html>|</body>|</style>|</script>|</svg>", re.IGNORECASE)
+        TAG_PATTERN = re.compile(r"<[^>\n]{1,400}>")
+
+        def strip_short_tags(text: str) -> str:
+          return TAG_PATTERN.sub("", text)
+
+        def main() -> int:
+          suppressing_html = False
+          for raw_line in sys.stdin:
+            line = raw_line.rstrip("\n")
+            if suppressing_html:
+              end = HTML_END_PATTERN.search(line)
+              if not end:
+                continue
+              line = line[end.end() :]
+              suppressing_html = False
+              if not line.strip():
+                continue
+
+            match = HTML_START_PATTERN.search(line)
+            if match:
+              prefix = strip_short_tags(line[: match.start()]).rstrip()
+              suffix = line[match.end() :]
+              end = HTML_END_PATTERN.search(suffix)
+              if end:
+                suffix = strip_short_tags(suffix[end.end() :]).strip()
+              else:
+                suffix = ""
+                suppressing_html = True
+              parts = [part for part in (prefix, SUPPRESSED_PROVIDER_HTML, suffix) if part]
+              print(" ".join(parts), flush=True)
+              continue
+
+            print(strip_short_tags(line), flush=True)
+          return 0
+
+        if __name__ == "__main__":
           raise SystemExit(main())
     - path: /root/.codex/should-hf-swarm-fallback.py
       content: |-
@@ -342,7 +391,7 @@ spec:
             end = log_text.find(end_marker)
             if start >= 0 and end > start:
               return log_text[start + len(start_marker) : end].strip()
-          return log_text.strip()[-4000:]
+          return summarize_failure_tail(log_text)
 
         def read_pod_log(namespace: str, job_name: str) -> str:
           from urllib.parse import quote
@@ -480,9 +529,13 @@ spec:
           run = ""
           stage = ""
           for line in upstream.splitlines():
-            if line.startswith("Auto-discovered upstream run:"):
+            if not line.strip() and (run or stage):
+              break
+            if line.startswith("## ") and (run or stage):
+              break
+            if line.startswith("Auto-discovered upstream run:") and not run:
               run = line.split(":", 1)[1].strip()
-            elif line.startswith("Auto-discovered upstream stage:"):
+            elif line.startswith("Auto-discovered upstream stage:") and not stage:
               stage = line.split(":", 1)[1].strip()
           if run and stage:
             return f"Auto-discovered upstream run: {run}\nAuto-discovered upstream stage: {stage}"
