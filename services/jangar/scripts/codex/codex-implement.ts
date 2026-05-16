@@ -288,6 +288,38 @@ const summarizeText = (value: string | undefined, max = 260) => {
   return `${trimmed.slice(0, max)}…`
 }
 
+const SUPPRESSED_PROVIDER_HTML = '[suppressed provider HTML response body]'
+const HTML_DOCUMENT_FRAGMENT = /(?:<!doctype|<html\b|<head\b|<body\b|<style\b|<script\b|<svg\b|<path\b)/i
+
+const sanitizeHumanFacingLogText = (value: string | null | undefined, max = 600) => {
+  if (!value) return ''
+
+  let sanitized = value.replace(/\r/g, '').trim()
+  if (!sanitized) return ''
+
+  if (HTML_DOCUMENT_FRAGMENT.test(sanitized)) {
+    sanitized = sanitized
+      .replace(/\s*<!doctype[\s\S]*$/i, ` ${SUPPRESSED_PROVIDER_HTML}`)
+      .replace(/\s*<html[\s\S]*$/i, ` ${SUPPRESSED_PROVIDER_HTML}`)
+      .replace(/\s*<head[\s\S]*$/i, ` ${SUPPRESSED_PROVIDER_HTML}`)
+      .replace(/\s*<body[\s\S]*$/i, ` ${SUPPRESSED_PROVIDER_HTML}`)
+      .replace(/\s*<style[\s\S]*$/i, ` ${SUPPRESSED_PROVIDER_HTML}`)
+      .replace(/\s*<script[\s\S]*$/i, ` ${SUPPRESSED_PROVIDER_HTML}`)
+      .replace(/\s*<svg[\s\S]*$/i, ` ${SUPPRESSED_PROVIDER_HTML}`)
+  }
+
+  sanitized = sanitized
+    .replace(/<[^>\n]{1,500}>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!sanitized) return SUPPRESSED_PROVIDER_HTML
+  return summarizeText(sanitized, max)
+}
+
+const sanitizeHumanFacingList = (items: string[] | undefined, max = 260) =>
+  (items ?? []).map((item) => sanitizeHumanFacingLogText(item, max)).filter((item) => item.length > 0)
+
 const truncatePromptSegment = (value: string, maxChars: number) => {
   const normalized = value.trim()
   if (normalized.length <= maxChars) {
@@ -349,17 +381,20 @@ const buildOwnerUpdateMessage = ({
   prUrl?: string | null
 }) => {
   const completed = decision === 'completed'
+  const safeRunSummary = sanitizeHumanFacingLogText(runSummary, 220)
+  const safeTests = sanitizeHumanFacingList(tests)
+  const safeGaps = sanitizeHumanFacingList(gaps)
   const lines = [
     completed
       ? `I finished ${stage} for ${repository}#${issueNumber}.`
       : `I am blocked on ${stage} for ${repository}#${issueNumber}.`,
     requirementMetadata.objective ? `Objective: ${summarizeText(requirementMetadata.objective, 200)}.` : '',
-    runSummary ? `Summary: ${summarizeText(runSummary, 220)}.` : '',
+    safeRunSummary ? `Summary: ${safeRunSummary}.` : '',
     prUrl ? `PR: ${prUrl}.` : '',
-    tests && tests.length > 0
-      ? `Validation results: ${tests.join('; ')}.`
+    safeTests.length > 0
+      ? `Validation results: ${safeTests.join('; ')}.`
       : 'Validation results: no explicit test list in the final run output.',
-    gaps && gaps.length > 0 ? `Key risks: ${gaps.join('; ')}.` : 'Key risks: none identified.',
+    safeGaps.length > 0 ? `Key risks: ${safeGaps.join('; ')}.` : 'Key risks: none identified.',
     requirementMetadata.acceptance && requirementMetadata.acceptance.length > 0
       ? `Acceptance criteria: ${requirementMetadata.acceptance.join('; ')}.`
       : '',
@@ -392,6 +427,9 @@ const buildReleaseNote = ({
   gaps?: string[]
   prUrl?: string | null
 }) => {
+  const safeRunSummary = sanitizeHumanFacingLogText(runSummary, 220)
+  const safeTests = sanitizeHumanFacingList(tests)
+  const safeGaps = sanitizeHumanFacingList(gaps)
   const requirementProvenance = [
     requirementMetadata.id ? `ID ${requirementMetadata.id}` : '',
     requirementMetadata.signal ? `signal ${requirementMetadata.signal}` : '',
@@ -404,7 +442,7 @@ const buildReleaseNote = ({
   const whatShipped = [
     `${stage} is ${decision === 'completed' ? 'complete' : 'blocked'}`,
     requirementMetadata.objective ? `Objective: ${summarizeText(requirementMetadata.objective, 200)}` : '',
-    runSummary ? `Summary: ${summarizeText(runSummary, 220)}` : '',
+    safeRunSummary ? `Summary: ${safeRunSummary}` : '',
   ]
     .filter((entry) => entry.length > 0)
     .join(' ')
@@ -414,10 +452,10 @@ const buildReleaseNote = ({
     requirementProvenance ? `Requirement provenance: ${requirementProvenance}.` : '',
     `What shipped: ${whatShipped}.`,
     prUrl ? `PR: ${prUrl}.` : '',
-    tests && tests.length > 0
-      ? `Validation results: ${tests.join('; ')}.`
+    safeTests.length > 0
+      ? `Validation results: ${safeTests.join('; ')}.`
       : 'Validation results: no explicit test list in the final run output.',
-    gaps && gaps.length > 0 ? `Key risks: ${gaps.join('; ')}.` : 'Key risks: none identified.',
+    safeGaps.length > 0 ? `Key risks: ${safeGaps.join('; ')}.` : 'Key risks: none identified.',
     `Rollback path: ${buildRollbackPath({ decision, repository, issueNumber, stage, requirementMetadata, prUrl })}.`,
     `Owner-facing status: ${resolveOwnerFacingStatus(decision)}.`,
     requirementMetadata.acceptance && requirementMetadata.acceptance.length > 0
@@ -1147,15 +1185,15 @@ const collectLogExcerpts = async (
 const normalizeFailureReason = (error: unknown) => {
   if (!error) return null
   if (error instanceof Error) {
-    return error.message.trim() || error.name || 'unknown error'
+    return sanitizeHumanFacingLogText(error.message, 1000) || error.name || 'unknown error'
   }
   if (typeof error === 'string') {
-    return error.trim() || null
+    return sanitizeHumanFacingLogText(error, 1000) || null
   }
   try {
-    return JSON.stringify(error)
+    return sanitizeHumanFacingLogText(JSON.stringify(error), 1000)
   } catch {
-    return String(error)
+    return sanitizeHumanFacingLogText(String(error), 1000)
   }
 }
 
@@ -1171,7 +1209,7 @@ const firstActionableLogLine = (logs: CodexNotifyLogExcerpt) => {
     const actionable = [...lines]
       .reverse()
       .find((line) => /\b(error|failed|failure|forbidden|denied|timeout|exception|traceback|panic)\b/i.test(line))
-    if (actionable) return actionable
+    if (actionable) return sanitizeHumanFacingLogText(actionable)
   }
   return null
 }
@@ -1191,9 +1229,10 @@ const buildFailureDiagnostics = ({
   runtimeLogPath: string
   statusPath: string
 }) => {
+  const safeGaps = sanitizeHumanFacingList(gaps, 600)
   if (gaps.length > 0) {
     return {
-      gaps,
+      gaps: safeGaps,
       failureReason: normalizeFailureReason(error),
       logLine: firstActionableLogLine(logs),
     }

@@ -921,6 +921,60 @@ describe('runCodexImplementation', () => {
     })
   }, 40_000)
 
+  it('suppresses provider HTML dumps in failed swarm handoff messages', async () => {
+    const capturePath = await installNatsPublishCapture(workdir, 'nats-publish-sanitized-failed-handoff.jsonl')
+    runCodexSessionMock.mockRejectedValueOnce(
+      new Error(
+        'codex exited with status 1: failed to warm featured plugin ids cache error=remote plugin sync request to https://chatgpt.com/backend-api/plugins/featured failed with status 403 Forbidden: <html><head><meta name="viewport" content="width=device-width"><style global>body{font-family:Arial}.container{display:flex}</style></head><body><div class="container"><svg width="41" height="41" viewBox="0 0 41 41"><path d="M37.5324 16.8707C37.9808 15.5241"/></svg><noscript>Enable JavaScript and cookies to continue</noscript></div></body></html>',
+      ),
+    )
+
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'validate readable cross-swarm failure handoff',
+      swarmRequirementChannel: 'workflow.general.requirement',
+      swarmRequirementId: '00gc1i45',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772433239',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmRequirementDescription: 'Post-merge validation with noisy provider failure.',
+      swarmAgentWorkerId: 'worker-0027ilba',
+      swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027ilba',
+      swarmAgentRole: 'implement',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow('codex exited with status 1')
+
+    const captured = await readCapturedNatsPublishes(capturePath)
+    const handoff = findCapturedNatsPublish(captured, 'swarm-handoff')
+    expect(handoff).toBeDefined()
+    if (!handoff) throw new Error('Expected a failed swarm-handoff publish call')
+    const handoffContent = contentFromCapturedNatsPublish(handoff)
+    const handoffAttrs = JSON.stringify(attrsFromCapturedNatsPublish(handoff))
+
+    expect(handoffContent).toContain('I am blocked on implementation for owner/repo#42.')
+    expect(handoffContent).toContain('[suppressed provider HTML response body]')
+    expect(handoffContent).not.toContain('<html')
+    expect(handoffContent).not.toContain('<style')
+    expect(handoffContent).not.toContain('viewBox')
+    expect(handoffAttrs).not.toContain('<html')
+    expect(handoffAttrs).not.toContain('viewBox')
+
+    const runGaps = findCapturedNatsPublish(captured, 'run-gaps')
+    expect(runGaps).toBeDefined()
+    if (!runGaps) throw new Error('Expected a failed run-gaps publish call')
+    const runGapContent = contentFromCapturedNatsPublish(runGaps)
+    expect(runGapContent).toContain('[suppressed provider HTML response body]')
+    expect(runGapContent).not.toContain('<html')
+    expect(runGapContent).not.toContain('viewBox')
+  }, 40_000)
+
   it('accepts worker identity metadata from parameters map', async () => {
     const payload = {
       prompt: 'Implementation prompt',

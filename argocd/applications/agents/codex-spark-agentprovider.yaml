@@ -212,6 +212,7 @@ spec:
         #!/usr/bin/env python3
         import json
         import os
+        import re
         import subprocess
         import sys
         import urllib.error
@@ -228,6 +229,47 @@ spec:
           if isinstance(value, (int, float, bool)):
             return str(value)
           return default
+
+        SUPPRESSED_PROVIDER_HTML = "[suppressed provider HTML response body]"
+        HTML_DOCUMENT_FRAGMENT = re.compile(r"(?:<!doctype|<html\b|<head\b|<body\b|<style\b|<script\b|<svg\b|<path\b)", re.IGNORECASE)
+
+        def summarize_text(value: str, max_chars: int = 600) -> str:
+          text = value.strip()
+          if len(text) <= max_chars:
+            return text
+          return f"{text[:max_chars]}..."
+
+        def sanitize_human_facing_log_text(value: str, max_chars: int = 1000) -> str:
+          sanitized = value.replace("\r", "").strip()
+          if not sanitized:
+            return ""
+          if HTML_DOCUMENT_FRAGMENT.search(sanitized):
+            sanitized = re.sub(r"\s*<!doctype[\s\S]*$", f" {SUPPRESSED_PROVIDER_HTML}", sanitized, flags=re.IGNORECASE)
+            sanitized = re.sub(r"\s*<html[\s\S]*$", f" {SUPPRESSED_PROVIDER_HTML}", sanitized, flags=re.IGNORECASE)
+            sanitized = re.sub(r"\s*<head[\s\S]*$", f" {SUPPRESSED_PROVIDER_HTML}", sanitized, flags=re.IGNORECASE)
+            sanitized = re.sub(r"\s*<body[\s\S]*$", f" {SUPPRESSED_PROVIDER_HTML}", sanitized, flags=re.IGNORECASE)
+            sanitized = re.sub(r"\s*<style[\s\S]*$", f" {SUPPRESSED_PROVIDER_HTML}", sanitized, flags=re.IGNORECASE)
+            sanitized = re.sub(r"\s*<script[\s\S]*$", f" {SUPPRESSED_PROVIDER_HTML}", sanitized, flags=re.IGNORECASE)
+            sanitized = re.sub(r"\s*<svg[\s\S]*$", f" {SUPPRESSED_PROVIDER_HTML}", sanitized, flags=re.IGNORECASE)
+          sanitized = re.sub(r"<[^>\n]{1,500}>", " ", sanitized)
+          sanitized = re.sub(r"\s+", " ", sanitized).strip()
+          return summarize_text(sanitized or SUPPRESSED_PROVIDER_HTML, max_chars)
+
+        def summarize_failure_tail(log_text: str) -> str:
+          lines: list[str] = []
+          for line in log_text.splitlines():
+            sanitized = sanitize_human_facing_log_text(line, 600)
+            if not sanitized:
+              continue
+            lowered = sanitized.lower()
+            if any(marker in lowered for marker in ("quota exceeded", "codex exited", "stream error", "turn failed", "failed to warm featured plugin", "forbidden", "denied", "timeout", "exception", "traceback", "panic", "suppressed provider html")):
+              lines.append(sanitized)
+          if not lines and log_text.strip():
+            lines.append(sanitize_human_facing_log_text(log_text, 1000))
+          if not lines:
+            return "No primary provider failure log was captured."
+          compact = "\n".join(dict.fromkeys(lines))
+          return compact[-1500:]
 
         def read_field(payload: dict, key: str, default: str = "") -> str:
           value = as_text(payload.get(key))
@@ -543,6 +585,7 @@ spec:
           business_metric = read_field(payload, "swarmBusinessMetric", "unavailable")
           evidence_url = read_field(payload, "swarmBusinessEvidenceUrl", "")
           failure_tail = log_path.read_text(encoding="utf-8", errors="replace")[-4000:] if log_path.exists() else ""
+          failure_summary = summarize_failure_tail(failure_tail)
           upstream = resolve_auto_upstream(payload, swarm_name, stage, role, run_name)
 
           print("SWARM_CODEX_HF_FALLBACK_UPSTREAM_BEGIN")
@@ -577,8 +620,8 @@ spec:
                 f"Business metric: {business_metric}",
                 f"Business evidence URL: {evidence_url}",
                 "",
-                "Primary Codex failure tail:",
-                failure_tail,
+                "Primary Codex failure summary:",
+                failure_summary,
                 "",
                 "The wrapper will render authoritative upstream run and stage facts.",
                 "Do not mention upstream run or upstream stage. Return 2-4 concise bullets with only additional teammate observations.",
@@ -611,7 +654,8 @@ spec:
             "role": role,
             "identity": identity,
             "model": model,
-            "primary_failure_tail": failure_tail,
+            "primary_failure_tail": failure_summary,
+            "primary_failure_summary": failure_summary,
             "upstream_read": summarize_upstream(upstream),
             "model_note": model_note,
             "content": content,
