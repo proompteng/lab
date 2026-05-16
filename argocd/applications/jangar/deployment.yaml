@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: 2026-05-16T11:59:50Z
+    deploy.knative.dev/rollout: 2026-05-16T14:22:36Z
 spec:
   replicas: 1
   strategy:
@@ -57,11 +57,11 @@ spec:
             - name: UI_PORT
               value: "8080"
             - name: JANGAR_RUNTIME_IMAGE
-              value: registry.ide-newton.ts.net/lab/jangar:86fe37b9@sha256:ef3970a77c4e423d05f5ceb0eadea050e44700c64645afee21e6ec54bae5ac5f
+              value: registry.ide-newton.ts.net/lab/jangar:e95491dc@sha256:d42d0e1fdd0c3ecb576c1a1280ad59a65e1af49c765ee450fa0c3f178b63ecc1
             - name: JANGAR_SOURCE_HEAD_SHA
-              value: 86fe37b9869bf96cf8455e6c2dd09d7e638cb501
+              value: e95491dc186675aca6ea339902be60e0783a77a9
             - name: JANGAR_GITOPS_REVISION
-              value: 86fe37b9869bf96cf8455e6c2dd09d7e638cb501
+              value: e95491dc186675aca6ea339902be60e0783a77a9
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: "120"
             - name: JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS
@@ -405,15 +405,15 @@ spec:
             - name: OPENAI_EMBEDDING_TIMEOUT_MS
               value: "60000"
             - name: JANGAR_SOURCE_CI_RUN_ID
-              value: "25961346273"
+              value: "25964272156"
             - name: JANGAR_SOURCE_CI_CONCLUSION
               value: success
             - name: JANGAR_MANIFEST_IMAGE_DIGEST
-              value: sha256:109c3ce0eb0dcf8147a04eac3b8d7ffe0cc74f6bca52025627d530c3b8cd2ecb
+              value: sha256:f8b964cb561b18a093aa72aa228a096f82276e7dcfb26df8652bb71a567d8933
             - name: JANGAR_SERVING_BUILD_COMMIT
-              value: 86fe37b9869bf96cf8455e6c2dd09d7e638cb501
+              value: e95491dc186675aca6ea339902be60e0783a77a9
             - name: JANGAR_SERVING_IMAGE_DIGEST
-              value: sha256:109c3ce0eb0dcf8147a04eac3b8d7ffe0cc74f6bca52025627d530c3b8cd2ecb
+              value: sha256:f8b964cb561b18a093aa72aa228a096f82276e7dcfb26df8652bb71a567d8933
           ports:
             - name: http
               containerPort: 8080
