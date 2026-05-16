@@ -355,6 +355,22 @@ describe('scheduled AgentRun templates', () => {
     expect(allowedSecrets).toContain('nats-agents-credentials')
   })
 
+  it('renders Codex HF fallback handoff facts outside the model draft', () => {
+    const manifests = readYamlObjects('argocd/applications/agents/codex-spark-agentprovider.yaml')
+    const provider = manifests.find((manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'codex-spark')
+    const inputFiles = objectAt(objectAt(provider, 'spec'), 'inputFiles') as Record<string, unknown>[] | undefined
+    const fallbackScript = inputFiles?.find(
+      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/swarm-hf-codex-fallback.py',
+    )
+    const content = objectAt(fallbackScript, 'content')
+
+    expect(content).toContain('def summarize_upstream(upstream: str) -> str:')
+    expect(content).toContain('def render_fallback_result(')
+    expect(content).toContain('Auto-discovered upstream run:')
+    expect(content).toContain('The wrapper will render authoritative upstream run and stage facts.')
+    expect(content).toContain('\"upstream_read\": summarize_upstream(upstream)')
+  })
+
   it('keeps the deployer implementation spec focused on a bounded release slice', () => {
     const manifests = readYamlObjects('argocd/applications/agents/swarm-implspecs.yaml')
     const deployerSpec = manifests.find(

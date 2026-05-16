@@ -409,6 +409,95 @@ spec:
             return "Deployer duty: consume the implementation handoff, give a go/no-go, identify rollout risk, and name the exact next verification action."
           return "Worker duty: consume upstream context, add one useful contribution, and hand off the exact next action."
 
+        def summarize_upstream(upstream: str) -> str:
+          if upstream.strip() == "None":
+            return "None"
+          run = ""
+          stage = ""
+          for line in upstream.splitlines():
+            if line.startswith("Auto-discovered upstream run:"):
+              run = line.split(":", 1)[1].strip()
+            elif line.startswith("Auto-discovered upstream stage:"):
+              stage = line.split(":", 1)[1].strip()
+          if run and stage:
+            return f"Auto-discovered upstream run: {run}\nAuto-discovered upstream stage: {stage}"
+          if run:
+            return f"Auto-discovered upstream run: {run}"
+          return "Prior handoff was present but did not include structured run metadata."
+
+        def next_action_for_stage(role: str, stage: str, objective: str) -> str:
+          normalized_stage = stage.lower().strip()
+          normalized_role = role.lower().strip()
+          if normalized_stage == "discover":
+            return f"Plan from the discovered blocker and preserve the objective: {objective}"
+          if normalized_stage == "plan":
+            return "Implement the planned repair path once a code-capable Codex worker is available."
+          if normalized_stage == "implement":
+            return "Verify the implementation handoff, rollout risk, and business evidence before declaring readiness."
+          if normalized_stage == "verify":
+            return "Escalate the primary provider outage if rollout proof still depends on code-capable Codex execution."
+          if normalized_role == "architect":
+            return f"Turn the blocker into a concrete execution plan for: {objective}"
+          if normalized_role in {"engineer", "builder"}:
+            return "Convert the prior plan into a narrow code change when primary provider capacity returns."
+          if normalized_role in {"deployer", "reviewer"}:
+            return "Validate the prior worker output against runtime evidence and call out any missing proof."
+          return f"Carry forward the upstream context and add the next useful contribution toward: {objective}"
+
+        def compact_model_note(content: str) -> str:
+          kept: list[str] = []
+          for line in content.splitlines():
+            stripped = line.strip()
+            if not stripped:
+              continue
+            if stripped.startswith("#"):
+              continue
+            lowered = stripped.lower()
+            if "auto-discovered upstream" in lowered or "upstream handoff" in lowered:
+              continue
+            kept.append(stripped)
+          return "\n".join(kept)[:1500].strip()
+
+        def render_fallback_result(
+          *,
+          identity: str,
+          role: str,
+          stage: str,
+          upstream: str,
+          objective: str,
+          business_metric: str,
+          evidence_url: str,
+          model_note: str,
+        ) -> str:
+          upstream_read = summarize_upstream(upstream)
+          next_action = next_action_for_stage(role, stage, objective)
+          contribution = role_guidance(role, stage)
+          if model_note:
+            contribution = f"{contribution}\n\nAdditional HF note:\n{model_note}"
+          return "\n".join([
+            "## Role",
+            f"{identity} ({role}) acting as fallback swarm teammate for stage `{stage}`.",
+            "",
+            "## Primary Provider Blocker",
+            "Primary Codex execution failed because the provider was unavailable due to auth or capacity, so this is a fallback coordination artifact rather than a completed code change.",
+            "",
+            "## Upstream Read",
+            upstream_read,
+            "",
+            "## Contribution",
+            contribution,
+            "",
+            "## Evidence",
+            f"Business metric: {business_metric}",
+            f"Business evidence URL: {evidence_url or 'unavailable'}",
+            "",
+            "## Handoff",
+            next_action,
+            "",
+            "## Value Created",
+            "The swarm preserved a structured handoff, kept stage-to-stage context intact, and avoided converting a provider outage into silent team drift.",
+          ])
+
         def main() -> int:
           event_path = Path(sys.argv[1] if len(sys.argv) > 1 else "/workspace/run.json")
           log_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("/workspace/.agent/runner.log")
@@ -467,23 +556,24 @@ spec:
                 "Primary Codex failure tail:",
                 failure_tail,
                 "",
-                "Upstream handoff:",
-                upstream,
-                "",
-                "Return markdown with exactly these sections:",
-                "## Role",
-                "## Primary Provider Blocker",
-                "## Upstream Read",
-                "## Contribution",
-                "## Evidence",
-                "## Handoff",
-                "## Value Created",
+                "The wrapper will render authoritative upstream run and stage facts.",
+                "Do not mention upstream run or upstream stage. Return 2-4 concise bullets with only additional teammate observations.",
               ]),
             },
           ]
 
           model = os.environ.get("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct:novita").strip()
-          content = chat_completion(os.environ.get("HF_BASE_URL", "https://router.huggingface.co/v1"), token, model, messages)
+          model_note = compact_model_note(chat_completion(os.environ.get("HF_BASE_URL", "https://router.huggingface.co/v1"), token, model, messages))
+          content = render_fallback_result(
+            identity=identity,
+            role=role,
+            stage=stage,
+            upstream=upstream,
+            objective=objective,
+            business_metric=business_metric,
+            evidence_url=evidence_url,
+            model_note=model_note,
+          )
           output_dir = Path("/workspace/.agent")
           output_dir.mkdir(parents=True, exist_ok=True)
           (output_dir / "hf-fallback-result.md").write_text(content + "\n", encoding="utf-8")
@@ -498,6 +588,8 @@ spec:
             "identity": identity,
             "model": model,
             "primary_failure_tail": failure_tail,
+            "upstream_read": summarize_upstream(upstream),
+            "model_note": model_note,
             "content": content,
           }
           (output_dir / "status.json").write_text(json.dumps({"status": "hf_fallback_succeeded", **handoff}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
