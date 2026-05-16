@@ -155,13 +155,19 @@ test('worker load failure cleanup terminates only non-terminal submitted workflo
   expect(events.map((event) => event.status).sort()).toEqual(['terminated', 'terminated'])
 })
 
-test('worker load failure cleanup reports already-completed and failed terminations', async () => {
+test('worker load failure cleanup reports already-completed, transient, and failed terminations', async () => {
   type CleanupClient = Parameters<typeof __workerLoadTestHooks.cleanupSubmittedWorkflows>[0]
   const client = {
     workflow: {
       terminate: async (handle: { workflowId: string }) => {
         if (handle.workflowId === 'already-completed') {
           throw new ConnectError('workflow execution already completed', Code.NotFound)
+        }
+        if (handle.workflowId === 'transient') {
+          throw {
+            _tag: 'UnknownException',
+            cause: new ConnectError('[unavailable] Not enough hosts to serve the request', Code.Unavailable),
+          }
         }
         throw new Error('backend unavailable')
       },
@@ -172,6 +178,7 @@ test('worker load failure cleanup reports already-completed and failed terminati
     client,
     [
       { workflowId: 'already-completed', runId: 'run-already-completed' },
+      { workflowId: 'transient', runId: 'run-transient' },
       { workflowId: 'failed', runId: 'run-failed' },
     ],
     [],
@@ -182,5 +189,6 @@ test('worker load failure cleanup reports already-completed and failed terminati
   expect(events.map((event) => [event.workflowId, event.status]).sort()).toEqual([
     ['already-completed', 'already-completed'],
     ['failed', 'failed'],
+    ['transient', 'transient-cleanup-failed'],
   ])
 })
