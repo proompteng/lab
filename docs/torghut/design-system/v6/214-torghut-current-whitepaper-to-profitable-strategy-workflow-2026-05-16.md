@@ -16,31 +16,31 @@ single sleeve that prints `$500` daily.
 ```mermaid
 flowchart TD
   Paper["Whitepaper or research note"] --> Ingest["Whitepaper ingest and versioning"]
-  Ingest --> Claims["Claim compiler<br/>mechanism, signal, data, risk, validation"]
-  Claims --> Cards["Hypothesis cards<br/>bounded, falsifiable, feature-linked"]
-  Cards --> Factory["Candidate compiler / strategy factory<br/>checked runtime family ids only"]
-  Factory --> Specs["CandidateSpec ledger<br/>family, universe, features, risk, execution profile"]
+  Ingest --> Claims["Claim compiler: mechanism, signal, data, risk, validation"]
+  Claims --> Cards["Hypothesis cards: bounded, falsifiable, feature-linked"]
+  Cards --> Factory["Candidate compiler: checked runtime family ids only"]
+  Factory --> Specs["CandidateSpec ledger: family, universe, features, risk, execution"]
 
-  Specs --> Snapshot["Immutable epoch snapshot<br/>specs, prior evidence, feature contracts"]
-  Snapshot --> MLX["MLX proposal ranker<br/>ranking only, no promotion authority"]
-  MLX --> Budget["Replay budget selector<br/>top-K plus exploration plus backfill"]
+  Specs --> Snapshot["Immutable epoch snapshot: specs, evidence, feature contracts"]
+  Snapshot --> MLX["MLX proposal ranker: ranking only, no promotion authority"]
+  MLX --> Budget["Replay budget selector: top-K, exploration, backfill"]
   Specs --> Budget
 
-  Budget --> Replay["Runtime replay<br/>scheduler-v3 / real replay mode"]
-  Replay --> Evidence["CandidateEvidenceBundle<br/>post-cost PnL, notional, cash, drawdown, blockers"]
-  Evidence --> Optimizer["Portfolio optimizer<br/>sleeve weights, correlation, exposure, concentration"]
-  Optimizer --> Portfolio["PortfolioCandidateSpec<br/>portfolio objective scorecard"]
+  Budget --> Replay["Runtime replay: scheduler-v3 real replay mode"]
+  Replay --> Evidence["CandidateEvidenceBundle: PnL, notional, cash, drawdown, blockers"]
+  Evidence --> Optimizer["Portfolio optimizer: weights, correlation, exposure, concentration"]
+  Optimizer --> Portfolio["PortfolioCandidateSpec: portfolio objective scorecard"]
 
   Portfolio --> Oracle{"Profit target oracle"}
-  Oracle -->|"fail"| LedgerFail["Persist failure table<br/>false positives, blockers, next epoch plan"]
-  LedgerFail --> Train["Train next proposal model<br/>rank-bucket lift and replay feedback"]
+  Oracle -->|"fail"| LedgerFail["Persist failure table: false positives, blockers, next plan"]
+  LedgerFail --> Train["Train next proposal model: rank-bucket lift and replay feedback"]
   Train --> MLX
 
-  Oracle -->|"pass"| Closure["Runtime closure<br/>config, replay plan, parity plan, approval prerequisites"]
+  Oracle -->|"pass"| Closure["Runtime closure: config, replay plan, parity plan, approvals"]
   Closure --> Shadow{"Paper/shadow gate"}
   Shadow -->|"fail"| LedgerFail
-  Shadow -->|"pass"| Promotion["Promotion readiness receipt<br/>no MLX-only promotion"]
-  Promotion --> LiveSleeve["Live strategy / sleeve candidate<br/>eligible for controlled rollout"]
+  Shadow -->|"pass"| Promotion["Promotion readiness receipt: no MLX-only promotion"]
+  Promotion --> LiveSleeve["Live strategy / sleeve candidate: controlled rollout eligible"]
 ```
 
 ## Promotion State Machine
@@ -48,25 +48,25 @@ flowchart TD
 ```mermaid
 stateDiagram-v2
   [*] --> ResearchOnly
-  ResearchOnly: paper parsed<br/>claims compiled<br/>candidate specs generated
-  ResearchOnly --> ReplayEligible: bounded CandidateSpec<br/>known runtime family<br/>feature contract present
-  ReplayEligible --> ReplayFailed: replay missing, stale, synthetic-only,<br/>or objective blockers
+  ResearchOnly: paper parsed, claims compiled, candidate specs generated
+  ResearchOnly --> ReplayEligible: bounded CandidateSpec, known runtime family, feature contract present
+  ReplayEligible --> ReplayFailed: replay missing, stale, synthetic-only, or objective blockers
   ReplayFailed --> ResearchOnly: feedback enters next epoch
 
-  ReplayEligible --> PortfolioCandidate: real replay evidence exists<br/>post-cost metrics computed
-  PortfolioCandidate --> OracleFailed: target, drawdown, cash,<br/>exposure, notional, concentration,<br/>or activity gates fail
+  ReplayEligible --> PortfolioCandidate: real replay evidence exists and post-cost metrics computed
+  PortfolioCandidate --> OracleFailed: target, drawdown, cash, exposure, notional, concentration, or activity gates fail
   OracleFailed --> ResearchOnly: failure is persisted as training signal
 
   PortfolioCandidate --> RuntimeClosure: portfolio oracle passes
-  RuntimeClosure --> ClosureBlocked: runtime strategy missing,<br/>parity missing, approval missing,<br/>or shadow evidence missing
+  RuntimeClosure --> ClosureBlocked: runtime strategy, parity, approval, or shadow evidence missing
   ClosureBlocked --> ResearchOnly: closure blockers drive repair work
 
-  RuntimeClosure --> ShadowReady: checked runtime family<br/>config materialized<br/>parity plan available
+  RuntimeClosure --> ShadowReady: checked runtime family, config materialized, parity plan available
   ShadowReady --> PaperShadow: zero/live-safe paper or shadow run
-  PaperShadow --> PromotionBlocked: paper/shadow evidence fails<br/>or ledger proof incomplete
+  PaperShadow --> PromotionBlocked: paper/shadow evidence fails or ledger proof incomplete
   PromotionBlocked --> ResearchOnly
 
-  PaperShadow --> PromotionEligible: paper/shadow evidence passes<br/>ledger proof complete<br/>capital gates pass
+  PaperShadow --> PromotionEligible: paper/shadow evidence passes, ledger proof complete, capital gates pass
   PromotionEligible --> LiveControlled: controlled rollout enabled
   LiveControlled --> [*]
 ```
