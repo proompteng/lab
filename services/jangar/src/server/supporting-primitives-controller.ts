@@ -2611,8 +2611,8 @@ const reconcileSwarm = async (
       paused: requirementStats.paused,
       admission: admissionStatusForStage(requirementAdmission),
       ...(requirementStageClearance ? { stageClearance: stageClearanceStatusForStage(requirementStageClearance) } : {}),
-      ...(requirementStats.pauseReason ? { pauseReason: requirementStats.pauseReason } : {}),
-      ...(requirementStats.pauseMessage ? { pauseMessage: requirementStats.pauseMessage } : {}),
+      pauseReason: requirementStats.pauseReason ?? '',
+      pauseMessage: requirementStats.pauseMessage ?? '',
       error: requirementTemplateError ?? '',
     },
   }
