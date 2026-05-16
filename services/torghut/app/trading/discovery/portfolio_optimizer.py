@@ -23,6 +23,8 @@ MAX_SINGLE_SYMBOL_CONTRIBUTION_SHARE = Decimal("0.35")
 MAX_ALLOWED_PAIRWISE_CORRELATION = Decimal("0.85")
 MAX_PORTFOLIO_GROSS_EXPOSURE_PCT_EQUITY = Decimal("1.0")
 PORTFOLIO_SEARCH_BEAM_WIDTH = 256
+PORTFOLIO_WEIGHTING_EQUAL_COUNT = "equal_count"
+PORTFOLIO_WEIGHTING_GROSS_EXPOSURE_BUDGET = "gross_exposure_budget"
 PORTFOLIO_COMPOSABLE_SINGLE_SLEEVE_VETOES = frozenset(
     {
         "active_day_ratio_below_min",
@@ -242,7 +244,7 @@ def _correlation(left: Mapping[str, Decimal], right: Mapping[str, Decimal]) -> D
 def _portfolio_daily_net(
     selected: Sequence[CandidateEvidenceBundle],
 ) -> dict[str, Decimal]:
-    weights = _equal_weights(selected)
+    weights = _portfolio_weights(selected)
     daily_totals: dict[str, Decimal] = {}
     for bundle, weight in zip(selected, weights, strict=True):
         for day, value in _daily_net(bundle).items():
@@ -253,7 +255,7 @@ def _portfolio_daily_net(
 def _portfolio_daily_filled_notional(
     selected: Sequence[CandidateEvidenceBundle],
 ) -> dict[str, Decimal]:
-    weights = _equal_weights(selected)
+    weights = _portfolio_weights(selected)
     daily_totals: dict[str, Decimal] = {}
     for bundle, weight in zip(selected, weights, strict=True):
         for day, value in _daily_filled_notional(bundle).items():
@@ -324,7 +326,7 @@ def _contribution_shares(values: Mapping[str, Decimal]) -> dict[str, Decimal]:
 def _cluster_contribution_shares(
     selected: Sequence[CandidateEvidenceBundle],
 ) -> dict[str, Decimal]:
-    weights = _equal_weights(selected)
+    weights = _portfolio_weights(selected)
     contributions: dict[str, Decimal] = {}
     for bundle, weight in zip(selected, weights, strict=True):
         cluster = _cluster_id(bundle)
@@ -354,7 +356,7 @@ def _bundle_symbol_shares(bundle: CandidateEvidenceBundle) -> dict[str, Decimal]
 def _symbol_contribution_shares(
     selected: Sequence[CandidateEvidenceBundle],
 ) -> dict[str, Decimal]:
-    weights = _equal_weights(selected)
+    weights = _portfolio_weights(selected)
     contributions: dict[str, Decimal] = {}
     for bundle, weight in zip(selected, weights, strict=True):
         bundle_positive_net = _positive_net_contribution(bundle) * weight
@@ -400,10 +402,41 @@ def _equal_weights(selected: Sequence[CandidateEvidenceBundle]) -> tuple[Decimal
     return tuple(weight for _ in selected)
 
 
+def _gross_exposure_budget_weights(
+    selected: Sequence[CandidateEvidenceBundle],
+) -> tuple[Decimal, ...] | None:
+    exposures = tuple(_max_gross_exposure_pct_equity(bundle) for bundle in selected)
+    if not exposures or any(exposure <= 0 for exposure in exposures):
+        return None
+    total_exposure = sum(exposures, Decimal("0"))
+    if total_exposure <= 0:
+        return None
+    scale = min(
+        Decimal("1"),
+        MAX_PORTFOLIO_GROSS_EXPOSURE_PCT_EQUITY / total_exposure,
+    )
+    return tuple(scale for _ in selected)
+
+
+def _portfolio_weights(
+    selected: Sequence[CandidateEvidenceBundle],
+) -> tuple[Decimal, ...]:
+    gross_budget_weights = _gross_exposure_budget_weights(selected)
+    if gross_budget_weights is not None:
+        return gross_budget_weights
+    return _equal_weights(selected)
+
+
+def _portfolio_weighting_mode(selected: Sequence[CandidateEvidenceBundle]) -> str:
+    if _gross_exposure_budget_weights(selected) is not None:
+        return PORTFOLIO_WEIGHTING_GROSS_EXPOSURE_BUDGET
+    return PORTFOLIO_WEIGHTING_EQUAL_COUNT
+
+
 def _portfolio_max_gross_exposure_pct_equity(
     selected: Sequence[CandidateEvidenceBundle],
 ) -> Decimal:
-    weights = _equal_weights(selected)
+    weights = _portfolio_weights(selected)
     return sum(
         (
             _max_gross_exposure_pct_equity(bundle) * weight
@@ -414,7 +447,7 @@ def _portfolio_max_gross_exposure_pct_equity(
 
 
 def _portfolio_min_cash(selected: Sequence[CandidateEvidenceBundle]) -> Decimal:
-    weights = _equal_weights(selected)
+    weights = _portfolio_weights(selected)
     return sum(
         (
             _min_cash(bundle) * weight
@@ -460,6 +493,7 @@ def _portfolio_scorecard(
     target_net_pnl_per_day: Decimal,
     oracle_policy: ProfitTargetOraclePolicy,
 ) -> dict[str, Any]:
+    weights = _portfolio_weights(selected)
     daily_net = _portfolio_daily_net(selected)
     trading_day_count = _portfolio_trading_day_count(selected, daily_net)
     missing_day_count = max(0, trading_day_count - len(daily_net))
@@ -524,6 +558,11 @@ def _portfolio_scorecard(
         "portfolio_post_cost_net_pnl_per_day": str(net_per_day),
         "target_net_pnl_per_day": str(target_net_pnl_per_day),
         "target_met": net_per_day >= target_net_pnl_per_day,
+        "portfolio_weighting_mode": _portfolio_weighting_mode(selected),
+        "portfolio_sleeve_weights": {
+            bundle.candidate_id: str(weight)
+            for bundle, weight in zip(selected, weights, strict=True)
+        },
         "active_day_ratio": str(active_day_ratio),
         "positive_day_ratio": str(positive_day_ratio),
         "min_daily_net_pnl": str(min_day),
