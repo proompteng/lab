@@ -476,6 +476,27 @@ describe('control-plane stage clearance', () => {
     })
   })
 
+  it('holds normal launch packets with a provider-auth repair action when workers cannot authenticate', () => {
+    const packets = build({
+      workflows: workflows({
+        recent_failed_jobs: 3,
+        backoff_limit_exceeded_jobs: 3,
+        top_failure_reasons: [{ reason: 'ProviderAuthUnavailable', count: 3 }],
+      }),
+    })
+
+    expect(packet(packets, 'implement', 'dispatch_normal')).toMatchObject({
+      decision: 'hold',
+      max_launches: 0,
+      reason_codes: expect.arrayContaining([
+        'workflow_recent_failed_jobs',
+        'workflow_failure_providerauthunavailable',
+        'provider_auth_debt_active',
+      ]),
+      required_repair_action: 'restore provider auth before launch',
+    })
+  })
+
   it('holds normal stage launch when failure-domain holdbacks report missing lease authority', () => {
     const packets = build({
       failureDomainLeases: failureDomainHoldbackLeases(),

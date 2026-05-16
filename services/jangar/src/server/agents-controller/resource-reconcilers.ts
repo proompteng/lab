@@ -1,6 +1,7 @@
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 
 import { normalizeConditions, upsertCondition } from './conditions'
+import { PROVIDER_AUTH_UNAVAILABLE_REASON, resolveProviderAuthFailureFromText } from './provider-capacity'
 
 type KubeClient = {
   get: (kind: string, name: string, namespace: string) => Promise<Record<string, unknown> | null>
@@ -16,6 +17,111 @@ type VcsAuthValidation = {
   reason?: string
   message?: string
   warnings?: ConditionWarning[]
+}
+
+const PROVIDER_AUTH_FAILURE_LOOKBACK_MS = 2 * 60 * 60 * 1000
+
+const parseTimestamp = (value: unknown) => {
+  const text = asString(value)
+  if (!text) return null
+  const parsed = Date.parse(text)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+const latestConditionTransition = (run: Record<string, unknown>) => {
+  const conditions = readNested(run, ['status', 'conditions'])
+  if (!Array.isArray(conditions)) return null
+  const timestamps = conditions
+    .map((condition) => parseTimestamp(asRecord(condition)?.lastTransitionTime))
+    .filter((timestamp): timestamp is number => timestamp !== null)
+  if (timestamps.length === 0) return null
+  return Math.max(...timestamps)
+}
+
+const runObservedAt = (run: Record<string, unknown>) =>
+  parseTimestamp(readNested(run, ['status', 'completedAt'])) ??
+  parseTimestamp(readNested(run, ['status', 'workflow', 'lastTransitionTime'])) ??
+  latestConditionTransition(run) ??
+  parseTimestamp(readNested(run, ['metadata', 'creationTimestamp']))
+
+const runTextForProviderAuthDetection = (run: Record<string, unknown>) => {
+  const conditions = readNested(run, ['status', 'conditions'])
+  const workflowSteps = readNested(run, ['status', 'workflow', 'steps'])
+  return [
+    readNested(run, ['status', 'reason']),
+    readNested(run, ['status', 'message']),
+    ...(Array.isArray(conditions)
+      ? conditions
+          .map((condition: unknown) => {
+            const record = asRecord(condition)
+            return [record?.reason, record?.message].filter(Boolean).join(' ')
+          })
+          .filter(Boolean)
+      : []),
+    ...(Array.isArray(workflowSteps)
+      ? workflowSteps
+          .map((step: unknown) => {
+            const record = asRecord(step)
+            return [record?.reason, record?.message].filter(Boolean).join(' ')
+          })
+          .filter(Boolean)
+      : []),
+  ]
+    .map((value) => asString(value))
+    .filter((value): value is string => Boolean(value))
+    .join('\n')
+}
+
+const hasProviderAuthFailure = (run: Record<string, unknown>) => {
+  const reason = asString(readNested(run, ['status', 'reason']))
+  if (reason === PROVIDER_AUTH_UNAVAILABLE_REASON) return true
+  return resolveProviderAuthFailureFromText(runTextForProviderAuthDetection(run)) !== null
+}
+
+const phaseOf = (run: Record<string, unknown>) => asString(readNested(run, ['status', 'phase']))?.toLowerCase()
+
+const resolveRecentProviderAuthFailure = (
+  provider: Record<string, unknown>,
+  agents: Record<string, unknown>[],
+  runs: Record<string, unknown>[],
+  nowMs: number,
+) => {
+  const providerName = asString(readNested(provider, ['metadata', 'name']))
+  if (!providerName) return null
+  const agentNames = new Set(
+    agents
+      .filter((agent) => asString(readNested(agent, ['spec', 'providerRef', 'name'])) === providerName)
+      .map((agent) => asString(readNested(agent, ['metadata', 'name'])))
+      .filter((name): name is string => Boolean(name)),
+  )
+  if (agentNames.size === 0) return null
+
+  let latestFailure: { at: number; name: string; message: string } | null = null
+  let latestSuccessAt: number | null = null
+  for (const run of runs) {
+    const agentName = asString(readNested(run, ['spec', 'agentRef', 'name']))
+    if (!agentName || !agentNames.has(agentName)) continue
+    const observedAt = runObservedAt(run)
+    if (observedAt === null) continue
+    const phase = phaseOf(run)
+    if (phase === 'succeeded') {
+      latestSuccessAt = Math.max(latestSuccessAt ?? 0, observedAt)
+      continue
+    }
+    if (phase !== 'failed' || !hasProviderAuthFailure(run)) continue
+    const name = asString(readNested(run, ['metadata', 'name'])) ?? 'unknown'
+    const message =
+      resolveProviderAuthFailureFromText(runTextForProviderAuthDetection(run))?.message ??
+      `provider auth unavailable: ${name}`
+    if (!latestFailure || observedAt > latestFailure.at) {
+      latestFailure = { at: observedAt, name, message }
+    }
+  }
+
+  if (!latestFailure) return null
+  if (latestSuccessAt !== null && latestSuccessAt > latestFailure.at) return null
+  if (nowMs - latestFailure.at > PROVIDER_AUTH_FAILURE_LOOKBACK_MS) return null
+  return latestFailure
 }
 
 export const createResourceReconcilers = (deps: {
@@ -99,11 +205,17 @@ export const createResourceReconcilers = (deps: {
     })
   }
 
-  const reconcileAgentProvider = async (kube: unknown, provider: Record<string, unknown>) => {
+  const reconcileAgentProvider = async (
+    kube: unknown,
+    provider: Record<string, unknown>,
+    agents: Record<string, unknown>[] = [],
+    runs: Record<string, unknown>[] = [],
+  ) => {
     const spec = asRecord(provider.spec) ?? {}
     const conditions = buildConditions(provider)
     const binary = asString(spec.binary)
     const namespace = asString(readNested(provider, ['metadata', 'namespace'])) ?? 'default'
+    const nowMs = Date.parse(deps.nowIso())
     let updated = conditions
     if (!binary) {
       updated = upsertCondition(updated, {
@@ -137,9 +249,26 @@ export const createResourceReconcilers = (deps: {
           message: authValidation.message ?? 'autonomous Codex auth validation failed',
         })
       } else {
+        const recentAuthFailure = resolveRecentProviderAuthFailure(provider, agents, runs, nowMs)
         updated = upsertCondition(updated, { type: 'InvalidSpec', status: 'False', reason: 'ValidSpec', message: '' })
-        updated = upsertCondition(updated, { type: 'Unreachable', status: 'False', reason: 'Reachable', message: '' })
-        updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'ValidSpec' })
+        if (recentAuthFailure) {
+          const message = `${recentAuthFailure.message}; latest failed AgentRun ${recentAuthFailure.name}`
+          updated = upsertCondition(updated, {
+            type: 'Unreachable',
+            status: 'True',
+            reason: PROVIDER_AUTH_UNAVAILABLE_REASON,
+            message,
+          })
+          updated = upsertCondition(updated, {
+            type: 'Ready',
+            status: 'False',
+            reason: PROVIDER_AUTH_UNAVAILABLE_REASON,
+            message,
+          })
+        } else {
+          updated = upsertCondition(updated, { type: 'Unreachable', status: 'False', reason: 'Reachable', message: '' })
+          updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'ValidSpec' })
+        }
       }
     }
     await deps.setStatus(kube, provider, {
