@@ -28,6 +28,9 @@ spec:
       labels:
         kubevirt.io/domain: saigak
         app.kubernetes.io/name: saigak
+      annotations:
+        kubevirt.io/pci-interface-slot-count: "9"
+        kubevirt.io/pci-topology-version: v2
       creationTimestamp: null
     spec:
       architecture: arm64
