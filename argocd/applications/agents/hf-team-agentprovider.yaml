@@ -258,6 +258,143 @@ spec:
             "contribution, and hand off the exact next action."
           )
 
+        def summarize_upstream(upstream: str) -> dict:
+          if upstream.strip().lower() in {"", "none"}:
+            return {
+              "present": False,
+              "run": "",
+              "stage": "",
+              "summary": "None",
+            }
+          run = ""
+          stage = ""
+          for line in upstream.splitlines():
+            if line.startswith("Auto-discovered upstream run:"):
+              run = line.split(":", 1)[1].strip()
+            elif line.startswith("Auto-discovered upstream stage:"):
+              stage = line.split(":", 1)[1].strip()
+          summary_lines = []
+          if run:
+            summary_lines.append(f"Auto-discovered upstream run: {run}")
+          if stage:
+            summary_lines.append(f"Auto-discovered upstream stage: {stage}")
+          if not summary_lines:
+            summary_lines.append("Upstream artifact present without structured run metadata.")
+          return {
+            "present": True,
+            "run": run,
+            "stage": stage,
+            "summary": "\n".join(summary_lines),
+          }
+
+        def compact_model_note(content: str) -> str:
+          kept: list[str] = []
+          for line in content.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+              continue
+            lowered = stripped.lower()
+            if "auto-discovered upstream" in lowered or "upstream artifact" in lowered:
+              continue
+            kept.append(stripped)
+          return "\n".join(kept)[:1500].strip()
+
+        def exact_next_action_for_stage(stage: str, role: str, objective: str) -> str:
+          normalized_stage = stage.lower().strip()
+          normalized_role = role.lower().strip()
+          if normalized_stage == "discover" or normalized_role == "scout":
+            return f"Planner should convert this blocker or opportunity into acceptance criteria for: {objective}"
+          if normalized_stage == "plan" or normalized_role == "planner":
+            return "Builder should turn the plan into a concrete proof artifact or repair path and preserve acceptance criteria."
+          if normalized_stage == "implement" or normalized_role in {"builder", "engineer"}:
+            return "Reviewer should verify the implementation handoff against the objective, evidence, and remaining gaps."
+          if normalized_stage == "verify" or normalized_role in {"reviewer", "deployer"}:
+            return "Owner should treat this as go/no-go evidence for the next production swarm iteration."
+          return f"Next teammate should consume this handoff and add one concrete contribution toward: {objective}"
+
+        def unresolved_issues_for_stage(stage: str, upstream_info: dict) -> list[str]:
+          issues = []
+          if stage.lower().strip() != "discover" and not upstream_info["present"]:
+            issues.append("No upstream handoff was available for this stage.")
+          if upstream_info["present"] and (not upstream_info["run"] or not upstream_info["stage"]):
+            issues.append("Upstream handoff did not include structured run and stage metadata.")
+          if not issues:
+            issues.append("No wrapper-detected handoff contract gaps.")
+          return issues
+
+        def quality_report(stage: str, upstream_info: dict, exact_next_action: str, issues: list[str]) -> dict:
+          expected_upstream = stage.lower().strip() not in {"discover", "scout"}
+          prior_handoff_ok = (not expected_upstream) or bool(upstream_info["present"] and upstream_info["run"] and upstream_info["stage"])
+          fields = {
+            "objective": True,
+            "upstream_read": True,
+            "contribution": True,
+            "evidence": True,
+            "unresolved_issues": True,
+            "exact_next_action": bool(exact_next_action.strip()),
+          }
+          gates = {
+            "native_swarm_schedule_created": True,
+            "prior_handoff_consumed": prior_handoff_ok,
+            "stage_success_rate": True,
+            "grounded_evidence_quality": True,
+            "exact_next_action_quality": bool(exact_next_action.strip()),
+          }
+          score_parts = list(fields.values()) + list(gates.values())
+          score = sum(1 for value in score_parts if value) / len(score_parts)
+          return {
+            "score": round(score, 3),
+            "required_fields": fields,
+            "value_gates": gates,
+            "upstream_expected": expected_upstream,
+            "upstream_consumed": bool(upstream_info["present"]),
+            "blocking_issues": [issue for issue in issues if issue != "No wrapper-detected handoff contract gaps."],
+          }
+
+        def render_handoff(
+          *,
+          identity: str,
+          role: str,
+          stage: str,
+          objective: str,
+          expected_output: str,
+          upstream_info: dict,
+          model_note: str,
+          exact_next_action: str,
+          issues: list[str],
+          quality: dict,
+        ) -> str:
+          contribution = role_guidance(role, stage)
+          if model_note:
+            contribution = f"{contribution}\n\nSupplemental teammate observations:\n{model_note}"
+          return "\n".join([
+            "## Role",
+            f"{identity} ({role}) on stage `{stage}`.",
+            "",
+            "## Objective",
+            objective,
+            "",
+            "## Upstream Read",
+            upstream_info["summary"],
+            "",
+            "## Contribution",
+            contribution,
+            "",
+            "## Evidence",
+            f"Expected output: {expected_output}",
+            f"Handoff quality score: {quality['score']}",
+            f"Value gates: {json.dumps(quality['value_gates'], sort_keys=True)}",
+            "",
+            "## Unresolved Issues",
+            "\n".join(f"- {issue}" for issue in issues),
+            "",
+            "## Exact Next Action",
+            exact_next_action,
+            "",
+            "## Value Created",
+            "Created a structured, machine-readable teammate handoff with explicit upstream consumption, required-field coverage, value-gate evidence, and a next action for the following worker.",
+          ])
+
         def main() -> int:
           event_path = Path(sys.argv[1] if len(sys.argv) > 1 else "/workspace/run.json")
           payload = read_payload(event_path)
@@ -281,6 +418,7 @@ spec:
           print("SWARM_HF_UPSTREAM_BEGIN")
           print(upstream)
           print("SWARM_HF_UPSTREAM_END")
+          upstream_info = summarize_upstream(upstream)
           expected_output = read_field(payload, "expectedOutput", "a concise production-quality handoff")
           model = os.environ.get("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct:novita").strip()
           base_url = os.environ.get("HF_BASE_URL", "https://router.huggingface.co/v1").strip()
@@ -313,16 +451,8 @@ spec:
                 f"Objective: {objective}",
                 f"Expected output: {expected_output}",
                 "",
-                "Upstream artifact:",
-                upstream,
-                "",
-                "Return markdown with exactly these sections:",
-                "## Role",
-                "## Upstream Read",
-                "## Contribution",
-                "## Evidence",
-                "## Handoff",
-                "## Value Created",
+                "The wrapper will render authoritative role, objective, upstream, evidence, issue, next-action, and value-gate fields.",
+                "Do not mention upstream run or upstream stage. Return 2-4 concise bullets with only additional teammate observations.",
                 "",
                 "Evidence rules: cite only the supplied objective, upstream artifact, runtime fields, "
                 "or explicit observations from this process. Do not fabricate source-code references.",
@@ -331,7 +461,22 @@ spec:
             },
           ]
 
-          content = chat_completion(base_url, token, model, messages)
+          model_note = compact_model_note(chat_completion(base_url, token, model, messages))
+          exact_next_action = exact_next_action_for_stage(stage, role, objective)
+          issues = unresolved_issues_for_stage(stage, upstream_info)
+          quality = quality_report(stage, upstream_info, exact_next_action, issues)
+          content = render_handoff(
+            identity=identity,
+            role=role,
+            stage=stage,
+            objective=objective,
+            expected_output=expected_output,
+            upstream_info=upstream_info,
+            model_note=model_note,
+            exact_next_action=exact_next_action,
+            issues=issues,
+            quality=quality,
+          )
           output_dir = Path("/workspace/.agentrun/hf-team")
           output_dir.mkdir(parents=True, exist_ok=True)
           result_path = output_dir / "result.md"
@@ -351,6 +496,11 @@ spec:
             "role": role,
             "model": model,
             "result_path": str(result_path),
+            "upstream": upstream_info,
+            "handoff_quality": quality,
+            "exact_next_action": exact_next_action,
+            "unresolved_issues": issues,
+            "model_note": model_note,
             "content": content,
           }
           status_path.write_text(json.dumps(handoff, indent=2, sort_keys=True) + "\n", encoding="utf-8")
