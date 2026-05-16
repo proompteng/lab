@@ -140,6 +140,14 @@ def _parse_args() -> argparse.Namespace:
         description="Run whitepaper autoresearch and assemble a portfolio candidate for a profit target.",
     )
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--epoch-id",
+        default="",
+        help=(
+            "Optional persisted autoresearch epoch id. Defaults to a generated "
+            "whitepaper-autoresearch id when omitted."
+        ),
+    )
     parser.add_argument("--paper-run-id", action="append", default=[])
     parser.add_argument("--seed-recent-whitepapers", action="store_true")
     parser.add_argument(
@@ -4634,7 +4642,9 @@ def run_whitepaper_autoresearch_profit_target(
             "clickhouse_password": _resolved_clickhouse_password(args),
         }
     )
-    epoch_id = run_id("whitepaper-autoresearch")
+    epoch_id = str(getattr(args, "epoch_id", "") or "").strip() or run_id(
+        "whitepaper-autoresearch"
+    )
     started_at = datetime.now(UTC)
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -159,6 +159,7 @@ spec:
 
             SCRIPT_ARGS=(
               --output-dir "${OUTPUT_DIR}"
+              --epoch-id "${RUN_ID}"
               --target-net-pnl-per-day "{{inputs.parameters.targetNetPnlPerDay}}"
               --max-candidates "{{inputs.parameters.maxCandidates}}"
               --top-k "{{inputs.parameters.topK}}"

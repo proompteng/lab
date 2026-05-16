@@ -85,6 +85,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
     def _args(self, output_dir: Path) -> Namespace:
         return Namespace(
             output_dir=output_dir,
+            epoch_id="",
             paper_run_id=[],
             source_jsonl=[],
             feedback_evidence_jsonl=[],
@@ -210,6 +211,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 args = runner._parse_args()
 
         self.assertEqual(args.target_net_pnl_per_day, "500")
+        self.assertEqual(args.epoch_id, "")
         self.assertEqual(
             args.program,
             Path(
@@ -239,6 +241,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("TORGHUT_WHITEPAPER_FEEDBACK_EVIDENCE_JSONL_B64", template)
         self.assertIn("TORGHUT_WHITEPAPER_FEEDBACK_EVIDENCE_CONFIGMAP_PATH", template)
         self.assertIn("TORGHUT_WHITEPAPER_SOURCE_JSONL_B64", template)
+        self.assertIn('--epoch-id "${RUN_ID}"', template)
         self.assertIn("name: feedback-evidence", template)
         self.assertNotIn(
             "printf '%s' \"{{inputs.parameters.feedbackEvidenceJsonlB64}}\"",
@@ -1595,10 +1598,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
     def test_seed_recent_whitepapers_runs_end_to_end_and_writes_artifacts(self) -> None:
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
-            payload = runner.run_whitepaper_autoresearch_profit_target(
-                self._args(output_dir)
-            )
+            args = self._args(output_dir)
+            args.epoch_id = "whitepaper-autoresearch-test-epoch"
+            payload = runner.run_whitepaper_autoresearch_profit_target(args)
 
+            self.assertEqual(payload["epoch_id"], "whitepaper-autoresearch-test-epoch")
             self.assertEqual(payload["status"], "no_profit_target_candidate")
             self.assertEqual(
                 payload["status_reason"],
@@ -3460,6 +3464,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "run_whitepaper_autoresearch_profit_target.py",
                     "--output-dir",
                     str(output_dir),
+                    "--epoch-id",
+                    "whitepaper-autoresearch-cli-epoch",
                     "--seed-recent-whitepapers",
                     "--replay-mode",
                     "synthetic",
@@ -3475,6 +3481,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 parsed = runner._parse_args()
 
         self.assertEqual(parsed.output_dir, output_dir)
+        self.assertEqual(parsed.epoch_id, "whitepaper-autoresearch-cli-epoch")
         self.assertTrue(parsed.seed_recent_whitepapers)
         self.assertEqual(parsed.replay_mode, "synthetic")
         self.assertEqual(parsed.source_jsonl, [source_path])
