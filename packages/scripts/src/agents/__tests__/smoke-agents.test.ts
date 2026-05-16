@@ -440,7 +440,9 @@ describe('scheduled AgentRun templates', () => {
     )
     expect(content).toContain('\"handoff_quality\": quality')
     expect(content).toContain('\"exact_next_action\": exact_next_action')
-    expect(content).toContain('publish_handoff(handoff_subject(payload, swarm_name, role, run_name), handoff)')
+    expect(content).toContain('subject = handoff_subject(payload, swarm_name, role, run_name)')
+    expect(content).toContain('publish_handoff(subject, handoff)')
+    expect(content).toContain('\"subject\": subject')
     expect(content).not.toContain('publish_handoff(f"swarm.')
   })
 
