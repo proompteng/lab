@@ -23,7 +23,7 @@ spec:
                   kubernetes.io/arch: arm64
                 containers:
                   - name: analysis
-                    image: registry.ide-newton.ts.net/lab/torghut@sha256:cdba30f60d101dcb0c6dacc184e43860fa8fd576e8843455f99316a8ea5e4ab3
+                    image: registry.ide-newton.ts.net/lab/torghut@sha256:ad12c0add7cd28dbf2a5ccd6f58e33f12a69b4100e92b900c6b0c8d410e93209
                     imagePullPolicy: IfNotPresent
                     command:
                       - /bin/bash
