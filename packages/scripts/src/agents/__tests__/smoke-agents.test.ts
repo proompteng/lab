@@ -371,6 +371,27 @@ describe('scheduled AgentRun templates', () => {
     expect(content).toContain('\"upstream_read\": summarize_upstream(upstream)')
   })
 
+  it('renders HF team handoff quality evidence outside the model draft', () => {
+    const manifests = readYamlObjects('argocd/applications/agents/hf-team-agentprovider.yaml')
+    const provider = manifests.find((manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'hf-team-worker')
+    const inputFiles = objectAt(objectAt(provider, 'spec'), 'inputFiles') as Record<string, unknown>[] | undefined
+    const workerScript = inputFiles?.find(
+      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/hf-team-worker.py',
+    )
+    const content = objectAt(workerScript, 'content')
+
+    expect(content).toContain('def summarize_upstream(upstream: str) -> dict:')
+    expect(content).toContain(
+      'def quality_report(stage: str, upstream_info: dict, exact_next_action: str, issues: list[str]) -> dict:',
+    )
+    expect(content).toContain('def render_handoff(')
+    expect(content).toContain(
+      'The wrapper will render authoritative role, objective, upstream, evidence, issue, next-action, and value-gate fields.',
+    )
+    expect(content).toContain('\"handoff_quality\": quality')
+    expect(content).toContain('\"exact_next_action\": exact_next_action')
+  })
+
   it('keeps the deployer implementation spec focused on a bounded release slice', () => {
     const manifests = readYamlObjects('argocd/applications/agents/swarm-implspecs.yaml')
     const deployerSpec = manifests.find(
