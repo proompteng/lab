@@ -7,6 +7,15 @@ import { withTemporalRetry, defaultRetryPolicy } from '../../src/client/retries'
 const run = <A>(effect: Effect.Effect<A, unknown, never>) => Effect.runPromise(effect)
 
 describe('Temporal RPC retries', () => {
+  test('default policy survives short Temporal frontend disruption windows', () => {
+    expect(defaultRetryPolicy.maxAttempts).toBeGreaterThanOrEqual(16)
+    expect(defaultRetryPolicy.initialDelayMs).toBeLessThanOrEqual(250)
+    expect(defaultRetryPolicy.maxDelayMs).toBeGreaterThanOrEqual(10_000)
+    expect(defaultRetryPolicy.retryableStatusCodes).toEqual(
+      expect.arrayContaining([Code.Unavailable, Code.ResourceExhausted, Code.DeadlineExceeded, Code.Internal]),
+    )
+  })
+
   test('retries retryable ConnectError codes until success', async () => {
     let attempts = 0
     const effect = Effect.tryPromise({
@@ -98,6 +107,29 @@ describe('Temporal RPC retries', () => {
         }),
       ),
     ).rejects.toThrow('fatal')
+    expect(attempts).toBe(1)
+  })
+
+  test('does not retry TLS handshake errors', async () => {
+    let attempts = 0
+    const effect = Effect.tryPromise({
+      try: async () => {
+        attempts += 1
+        const error = new Error('Temporal TLS handshake failed')
+        error.name = 'TemporalTlsHandshakeError'
+        throw error
+      },
+      catch: (error) => error,
+    })
+
+    await expect(
+      run(
+        withTemporalRetry(effect, {
+          ...defaultRetryPolicy,
+          maxAttempts: 5,
+        }),
+      ),
+    ).rejects.toThrow('Temporal TLS handshake failed')
     expect(attempts).toBe(1)
   })
 })

@@ -23,9 +23,9 @@ const DEFAULT_RETRYABLE_CODES: number[] = [
 ]
 
 export const defaultRetryPolicy: TemporalRpcRetryPolicy = {
-  maxAttempts: 8,
+  maxAttempts: 16,
   initialDelayMs: 200,
-  maxDelayMs: 5_000,
+  maxDelayMs: 10_000,
   backoffCoefficient: 2,
   jitterFactor: 0.2,
   retryableStatusCodes: [...DEFAULT_RETRYABLE_CODES],
@@ -44,6 +44,9 @@ const clampJitter = (factor: number): number => {
 const unwrapRetryError = (error: unknown): unknown => {
   if (error && typeof error === 'object') {
     const candidate = error as { _tag?: string; cause?: unknown; error?: unknown }
+    if (error instanceof Error && error.name === 'TemporalTlsHandshakeError') {
+      return error
+    }
     // Effect.tryPromise failures arrive as UnknownException; surface the underlying cause when present.
     if (candidate._tag === 'UnknownException') {
       return candidate.cause ?? candidate.error ?? error
@@ -75,6 +78,9 @@ const shouldRetryError = (policy: TemporalRpcRetryPolicy) => {
     // Treat generic errors as transient for interceptor-driven retries; bounded by maxAttempts.
     if (underlying instanceof Error) {
       if (underlying.name === 'AbortError') {
+        return false
+      }
+      if (underlying.name === 'TemporalTlsHandshakeError') {
         return false
       }
       return true
