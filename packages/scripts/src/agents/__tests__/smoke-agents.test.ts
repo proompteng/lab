@@ -360,6 +360,7 @@ describe('scheduled AgentRun templates', () => {
   it('renders Codex HF fallback handoff facts outside the model draft', () => {
     const manifests = readYamlObjects('argocd/applications/agents/codex-spark-agentprovider.yaml')
     const provider = manifests.find((manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'codex-spark')
+    const envTemplate = objectAt(objectAt(provider, 'spec'), 'envTemplate')
     const inputFiles = objectAt(objectAt(provider, 'spec'), 'inputFiles') as Record<string, unknown>[] | undefined
     const providerConfig = inputFiles?.find(
       (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/provider-codex-spark.json',
@@ -373,11 +374,20 @@ describe('scheduled AgentRun templates', () => {
     expect(providerCommand).toContain('2>&1 | tee "$LOG_PATH"')
     expect(providerCommand).toContain('status=${PIPESTATUS[0]}')
     expect(providerCommand).not.toContain('> >(tee')
+    expect(objectAt(envTemplate, 'AGENT_RUN_NAME')).toBe('{{agentRun.name}}')
+    expect(objectAt(envTemplate, 'AGENT_RUN_NAMESPACE')).toBe('{{agentRun.namespace}}')
     expect(content).toContain('def summarize_upstream(upstream: str) -> str:')
+    expect(content).toContain(
+      'def handoff_subject(payload: dict, swarm_name: str, role: str, run_name: str, suffix: str = "") -> str:',
+    )
     expect(content).toContain('def render_fallback_result(')
     expect(content).toContain('Auto-discovered upstream run:')
     expect(content).toContain('The wrapper will render authoritative upstream run and stage facts.')
     expect(content).toContain('\"upstream_read\": summarize_upstream(upstream)')
+    expect(content).toContain(
+      'publish_handoff(handoff_subject(payload, swarm_name, role, run_name, "fallback"), handoff)',
+    )
+    expect(content).not.toContain('publish_handoff(f"swarm.')
   })
 
   it('classifies current Codex quota logs as HF fallback eligible', () => {
@@ -410,13 +420,17 @@ describe('scheduled AgentRun templates', () => {
   it('renders HF team handoff quality evidence outside the model draft', () => {
     const manifests = readYamlObjects('argocd/applications/agents/hf-team-agentprovider.yaml')
     const provider = manifests.find((manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'hf-team-worker')
+    const envTemplate = objectAt(objectAt(provider, 'spec'), 'envTemplate')
     const inputFiles = objectAt(objectAt(provider, 'spec'), 'inputFiles') as Record<string, unknown>[] | undefined
     const workerScript = inputFiles?.find(
       (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/hf-team-worker.py',
     )
     const content = objectAt(workerScript, 'content')
 
+    expect(objectAt(envTemplate, 'AGENT_RUN_NAME')).toBe('{{agentRun.name}}')
+    expect(objectAt(envTemplate, 'AGENT_RUN_NAMESPACE')).toBe('{{agentRun.namespace}}')
     expect(content).toContain('def summarize_upstream(upstream: str) -> dict:')
+    expect(content).toContain('def handoff_subject(payload: dict, swarm_name: str, role: str, run_name: str) -> str:')
     expect(content).toContain(
       'def quality_report(stage: str, upstream_info: dict, exact_next_action: str, issues: list[str]) -> dict:',
     )
@@ -426,6 +440,8 @@ describe('scheduled AgentRun templates', () => {
     )
     expect(content).toContain('\"handoff_quality\": quality')
     expect(content).toContain('\"exact_next_action\": exact_next_action')
+    expect(content).toContain('publish_handoff(handoff_subject(payload, swarm_name, role, run_name), handoff)')
+    expect(content).not.toContain('publish_handoff(f"swarm.')
   })
 
   it('keeps the deployer implementation spec focused on a bounded release slice', () => {

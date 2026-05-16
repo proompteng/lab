@@ -11,6 +11,8 @@ spec:
     HF_BASE_URL: https://router.huggingface.co/v1
     HF_MODEL: meta-llama/Llama-3.1-8B-Instruct:novita
     NATS_URL: nats://nats.nats.svc.cluster.local:4222
+    AGENT_RUN_NAME: "{{agentRun.name}}"
+    AGENT_RUN_NAMESPACE: "{{agentRun.namespace}}"
   inputFiles:
     - path: /root/.codex/hf-team-worker.py
       content: |-
@@ -108,6 +110,24 @@ spec:
             subprocess.run(command, check=False, timeout=20)
           except Exception as error:
             print(f"NATS handoff publish skipped: {error}", file=sys.stderr)
+
+        def subject_part(value: str, default: str) -> str:
+          text = as_text(value, default)
+          normalized = "".join(char if char.isalnum() or char in {"-", "_"} else "-" for char in text)
+          normalized = "-".join(part for part in normalized.split("-") if part)
+          return normalized or default
+
+        def handoff_subject(payload: dict, swarm_name: str, role: str, run_name: str) -> str:
+          prefix = read_field(payload, "natsSubjectPrefix", "workflow")
+          channel = read_field(payload, "natsChannel", "general")
+          return ".".join([
+            subject_part(prefix, "workflow"),
+            subject_part(channel, "general"),
+            "swarm",
+            subject_part(swarm_name, "unknown-swarm"),
+            subject_part(role, "worker"),
+            subject_part(run_name, "unknown-run"),
+          ])
 
         def k8s_request(path: str) -> dict | str | None:
           host = os.environ.get("KUBERNETES_SERVICE_HOST", "").strip()
@@ -402,7 +422,8 @@ spec:
           if not token:
             raise RuntimeError("HF_TOKEN is required")
 
-          run_name = read_field(payload, "name", as_text(payload.get("metadata", {}).get("name"), "unknown-run"))
+          env_run_name = os.environ.get("AGENT_RUN_NAME", "").strip()
+          run_name = read_field(payload, "name", env_run_name or as_text(payload.get("metadata", {}).get("name"), "unknown-run"))
           repository = read_field(payload, "repository", "unknown")
           base = read_field(payload, "base", "main")
           head = read_field(payload, "head", "unknown")
@@ -504,8 +525,7 @@ spec:
             "content": content,
           }
           status_path.write_text(json.dumps(handoff, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-          subject = f"swarm.{swarm_name}.{role}.{run_name}".replace("/", ".")
-          publish_handoff(subject, handoff)
+          publish_handoff(handoff_subject(payload, swarm_name, role, run_name), handoff)
 
           print("SWARM_HF_RESULT_BEGIN")
           print(content)
