@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { parseAllDocuments } from 'yaml'
 
 import {
@@ -359,16 +361,50 @@ describe('scheduled AgentRun templates', () => {
     const manifests = readYamlObjects('argocd/applications/agents/codex-spark-agentprovider.yaml')
     const provider = manifests.find((manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'codex-spark')
     const inputFiles = objectAt(objectAt(provider, 'spec'), 'inputFiles') as Record<string, unknown>[] | undefined
+    const providerConfig = inputFiles?.find(
+      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/provider-codex-spark.json',
+    )
+    const providerCommand = JSON.parse(String(objectAt(providerConfig, 'content'))).argsTemplate[1]
     const fallbackScript = inputFiles?.find(
       (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/swarm-hf-codex-fallback.py',
     )
     const content = objectAt(fallbackScript, 'content')
 
+    expect(providerCommand).toContain('2>&1 | tee "$LOG_PATH"')
+    expect(providerCommand).toContain('status=${PIPESTATUS[0]}')
+    expect(providerCommand).not.toContain('> >(tee')
     expect(content).toContain('def summarize_upstream(upstream: str) -> str:')
     expect(content).toContain('def render_fallback_result(')
     expect(content).toContain('Auto-discovered upstream run:')
     expect(content).toContain('The wrapper will render authoritative upstream run and stage facts.')
     expect(content).toContain('\"upstream_read\": summarize_upstream(upstream)')
+  })
+
+  it('classifies current Codex quota logs as HF fallback eligible', () => {
+    const manifests = readYamlObjects('argocd/applications/agents/codex-spark-agentprovider.yaml')
+    const provider = manifests.find((manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'codex-spark')
+    const inputFiles = objectAt(objectAt(provider, 'spec'), 'inputFiles') as Record<string, unknown>[] | undefined
+    const fallbackPredicate = inputFiles?.find(
+      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/should-hf-swarm-fallback.py',
+    )
+    const tempDir = mkdtempSync(join(tmpdir(), 'codex-fallback-'))
+    const scriptPath = join(tempDir, 'should-hf-swarm-fallback.py')
+    const logPath = join(tempDir, 'runner.log')
+
+    writeFileSync(scriptPath, String(objectAt(fallbackPredicate, 'content')))
+    writeFileSync(
+      logPath,
+      [
+        'Running Codex implementation for proompteng/lab#swarm-jangar-control-plane',
+        'Turn started',
+        'Stream error -> Quota exceeded. Check your plan and billing details.',
+        'Turn failed -> Quota exceeded. Check your plan and billing details.',
+      ].join('\n'),
+    )
+
+    const result = spawnSync('python3', [scriptPath, logPath], { encoding: 'utf8' })
+
+    expect(result.status).toBe(0)
   })
 
   it('renders HF team handoff quality evidence outside the model draft', () => {

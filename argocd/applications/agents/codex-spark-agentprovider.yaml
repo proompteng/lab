@@ -51,7 +51,7 @@ spec:
           "binary": "/bin/bash",
           "argsTemplate": [
             "-lc",
-            "set -o pipefail; EVENT_FILE=$(mktemp /tmp/codex-event.XXXXXX.json) && cp \"$1\" \"$EVENT_FILE\" && python3 /root/.codex/ensure-market-context-issue-number.py \"$EVENT_FILE\" && mkdir -p /workspace/.agent && LOG_PATH=/workspace/.agent/runner.log && if /usr/local/bin/codex-implement \"$EVENT_FILE\" > >(tee \"$LOG_PATH\") 2> >(tee -a \"$LOG_PATH\" >&2); then exit 0; fi; status=$?; if python3 /root/.codex/should-hf-swarm-fallback.py \"$LOG_PATH\"; then exec python3 /root/.codex/swarm-hf-codex-fallback.py \"$EVENT_FILE\" \"$LOG_PATH\"; fi; exit \"$status\"",
+            "set -o pipefail; EVENT_FILE=$(mktemp /tmp/codex-event.XXXXXX.json) && cp \"$1\" \"$EVENT_FILE\" && python3 /root/.codex/ensure-market-context-issue-number.py \"$EVENT_FILE\" && mkdir -p /workspace/.agent && LOG_PATH=/workspace/.agent/runner.log && /usr/local/bin/codex-implement \"$EVENT_FILE\" 2>&1 | tee \"$LOG_PATH\"; status=${PIPESTATUS[0]}; if [ \"$status\" -eq 0 ]; then exit 0; fi; if python3 /root/.codex/should-hf-swarm-fallback.py \"$LOG_PATH\"; then exec python3 /root/.codex/swarm-hf-codex-fallback.py \"$EVENT_FILE\" \"$LOG_PATH\"; fi; exit \"$status\"",
             "--",
             "{{payloads.eventFilePath}}"
           ],
