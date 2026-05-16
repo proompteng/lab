@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
-from typing import Any, cast
+from typing import Any
+
+from .read_model_utils import (
+    append_unique_text as _append_unique,
+    as_int as _int,
+    as_mapping as _mapping,
+    as_sequence as _sequence,
+    as_text as _text,
+    first_mapping as _top_queue_item,
+    is_alpha_readiness_repair as _is_alpha_repair,
+    parse_datetime_utc as _parse_datetime,
+    routeable_candidate_count as _routeable_candidate_count,
+    stable_hash24 as _stable_hash,
+    unique_text_list as _string_list,
+)
 
 ALPHA_REPAIR_DIVIDEND_LEDGER_SCHEMA_VERSION = "torghut.alpha-repair-dividend-ledger.v1"
 ALPHA_REPAIR_DIVIDEND_LEDGER_REF_SCHEMA_VERSION = (
@@ -34,119 +46,6 @@ _NO_DELTA_RELEASE_CONDITIONS = [
     "blocker_set_changes",
     "required_receipt_changes",
 ]
-
-
-def _mapping(value: object) -> Mapping[str, Any]:
-    if isinstance(value, Mapping):
-        return cast(Mapping[str, Any], value)
-    return {}
-
-
-def _sequence(value: object) -> Sequence[object]:
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return cast(Sequence[object], value)
-    return ()
-
-
-def _text(value: object, default: str = "") -> str:
-    if value is None:
-        return default
-    normalized = str(value).strip()
-    return normalized or default
-
-
-def _int(value: object, default: int = 0) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str) and value.strip():
-        try:
-            return int(float(value.strip()))
-        except ValueError:
-            return default
-    return default
-
-
-def _string_list(value: object) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for item in _sequence(value):
-        normalized = _text(item)
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        result.append(normalized)
-    return result
-
-
-def _append_unique(items: list[str], *values: object) -> list[str]:
-    seen = set(items)
-    for value in values:
-        if isinstance(value, Sequence) and not isinstance(
-            value, (str, bytes, bytearray)
-        ):
-            candidates = _string_list(cast(Sequence[object], value))
-        else:
-            candidates = [_text(value)]
-        for candidate in candidates:
-            if not candidate or candidate in seen:
-                continue
-            seen.add(candidate)
-            items.append(candidate)
-    return items
-
-
-def _stable_hash(prefix: str, payload: Mapping[str, object]) -> str:
-    encoded = json.dumps(
-        {"prefix": prefix, **dict(payload)},
-        sort_keys=True,
-        separators=(",", ":"),
-        default=str,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()[:24]
-
-
-def _parse_datetime(value: object) -> datetime | None:
-    raw = _text(value)
-    if not raw:
-        return None
-    normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return None
-    return parsed.astimezone(timezone.utc)
-
-
-def _top_queue_item(repair_queue: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
-    for item in repair_queue:
-        payload = _mapping(item)
-        if payload:
-            return payload
-    return {}
-
-
-def _is_alpha_repair(item: Mapping[str, Any]) -> bool:
-    return (
-        _text(item.get("code")) == "repair_alpha_readiness"
-        or _text(item.get("reason")) == "alpha_readiness_not_promotion_eligible"
-    )
-
-
-def _routeable_candidate_count(evidence: Mapping[str, Any]) -> int:
-    repair_bid_settlement = _mapping(evidence.get("repair_bid_settlement"))
-    routeability_acceptance = _mapping(evidence.get("routeability_acceptance"))
-    route_clearinghouse = _mapping(evidence.get("route_evidence_clearinghouse"))
-    return max(
-        _int(repair_bid_settlement.get("routeable_candidate_count")),
-        _int(routeability_acceptance.get("accepted_routeable_candidate_count")),
-        _int(route_clearinghouse.get("accepted_routeable_candidate_count")),
-    )
 
 
 def _source_revenue_repair_ref(
