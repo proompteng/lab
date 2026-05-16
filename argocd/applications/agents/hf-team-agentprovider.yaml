@@ -109,6 +109,31 @@ spec:
           except Exception as error:
             print(f"NATS handoff publish skipped: {error}", file=sys.stderr)
 
+        def role_guidance(role: str) -> str:
+          normalized = role.lower().strip()
+          if normalized == "scout":
+            return (
+              "Scout duty: identify the smallest grounded blocker or opportunity from the "
+              "objective and supplied context. Do not design the full solution; hand off a "
+              "specific target for the builder."
+            )
+          if normalized == "builder":
+            return (
+              "Builder duty: consume the scout handoff and turn it into a concrete, "
+              "implementable plan or artifact. Do not merely repeat the scout; add structure, "
+              "acceptance criteria, and the next build step."
+            )
+          if normalized == "reviewer":
+            return (
+              "Reviewer duty: consume the builder handoff, evaluate whether it satisfies the "
+              "objective, list gaps or risks, and give a go/no-go next action. Do not speak as "
+              "the builder or repeat the builder contribution as your own."
+            )
+          return (
+            "Worker duty: consume the upstream handoff, add one new role-appropriate "
+            "contribution, and hand off the exact next action."
+          )
+
         def main() -> int:
           event_path = Path(sys.argv[1] if len(sys.argv) > 1 else "/workspace/run.json")
           payload = read_payload(event_path)
@@ -140,7 +165,7 @@ spec:
                 "You only have the AgentRun payload and upstream artifact unless the prompt gives "
                 "you other evidence. Do not invent file paths, functions, command results, or repo "
                 "inspection. If evidence is limited, say that plainly and still provide a useful "
-                "next action."
+                "next action. Never claim to be a different role than the Role field."
               ),
             },
             {
@@ -153,6 +178,7 @@ spec:
                 f"Team: {team_name}",
                 f"Worker identity: {identity}",
                 f"Role: {role}",
+                role_guidance(role),
                 f"Objective: {objective}",
                 f"Expected output: {expected_output}",
                 "",
