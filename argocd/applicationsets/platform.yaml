@@ -723,6 +723,15 @@ spec:
             - .spec.template.spec.architecture
             - .spec.template.spec.domain.firmware
             - .spec.template.spec.domain.machine
+        - kind: VirtualMachine
+          group: kubevirt.io
+          namespace: saigak
+          name: saigak
+          jqPathExpressions:
+            - .metadata.annotations
+            - .metadata.finalizers
+            - .spec.dataVolumeTemplates[].metadata.creationTimestamp
+            - .spec.template.metadata.creationTimestamp
         - kind: ClusterPolicy
           group: nvidia.com
           name: cluster-policy
