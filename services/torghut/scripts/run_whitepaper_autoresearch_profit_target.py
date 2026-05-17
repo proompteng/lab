@@ -2522,6 +2522,14 @@ def _candidate_spec_feedback_shape_key(spec: CandidateSpec) -> str:
 
 def _candidate_spec_feedback_metadata(spec: CandidateSpec) -> dict[str, Any]:
     execution_profile = _candidate_spec_execution_profile(spec)
+    params = _mapping(spec.strategy_overrides.get("params"))
+    universe_symbols = [
+        _string(symbol).upper()
+        for symbol in cast(
+            Sequence[Any], spec.strategy_overrides.get("universe_symbols") or []
+        )
+        if _string(symbol)
+    ]
     return {
         "family_template_id": spec.family_template_id,
         "runtime_family": spec.runtime_family,
@@ -2533,6 +2541,8 @@ def _candidate_spec_feedback_metadata(spec: CandidateSpec) -> dict[str, Any]:
         "feedback_shape_key": _candidate_spec_feedback_shape_key(spec),
         "universe_key": _candidate_spec_universe_key(spec),
         "signal_key": _candidate_spec_signal_key(spec),
+        "runtime_params": dict(params),
+        "universe_symbols": universe_symbols,
     }
 
 

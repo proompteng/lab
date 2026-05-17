@@ -635,6 +635,80 @@ data:
                 gate_report["vnext"]["portfolio_promotion"]["missing_policy_refs"], []
             )
 
+    def test_microbar_portfolio_closure_preserves_prevclose_runtime_params(
+        self,
+    ) -> None:
+        context = RuntimeClosureExecutionContext(
+            strategy_configmap_path=Path("/tmp/unused.yaml"),
+            clickhouse_http_url="http://example.invalid:8123",
+            clickhouse_username="torghut",
+            clickhouse_password="secret",
+            start_equity=Decimal("31590.02"),
+            chunk_minutes=10,
+            symbols=("NVDA", "AVGO", "AMD"),
+        )
+        best_candidate = {
+            "candidate_id": "cand-prevclose",
+            "family": "microbar_cross_sectional_pairs",
+            "family_template_id": "microbar_cross_sectional_pairs_v1",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "replay_config": {
+                "backend": "microbar_daily_portfolio",
+                "portfolio": {
+                    "base_per_leg_notional": "30000",
+                    "symbols": ["NVDA", "AVGO", "AMD"],
+                    "sleeves": [
+                        {
+                            "signal": "opening_window_prev_close_reversal",
+                            "weight": "1",
+                            "params": {
+                                "entry_minute_after_open": "35",
+                                "entry_window_minutes": "25",
+                                "exit_minute_after_open": "180",
+                                "signal_motif": "opening_window_prev_close_reversal",
+                                "rank_feature": (
+                                    "cross_section_opening_window_return_from_prev_close_rank"
+                                ),
+                                "selection_mode": "reversal",
+                                "top_n": "2",
+                                "gate_feature": (
+                                    "cross_section_positive_opening_window_return_from_prev_close_ratio"
+                                ),
+                                "gate_min": "0.20",
+                                "gate_max": "0.85",
+                                "long_stop_loss_bps": "5",
+                                "long_trailing_stop_activation_profit_bps": "5",
+                                "long_trailing_stop_drawdown_bps": "2",
+                                "max_session_negative_exit_bps": "3",
+                            },
+                            "universe_symbols": ["NVDA", "AVGO", "AMD"],
+                        }
+                    ],
+                },
+            },
+        }
+
+        strategies = (
+            runtime_closure._materialized_microbar_portfolio_runtime_strategies(
+                best_candidate=best_candidate,
+                execution_context=context,
+            )
+        )
+
+        self.assertEqual(len(strategies), 2)
+        long_params = strategies[0]["params"]
+        self.assertEqual(
+            long_params["rank_feature"],
+            "cross_section_opening_window_return_from_prev_close_rank",
+        )
+        self.assertEqual(
+            long_params["gate_feature"],
+            "cross_section_positive_opening_window_return_from_prev_close_ratio",
+        )
+        self.assertEqual(long_params["entry_window_minutes"], "25")
+        self.assertEqual(long_params["long_stop_loss_bps"], "5")
+        self.assertEqual(strategies[0]["universe_symbols"], ["NVDA", "AVGO", "AMD"])
+
     def test_materialize_candidate_configmap_supports_generic_portfolio_candidates(
         self,
     ) -> None:
