@@ -36,6 +36,16 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('[ "${OPERATION_PHASE}" = \'Succeeded\' ]')
   })
 
+  it('continues past degraded Torghut options Argo health only with explicit workload rollout checks', () => {
+    expect(workflow).toContain(
+      'Torghut options Argo health is Degraded after sync; continuing to explicit workload rollout checks',
+    )
+    expect(workflow).toContain('[ "${app}" = \'torghut-options\' ]')
+    expect(workflow).toContain('kubectl rollout status deployment/torghut-options-catalog -n torghut --timeout=10m')
+    expect(workflow).toContain('kubectl rollout status deployment/torghut-options-enricher -n torghut --timeout=10m')
+    expect(workflow).toContain('kubectl rollout status deployment/torghut-ws-options -n torghut --timeout=10m')
+  })
+
   it('delegates readyz acceptance to the revenue repair evidence validator', () => {
     expect(workflow).toContain('TORGHUT_READYZ_HTTP_STATUS')
     expect(workflow).toContain('TORGHUT_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-readyz.json"')
