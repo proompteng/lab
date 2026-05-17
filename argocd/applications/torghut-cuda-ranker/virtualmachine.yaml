@@ -1,0 +1,86 @@
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: torghut-cuda-ranker
+  labels:
+    app.kubernetes.io/name: torghut-cuda-ranker
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  running: false
+  dataVolumeTemplates:
+    - metadata:
+        name: torghut-cuda-ranker-rootdisk
+        creationTimestamp: null
+      spec:
+        source:
+          http:
+            url: https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img
+        pvc:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 80Gi
+          storageClassName: local-path
+  template:
+    metadata:
+      labels:
+        kubevirt.io/domain: torghut-cuda-ranker
+        app.kubernetes.io/name: torghut-cuda-ranker
+      annotations:
+        kubevirt.io/pci-interface-slot-count: "9"
+        kubevirt.io/pci-topology-version: v2
+      creationTimestamp: null
+    spec:
+      architecture: arm64
+      nodeSelector:
+        kubernetes.io/hostname: talos-192-168-1-85
+      domain:
+        cpu:
+          cores: 12
+        firmware:
+          uuid: 6a372f76-38dd-4ef5-b6d0-5512d466d1cf
+          serial: 7be1eea5-4b21-45d1-94f8-c722cb981751
+        machine:
+          type: virt
+        resources:
+          requests:
+            memory: 48Gi
+        devices:
+          gpus:
+            - name: gpu0
+              deviceName: nvidia.com/GA102_GEFORCE_RTX_3090
+          disks:
+            - name: rootdisk
+              disk:
+                bus: virtio
+              bootOrder: 1
+            - name: datadisk
+              disk:
+                bus: virtio
+            - name: cloudinitdisk
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {}
+              macAddress: "02:00:00:00:00:71"
+              ports:
+                - port: 22
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: rootdisk
+          dataVolume:
+            name: torghut-cuda-ranker-rootdisk
+        - name: datadisk
+          persistentVolumeClaim:
+            claimName: torghut-cuda-ranker-data
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            secretRef:
+              name: torghut-cuda-ranker-cloud-init
+            networkDataSecretRef:
+              name: torghut-cuda-ranker-cloud-init-network

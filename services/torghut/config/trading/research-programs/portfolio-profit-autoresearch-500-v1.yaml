@@ -151,6 +151,39 @@ research_sources:
       - claim_id: macro_information_momentum
         summary: Intraday momentum is stronger around macro-announcement information windows.
         implication: Treat late-day continuation as regime conditional and require non-announcement held-out validation.
+  - source_id: intraday_residual_reversal_2024
+    title: 'Intraday Residual Reversal in the U.S. Stock Market'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4731947
+    published_at: '2024-02-19'
+    claims:
+      - claim_id: residual_noise_reversal
+        summary: Factor-unexplained intraday price moves can reverse as transitory liquidity pressure unwinds.
+        implication: Add residual-style cross-sectional reversal sleeves that fade short-horizon losers/winners after costs.
+      - claim_id: liquidity_provision_profit_source
+        summary: The claimed return source is liquidity provision to transitory stock-return components.
+        implication: Keep cost, notional, spread, active-day, and best-day concentration gates intact before promotion.
+  - source_id: intraday_return_autocorrelation_term_structure_2025
+    title: 'The Term Structure of Intraday Return Autocorrelations'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5227714
+    published_at: '2025-04-23'
+    claims:
+      - claim_id: horizon_specific_reversal
+        summary: Intraday autocorrelation direction depends on horizon, with reversals stronger around 15-minute horizons.
+        implication: Sweep short, horizon-specific reversal entries instead of pooling open, mid-day, and close effects.
+      - claim_id: subminute_large_stock_continuation
+        summary: Sub-minute continuations can appear in larger stocks, market stress, and the first half-hour.
+        implication: Keep continuation and reversal sleeves separated by horizon and require holdout proof for each sleeve.
+  - source_id: intraday_cross_section_patterns_2010
+    title: 'Intraday Patterns in the Cross-section of Stock Returns'
+    url: https://arxiv.org/abs/1005.3535
+    published_at: '2010-05-19'
+    claims:
+      - claim_id: same_interval_daily_periodicity
+        summary: Cross-sectional returns can continue at half-hour intervals matching prior trading-day timing.
+        implication: Test interval-specific cross-sectional sleeves with timing controls instead of broad all-day ranks.
+      - claim_id: subhour_liquidity_reversal
+        summary: Short-term reversals can be driven by temporary liquidity imbalances lasting less than an hour.
+        implication: Add sub-hour reversal sleeves with strict turnover, cost, and drawdown evidence.
 families:
   - family_template_id: microstructure_continuation_matched_filter_v1
     seed_sweep_config: ../profitability-frontier-strict-daily-microstructure.yaml
@@ -210,6 +243,96 @@ families:
       max_notional_per_trade:
         mode: explicit_values
         values: ['7500', '15000', '22500', '30000']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-microbar-eod-loser-reversal.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    parameter_mutations:
+      entry_minute_after_open:
+        mode: numeric_step
+        deltas: ['-15', '0', '15']
+        minimum: '330'
+        maximum: '390'
+      exit_minute_after_open:
+        mode: numeric_step
+        deltas: ['-15', '0', '15']
+        minimum: '360'
+        maximum: '390'
+      top_n:
+        mode: explicit_values
+        values: ['1', '2', '3']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-microbar-vwap-reversal.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    parameter_mutations:
+      entry_minute_after_open:
+        mode: numeric_step
+        deltas: ['-30', '0', '30']
+        minimum: '120'
+        maximum: '240'
+      exit_minute_after_open:
+        mode: numeric_step
+        deltas: ['-30', '0', '30']
+        minimum: '150'
+        maximum: '300'
+      top_n:
+        mode: explicit_values
+        values: ['1', '2', '3']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-microbar-prev-day-open60-short-top1.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    parameter_mutations:
+      entry_minute_after_open:
+        mode: numeric_step
+        deltas: ['0', '15', '30']
+        minimum: '0'
+        maximum: '60'
+      exit_minute_after_open:
+        mode: numeric_step
+        deltas: ['-15', '0', '15']
+        minimum: '30'
+        maximum: '90'
+      top_n:
+        mode: explicit_values
+        values: ['1', '2']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
   - family_template_id: intraday_tsmom_v2
     seed_sweep_config: ../profitability-frontier-strict-daily-tsmom.yaml
     max_iterations: 2

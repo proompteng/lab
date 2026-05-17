@@ -132,6 +132,19 @@ spec:
                     pod-security.kubernetes.io/enforce: privileged
                     pod-security.kubernetes.io/audit: privileged
                     pod-security.kubernetes.io/warn: privileged
+              - name: torghut-cuda-ranker
+                path: argocd/applications/torghut-cuda-ranker
+                namespace: torghut-cuda-ranker
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: manual
+                # Keep disabled until the 3090 is intentionally moved away from saigak.
+                enabled: "false"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
               - name: openclaw
                 path: argocd/applications/openclaw
                 namespace: openclaw
@@ -727,6 +740,15 @@ spec:
           group: kubevirt.io
           namespace: saigak
           name: saigak
+          jqPathExpressions:
+            - .metadata.annotations
+            - .metadata.finalizers
+            - .spec.dataVolumeTemplates[].metadata.creationTimestamp
+            - .spec.template.metadata.creationTimestamp
+        - kind: VirtualMachine
+          group: kubevirt.io
+          namespace: torghut-cuda-ranker
+          name: torghut-cuda-ranker
           jqPathExpressions:
             - .metadata.annotations
             - .metadata.finalizers
