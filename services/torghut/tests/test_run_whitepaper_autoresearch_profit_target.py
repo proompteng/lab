@@ -305,18 +305,19 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             'if [ -n "{{inputs.parameters.expectedLastTradingDay}}" ]; then',
             template,
         )
-        self.assertIn("name: maxCandidates\n        value: '136'", template)
-        self.assertIn("name: topK\n        value: '72'", template)
-        self.assertIn("name: explorationSlots\n        value: '64'", template)
+        self.assertIn("name: maxCandidates\n        value: '420'", template)
+        self.assertIn("name: topK\n        value: '192'", template)
+        self.assertIn("name: explorationSlots\n        value: '228'", template)
         self.assertIn(
-            "name: maxTotalFrontierCandidates\n        value: '128'", template
+            "name: maxTotalFrontierCandidates\n        value: '420'", template
         )
         self.assertIn(
-            "name: realReplayTimeoutSeconds\n        value: '10000'", template
+            "name: realReplayTimeoutSeconds\n        value: '14400'", template
         )
         self.assertIn(
             "name: realReplayShardTimeoutSeconds\n        value: '1800'", template
         )
+        self.assertIn("name: realReplayShardWorkers\n        value: '48'", template)
         self.assertIn(
             "--program config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml",
             template,
@@ -1730,6 +1731,45 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             selection["rows"][0]["selection_reason"],
             "pre_replay_mlx_synthetic_nonpositive_expected_value",
         )
+
+    def test_candidate_selection_uses_exploration_for_synthetic_nonpositive_prior(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-negative-synthetic-prior-probe")
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(spec,),
+            proposal_rows=[
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": -12.5,
+                    "selection_reason": "pre_replay_mlx_rank",
+                    "training_source": "synthetic_prior",
+                    "feedback_evidence_context_count": 1,
+                }
+            ],
+            top_k=1,
+            exploration_slots=1,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [spec])
+        self.assertEqual(selection["budget"]["eligible_candidate_count"], 0)
+        self.assertEqual(
+            selection["budget"]["pre_replay_nonpositive_synthetic_candidate_count"], 1
+        )
+        self.assertEqual(
+            selection["budget"]["pre_replay_nonpositive_synthetic_exploration_count"],
+            1,
+        )
+        self.assertEqual(selection["budget"]["pre_replay_blocked_candidate_count"], 0)
+        self.assertEqual(
+            selection["rows"][0]["selection_reason"],
+            "synthetic_prior_exploration",
+        )
+        self.assertTrue(selection["rows"][0]["selected_for_replay"])
 
     def test_candidate_selection_ignores_malformed_feedback_context_for_synthetic_prior(
         self,
