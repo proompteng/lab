@@ -37,27 +37,27 @@ spec:
       - name: targetNetPnlPerDay
         value: '500'
       - name: maxCandidates
-        value: '136'
+        value: '240'
       - name: topK
-        value: '72'
+        value: '128'
       - name: explorationSlots
-        value: '64'
+        value: '112'
       - name: portfolioSizeMin
         value: '3'
       - name: portfolioSizeMax
         value: '8'
       - name: maxFrontierCandidatesPerSpec
-        value: '2'
+        value: '3'
       - name: maxTotalFrontierCandidates
-        value: '128'
+        value: '240'
       - name: realReplayTimeoutSeconds
-        value: '10000'
+        value: '14400'
       - name: realReplayShardSize
         value: '1'
       - name: realReplayShardTimeoutSeconds
         value: '1800'
       - name: realReplayShardWorkers
-        value: '6'
+        value: '24'
       - name: prefetchFullWindowRows
         value: 'true'
       - name: allowStaleTape
@@ -135,11 +135,11 @@ spec:
             readOnly: true
         resources:
           requests:
-            cpu: 1
-            memory: 8Gi
+            cpu: 16
+            memory: 32Gi
           limits:
-            cpu: 4
-            memory: 16Gi
+            cpu: 32
+            memory: 96Gi
         args:
           - |
             set -euo pipefail
