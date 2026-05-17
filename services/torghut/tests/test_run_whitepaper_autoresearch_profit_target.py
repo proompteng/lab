@@ -1201,6 +1201,57 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             row_by_spec[capital_unsafe_spec.candidate_spec_id]["selected_for_replay"]
         )
 
+    def test_candidate_selection_replays_feedback_reaudit_before_synthetic_probe(
+        self,
+    ) -> None:
+        feedback_spec = self._candidate_spec("spec-feedback-first")
+        synthetic_probe_spec = self._candidate_spec(
+            "spec-synthetic-probe",
+            family_template_id="mean_reversion_rebound_v1",
+            entry_minute_after_open="75",
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(synthetic_probe_spec, feedback_spec),
+            proposal_rows=[
+                {
+                    "candidate_spec_id": synthetic_probe_spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": -12.5,
+                    "selection_reason": "pre_replay_mlx_rank",
+                    "training_source": "synthetic_prior",
+                    "feedback_evidence_context_count": 1,
+                },
+                {
+                    "candidate_spec_id": feedback_spec.candidate_spec_id,
+                    "rank": 2,
+                    "proposal_score": -1_000_000,
+                    "selection_reason": "pre_replay_mlx_feedback_blocked",
+                    "training_source": "feedback_real_replay",
+                },
+            ],
+            top_k=1,
+            exploration_slots=1,
+            feedback_block_reaudit_slots=1,
+            max_candidates=2,
+            portfolio_size_min=1,
+        )
+        row_by_spec = {row["candidate_spec_id"]: row for row in selection["rows"]}
+
+        self.assertEqual(selected, [feedback_spec, synthetic_probe_spec])
+        self.assertEqual(
+            row_by_spec[feedback_spec.candidate_spec_id]["selection_reason"],
+            "feedback_block_reaudit",
+        )
+        self.assertEqual(
+            row_by_spec[synthetic_probe_spec.candidate_spec_id]["selection_reason"],
+            "synthetic_prior_exploration",
+        )
+        self.assertEqual(row_by_spec[feedback_spec.candidate_spec_id]["replay_order"], 1)
+        self.assertEqual(
+            row_by_spec[synthetic_probe_spec.candidate_spec_id]["replay_order"], 2
+        )
+
     def test_candidate_selection_keeps_positive_blocked_feedback_repair_candidates(
         self,
     ) -> None:
