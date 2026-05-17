@@ -40,7 +40,7 @@ spec:
   mode: lights-out
   timezone: UTC
   cadence:
-    discoverEvery: 4h
+    discoverEvery: 1h
     planEvery: 4h
     implementEvery: 30m
     verifyEvery: 1h
@@ -151,7 +151,7 @@ spec:
   mode: lights-out
   timezone: UTC
   cadence:
-    discoverEvery: 4h
+    discoverEvery: 1h
     planEvery: 4h
     implementEvery: 30m
     verifyEvery: 1h

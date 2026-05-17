@@ -42,6 +42,8 @@ import {
   SCHEDULE_RUNNER_STAGE_CLEARANCE_ENFORCEMENT_ENV,
   SCHEDULE_RUNNER_STAGE_CLEARANCE_HOLD_STAGES_ENV,
 } from '~/server/supporting-primitives-schedule-runner'
+import { maybeCreateInitialSwarmScheduleJob } from '~/server/supporting-primitives-schedule-catchup'
+import { resolveSwarmScheduleStage } from '~/server/supporting-primitives-schedule-identity'
 import {
   effectiveStageClearanceMode,
   fetchStageClearanceStatusSnapshot,
@@ -509,14 +511,6 @@ const shouldRejectRequirementSignalForAdmission = (admission: SwarmLaunchAdmissi
   (admission.reason === 'RuntimeAdmissionBlocked' && admission.passport?.decision === 'block') ||
   (admission.reason === 'RuntimeProofSurfaceBlocked' &&
     (admission.warrant?.status === 'broken' || admission.warrant?.status === 'quarantined'))
-
-const resolveSwarmScheduleStage = (schedule: Record<string, unknown>): StageName | null => {
-  const labels = asRecord(readNested(schedule, ['metadata', 'labels'])) ?? {}
-  if (!asString(labels[SWARM_NAME_LABEL])) return null
-  const stage = asString(labels[SWARM_STAGE_LABEL])?.trim().toLowerCase()
-  if (!stage) return null
-  return STAGE_NAMES.find((candidate) => candidate === stage) ?? null
-}
 
 const resolveScheduleLaunchAdmission = (schedule: Record<string, unknown>): SwarmLaunchAdmission | null => {
   const stage = resolveSwarmScheduleStage(schedule)
@@ -1661,6 +1655,7 @@ const reconcileSchedule = async (
       },
     }
     await applyResourceIfChanged(kube, cronJob)
+    await maybeCreateInitialSwarmScheduleJob(kube, schedule, cronJob, namespace)
     await reconcileScheduleRunnerStatus(kube, schedule, namespace)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
