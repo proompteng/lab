@@ -227,6 +227,7 @@ describe('temporal-bun-sdk packaging manifest', () => {
         git?: { localSha?: string | null; githubSha?: string | null; shaMatchesGithub?: boolean }
         githubActions?: { present?: boolean; runUrl?: string | null; runId?: string | null }
         npm?: { distTag?: string | null; dryRun?: string | null }
+        releaseSoak?: { runId?: string | null; runUrl?: string | null; artifactName?: string }
         artifactBundles?: Array<{ name?: string; runUrl?: string | null }>
         evidenceArtifacts?: Array<{ path?: string; present?: boolean; sizeBytes?: number | null; sha256?: string | null }>
         readinessArtifactTargets?: string[]
@@ -370,6 +371,12 @@ describe('temporal-bun-sdk packaging manifest', () => {
     )
     expect(productionEvidence.releaseProvenance?.artifactBundles?.map((artifact) => artifact.name)).toContain(
       'production-readiness-artifacts',
+    )
+    expect(productionEvidence.releaseProvenance?.artifactBundles?.map((artifact) => artifact.name)).toContain(
+      'temporal-bun-sdk-long-soak-release',
+    )
+    expect(productionEvidence.releaseProvenance?.releaseSoak?.artifactName).toBe(
+      'temporal-bun-sdk-long-soak-release',
     )
     expect(releaseProvenance.releaseProvenanceManifest).toBe('dist/release-provenance.json')
     expect(releaseProvenance.readinessArtifacts?.map((artifact) => artifact.path).sort()).toEqual([

@@ -136,6 +136,18 @@ jobs:
             echo "activity_concurrency=${activity_concurrency}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Run Temporal Bun SDK tests
+        run: |
+          cd packages/temporal-bun-sdk
+          TEMPORAL_TEST_SERVER=1 bun test --timeout=30000 --max-concurrency=1
+
+      - name: Verify replay corpus
+        run: bun run --filter @proompteng/temporal-bun-sdk verify:replay-corpus
+
+      - name: Run worker load suite
+        run: |
+          TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load
+
       - name: Run long soak
         run: |
           bun run --filter @proompteng/temporal-bun-sdk test:soak -- \
@@ -164,6 +176,12 @@ jobs:
         with:
           name: temporal-bun-sdk-long-soak-${{ steps.soak.outputs.mode || 'nightly' }}
           path: |
+            packages/temporal-bun-sdk/.artifacts/async-fuzz/report.json
+            packages/temporal-bun-sdk/.artifacts/replay-corpus/report.json
+            packages/temporal-bun-sdk/.artifacts/worker-load/report.json
+            packages/temporal-bun-sdk/.artifacts/worker-load/metrics.jsonl
+            packages/temporal-bun-sdk/.artifacts/worker-load/memory.jsonl
+            packages/temporal-bun-sdk/.artifacts/worker-load/temporal-cli.log
             packages/temporal-bun-sdk/.artifacts/worker-soak/report.json
             packages/temporal-bun-sdk/.artifacts/worker-soak/memory.jsonl
             packages/temporal-bun-sdk/.artifacts/worker-soak/iteration-*/report.json

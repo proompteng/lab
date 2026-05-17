@@ -150,6 +150,11 @@ type ReleaseProvenanceEvidence = {
     readonly distTag: string | null
     readonly dryRun: string | null
   }
+  readonly releaseSoak: {
+    readonly runId: string | null
+    readonly runUrl: string | null
+    readonly artifactName: string
+  }
   readonly artifactBundles: readonly {
     readonly name: string
     readonly runUrl: string | null
@@ -251,6 +256,24 @@ type SoakReport = {
   readonly passed?: boolean
   readonly durationMs?: number
   readonly elapsedMs?: number
+  readonly provenance?: {
+    readonly package?: {
+      readonly name?: string | null
+      readonly version?: string | null
+    }
+    readonly git?: {
+      readonly sha?: string | null
+      readonly branch?: string | null
+    }
+    readonly githubActions?: {
+      readonly present?: boolean
+      readonly repository?: string | null
+      readonly workflow?: string | null
+      readonly runId?: string | null
+      readonly runAttempt?: string | null
+      readonly sha?: string | null
+    }
+  }
   readonly failureModeCoverage?: Record<string, number>
   readonly failureModeEvidence?: Record<string, Record<string, number>>
   readonly memorySummary?: SoakMemorySummary
@@ -927,6 +950,60 @@ const validateReleaseSoakLoadEvidence = (report: SoakReport | null): LoadEvidenc
   }
 }
 
+const validateSoakProvenance = (
+  report: SoakReport | null,
+  packageJson: PackageJson,
+  localGitSha: string | null,
+): GateStatus => {
+  if (!report) {
+    return buildGate(false, 'missing release-soak report')
+  }
+
+  const missing: string[] = []
+  const provenance = report.provenance
+  if (!provenance) {
+    missing.push('soak report provenance missing')
+  }
+
+  const packageName = provenance?.package?.name ?? null
+  const packageVersion = provenance?.package?.version ?? null
+  const gitSha = provenance?.git?.sha ?? null
+  const githubSha = provenance?.githubActions?.sha ?? null
+  const githubRunId = provenance?.githubActions?.runId ?? null
+  const expectedReleaseSoakRunId = process.env.TEMPORAL_BUN_RELEASE_SOAK_RUN_ID?.trim() || null
+
+  if (packageName !== packageJson.name) {
+    missing.push(`soak package name ${packageName ?? 'missing'} does not match ${packageJson.name ?? 'missing'}`)
+  }
+  if (packageVersion !== packageJson.version) {
+    missing.push(
+      `soak package version ${packageVersion ?? 'missing'} does not match ${packageJson.version ?? 'missing'}`,
+    )
+  }
+  if (!gitSha) {
+    missing.push('soak git SHA missing')
+  } else if (localGitSha && gitSha !== localGitSha) {
+    missing.push(`soak git SHA ${gitSha} does not match local git SHA ${localGitSha}`)
+  }
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    if (!githubSha) {
+      missing.push('soak GitHub Actions SHA missing')
+    } else if (localGitSha && githubSha !== localGitSha) {
+      missing.push(`soak GitHub Actions SHA ${githubSha} does not match local git SHA ${localGitSha}`)
+    }
+    if (expectedReleaseSoakRunId && githubRunId !== expectedReleaseSoakRunId) {
+      missing.push(`soak GitHub Actions run id ${githubRunId ?? 'missing'} does not match ${expectedReleaseSoakRunId}`)
+    }
+  }
+
+  return buildGate(
+    missing.length === 0,
+    missing.length === 0
+      ? `package=${packageName}@${packageVersion}; gitSha=${gitSha}; githubSha=${githubSha ?? 'none'}; runId=${githubRunId ?? 'none'}`
+      : `missing=${missing.join(' | ')}`,
+  )
+}
+
 const collectProductionUsageEvidence = async (): Promise<ProductionUsageEvidence> => {
   const services: ProductionUsageServiceEvidence[] = []
 
@@ -986,6 +1063,9 @@ const requiredCiCommands = [
   'TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load',
   'TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:soak',
   'TEMPORAL_BUN_EVIDENCE_PURPOSE',
+  'release_soak_run_id',
+  'temporal-bun-sdk-long-soak-release',
+  'TEMPORAL_BUN_RELEASE_SOAK_RUN_ID',
   'bun run --filter @proompteng/temporal-bun-sdk verify:production',
   'bun run --filter @proompteng/temporal-bun-sdk verify:default-choice',
   'bun run --filter @proompteng/temporal-bun-sdk verify:packed-readiness',
@@ -1000,12 +1080,18 @@ const requiredLongSoakWorkflowFragments = [
   "TEMPORAL_TEST_SERVER: '1'",
   'TEMPORAL_ADDRESS: temporal-grpc:7233',
   'TEMPORAL_SOAK_FAILURE_MODES: baseline,worker-restart,sticky-cache-churn,update-rejection-termination,activity-cancellation',
+  'TEMPORAL_TEST_SERVER=1 bun test --timeout=30000 --max-concurrency=1',
+  'bun run --filter @proompteng/temporal-bun-sdk verify:replay-corpus',
+  'TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load',
   'bun run --filter @proompteng/temporal-bun-sdk test:soak',
   '--duration "${{ steps.soak.outputs.duration }}"',
   '--iterations "${{ steps.soak.outputs.iterations }}"',
   '--failure-modes "${TEMPORAL_SOAK_FAILURE_MODES}"',
   'bun run --filter @proompteng/temporal-bun-sdk verify:default-choice',
   'TEMPORAL_BUN_EVIDENCE_PURPOSE: release-soak',
+  'packages/temporal-bun-sdk/.artifacts/async-fuzz/report.json',
+  'packages/temporal-bun-sdk/.artifacts/replay-corpus/report.json',
+  'packages/temporal-bun-sdk/.artifacts/worker-load/report.json',
   'packages/temporal-bun-sdk/.artifacts/worker-soak/memory.jsonl',
   'packages/temporal-bun-sdk/dist/release-provenance.json',
   'actions/upload-artifact@v5',
@@ -1077,7 +1163,11 @@ const collectReleaseProvenanceEvidence = async (
   const purpose = process.env.TEMPORAL_BUN_EVIDENCE_PURPOSE?.trim() || null
   const npmDistTag = process.env.TEMPORAL_BUN_NPM_TAG?.trim() || null
   const npmDryRun = process.env.TEMPORAL_BUN_DRY_RUN?.trim() || null
+  const releaseSoakRunId =
+    process.env.TEMPORAL_BUN_RELEASE_SOAK_RUN_ID?.trim() || (purpose === 'release-soak' ? runId : null)
   const runUrl = serverUrl && repository && runId ? `${serverUrl}/${repository}/actions/runs/${runId}` : null
+  const releaseSoakRunUrl =
+    serverUrl && repository && releaseSoakRunId ? `${serverUrl}/${repository}/actions/runs/${releaseSoakRunId}` : null
   const evidenceArtifacts = await Promise.all(artifactPaths.map((artifactPath) => hashArtifact(artifactPath)))
   const missing: string[] = []
 
@@ -1127,6 +1217,11 @@ const collectReleaseProvenanceEvidence = async (
     if (!npmDryRun) {
       missing.push('TEMPORAL_BUN_DRY_RUN missing for publish provenance')
     }
+    if (!releaseSoakRunId) {
+      missing.push('TEMPORAL_BUN_RELEASE_SOAK_RUN_ID missing for publish provenance')
+    } else if (!/^[0-9]+$/.test(releaseSoakRunId)) {
+      missing.push(`TEMPORAL_BUN_RELEASE_SOAK_RUN_ID=${releaseSoakRunId} is not a numeric GitHub Actions run id`)
+    }
   }
   for (const artifact of evidenceArtifacts) {
     if (!artifact.present || !artifact.sha256 || artifact.sizeBytes === null) {
@@ -1164,9 +1259,15 @@ const collectReleaseProvenanceEvidence = async (
       distTag: npmDistTag,
       dryRun: npmDryRun,
     },
+    releaseSoak: {
+      runId: releaseSoakRunId,
+      runUrl: releaseSoakRunUrl,
+      artifactName: 'temporal-bun-sdk-long-soak-release',
+    },
     artifactBundles: [
       { name: 'worker-load-artifacts', runUrl },
       { name: 'production-readiness-artifacts', runUrl },
+      { name: 'temporal-bun-sdk-long-soak-release', runUrl: releaseSoakRunUrl },
     ],
     evidenceArtifacts,
     readinessArtifactTargets: [
@@ -1327,6 +1428,7 @@ const main = async () => {
   const soakMemoryReady = soakMemorySampleCount > 0 && soakMemorySummary?.withinSlopeLimit !== false
   const missingSoakFailureModes = requiredSoakFailureModes.filter((mode) => (soakFailureModeCoverage[mode] ?? 0) <= 0)
   const soakPassed = soakReport?.passed === true && soakIterationsPassed
+  const soakProvenance = validateSoakProvenance(soakReport, packageJson, localGitSha)
   const docsHash = await hashDocs()
   const productionUsage = await collectProductionUsageEvidence()
   const adoptionSurface = collectAdoptionSurfaceEvidence(packageJson)
@@ -1383,6 +1485,7 @@ const main = async () => {
         soakIterationCount >= minimumSoakIterations &&
         soakElapsedMs >= minimumSoakDurationMs &&
         soakMemoryReady &&
+        soakProvenance.passed &&
         missingSoakFailureModes.length === 0 &&
         missingSoakFailureEvidence.length === 0,
       soakReport
@@ -1393,7 +1496,7 @@ const main = async () => {
             `rssSlopeMbPerHour=${soakMemorySummary?.rssSlopeMbPerHour?.toFixed(2) ?? 'unknown'}; ` +
             `slopeAssessment=${soakMemorySummary?.slopeAssessment ?? 'unknown'}; ` +
             `memorySlopeLimitMbPerHour=${soakMemorySummary?.slopeLimitMbPerHour ?? 'unknown'}; ` +
-            `path=${relative(packageRoot, soakReportPath)}`
+            `path=${relative(packageRoot, soakReportPath)}; provenance=${soakProvenance.detail}`
         : 'missing',
     ),
     ciWorkflowCoverage: await validateCiWorkflowCoverage(),

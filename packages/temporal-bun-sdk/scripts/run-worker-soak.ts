@@ -4,6 +4,8 @@ import { parseArgs } from 'node:util'
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+const packageRoot = join(import.meta.dir, '..')
+
 const failureModes = [
   'baseline',
   'worker-restart',
@@ -50,12 +52,14 @@ const minimumIterations = Math.max(
 )
 const startedAt = Date.now()
 const deadline = startedAt + durationMs
-const artifactsDir = process.env.TEMPORAL_SOAK_ARTIFACTS_DIR ?? join(process.cwd(), '.artifacts', 'worker-soak')
+const artifactsDir = process.env.TEMPORAL_SOAK_ARTIFACTS_DIR ?? join(packageRoot, '.artifacts', 'worker-soak')
 const requestedFailureModes = parseFailureModes(
   String(argv.values['failure-modes'] ?? process.env.TEMPORAL_SOAK_FAILURE_MODES ?? 'baseline'),
 )
 const iterations: SoakIteration[] = []
 const memorySamplesPath = join(artifactsDir, 'memory.jsonl')
+const packageJsonPath = join(packageRoot, 'package.json')
+const packageJson = await readOptionalJson<PackageJson>(packageJsonPath)
 
 const applyOverride = (name: string, value: string | boolean | undefined) => {
   if (value !== undefined) {
@@ -82,7 +86,7 @@ while (Date.now() < deadline || iteration < minimumIterations) {
   const memoryBefore = await memoryRecorder.sample('before-iteration', { iteration, mode })
 
   const child = Bun.spawn(['bun', 'scripts/run-worker-load.ts'], {
-    cwd: process.cwd(),
+    cwd: packageRoot,
     stdout: 'inherit',
     stderr: 'inherit',
     env: {
@@ -134,6 +138,24 @@ const report = {
     arch: process.arch,
     temporalAddress: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
     temporalNamespace: process.env.TEMPORAL_NAMESPACE ?? 'default',
+  },
+  provenance: {
+    package: {
+      name: packageJson?.name ?? null,
+      version: packageJson?.version ?? null,
+    },
+    git: {
+      sha: await safeGitOutput(['rev-parse', 'HEAD']),
+      branch: await safeGitOutput(['rev-parse', '--abbrev-ref', 'HEAD']),
+    },
+    githubActions: {
+      present: process.env.GITHUB_ACTIONS === 'true',
+      repository: process.env.GITHUB_REPOSITORY ?? null,
+      workflow: process.env.GITHUB_WORKFLOW ?? null,
+      runId: process.env.GITHUB_RUN_ID ?? null,
+      runAttempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
+      sha: process.env.GITHUB_SHA ?? null,
+    },
   },
   passed: iterations.length > 0 && iterations.every((entry) => entry.exitCode === 0),
   iterations,
@@ -230,6 +252,11 @@ type FailureInjectionReport = {
     readonly runId?: string
     readonly status?: string
   }[]
+}
+
+type PackageJson = {
+  readonly name?: string
+  readonly version?: string
 }
 
 type MemorySample = {
@@ -346,6 +373,20 @@ async function readOptionalJson<T>(path: string): Promise<T | null> {
   } catch {
     return null
   }
+}
+
+async function safeGitOutput(args: readonly string[]): Promise<string | null> {
+  const child = Bun.spawn(['git', ...args], {
+    cwd: packageRoot,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const [exitCode, stdout] = await Promise.all([child.exited, new Response(child.stdout).text()])
+  if (exitCode !== 0) {
+    return null
+  }
+  const trimmed = stdout.trim()
+  return trimmed.length > 0 ? trimmed : null
 }
 
 function summarizeLoadReport(report: WorkerLoadReport | null): LoadReportSummary | null {
