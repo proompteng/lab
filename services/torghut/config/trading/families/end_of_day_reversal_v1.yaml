@@ -4,18 +4,23 @@ economic_mechanism: Late-session reversal in intraday losers after rebid confirm
 supported_markets:
   - us_equities_intraday
 required_features:
+  - prev_session_close_price
+  - price_vs_prev_session_close_bps
+  - opening_window_return_from_prev_close_bps
   - closing_window
   - intraday_return_rank
   - late_day_drawdown
   - reversal_rank
   - quote_quality
   - rebid_confirmation
+  - cross_section_opening_window_return_from_prev_close_rank
 allowed_normalizations:
   - price_scaled
   - opening_window_scaled
 entry_motifs:
   - end_of_day_reversal
   - close_reversion
+  - overnight_gap_reversal
 exit_motifs:
   - vwap_recovery
   - close_flatten

@@ -201,6 +201,17 @@ def _microbar_rank_universe_size(
     return _microbar_universe_size(context=context, params=params)
 
 
+def _microbar_required_features(params: dict[str, Any]) -> tuple[str, ...]:
+    required = ["session_minutes_elapsed"]
+    rank_feature = str(params.get("rank_feature") or "").strip()
+    gate_feature = str(params.get("gate_feature") or "").strip()
+    if rank_feature:
+        required.append(rank_feature)
+    if gate_feature:
+        required.append(gate_feature)
+    return tuple(dict.fromkeys(required))
+
+
 def _evaluate_microbar_cross_sectional(
     *,
     context: "StrategyContext",
@@ -244,12 +255,7 @@ def _evaluate_microbar_cross_sectional(
                 horizon=context.timeframe,
                 explain=rationale,
                 feature_snapshot_hash=features.normalization_hash,
-                required_features=(
-                    "session_minutes_elapsed",
-                    "cross_section_continuation_breadth",
-                    "cross_section_session_open_rank",
-                    "cross_section_vwap_w5m_rank",
-                ),
+                required_features=_microbar_required_features(params),
             ),
             trace=_generic_plugin_trace(
                 context=context,
@@ -457,12 +463,7 @@ def _evaluate_microbar_cross_sectional(
             horizon=context.timeframe,
             explain=entry_rationale,
             feature_snapshot_hash=features.normalization_hash,
-            required_features=(
-                "session_minutes_elapsed",
-                "cross_section_continuation_breadth",
-                "cross_section_session_open_rank",
-                "cross_section_vwap_w5m_rank",
-            ),
+            required_features=_microbar_required_features(params),
         ),
         trace=trace,
     )

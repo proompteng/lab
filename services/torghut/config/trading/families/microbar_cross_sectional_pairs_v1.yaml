@@ -5,13 +5,21 @@ supported_markets:
   - us_equities_intraday
 required_features:
   - session_open_price
+  - prev_session_close_price
+  - opening_window_return_from_prev_close_bps
   - vwap_session
   - cross_section_rank
+  - cross_section_prev_session_close_rank
+  - cross_section_opening_window_return_from_prev_close_rank
+  - cross_section_positive_opening_window_return_from_prev_close_ratio
 allowed_normalizations:
   - market_neutral_gross_scaled
 entry_motifs:
   - open_window_continuation
   - open_window_reversal
+  - overnight_gap_reversal
+  - opening_window_prev_close_reversal
+  - intraday_tug_of_war_reversal
   - vwap_close_continuation
   - vwap_close_reversal
 exit_motifs:

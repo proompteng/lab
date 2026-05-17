@@ -14,6 +14,7 @@ single sleeve that prints `$500` daily.
 ## End-to-End Flow
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 1000}}}%%
 flowchart TD
   Paper["Whitepaper or research note"] --> Ingest["Whitepaper ingest and versioning"]
   Ingest --> Claims["Claim compiler: mechanism, signal, data, risk, validation"]

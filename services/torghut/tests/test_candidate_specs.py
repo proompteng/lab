@@ -345,6 +345,76 @@ class TestCandidateSpecs(TestCase):
                     family_template_id,
                 )
 
+    def test_portfolio_profit_target_includes_prev_close_reversal_surface(
+        self,
+    ) -> None:
+        coverage_profiles = (
+            candidate_specs_module._PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES
+        )
+
+        microbar_motifs = {
+            str(profile["params"].get("signal_motif"))
+            for profile in coverage_profiles["microbar_cross_sectional_pairs_v1"]
+        }
+        self.assertIn("overnight_gap_reversal", microbar_motifs)
+        self.assertIn("opening_window_prev_close_reversal", microbar_motifs)
+        self.assertIn("intraday_tug_of_war_reversal", microbar_motifs)
+
+        prev_close_microbar = [
+            profile
+            for profile in coverage_profiles["microbar_cross_sectional_pairs_v1"]
+            if str(profile["params"].get("rank_feature"))
+            in {
+                "cross_section_prev_session_close_rank",
+                "cross_section_opening_window_return_from_prev_close_rank",
+            }
+        ]
+        self.assertGreaterEqual(len(prev_close_microbar), 3)
+        for profile in prev_close_microbar:
+            params = profile["params"]
+            self.assertEqual(params["selection_mode"], "reversal")
+            self.assertIn("entry_window_minutes", params)
+            self.assertEqual(
+                params["gate_feature"],
+                "cross_section_positive_opening_window_return_from_prev_close_ratio",
+            )
+            self.assertLessEqual(
+                Decimal(str(profile["max_notional_per_trade"])), Decimal("63180")
+            )
+            self.assertLessEqual(
+                Decimal(str(profile["max_position_pct_equity"])), Decimal("2.0")
+            )
+            self.assertLessEqual(
+                Decimal(str(params["max_session_negative_exit_bps"])), Decimal("3")
+            )
+
+        for family_template_id in (
+            "mean_reversion_rebound_v1",
+            "end_of_day_reversal_v1",
+        ):
+            prev_close_profiles = [
+                profile
+                for profile in coverage_profiles[family_template_id]
+                if profile["params"].get("drive_reference_basis") == "prev_close"
+            ]
+            self.assertGreaterEqual(len(prev_close_profiles), 3, family_template_id)
+            for profile in prev_close_profiles:
+                params = profile["params"]
+                self.assertEqual(params["opening_window_reference_basis"], "prev_close")
+                self.assertEqual(
+                    params["opening_window_rank_reference_basis"], "prev_close"
+                )
+                self.assertLessEqual(
+                    Decimal(str(profile["max_notional_per_trade"])), Decimal("63180")
+                )
+                self.assertLessEqual(
+                    Decimal(str(profile["max_position_pct_equity"])), Decimal("2.0")
+                )
+                self.assertLessEqual(
+                    Decimal(str(params["max_session_negative_exit_bps"])),
+                    Decimal("3"),
+                )
+
     def test_portfolio_profit_target_adds_capital_constrained_profiles(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-capital-realistic",

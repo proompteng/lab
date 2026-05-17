@@ -5756,6 +5756,51 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
         self.assertIsNotNone(periodicity_buy.intent)
         assert periodicity_buy.intent is not None
         self.assertEqual(periodicity_buy.intent.action, "buy")
+        self.assertEqual(
+            periodicity_buy.intent.required_features,
+            ("session_minutes_elapsed", "cross_section_prev_day_open45_return_rank"),
+        )
+
+        overnight_reversal_buy = long_plugin.evaluate(
+            self._context(
+                params={
+                    "entry_minute_after_open": "20",
+                    "entry_window_minutes": "25",
+                    "exit_minute_after_open": "150",
+                    "signal_motif": "overnight_gap_reversal",
+                    "rank_feature": "cross_section_prev_session_close_rank",
+                    "selection_mode": "reversal",
+                    "top_n": "2",
+                    "universe_size": "8",
+                    "gate_feature": (
+                        "cross_section_positive_opening_window_return_from_prev_close_ratio"
+                    ),
+                    "gate_min": "0.20",
+                    "gate_max": "0.80",
+                },
+                event_ts="2026-03-25T13:55:00+00:00",
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 25,
+                    "cross_section_prev_session_close_rank": Decimal("0.05"),
+                    "cross_section_positive_opening_window_return_from_prev_close_ratio": Decimal(
+                        "0.42"
+                    ),
+                }
+            ),
+        )
+        self.assertIsNotNone(overnight_reversal_buy.intent)
+        assert overnight_reversal_buy.intent is not None
+        self.assertEqual(overnight_reversal_buy.intent.action, "buy")
+        self.assertEqual(
+            overnight_reversal_buy.intent.required_features,
+            (
+                "session_minutes_elapsed",
+                "cross_section_prev_session_close_rank",
+                "cross_section_positive_opening_window_return_from_prev_close_ratio",
+            ),
+        )
 
         continuation_skip = _evaluate_microbar_cross_sectional(
             context=self._context(
