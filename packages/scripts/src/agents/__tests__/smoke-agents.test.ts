@@ -380,6 +380,8 @@ describe('scheduled AgentRun templates', () => {
     expect(providerCommand).not.toContain('> >(tee')
     expect(objectAt(envTemplate, 'AGENT_RUN_NAME')).toBe('{{agentRun.name}}')
     expect(objectAt(envTemplate, 'AGENT_RUN_NAMESPACE')).toBe('{{agentRun.namespace}}')
+    expect(objectAt(envTemplate, 'CODEX_MODEL_FALLBACKS')).toBe('gpt-5.4,gpt-5.4-mini,gpt-5.3-codex-spark')
+    expect(objectAt(envTemplate, 'CODEX_MAX_SESSION_ATTEMPTS')).toBe('4')
     expect(sanitizerContent).toContain('SUPPRESSED_PROVIDER_HTML = "[suppressed provider HTML response body]"')
     expect(sanitizerContent).toContain('HTML_START_PATTERN = re.compile(')
     expect(content).toContain('def summarize_upstream(upstream: str) -> str:')
