@@ -30,32 +30,32 @@
 {{- $sha256DigestPattern := "^sha256:[a-fA-F0-9]{64}$" -}}
 {{- $sha256ImageReferencePattern := "@sha256:[a-fA-F0-9]{64}$" -}}
 {{- $reservedEnvKeys := list
-  "JANGAR_GRPC_ENABLED"
-  "JANGAR_GRPC_HOST"
-  "JANGAR_GRPC_PORT"
-  "JANGAR_MIGRATIONS"
-  "JANGAR_CONTROL_PLANE_CACHE_ENABLED"
-  "JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED"
-  "JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS"
-  "JANGAR_AGENTRUN_ARTIFACTS_MAX"
-  "JANGAR_AGENTRUN_ARTIFACTS_STRICT"
+  "AGENTS_GRPC_ENABLED"
+  "AGENTS_GRPC_HOST"
+  "AGENTS_GRPC_PORT"
+  "AGENTS_MIGRATIONS"
+  "AGENTS_CONTROL_PLANE_CACHE_ENABLED"
+  "AGENTS_AGENTRUN_IDEMPOTENCY_ENABLED"
+  "AGENTS_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS"
+  "AGENTS_AGENTRUN_ARTIFACTS_MAX"
+  "AGENTS_AGENTRUN_ARTIFACTS_STRICT"
 }}
 {{- $controlPlaneReservedEnvKeys := list
-  "JANGAR_GRPC_ENABLED"
-  "JANGAR_GRPC_HOST"
-  "JANGAR_GRPC_PORT"
-  "JANGAR_MIGRATIONS"
+  "AGENTS_GRPC_ENABLED"
+  "AGENTS_GRPC_HOST"
+  "AGENTS_GRPC_PORT"
+  "AGENTS_MIGRATIONS"
 }}
 {{- $controllersReservedEnvKeys := list
-  "JANGAR_GRPC_ENABLED"
-  "JANGAR_GRPC_HOST"
-  "JANGAR_GRPC_PORT"
-  "JANGAR_MIGRATIONS"
-  "JANGAR_CONTROL_PLANE_CACHE_ENABLED"
-  "JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED"
-  "JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS"
-  "JANGAR_AGENTRUN_ARTIFACTS_MAX"
-  "JANGAR_AGENTRUN_ARTIFACTS_STRICT"
+  "AGENTS_GRPC_ENABLED"
+  "AGENTS_GRPC_HOST"
+  "AGENTS_GRPC_PORT"
+  "AGENTS_MIGRATIONS"
+  "AGENTS_CONTROL_PLANE_CACHE_ENABLED"
+  "AGENTS_AGENTRUN_IDEMPOTENCY_ENABLED"
+  "AGENTS_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS"
+  "AGENTS_AGENTRUN_ARTIFACTS_MAX"
+  "AGENTS_AGENTRUN_ARTIFACTS_STRICT"
 }}
 {{- $grpcManagedByChart := true -}}
 {{- if hasKey .Values "grpc" -}}
@@ -67,31 +67,31 @@
 {{- $expectedGrpcHost := "0.0.0.0" -}}
 {{- $expectedGrpcPort := toString .Values.grpc.port -}}
 {{- $grpcManagedKeys := list
-  "JANGAR_GRPC_ENABLED"
-  "JANGAR_GRPC_HOST"
-  "JANGAR_GRPC_PORT"
+  "AGENTS_GRPC_ENABLED"
+  "AGENTS_GRPC_HOST"
+  "AGENTS_GRPC_PORT"
 }}
 {{- $namespaceTokenPattern := "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" -}}
 {{- $controlPlaneGrpcExpectedValues := dict
-  "JANGAR_GRPC_ENABLED" $expectedGrpcEnabled
-  "JANGAR_GRPC_HOST" $expectedGrpcHost
-  "JANGAR_GRPC_PORT" $expectedGrpcPort
+  "AGENTS_GRPC_ENABLED" $expectedGrpcEnabled
+  "AGENTS_GRPC_HOST" $expectedGrpcHost
+  "AGENTS_GRPC_PORT" $expectedGrpcPort
 }}
 {{- $controllersGrpcExpectedValues := dict
-  "JANGAR_GRPC_ENABLED" "0"
-  "JANGAR_GRPC_HOST" "0.0.0.0"
-  "JANGAR_GRPC_PORT" $expectedGrpcPort
+  "AGENTS_GRPC_ENABLED" "0"
+  "AGENTS_GRPC_HOST" "0.0.0.0"
+  "AGENTS_GRPC_PORT" $expectedGrpcPort
 }}
 {{- $controllersReservedEnvDefaults := dict
-  "JANGAR_MIGRATIONS" "skip"
-  "JANGAR_GRPC_ENABLED" "0"
-  "JANGAR_GRPC_HOST" "0.0.0.0"
-  "JANGAR_GRPC_PORT" $expectedGrpcPort
-  "JANGAR_CONTROL_PLANE_CACHE_ENABLED" "0"
-  "JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED" "true"
-  "JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS" "30"
-  "JANGAR_AGENTRUN_ARTIFACTS_MAX" (toString (.Values.controller.agentRunArtifacts.max | default 50))
-  "JANGAR_AGENTRUN_ARTIFACTS_STRICT" (toString (.Values.controller.agentRunArtifacts.strict | default false))
+  "AGENTS_MIGRATIONS" "skip"
+  "AGENTS_GRPC_ENABLED" "0"
+  "AGENTS_GRPC_HOST" "0.0.0.0"
+  "AGENTS_GRPC_PORT" $expectedGrpcPort
+  "AGENTS_CONTROL_PLANE_CACHE_ENABLED" "0"
+  "AGENTS_AGENTRUN_IDEMPOTENCY_ENABLED" "true"
+  "AGENTS_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS" "30"
+  "AGENTS_AGENTRUN_ARTIFACTS_MAX" (toString (.Values.controller.agentRunArtifacts.max | default 50))
+  "AGENTS_AGENTRUN_ARTIFACTS_STRICT" (toString (.Values.controller.agentRunArtifacts.strict | default false))
 }}
 
 {{- if $imagePolicy.requireDigest -}}
@@ -99,14 +99,14 @@
 {{- $controlPlaneDigest := $controlPlaneImage.digest | default .Values.image.digest | default "" -}}
 {{- $runnerImage := .Values.runner.image | default dict -}}
 {{- $runtime := .Values.runtime | default dict -}}
-{{- $controlPlaneRunnerOverride := index $controlPlaneEnvVars "JANGAR_AGENT_RUNNER_IMAGE" | default "" -}}
-{{- $controllersRunnerOverride := index $controllersEnvVars "JANGAR_AGENT_RUNNER_IMAGE" | default "" -}}
+{{- $controlPlaneRunnerOverride := index $controlPlaneEnvVars "AGENTS_AGENT_RUNNER_IMAGE" | default "" -}}
+{{- $controllersRunnerOverride := index $controllersEnvVars "AGENTS_AGENT_RUNNER_IMAGE" | default "" -}}
 {{- if not (regexMatch $sha256DigestPattern (toString $controlPlaneDigest)) -}}
 {{- $errors = append $errors "imagePolicy.requireDigest=true requires image.digest or controlPlane.image.digest to be a sha256 digest for Deployment/agents." -}}
 {{- end -}}
 {{- if $controlPlaneRunnerOverride -}}
 {{- if not (regexMatch $sha256ImageReferencePattern (toString $controlPlaneRunnerOverride)) -}}
-{{- $errors = append $errors "imagePolicy.requireDigest=true requires env.vars/controlPlane.env.vars.JANGAR_AGENT_RUNNER_IMAGE to end with an @sha256 digest." -}}
+{{- $errors = append $errors "imagePolicy.requireDigest=true requires env.vars/controlPlane.env.vars.AGENTS_AGENT_RUNNER_IMAGE to end with an @sha256 digest." -}}
 {{- end -}}
 {{- else if $runnerImage.repository -}}
 {{- if not (regexMatch $sha256DigestPattern (toString ($runnerImage.digest | default ""))) -}}
@@ -131,7 +131,7 @@
 {{- end -}}
 {{- if $controllersRunnerOverride -}}
 {{- if not (regexMatch $sha256ImageReferencePattern (toString $controllersRunnerOverride)) -}}
-{{- $errors = append $errors "imagePolicy.requireDigest=true requires env.vars/controllers.env.vars.JANGAR_AGENT_RUNNER_IMAGE to end with an @sha256 digest." -}}
+{{- $errors = append $errors "imagePolicy.requireDigest=true requires env.vars/controllers.env.vars.AGENTS_AGENT_RUNNER_IMAGE to end with an @sha256 digest." -}}
 {{- end -}}
 {{- else if $runnerImage.repository -}}
 {{- if not (regexMatch $sha256DigestPattern (toString ($runnerImage.digest | default ""))) -}}
@@ -177,11 +177,11 @@
 {{- end -}}
 {{- end }}
 {{- end }}
-{{- $controllersGrpcEnabledRaw := lower (trim (toString (index $controllersResolvedEnvVars "JANGAR_GRPC_ENABLED" | default "0"))) -}}
+{{- $controllersGrpcEnabledRaw := lower (trim (toString (index $controllersResolvedEnvVars "AGENTS_GRPC_ENABLED" | default "0"))) -}}
 {{- $controllersGrpcEnabled := regexMatch "^(1|true|yes|on)$" $controllersGrpcEnabledRaw -}}
 {{- $controllersServiceEnabled := .Values.controllers.service.enabled | default false -}}
 {{- if and $controllersEnabled $controllersGrpcEnabled (not $controllersServiceEnabled) }}
-{{- $errors = append $errors (printf "controllers.service.enabled must be true when controllers.env.vars.JANGAR_GRPC_ENABLED is true; add --set controllers.service.enabled=true to expose the controller gRPC listener.") -}}
+{{- $errors = append $errors (printf "controllers.service.enabled must be true when controllers.env.vars.AGENTS_GRPC_ENABLED is true; add --set controllers.service.enabled=true to expose the controller gRPC listener.") -}}
 {{- end }}
 
 {{- $validationInputs := list
@@ -264,7 +264,7 @@
 {{- end }}
 
 {{- if $grpcManagedByChart }}
-{{- $grpcControlPlaneGrpcConflictValues := list "JANGAR_GRPC_ENABLED" "JANGAR_GRPC_HOST" "JANGAR_GRPC_PORT" -}}
+{{- $grpcControlPlaneGrpcConflictValues := list "AGENTS_GRPC_ENABLED" "AGENTS_GRPC_HOST" "AGENTS_GRPC_PORT" -}}
 {{- range $grpcEnvKey := $grpcControlPlaneGrpcConflictValues }}
 {{- if and (hasKey $controlPlaneExplicitEnvVars $grpcEnvKey) (hasKey $globalEnvVars $grpcEnvKey) }}
 {{- if ne (toString (index $controlPlaneExplicitEnvVars $grpcEnvKey)) (toString (index $globalEnvVars $grpcEnvKey)) }}

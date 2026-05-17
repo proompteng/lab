@@ -12,10 +12,10 @@ POSTGRES_DB="${POSTGRES_DB:-agents}"
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-pgvector/pgvector:pg18}"
 CHART_PATH="${CHART_PATH:-${REPO_ROOT}/charts/agents}"
 VALUES_FILE="${VALUES_FILE:-${CHART_PATH}/values-kind.yaml}"
-SECRET_NAME="${SECRET_NAME:-jangar-db-app}"
+SECRET_NAME="${SECRET_NAME:-agents-db-app}"
 SECRET_KEY="${SECRET_KEY:-uri}"
 KUBECTL_CONTEXT="${KUBECTL_CONTEXT:-kind-${CLUSTER_NAME}}"
-IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-jangar-local}"
+IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-agents-control-plane-local}"
 IMAGE_TAG="${IMAGE_TAG:-kind}"
 BUILD_IMAGE="${BUILD_IMAGE:-1}"
 
@@ -48,7 +48,7 @@ HELM=(helm --kube-context "${KUBECTL_CONTEXT}")
 "${KUBECTL[@]}" create namespace "${NAMESPACE}" --dry-run=client -o yaml | "${KUBECTL[@]}" apply -f -
 
 if [ "${BUILD_IMAGE}" = "1" ]; then
-  echo "Building Jangar image ${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+  echo "Building Agents image ${IMAGE_REPOSITORY}:${IMAGE_TAG}"
   PRUNE_DIR="$(mktemp -d /tmp/jangar-prune-XXXXXX)"
   cleanup_prune() {
     rm -rf "${PRUNE_DIR}"

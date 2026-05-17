@@ -1508,14 +1508,14 @@ describe('control-plane Torghut consumer evidence', () => {
     expect(result.negativeEvidence).toBeUndefined()
   })
 
-  it('configures Jangar to read the non-recursive Torghut consumer evidence endpoint', () => {
+  it('configures Agents to read the non-recursive Torghut consumer evidence endpoint', () => {
     const manifest = readFileSync(resolve(REPO_ROOT, 'argocd/applications/agents/values.yaml'), 'utf8')
 
     expect(manifest).toContain(
-      'JANGAR_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
+      'AGENTS_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
     )
     expect(manifest).not.toContain(
-      'JANGAR_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/autonomy',
+      'AGENTS_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/autonomy',
     )
   })
 })

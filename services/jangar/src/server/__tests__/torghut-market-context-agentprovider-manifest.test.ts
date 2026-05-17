@@ -71,7 +71,7 @@ describe('torghut market-context AgentProvider manifest', () => {
     )
 
     expect(manifest).toContain("DEFAULT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'")
-    expect(manifest).toContain('token = _load_bearer_token()')
+    expect(manifest).toContain('token = _load_token(args.token_path)')
     expect(manifest).toContain("headers['authorization'] = f'Bearer {token}'")
   })
 
@@ -118,287 +118,59 @@ describe('torghut market-context AgentProvider manifest', () => {
     await execFileAsync('python3', [validatorPath, '--domain', 'news', '--file', payloadPath], { timeout: 10_000 })
   })
 
-  it('decodes timeout output before writing process streams', async () => {
+  it('uses the Codex app-server adapter instead of the legacy market-context runner wrapper', async () => {
     const manifest = await readFile(
       resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
       'utf8',
     )
 
-    expect(manifest).toContain('def _write_process_output(stream, output) -> None:')
-    expect(manifest).toContain('if isinstance(output, bytes):')
-    expect(manifest).toContain("output.decode('utf-8', errors='replace')")
-    expect(manifest).toContain('_write_process_output(sys.stdout, error.stdout)')
-    expect(manifest).toContain('_write_process_output(sys.stderr, error.stderr)')
+    expect(manifest).toContain('type: codex-app-server')
+    expect(manifest).toContain('model: gpt-5.5')
+    expect(manifest).toContain('effort: xhigh')
+    expect(manifest).toContain('cwd: /workspace/lab')
+    expect(manifest).toContain('web_search: live')
     expect(manifest).toContain('CODEX_MARKET_CONTEXT_PREFLIGHT_TIMEOUT_SECONDS: "10"')
+    expect(manifest).not.toContain('/root/.codex/market-context-provider-runner.py')
+    expect(manifest).not.toContain('def _write_process_output(stream, output) -> None:')
+    expect(manifest).not.toContain('codex-implement')
   })
 
-  it('preflights closed market sessions before running Codex attempts', async () => {
+  it('hydrates market-context issue numbers before Codex app-server execution', async () => {
     const manifest = await readFile(
       resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
       'utf8',
     )
-    const runner = extractInputFileContent(manifest, '/root/.codex/market-context-provider-runner.py')
-    const tempDir = await mkdtemp(resolve(tmpdir(), 'market-context-runner-'))
-    const runnerPath = resolve(tempDir, 'market-context-provider-runner.py')
+    const helper = extractInputFileContent(manifest, '/root/.codex/ensure-market-context-issue-number.py')
+    const tempDir = await mkdtemp(resolve(tmpdir(), 'market-context-helper-'))
+    const helperPath = resolve(tempDir, 'ensure-market-context-issue-number.py')
     const eventPath = resolve(tempDir, 'event.json')
-    const probePath = resolve(tempDir, 'probe.py')
-    await writeFile(runnerPath, runner)
+    await writeFile(helperPath, helper)
     await writeFile(
       eventPath,
       JSON.stringify({
         parameters: {
-          domain: 'fundamentals',
-          executionMode: 'batch_task',
-          tradingStatusUrl: 'http://torghut.test/trading/status',
-        },
-      }),
-    )
-    await writeFile(
-      probePath,
-      `
-import importlib.util
-import sys
-from pathlib import Path
-
-runner_path = Path(sys.argv[1])
-event_path = Path(sys.argv[2])
-spec = importlib.util.spec_from_file_location('runner', runner_path)
-module = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-spec.loader.exec_module(module)
-
-class FakeResponse:
-  def __enter__(self):
-    return self
-
-  def __exit__(self, exc_type, exc, tb):
-    return False
-
-  def read(self):
-    return b'{"signal_continuity":{"market_session_open":false}}'
-
-def fake_urlopen(request, timeout=0):
-  assert timeout == 10
-  assert request.full_url == 'http://torghut.test/trading/status'
-  return FakeResponse()
-
-def fail_run(*args, **kwargs):
-  raise AssertionError('codex attempt should not run while market is closed')
-
-module.urllib.request.urlopen = fake_urlopen
-module.subprocess.run = fail_run
-sys.argv = ['market-context-provider-runner.py', str(event_path)]
-exit_code = module.main()
-assert exit_code == 0, exit_code
-`,
-    )
-
-    const { stdout } = await execFileAsync('python3', [probePath, runnerPath, eventPath], { timeout: 10_000 })
-
-    expect(stdout).toContain('market_session_closed_noop')
-  })
-
-  it('handles byte output from timed-out provider attempts', async () => {
-    const manifest = await readFile(
-      resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
-      'utf8',
-    )
-    const runner = extractInputFileContent(manifest, '/root/.codex/market-context-provider-runner.py')
-    const tempDir = await mkdtemp(resolve(tmpdir(), 'market-context-runner-'))
-    const runnerPath = resolve(tempDir, 'market-context-provider-runner.py')
-    const probePath = resolve(tempDir, 'probe.py')
-    await writeFile(runnerPath, runner)
-    await writeFile(
-      probePath,
-      `
-import importlib.util
-import subprocess
-import sys
-from pathlib import Path
-
-runner_path = Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location('runner', runner_path)
-module = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-spec.loader.exec_module(module)
-
-def fake_run(*args, **kwargs):
-  raise subprocess.TimeoutExpired(
-    cmd=args[0],
-    timeout=1,
-    output=bytes([111, 117, 116, 255]),
-    stderr=bytes([101, 114, 114, 255]),
-  )
-
-module.subprocess.run = fake_run
-exit_code, failure_category, message = module._run_attempt(Path('/tmp/event.json'), 'codex', 'gpt-5.5', 1)
-assert exit_code == 124, exit_code
-assert failure_category == 'provider_attempt_timeout', failure_category
-assert message == 'provider_attempt_timeout', message
-`,
-    )
-
-    const { stderr, stdout } = await execFileAsync('python3', [probePath, runnerPath], { timeout: 10_000 })
-
-    expect(stdout).toContain('out')
-    expect(stderr).toContain('err')
-  })
-
-  it('classifies generated script syntax failures as provider-fallback eligible payload failures', async () => {
-    const manifest = await readFile(
-      resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
-      'utf8',
-    )
-    const runner = extractInputFileContent(manifest, '/root/.codex/market-context-provider-runner.py')
-    const tempDir = await mkdtemp(resolve(tmpdir(), 'market-context-runner-'))
-    const runnerPath = resolve(tempDir, 'market-context-provider-runner.py')
-    const probePath = resolve(tempDir, 'probe.py')
-    await writeFile(runnerPath, runner)
-    await writeFile(
-      probePath,
-      `
-import importlib.util
-import subprocess
-import sys
-from pathlib import Path
-
-runner_path = Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location('runner', runner_path)
-module = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-spec.loader.exec_module(module)
-
-def fake_run(*args, **kwargs):
-  return subprocess.CompletedProcess(
-    args=args[0],
-    returncode=1,
-    stdout='',
-    stderr='  File "<stdin>", line 689\\nSyntaxError: ( was never closed\\nCommand exited with status 1\\n',
-  )
-
-module.subprocess.run = fake_run
-exit_code, failure_category, message = module._run_attempt(Path('/tmp/event.json'), 'codex', 'gpt-5.5', 1)
-assert exit_code == 1, exit_code
-assert failure_category == 'payload_validation_failure', failure_category
-assert module._can_retry_with_next_provider(failure_category) is True
-assert message == 'Command exited with status 1', message
-`,
-    )
-
-    const { stderr } = await execFileAsync('python3', [probePath, runnerPath], { timeout: 10_000 })
-
-    expect(stderr).toContain('SyntaxError')
-  })
-
-  it('resolves the base market-context callback URL for lifecycle calls', async () => {
-    const manifest = await readFile(
-      resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
-      'utf8',
-    )
-    const runner = extractInputFileContent(manifest, '/root/.codex/market-context-provider-runner.py')
-    const tempDir = await mkdtemp(resolve(tmpdir(), 'market-context-runner-'))
-    const runnerPath = resolve(tempDir, 'market-context-provider-runner.py')
-    const probePath = resolve(tempDir, 'probe.py')
-    await writeFile(runnerPath, runner)
-    await writeFile(
-      probePath,
-      `
-import importlib.util
-import sys
-from pathlib import Path
-
-runner_path = Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location('runner', runner_path)
-module = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-spec.loader.exec_module(module)
-
-base = 'http://jangar.jangar.svc.cluster.local/api/torghut/market-context'
-assert module._resolve_runs_base(base) == base
-assert module._resolve_runs_base(base + '/ingest') == base
-assert module._resolve_runs_base('') is None
-`,
-    )
-
-    await execFileAsync('python3', [probePath, runnerPath], { timeout: 10_000 })
-  })
-
-  it('finalizes a truthful partial payload after provider capacity exhaustion', async () => {
-    const manifest = await readFile(
-      resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
-      'utf8',
-    )
-    const runner = extractInputFileContent(manifest, '/root/.codex/market-context-provider-runner.py')
-    const tempDir = await mkdtemp(resolve(tmpdir(), 'market-context-runner-'))
-    const runnerPath = resolve(tempDir, 'market-context-provider-runner.py')
-    const eventPath = resolve(tempDir, 'event.json')
-    const probePath = resolve(tempDir, 'probe.py')
-    await writeFile(runnerPath, runner)
-    await writeFile(
-      eventPath,
-      JSON.stringify({
-        parameters: {
-          symbol: 'AMZN',
+          repository: 'proompteng/lab',
           domain: 'news',
-          asOfUtc: '2026-05-17T03:44:17.863Z',
-          callbackUrl: 'http://jangar.jangar.svc.cluster.local/api/torghut/market-context',
-          requestId: 'market-context-news-amzn-test',
-          reason: 'on_demand_stale_snapshot_refresh',
+          symbol: 'AMD',
+          requestId: 'market-context-news-amd-smoke',
+          stage: 'market-context',
+        },
+        prompt: 'Collect market context for ${symbol}',
+        implementation: {
+          text: 'Use request ${issueNumber} for ${domain}',
         },
       }),
     )
-    await writeFile(
-      probePath,
-      `
-import importlib.util
-import json
-import os
-import subprocess
-import sys
-from pathlib import Path
 
-runner_path = Path(sys.argv[1])
-event_path = Path(sys.argv[2])
-spec = importlib.util.spec_from_file_location('runner', runner_path)
-module = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-spec.loader.exec_module(module)
+    await execFileAsync('python3', ['-m', 'py_compile', helperPath], { timeout: 10_000 })
+    await execFileAsync('python3', [helperPath, eventPath], { timeout: 10_000 })
 
-posts = []
-
-def fake_post_json(url, payload, timeout_seconds):
-  posts.append((url, payload))
-  if url.endswith('/runs/finalize'):
-    assert payload['runStatus'] == 'partial'
-    assert payload['qualityScore'] == 0
-    assert payload['sourceCount'] == 0
-    assert payload['citations'] == []
-    assert 'provider_capacity_exhausted' in payload['riskFlags']
-    assert payload['payload']['providerCapacityExhausted'] is True
-    return 200, {'ok': True}
-  return 200, {'ok': True}
-
-def fake_run(*args, **kwargs):
-  return subprocess.CompletedProcess(
-    args=args[0],
-    returncode=1,
-    stdout='',
-    stderr='Turn failed -> Quota exceeded. Check your plan and billing details.\\n',
-  )
-
-module._post_json = fake_post_json
-module.subprocess.run = fake_run
-os.environ['CODEX_MARKET_CONTEXT_PROVIDER_CHAIN'] = 'codex:gpt-5.5,codex-spark:gpt-5.5'
-sys.argv = ['market-context-provider-runner.py', str(event_path)]
-exit_code = module.main()
-assert exit_code == 0, exit_code
-finalize_posts = [entry for entry in posts if entry[0].endswith('/runs/finalize')]
-assert len(finalize_posts) == 1, posts
-`,
-    )
-
-    const { stdout } = await execFileAsync('python3', [probePath, runnerPath, eventPath], { timeout: 10_000 })
-
-    expect(stdout).toContain('market_context_capacity_fallback_partial_finalized')
+    const payload = JSON.parse(await readFile(eventPath, 'utf8')) as Record<string, unknown>
+    expect(payload.issueNumber).toMatch(/^\d+$/)
+    expect(payload.issue_number).toBe(payload.issueNumber)
+    expect(payload.prompt).toBe('Collect market context for AMD')
+    expect(payload.implementation).toMatchObject({
+      text: `Use request ${payload.issueNumber} for news`,
+    })
   })
 })

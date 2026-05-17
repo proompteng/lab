@@ -1,6 +1,10 @@
+import { installAgentsEnvCompatibility } from '@proompteng/agents/server/env-compat'
+
 import { bootRuntimeProfile } from './runtime-boot'
 import { JANGAR_RUNTIME_PROFILES } from './runtime-profile'
 import { resolveHttpServerListenConfig } from './runtime-entry-config'
+
+installAgentsEnvCompatibility()
 
 const { port, hostname, idleTimeoutSeconds } = resolveHttpServerListenConfig()
 const runtimeProfile = JANGAR_RUNTIME_PROFILES.httpServer

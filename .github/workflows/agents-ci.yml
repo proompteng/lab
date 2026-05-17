@@ -20,6 +20,7 @@ on:
       - 'packages/scripts/src/jangar/**'
       - 'packages/scripts/src/shared/**'
       - 'packages/temporal-bun-sdk/**'
+      - 'services/agents/**'
       - 'services/bumba/**'
       - 'services/jangar/**'
       - 'scripts/agents/**'
@@ -43,6 +44,7 @@ on:
       - 'packages/scripts/src/jangar/**'
       - 'packages/scripts/src/shared/**'
       - 'packages/temporal-bun-sdk/**'
+      - 'services/agents/**'
       - 'services/bumba/**'
       - 'services/jangar/**'
       - 'scripts/agents/**'
@@ -172,6 +174,7 @@ jobs:
           --filter @proompteng/cx-tools
           --filter @proompteng/design
           --filter @proompteng/discord
+          --filter @proompteng/agents
           --filter @proompteng/jangar
           --filter @proompteng/otel
           --filter @proompteng/scripts
@@ -181,8 +184,17 @@ jobs:
         run: |
           bun test \
             packages/scripts/src/agents/__tests__/smoke-agents.test.ts \
+            packages/scripts/src/agents/__tests__/deploy-service.test.ts \
             packages/scripts/src/jangar/__tests__/release-contract.test.ts \
             packages/scripts/src/shared/__tests__/docker.test.ts
+
+      - name: Run Agents service unit tests
+        run: |
+          bun run --cwd services/agents tsc
+          bun run --cwd services/agents test
+
+      - name: Guard Agents service boundaries
+        run: scripts/agents/guard-extraction-boundaries.sh
 
       - name: Classify Jangar image mode
         id: jangar_image_mode
@@ -328,7 +340,7 @@ jobs:
           set -euxo pipefail
 
           WORKSPACE="${GITHUB_WORKSPACE}"
-          IMAGE_REPOSITORY="${AGENTS_IMAGE_REPOSITORY:-jangar-local}"
+          IMAGE_REPOSITORY="${AGENTS_IMAGE_REPOSITORY:-agents-control-plane-local}"
           DEFAULT_IMAGE_TAG_SUFFIX="${GITHUB_SHA:-unknown}"
           IMAGE_TAG="${AGENTS_IMAGE_TAG:-ci-$DEFAULT_IMAGE_TAG_SUFFIX}"
           PRUNE_DIR="$(mktemp -d /tmp/jangar-prune-XXXXXX)"

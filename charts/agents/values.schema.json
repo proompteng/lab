@@ -345,7 +345,7 @@
         "enabled": { "type": "boolean" },
         "manageEnvVar": {
           "type": "boolean",
-          "description": "When true (default), control-plane env values for JANGAR_GRPC_* are chart-owned and derived from grpc.*. For controllers, reserved keys are source-of-truth-managed unless explicitly set in controllers.env.vars."
+          "description": "When true (default), control-plane env values for AGENTS_GRPC_* are chart-owned and derived from grpc.*. For controllers, reserved keys are source-of-truth-managed unless explicitly set in controllers.env.vars."
         },
         "port": { "type": "integer" },
         "servicePort": { "type": "integer" },

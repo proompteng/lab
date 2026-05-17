@@ -39,10 +39,10 @@ run_with_helm3() {
   "$@"
 }
 
-go generate "${ROOT_DIR}/services/jangar/api/agents"
+go generate "${ROOT_DIR}/services/agents/api/agents"
 
 git -C "${ROOT_DIR}" diff --exit-code -- "${CHART_DIR}/crds" \
-  "${ROOT_DIR}/services/jangar/api/agents/v1alpha1/zz_generated.deepcopy.go"
+  "${ROOT_DIR}/services/agents/api/agents/v1alpha1/zz_generated.deepcopy.go"
 
 run_with_helm3 helm lint --kube-version "${KUBE_VERSION_FOR_HELM}" "${CHART_DIR}"
 

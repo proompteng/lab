@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'charts/agents/**'
+      - 'services/agents/api/agents/**'
       - 'packages/scripts/src/agents/publish-chart.ts'
       - 'scripts/agents/wait-for-artifacthub-chart.sh'
       - 'artifacthub-repo.yml'

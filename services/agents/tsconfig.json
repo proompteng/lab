@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "strictNullChecks": true,
+    "types": ["bun-types"],
+    "paths": {
+      "@/*": ["./src/*"],
+      "~/*": ["./src/*"],
+      "@proompteng/codex": ["../../packages/codex/src/index.ts"],
+      "@proompteng/codex/*": ["../../packages/codex/src/*"],
+      "@proompteng/temporal-bun-sdk": ["../../packages/temporal-bun-sdk/src/index.ts"],
+      "@proompteng/temporal-bun-sdk/*": [
+        "../../packages/temporal-bun-sdk/src/*/index.ts",
+        "../../packages/temporal-bun-sdk/src/*.ts"
+      ]
+    }
+  },
+  "include": ["./src/**/*", "./scripts/**/*", "./vitest.config.ts"]
+}

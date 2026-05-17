@@ -51,7 +51,7 @@ kind delete cluster --name agents
 `scripts/agents/kind-e2e.sh` is intentionally more useful than a render-only demo:
 
 1. Creates or reuses a kind cluster named `agents`.
-2. Builds the Jangar container image from `services/jangar/Dockerfile`.
+2. Builds the Agents container images for the control plane, controllers, and Codex runner.
 3. Loads that image into kind.
 4. Installs a disposable `pgvector/pgvector` Postgres deployment and creates the required `vector` and `pgcrypto` extensions.
 5. Creates the database URL Secret the chart expects.
@@ -69,8 +69,8 @@ Use this path when you already have:
 - Kubernetes `1.25+`
 - Helm with OCI registry support
 - A Postgres-compatible database URL
-- A Jangar image your cluster can pull
-- A runner image your cluster can pull for `AgentRun` Jobs
+- An Agents control-plane image your cluster can pull
+- An Agents Codex runner image your cluster can pull for `AgentRun` Jobs
 
 The chart package is public. The runtime images are an operator decision: the local quickstart builds an image for kind, while production should use your promoted image tags and digests.
 
@@ -88,15 +88,15 @@ Create a values file for your environment:
 ```yaml
 # agents-values.yaml
 image:
-  repository: registry.example.com/platform/jangar
+  repository: registry.example.com/platform/agents-control-plane
   tag: 2026-05-05
-  digest: sha256:REPLACE_WITH_JANGAR_IMAGE_DIGEST
+  digest: sha256:REPLACE_WITH_AGENTS_CONTROL_PLANE_IMAGE_DIGEST
   pullSecrets:
     - registry-cred
 
 runner:
   image:
-    repository: registry.example.com/platform/agent-runner
+    repository: registry.example.com/platform/agents-codex-runner
     tag: 2026-05-05
     digest: sha256:REPLACE_WITH_RUNNER_IMAGE_DIGEST
     pullSecrets:
@@ -246,7 +246,7 @@ Production should pin image tags and digests:
 
 ```yaml
 image:
-  repository: registry.example.com/platform/jangar
+  repository: registry.example.com/platform/agents-control-plane
   tag: 2026-05-05
   digest: sha256:...
   pullSecrets:
@@ -322,11 +322,11 @@ Invalid combinations fail at render time, including empty scope lists, wildcard 
 
 ### Runner Defaults
 
-The controller passes runner image defaults to AgentRun Jobs through `JANGAR_AGENT_RUNNER_IMAGE`.
+The controller passes runner image defaults to AgentRun Jobs through `AGENTS_AGENT_RUNNER_IMAGE`.
 
 Precedence:
 
-1. `env.vars.JANGAR_AGENT_RUNNER_IMAGE`
+1. `env.vars.AGENTS_AGENT_RUNNER_IMAGE`
 2. `runner.image.*`
 3. `runtime.agentRunnerImage` legacy fallback
 

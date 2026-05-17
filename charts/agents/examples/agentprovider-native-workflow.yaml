@@ -4,6 +4,8 @@ metadata:
   name: codex
 spec:
   binary: /usr/local/bin/agent-runner
+  adapter:
+    type: codex-app-server
   argsTemplate: []
   envTemplate:
     CODEX_LOG_LEVEL: info

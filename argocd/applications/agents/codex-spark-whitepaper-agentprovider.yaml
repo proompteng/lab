@@ -4,11 +4,21 @@ metadata:
   name: codex-spark-whitepaper
 spec:
   binary: /usr/local/bin/agent-runner
+  adapter:
+    type: codex-app-server
+    codex:
+      model: gpt-5.5
+      effort: xhigh
+      sandbox: danger-full-access
+      approval: never
+      cwd: /workspace/lab
+      threadConfig:
+        mcp_servers: {}
+        web_search: live
   argsTemplate: []
   envTemplate:
     CODEX_LOG_LEVEL: info
     NATS_URL: nats://nats.nats.svc.cluster.local:4222
-    AGENT_PROVIDER_PATH: /root/.codex/provider-codex-spark-whitepaper.json
     CODEX_MODEL: gpt-5.5
     CODEX_REQUIRE_PULL_REQUEST: "false"
     ALPACA_PAPER_TRADE: "true"
@@ -48,23 +58,6 @@ spec:
 
         [projects."/root"]
         trust_level = "trusted"
-    - path: /root/.codex/provider-codex-spark-whitepaper.json
-      content: |-
-        {
-          "name": "codex-spark-whitepaper",
-          "binary": "/bin/bash",
-          "argsTemplate": [
-            "-lc",
-            "EVENT_FILE=$(mktemp /tmp/codex-event.XXXXXX.json) && cp \"$1\" \"$EVENT_FILE\" && python3 /root/.codex/ensure-market-context-issue-number.py \"$EVENT_FILE\" && exec /usr/local/bin/codex-implement \"$EVENT_FILE\"",
-            "--",
-            "{{payloads.eventFilePath}}"
-          ],
-          "envTemplate": {
-            "WORKFLOW_STAGE": "{{inputs.stage}}",
-            "CODEX_STAGE": "{{inputs.stage}}",
-            "CODEX_REQUIRE_PULL_REQUEST": "false"
-          }
-        }
     - path: /root/.codex/ensure-market-context-issue-number.py
       content: |-
         #!/usr/bin/env python3

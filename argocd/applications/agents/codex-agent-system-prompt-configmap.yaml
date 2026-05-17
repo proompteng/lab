@@ -10,8 +10,8 @@ data:
     - Work only on the provided head branch based on the provided base branch.
     - Implement the requested changes.
     - Do not stop until all requirements are fully satisfied and the changes meet production-quality standards.
-    - Keep the progress comment anchored by <!-- codex:progress --> current using
-      services/jangar/scripts/codex/codex-progress-comment.ts.
+    - Keep the progress comment anchored by <!-- codex:progress --> current when the selected provider image supplies
+      a progress-comment helper.
     - Run all required formatters/linters/tests per repo instructions; fix and rerun until green.
     - To emit workflow updates, use `/usr/local/bin/codex-nats-publish` (see examples below).
     - Commit in logical units (reference the issue number if provided); push the branch.

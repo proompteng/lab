@@ -1,6 +1,6 @@
 apiVersion: v2
 name: agents
-description: Minimal Agents control plane (Jangar) with CRDs
+description: Agents control plane with CRDs and Codex runner harness
 home: https://github.com/proompteng/charts/tree/main/charts/agents
 sources:
   - https://github.com/proompteng/charts/tree/main/charts/agents
@@ -11,7 +11,6 @@ appVersion: '0.9.0'
 icon: https://avatars.githubusercontent.com/u/234536857
 keywords:
   - agents
-  - jangar
   - control-plane
   - codex
 maintainers:
@@ -25,10 +24,14 @@ annotations:
       url: https://github.com/proompteng/charts/tree/main/charts/agents
     - name: Documentation
       url: https://github.com/proompteng/charts/blob/main/charts/agents/README.md
-  artifacthub.io/keywords: agents,jangar,codex,control-plane
+  artifacthub.io/keywords: agents,codex,control-plane
   artifacthub.io/images: |
-    - name: jangar
-      image: ghcr.io/proompteng/jangar:latest
+    - name: agents-control-plane
+      image: ghcr.io/proompteng/agents-control-plane:latest
+    - name: agents-controller
+      image: ghcr.io/proompteng/agents-controller:latest
+    - name: agents-codex-runner
+      image: ghcr.io/proompteng/agents-codex-runner:latest
   artifacthub.io/crds: |
     - kind: Agent
       version: v1alpha1
@@ -98,6 +101,8 @@ annotations:
       spec:
         binary: /usr/local/bin/agent-runner
         argsTemplate: []
+        adapter:
+          type: codex-app-server
     - apiVersion: agents.proompteng.ai/v1alpha1
       kind: ImplementationSpec
       metadata:
