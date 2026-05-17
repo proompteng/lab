@@ -212,7 +212,6 @@ def _capital_rank_count_floor(
     *, strategy_overrides: Mapping[str, Any], params: Mapping[str, Any]
 ) -> int:
     for key in (
-        "max_entries_per_session",
         "max_concurrent_positions",
         "max_pair_legs",
         "top_n",
@@ -220,6 +219,8 @@ def _capital_rank_count_floor(
     ):
         if _float(params.get(key)) > 0:
             return 1
+    if _float(params.get("max_entries_per_session")) > 0:
+        return 1
     return max(1, len(_sequence_strings(strategy_overrides.get("universe_symbols"))))
 
 

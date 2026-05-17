@@ -29,15 +29,20 @@ def _param_slot(params: Mapping[str, Any], key: str) -> float:
 def estimate_capital_slot_count(
     params: Mapping[str, Any], *, rank_count_floor: int = 1
 ) -> float:
-    """Estimate simultaneous entry slots implied by runtime sleeve controls."""
+    """Estimate simultaneous exposure slots implied by runtime sleeve controls.
+
+    ``max_entries_per_session`` is a turnover cap, not a concurrency cap. Counting
+    it as simultaneous exposure blocks honest high-turnover candidates before
+    replay can prove whether they satisfy daily notional and drawdown gates.
+    """
 
     return max(
         1.0,
         float(max(1, int(rank_count_floor))),
-        _param_slot(params, "max_entries_per_session"),
         _param_slot(params, "max_concurrent_positions"),
         _param_slot(params, "max_pair_legs"),
         _param_slot(params, "top_n"),
+        _param_slot(params, "rank_count"),
     )
 
 

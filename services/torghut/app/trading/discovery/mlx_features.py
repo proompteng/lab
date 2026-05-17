@@ -129,7 +129,6 @@ def _infer_rank_policy(config: Mapping[str, Any], template: FamilyTemplate) -> s
 
 def _infer_rank_count(config: Mapping[str, Any]) -> int:
     for key in (
-        "max_entries_per_session",
         "max_concurrent_positions",
         "max_pair_legs",
         "top_n",
@@ -141,6 +140,8 @@ def _infer_rank_count(config: Mapping[str, Any]) -> int:
                 return max(1, int(float(str(value))))
             except ValueError:
                 continue
+    if _param_value(config, "max_entries_per_session") is not None:
+        return 1
     universe = _override_value(config, "universe_symbols")
     if isinstance(universe, list):
         universe_values = cast(list[Any], universe)
