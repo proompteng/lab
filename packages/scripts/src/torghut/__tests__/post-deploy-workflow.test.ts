@@ -10,6 +10,14 @@ const agentsCiClusterRbac = readFileSync(
   new URL('../../../../../argocd/applications/agents-ci/runner-rbac-cluster.yaml', import.meta.url),
   'utf8',
 )
+const optionsTaConfigmap = readFileSync(
+  new URL('../../../../../argocd/applications/torghut-options/ta/configmap.yaml', import.meta.url),
+  'utf8',
+)
+const optionsTaFlinkDeployment = readFileSync(
+  new URL('../../../../../argocd/applications/torghut-options/ta/flinkdeployment.yaml', import.meta.url),
+  'utf8',
+)
 
 describe('torghut post-deploy verifier workflow', () => {
   it('does not skip Knative Service readiness when the runner lacks RBAC', () => {
@@ -50,5 +58,13 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(agentsCiClusterRbac).toContain('agents-ci-runner-argocd-application-refresh')
     expect(agentsCiClusterRbac).toContain('argoproj.io')
     expect(agentsCiClusterRbac).toContain('patch')
+  })
+
+  it('rotates the options TA Kafka transactional client prefix with the restart nonce', () => {
+    expect(optionsTaFlinkDeployment).toContain('restartNonce: 8')
+    expect(optionsTaConfigmap).toContain('TA_KAFKA_TRANSACTION_TIMEOUT_MS: "120000"')
+    expect(optionsTaConfigmap).toContain('TA_CLIENT_ID: "torghut-options-ta-r8"')
+    expect(optionsTaConfigmap).toContain('TA_GROUP_ID: "torghut-options-ta-2026-03-08"')
+    expect(optionsTaFlinkDeployment).toContain('value: EXACTLY_ONCE')
   })
 })
