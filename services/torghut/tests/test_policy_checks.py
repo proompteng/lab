@@ -3896,6 +3896,40 @@ class TestPolicyChecks(TestCase):
         self.assertFalse(promotion.allowed)
         self.assertIn("benchmark_parity_schema_version_invalid", promotion.reasons)
 
+    def test_promotion_prerequisites_fail_when_benchmark_parity_identity_is_missing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "benchmarks").mkdir(parents=True, exist_ok=True)
+            payload = _build_benchmark_parity_payload()
+            payload["candidate_id"] = ""
+            payload["baseline_candidate_id"] = ""
+            _recompute_benchmark_artifact_hash(payload)
+            _write_benchmark_parity_payload_payload(root, payload=payload)
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_benchmark_parity": True,
+                    "promotion_benchmark_parity_required_targets": ["paper"],
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("benchmark_parity_candidate_id_missing", promotion.reasons)
+        self.assertIn("benchmark_parity_baseline_candidate_id_missing", promotion.reasons)
+
     def test_promotion_prerequisites_fail_when_benchmark_parity_contract_is_missing(
         self,
     ) -> None:
@@ -3926,6 +3960,63 @@ class TestPolicyChecks(TestCase):
 
         self.assertFalse(promotion.allowed)
         self.assertIn("benchmark_parity_contract_missing", promotion.reasons)
+
+    def test_promotion_prerequisites_fail_when_benchmark_parity_contract_metadata_is_invalid(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "benchmarks").mkdir(parents=True, exist_ok=True)
+            payload = _build_benchmark_parity_payload()
+            contract = payload.get("contract")
+            if isinstance(contract, dict):
+                contract["schema_version"] = "benchmark-parity-contract-v0"
+                contract["hash_algorithm"] = "md5"
+                contract["required_families"] = ["baseline_regime"]
+                contract["required_scorecards"] = ["decision_quality"]
+                contract["required_run_fields"] = ["family"]
+            _recompute_benchmark_artifact_hash(payload)
+            _write_benchmark_parity_payload_payload(root, payload=payload)
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_benchmark_parity": True,
+                    "promotion_benchmark_parity_required_targets": ["paper"],
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn(
+            "benchmark_parity_contract_schema_version_invalid",
+            promotion.reasons,
+        )
+        self.assertIn(
+            "benchmark_parity_contract_hash_algorithm_invalid",
+            promotion.reasons,
+        )
+        self.assertIn(
+            "benchmark_parity_contract_required_families_invalid",
+            promotion.reasons,
+        )
+        self.assertIn(
+            "benchmark_parity_contract_required_scorecards_invalid",
+            promotion.reasons,
+        )
+        self.assertIn(
+            "benchmark_parity_contract_required_run_fields_invalid",
+            promotion.reasons,
+        )
 
     def test_promotion_prerequisites_fail_when_benchmark_parity_contract_scorecard_fields_are_invalid(
         self,
@@ -4114,6 +4205,38 @@ class TestPolicyChecks(TestCase):
 
         self.assertFalse(promotion.allowed)
         self.assertIn("benchmark_parity_run_missing_required_fields", promotion.reasons)
+
+    def test_promotion_prerequisites_fail_when_benchmark_parity_runs_are_missing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "benchmarks").mkdir(parents=True, exist_ok=True)
+            payload = _build_benchmark_parity_payload()
+            payload["benchmark_runs"] = []
+            _recompute_benchmark_artifact_hash(payload)
+            _write_benchmark_parity_payload_payload(root, payload=payload)
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_benchmark_parity": True,
+                    "promotion_benchmark_parity_required_targets": ["paper"],
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("benchmark_parity_runs_missing", promotion.reasons)
 
     def test_promotion_prerequisites_fail_when_benchmark_parity_advisory_output_rate_breaches_threshold(
         self,
