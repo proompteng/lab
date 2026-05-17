@@ -3344,10 +3344,23 @@ def _select_candidate_specs_for_replay(
         for spec in ordered_unique
         if spec.candidate_spec_id not in block_reason_by_spec
     ]
+    synthetic_prior_probe_candidates = [
+        spec
+        for spec in ordered_unique
+        if block_reason_by_spec.get(spec.candidate_spec_id)
+        == "pre_replay_mlx_synthetic_nonpositive_expected_value"
+    ]
     rank_position_by_spec = {
         spec.candidate_spec_id: index for index, spec in enumerate(ordered, start=1)
     }
-    replay_budget = min(replay_budget, len(ordered_eligible))
+    synthetic_prior_probe_capacity = min(
+        requested_exploration_slots,
+        len(synthetic_prior_probe_candidates),
+    )
+    replay_budget = min(
+        replay_budget,
+        len(ordered_eligible) + synthetic_prior_probe_capacity,
+    )
     exploitation_count = min(max(0, int(top_k)), replay_budget, len(ordered_eligible))
 
     def spec_source_run_id(spec: CandidateSpec) -> str:
@@ -3440,9 +3453,24 @@ def _select_candidate_specs_for_replay(
         count=exploration_count,
         selected_so_far=exploitation,
     )
+    synthetic_prior_probe_exploration_count = min(
+        max(0, requested_exploration_slots - len(exploration)),
+        replay_budget - len(exploitation) - len(exploration),
+        len(synthetic_prior_probe_candidates),
+    )
+    synthetic_prior_probe_exploration = take_diverse(
+        synthetic_prior_probe_candidates,
+        count=synthetic_prior_probe_exploration_count,
+        selected_so_far=[*exploitation, *exploration],
+    )
     if len(exploitation) + len(exploration) < replay_budget:
         selected_ids = {
-            item.candidate_spec_id for item in (*exploitation, *exploration)
+            item.candidate_spec_id
+            for item in (
+                *exploitation,
+                *exploration,
+                *synthetic_prior_probe_exploration,
+            )
         }
         backfill_candidates = [
             item
@@ -3451,8 +3479,15 @@ def _select_candidate_specs_for_replay(
         ]
         backfill = take_diverse(
             backfill_candidates,
-            count=replay_budget - len(exploitation) - len(exploration),
-            selected_so_far=[*exploitation, *exploration],
+            count=replay_budget
+            - len(exploitation)
+            - len(exploration)
+            - len(synthetic_prior_probe_exploration),
+            selected_so_far=[
+                *exploitation,
+                *exploration,
+                *synthetic_prior_probe_exploration,
+            ],
         )
     else:
         backfill = []
@@ -3460,10 +3495,24 @@ def _select_candidate_specs_for_replay(
         item.candidate_spec_id: "exploitation" for item in exploitation
     } | {item.candidate_spec_id: "exploration" for item in exploration}
     selected_reason.update(
+        {
+            item.candidate_spec_id: "synthetic_prior_exploration"
+            for item in synthetic_prior_probe_exploration
+        }
+    )
+    selected_reason.update(
         {item.candidate_spec_id: "budget_backfill" for item in backfill}
     )
-    selected = [*exploitation, *exploration, *backfill]
+    selected = [
+        *exploitation,
+        *exploration,
+        *synthetic_prior_probe_exploration,
+        *backfill,
+    ]
     selected_ids = {item.candidate_spec_id for item in selected}
+    synthetic_prior_probe_selected_ids = {
+        item.candidate_spec_id for item in synthetic_prior_probe_exploration
+    }
     replay_order_by_spec = {
         item.candidate_spec_id: index for index, item in enumerate(selected, start=1)
     }
@@ -3595,13 +3644,20 @@ def _select_candidate_specs_for_replay(
                 for reason in block_reason_by_spec.values()
                 if reason == "pre_replay_mlx_synthetic_nonpositive_expected_value"
             ),
+            "pre_replay_nonpositive_synthetic_exploration_count": len(
+                synthetic_prior_probe_exploration
+            ),
             "pre_replay_capital_blocked_candidate_count": sum(
                 1
                 for reason in block_reason_by_spec.values()
                 if reason == capital_block_reason
             ),
-            "pre_replay_blocked_candidate_count": len(block_reason_by_spec),
-            "replay_order_policy": "quality_gated_diversity_pick_order",
+            "pre_replay_blocked_candidate_count": sum(
+                1
+                for candidate_spec_id in block_reason_by_spec
+                if candidate_spec_id not in synthetic_prior_probe_selected_ids
+            ),
+            "replay_order_policy": "quality_gated_diversity_pick_order_with_synthetic_prior_probe",
             "capital_feasible_candidate_count": sum(
                 1
                 for features in capital_features_by_spec.values()
