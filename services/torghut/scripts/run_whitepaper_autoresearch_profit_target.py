@@ -3174,6 +3174,7 @@ def _select_candidate_specs_for_replay(
         "pre_replay_mlx_risk_profile_feedback_blocked",
         "pre_replay_mlx_family_feedback_blocked",
     }
+    capital_block_reason = "pre_replay_capital_budget_blocked"
 
     def proposal_score(candidate_spec_id: str) -> Decimal:
         return _decimal(
@@ -3197,11 +3198,28 @@ def _select_candidate_specs_for_replay(
         except (TypeError, ValueError):
             return 0
 
+    def capital_blocked(spec: CandidateSpec) -> bool:
+        features = capital_features_by_spec.get(spec.candidate_spec_id, {})
+        oracle_policy = _mapping(
+            spec.promotion_contract.get("profit_target_oracle_policy")
+        )
+        max_gross_exposure = _decimal(
+            oracle_policy.get("max_gross_exposure_pct_equity"), default="1.0"
+        )
+        return (
+            _decimal(features.get("capital_feasible_flag")) < Decimal("1")
+            or _decimal(features.get("capital_budget_overage_ratio")) > Decimal("0")
+            or _decimal(features.get("estimated_max_gross_exposure_pct_equity"))
+            > max_gross_exposure
+        )
+
     def pre_replay_block_reason(spec: CandidateSpec) -> str:
         proposal = proposal_by_spec.get(spec.candidate_spec_id, {})
         selection_reason = _string(proposal.get("selection_reason"))
         if selection_reason in feedback_block_reasons:
             return selection_reason
+        if capital_blocked(spec):
+            return capital_block_reason
         score = proposal_score(spec.candidate_spec_id)
         if proposal.get("proposal_score") is not None and score <= Decimal("-999999"):
             return "pre_replay_mlx_feedback_blocked"
@@ -3528,6 +3546,11 @@ def _select_candidate_specs_for_replay(
                 1
                 for reason in block_reason_by_spec.values()
                 if reason == "pre_replay_mlx_synthetic_nonpositive_expected_value"
+            ),
+            "pre_replay_capital_blocked_candidate_count": sum(
+                1
+                for reason in block_reason_by_spec.values()
+                if reason == capital_block_reason
             ),
             "pre_replay_blocked_candidate_count": len(block_reason_by_spec),
             "replay_order_policy": "quality_gated_diversity_pick_order",
