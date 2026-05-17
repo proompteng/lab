@@ -67,4 +67,12 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(optionsTaConfigmap).toContain('TA_GROUP_ID: "torghut-options-ta-2026-03-08"')
     expect(optionsTaFlinkDeployment).toContain('value: EXACTLY_ONCE')
   })
+
+  it('closes superseded automatic rollback pull requests after successful verification', () => {
+    expect(workflow).toContain('Close superseded Torghut rollback pull requests')
+    expect(workflow).toContain("success() && github.event_name == 'push' && github.ref == 'refs/heads/main'")
+    expect(workflow).toContain('codex/torghut-rollback-')
+    expect(workflow).toContain('revert(torghut): rollback failed promotion ')
+    expect(workflow).toContain('gh pr close "${pr_number}" -R "${GH_REPO}" --delete-branch --comment "${comment}"')
+  })
 })
