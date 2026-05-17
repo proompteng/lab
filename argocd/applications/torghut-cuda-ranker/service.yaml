@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: torghut-cuda-ranker
+  labels:
+    app.kubernetes.io/name: torghut-cuda-ranker
+spec:
+  type: ClusterIP
+  selector:
+    kubevirt.io/domain: torghut-cuda-ranker
+  ports:
+    - name: ssh
+      port: 22
+      protocol: TCP
+      targetPort: 22

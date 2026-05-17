@@ -426,6 +426,42 @@ class TestStrategyAutoresearch(TestCase):
         )
         self.assertEqual(program.objective.min_cash, Decimal("0"))
 
+    def test_checked_in_500_portfolio_profit_program_includes_reversal_surfaces(
+        self,
+    ) -> None:
+        program_path = Path(
+            "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
+        )
+
+        program = load_strategy_autoresearch_program(
+            program_path,
+            family_dir=Path("config/trading/families"),
+        )
+
+        source_ids = {source.source_id for source in program.research_sources}
+        self.assertTrue(
+            {
+                "intraday_residual_reversal_2024",
+                "intraday_return_autocorrelation_term_structure_2025",
+                "intraday_cross_section_patterns_2010",
+            }.issubset(source_ids)
+        )
+
+        microbar_seed_names = {
+            plan.seed_sweep_config.name
+            for plan in program.families
+            if plan.family_template.family_id == "microbar_cross_sectional_pairs_v1"
+        }
+        self.assertTrue(
+            {
+                "profitability-frontier-strict-daily-microbar-eod-loser-reversal.yaml",
+                "profitability-frontier-strict-daily-microbar-vwap-reversal.yaml",
+                "profitability-frontier-strict-daily-microbar-prev-day-open60-short-top1.yaml",
+            }.issubset(microbar_seed_names)
+        )
+        self.assertEqual(program.promotion_policy, "research_only")
+        self.assertIn("scheduler_v3_parity_replay", program.parity_requirements)
+
     def test_load_program_rejects_non_mapping_schema_and_missing_families(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
