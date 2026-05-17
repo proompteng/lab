@@ -4,10 +4,14 @@ economic_mechanism: Controlled intraday oversold rebound after downside dislocat
 supported_markets:
   - us_equities_intraday
 required_features:
+  - prev_session_close_price
+  - price_vs_prev_session_close_bps
+  - opening_window_return_from_prev_close_bps
   - session_drawdown
   - session_selloff_bps
   - reversal_rank
   - cross_section_reversal_rank
+  - cross_section_opening_window_return_from_prev_close_rank
   - quote_quality
   - rebid_confirmation
 allowed_normalizations:
@@ -16,6 +20,7 @@ allowed_normalizations:
 entry_motifs:
   - mean_reversion_rebound
   - downside_dislocation
+  - overnight_gap_reversal
 exit_motifs:
   - vwap_recovery
   - momentum_rollover
