@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
-  repository: registry.ide-newton.ts.net/lab/agents-control-plane
-  tag: ea0f7a1d
-  digest: sha256:71fe9ceae23b187fe3f1dfec034687dd86d4acf7dc6ec586102565b95bd49683
+  repository: registry.ide-newton.ts.net/lab/jangar
+  tag: e69f6e09
+  digest: sha256:ca638ebb92ee2cfb6eb21c03af4cc27437f56d9cd4f73379abd3ba5027e895e1
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -10,9 +10,9 @@ nodeSelector:
   kubernetes.io/arch: arm64
 controlPlane:
   image:
-    repository: registry.ide-newton.ts.net/lab/agents-control-plane
-    tag: ea0f7a1d
-    digest: sha256:6d372f58f7115b395ec40f7dba35b8c1bddb41875c6be9bd0cf7350eb6744f6d
+    repository: registry.ide-newton.ts.net/lab/jangar-control-plane
+    tag: e69f6e09
+    digest: sha256:316d16751a7a8bd75c428c36ab01585603da11546050f497de91891b4e55bbc6
   env:
     vars:
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
@@ -25,11 +25,18 @@ controlPlane:
       AGENTS_MANIFEST_IMAGE_DIGEST: sha256:6d372f58f7115b395ec40f7dba35b8c1bddb41875c6be9bd0cf7350eb6744f6d
       AGENTS_SERVING_BUILD_COMMIT: ea0f7a1d3d41adacf18185a26a3bafc72f7ba355
       AGENTS_SERVING_IMAGE_DIGEST: sha256:6d372f58f7115b395ec40f7dba35b8c1bddb41875c6be9bd0cf7350eb6744f6d
+      JANGAR_SOURCE_HEAD_SHA: e69f6e096ae349e8be465c4f975db1a748898208
+      JANGAR_GITOPS_REVISION: e69f6e096ae349e8be465c4f975db1a748898208
+      JANGAR_SOURCE_CI_RUN_ID: "26005025998"
+      JANGAR_SOURCE_CI_CONCLUSION: success
+      JANGAR_MANIFEST_IMAGE_DIGEST: sha256:316d16751a7a8bd75c428c36ab01585603da11546050f497de91891b4e55bbc6
+      JANGAR_SERVING_BUILD_COMMIT: e69f6e096ae349e8be465c4f975db1a748898208
+      JANGAR_SERVING_IMAGE_DIGEST: sha256:316d16751a7a8bd75c428c36ab01585603da11546050f497de91891b4e55bbc6
 runner:
   image:
-    repository: registry.ide-newton.ts.net/lab/agents-codex-runner
-    tag: ea0f7a1d
-    digest: sha256:71fe9ceae23b187fe3f1dfec034687dd86d4acf7dc6ec586102565b95bd49683
+    repository: registry.ide-newton.ts.net/lab/jangar
+    tag: e69f6e09
+    digest: sha256:ca638ebb92ee2cfb6eb21c03af4cc27437f56d9cd4f73379abd3ba5027e895e1
 argocdHooks:
   enabled: true
   image:
