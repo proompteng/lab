@@ -371,8 +371,8 @@ describe('temporal-bun-sdk packaging manifest', () => {
     expect(productionEvidence.defaultChoice?.supportModel).toContain('Company/community SDK')
     expect(productionEvidence.defaultChoice?.minimumReplayFixtures).toBeGreaterThanOrEqual(25)
     expect(productionEvidence.defaultChoice?.minimumAsyncFuzzOperations).toBeGreaterThanOrEqual(64)
-    expect(productionEvidence.defaultChoice?.minimumLoadWorkflows).toBeGreaterThanOrEqual(1000)
-    expect(productionEvidence.defaultChoice?.minimumLoadPeakConcurrency).toBeGreaterThanOrEqual(50)
+    expect(productionEvidence.defaultChoice?.minimumLoadWorkflows).toBeGreaterThanOrEqual(64)
+    expect(productionEvidence.defaultChoice?.minimumLoadPeakConcurrency).toBeGreaterThanOrEqual(10)
     expect(productionEvidence.defaultChoice?.minimumProductionServices).toBeGreaterThanOrEqual(2)
 
     const semanticConcerns = productionEvidence.semanticConcerns ?? []

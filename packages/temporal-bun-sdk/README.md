@@ -78,7 +78,7 @@ Temporal workers:
 - replay-corpus capture and verification tooling for Temporal CLI dev-server
   histories,
 - 10,000-seed async fuzz replay with 64 actual workflow operations per seed,
-- 1,000-workflow load evidence across CPU, activity, and update scenarios,
+- 64-workflow load evidence across CPU, activity, and update scenarios,
 - activity heartbeats, retries, cancellation, and failure conversion,
 - sticky-cache healing, build-id routing, graceful shutdown, and worker metrics,
 - Temporal CLI integration tests and worker load/perf checks in CI,

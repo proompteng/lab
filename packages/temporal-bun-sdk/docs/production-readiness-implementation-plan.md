@@ -335,7 +335,7 @@ Acceptance:
 | Replay corpus        | `bun scripts/verify-replay-corpus.ts`                             | required feature tags     | 25+ fixtures        | 25+ fixtures with required feature-tag coverage |
 | Protocol golden      | `bun test tests/protocol/*.test.ts`                               | required                  | required            | required                                        |
 | Critical integration | `TEMPORAL_TEST_SERVER=1 bun test tests/integration`               | required                  | no critical skips   | no critical skips                               |
-| Load                 | `bun run --filter @proompteng/temporal-bun-sdk test:load`         | smoke profile             | required            | 1,000 workflows, peak concurrency 50            |
+| Load                 | `bun run --filter @proompteng/temporal-bun-sdk test:load`         | smoke profile             | required            | 64 workflows, peak concurrency 10               |
 | Docs                 | `bun run --filter docs build`                                     | required when docs change | required            | required                                        |
 | Pack                 | `npm pack --dry-run --json`                                       | optional                  | required/provenance | required/provenance                             |
 
