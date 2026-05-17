@@ -237,6 +237,35 @@ jobs:
           export TORGHUT_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-readyz.json"
           bun run packages/scripts/src/torghut/post-deploy-evidence.ts
 
+      - name: Close superseded Torghut rollback pull requests
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          VERIFIED_SHA: ${{ github.sha }}
+          VERIFIED_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t rollback_pr_numbers < <(
+            gh pr list -R "${GH_REPO}" --state open --base main --limit 200 \
+              --json number,title,headRefName \
+              --jq ".[] | select(.headRefName | startswith(\"codex/torghut-rollback-\")) | select(.title | startswith(\"revert(torghut): rollback failed promotion \")) | .number"
+          )
+
+          if [ "${#rollback_pr_numbers[@]}" -eq 0 ]; then
+            echo "No superseded Torghut rollback pull requests to close"
+            exit 0
+          fi
+
+          for pr_number in "${rollback_pr_numbers[@]}"; do
+            printf -v comment "Closing this superseded automatic Torghut rollback PR because a newer torghut-post-deploy-verify run succeeded on %s.\n\nSuccessful run: %s\n" \
+              "${VERIFIED_SHA}" \
+              "${VERIFIED_RUN_URL}"
+            gh pr close "${pr_number}" -R "${GH_REPO}" --delete-branch --comment "${comment}"
+          done
+
       - name: Prepare rollback manifests
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: rollback
