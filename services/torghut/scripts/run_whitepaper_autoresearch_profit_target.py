@@ -2613,6 +2613,18 @@ def _feedback_risk_profile_has_penalty(scorecard: Mapping[str, Any]) -> bool:
     return False
 
 
+def _feedback_risk_profile_has_terminal_block(scorecard: Mapping[str, Any]) -> bool:
+    if not _feedback_risk_profile_has_penalty(scorecard):
+        return False
+    if _feedback_has_nonpositive_expected_value(scorecard):
+        return True
+    if _decimal(scorecard.get("max_gross_exposure_pct_equity")) > Decimal("1.0"):
+        return True
+    if _decimal(scorecard.get("min_cash")) < Decimal("0"):
+        return True
+    return _decimal(scorecard.get("negative_cash_observation_count")) > Decimal("0")
+
+
 def _feedback_is_blocked(scorecard: Mapping[str, Any]) -> bool:
     if _feedback_scorecard_has_hard_veto(scorecard):
         return True
@@ -2977,6 +2989,8 @@ def _pre_replay_proposal_model_and_rows(
             and bundle is not None
             and _feedback_risk_profile_has_penalty(bundle.objective_scorecard)
         ):
+            if _feedback_risk_profile_has_terminal_block(bundle.objective_scorecard):
+                return "pre_replay_mlx_risk_profile_feedback_blocked"
             return "pre_replay_mlx_risk_profile_feedback_penalized"
         if (
             source == "feedback_family_replay"
@@ -3007,6 +3021,12 @@ def _pre_replay_proposal_model_and_rows(
             source == "feedback_shape_prior"
             and bundle is not None
             and _feedback_family_prior_has_hard_block(bundle.objective_scorecard)
+        ):
+            return min(-1_000_000.0, target_by_spec.get(candidate_spec_id, raw_score))
+        if (
+            source == "feedback_risk_profile_prior"
+            and bundle is not None
+            and _feedback_risk_profile_has_terminal_block(bundle.objective_scorecard)
         ):
             return min(-1_000_000.0, target_by_spec.get(candidate_spec_id, raw_score))
         if (
@@ -3151,6 +3171,7 @@ def _select_candidate_specs_for_replay(
         "pre_replay_mlx_feedback_blocked",
         "pre_replay_mlx_signature_feedback_blocked",
         "pre_replay_mlx_shape_feedback_blocked",
+        "pre_replay_mlx_risk_profile_feedback_blocked",
         "pre_replay_mlx_family_feedback_blocked",
     }
 
