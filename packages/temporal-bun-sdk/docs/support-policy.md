@@ -39,11 +39,10 @@ Every release should publish or upload:
 - replay corpus report;
 - worker load report;
 - async determinism fuzz report;
-- worker soak report;
 - npm pack or publish provenance output.
 
 `agent-readiness.json` must not set `recommended: true` until the replay corpus,
-async determinism fuzz, load, soak, CI coverage, package-boundary, and semantic
+async determinism fuzz, load, CI coverage, package-boundary, and semantic
 concern evidence meet the default-choice thresholds in
 `docs/semantic-readiness.md`.
 
@@ -61,7 +60,8 @@ must not select it by default until `verify:default-choice` passes.
 - Default-choice status is scoped to Bun-first deployments that accept the
   published gates and support model. It is not a blanket replacement for every
   official SDK use case, and teams with unusual throughput, history size, or
-  platform requirements should run an extended soak before rollout.
+  platform requirements should run target-environment replay and load checks
+  before rollout.
 
 ## Security And Reliability Issues
 

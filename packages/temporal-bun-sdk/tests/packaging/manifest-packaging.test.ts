@@ -198,8 +198,6 @@ describe('temporal-bun-sdk packaging manifest', () => {
         loadScenarioCoverage?: Record<string, number>
         asyncFuzzOperationCount?: number
         asyncFuzzOperationCoverage?: Record<string, number>
-        soakFailureModeCoverage?: Record<string, number>
-        soakMemorySummary?: { sampleCount?: number; withinSlopeLimit?: boolean } | null
         productionUsageServiceCount?: number
         productionUsageServices?: Array<{ id?: string; passed?: boolean; missingRefs?: string[] }>
         productionUsageObservabilityRefs?: string[]
@@ -216,8 +214,6 @@ describe('temporal-bun-sdk packaging manifest', () => {
           readinessFiles?: string[]
           bootstrapCommand?: string
         }
-        longSoakWorkflowPresent?: boolean
-        longSoakWorkflowPath?: string
       }
       gates?: Record<string, { passed?: boolean }>
       releaseProvenance?: {
@@ -227,7 +223,6 @@ describe('temporal-bun-sdk packaging manifest', () => {
         git?: { localSha?: string | null; githubSha?: string | null; shaMatchesGithub?: boolean }
         githubActions?: { present?: boolean; runUrl?: string | null; runId?: string | null }
         npm?: { distTag?: string | null; dryRun?: string | null }
-        releaseSoak?: { runId?: string | null; runUrl?: string | null; artifactName?: string }
         artifactBundles?: Array<{ name?: string; runUrl?: string | null }>
         evidenceArtifacts?: Array<{ path?: string; present?: boolean; sizeBytes?: number | null; sha256?: string | null }>
         readinessArtifactTargets?: string[]
@@ -253,7 +248,6 @@ describe('temporal-bun-sdk packaging manifest', () => {
         minimumLoadWorkflows?: number
         minimumLoadPeakConcurrency?: number
         minimumProductionServices?: number
-        minimumSoakDurationMs?: number
       }
       adoption?: {
         defaultUseCase?: string
@@ -316,13 +310,10 @@ describe('temporal-bun-sdk packaging manifest', () => {
     expect(productionEvidence.gates?.replayCorpusEvidence).toBeDefined()
     expect(productionEvidence.gates?.loadEvidence).toBeDefined()
     expect(productionEvidence.gates?.asyncFuzzEvidence).toBeDefined()
-    expect(productionEvidence.gates?.soakEvidence).toBeDefined()
-    expect(productionEvidence.gates?.longSoakWorkflowCoverage).toBeDefined()
     expect(productionEvidence.gates?.productionUsageEvidence).toBeDefined()
     expect(productionEvidence.gates?.adoptionSurfaceEvidence).toBeDefined()
     expect(productionEvidence.gates?.releaseProvenanceEvidence).toBeDefined()
     expect(typeof productionEvidence.gates?.ciWorkflowCoverage?.passed).toBe('boolean')
-    expect(typeof productionEvidence.gates?.longSoakWorkflowCoverage?.passed).toBe('boolean')
     expect(typeof productionEvidence.gates?.productionUsageEvidence?.passed).toBe('boolean')
     expect(typeof productionEvidence.gates?.adoptionSurfaceEvidence?.passed).toBe('boolean')
     expect(typeof productionEvidence.gates?.releaseProvenanceEvidence?.passed).toBe('boolean')
@@ -332,11 +323,6 @@ describe('temporal-bun-sdk packaging manifest', () => {
     expect(typeof productionEvidence.evidence?.asyncFuzzOperationCount).toBe('number')
     expect(typeof productionEvidence.evidence?.asyncFuzzOperationCoverage).toBe('object')
     expect(typeof productionEvidence.evidence?.loadScenarioCoverage).toBe('object')
-    expect(typeof productionEvidence.evidence?.soakFailureModeCoverage).toBe('object')
-    expect(
-      productionEvidence.evidence?.soakMemorySummary === null ||
-        typeof productionEvidence.evidence?.soakMemorySummary === 'object',
-    ).toBeTrue()
     expect(productionEvidence.evidence?.productionUsageServiceCount).toBeGreaterThanOrEqual(2)
     expect(Array.isArray(productionEvidence.evidence?.productionUsageServices)).toBeTrue()
     expect(Array.isArray(productionEvidence.evidence?.productionUsageObservabilityRefs)).toBeTrue()
@@ -351,8 +337,6 @@ describe('temporal-bun-sdk packaging manifest', () => {
     expect(productionEvidence.evidence?.adoptionSurface?.missingRequiredScripts).toEqual([])
     expect(productionEvidence.evidence?.adoptionSurface?.bootstrapCommand).toContain('@proompteng/temporal-bun-sdk')
     expect(productionEvidence.evidence?.adoptionSurface?.readinessFiles).toContain('dist/agent-readiness.json')
-    expect(productionEvidence.evidence?.longSoakWorkflowPresent).toBeTrue()
-    expect(productionEvidence.evidence?.longSoakWorkflowPath).toContain('temporal-bun-sdk-nightly.yml')
     expect(productionEvidence.adoption?.defaultUseCase).toContain('@proompteng/temporal-bun-sdk')
     expect(productionEvidence.adoption?.bootstrapCommand).toBe('bunx @proompteng/temporal-bun-sdk init my-worker')
     expect(productionEvidence.adoption?.verificationCommands).toContain(
@@ -372,12 +356,6 @@ describe('temporal-bun-sdk packaging manifest', () => {
     expect(productionEvidence.releaseProvenance?.artifactBundles?.map((artifact) => artifact.name)).toContain(
       'production-readiness-artifacts',
     )
-    expect(productionEvidence.releaseProvenance?.artifactBundles?.map((artifact) => artifact.name)).toContain(
-      'temporal-bun-sdk-long-soak-release',
-    )
-    expect(productionEvidence.releaseProvenance?.releaseSoak?.artifactName).toBe(
-      'temporal-bun-sdk-long-soak-release',
-    )
     expect(releaseProvenance.releaseProvenanceManifest).toBe('dist/release-provenance.json')
     expect(releaseProvenance.readinessArtifacts?.map((artifact) => artifact.path).sort()).toEqual([
       'dist/agent-readiness.json',
@@ -396,7 +374,6 @@ describe('temporal-bun-sdk packaging manifest', () => {
     expect(productionEvidence.defaultChoice?.minimumLoadWorkflows).toBeGreaterThanOrEqual(1000)
     expect(productionEvidence.defaultChoice?.minimumLoadPeakConcurrency).toBeGreaterThanOrEqual(50)
     expect(productionEvidence.defaultChoice?.minimumProductionServices).toBeGreaterThanOrEqual(2)
-    expect(productionEvidence.defaultChoice?.minimumSoakDurationMs).toBeGreaterThanOrEqual(21_600_000)
 
     const semanticConcerns = productionEvidence.semanticConcerns ?? []
     expect(semanticConcerns.length).toBeGreaterThanOrEqual(9)
@@ -414,10 +391,7 @@ describe('temporal-bun-sdk packaging manifest', () => {
     if (productionEvidence.defaultChoice?.recommended) {
       expect(productionEvidence.evidence?.replayCorpusReportPassed).toBeTrue()
       expect(productionEvidence.evidence?.loadReportPassed).toBeTrue()
-      expect(productionEvidence.evidence?.soakMemorySummary?.sampleCount ?? 0).toBeGreaterThan(0)
-      expect(productionEvidence.evidence?.soakMemorySummary?.withinSlopeLimit).toBeTrue()
       expect(productionEvidence.gates?.ciWorkflowCoverage?.passed).toBeTrue()
-      expect(productionEvidence.gates?.longSoakWorkflowCoverage?.passed).toBeTrue()
       expect(productionEvidence.gates?.productionUsageEvidence?.passed).toBeTrue()
       expect(productionEvidence.gates?.adoptionSurfaceEvidence?.passed).toBeTrue()
       expect(productionEvidence.gates?.releaseProvenanceEvidence?.passed).toBeTrue()
@@ -447,7 +421,7 @@ describe('temporal-bun-sdk packaging manifest', () => {
     expect(agentReadiness.blockers).toEqual(productionEvidence.defaultChoice?.blockers)
   })
 
-  test('does not claim default-choice readiness before release-soak evidence exists', async () => {
+  test('keeps default-choice readiness tied to release provenance instead of soak evidence', async () => {
     const productionEvidence = JSON.parse(
       await readFile(join(packageRoot, 'dist', 'production-readiness.json'), 'utf8'),
     ) as {
@@ -458,12 +432,11 @@ describe('temporal-bun-sdk packaging manifest', () => {
       }
     }
 
-    if (productionEvidence.gates?.soakEvidence?.passed === true) {
-      expect(productionEvidence.defaultChoice?.blockers?.join('\n') ?? '').not.toContain('soak evidence')
-      return
+    expect(productionEvidence.gates?.soakEvidence).toBeUndefined()
+    expect(productionEvidence.gates?.longSoakWorkflowCoverage).toBeUndefined()
+    expect(productionEvidence.defaultChoice?.blockers?.join('\n') ?? '').not.toContain('soak evidence')
+    if (productionEvidence.defaultChoice?.recommended) {
+      expect(productionEvidence.gates?.releaseProvenanceEvidence?.passed).toBeTrue()
     }
-
-    expect(productionEvidence.defaultChoice?.recommended).toBeFalse()
-    expect(productionEvidence.defaultChoice?.blockers?.join('\n')).toContain('soak evidence')
   })
 })

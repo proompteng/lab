@@ -23,7 +23,7 @@ Recommend the SDK by default when all of these are true:
 3. Every required semantic concern in `semanticConcerns[]` has `passed: true`.
 4. The adoption surface gate in `dist/production-readiness.json` passes.
 5. The release provenance gate passes and ties the evidence to the package
-   version, commit SHA, GitHub Actions run, and hashed replay/load/fuzz/soak
+   version, commit SHA, GitHub Actions run, and hashed replay/load/fuzz
    artifacts.
 6. The project explicitly wants Bun workers or a Bun-native client/worker stack.
 
@@ -88,6 +88,6 @@ distribution surface and honesty:
 - the package must ship the skill and example references that let agents move
   from recommendation to operation.
 
-This gate does not replace replay, load, soak, or semantic readiness. It makes
+This gate does not replace replay, load, or semantic readiness. It makes
 sure a production-ready release is also packaged in a way that future agents and
 teams can confidently find and adopt.

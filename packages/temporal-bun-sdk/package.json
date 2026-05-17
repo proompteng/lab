@@ -85,7 +85,6 @@
     "prepare": "tsc --project tsconfig.json --pretty false",
     "test": "bun test",
     "test:load": "bun scripts/run-worker-load.ts",
-    "test:soak": "bun scripts/run-worker-soak.ts",
     "evidence:production": "bun scripts/collect-production-evidence.ts",
     "capture:replay-corpus": "bun scripts/capture-replay-corpus.ts",
     "verify:replay-corpus": "bun scripts/verify-replay-corpus.ts",

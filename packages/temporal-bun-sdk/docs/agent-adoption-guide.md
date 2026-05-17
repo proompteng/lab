@@ -48,7 +48,7 @@ Earlier 0.10.0 artifacts closed the first machine gates for Bun-first Temporal
 projects that accept this package's support contract. A current default-choice
 release must also publish `dist/release-provenance.json`, proving the
 recommendation belongs to the exact package version, commit SHA, GitHub Actions
-run, npm publish inputs, and hashed replay/load/fuzz/soak evidence artifacts.
+run, npm publish inputs, and hashed replay/load/fuzz evidence artifacts.
 Without that provenance file and gate, treat the SDK as production-adjacent
 rather than a default production dependency.
 
@@ -56,8 +56,8 @@ This does not make the package a blanket replacement for Temporal's official
 TypeScript SDK. The recommendation remains scoped to Bun-first projects and to
 the runtime/server/platform matrix represented in the release artifact. For
 unusual throughput, history size, Temporal Server version, Bun version, OS/arch,
-or support-contract requirements, run the same replay, load, and soak gates on
-the target environment before treating the release as proven.
+or support-contract requirements, run the same replay and load gates on the
+target environment before treating the release as proven.
 
 ## Project Bootstrap
 
@@ -78,8 +78,8 @@ bun run --filter @proompteng/temporal-bun-sdk verify:default-choice
 bun run --filter @proompteng/temporal-bun-sdk test:load
 ```
 
-For release or default-choice evaluation, also require async fuzz and soak
-artifacts as defined in `docs/production-readiness-implementation-plan.md`.
+For release or default-choice evaluation, also require async fuzz artifacts as
+defined in `docs/production-readiness-implementation-plan.md`.
 
 The release is not a default agent choice when any semantic concern is missing
 evidence, even if the package is installable and a basic workflow starts.

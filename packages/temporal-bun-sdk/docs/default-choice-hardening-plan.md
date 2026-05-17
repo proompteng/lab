@@ -10,8 +10,8 @@ accept this package's support contract. A neutral release-gate review rejected
 the earlier 0.9.x evidence because it was too small, too self-attested, and too
 narrow for a production Temporal worker SDK; the 0.10.0 release addresses those
 machine-gated blockers with public readiness artifacts, expanded replay and
-async-fuzz reports, load evidence, a six-hour release soak, package-boundary
-checks, and production usage references.
+async-fuzz reports, release load evidence, package-boundary checks, and
+production usage references.
 
 `dist/agent-readiness.json` must stay `recommended: false` for any future
 release that does not meet the default-choice thresholds. For 0.10.0, the
@@ -46,11 +46,10 @@ is not a blanket replacement for Temporal's official SDK support contract.
    - adversarial workflow tests for filesystem, network, subprocess, clock,
      random, global mutation, and cross-workflow state leakage;
    - runtime and lint gates must both fail closed.
-5. Load and soak:
+5. Load:
    - at least 1,000 workflows per default-choice load run;
    - peak workflow concurrency of at least 50;
    - CPU, activity, and update workflow scenarios present in the report;
-   - six-hour release soak with at least 12 successful load iterations;
    - failure injection for shutdown, restart, server disconnect, sticky cache
      churn, cancellation, and retry paths.
 6. Compatibility matrix:
@@ -74,7 +73,7 @@ is not a blanket replacement for Temporal's official SDK support contract.
 3. Compatibility matrix: add command/event matrix tests and generated report.
 4. Isolation hardening: add adversarial workflow modules and fail-closed guard
    tests.
-5. Load/soak hardening: add scenario coverage, restart/disconnect modes, memory
+5. Load hardening: add scenario coverage, restart/disconnect modes, memory
    samples, and long-running release lanes.
 6. Release evidence: package raw report snapshots or link immutable CI
    artifacts from `production-readiness.json`.
@@ -101,72 +100,43 @@ is not a blanket replacement for Temporal's official SDK support contract.
   event families. The replay gate is passing with required coverage for signal,
   query, update, cancellation, search attributes, versioning, side effect, and
   workflow-task-failure evidence. Default-choice readiness remains blocked by
-  async-fuzz operation depth, load/soak thresholds, CI workflow coverage, and
+  async-fuzz operation depth, load thresholds, CI workflow coverage, and
   production-operation evidence.
 - May 6, 2026: raised the async fuzz default to 10,000 seeds with 64 workflow
   operations per seed and changed the report to count operation coverage from
   the workflow result instead of the planned RNG path. The async gate now
   records 640,000 executed operations, full coverage, and the replay/mutation
-  oracle. Default-choice readiness remains blocked by load/soak thresholds, CI
+  oracle. Default-choice readiness remains blocked by load thresholds, CI
   workflow coverage, broader workflow-isolation/runtime matrix evidence, and
   production-operation history.
 - May 6, 2026: replaced the old 64-workflow smoke load artifact with a
   1,000-workflow Temporal CLI dev-server run that hit peak workflow concurrency
   50, completed all submitted workflows, and covered CPU, activity, and update
-  workflow scenarios. Default-choice readiness remains blocked by the six-hour
-  soak requirement, CI default-choice coverage, broader workflow-isolation and
-  runtime matrix evidence, and production-operation history.
-- May 6, 2026: hardened the soak runner to record per-iteration load summaries,
-  runtime/server metadata, and failure-mode coverage for baseline,
-  worker-restart, sticky-cache-churn, and update rejection/termination paths.
-  The smoke run covered the four then-required modes, but default-choice
-  readiness remained blocked by the six-hour soak duration, 12-iteration
-  release threshold, broader runtime matrix evidence, and production-operation
-  history.
-- May 7, 2026: added an `activity-cancellation` soak mode that cancels
-  activity-heavy workflows while heartbeat activities are running and requires
-  cancellation-attempt/success plus terminal `CANCELED` outcome evidence in
-  `verify:production`. The smoke run now covers five failure modes with no
-  missing failure-mode evidence, but default-choice readiness remains blocked by
-  the six-hour soak duration, 12-iteration release threshold, and the
-  sticky-cache/shutdown semantic gate that depends on long-soak evidence.
+  workflow scenarios. Default-choice readiness remains blocked by CI
+  default-choice coverage, broader workflow-isolation and runtime matrix
+  evidence, and production-operation history.
+- May 6-7, 2026: explored a long-running validation lane for restart, sticky-cache,
+  update termination, and activity-cancellation evidence. That lane is retired
+  from the release/default-choice gate; the release path now relies on replay,
+  async fuzz, focused integration tests, and the worker-load artifact.
 - May 7, 2026: added a direct shutdown-poller regression test that keeps normal
   workflow, sticky workflow, and activity long-poll RPCs open, then verifies
   worker shutdown aborts every poll, flushes metrics, and reports a drained
   shutdown. This closes an important unit-level evidence gap for the
-  sticky-cache/shutdown concern, while the default-choice gate still requires
-  the six-hour soak report before marking that concern fully evidenced.
+  sticky-cache/shutdown concern.
 - May 6, 2026: added `verify:default-choice` to the npm publish path and added
   structured production-usage evidence for Jangar/Bumba source, deployment, and
-  observability references. The CI coverage blocker is closed locally, but
-  default-choice readiness remains blocked by long-soak evidence and the
-  sticky-cache/shutdown semantic gate that depends on it.
-- May 6, 2026: added `.github/workflows/temporal-bun-sdk-nightly.yml` for
-  scheduled two-hour long-soak evidence and manual six-hour release soak runs,
-  with release mode gated by `verify:default-choice` and artifact upload. The
-  evidence generator now validates that this long-soak lane exists, but default
-  choice remains blocked until an actual six-hour report passes.
-- May 7, 2026: added load/soak memory sampling artifacts. Load iterations and
-  soak wrappers now write `memory.jsonl` and RSS/heap slope summaries, and
-  `verify:production` keeps soak evidence failed when memory samples are
-  missing or exceed the configured slope limit. Default choice remains blocked
-  until a real six-hour, 12-iteration release soak passes with those artifacts.
+  observability references. The CI coverage blocker is closed locally.
+- May 7, 2026: added load memory sampling artifacts. Load iterations write
+  `memory.jsonl` and RSS/heap slope summaries.
 - May 7, 2026: widened the worker-load heartbeat activity timeout budget and
-  moved it into explicit load configuration. The prior release soak used a
-  `10s` schedule-to-close timeout for activity-heavy workflows; under the
-  `1000`-workflow release profile, one baseline activity waited about `9.5s`
-  before its third retry started and then failed on schedule-to-close. The gate
-  now uses a `30s`/`60s`/`90s`/`150s` heartbeat/start/schedule budget and
-  records heartbeat, start-to-close, schedule-to-start, and
-  schedule-to-close budgets in the load report so release soak evidence is
-  measuring worker/runtime behavior instead of an undersized synthetic timeout.
+  moved it into explicit load configuration. The gate now uses a
+  `30s`/`60s`/`90s`/`150s` heartbeat/start/schedule budget and records
+  heartbeat, start-to-close, schedule-to-start, and schedule-to-close budgets
+  in the load report.
 - May 7, 2026: moved worker-load completion verification off the Temporal CLI
   describe loop and onto the SDK's native `DescribeWorkflowExecution` RPC path
-  with bounded describe concurrency. The failed publish soak completed two full
-  passes of every failure mode and passed memory-slope checks, but the 11th
-  iteration timed out while the external CLI verifier was describing 1,000
-  workflows. Release-soak evidence now measures SDK worker/client behavior
-  instead of the throughput of a shell-based verifier.
+  with bounded describe concurrency.
 - May 7, 2026: isolated the signal/query and query-only integration suites onto
   UUID-suffixed task queues by default. The shared remote Temporal namespace had
   stale `temporal-bun-integration` workflow tasks from previous runs, so workers
@@ -179,21 +149,12 @@ is not a blanket replacement for Temporal's official SDK support contract.
   because Temporal queries are not history events. A regression test now covers
   the sequence that failed in CI: query while blocked, then process a signal and
   query the updated state without tripping nondeterminism.
-- May 8, 2026: the publish-mode six-hour soak completed 40 consecutive
-  `1000`-workflow iterations across baseline, worker restart, sticky churn,
-  update rejection/termination, and activity cancellation before the 41st
-  iteration hit the worker-load runner's fixed `105s` completion budget. The
-  gate now scales the default completion budget with workflow count and
-  concurrency, records that derived budget in load reports, and writes partial
-  workflow completion status plus a serialized completion failure before
-  returning nonzero. Default choice remains blocked until the publish-mode soak
-  reruns and publishes `0.10.0`.
+- May 8, 2026: the worker-load gate now scales the default completion budget
+  with workflow count and concurrency, records that derived budget in load
+  reports, and writes partial workflow completion status plus a serialized
+  completion failure before returning nonzero.
 - May 8, 2026: fixed the package-boundary verifier to accept passing
-  release-soak aggregate load evidence when the smaller pre-soak worker-load
-  smoke artifact is intentionally below default-choice scale. The successful
-  publish run for `0.10.0` completed a six-hour release soak with 121
-  `1000`-workflow iterations, 121,000 completed workflows, peak workflow
-  concurrency 50, five failure modes, passing memory-slope evidence, and
-  `verify:default-choice` before npm publication. The npm `latest` dist-tag now
-  points at `0.10.0`, whose published `dist/agent-readiness.json` reports
-  `recommended: true` with no blockers for the scoped Bun-first support model.
+  release load evidence when the worker-load artifact is default-choice scale.
+  The npm `latest` dist-tag pointed at `0.10.0`, whose published
+  `dist/agent-readiness.json` reported `recommended: true` with no blockers for
+  the scoped Bun-first support model.

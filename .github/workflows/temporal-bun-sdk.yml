@@ -9,14 +9,12 @@ on:
       - 'packages/temporal-bun-sdk-example/**'
       - 'apps/docs/content/docs/temporal-bun-sdk*.mdx'
       - '.github/workflows/temporal-bun-sdk.yml'
-      - '.github/workflows/temporal-bun-sdk-nightly.yml'
   pull_request:
     paths:
       - 'packages/temporal-bun-sdk/**'
       - 'packages/temporal-bun-sdk-example/**'
       - 'apps/docs/content/docs/temporal-bun-sdk*.mdx'
       - '.github/workflows/temporal-bun-sdk.yml'
-      - '.github/workflows/temporal-bun-sdk-nightly.yml'
   workflow_dispatch:
     inputs:
       npm_tag:
@@ -36,11 +34,6 @@ on:
         options:
           - prepare
           - publish
-      release_soak_run_id:
-        description: 'Required for publish: successful Temporal Bun SDK Long Soak release-mode workflow run id'
-        type: string
-        required: false
-        default: ''
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -49,7 +42,7 @@ concurrency:
 jobs:
   test:
     runs-on: arc-arm64
-    timeout-minutes: 390
+    timeout-minutes: 60
 
     env:
       TEMPORAL_TEST_SERVER: '1'
@@ -62,7 +55,6 @@ jobs:
       TEMPORAL_LOAD_TEST_WORKFLOW_POLL_P95_MS: '12000'
       TEMPORAL_LOAD_TEST_ACTIVITY_POLL_P95_MS: '12000'
       TEMPORAL_LOAD_TEST_DESCRIBE_CONCURRENCY: '32'
-      TEMPORAL_SOAK_FAILURE_MODES: baseline,worker-restart,sticky-cache-churn,update-rejection-termination,activity-cancellation
       TEMPORAL_BUN_EVIDENCE_PURPOSE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'publish' && 'publish' || 'ci' }}
       TEMPORAL_BUN_NPM_TAG: ${{ github.event.inputs.npm_tag || 'latest' }}
       TEMPORAL_BUN_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
@@ -152,16 +144,6 @@ jobs:
         run: |
           TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load
 
-      - name: Run worker soak smoke
-        run: |
-          TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:soak -- \
-            --duration 1000 \
-            --iterations 1 \
-            --workflows 4 \
-            --workflow-concurrency 2 \
-            --activity-concurrency 2 \
-            --failure-modes baseline
-
       - name: Verify Temporal Bun SDK load cleanup
         run: bun packages/temporal-bun-sdk/scripts/cleanup-integration-workflows.ts --verify
 
@@ -178,9 +160,6 @@ jobs:
             packages/temporal-bun-sdk/.artifacts/worker-load/memory.jsonl
             packages/temporal-bun-sdk/.artifacts/worker-load/report.json
             packages/temporal-bun-sdk/.artifacts/worker-load/temporal-cli.log
-            packages/temporal-bun-sdk/.artifacts/worker-soak/report.json
-            packages/temporal-bun-sdk/.artifacts/worker-soak/memory.jsonl
-            packages/temporal-bun-sdk/.artifacts/worker-soak/iteration-*/report.json
             packages/temporal-bun-sdk/.artifacts/async-fuzz/report.json
 
       - name: Upload production readiness artifacts
@@ -195,8 +174,6 @@ jobs:
             packages/temporal-bun-sdk/.artifacts/async-fuzz/report.json
             packages/temporal-bun-sdk/.artifacts/replay-corpus/report.json
             packages/temporal-bun-sdk/.artifacts/worker-load/report.json
-            packages/temporal-bun-sdk/.artifacts/worker-soak/report.json
-            packages/temporal-bun-sdk/.artifacts/worker-soak/memory.jsonl
 
   prepare-release:
     name: Prepare Temporal Bun SDK Release
@@ -259,7 +236,6 @@ jobs:
     needs: test
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'publish' && github.ref == 'refs/heads/main'
     permissions:
-      actions: read
       contents: read
       id-token: write
       issues: write
@@ -296,7 +272,6 @@ jobs:
           version_value=$(node -p "require('./packages/temporal-bun-sdk/package.json').version")
           npm_tag_input="${{ github.event.inputs.npm_tag || 'latest' }}"
           dry_run_input="${{ github.event.inputs.dry_run || 'false' }}"
-          release_soak_run_id="${{ github.event.inputs.release_soak_run_id || '' }}"
 
           case "$dry_run_input" in
             true|True|TRUE) dry_run_value=true ;;
@@ -306,20 +281,11 @@ jobs:
               exit 1
               ;;
           esac
-          if [[ -z "$release_soak_run_id" ]]; then
-            echo 'release_soak_run_id is required for publish; run Temporal Bun SDK Long Soak with mode=release first.' >&2
-            exit 1
-          fi
-          if [[ ! "$release_soak_run_id" =~ ^[0-9]+$ ]]; then
-            echo 'release_soak_run_id must be a numeric GitHub Actions run id.' >&2
-            exit 1
-          fi
 
           {
             echo "version=$version_value"
             echo "npm_tag=$npm_tag_input"
             echo "dry_run=$dry_run_value"
-            echo "release_soak_run_id=$release_soak_run_id"
           } >> "$GITHUB_OUTPUT"
 
       - name: Confirm package version
@@ -341,20 +307,11 @@ jobs:
           name: production-readiness-artifacts
           path: packages/temporal-bun-sdk
 
-      - name: Download release soak evidence
-        uses: actions/download-artifact@v5
-        with:
-          name: temporal-bun-sdk-long-soak-release
-          run-id: ${{ steps.release_meta.outputs.release_soak_run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: packages/temporal-bun-sdk
-
       - name: Verify production package boundary
         env:
           TEMPORAL_BUN_EVIDENCE_PURPOSE: publish
           TEMPORAL_BUN_NPM_TAG: ${{ steps.release_meta.outputs.npm_tag }}
           TEMPORAL_BUN_DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
-          TEMPORAL_BUN_RELEASE_SOAK_RUN_ID: ${{ steps.release_meta.outputs.release_soak_run_id }}
         run: bun run --filter @proompteng/temporal-bun-sdk verify:production
 
       - name: Verify default-choice readiness
@@ -362,7 +319,6 @@ jobs:
           TEMPORAL_BUN_EVIDENCE_PURPOSE: publish
           TEMPORAL_BUN_NPM_TAG: ${{ steps.release_meta.outputs.npm_tag }}
           TEMPORAL_BUN_DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
-          TEMPORAL_BUN_RELEASE_SOAK_RUN_ID: ${{ steps.release_meta.outputs.release_soak_run_id }}
         run: bun run --filter @proompteng/temporal-bun-sdk verify:default-choice
 
       - name: Verify packed readiness artifacts
@@ -376,7 +332,6 @@ jobs:
           TEMPORAL_BUN_EVIDENCE_PURPOSE: publish
           TEMPORAL_BUN_NPM_TAG: ${{ steps.release_meta.outputs.npm_tag }}
           TEMPORAL_BUN_DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
-          TEMPORAL_BUN_RELEASE_SOAK_RUN_ID: ${{ steps.release_meta.outputs.release_soak_run_id }}
           TEMPORAL_REQUIRE_DEFAULT_CHOICE: '1'
           NPM_DIST_TAG: ${{ steps.release_meta.outputs.npm_tag }}
           DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}

@@ -40,7 +40,7 @@ Bun worker/client path in the deployed control-plane worker.
 > "Bun cannot load the official Node worker stack." This SDK does not depend on
 > `@temporalio/worker`, Node-API native modules, `process.dlopen()`, or
 > `worker_threads` for worker execution. The real external concern is trust:
-> third-party support status, public proof of deterministic replay and soak/load
+> third-party support status, public proof of deterministic replay and load
 > behaviour, and clear operational docs for teams choosing a non-official SDK.
 > `bun run verify:production` is the mechanical package-boundary gate: it fails
 > if native bridge artifacts, official Node worker dependencies, or stale native
@@ -251,7 +251,7 @@ can contribute independently without re-planning.
   - CPU-heavy + I/O-heavy workflows live under `tests/integration/load/**` alongside the JSONL metrics aggregator. The harness starts the Temporal CLI dev server, creates `.artifacts/worker-load` per run, and collects sticky cache, poll latency, and throughput metrics via the worker runtime's file exporter.
   - Local runs: `cd packages/temporal-bun-sdk && TEMPORAL_INTEGRATION_TESTS=1 bun test tests/integration/worker-load.test.ts` (Bun test runner) or `cd packages/temporal-bun-sdk && bun run test:load` (Bun CLI script).
   - CI: `.github/workflows/temporal-bun-sdk.yml` now executes `cd packages/temporal-bun-sdk && bun run test:load` after the main suite and uploads the `.artifacts/worker-load/{metrics.jsonl,report.json,temporal-cli.log}` bundle for reviewers.
-  - Default knobs submit 64 workflows with a 100s completion budget and workflow/activity concurrency of 10/14; completion evidence is verified through the SDK's own `DescribeWorkflowExecution` RPC path with bounded `TEMPORAL_LOAD_TEST_DESCRIBE_CONCURRENCY` instead of shelling out to `temporal workflow describe` for every workflow. This keeps the release soak focused on worker/runtime behavior instead of CLI polling overhead.
+  - Default knobs submit 64 workflows with a 100s completion budget and workflow/activity concurrency of 10/14; completion evidence is verified through the SDK's own `DescribeWorkflowExecution` RPC path with bounded `TEMPORAL_LOAD_TEST_DESCRIBE_CONCURRENCY` instead of shelling out to `temporal workflow describe` for every workflow. This keeps release load evidence focused on worker/runtime behavior instead of CLI polling overhead.
 
 ### TBS-004 – Observability (Complete)
 
@@ -506,7 +506,7 @@ can contribute independently without re-planning.
 3. **Replay regression harness**
    - Capture real histories, replay offline, ensure deterministic snapshots survive
      worker restarts.
-4. **Performance & soak testing**
+4. **Performance and load testing**
    - Stress test worker concurrency scaling, measure poll latency under load.
 5. **CI pipeline**
    - Bun tests, lint (Oxlint), formatting (`bunx oxfmt --check`), type-check (`bunx tsc --noEmit`), Temporal dev-server
