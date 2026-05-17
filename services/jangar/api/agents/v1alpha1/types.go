@@ -90,6 +90,7 @@ type AgentRunSpec struct {
 	AgentRef              LocalRef              `json:"agentRef"`
 	ImplementationSpecRef *LocalRef             `json:"implementationSpecRef,omitempty"`
 	Implementation        *InlineImplementation `json:"implementation,omitempty"`
+	Goal                  *GoalSpec             `json:"goal,omitempty"`
 	Runtime               RuntimeSpec           `json:"runtime"`
 	Workflow              *WorkflowSpec         `json:"workflow,omitempty"`
 	Workload              *WorkloadSpec         `json:"workload,omitempty"`
@@ -105,6 +106,14 @@ type AgentRunSpec struct {
 	IdempotencyKey  string           `json:"idempotencyKey,omitempty"`
 	// +kubebuilder:validation:Minimum=0
 	TTLSecondsAfterFinished *int32 `json:"ttlSecondsAfterFinished,omitempty"`
+}
+
+type GoalSpec struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=8192
+	Objective string `json:"objective"`
+	// +kubebuilder:validation:Minimum=1
+	TokenBudget *int64 `json:"tokenBudget,omitempty"`
 }
 
 type InlineImplementation struct {

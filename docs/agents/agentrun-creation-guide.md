@@ -44,6 +44,9 @@ spec:
   implementationSpecRef:
     name: leader-election-design-20260207
   ttlSecondsAfterFinished: 7200
+  goal:
+    objective: Implement leader election end to end and verify the chart/runtime rollout path.
+    tokenBudget: 64000
   parameters:
     repository: proompteng/lab
     base: main
@@ -78,11 +81,96 @@ Notes:
   when you need a distinct planning artifact.
 - Secrets are cluster- and provider-specific. If you reference a Secret (directly or via `systemPromptRef`) it must be
   allowed by policy and often must be listed in `spec.secrets` (see `docs/agents/rbac-matrix.md`).
+- Codex provider images include the official Alpaca MCP server. Runs that need Alpaca tools should list an allowed
+  secret such as `alpaca-mcp` in `spec.secrets`; the secret must provide `ALPACA_API_KEY` and `ALPACA_SECRET_KEY`.
 - `ttlSecondsAfterFinished` is a top-level `AgentRun.spec` field (see `charts/agents/crds/agents.proompteng.ai_agentruns.yaml`).
   Do not put TTL under `spec.runtime.config` unless a specific runtime explicitly documents it.
+- `goal` is a top-level `AgentRun.spec` object. Use `goal.objective` for the persistent Codex goal and optional
+  `goal.tokenBudget` for an explicit positive token budget. Do not encode the first-class goal as
+  `parameters.prompt`.
 - Keep `metadata.name` short enough for label propagation. The controller writes
   `agents.proompteng.ai/agent-run=<run-name>` labels, so names longer than 63 characters can fail reconciliation.
 - Prefer omitting `spec.workload.image` unless you intentionally pin a known-good runner image.
+
+## Create An AgentRun With A Codex Goal
+
+Use `spec.goal` when the run should carry a persistent Codex goal in addition to the task prompt. The prompt still comes
+from `ImplementationSpec.spec.text` or `spec.implementation.inline.text`; the goal is separate runtime state used by
+goal-aware Codex clients.
+
+```yaml
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: codex-goal-smoke-20260517
+  namespace: agents
+spec:
+  agentRef:
+    name: codex-spark-agent
+  implementation:
+    inline:
+      text: |
+        Verify the goal-aware runner path without making source changes.
+        Report whether the generated run payload includes the expected goal.
+  goal:
+    objective: Verify Codex goal support in the AgentRun runtime.
+    tokenBudget: 8000
+  ttlSecondsAfterFinished: 7200
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/agentrun-goal-smoke-20260517
+    stage: verification
+  runtime:
+    type: workflow
+  secrets:
+    - codex-openai-key
+  workflow:
+    steps:
+      - name: verify
+        parameters:
+          stage: verify
+        timeoutSeconds: 1800
+  workload:
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1024Mi
+```
+
+Rules:
+
+- `spec.goal.objective` is required when `spec.goal` is present. It must be a non-empty string.
+- `spec.goal.tokenBudget` is optional. If set, it must be a positive integer.
+- Do not put the goal in `spec.parameters.prompt`; that field is rejected and would also override the task prompt model.
+- Do not use legacy parameter fallbacks such as `goalObjective` for new YAML. They exist only for compatibility with
+  older callers.
+- Runs that need Alpaca tools should add the allowed `alpaca-mcp` Secret to `spec.secrets`. That secret must contain
+  `ALPACA_API_KEY` and `ALPACA_SECRET_KEY`; Codex provider images already include the `alpaca-mcp-server` binary and
+  provider config.
+
+After apply, verify the controller materialized the goal into the generated run payload:
+
+```bash
+RUN=codex-goal-smoke-20260517
+
+kubectl -n agents get agentrun "$RUN" -o yaml | rg -n 'goal:|objective:|tokenBudget:'
+
+CM=$(kubectl -n agents get cm -l agents.proompteng.ai/agent-run="$RUN" \
+  -o jsonpath='{.items[0].metadata.name}')
+
+kubectl -n agents get cm "$CM" -o jsonpath='{.data.run\.json}' | jq '.goal'
+kubectl -n agents get cm "$CM" -o jsonpath='{.data.agent-runner\.json}' | jq '.goal'
+```
+
+Expected payload shape:
+
+```json
+{
+  "objective": "Verify Codex goal support in the AgentRun runtime.",
+  "tokenBudget": 8000
+}
+```
 
 ## Preflight: Validate References Before `kubectl apply`
 
@@ -158,6 +246,7 @@ kubectl get cm -n agents <run-spec-configmap> -o yaml | rg -n 'run.json:|\"promp
 ```
 
 If `run.json.prompt` contains your ImplementationSpec `text`, you did not override the prompt.
+If `spec.goal` is set, `run.json.goal.objective` should contain the goal text.
 
 If `run.json.prompt` does not contain the expected ImplementationSpec text, fail the run setup and fix the spec.
 

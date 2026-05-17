@@ -5,10 +5,31 @@ import { MockCodexAppServerClient, shouldUseMockCodexClient } from './mock-codex
 import { resolveCodexClientConfig } from './runtime-tooling-config'
 
 type Factory = (options?: { defaultModel?: string }) => CodexAppServerClient
+type JsonValue = number | string | boolean | JsonValue[] | { [key: string]: JsonValue | undefined } | null
 
 const resolveMcpUrl = () => resolveCodexClientConfig(process.env).mcpUrl
 
 const resolveCodexBinary = () => resolveCodexClientConfig(process.env).binaryPath
+
+const buildMcpServers = () => {
+  const servers: Record<string, { [key: string]: JsonValue | undefined }> = {
+    memories: {
+      url: resolveMcpUrl(),
+    },
+  }
+  if (process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY) {
+    servers.alpaca = {
+      command: process.env.ALPACA_MCP_SERVER_COMMAND ?? '/usr/local/bin/alpaca-mcp-server',
+      env: {
+        ALPACA_API_KEY: process.env.ALPACA_API_KEY,
+        ALPACA_SECRET_KEY: process.env.ALPACA_SECRET_KEY,
+        ALPACA_PAPER_TRADE: process.env.ALPACA_PAPER_TRADE ?? 'true',
+        ...(process.env.ALPACA_TOOLSETS ? { ALPACA_TOOLSETS: process.env.ALPACA_TOOLSETS } : {}),
+      },
+    }
+  }
+  return servers
+}
 
 const defaultFactory: Factory = (options) => {
   if (shouldUseMockCodexClient()) {
@@ -22,11 +43,7 @@ const defaultFactory: Factory = (options) => {
     threadConfig: {
       'features.rmcp_client': true,
       web_search: 'live',
-      mcp_servers: {
-        memories: {
-          url: resolveMcpUrl(),
-        },
-      },
+      mcp_servers: buildMcpServers(),
     },
   })
 }

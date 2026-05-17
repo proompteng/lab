@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: ea0f7a1d
-  digest: sha256:71fe9ceae23b187fe3f1dfec034687dd86d4acf7dc6ec586102565b95bd49683
+  tag: codex-goal-alpaca-0ab3f5a38
+  digest: sha256:de68b60586750a1e7798ba216decd48e66f32b876b5df1b4a4f64ecd7f62bc45
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,8 +11,8 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: ea0f7a1d
-    digest: sha256:6d372f58f7115b395ec40f7dba35b8c1bddb41875c6be9bd0cf7350eb6744f6d
+    tag: codex-goal-alpaca-0ab3f5a38
+    digest: sha256:be9462bc32d45ab2e035ce2e2bfe6372fd44d1826a5d7d30f388ef5fe3f5aa1a
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
@@ -28,8 +28,8 @@ controlPlane:
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: ea0f7a1d
-    digest: sha256:71fe9ceae23b187fe3f1dfec034687dd86d4acf7dc6ec586102565b95bd49683
+    tag: codex-goal-alpaca-0ab3f5a38
+    digest: sha256:de68b60586750a1e7798ba216decd48e66f32b876b5df1b4a4f64ecd7f62bc45
 argocdHooks:
   enabled: true
   image:
@@ -49,6 +49,9 @@ argocdHooks:
           name: codex-spark-smoke-agent
         implementationSpecRef:
           name: codex-spark-smoke-implspec
+        goal:
+          objective: Verify Codex goal support, provider startup, and the promoted runner image without external side effects.
+          tokenBudget: 8000
         runtime:
           type: workflow
           config:

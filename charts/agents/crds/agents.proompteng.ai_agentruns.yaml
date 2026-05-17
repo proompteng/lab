@@ -66,6 +66,19 @@ spec:
                 required:
                 - name
                 type: object
+              goal:
+                properties:
+                  objective:
+                    maxLength: 8192
+                    minLength: 1
+                    type: string
+                  tokenBudget:
+                    format: int64
+                    minimum: 1
+                    type: integer
+                required:
+                - objective
+                type: object
               idempotencyKey:
                 type: string
               implementation:

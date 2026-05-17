@@ -16,6 +16,7 @@ spec:
     CODEX_MAX_SESSION_ATTEMPTS: "5"
     HF_BASE_URL: https://router.huggingface.co/v1
     HF_MODEL: meta-llama/Llama-3.1-8B-Instruct:novita
+    ALPACA_PAPER_TRADE: "true"
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
@@ -39,6 +40,10 @@ spec:
         child_agents_md = true
         collaboration_modes = true
         responses_websockets = false
+        goals = true
+
+        [mcp_servers.alpaca]
+        command = "/usr/local/bin/alpaca-mcp-server"
 
         [shell_environment_policy]
         ignore_default_excludes = true

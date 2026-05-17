@@ -11,6 +11,7 @@ export const buildAgentRunImmutableSpecSnapshot = (agentRun: Record<string, unkn
     agentRef: asRecord(spec.agentRef) ?? null,
     implementationSpecRef: asRecord(spec.implementationSpecRef) ?? null,
     implementation: asRecord(spec.implementation) ?? null,
+    goal: asRecord(spec.goal) ?? null,
     runtime: asRecord(spec.runtime) ?? null,
     workflow: asRecord(spec.workflow) ?? null,
     secrets,

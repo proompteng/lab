@@ -18,6 +18,14 @@ import type {
   SandboxMode,
   SandboxPolicy,
   TerminalInteractionNotification,
+  ThreadGoal,
+  ThreadGoalClearParams,
+  ThreadGoalClearResponse,
+  ThreadGoalGetParams,
+  ThreadGoalGetResponse,
+  ThreadGoalSetParams,
+  ThreadGoalSetResponse,
+  ThreadGoalStatus,
   ThreadItem,
   ThreadStartParams,
   ThreadStartResponse,
@@ -39,9 +47,22 @@ type PendingRequest = {
   startedAt: number
 }
 
-type JsonRpcRequestMethod = 'initialize' | 'thread/start' | 'turn/start' | 'turn/interrupt'
+type JsonRpcRequestMethod =
+  | 'initialize'
+  | 'thread/start'
+  | 'thread/goal/set'
+  | 'thread/goal/get'
+  | 'thread/goal/clear'
+  | 'turn/start'
+  | 'turn/interrupt'
 type JsonRpcRequest = { id: RequestId; method: JsonRpcRequestMethod; params: unknown }
 type JsonRpcNotification = { method: string; params?: unknown }
+
+export type ThreadGoalInput = {
+  objective: string
+  tokenBudget?: number | null
+  status?: ThreadGoalStatus | null
+}
 
 export type StreamDelta =
   | { type: 'message' | 'reasoning'; delta: string }
@@ -460,18 +481,27 @@ export class CodexAppServerClient {
       cwd,
       threadId,
       effort,
-    }: { model?: string; cwd?: string | null; threadId?: string; effort?: ReasoningEffort } = {},
+      goal,
+    }: {
+      model?: string
+      cwd?: string | null
+      threadId?: string
+      effort?: ReasoningEffort
+      goal?: ThreadGoalInput | null
+    } = {},
   ): Promise<{ text: string; turn: Turn | null; threadId: string }> {
     const runOpts: {
       model?: string
       cwd?: string | null
       threadId?: string
       effort?: ReasoningEffort
+      goal?: ThreadGoalInput | null
     } = {}
     if (model !== undefined) runOpts.model = model
     if (cwd !== undefined) runOpts.cwd = cwd
     if (threadId !== undefined) runOpts.threadId = threadId
     if (effort !== undefined) runOpts.effort = effort
+    if (goal !== undefined) runOpts.goal = goal
 
     const { stream, turnId: activeTurnId, threadId: activeThreadId } = await this.runTurnStream(prompt, runOpts)
     let text = ''
@@ -504,11 +534,13 @@ export class CodexAppServerClient {
       cwd,
       threadId,
       effort,
+      goal,
     }: {
       model?: string
       cwd?: string | null
       threadId?: string
       effort?: ReasoningEffort
+      goal?: ThreadGoalInput | null
     } = {},
   ): Promise<{ stream: AsyncGenerator<StreamDelta, Turn | null, void>; turnId: string; threadId: string }> {
     await this.ensureReady()
@@ -546,6 +578,10 @@ export class CodexAppServerClient {
       activeThreadId = threadResp.thread.id
     }
 
+    if (goal) {
+      await this.setThreadGoal(activeThreadId, goal)
+    }
+
     const turnParams: TurnStartParams = {
       threadId: activeThreadId,
       input: [{ type: 'text', text: prompt, text_elements: [] }],
@@ -567,6 +603,39 @@ export class CodexAppServerClient {
     this.turnItems.set(turnId, new Set())
     this.lastActiveTurnId = turnId
     return { stream: stream.iterator, turnId, threadId: activeThreadId }
+  }
+
+  async setThreadGoal(threadId: string, goal: ThreadGoalInput): Promise<ThreadGoal> {
+    await this.ensureReady()
+    const objective = goal.objective.trim()
+    if (!objective) {
+      throw new Error('thread goal objective must be non-empty')
+    }
+    const params: ThreadGoalSetParams = {
+      threadId,
+      objective,
+      status: goal.status ?? 'active',
+      tokenBudget: goal.tokenBudget ?? null,
+    }
+    const response = (await this.request<ThreadGoalSetResponse>('thread/goal/set', params)) as ThreadGoalSetResponse
+    return response.goal
+  }
+
+  async getThreadGoal(threadId: string): Promise<ThreadGoal | null> {
+    await this.ensureReady()
+    const params: ThreadGoalGetParams = { threadId }
+    const response = (await this.request<ThreadGoalGetResponse>('thread/goal/get', params)) as ThreadGoalGetResponse
+    return response.goal
+  }
+
+  async clearThreadGoal(threadId: string): Promise<boolean> {
+    await this.ensureReady()
+    const params: ThreadGoalClearParams = { threadId }
+    const response = (await this.request<ThreadGoalClearResponse>(
+      'thread/goal/clear',
+      params,
+    )) as ThreadGoalClearResponse
+    return response.cleared
   }
 
   async interruptTurn(turnId: string, threadId: string): Promise<void> {

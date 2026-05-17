@@ -150,6 +150,7 @@ const hashAgentRunImmutableSpec = (agentRun: Record<string, unknown>) => {
     agentRef: (spec.agentRef as Record<string, unknown> | undefined) ?? null,
     implementationSpecRef: (spec.implementationSpecRef as Record<string, unknown> | undefined) ?? null,
     implementation: (spec.implementation as Record<string, unknown> | undefined) ?? null,
+    goal: (spec.goal as Record<string, unknown> | undefined) ?? null,
     runtime: (spec.runtime as Record<string, unknown> | undefined) ?? null,
     workflow: (spec.workflow as Record<string, unknown> | undefined) ?? null,
     secrets,

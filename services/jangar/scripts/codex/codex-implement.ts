@@ -49,9 +49,17 @@ type SwarmRequirementPayloadMetadata = {
   acceptance?: string[]
 }
 
+type CodexGoalPayload = {
+  objective?: string | number | boolean | null
+  tokenBudget?: string | number | null
+}
+
 interface ImplementationEventPayload {
   prompt?: string
   systemPrompt?: string | null
+  goal?: CodexGoalPayload | null
+  goalObjective?: string | null
+  goalTokenBudget?: string | number | null
   repository?: string
   issueNumber?: number | string
   executionMode?: string | null
@@ -2712,6 +2720,11 @@ const parseOptionalInt = (value: string | number | null | undefined) => {
   return null
 }
 
+const parsePositiveInt = (value: string | number | null | undefined) => {
+  const parsed = parseOptionalInt(value)
+  return parsed !== null && parsed > 0 ? parsed : undefined
+}
+
 const parsePositiveIntEnv = (value: string | undefined, fallback: number) => {
   if (!value || value.trim().length === 0) {
     return fallback
@@ -2721,6 +2734,32 @@ const parsePositiveIntEnv = (value: string | undefined, fallback: number) => {
     return fallback
   }
   return parsed
+}
+
+const resolveCodexGoal = (
+  event: ImplementationEventPayload,
+  parameters: Record<string, string>,
+  requirementMetadata: RequirementMetadata,
+) => {
+  const objective =
+    normalizeNullableStringValue(event.goal?.objective) ??
+    normalizeNullableStringValue(event.goalObjective) ??
+    normalizeNullableStringValue(parameters.goalObjective) ??
+    normalizeNullableStringValue(event.objective) ??
+    normalizeNullableStringValue(event.swarmRequirementObjective) ??
+    requirementMetadata.objective
+  if (!objective) {
+    return null
+  }
+  const tokenBudget =
+    parsePositiveInt(event.goal?.tokenBudget) ??
+    parsePositiveInt(event.goalTokenBudget) ??
+    parsePositiveInt(parameters.goalTokenBudget) ??
+    parsePositiveInt(parameters.tokenBudget)
+  return {
+    objective,
+    ...(tokenBudget ? { tokenBudget } : {}),
+  }
 }
 
 const fitPromptToBudget = ({
@@ -3240,6 +3279,7 @@ export const runCodexImplementation = async (eventPath: string) => {
     channel: extractedRequirementMetadata.channel ?? resolvedNatsChannel,
   }
   const parameters = asStringMap(event.parameters)
+  const codexGoal = resolveCodexGoal(event, parameters, requirementMetadata)
   const executionMode =
     normalizeNullableStringValue(event.executionMode) ?? normalizeNullableStringValue(parameters.executionMode)
   const isBatchTask = executionMode?.toLowerCase() === 'batch_task'
@@ -3383,6 +3423,8 @@ export const runCodexImplementation = async (eventPath: string) => {
   process.env.CODEX_ITERATION_CYCLE =
     iterationCycle !== null && iterationCycle !== undefined ? String(iterationCycle) : ''
   process.env.CODEX_ITERATIONS_COUNT = iterations !== null && iterations !== undefined ? String(iterations) : ''
+  process.env.CODEX_GOAL_OBJECTIVE = codexGoal?.objective ?? ''
+  process.env.CODEX_GOAL_TOKEN_BUDGET = codexGoal?.tokenBudget ? String(codexGoal.tokenBudget) : ''
   process.env.IMPLEMENTATION_PATCH_PATH = patchPath
   process.env.IMPLEMENTATION_STATUS_PATH = statusPath
   process.env.IMPLEMENTATION_CHANGES_ARCHIVE_PATH = archivePath
@@ -3664,6 +3706,7 @@ export const runCodexImplementation = async (eventPath: string) => {
         jsonOutputPath,
         agentOutputPath,
         resumeSessionId,
+        goal: codexGoal,
         logger,
         discordChannel: discordChannelCommand
           ? {

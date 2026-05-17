@@ -595,6 +595,10 @@ describe('primitives endpoints', () => {
         idempotencyKey: 'torghut-dspy-compile-abc123',
         agentRef: { name: 'codex-agent' },
         implementationSpecRef: { name: 'torghut-dspy-compile-mipro-v1' },
+        goal: {
+          objective: 'Compile the DSPy artifact and publish validation evidence',
+          tokenBudget: 32000,
+        },
         runtime: { type: 'job' },
         vcsRef: { name: 'github' },
         vcsPolicy: { required: true, mode: 'read-write' },
@@ -621,6 +625,10 @@ describe('primitives endpoints', () => {
     expect((spec.idempotencyKey as string) ?? '').toBe('torghut-dspy-compile-abc123')
     expect((spec.ttlSecondsAfterFinished as number) ?? 0).toBe(14400)
     expect((spec.implementationSpecRef as Record<string, unknown>)?.name).toBe('torghut-dspy-compile-mipro-v1')
+    expect(spec.goal).toEqual({
+      objective: 'Compile the DSPy artifact and publish validation evidence',
+      tokenBudget: 32000,
+    })
   })
 
   it('rejects non-string idempotencyKey in payload', async () => {

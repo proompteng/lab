@@ -149,6 +149,30 @@ describe('codex-runner', () => {
     expect(capturedResume).toBe('resume-41')
   })
 
+  it('passes goal metadata through the Codex runner environment', async () => {
+    let capturedEnv: Record<string, string> | undefined
+
+    runnerMocks.run.mockImplementation(async (options) => {
+      capturedEnv = options.env as Record<string, string> | undefined
+      return { agentMessages: [], sessionId: 'goal-session', exitCode: 0, forcedTermination: false }
+    })
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt: 'Continue',
+      goal: { objective: ' Complete AgentRun goal support ', tokenBudget: 2500 },
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
+    })
+
+    expect(capturedEnv).toMatchObject({
+      CODEX_STAGE: 'implementation',
+      CODEX_GOAL_OBJECTIVE: 'Complete AgentRun goal support',
+      CODEX_GOAL_TOKEN_BUDGET: '2500',
+    })
+  })
+
   it('maps --last resume into the runner option', async () => {
     let capturedResume: string | undefined
 

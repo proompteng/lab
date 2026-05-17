@@ -1064,6 +1064,35 @@ describe('runCodexImplementation', () => {
     expect(invocation?.systemPrompt).toBe(systemPrompt)
   }, 40_000)
 
+  it('forwards typed goal payloads into runCodexSession', async () => {
+    const payload = {
+      prompt: 'Implementation prompt',
+      goal: {
+        objective: 'Finish goal-aware AgentRuns',
+        tokenBudget: 6000,
+      },
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      planCommentId: 123,
+      planCommentUrl: 'http://example.com',
+      planCommentBody: '<!-- codex:plan -->',
+    }
+    await writeFile(eventPath, JSON.stringify(payload), 'utf8')
+
+    await runCodexImplementation(eventPath)
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.goal).toEqual({
+      objective: 'Finish goal-aware AgentRuns',
+      tokenBudget: 6000,
+    })
+    expect(process.env.CODEX_GOAL_OBJECTIVE).toBe('Finish goal-aware AgentRuns')
+    expect(process.env.CODEX_GOAL_TOKEN_BUDGET).toBe('6000')
+  }, 40_000)
+
   it('prefers CODEX_SYSTEM_PROMPT_PATH over the payload and does not log system prompt contents', async () => {
     const systemPromptPath = join(workdir, 'system-prompt.txt')
     const systemPromptFromFile = 'FROM FILE ONLY'

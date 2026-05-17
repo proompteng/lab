@@ -11,6 +11,7 @@ spec:
     AGENT_PROVIDER_PATH: /root/.codex/provider-codex-spark-whitepaper.json
     CODEX_MODEL: gpt-5.5
     CODEX_REQUIRE_PULL_REQUEST: "false"
+    ALPACA_PAPER_TRADE: "true"
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
@@ -34,6 +35,10 @@ spec:
         child_agents_md = true
         collaboration_modes = true
         responses_websockets = false
+        goals = true
+
+        [mcp_servers.alpaca]
+        command = "/usr/local/bin/alpaca-mcp-server"
 
         [shell_environment_policy]
         ignore_default_excludes = true
