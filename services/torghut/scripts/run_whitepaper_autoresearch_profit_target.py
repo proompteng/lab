@@ -173,6 +173,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-candidates", type=int, default=64)
     parser.add_argument("--top-k", type=int, default=16)
     parser.add_argument("--exploration-slots", type=int, default=8)
+    parser.add_argument(
+        "--feedback-block-reaudit-slots",
+        type=int,
+        default=0,
+        help=(
+            "Bounded slots for replaying candidates blocked only by prior "
+            "feedback. These are diagnostic re-audits; capital blocks and final "
+            "promotion/oracle gates still apply."
+        ),
+    )
     parser.add_argument("--portfolio-size-min", type=int, default=2)
     parser.add_argument("--portfolio-size-max", type=int, default=8)
     parser.add_argument("--replay-mode", choices=("synthetic", "real"), default="real")
@@ -2139,6 +2149,9 @@ def _profitability_next_epoch_plan(
         "--max-candidates": str(max(64, _int_arg(args, "max_candidates", 64))),
         "--top-k": str(max(16, _int_arg(args, "top_k", 16))),
         "--exploration-slots": str(max(8, _int_arg(args, "exploration_slots", 8))),
+        "--feedback-block-reaudit-slots": str(
+            max(0, _int_arg(args, "feedback_block_reaudit_slots", 0))
+        ),
         "--portfolio-size-min": str(max(2, _int_arg(args, "portfolio_size_min", 2))),
         "--portfolio-size-max": str(max(8, _int_arg(args, "portfolio_size_max", 8))),
         "--max-frontier-candidates-per-spec": str(
@@ -2202,6 +2215,7 @@ def _profitability_next_epoch_plan(
         "--max-candidates",
         "--top-k",
         "--exploration-slots",
+        "--feedback-block-reaudit-slots",
         "--portfolio-size-min",
         "--portfolio-size-max",
         "--max-total-frontier-candidates",
@@ -3201,6 +3215,7 @@ def _select_candidate_specs_for_replay(
     exploration_slots: int,
     max_candidates: int,
     portfolio_size_min: int,
+    feedback_block_reaudit_slots: int = 0,
 ) -> tuple[list[CandidateSpec], dict[str, Any]]:
     if not specs:
         return [], {
@@ -3350,6 +3365,13 @@ def _select_candidate_specs_for_replay(
         if block_reason_by_spec.get(spec.candidate_spec_id)
         == "pre_replay_mlx_synthetic_nonpositive_expected_value"
     ]
+    feedback_block_reaudit_candidates = [
+        spec
+        for spec in ordered_unique
+        if is_feedback_block_reason(
+            block_reason_by_spec.get(spec.candidate_spec_id, "")
+        )
+    ]
     rank_position_by_spec = {
         spec.candidate_spec_id: index for index, spec in enumerate(ordered, start=1)
     }
@@ -3357,9 +3379,16 @@ def _select_candidate_specs_for_replay(
         requested_exploration_slots,
         len(synthetic_prior_probe_candidates),
     )
+    requested_feedback_block_reaudit_slots = max(0, int(feedback_block_reaudit_slots))
+    feedback_block_reaudit_capacity = min(
+        requested_feedback_block_reaudit_slots,
+        len(feedback_block_reaudit_candidates),
+    )
     replay_budget = min(
         replay_budget,
-        len(ordered_eligible) + synthetic_prior_probe_capacity,
+        len(ordered_eligible)
+        + synthetic_prior_probe_capacity
+        + feedback_block_reaudit_capacity,
     )
     exploitation_count = min(max(0, int(top_k)), replay_budget, len(ordered_eligible))
 
@@ -3463,6 +3492,23 @@ def _select_candidate_specs_for_replay(
         count=synthetic_prior_probe_exploration_count,
         selected_so_far=[*exploitation, *exploration],
     )
+    feedback_block_reaudit_count = min(
+        requested_feedback_block_reaudit_slots,
+        replay_budget
+        - len(exploitation)
+        - len(exploration)
+        - len(synthetic_prior_probe_exploration),
+        len(feedback_block_reaudit_candidates),
+    )
+    feedback_block_reaudit = take_diverse(
+        feedback_block_reaudit_candidates,
+        count=feedback_block_reaudit_count,
+        selected_so_far=[
+            *exploitation,
+            *exploration,
+            *synthetic_prior_probe_exploration,
+        ],
+    )
     if len(exploitation) + len(exploration) < replay_budget:
         selected_ids = {
             item.candidate_spec_id
@@ -3470,6 +3516,7 @@ def _select_candidate_specs_for_replay(
                 *exploitation,
                 *exploration,
                 *synthetic_prior_probe_exploration,
+                *feedback_block_reaudit,
             )
         }
         backfill_candidates = [
@@ -3482,11 +3529,13 @@ def _select_candidate_specs_for_replay(
             count=replay_budget
             - len(exploitation)
             - len(exploration)
-            - len(synthetic_prior_probe_exploration),
+            - len(synthetic_prior_probe_exploration)
+            - len(feedback_block_reaudit),
             selected_so_far=[
                 *exploitation,
                 *exploration,
                 *synthetic_prior_probe_exploration,
+                *feedback_block_reaudit,
             ],
         )
     else:
@@ -3501,18 +3550,25 @@ def _select_candidate_specs_for_replay(
         }
     )
     selected_reason.update(
+        {
+            item.candidate_spec_id: "feedback_block_reaudit"
+            for item in feedback_block_reaudit
+        }
+    )
+    selected_reason.update(
         {item.candidate_spec_id: "budget_backfill" for item in backfill}
     )
     selected = [
         *exploitation,
         *exploration,
         *synthetic_prior_probe_exploration,
+        *feedback_block_reaudit,
         *backfill,
     ]
     selected_ids = {item.candidate_spec_id for item in selected}
-    synthetic_prior_probe_selected_ids = {
+    selected_pre_replay_blocked_ids = {
         item.candidate_spec_id for item in synthetic_prior_probe_exploration
-    }
+    } | {item.candidate_spec_id for item in feedback_block_reaudit}
     replay_order_by_spec = {
         item.candidate_spec_id: index for index, item in enumerate(selected, start=1)
     }
@@ -3629,6 +3685,9 @@ def _select_candidate_specs_for_replay(
             "exploration_slots_requested": requested_exploration_slots,
             "exploration_slots_effective": effective_exploration_slots,
             "exploration_slots": effective_exploration_slots,
+            "feedback_block_reaudit_slots_requested": requested_feedback_block_reaudit_slots,
+            "feedback_block_reaudit_slots_effective": feedback_block_reaudit_capacity,
+            "feedback_block_reaudit_selected_count": len(feedback_block_reaudit),
             "portfolio_size_min": max(1, int(portfolio_size_min)),
             "selected_count": len(selected),
             "compiled_candidate_count": len(specs),
@@ -3655,9 +3714,9 @@ def _select_candidate_specs_for_replay(
             "pre_replay_blocked_candidate_count": sum(
                 1
                 for candidate_spec_id in block_reason_by_spec
-                if candidate_spec_id not in synthetic_prior_probe_selected_ids
+                if candidate_spec_id not in selected_pre_replay_blocked_ids
             ),
-            "replay_order_policy": "quality_gated_diversity_pick_order_with_synthetic_prior_probe",
+            "replay_order_policy": "quality_gated_diversity_pick_order_with_synthetic_prior_probe_and_feedback_reaudit",
             "capital_feasible_candidate_count": sum(
                 1
                 for features in capital_features_by_spec.values()
@@ -4981,6 +5040,9 @@ def run_whitepaper_autoresearch_profit_target(
         proposal_rows=pre_replay_proposal_rows,
         top_k=int(args.top_k),
         exploration_slots=int(args.exploration_slots),
+        feedback_block_reaudit_slots=int(
+            getattr(args, "feedback_block_reaudit_slots", 0) or 0
+        ),
         max_candidates=int(args.max_candidates),
         portfolio_size_min=int(args.portfolio_size_min),
     )
@@ -5429,6 +5491,9 @@ def run_whitepaper_autoresearch_profit_target(
             "max_candidates": int(args.max_candidates),
             "top_k": int(args.top_k),
             "exploration_slots": int(args.exploration_slots),
+            "feedback_block_reaudit_slots": int(
+                getattr(args, "feedback_block_reaudit_slots", 0) or 0
+            ),
             "replay_candidate_spec_count": len(replay_candidate_specs),
             "replay_incomplete": replay_result.incomplete,
             "replay_failure_reasons": replay_failure_reasons,

@@ -94,6 +94,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             max_candidates=8,
             top_k=4,
             exploration_slots=2,
+            feedback_block_reaudit_slots=0,
             portfolio_size_min=2,
             portfolio_size_max=4,
             replay_mode="synthetic",
@@ -305,11 +306,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             'if [ -n "{{inputs.parameters.expectedLastTradingDay}}" ]; then',
             template,
         )
-        self.assertIn("name: maxCandidates\n        value: '420'", template)
-        self.assertIn("name: topK\n        value: '192'", template)
-        self.assertIn("name: explorationSlots\n        value: '228'", template)
+        self.assertIn("name: maxCandidates\n        value: '640'", template)
+        self.assertIn("name: topK\n        value: '256'", template)
+        self.assertIn("name: explorationSlots\n        value: '256'", template)
+        self.assertIn("name: feedbackBlockReauditSlots\n        value: '128'", template)
         self.assertIn(
-            "name: maxTotalFrontierCandidates\n        value: '420'", template
+            "name: maxTotalFrontierCandidates\n        value: '640'", template
         )
         self.assertIn(
             "name: realReplayTimeoutSeconds\n        value: '14400'", template
@@ -317,7 +319,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn(
             "name: realReplayShardTimeoutSeconds\n        value: '1800'", template
         )
-        self.assertIn("name: realReplayShardWorkers\n        value: '48'", template)
+        self.assertIn("name: realReplayShardWorkers\n        value: '64'", template)
+        self.assertIn("--feedback-block-reaudit-slots", template)
         self.assertIn(
             "--program config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml",
             template,
@@ -1126,6 +1129,76 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             selection["rows"][0]["selection_reason"],
             "pre_replay_mlx_family_feedback_blocked",
+        )
+
+    def test_candidate_selection_can_reaudit_feedback_blocked_candidates(
+        self,
+    ) -> None:
+        source_spec = self._candidate_spec("spec-reaudit-source")
+        blocked_spec = self._candidate_spec(
+            "spec-reaudit-blocked",
+            entry_minute_after_open="60",
+        )
+        capital_unsafe_spec = replace(
+            self._candidate_spec(
+                "spec-reaudit-capital-unsafe",
+                family_template_id="breakout_reclaim_v2",
+            ),
+            strategy_overrides={
+                **self._candidate_spec(
+                    "spec-reaudit-capital-unsafe",
+                    family_template_id="breakout_reclaim_v2",
+                ).strategy_overrides,
+                "max_notional_per_trade": "157950",
+                "max_position_pct_equity": "4",
+            },
+        )
+        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=source_spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-reaudit-source",
+                "family_template_id": source_spec.family_template_id,
+                "runtime_family": source_spec.runtime_family,
+                "runtime_strategy_name": source_spec.runtime_strategy_name,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "-250",
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "0",
+                    "negative_day_count": 4,
+                    "daily_net": {"2026-05-01": "-250"},
+                },
+            },
+            dataset_snapshot_id="snap-reaudit-feedback",
+            result_path="feedback://reaudit",
+        )
+
+        _model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(blocked_spec, capital_unsafe_spec),
+            feedback_evidence_bundles=(feedback_bundle,),
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(blocked_spec, capital_unsafe_spec),
+            proposal_rows=rows,
+            top_k=1,
+            exploration_slots=0,
+            feedback_block_reaudit_slots=1,
+            max_candidates=2,
+            portfolio_size_min=1,
+        )
+        row_by_spec = {row["candidate_spec_id"]: row for row in selection["rows"]}
+
+        self.assertEqual(selected, [blocked_spec])
+        self.assertEqual(selection["budget"]["selected_count"], 1)
+        self.assertEqual(
+            selection["budget"]["feedback_block_reaudit_selected_count"], 1
+        )
+        self.assertEqual(
+            row_by_spec[blocked_spec.candidate_spec_id]["selection_reason"],
+            "feedback_block_reaudit",
+        )
+        self.assertFalse(
+            row_by_spec[capital_unsafe_spec.candidate_spec_id]["selected_for_replay"]
         )
 
     def test_candidate_selection_keeps_positive_blocked_feedback_repair_candidates(

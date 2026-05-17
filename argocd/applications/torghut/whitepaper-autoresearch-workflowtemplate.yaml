@@ -37,11 +37,13 @@ spec:
       - name: targetNetPnlPerDay
         value: '500'
       - name: maxCandidates
-        value: '420'
+        value: '640'
       - name: topK
-        value: '192'
+        value: '256'
       - name: explorationSlots
-        value: '228'
+        value: '256'
+      - name: feedbackBlockReauditSlots
+        value: '128'
       - name: portfolioSizeMin
         value: '3'
       - name: portfolioSizeMax
@@ -49,7 +51,7 @@ spec:
       - name: maxFrontierCandidatesPerSpec
         value: '4'
       - name: maxTotalFrontierCandidates
-        value: '420'
+        value: '640'
       - name: realReplayTimeoutSeconds
         value: '14400'
       - name: realReplayShardSize
@@ -57,7 +59,7 @@ spec:
       - name: realReplayShardTimeoutSeconds
         value: '1800'
       - name: realReplayShardWorkers
-        value: '48'
+        value: '64'
       - name: prefetchFullWindowRows
         value: 'true'
       - name: allowStaleTape
@@ -86,6 +88,7 @@ spec:
           - name: maxCandidates
           - name: topK
           - name: explorationSlots
+          - name: feedbackBlockReauditSlots
           - name: portfolioSizeMin
           - name: portfolioSizeMax
           - name: maxFrontierCandidatesPerSpec
@@ -164,6 +167,7 @@ spec:
               --max-candidates "{{inputs.parameters.maxCandidates}}"
               --top-k "{{inputs.parameters.topK}}"
               --exploration-slots "{{inputs.parameters.explorationSlots}}"
+              --feedback-block-reaudit-slots "{{inputs.parameters.feedbackBlockReauditSlots}}"
               --portfolio-size-min "{{inputs.parameters.portfolioSizeMin}}"
               --portfolio-size-max "{{inputs.parameters.portfolioSizeMax}}"
               --replay-mode real
