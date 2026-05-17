@@ -289,4 +289,116 @@ assert message == 'Command exited with status 1', message
 
     expect(stderr).toContain('SyntaxError')
   })
+
+  it('resolves the base market-context callback URL for lifecycle calls', async () => {
+    const manifest = await readFile(
+      resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
+      'utf8',
+    )
+    const runner = extractInputFileContent(manifest, '/root/.codex/market-context-provider-runner.py')
+    const tempDir = await mkdtemp(resolve(tmpdir(), 'market-context-runner-'))
+    const runnerPath = resolve(tempDir, 'market-context-provider-runner.py')
+    const probePath = resolve(tempDir, 'probe.py')
+    await writeFile(runnerPath, runner)
+    await writeFile(
+      probePath,
+      `
+import importlib.util
+import sys
+from pathlib import Path
+
+runner_path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location('runner', runner_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+base = 'http://jangar.jangar.svc.cluster.local/api/torghut/market-context'
+assert module._resolve_runs_base(base) == base
+assert module._resolve_runs_base(base + '/ingest') == base
+assert module._resolve_runs_base('') is None
+`,
+    )
+
+    await execFileAsync('python3', [probePath, runnerPath], { timeout: 10_000 })
+  })
+
+  it('finalizes a truthful partial payload after provider capacity exhaustion', async () => {
+    const manifest = await readFile(
+      resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
+      'utf8',
+    )
+    const runner = extractInputFileContent(manifest, '/root/.codex/market-context-provider-runner.py')
+    const tempDir = await mkdtemp(resolve(tmpdir(), 'market-context-runner-'))
+    const runnerPath = resolve(tempDir, 'market-context-provider-runner.py')
+    const eventPath = resolve(tempDir, 'event.json')
+    const probePath = resolve(tempDir, 'probe.py')
+    await writeFile(runnerPath, runner)
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        parameters: {
+          symbol: 'AMZN',
+          domain: 'news',
+          asOfUtc: '2026-05-17T03:44:17.863Z',
+          callbackUrl: 'http://jangar.jangar.svc.cluster.local/api/torghut/market-context',
+          requestId: 'market-context-news-amzn-test',
+          reason: 'on_demand_stale_snapshot_refresh',
+        },
+      }),
+    )
+    await writeFile(
+      probePath,
+      `
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+runner_path = Path(sys.argv[1])
+event_path = Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location('runner', runner_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+posts = []
+
+def fake_post_json(url, payload, timeout_seconds):
+  posts.append((url, payload))
+  if url.endswith('/runs/finalize'):
+    assert payload['runStatus'] == 'partial'
+    assert payload['qualityScore'] == 0
+    assert payload['sourceCount'] == 0
+    assert payload['citations'] == []
+    assert 'provider_capacity_exhausted' in payload['riskFlags']
+    assert payload['payload']['providerCapacityExhausted'] is True
+    return 200, {'ok': True}
+  return 200, {'ok': True}
+
+def fake_run(*args, **kwargs):
+  return subprocess.CompletedProcess(
+    args=args[0],
+    returncode=1,
+    stdout='',
+    stderr='Turn failed -> Quota exceeded. Check your plan and billing details.\\n',
+  )
+
+module._post_json = fake_post_json
+module.subprocess.run = fake_run
+os.environ['CODEX_MARKET_CONTEXT_PROVIDER_CHAIN'] = 'codex:gpt-5.5,codex-spark:gpt-5.5'
+sys.argv = ['market-context-provider-runner.py', str(event_path)]
+exit_code = module.main()
+assert exit_code == 0, exit_code
+finalize_posts = [entry for entry in posts if entry[0].endswith('/runs/finalize')]
+assert len(finalize_posts) == 1, posts
+`,
+    )
+
+    const { stdout } = await execFileAsync('python3', [probePath, runnerPath, eventPath], { timeout: 10_000 })
+
+    expect(stdout).toContain('market_context_capacity_fallback_partial_finalized')
+  })
 })
