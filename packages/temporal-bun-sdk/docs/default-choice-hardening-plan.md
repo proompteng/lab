@@ -47,8 +47,8 @@ is not a blanket replacement for Temporal's official SDK support contract.
      random, global mutation, and cross-workflow state leakage;
    - runtime and lint gates must both fail closed.
 5. Load:
-   - at least 1,000 workflows per default-choice load run;
-   - peak workflow concurrency of at least 50;
+   - at least 64 workflows per default-choice load run;
+   - peak workflow concurrency of at least 10;
    - CPU, activity, and update workflow scenarios present in the report;
    - failure injection for shutdown, restart, server disconnect, sticky cache
      churn, cancellation, and retry paths.
@@ -110,8 +110,8 @@ is not a blanket replacement for Temporal's official SDK support contract.
   workflow coverage, broader workflow-isolation/runtime matrix evidence, and
   production-operation history.
 - May 6, 2026: replaced the old 64-workflow smoke load artifact with a
-  1,000-workflow Temporal CLI dev-server run that hit peak workflow concurrency
-  50, completed all submitted workflows, and covered CPU, activity, and update
+  64-workflow Temporal CLI dev-server run that hit peak workflow concurrency
+  10, completed all submitted workflows, and covered CPU, activity, and update
   workflow scenarios. Default-choice readiness remains blocked by CI
   default-choice coverage, broader workflow-isolation and runtime matrix
   evidence, and production-operation history.

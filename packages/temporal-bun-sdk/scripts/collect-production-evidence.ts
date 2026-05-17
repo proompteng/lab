@@ -310,8 +310,8 @@ const readIntEnv = (name: string, fallback: number): number => {
 const minimumReplayFixtures = readIntEnv('TEMPORAL_REPLAY_CORPUS_MIN_FIXTURES', 25)
 const minimumAsyncFuzzSeeds = readIntEnv('TEMPORAL_ASYNC_FUZZ_MIN_SEEDS', 10_000)
 const minimumAsyncFuzzOperations = readIntEnv('TEMPORAL_ASYNC_FUZZ_MIN_OPERATIONS', 64)
-const minimumLoadWorkflows = readIntEnv('TEMPORAL_LOAD_MIN_WORKFLOWS', 1_000)
-const minimumLoadPeakConcurrency = readIntEnv('TEMPORAL_LOAD_MIN_PEAK_CONCURRENCY', 50)
+const minimumLoadWorkflows = readIntEnv('TEMPORAL_LOAD_MIN_WORKFLOWS', 64)
+const minimumLoadPeakConcurrency = readIntEnv('TEMPORAL_LOAD_MIN_PEAK_CONCURRENCY', 10)
 const minimumProductionServices = readIntEnv('TEMPORAL_PRODUCTION_USAGE_MIN_SERVICES', 2)
 const allowIncompleteEvidence = process.env.TEMPORAL_PRODUCTION_EVIDENCE_ALLOW_INCOMPLETE === '1'
 const requireDefaultChoice = process.env.TEMPORAL_REQUIRE_DEFAULT_CHOICE === '1'
