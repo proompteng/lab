@@ -200,6 +200,95 @@ class TestPortfolioOptimizer(TestCase):
         self.assertTrue(portfolio.objective_scorecard["target_met"])
         self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
 
+    def test_portfolio_sleeves_preserve_runtime_params_for_closure(self) -> None:
+        def bundle(candidate_id: str, symbol: str) -> CandidateEvidenceBundle:
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "runtime_family": "microbar_cross_sectional_pairs",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "family_template_id": "microbar_cross_sectional_pairs_v1",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "300",
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "max_gross_exposure_pct_equity": "0.5",
+                        "min_cash": "5000",
+                        "negative_cash_observation_count": 0,
+                        "best_day_share": "0.2",
+                        "avg_filled_notional_per_day": "150000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "correlation_cluster": candidate_id,
+                        "symbol_contribution_shares": {symbol: "1.0"},
+                        "runtime_params": {
+                            "entry_minute_after_open": "35",
+                            "entry_window_minutes": "25",
+                            "exit_minute_after_open": "180",
+                            "signal_motif": "opening_window_prev_close_reversal",
+                            "rank_feature": (
+                                "cross_section_opening_window_return_from_prev_close_rank"
+                            ),
+                            "selection_mode": "reversal",
+                            "top_n": "2",
+                            "gate_feature": (
+                                "cross_section_positive_opening_window_return_from_prev_close_ratio"
+                            ),
+                            "gate_min": "0.20",
+                            "gate_max": "0.85",
+                        },
+                        "universe_symbols": ["NVDA", "AVGO", "AMD"],
+                        **_executable_scorecard_fields(candidate_id),
+                    },
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": "300",
+                            "2026-02-24": "300",
+                            "2026-02-25": "300",
+                            "2026-02-26": "300",
+                            "2026-02-27": "300",
+                        },
+                        "daily_filled_notional": {
+                            "2026-02-23": "150000",
+                            "2026-02-24": "150000",
+                            "2026-02-25": "150000",
+                            "2026-02-26": "150000",
+                            "2026-02-27": "150000",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-runtime-param-carry",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[
+                bundle("cand-prevclose-a", "NVDA"),
+                bundle("cand-prevclose-b", "AVGO"),
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            oracle_policy=ProfitTargetOraclePolicy(
+                max_cluster_contribution_share=Decimal("0.50"),
+                max_single_symbol_contribution_share=Decimal("0.50"),
+            ),
+            portfolio_size_min=2,
+            portfolio_size_max=2,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        first_sleeve = portfolio.sleeves[0]
+        self.assertEqual(first_sleeve["signal"], "opening_window_prev_close_reversal")
+        self.assertEqual(
+            first_sleeve["params"]["gate_feature"],
+            "cross_section_positive_opening_window_return_from_prev_close_ratio",
+        )
+        self.assertEqual(first_sleeve["universe_symbols"], ["NVDA", "AVGO", "AMD"])
+
     def test_portfolio_candidate_round_trips_from_optimizer_payload(self) -> None:
         daily_profiles = [
             ("610", "620", "630", "640", "650"),

@@ -197,6 +197,52 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             promotion_contract={},
         )
 
+    def test_candidate_feedback_metadata_preserves_runtime_params_for_closure(
+        self,
+    ) -> None:
+        spec = replace(
+            self._candidate_spec("spec-prevclose-runtime"),
+            strategy_overrides={
+                "max_notional_per_trade": "7500",
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "entry_minute_after_open": "35",
+                    "entry_window_minutes": "25",
+                    "exit_minute_after_open": "180",
+                    "signal_motif": "opening_window_prev_close_reversal",
+                    "rank_feature": "cross_section_opening_window_return_from_prev_close_rank",
+                    "selection_mode": "reversal",
+                    "top_n": "2",
+                    "gate_feature": "cross_section_positive_opening_window_return_from_prev_close_ratio",
+                    "gate_min": "0.20",
+                    "gate_max": "0.85",
+                    "long_stop_loss_bps": "5",
+                    "long_trailing_stop_activation_profit_bps": "5",
+                    "long_trailing_stop_drawdown_bps": "2",
+                },
+                "universe_symbols": ["NVDA", "AVGO", "AMD"],
+            },
+        )
+
+        candidate = runner._candidate_payload_with_feedback_metadata(
+            spec=spec,
+            candidate={
+                "candidate_id": "candidate-prevclose",
+                "objective_scorecard": {"net_pnl_per_day": "401.8"},
+            },
+        )
+
+        scorecard = candidate["objective_scorecard"]
+        self.assertEqual(
+            scorecard["runtime_params"]["signal_motif"],
+            "opening_window_prev_close_reversal",
+        )
+        self.assertEqual(
+            scorecard["runtime_params"]["gate_feature"],
+            "cross_section_positive_opening_window_return_from_prev_close_ratio",
+        )
+        self.assertEqual(scorecard["universe_symbols"], ["NVDA", "AVGO", "AMD"])
+
     def test_parse_args_defaults_to_500_daily_profit_program(self) -> None:
         with TemporaryDirectory() as tmpdir:
             with patch.object(

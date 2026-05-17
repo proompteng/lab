@@ -164,7 +164,38 @@ _MICROBAR_PORTFOLIO_SIGNAL_SETTINGS: dict[str, dict[str, str]] = {
         "rank_feature": "cross_section_prev_day_open45_return_rank",
         "selection_mode": "continuation",
     },
+    "overnight_gap_reversal": {
+        "rank_feature": "cross_section_prev_session_close_rank",
+        "selection_mode": "reversal",
+    },
+    "opening_window_prev_close_reversal": {
+        "rank_feature": "cross_section_opening_window_return_from_prev_close_rank",
+        "selection_mode": "reversal",
+    },
+    "intraday_tug_of_war_reversal": {
+        "rank_feature": "cross_section_prev_session_close_rank",
+        "selection_mode": "reversal",
+    },
 }
+
+_MICROBAR_PORTFOLIO_RUNTIME_PARAM_KEYS: tuple[str, ...] = (
+    "entry_window_minutes",
+    "gate_feature",
+    "gate_min",
+    "gate_max",
+    "max_pair_legs",
+    "entry_cooldown_seconds",
+    "long_stop_loss_bps",
+    "short_stop_loss_bps",
+    "long_trailing_stop_activation_profit_bps",
+    "long_trailing_stop_drawdown_bps",
+    "short_trailing_stop_activation_profit_bps",
+    "short_trailing_stop_drawdown_bps",
+    "max_hold_seconds",
+    "max_session_negative_exit_bps",
+    "max_stop_loss_exits_per_session",
+    "stop_loss_lockout_seconds",
+)
 
 _PORTFOLIO_POLICY_REF_PREFIX = "torghut.autoresearch.portfolio"
 
@@ -699,15 +730,36 @@ def _materialized_microbar_portfolio_runtime_strategies(
     candidate_id = _string(best_candidate.get("candidate_id")) or "runtime-closure"
     strategies: list[dict[str, Any]] = []
     for sleeve_index, sleeve in enumerate(sleeves, start=1):
-        signal = _string(sleeve.get("signal"))
+        sleeve_params = _mapping(sleeve.get("params"))
+        signal = _string(sleeve.get("signal")) or _string(
+            sleeve_params.get("signal_motif")
+        )
         signal_settings = _MICROBAR_PORTFOLIO_SIGNAL_SETTINGS.get(signal)
         if signal_settings is None:
             raise ValueError(
                 f"runtime_closure_microbar_portfolio_signal_unsupported:{signal}"
             )
-        entry_minute = max(0, _int(sleeve.get("entry_minute_after_open")))
-        exit_text = _string(sleeve.get("exit_minute_after_open")) or "close"
-        top_n = max(1, _int(sleeve.get("top_n")))
+        entry_minute = max(
+            0,
+            _int(
+                sleeve.get("entry_minute_after_open")
+                or sleeve_params.get("entry_minute_after_open")
+            ),
+        )
+        exit_text = (
+            _string(sleeve.get("exit_minute_after_open"))
+            or _string(sleeve_params.get("exit_minute_after_open"))
+            or "close"
+        )
+        top_n = max(1, _int(sleeve.get("top_n") or sleeve_params.get("top_n")))
+        sleeve_symbols = [
+            symbol
+            for symbol in (
+                _string(item).upper()
+                for item in cast(Sequence[Any], sleeve.get("universe_symbols") or [])
+            )
+            if symbol
+        ] or list(symbols)
         weight = _decimal(sleeve.get("weight"), default="1")
         if weight <= 0:
             weight = Decimal("1")
@@ -740,20 +792,27 @@ def _materialized_microbar_portfolio_runtime_strategies(
                     "enabled": True,
                     "base_timeframe": "1Sec",
                     "universe_type": strategy_type,
-                    "universe_symbols": list(symbols),
+                    "universe_symbols": list(sleeve_symbols),
                     "max_notional_per_trade": _decimal_string(max_notional_per_trade),
                     "max_position_pct_equity": _decimal_string(max_position_pct_equity),
                     "params": {
                         "entry_minute_after_open": str(entry_minute),
                         "exit_minute_after_open": exit_text,
                         "signal_motif": signal,
-                        "rank_feature": signal_settings["rank_feature"],
-                        "selection_mode": signal_settings["selection_mode"],
+                        "rank_feature": _string(sleeve_params.get("rank_feature"))
+                        or signal_settings["rank_feature"],
+                        "selection_mode": _string(sleeve_params.get("selection_mode"))
+                        or signal_settings["selection_mode"],
                         "top_n": str(top_n),
-                        "universe_size": str(len(symbols)),
+                        "universe_size": str(len(sleeve_symbols)),
                         "max_concurrent_positions": str(top_n),
                         "max_entries_per_session": str(top_n),
                         "position_isolation_mode": "per_strategy",
+                        **{
+                            key: _string(sleeve_params.get(key))
+                            for key in _MICROBAR_PORTFOLIO_RUNTIME_PARAM_KEYS
+                            if _string(sleeve_params.get(key))
+                        },
                     },
                 }
             )

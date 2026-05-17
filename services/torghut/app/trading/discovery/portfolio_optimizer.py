@@ -57,6 +57,12 @@ def _string(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _mapping(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): item for key, item in cast(Mapping[Any, Any], value).items()}
+
+
 def _boolish(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -65,6 +71,32 @@ def _boolish(value: Any) -> bool:
 
 def _scorecard(bundle: CandidateEvidenceBundle) -> Mapping[str, Any]:
     return bundle.objective_scorecard
+
+
+def _scorecard_runtime_params(bundle: CandidateEvidenceBundle) -> Mapping[str, Any]:
+    return _mapping(_scorecard(bundle).get("runtime_params"))
+
+
+def _scorecard_universe_symbols(bundle: CandidateEvidenceBundle) -> list[str]:
+    raw_symbols = _scorecard(bundle).get("universe_symbols")
+    if not isinstance(raw_symbols, Sequence) or isinstance(raw_symbols, str):
+        return []
+    return [
+        symbol
+        for symbol in (
+            _string(item).upper() for item in cast(Sequence[Any], raw_symbols)
+        )
+        if symbol
+    ]
+
+
+def _scorecard_signal(bundle: CandidateEvidenceBundle) -> str:
+    params = _scorecard_runtime_params(bundle)
+    signal = _string(params.get("signal_motif"))
+    if signal:
+        return signal
+    signal_key = _string(_scorecard(bundle).get("signal_key"))
+    return signal_key.split("|", 1)[0] if signal_key else ""
 
 
 def _net_per_day(bundle: CandidateEvidenceBundle) -> Decimal:
@@ -931,6 +963,9 @@ def optimize_portfolio_candidate(
                 "runtime_family": _string(_scorecard(bundle).get("runtime_family")),
                 "runtime_strategy_name": f"{base_runtime_strategy_name}-sleeve-{sleeve_index}",
                 "weight": str(weight),
+                "signal": _scorecard_signal(bundle),
+                "params": dict(_scorecard_runtime_params(bundle)),
+                "universe_symbols": _scorecard_universe_symbols(bundle),
                 "expected_net_pnl_per_day": str(_net_per_day(bundle) * weight),
                 "source_expected_net_pnl_per_day": str(_net_per_day(bundle)),
                 "risk_contribution": str(_max_drawdown(bundle) * weight),
