@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: codex-goal-alpaca-088487157
-  digest: sha256:e7f3e48b4ae373f9fc0d8f05867c2fc02b31bbbe70b59f945ae59deafd6b63f1
+  tag: codex-goal-alpaca-0ab3f5a38
+  digest: sha256:de68b60586750a1e7798ba216decd48e66f32b876b5df1b4a4f64ecd7f62bc45
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,8 +11,8 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: codex-goal-alpaca-088487157
-    digest: sha256:32efd080fac3e8f2279ba94cebbb0cf62c5a23410c3b19dfc0ce343fec3979e3
+    tag: codex-goal-alpaca-0ab3f5a38
+    digest: sha256:be9462bc32d45ab2e035ce2e2bfe6372fd44d1826a5d7d30f388ef5fe3f5aa1a
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
@@ -28,8 +28,8 @@ controlPlane:
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: codex-goal-alpaca-088487157
-    digest: sha256:e7f3e48b4ae373f9fc0d8f05867c2fc02b31bbbe70b59f945ae59deafd6b63f1
+    tag: codex-goal-alpaca-0ab3f5a38
+    digest: sha256:de68b60586750a1e7798ba216decd48e66f32b876b5df1b4a4f64ecd7f62bc45
 argocdHooks:
   enabled: true
   image:
