@@ -1169,6 +1169,104 @@ describe('supporting primitives controller', () => {
     })
   })
 
+  it('creates an immediate catch-up job for a swarm schedule that has never fired', async () => {
+    const target = {
+      kind: 'AgentRun',
+      metadata: { name: 'agentrun-discover-template', namespace: 'agents' },
+      spec: {
+        agentRef: { name: 'codex-spark-agent' },
+        runtime: { type: 'job' },
+      },
+    }
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) return target
+      return null
+    })
+    const apply = vi.fn().mockResolvedValue({})
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const kube = { get, apply, applyStatus } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-discover-sched',
+        namespace: 'agents',
+        uid: 'schedule-uid',
+        generation: 5,
+        labels: {
+          'swarm.proompteng.ai/name': 'jangar-control-plane',
+          'swarm.proompteng.ai/stage': 'discover',
+        },
+      },
+      spec: {
+        cron: '5 * * * *',
+        targetRef: { kind: 'AgentRun', name: 'agentrun-discover-template', namespace: 'agents' },
+      },
+    }
+
+    await __test__.reconcileSchedule(kube, schedule, 'agents')
+
+    const catchupJob = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((payload) => payload.kind === 'Job') as
+      | { metadata?: Record<string, unknown>; spec?: Record<string, unknown> }
+      | undefined
+
+    expect(catchupJob).toBeDefined()
+    expect(catchupJob?.metadata?.name).toMatch(/^jangar-control-plane-discover-sched-initial-[a-z0-9]+$/)
+    expect(catchupJob?.metadata?.labels).toMatchObject({
+      'schedules.proompteng.ai/schedule': 'jangar-control-plane-discover-sched',
+      'schedules.proompteng.ai/initial-catchup': 'true',
+    })
+    expect(catchupJob?.metadata?.annotations).toMatchObject({
+      'schedules.proompteng.ai/initial-catchup-for': 'jangar-control-plane-discover-sched',
+    })
+    expect(catchupJob?.spec?.ttlSecondsAfterFinished).toBe(3600)
+  })
+
+  it('does not create a catch-up job for a swarm schedule that already fired', async () => {
+    const target = {
+      kind: 'AgentRun',
+      metadata: { name: 'agentrun-discover-template', namespace: 'agents' },
+      spec: {
+        agentRef: { name: 'codex-spark-agent' },
+        runtime: { type: 'job' },
+      },
+    }
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) return target
+      return null
+    })
+    const apply = vi.fn().mockResolvedValue({})
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const kube = { get, apply, applyStatus } as unknown as KubernetesClient
+    const schedule = {
+      apiVersion: 'schedules.proompteng.ai/v1alpha1',
+      kind: 'Schedule',
+      metadata: {
+        name: 'jangar-control-plane-discover-sched',
+        namespace: 'agents',
+        uid: 'schedule-uid',
+        generation: 5,
+        labels: {
+          'swarm.proompteng.ai/name': 'jangar-control-plane',
+          'swarm.proompteng.ai/stage': 'discover',
+        },
+      },
+      spec: {
+        cron: '5 * * * *',
+        targetRef: { kind: 'AgentRun', name: 'agentrun-discover-template', namespace: 'agents' },
+      },
+      status: {
+        lastRunTime: '2026-01-20T00:05:00Z',
+      },
+    }
+
+    await __test__.reconcileSchedule(kube, schedule, 'agents')
+
+    expect(apply.mock.calls.map((call) => (call[0] as Record<string, unknown>).kind)).not.toContain('Job')
+  })
+
   it('pins schedule runner cronjobs to the configured workload node selector', async () => {
     process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR = JSON.stringify({ 'kubernetes.io/arch': 'arm64' })
 
