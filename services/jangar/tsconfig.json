@@ -9,6 +9,8 @@
     "paths": {
       "@/*": ["./src/*"],
       "~/*": ["./src/*"],
+      "@proompteng/agents": ["../agents/src/index.ts"],
+      "@proompteng/agents/*": ["../agents/src/*"],
       "@proompteng/bumba/*": ["../bumba/*"],
       "@proompteng/codex": ["../../packages/codex/src/index.ts"],
       "@proompteng/codex/*": ["../../packages/codex/src/*"],

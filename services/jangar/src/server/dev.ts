@@ -1,3 +1,4 @@
+import { installAgentsEnvCompatibility } from '@proompteng/agents/server/env-compat'
 import { createServer as createViteServer } from 'vite'
 
 import { bootRuntimeProfile } from './runtime-boot'
@@ -5,6 +6,8 @@ import { JANGAR_RUNTIME_PROFILES } from './runtime-profile'
 import { resolveHttpServerListenConfig } from './runtime-entry-config'
 
 type JangarRuntime = Awaited<ReturnType<typeof import('./app').createJangarRuntime>>
+
+installAgentsEnvCompatibility()
 
 const { port, hostname, idleTimeoutSeconds } = resolveHttpServerListenConfig(process.env, { dev: true })
 const runtimeProfile = JANGAR_RUNTIME_PROFILES.viteDevApi

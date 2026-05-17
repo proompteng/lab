@@ -6,4 +6,4 @@ spec:
   toolRef:
     name: echo-tool
   parameters:
-    path: services/jangar
+    path: services/agents

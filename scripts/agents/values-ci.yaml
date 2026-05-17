@@ -1,10 +1,18 @@
 replicaCount: 1
 
 image:
-  repository: registry.ide-newton.ts.net/lab/jangar-control-plane
+  repository: registry.ide-newton.ts.net/lab/agents-control-plane
   tag: latest
   digest: ''
   pullPolicy: IfNotPresent
+
+controllers:
+  image:
+    repository: registry.ide-newton.ts.net/lab/agents-controller
+
+runner:
+  image:
+    repository: registry.ide-newton.ts.net/lab/agents-codex-runner
 
 namespaceOverride: agents-ci
 
@@ -32,7 +40,7 @@ env:
   vars:
     # CI runs with a fresh Postgres, so we must run migrations to create schema
     # (otherwise controllers will fail to reconcile AgentRuns).
-    JANGAR_MIGRATIONS: 'auto'
+    AGENTS_MIGRATIONS: 'auto'
 
 resources:
   requests:

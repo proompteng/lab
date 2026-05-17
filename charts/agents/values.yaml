@@ -11,7 +11,7 @@ autoscaling:
   targetMemoryUtilizationPercentage: null
 
 image:
-  repository: ghcr.io/proompteng/jangar
+  repository: ghcr.io/proompteng/agents-control-plane
   tag: latest
   digest: ''
   pullPolicy: IfNotPresent
@@ -22,7 +22,7 @@ imagePolicy:
 
 controlPlane:
   image:
-    repository: ''
+    repository: ghcr.io/proompteng/agents-control-plane
     tag: ''
     digest: ''
     pullPolicy: ''
@@ -57,7 +57,7 @@ controllers:
     labels: {}
   deploymentStrategy: {}
   image:
-    repository: ''
+    repository: ghcr.io/proompteng/agents-controller
     tag: ''
     digest: ''
     pullPolicy: ''
@@ -73,8 +73,8 @@ controllers:
 
 runner:
   image:
-    repository: registry.ide-newton.ts.net/lab/codex-universal
-    tag: 20260219-234214-2a44dd59-dl
+    repository: ghcr.io/proompteng/agents-codex-runner
+    tag: latest
     digest: ''
     pullPolicy: IfNotPresent
     pullSecrets: []
@@ -258,7 +258,7 @@ env:
   vars:
     NODE_ENV: production
     PORT: '8080'
-    JANGAR_MIGRATIONS: 'auto'
+    AGENTS_MIGRATIONS: 'auto'
 
 workflowRuntime:
   native:
@@ -280,7 +280,7 @@ controller:
   enabled: true
   leaderElection:
     enabled: true
-    leaseName: jangar-controller-leader
+    leaseName: agents-controller-leader
     leaseNamespace: ''
     leaseDurationSeconds: 30
     renewDeadlineSeconds: 20

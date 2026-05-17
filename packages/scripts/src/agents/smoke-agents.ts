@@ -142,6 +142,8 @@ type BuildHelmArgsInput = {
   createNamespace: boolean
   databaseUrl?: string
   imageRepository?: string
+  controlPlaneImageRepository?: string
+  controllersImageRepository?: string
   imageTag?: string
   imageDigestSet: boolean
   imageDigest: string
@@ -154,6 +156,8 @@ export const buildHelmArgs = ({
   createNamespace,
   databaseUrl,
   imageRepository,
+  controlPlaneImageRepository,
+  controllersImageRepository,
   imageTag,
   imageDigestSet,
   imageDigest,
@@ -179,12 +183,25 @@ export const buildHelmArgs = ({
   }
   if (imageRepository) {
     helmArgs.push('--set', `image.repository=${imageRepository}`)
+    helmArgs.push('--set', `controlPlane.image.repository=${controlPlaneImageRepository ?? imageRepository}`)
+    helmArgs.push('--set', `controllers.image.repository=${controllersImageRepository ?? imageRepository}`)
+  } else {
+    if (controlPlaneImageRepository) {
+      helmArgs.push('--set', `controlPlane.image.repository=${controlPlaneImageRepository}`)
+    }
+    if (controllersImageRepository) {
+      helmArgs.push('--set', `controllers.image.repository=${controllersImageRepository}`)
+    }
   }
   if (imageTag) {
     helmArgs.push('--set', `image.tag=${imageTag}`)
+    helmArgs.push('--set', `controlPlane.image.tag=${imageTag}`)
+    helmArgs.push('--set', `controllers.image.tag=${imageTag}`)
   }
   if (imageDigestSet) {
     helmArgs.push('--set', `image.digest=${imageDigest}`)
+    helmArgs.push('--set', `controlPlane.image.digest=${imageDigest}`)
+    helmArgs.push('--set', `controllers.image.digest=${imageDigest}`)
   }
 
   return helmArgs
@@ -620,6 +637,8 @@ const main = async () => {
     process.env.AGENTCTL_KUBECONFIG ?? process.env.KUBECONFIG ?? resolve(homedir(), '.kube', 'config')
   const caFile = process.env.KUBE_CA_FILE ?? '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
   const imageRepository = process.env.AGENTS_IMAGE_REPOSITORY
+  const controlPlaneImageRepository = process.env.AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY
+  const controllersImageRepository = process.env.AGENTS_CONTROLLER_IMAGE_REPOSITORY
   const imageTag = process.env.AGENTS_IMAGE_TAG
   const imageDigestSet = Object.prototype.hasOwnProperty.call(process.env, 'AGENTS_IMAGE_DIGEST')
   const imageDigest = process.env.AGENTS_IMAGE_DIGEST ?? ''
@@ -708,6 +727,8 @@ const main = async () => {
     createNamespace,
     databaseUrl: process.env.AGENTS_DB_URL,
     imageRepository,
+    controlPlaneImageRepository,
+    controllersImageRepository,
     imageTag,
     imageDigestSet,
     imageDigest,

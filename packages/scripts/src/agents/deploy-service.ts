@@ -1,19 +1,33 @@
 #!/usr/bin/env bun
 
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
 import YAML from 'yaml'
 import { buildImage } from '../jangar/build-image'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
-import { inspectImageDigest } from '../shared/docker'
+import { buildAndPushDockerImage, inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
 
 type KubernetesManifest = {
   metadata?: {
     annotations?: Record<string, unknown>
+  }
+}
+
+type KubernetesSecretManifest = {
+  apiVersion?: string
+  kind?: string
+  type?: string
+  data?: Record<string, string>
+  stringData?: Record<string, string>
+  metadata?: Record<string, unknown> & {
+    name?: string
+    namespace?: string
+    labels?: Record<string, string>
+    annotations?: Record<string, string>
   }
 }
 
@@ -23,9 +37,17 @@ type Options = {
   registry: string
   repository: string
   controlPlaneRepository: string
+  runnerRepository: string
+  runnerDockerfile: string
+  codexAuthPath: string
   tag: string
   platforms: string[]
   apply: boolean
+}
+
+type DatabaseSecretRequirement = {
+  namespace: string
+  name: string
 }
 
 const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
@@ -94,6 +116,33 @@ const parseArgs = (argv: string[]): Partial<Options> => {
       options.controlPlaneRepository = arg.slice('--control-plane-repository='.length)
       continue
     }
+    if (arg === '--runner-repository') {
+      options.runnerRepository = argv[i + 1]
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--runner-repository=')) {
+      options.runnerRepository = arg.slice('--runner-repository='.length)
+      continue
+    }
+    if (arg === '--runner-dockerfile') {
+      options.runnerDockerfile = argv[i + 1]
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--runner-dockerfile=')) {
+      options.runnerDockerfile = arg.slice('--runner-dockerfile='.length)
+      continue
+    }
+    if (arg === '--codex-auth-path') {
+      options.codexAuthPath = argv[i + 1]
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--codex-auth-path=')) {
+      options.codexAuthPath = arg.slice('--codex-auth-path='.length)
+      continue
+    }
     if (arg === '--tag') {
       options.tag = argv[i + 1]
       i += 1
@@ -112,14 +161,36 @@ const parseArgs = (argv: string[]): Partial<Options> => {
 
 const resolveOptions = (): Options => {
   const args = parseArgs(process.argv.slice(2))
-  const registry = args.registry ?? process.env.JANGAR_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
-  const repository = args.repository ?? process.env.JANGAR_IMAGE_REPOSITORY ?? 'lab/jangar'
+  const registry =
+    args.registry ??
+    process.env.AGENTS_IMAGE_REGISTRY ??
+    process.env.JANGAR_IMAGE_REGISTRY ??
+    'registry.ide-newton.ts.net'
+  const repository =
+    args.repository ??
+    process.env.AGENTS_CONTROLLER_IMAGE_REPOSITORY ??
+    process.env.AGENTS_IMAGE_REPOSITORY ??
+    process.env.JANGAR_IMAGE_REPOSITORY ??
+    'lab/agents-controller'
   const controlPlaneRepository =
     args.controlPlaneRepository ??
     process.env.AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY ??
     process.env.JANGAR_CONTROL_PLANE_IMAGE_REPOSITORY ??
-    'lab/jangar-control-plane'
-  const tag = args.tag ?? process.env.JANGAR_IMAGE_TAG ?? execGit(['rev-parse', '--short', 'HEAD'])
+    'lab/agents-control-plane'
+  const runnerRepository =
+    args.runnerRepository ??
+    process.env.AGENTS_RUNNER_IMAGE_REPOSITORY ??
+    process.env.AGENTS_CODEX_RUNNER_IMAGE_REPOSITORY ??
+    'lab/agents-codex-runner'
+  const runnerDockerfile =
+    args.runnerDockerfile ?? process.env.AGENTS_RUNNER_DOCKERFILE ?? 'services/agents/Dockerfile.codex-runner'
+  const codexAuthPath =
+    args.codexAuthPath ?? process.env.CODEX_AUTH_PATH ?? resolve(process.env.HOME ?? '', '.codex/auth.json')
+  const tag =
+    args.tag ??
+    process.env.AGENTS_IMAGE_TAG ??
+    process.env.JANGAR_IMAGE_TAG ??
+    execGit(['rev-parse', '--short', 'HEAD'])
   const platforms = parsePlatforms(process.env.AGENTS_IMAGE_PLATFORMS) ??
     parsePlatforms(process.env.JANGAR_IMAGE_PLATFORMS) ?? ['linux/amd64', 'linux/arm64']
 
@@ -135,6 +206,9 @@ const resolveOptions = (): Options => {
     registry,
     repository,
     controlPlaneRepository,
+    runnerRepository,
+    runnerDockerfile: resolve(repoRoot, runnerDockerfile),
+    codexAuthPath,
     tag,
     platforms,
     apply: args.apply ?? parseBoolean(process.env.AGENTS_APPLY, true),
@@ -162,6 +236,20 @@ const capture = async (cmd: string[], env?: Record<string, string | undefined>):
   }
 
   return stdout.trim()
+}
+
+const captureStatus = async (cmd: string[], env?: Record<string, string | undefined>) => {
+  const subprocess = Bun.spawn(cmd, {
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: buildEnv(env),
+  })
+  const [exitCode, stdout, stderr] = await Promise.all([
+    subprocess.exited,
+    new Response(subprocess.stdout).text(),
+    new Response(subprocess.stderr).text(),
+  ])
+  return { exitCode, stdout: stdout.trim(), stderr: stderr.trim() }
 }
 
 const buildEnv = (env?: Record<string, string | undefined>) =>
@@ -259,6 +347,9 @@ const updateValuesFile = (
   controlPlaneImageRepository: string,
   controlPlaneTag: string,
   controlPlaneDigest: string,
+  runnerImageRepository: string,
+  runnerTag: string,
+  runnerDigest: string,
 ) => {
   const raw = readFileSync(valuesPath, 'utf8')
   const doc = YAML.parse(raw) ?? {}
@@ -274,10 +365,111 @@ const updateValuesFile = (
   doc.controlPlane.image.tag = controlPlaneTag
   doc.controlPlane.image.digest = controlPlaneDigest
 
+  doc.runner ??= {}
+  doc.runner.image ??= {}
+  doc.runner.image.repository = runnerImageRepository
+  doc.runner.image.tag = runnerTag
+  doc.runner.image.digest = runnerDigest
+
   writeFileSync(valuesPath, YAML.stringify(doc, { lineWidth: 120 }))
   console.log(
-    `Updated ${valuesPath} with ${imageRepository}:${tag}@${digest} and ${controlPlaneImageRepository}:${controlPlaneTag}@${controlPlaneDigest}`,
+    `Updated ${valuesPath} with ${imageRepository}:${tag}@${digest}, ${controlPlaneImageRepository}:${controlPlaneTag}@${controlPlaneDigest}, and ${runnerImageRepository}:${runnerTag}@${runnerDigest}`,
   )
+}
+
+const resolveDatabaseSecretRequirement = (
+  values: unknown,
+  namespace = process.env.AGENTS_NAMESPACE ?? 'agents',
+): DatabaseSecretRequirement | null => {
+  if (!values || typeof values !== 'object') return null
+  const database = (values as { database?: unknown }).database
+  if (!database || typeof database !== 'object') return null
+  const db = database as {
+    url?: unknown
+    createSecret?: { enabled?: unknown; name?: unknown }
+    secretRef?: { name?: unknown }
+  }
+  if (typeof db.url === 'string' && db.url.trim().length > 0) return null
+  if (db.createSecret?.enabled === true) return null
+  const name = typeof db.secretRef?.name === 'string' ? db.secretRef.name.trim() : ''
+  return name ? { namespace, name } : null
+}
+
+const buildDatabaseSecretAliasManifest = (
+  source: KubernetesSecretManifest,
+  options: {
+    sourceNamespace: string
+    sourceName: string
+    targetNamespace: string
+    targetName: string
+  },
+): KubernetesSecretManifest => ({
+  apiVersion: source.apiVersion ?? 'v1',
+  kind: 'Secret',
+  type: source.type,
+  data: source.data ?? {},
+  stringData: source.stringData,
+  metadata: {
+    name: options.targetName,
+    namespace: options.targetNamespace,
+    labels: {
+      'app.kubernetes.io/name': 'agents',
+      'app.kubernetes.io/component': 'database',
+      'agents.proompteng.ai/compat-source-secret': options.sourceName,
+      ...(source.metadata?.labels ?? {}),
+    },
+    annotations: {
+      'agents.proompteng.ai/created-by': 'agents-deploy-service',
+      'agents.proompteng.ai/compat-source-secret': `${options.sourceNamespace}/${options.sourceName}`,
+    },
+  },
+})
+
+const ensureDatabaseSecretReady = async (requirement: DatabaseSecretRequirement | null) => {
+  if (!requirement) return
+  ensureCli('kubectl')
+
+  const target = await captureStatus([
+    'kubectl',
+    '-n',
+    requirement.namespace,
+    'get',
+    'secret',
+    requirement.name,
+    '-o',
+    'name',
+  ])
+  if (target.exitCode === 0) {
+    console.log(`Database secret ${requirement.namespace}/${requirement.name} already exists`)
+    return
+  }
+
+  if (!parseBoolean(process.env.AGENTS_CREATE_DB_SECRET_ALIAS, false)) {
+    fatal(
+      `Database secret ${requirement.namespace}/${requirement.name} is missing. Create/migrate the Agents database secret before applying, or set AGENTS_CREATE_DB_SECRET_ALIAS=true to copy the configured compatibility source secret for this rollout.`,
+    )
+  }
+
+  const sourceNamespace = process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE ?? requirement.namespace
+  const sourceName = process.env.AGENTS_DB_SECRET_SOURCE_NAME ?? 'jangar-db-app'
+  const source = await capture(['kubectl', '-n', sourceNamespace, 'get', 'secret', sourceName, '-o', 'json'])
+  const manifest = buildDatabaseSecretAliasManifest(JSON.parse(source) as KubernetesSecretManifest, {
+    sourceNamespace,
+    sourceName,
+    targetNamespace: requirement.namespace,
+    targetName: requirement.name,
+  })
+  const tmpDir = mkdtempSync(`${tmpdir()}/agents-db-secret-`)
+  const tmpPath = resolve(tmpDir, 'secret.yaml')
+  try {
+    writeFileSync(tmpPath, YAML.stringify(manifest, { lineWidth: 120 }))
+    await run('kubectl', ['apply', '-f', tmpPath])
+    console.log(
+      `Created compatibility database secret ${requirement.namespace}/${requirement.name} from ${sourceNamespace}/${sourceName}`,
+    )
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
 }
 
 const isArgoHookManifest = (manifest: unknown): boolean => {
@@ -334,6 +526,8 @@ const main = async () => {
   const image = `${imageName}:${options.tag}`
   const controlPlaneImageName = `${options.registry}/${options.controlPlaneRepository}`
   const controlPlaneImage = `${controlPlaneImageName}:${options.tag}`
+  const runnerImageName = `${options.registry}/${options.runnerRepository}`
+  const runnerImage = `${runnerImageName}:${options.tag}`
 
   await buildImage({
     registry: options.registry,
@@ -348,6 +542,19 @@ const main = async () => {
     target: 'control-plane',
     platforms: options.platforms,
   })
+  if (!existsSync(options.codexAuthPath)) {
+    fatal(`Codex auth not found at ${options.codexAuthPath}; cannot build agents-codex-runner image.`)
+  }
+  await buildAndPushDockerImage({
+    registry: options.registry,
+    repository: options.runnerRepository,
+    tag: options.tag,
+    context: repoRoot,
+    dockerfile: options.runnerDockerfile,
+    codexAuthPath: options.codexAuthPath,
+    cacheRef: process.env.AGENTS_RUNNER_BUILD_CACHE_REF ?? `${options.registry}/${options.runnerRepository}:buildcache`,
+    platforms: options.platforms,
+  })
 
   const repoDigest = inspectImageDigest(image)
   const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
@@ -356,6 +563,8 @@ const main = async () => {
   const controlPlaneDigest = controlPlaneRepoDigest.includes('@')
     ? controlPlaneRepoDigest.split('@')[1]
     : controlPlaneRepoDigest
+  const runnerRepoDigest = inspectImageDigest(runnerImage)
+  const runnerDigest = runnerRepoDigest.includes('@') ? runnerRepoDigest.split('@')[1] : runnerRepoDigest
 
   updateValuesFile(
     options.valuesPath,
@@ -365,9 +574,14 @@ const main = async () => {
     controlPlaneImageName,
     options.tag,
     controlPlaneDigest,
+    runnerImageName,
+    options.tag,
+    runnerDigest,
   )
 
   if (options.apply) {
+    const updatedValues = YAML.parse(readFileSync(options.valuesPath, 'utf8'))
+    await ensureDatabaseSecretReady(resolveDatabaseSecretRequirement(updatedValues))
     await renderAndApply(options.kustomizePath)
   }
 }
@@ -384,4 +598,6 @@ export const __private = {
   isArgoHookManifest,
   renderAndApply,
   updateValuesFile,
+  resolveDatabaseSecretRequirement,
+  buildDatabaseSecretAliasManifest,
 }

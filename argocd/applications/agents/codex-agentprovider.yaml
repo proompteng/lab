@@ -4,6 +4,17 @@ metadata:
   name: codex
 spec:
   binary: /usr/local/bin/agent-runner
+  adapter:
+    type: codex-app-server
+    codex:
+      model: gpt-5.5
+      effort: high
+      sandbox: danger-full-access
+      approval: never
+      cwd: /workspace/lab
+      threadConfig:
+        mcp_servers: {}
+        web_search: live
   argsTemplate: []
   envTemplate:
     CODEX_LOG_LEVEL: info

@@ -1,8 +1,17 @@
 replicaCount: 1
 
 image:
-  repository: jangar-local
+  repository: agents-control-plane-local
   tag: kind
+
+controllers:
+  image:
+    repository: agents-controller-local
+
+runner:
+  image:
+    repository: agents-codex-runner-local
+    tag: kind
 
 resources:
   requests:
@@ -21,7 +30,7 @@ env:
 
 database:
   secretRef:
-    name: jangar-db-app
+    name: agents-db-app
     key: uri
 
 controller:

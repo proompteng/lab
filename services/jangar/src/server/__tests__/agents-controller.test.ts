@@ -2197,6 +2197,9 @@ describe('agents controller reconcileAgentRun', () => {
       String((specConfigMap?.data as Record<string, unknown> | undefined)?.['agent-runner.json'] ?? '{}'),
     ) as Record<string, unknown>
     const payloads = (agentRunnerSpec.payloads ?? {}) as Record<string, unknown>
+    expect(agentRunnerSpec.schemaVersion).toBe('agents.proompteng.ai/runner/v1')
+    expect(agentRunnerSpec.provider).toBe('provider-1')
+    expect(agentRunnerSpec.adapter).toEqual({ type: 'codex-app-server' })
     expect(payloads.eventFilePath).toBe('/workspace/run.json')
     expect(payloads.eventBodyPath).toBe('/workspace/run.json')
 
@@ -3058,7 +3061,7 @@ describe('agents controller reconcileAgentRun', () => {
         ?.template as Record<string, unknown> | undefined
       const defaultPodSpec = (defaultTemplate?.spec as Record<string, unknown> | undefined) ?? {}
       expect(defaultPodSpec.topologySpreadConstraints).toBeUndefined()
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS'))
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('AGENTS_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS'))
     } finally {
       warnSpy.mockRestore()
       if (previousEnv === undefined) {

@@ -58,12 +58,6 @@ type JsonRpcRequestMethod =
 type JsonRpcRequest = { id: RequestId; method: JsonRpcRequestMethod; params: unknown }
 type JsonRpcNotification = { method: string; params?: unknown }
 
-export type ThreadGoalInput = {
-  objective: string
-  tokenBudget?: number | null
-  status?: ThreadGoalStatus | null
-}
-
 export type StreamDelta =
   | { type: 'message' | 'reasoning'; delta: string }
   | {
@@ -135,6 +129,38 @@ export type CodexAppServerOptions = {
   clientInfo?: ClientInfo
   logger?: (level: 'info' | 'warn' | 'error', message: string, meta?: Record<string, unknown>) => void
   bootstrapTimeoutMs?: number
+}
+
+export type CodexAppServerGoalOptions = {
+  objective?: string | null
+  status?: ThreadGoalStatus | null
+  tokenBudget?: number | null
+}
+
+export type CodexAppServerTurnOptions = {
+  model?: string
+  cwd?: string | null
+  threadId?: string
+  effort?: ReasoningEffort
+  baseInstructions?: string | null
+  developerInstructions?: string | null
+  personality?: ThreadStartParams['personality']
+  goal?: CodexAppServerGoalOptions | null
+}
+
+const normalizeTurnGoalOptions = (goal: CodexAppServerGoalOptions): CodexAppServerGoalOptions => {
+  const normalized: CodexAppServerGoalOptions = {}
+  if (goal.objective !== undefined) {
+    const objective = goal.objective === null ? null : goal.objective.trim()
+    if (objective !== null && !objective) {
+      throw new Error('thread goal objective must be non-empty')
+    }
+    normalized.objective = objective
+    if (goal.status === undefined) normalized.status = 'active'
+  }
+  if (goal.status !== undefined) normalized.status = goal.status
+  if (goal.tokenBudget !== undefined) normalized.tokenBudget = goal.tokenBudget
+  return normalized
 }
 
 const normalizeSandboxMode = (mode: SandboxModeInput): SandboxMode => {
@@ -481,26 +507,20 @@ export class CodexAppServerClient {
       cwd,
       threadId,
       effort,
+      baseInstructions,
+      developerInstructions,
+      personality,
       goal,
-    }: {
-      model?: string
-      cwd?: string | null
-      threadId?: string
-      effort?: ReasoningEffort
-      goal?: ThreadGoalInput | null
-    } = {},
+    }: CodexAppServerTurnOptions = {},
   ): Promise<{ text: string; turn: Turn | null; threadId: string }> {
-    const runOpts: {
-      model?: string
-      cwd?: string | null
-      threadId?: string
-      effort?: ReasoningEffort
-      goal?: ThreadGoalInput | null
-    } = {}
+    const runOpts: CodexAppServerTurnOptions = {}
     if (model !== undefined) runOpts.model = model
     if (cwd !== undefined) runOpts.cwd = cwd
     if (threadId !== undefined) runOpts.threadId = threadId
     if (effort !== undefined) runOpts.effort = effort
+    if (baseInstructions !== undefined) runOpts.baseInstructions = baseInstructions
+    if (developerInstructions !== undefined) runOpts.developerInstructions = developerInstructions
+    if (personality !== undefined) runOpts.personality = personality
     if (goal !== undefined) runOpts.goal = goal
 
     const { stream, turnId: activeTurnId, threadId: activeThreadId } = await this.runTurnStream(prompt, runOpts)
@@ -534,27 +554,23 @@ export class CodexAppServerClient {
       cwd,
       threadId,
       effort,
+      baseInstructions,
+      developerInstructions,
+      personality,
       goal,
-    }: {
-      model?: string
-      cwd?: string | null
-      threadId?: string
-      effort?: ReasoningEffort
-      goal?: ThreadGoalInput | null
-    } = {},
+    }: CodexAppServerTurnOptions = {},
   ): Promise<{ stream: AsyncGenerator<StreamDelta, Turn | null, void>; turnId: string; threadId: string }> {
     await this.ensureReady()
 
-    const turnOptions: {
-      model?: string
-      cwd?: string | null
-      threadId?: string
-      effort?: ReasoningEffort
-    } = {}
+    const turnOptions: CodexAppServerTurnOptions = {}
     if (model !== undefined) turnOptions.model = model
     if (cwd !== undefined) turnOptions.cwd = cwd
     if (threadId !== undefined) turnOptions.threadId = threadId
     turnOptions.effort = effort ?? this.defaultEffort
+    if (baseInstructions !== undefined) turnOptions.baseInstructions = baseInstructions
+    if (developerInstructions !== undefined) turnOptions.developerInstructions = developerInstructions
+    if (personality !== undefined) turnOptions.personality = personality
+    if (goal !== undefined) turnOptions.goal = goal
 
     let activeThreadId = turnOptions.threadId
 
@@ -566,9 +582,9 @@ export class CodexAppServerClient {
         approvalPolicy: this.approval,
         sandbox: this.sandbox,
         config: this.threadConfig,
-        baseInstructions: null,
-        developerInstructions: null,
-        personality: null,
+        baseInstructions: turnOptions.baseInstructions ?? null,
+        developerInstructions: turnOptions.developerInstructions ?? null,
+        personality: turnOptions.personality ?? null,
         ephemeral: null,
         experimentalRawEvents: this.experimentalRawEvents,
         persistExtendedHistory: this.persistExtendedHistory,
@@ -578,8 +594,8 @@ export class CodexAppServerClient {
       activeThreadId = threadResp.thread.id
     }
 
-    if (goal) {
-      await this.setThreadGoal(activeThreadId, goal)
+    if (turnOptions.goal) {
+      await this.setThreadGoal(activeThreadId, normalizeTurnGoalOptions(turnOptions.goal))
     }
 
     const turnParams: TurnStartParams = {
@@ -590,7 +606,7 @@ export class CodexAppServerClient {
       sandboxPolicy: toSandboxPolicy(this.sandbox),
       model: turnOptions.model ?? this.defaultModel,
       effort: turnOptions.effort ?? this.defaultEffort,
-      personality: null,
+      personality: turnOptions.personality ?? null,
       outputSchema: null,
       collaborationMode: null,
     }
@@ -605,18 +621,12 @@ export class CodexAppServerClient {
     return { stream: stream.iterator, turnId, threadId: activeThreadId }
   }
 
-  async setThreadGoal(threadId: string, goal: ThreadGoalInput): Promise<ThreadGoal> {
+  async setThreadGoal(threadId: string, goal: CodexAppServerGoalOptions): Promise<ThreadGoal> {
     await this.ensureReady()
-    const objective = goal.objective.trim()
-    if (!objective) {
-      throw new Error('thread goal objective must be non-empty')
-    }
-    const params: ThreadGoalSetParams = {
-      threadId,
-      objective,
-      status: goal.status ?? 'active',
-      tokenBudget: goal.tokenBudget ?? null,
-    }
+    const params: ThreadGoalSetParams = { threadId }
+    if (goal.objective !== undefined) params.objective = goal.objective
+    if (goal.status !== undefined) params.status = goal.status
+    if (goal.tokenBudget !== undefined) params.tokenBudget = goal.tokenBudget
     const response = (await this.request<ThreadGoalSetResponse>('thread/goal/set', params)) as ThreadGoalSetResponse
     return response.goal
   }
@@ -673,7 +683,7 @@ export class CodexAppServerClient {
     try {
       msg = JSON.parse(raw) as Record<string, unknown>
     } catch (error) {
-      this.log('warn', 'failed to parse app-server line', { raw, error: `${error}` })
+      this.log('warn', 'failed to parse app-server line', { raw, error: String(error) })
       return
     }
 

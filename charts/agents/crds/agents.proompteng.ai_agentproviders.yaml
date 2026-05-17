@@ -41,6 +41,14 @@ spec:
             type: object
           spec:
             properties:
+              adapter:
+                additionalProperties:
+                  x-kubernetes-preserve-unknown-fields: true
+                description: |-
+                  Adapter is the normalized runner contract consumed by agents-codex-runner.
+                  Existing binary/argsTemplate/envTemplate fields remain valid for exec-style providers.
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
               argsTemplate:
                 items:
                   type: string

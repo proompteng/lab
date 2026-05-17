@@ -43,6 +43,7 @@
     "@grpc/proto-loader": "^0.8.0",
     "@kubernetes/client-node": "^1.4.0",
     "@opentelemetry/exporter-prometheus": "0.216.0",
+    "@proompteng/agents": "workspace:*",
     "@proompteng/bumba": "workspace:*",
     "@proompteng/codex": "workspace:*",
     "@proompteng/design": "workspace:*",

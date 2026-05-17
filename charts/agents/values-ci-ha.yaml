@@ -2,9 +2,13 @@ replicaCount: 1
 
 image:
   # Local dev image loaded into kind via AGENTS_KIND_LOAD_IMAGE.
-  repository: jangar-control-plane
+  repository: agents-control-plane
   tag: ha-test
   pullPolicy: IfNotPresent
+
+controllers:
+  image:
+    repository: agents-controller
 
 grpc:
   enabled: false
@@ -17,7 +21,7 @@ env:
   vars:
     # CI runs with a fresh Postgres, so we must run migrations to create schema
     # (otherwise controllers will fail to reconcile AgentRuns).
-    JANGAR_MIGRATIONS: 'auto'
+    AGENTS_MIGRATIONS: 'auto'
 
 resources:
   requests:
@@ -29,7 +33,7 @@ controllers:
   replicaCount: 2
   env:
     vars:
-      JANGAR_MIGRATIONS: 'auto'
+      AGENTS_MIGRATIONS: 'auto'
 
 controller:
   leaderElection:

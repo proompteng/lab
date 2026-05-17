@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'bun:test'
-import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { parseAllDocuments } from 'yaml'
 
 import {
@@ -20,7 +18,7 @@ import {
 } from '../smoke-agents'
 
 describe('buildHelmArgs', () => {
-  it('applies image repository, tag, and empty digest overrides', () => {
+  it('applies chart deployment image repository, tag, and empty digest overrides', () => {
     const valuesFile = resolve(process.cwd(), 'scripts/agents/values-ci.yaml')
     const chartPath = resolve(process.cwd(), 'charts/agents')
     const args = buildHelmArgs({
@@ -29,7 +27,7 @@ describe('buildHelmArgs', () => {
       valuesFile,
       createNamespace: true,
       databaseUrl: 'postgresql://agents:pw@agents-postgres:5432/agents?sslmode=disable',
-      imageRepository: 'ghcr.io/proompteng/jangar',
+      imageRepository: 'agents-ci-local',
       imageTag: 'latest',
       imageDigestSet: true,
       imageDigest: '',
@@ -49,12 +47,46 @@ describe('buildHelmArgs', () => {
       '--set-string',
       'database.url=postgresql://agents:pw@agents-postgres:5432/agents?sslmode=disable',
       '--set',
-      'image.repository=ghcr.io/proompteng/jangar',
+      'image.repository=agents-ci-local',
+      '--set',
+      'controlPlane.image.repository=agents-ci-local',
+      '--set',
+      'controllers.image.repository=agents-ci-local',
       '--set',
       'image.tag=latest',
       '--set',
+      'controlPlane.image.tag=latest',
+      '--set',
+      'controllers.image.tag=latest',
+      '--set',
       'image.digest=',
+      '--set',
+      'controlPlane.image.digest=',
+      '--set',
+      'controllers.image.digest=',
     ])
+  })
+
+  it('allows separate control-plane and controller image repositories', () => {
+    const valuesFile = resolve(process.cwd(), 'scripts/agents/values-ci.yaml')
+    const args = buildHelmArgs({
+      releaseName: 'agents',
+      namespace: 'agents-ci',
+      valuesFile,
+      createNamespace: false,
+      imageRepository: 'agents-base-local',
+      controlPlaneImageRepository: 'agents-control-plane-local',
+      controllersImageRepository: 'agents-controller-local',
+      imageTag: 'ci',
+      imageDigestSet: false,
+      imageDigest: '',
+    })
+
+    expect(args).toContain('image.repository=agents-base-local')
+    expect(args).toContain('controlPlane.image.repository=agents-control-plane-local')
+    expect(args).toContain('controllers.image.repository=agents-controller-local')
+    expect(args).toContain('controlPlane.image.tag=ci')
+    expect(args).toContain('controllers.image.tag=ci')
   })
 
   it('omits image digest when the env key is unset', () => {
@@ -236,11 +268,11 @@ describe('scheduled AgentRun templates', () => {
     const values = readYamlObjects('argocd/applications/agents/values.yaml')[0]
     const controllers = objectAt(values, 'controllers')
     const env = objectAt(objectAt(controllers, 'env'), 'vars')
-    const timeoutMs = Number(objectAt(env, 'JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS'))
+    const timeoutMs = Number(objectAt(env, 'AGENTS_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS'))
 
-    expect(objectAt(env, 'JANGAR_MATERIAL_REENTRY_REQUIREMENT_SIGNALS')).toBe('false')
-    expect(objectAt(env, 'JANGAR_SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE')).toBe('1')
-    expect(objectAt(env, 'JANGAR_SWARM_REQUIREMENT_MAX_ACTIVE_PER_SWARM')).toBe('2')
+    expect(objectAt(env, 'AGENTS_MATERIAL_REENTRY_REQUIREMENT_SIGNALS')).toBe('false')
+    expect(objectAt(env, 'AGENTS_SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE')).toBe('1')
+    expect(objectAt(env, 'AGENTS_SWARM_REQUIREMENT_MAX_ACTIVE_PER_SWARM')).toBe('2')
     expect(timeoutMs).toBeGreaterThanOrEqual(10_000)
   })
 
@@ -357,122 +389,37 @@ describe('scheduled AgentRun templates', () => {
     expect(allowedSecrets).toContain('nats-agents-credentials')
   })
 
-  it('renders Codex HF fallback handoff facts outside the model draft', () => {
+  it('renders Codex app-server adapter metadata instead of legacy provider wrapper scripts', () => {
     const manifests = readYamlObjects('argocd/applications/agents/codex-spark-agentprovider.yaml')
     const provider = manifests.find((manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'codex-spark')
+    const spec = objectAt(provider, 'spec')
+    const adapter = objectAt(spec, 'adapter')
+    const codex = objectAt(adapter, 'codex')
     const envTemplate = objectAt(objectAt(provider, 'spec'), 'envTemplate')
     const inputFiles = objectAt(objectAt(provider, 'spec'), 'inputFiles') as Record<string, unknown>[] | undefined
-    const providerConfig = inputFiles?.find(
-      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/provider-codex-spark.json',
-    )
-    const providerCommand = JSON.parse(String(objectAt(providerConfig, 'content'))).argsTemplate[1]
-    const logSanitizer = inputFiles?.find(
-      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/sanitize-codex-log.py',
-    )
-    const fallbackScript = inputFiles?.find(
-      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/swarm-hf-codex-fallback.py',
-    )
-    const sanitizerContent = objectAt(logSanitizer, 'content')
-    const content = objectAt(fallbackScript, 'content')
 
-    expect(providerCommand).toContain('2>&1 | python3 /root/.codex/sanitize-codex-log.py | tee "$LOG_PATH"')
-    expect(providerCommand).toContain('status=${PIPESTATUS[0]}')
-    expect(providerCommand).not.toContain('> >(tee')
+    expect(objectAt(spec, 'binary')).toBe('/usr/local/bin/agent-runner')
+    expect(objectAt(spec, 'argsTemplate')).toEqual([])
+    expect(objectAt(adapter, 'type')).toBe('codex-app-server')
+    expect(objectAt(codex, 'model')).toBe('gpt-5.5')
+    expect(objectAt(codex, 'effort')).toBe('xhigh')
+    expect(objectAt(codex, 'sandbox')).toBe('danger-full-access')
+    expect(objectAt(codex, 'approval')).toBe('never')
+    expect(objectAt(codex, 'cwd')).toBe('/workspace/lab')
     expect(objectAt(envTemplate, 'AGENT_RUN_NAME')).toBe('{{agentRun.name}}')
     expect(objectAt(envTemplate, 'AGENT_RUN_NAMESPACE')).toBe('{{agentRun.namespace}}')
     expect(objectAt(envTemplate, 'CODEX_MODEL_FALLBACKS')).toBe('gpt-5.4,gpt-5.4-mini,gpt-5.2-codex,gpt-5-codex')
     expect(objectAt(envTemplate, 'CODEX_MODEL_FALLBACKS')).not.toContain('gpt-5.3-codex-spark')
     expect(objectAt(envTemplate, 'CODEX_MAX_SESSION_ATTEMPTS')).toBe('5')
-    expect(sanitizerContent).toContain('SUPPRESSED_PROVIDER_HTML = "[suppressed provider HTML response body]"')
-    expect(sanitizerContent).toContain('HTML_START_PATTERN = re.compile(')
-    expect(content).toContain('def summarize_upstream(upstream: str) -> str:')
-    expect(content).toContain('def summarize_failure_tail(log_text: str) -> str:')
-    expect(content).toContain('return summarize_failure_tail(log_text)')
-    expect(content).toContain('if not line.strip() and (run or stage):')
-    expect(content).toContain('if line.startswith("Auto-discovered upstream run:") and not run:')
-    expect(content).toContain(
-      'def handoff_subject(payload: dict, swarm_name: str, role: str, run_name: str, suffix: str = "") -> str:',
+    expect((inputFiles ?? []).map((inputFile) => objectAt(inputFile, 'path'))).not.toContain(
+      '/root/.codex/provider-codex-spark.json',
     )
-    expect(content).toContain('def render_fallback_result(')
-    expect(content).toContain('Auto-discovered upstream run:')
-    expect(content).toContain('The wrapper will render authoritative upstream run and stage facts.')
-    expect(content).toContain('Primary Codex failure summary:')
-    expect(content).toContain('"primary_failure_tail": failure_summary')
-    expect(content).toContain('"primary_failure_summary": failure_summary')
-    expect(content).toContain('\"upstream_read\": summarize_upstream(upstream)')
-    expect(content).toContain(
-      'publish_handoff(handoff_subject(payload, swarm_name, role, run_name, "fallback"), handoff)',
+    expect((inputFiles ?? []).map((inputFile) => objectAt(inputFile, 'path'))).not.toContain(
+      '/root/.codex/sanitize-codex-log.py',
     )
-    expect(content).not.toContain('Primary Codex failure tail:')
-    expect(content).not.toContain('publish_handoff(f"swarm.')
-  })
-
-  it('redacts provider HTML before Codex runner logs become swarm evidence', () => {
-    const manifests = readYamlObjects('argocd/applications/agents/codex-spark-agentprovider.yaml')
-    const provider = manifests.find((manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'codex-spark')
-    const inputFiles = objectAt(objectAt(provider, 'spec'), 'inputFiles') as Record<string, unknown>[] | undefined
-    const logSanitizer = inputFiles?.find(
-      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/sanitize-codex-log.py',
+    expect((inputFiles ?? []).map((inputFile) => objectAt(inputFile, 'path'))).not.toContain(
+      '/root/.codex/swarm-hf-codex-fallback.py',
     )
-    const tempDir = mkdtempSync(join(tmpdir(), 'codex-log-sanitizer-'))
-    const scriptPath = join(tempDir, 'sanitize-codex-log.py')
-
-    writeFileSync(scriptPath, String(objectAt(logSanitizer, 'content')))
-
-    const result = spawnSync('python3', [scriptPath], {
-      input: [
-        'Running Codex implementation for proompteng/lab#swarm-jangar-control-plane',
-        'Failure reason: codex exited with status 1: failed to warm featured plugin ids cache error=remote plugin sync request failed with status 403 Forbidden: <html>',
-        '<head><style global>body{font-family:Arial}.challenge-error-text{display:block}</style></head>',
-        '<span id="challenge-error-text"',
-        'data-cf-error="403">Enable JavaScript and cookies to continue</span>',
-        '<body><svg width="41" height="41" viewBox="0 0 41 41"><path d="M37.5324 16.8707"/></svg></body></html>',
-        '<script>(function(){window._cf_chl_opt={cRay:"9fc9c7b1bfd6fdda",fa:"/backend-api/plugins/featured?platform=codex&__cf_chl_tk=token"}})();</script>',
-        'Turn failed -> Quota exceeded. Check your plan and billing details.',
-      ].join('\n'),
-      encoding: 'utf8',
-    })
-
-    expect(result.status).toBe(0)
-    expect(result.stdout).toContain('failed to warm featured plugin ids cache')
-    expect(result.stdout).toContain('[suppressed provider HTML response body]')
-    expect(result.stdout).toContain('Quota exceeded')
-    expect(result.stdout).not.toContain('<html')
-    expect(result.stdout).not.toContain('<style')
-    expect(result.stdout).not.toContain('<span')
-    expect(result.stdout).not.toContain('viewBox')
-    expect(result.stdout).not.toContain('challenge-error-text')
-    expect(result.stdout).not.toContain('window._cf_chl_opt')
-    expect(result.stdout).not.toContain('__cf_chl')
-    expect(result.stdout).not.toContain('backend-api/plugins/featured?platform=codex')
-    expect(result.stdout).not.toMatch(/<[A-Za-z]/)
-  })
-
-  it('classifies current Codex quota logs as HF fallback eligible', () => {
-    const manifests = readYamlObjects('argocd/applications/agents/codex-spark-agentprovider.yaml')
-    const provider = manifests.find((manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'codex-spark')
-    const inputFiles = objectAt(objectAt(provider, 'spec'), 'inputFiles') as Record<string, unknown>[] | undefined
-    const fallbackPredicate = inputFiles?.find(
-      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/should-hf-swarm-fallback.py',
-    )
-    const tempDir = mkdtempSync(join(tmpdir(), 'codex-fallback-'))
-    const scriptPath = join(tempDir, 'should-hf-swarm-fallback.py')
-    const logPath = join(tempDir, 'runner.log')
-
-    writeFileSync(scriptPath, String(objectAt(fallbackPredicate, 'content')))
-    writeFileSync(
-      logPath,
-      [
-        'Running Codex implementation for proompteng/lab#swarm-jangar-control-plane',
-        'Turn started',
-        'Stream error -> Quota exceeded. Check your plan and billing details.',
-        'Turn failed -> Quota exceeded. Check your plan and billing details.',
-      ].join('\n'),
-    )
-
-    const result = spawnSync('python3', [scriptPath, logPath], { encoding: 'utf8' })
-
-    expect(result.status).toBe(0)
   })
 
   it('keeps the deployer implementation spec focused on a bounded release slice', () => {
