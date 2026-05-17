@@ -6,7 +6,7 @@ sources:
   - https://github.com/proompteng/charts/tree/main/charts/agents
 type: application
 kubeVersion: '>=1.25.0-0'
-version: 0.9.16
+version: 0.9.17
 appVersion: '0.9.0'
 icon: https://avatars.githubusercontent.com/u/234536857
 keywords:
