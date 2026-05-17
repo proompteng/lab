@@ -84,6 +84,45 @@ class TestMlxTrainingData(TestCase):
         self.assertGreater(features["estimated_max_gross_exposure_pct_equity"], 1.0)
         self.assertEqual(features["capital_feasible_flag"], 0.0)
 
+    def test_candidate_capital_features_treat_session_entries_as_turnover(
+        self,
+    ) -> None:
+        spec = CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id="spec-turnover-not-concurrency",
+            hypothesis_id="H-TURNOVER",
+            family_template_id="microbar_cross_sectional_pairs_v1",
+            candidate_kind="configuration",
+            runtime_family="microbar_cross_sectional_pairs",
+            runtime_strategy_name="microbar-cross-sectional-pairs-v1",
+            feature_contract={},
+            parameter_space={},
+            strategy_overrides={
+                "max_notional_per_trade": "15000",
+                "max_position_pct_equity": "0.50",
+                "params": {
+                    "max_gross_exposure_pct_equity": "1.0",
+                    "max_entries_per_session": "12",
+                    "max_concurrent_positions": "1",
+                    "top_n": "1",
+                },
+            },
+            objective={},
+            hard_vetoes={},
+            expected_failure_modes=(),
+            promotion_contract={},
+        )
+
+        features = candidate_spec_capital_features(spec)
+
+        self.assertEqual(features["max_entries_per_session"], 12.0)
+        self.assertEqual(features["estimated_capital_slot_count"], 1.0)
+        self.assertLessEqual(
+            features["estimated_max_gross_exposure_pct_equity"],
+            1.0,
+        )
+        self.assertEqual(features["capital_feasible_flag"], 1.0)
+
     def test_candidate_capital_features_infer_uncapped_universe_slots(self) -> None:
         spec = CandidateSpec(
             schema_version="torghut.candidate-spec.v1",

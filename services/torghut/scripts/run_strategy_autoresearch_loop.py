@@ -203,7 +203,7 @@ def _positive_decimal_grid_values(value: Any) -> list[Decimal]:
 
 
 def _max_entry_count(parameters: Mapping[str, Any]) -> int:
-    for key in ("max_entries_per_session", "rank_count"):
+    for key in ("max_concurrent_positions", "max_pair_legs", "top_n", "rank_count"):
         values = _positive_decimal_grid_values(parameters.get(key))
         if values:
             return max(1, int(max(values)))

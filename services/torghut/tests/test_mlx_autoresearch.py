@@ -212,6 +212,15 @@ class TestMlxAutoresearch(TestCase):
             ),
             2,
         )
+        self.assertEqual(
+            mlx_features_module._infer_rank_count(
+                {
+                    "parameters": {"max_entries_per_session": ["12"]},
+                    "strategy_overrides": {"universe_symbols": [["NVDA", "AMD"]]},
+                }
+            ),
+            1,
+        )
 
     def test_build_snapshot_manifest_uses_program_snapshot_policy(self) -> None:
         manifest = build_mlx_snapshot_manifest(
@@ -246,6 +255,7 @@ class TestMlxAutoresearch(TestCase):
                     "leader_reclaim_start_minutes_since_open": ["45"],
                     "max_hold_seconds": ["900"],
                     "max_entries_per_session": ["2"],
+                    "top_n": ["2"],
                 },
                 "strategy_overrides": {
                     "max_notional_per_trade": ["315900.20"],

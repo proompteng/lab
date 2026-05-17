@@ -173,6 +173,28 @@ research_sources:
       - claim_id: subminute_large_stock_continuation
         summary: Sub-minute continuations can appear in larger stocks, market stress, and the first half-hour.
         implication: Keep continuation and reversal sleeves separated by horizon and require holdout proof for each sleeve.
+  - source_id: intraday_time_series_reversal_2025
+    title: 'Intraday Time Series Reversal'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5807282
+    published_at: '2025-12-13'
+    claims:
+      - claim_id: volatility_conditioned_intraday_reversal
+        summary: Intraday reversal effects can strengthen during high-volatility regimes.
+        implication: Reaudit short-horizon reversal sleeves with explicit volatility and drawdown gates instead of broad all-day pooling.
+      - claim_id: time_series_not_only_cross_section
+        summary: Reversal can be framed as a time-series effect, not only a cross-sectional loser/winner sort.
+        implication: Include recent-window reversal profiles that can trade serially while respecting simultaneous exposure caps.
+  - source_id: overnight_jump_intraday_reversal_2026
+    title: 'Dark Side of the Day: Overnight Price Jumps and Short-Term Return Predictability'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4335622
+    published_at: '2026-04-27'
+    claims:
+      - claim_id: overnight_jump_reversal
+        summary: Overnight price jumps can negatively predict short-term returns as overreaction unwinds.
+        implication: Reaudit overnight-gap and opening-window reversal sleeves using prior-close features and strict cost controls.
+      - claim_id: transient_active_trading_window
+        summary: The reversal pattern is transient and tied to active trading conditions.
+        implication: Prefer opening-window exits and reject candidates that need stale or late-day-only evidence.
   - source_id: intraday_cross_section_patterns_2010
     title: 'Intraday Patterns in the Cross-section of Stock Returns'
     url: https://arxiv.org/abs/1005.3535
@@ -231,9 +253,9 @@ families:
         maximum: '0.75'
       max_entries_per_session:
         mode: numeric_step
-        deltas: ['-1', '0', '1']
+        deltas: ['-1', '0', '1', '3', '5']
         minimum: '1'
-        maximum: '3'
+        maximum: '8'
       max_gross_exposure_pct_equity:
         mode: explicit_values
         values: ['0.50', '0.75', '1.0']
@@ -266,6 +288,12 @@ families:
       top_n:
         mode: explicit_values
         values: ['1', '2', '3']
+      max_entries_per_session:
+        mode: explicit_values
+        values: ['1', '3', '6', '8']
+      entry_cooldown_seconds:
+        mode: explicit_values
+        values: ['60', '180', '300']
     strategy_override_mutations:
       max_notional_per_trade:
         mode: explicit_values
@@ -296,6 +324,12 @@ families:
       top_n:
         mode: explicit_values
         values: ['1', '2', '3']
+      max_entries_per_session:
+        mode: explicit_values
+        values: ['1', '3', '6', '8']
+      entry_cooldown_seconds:
+        mode: explicit_values
+        values: ['60', '180', '300']
     strategy_override_mutations:
       max_notional_per_trade:
         mode: explicit_values
@@ -326,6 +360,84 @@ families:
       top_n:
         mode: explicit_values
         values: ['1', '2']
+      max_entries_per_session:
+        mode: explicit_values
+        values: ['1', '3', '6', '8']
+      entry_cooldown_seconds:
+        mode: explicit_values
+        values: ['60', '180', '300']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-microbar-recent15-reversal-short.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    parameter_mutations:
+      entry_minute_after_open:
+        mode: numeric_step
+        deltas: ['-15', '0', '15']
+        minimum: '45'
+        maximum: '180'
+      exit_minute_after_open:
+        mode: numeric_step
+        deltas: ['-15', '0', '15']
+        minimum: '75'
+        maximum: '240'
+      top_n:
+        mode: explicit_values
+        values: ['1', '2', '3']
+      max_entries_per_session:
+        mode: explicit_values
+        values: ['1', '3', '6', '8']
+      entry_cooldown_seconds:
+        mode: explicit_values
+        values: ['60', '180', '300']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-microbar-vwap-stretch-reversal-long-top4.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    parameter_mutations:
+      entry_minute_after_open:
+        mode: numeric_step
+        deltas: ['-30', '0', '30']
+        minimum: '90'
+        maximum: '270'
+      exit_minute_after_open:
+        mode: numeric_step
+        deltas: ['-30', '0', '30']
+        minimum: '150'
+        maximum: '360'
+      top_n:
+        mode: explicit_values
+        values: ['1', '2', '4']
+      max_entries_per_session:
+        mode: explicit_values
+        values: ['1', '3', '6', '8']
+      entry_cooldown_seconds:
+        mode: explicit_values
+        values: ['60', '180', '300']
     strategy_override_mutations:
       max_notional_per_trade:
         mode: explicit_values

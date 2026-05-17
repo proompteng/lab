@@ -85,7 +85,8 @@ class TestStrategyAutoresearch(TestCase):
         limited = runner._apply_objective_capital_limits(
             sweep_config={
                 "parameters": {
-                    "max_entries_per_session": ["2", "3"],
+                    "max_entries_per_session": ["2", "8"],
+                    "top_n": ["3"],
                     "max_gross_exposure_pct_equity": ["10.0"],
                 },
                 "strategy_overrides": {
@@ -106,6 +107,35 @@ class TestStrategyAutoresearch(TestCase):
         self.assertEqual(
             limited["strategy_overrides"]["max_notional_per_trade"], ["10319.4"]
         )
+
+    def test_apply_objective_capital_limits_keeps_turnover_separate_from_exposure(
+        self,
+    ) -> None:
+        limited = runner._apply_objective_capital_limits(
+            sweep_config={
+                "parameters": {
+                    "max_entries_per_session": ["12"],
+                    "max_gross_exposure_pct_equity": ["10.0"],
+                },
+                "strategy_overrides": {
+                    "max_position_pct_equity": ["10.0"],
+                    "max_notional_per_trade": ["315900.20"],
+                },
+            },
+            max_gross_exposure_pct_equity=Decimal("1.0"),
+            start_equity=Decimal("31590.02"),
+        )
+
+        self.assertEqual(
+            limited["parameters"]["max_gross_exposure_pct_equity"], ["0.98"]
+        )
+        self.assertEqual(
+            limited["strategy_overrides"]["max_position_pct_equity"], ["0.98"]
+        )
+        self.assertEqual(
+            limited["strategy_overrides"]["max_notional_per_trade"], ["30958.21"]
+        )
+        self.assertEqual(limited["parameters"]["max_entries_per_session"], ["12"])
 
     def test_runtime_closure_candidate_rejects_failed_or_vetoed_candidates(
         self,
@@ -443,6 +473,8 @@ class TestStrategyAutoresearch(TestCase):
             {
                 "intraday_residual_reversal_2024",
                 "intraday_return_autocorrelation_term_structure_2025",
+                "intraday_time_series_reversal_2025",
+                "overnight_jump_intraday_reversal_2026",
                 "intraday_cross_section_patterns_2010",
             }.issubset(source_ids)
         )
@@ -457,6 +489,8 @@ class TestStrategyAutoresearch(TestCase):
                 "profitability-frontier-strict-daily-microbar-eod-loser-reversal.yaml",
                 "profitability-frontier-strict-daily-microbar-vwap-reversal.yaml",
                 "profitability-frontier-strict-daily-microbar-prev-day-open60-short-top1.yaml",
+                "profitability-frontier-strict-daily-microbar-recent15-reversal-short.yaml",
+                "profitability-frontier-strict-daily-microbar-vwap-stretch-reversal-long-top4.yaml",
             }.issubset(microbar_seed_names)
         )
         self.assertEqual(program.promotion_policy, "research_only")
@@ -1502,6 +1536,7 @@ class TestStrategyAutoresearch(TestCase):
                             "replay_config": {
                                 "params": {
                                     "max_entries_per_session": "1",
+                                    "top_n": "1",
                                     "entry_cooldown_seconds": "600",
                                 },
                                 "strategy_overrides": {
@@ -1538,6 +1573,7 @@ class TestStrategyAutoresearch(TestCase):
                             "replay_config": {
                                 "params": {
                                     "max_entries_per_session": "3",
+                                    "top_n": "2",
                                     "entry_cooldown_seconds": "600",
                                 },
                                 "strategy_overrides": {
