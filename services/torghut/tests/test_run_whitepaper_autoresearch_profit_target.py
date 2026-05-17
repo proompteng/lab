@@ -1313,6 +1313,115 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "synthetic_prior",
         )
 
+    def test_candidate_selection_blocks_terminal_risk_profile_feedback(self) -> None:
+        failed_spec = self._candidate_spec("spec-risk-terminal-source")
+        matching_risk_probe = replace(
+            failed_spec,
+            candidate_spec_id="spec-risk-terminal-probe",
+            hypothesis_id="hyp-spec-risk-terminal-probe",
+            hard_vetoes={"required_min_daily_notional": "450000"},
+            strategy_overrides={
+                **failed_spec.strategy_overrides,
+                "params": {
+                    **cast(dict[str, Any], failed_spec.strategy_overrides["params"]),
+                    "entry_minute_after_open": "90",
+                },
+            },
+        )
+        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=failed_spec.candidate_spec_id,
+            candidate=runner._candidate_payload_with_feedback_metadata(
+                spec=failed_spec,
+                candidate={
+                    "candidate_id": "cand-terminal-risk-feedback",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "-72.11",
+                        "active_day_ratio": "0.8",
+                        "positive_day_ratio": "0",
+                        "negative_day_count": 4,
+                        "best_day_share": "1",
+                        "daily_net": {
+                            "2026-05-04": "-287.72",
+                            "2026-05-05": "-22.05",
+                            "2026-05-06": "-13.51",
+                            "2026-05-07": "-37.30",
+                            "2026-05-12": "0",
+                        },
+                    },
+                },
+            ),
+            dataset_snapshot_id="snap-terminal-risk-feedback",
+            result_path="feedback://terminal-risk",
+        )
+
+        model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(matching_risk_probe,),
+            feedback_evidence_bundles=(feedback_bundle,),
+        )
+
+        self.assertEqual(model["feedback_risk_profile_matched_spec_count"], 1)
+        self.assertEqual(rows[0]["training_source"], "feedback_risk_profile_prior")
+        self.assertEqual(
+            rows[0]["selection_reason"],
+            "pre_replay_mlx_risk_profile_feedback_blocked",
+        )
+        self.assertLessEqual(
+            Decimal(str(rows[0]["proposal_score"])), Decimal("-999999")
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(matching_risk_probe,),
+            proposal_rows=rows,
+            top_k=1,
+            exploration_slots=0,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(selection["budget"]["selected_count"], 0)
+        self.assertEqual(selection["budget"]["eligible_candidate_count"], 0)
+        self.assertEqual(
+            selection["budget"]["pre_replay_feedback_blocked_candidate_count"], 1
+        )
+
+    def test_terminal_risk_profile_block_covers_capital_paths(self) -> None:
+        self.assertFalse(runner._feedback_risk_profile_has_terminal_block({}))
+
+        penalty_scorecard = {
+            "profit_target_oracle": {
+                "blockers": ["max_single_day_contribution_share_failed"]
+            },
+            "net_pnl_per_day": "250",
+            "active_day_ratio": "1",
+            "positive_day_ratio": "1",
+            "best_day_share": "0.25",
+        }
+        self.assertTrue(
+            runner._feedback_risk_profile_has_terminal_block(
+                {
+                    **penalty_scorecard,
+                    "max_gross_exposure_pct_equity": "1.01",
+                }
+            )
+        )
+        self.assertTrue(
+            runner._feedback_risk_profile_has_terminal_block(
+                {
+                    **penalty_scorecard,
+                    "min_cash": "-0.01",
+                }
+            )
+        )
+        self.assertTrue(
+            runner._feedback_risk_profile_has_terminal_block(
+                {
+                    **penalty_scorecard,
+                    "negative_cash_observation_count": "1",
+                }
+            )
+        )
+
     def test_feedback_shape_prior_penalizes_cash_blocks_without_family_veto(
         self,
     ) -> None:
