@@ -175,6 +175,10 @@ jobs:
                   echo "Torghut Argo health is Degraded after sync; continuing to runtime safety checks"
                   break
                 fi
+                if [ "${app}" = 'torghut-options' ] && [ "${HEALTH_STATUS}" = 'Degraded' ] && [ "${OPERATION_PHASE}" = 'Succeeded' ]; then
+                  echo "Torghut options Argo health is Degraded after sync; continuing to explicit workload rollout checks"
+                  break
+                fi
               fi
 
               if [ "${attempt}" -eq 90 ]; then
@@ -187,6 +191,9 @@ jobs:
           done
 
           kubectl rollout status deployment/torghut-ws -n torghut --timeout=10m
+          kubectl rollout status deployment/torghut-options-catalog -n torghut --timeout=10m
+          kubectl rollout status deployment/torghut-options-enricher -n torghut --timeout=10m
+          kubectl rollout status deployment/torghut-ws-options -n torghut --timeout=10m
 
           set +e
           KNSVC_READY="$(kubectl get ksvc torghut -n torghut -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2> /tmp/torghut-ksvc-ready.err)"
