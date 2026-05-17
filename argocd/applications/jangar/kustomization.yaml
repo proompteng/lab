@@ -59,5 +59,5 @@ helmCharts:
     valuesFile: openwebui-values.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: 966a6a57
-    digest: sha256:d5ac66038d6e9890eee25dea82470ffb5dacabe43ce388289405e6beb8cf5516
+    newTag: 52d3424c
+    digest: sha256:9e5127ba48fd1403d868b44d87c152e2c7afec369780cf9586a8eab33f41dd2e
