@@ -245,6 +245,9 @@ spec:
           suffix = '/api/torghut/market-context/ingest'
           if normalized.endswith(suffix):
             return normalized[: -len('/ingest')]
+          base_suffix = '/api/torghut/market-context'
+          if normalized.endswith(base_suffix):
+            return normalized
           return None
 
         def _get_json(url: str, timeout_seconds: int):
@@ -342,6 +345,88 @@ spec:
               return response.getcode() or 200, _parse_json_bytes(response.read())
           except urllib.error.HTTPError as error:
             return error.code, _parse_json_bytes(error.read())
+
+        def _build_capacity_fallback_payload(payload: dict, attempts: list[dict]) -> dict:
+          symbol = _resolve_field(payload, 'symbol') or 'UNKNOWN'
+          domain = _resolve_field(payload, 'domain') or 'news'
+          request_id = _resolve_field(payload, 'requestId') or ''
+          as_of_utc = _resolve_field(payload, 'asOfUtc') or time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+          provider = 'provider-capacity-fallback'
+          risk_flags = [
+            'provider_capacity_exhausted',
+            'market_context_generation_unavailable',
+            'market_context_partial_no_sources',
+          ]
+          metadata = {
+            'providerAttempts': attempts,
+            'providerChain': [entry.get('provider') for entry in attempts if entry.get('provider')],
+            'activeProvider': provider,
+            'failureCategory': 'provider_capacity_exhausted',
+            'failureMessage': 'all Codex-backed market-context providers exhausted capacity before producing evidence',
+          }
+          if domain == 'fundamentals':
+            context_payload = {
+              'thesis': 'Current fundamentals generation is unavailable because all Codex-backed market-context providers exhausted capacity before producing evidence.',
+              'valuation': {},
+              'growth': {},
+              'profitability': {},
+              'balanceSheet': {},
+              'upcomingCatalysts': [],
+              'providerCapacityExhausted': True,
+            }
+          else:
+            domain = 'news'
+            context_payload = {
+              'summary': 'Current news generation is unavailable because all Codex-backed market-context providers exhausted capacity before producing evidence.',
+              'headlines': [],
+              'eventRisk': 'high',
+              'providerCapacityExhausted': True,
+            }
+          return {
+            'symbol': symbol,
+            'domain': domain,
+            'asOfUtc': as_of_utc,
+            'sourceCount': 0,
+            'qualityScore': 0,
+            'payload': context_payload,
+            'citations': [],
+            'riskFlags': risk_flags,
+            'provider': provider,
+            'runStatus': 'partial',
+            'requestId': request_id,
+            'metadata': metadata,
+          }
+
+        def _should_finalize_capacity_fallback(attempts: list[dict]) -> bool:
+          if not attempts:
+            return False
+          eligible_categories = {'provider_fallback_eligible', 'provider_attempt_timeout', 'provider_circuit_open'}
+          for attempt in attempts:
+            category = str(attempt.get('failureCategory') or '').strip()
+            error = str(attempt.get('error') or '').lower()
+            if category in eligible_categories:
+              return True
+            if any(token in error for token in ('quota', 'usage limit', 'insufficient_quota', 'provider capacity')):
+              return True
+          return False
+
+        def _finalize_capacity_fallback(payload: dict, attempts: list[dict], timeout_seconds: int) -> tuple[bool, str]:
+          callback_url = _resolve_field(payload, 'callbackUrl')
+          runs_base = _resolve_runs_base(callback_url)
+          request_id = _resolve_field(payload, 'requestId')
+          if not runs_base or not request_id:
+            return False, 'capacity fallback missing callbackUrl or requestId'
+          fallback_payload = _build_capacity_fallback_payload(payload, attempts)
+          try:
+            status_code, response_payload = _post_json(f'{runs_base}/runs/finalize', fallback_payload, timeout_seconds)
+          except Exception as error:
+            return False, str(error).strip() or type(error).__name__
+          if 200 <= status_code < 300:
+            if isinstance(response_payload, dict) and response_payload.get('ok') is False:
+              return False, _extract_response_message(response_payload, 'capacity fallback finalize rejected')
+            print('market_context_capacity_fallback_partial_finalized')
+            return True, ''
+          return False, _extract_response_message(response_payload, f'capacity fallback finalize HTTP {status_code}')
 
         def _build_attempt_metadata(
           payload: dict,
@@ -655,6 +740,11 @@ spec:
 
           final_provider = attempts[-1]['provider'] if attempts else 'unknown'
           final_model = attempts[-1]['model'] if attempts else 'unknown'
+          if _should_finalize_capacity_fallback(attempts):
+            finalized, finalize_message = _finalize_capacity_fallback(original_payload, attempts, progress_timeout)
+            if finalized:
+              return 0
+            print(f'market_context_capacity_fallback_failed:{finalize_message}', file=sys.stderr)
           _emit_progress_event(
             original_payload,
             final_provider,
