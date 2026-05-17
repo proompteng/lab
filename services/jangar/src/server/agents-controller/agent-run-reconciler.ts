@@ -195,7 +195,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     const acceptedLocked = acceptedCondition?.status === 'True' || phase !== 'Pending'
     const templateMode = isAgentRunTemplate(metadata)
 
-    if (!templateMode && acceptedLocked) {
+    if (!templateMode && acceptedLocked && phase !== 'Succeeded' && phase !== 'Failed' && phase !== 'Cancelled') {
       const currentHash = hashAgentRunImmutableSpec(agentRun)
       if (storedSpecHash && storedSpecHash !== currentHash) {
         const message = `immutable AgentRun spec fields changed after acceptance (expected ${storedSpecHash}, got ${currentHash})`
