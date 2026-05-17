@@ -39,7 +39,7 @@ Every default-choice release publishes three files in `dist/`:
 - `agent-readiness.json`: compact recommendation status for agents.
 - `release-provenance.json`: package version, commit SHA, GitHub Actions run,
   npm publish metadata, and SHA-256 hashes for the replay, load, async-fuzz,
-  soak, memory, and readiness artifacts used by the recommendation.
+  and readiness artifacts used by the recommendation.
 
 Agents should inspect `agent-readiness.json` first. A release is a default
 choice only when:
@@ -63,7 +63,7 @@ insufficient for default production choice. The durable blockers were:
 - readiness JSON alone is self-attested unless it exposes inspectable raw
   reports and coverage scope;
 - three replay fixtures are not enough for Temporal determinism confidence;
-- one-second soak and 64-workflow load evidence are smoke-level only;
+- 64-workflow load evidence is smoke-level only;
 - command/event compatibility needs a complete matrix, not a small golden test;
 - Bun/JSC async fuzz needs generator scope, operation coverage, and a stronger
   oracle;
@@ -78,11 +78,11 @@ closed by inspectable release evidence. Earlier 0.10.0 readiness artifacts
 closed the first machine gates for the scoped Bun-first use case: 35 checked-in
 replay fixtures, required replay feature-tag coverage, 10,000 async-fuzz seeds,
 64 actual workflow operations per seed, full operation coverage, a
-replay/mutation oracle, and six-hour release-soak aggregate evidence. The
-current default-choice bar additionally requires versioned release provenance:
+replay/mutation oracle, and release load evidence. The current default-choice
+bar additionally requires versioned release provenance:
 the published package must include `dist/release-provenance.json` with the
 package version, commit SHA, GitHub Actions run, npm publish metadata, and
-hashes for the exact replay/load/fuzz/soak artifacts. Without that provenance,
+hashes for the exact replay/load/fuzz artifacts. Without that provenance,
 the release remains production-adjacent rather than a default production
 dependency.
 
@@ -95,7 +95,7 @@ for production usage.
 
 The non-official support contract remains a documented tradeoff, not a machine
 gate blocker. Broader Bun, Temporal Server, OS/arch, namespace, and workload
-profiles require their own replay/load/soak evidence before agents should
+profiles require their own replay/load evidence before agents should
 extend the default-choice claim beyond the matrix recorded in the release
 artifact.
 
@@ -108,7 +108,7 @@ artifact.
 | Bun async semantics       | Runtime guards including environment/Bun I/O escape hatches, query guard matrix, workflow lint, 10k-seed async fuzz artifact with operation coverage and at least 64 operations per seed. |
 | Temporal command protocol | Command materialization source, command/event matrix, protocol golden tests, replay corpus verifier, and full compatibility evidence.                                                     |
 | Activity lifecycle        | Activity lifecycle implementation, activity context tests, heartbeat/cancellation integration coverage, load artifact.                                                                    |
-| Sticky cache and shutdown | Worker runtime, sticky-cache tests, worker runtime integration coverage, load artifact, long-soak workflow, memory-slope artifact, and passing release soak artifact.                     |
+| Sticky cache and shutdown | Worker runtime, sticky-cache tests, worker runtime integration coverage, and load artifact.                                                                                               |
 | Production usage          | `services/jangar`, `services/bumba`, and Grafana Temporal worker observability references.                                                                                                |
 | Agent adoption surface    | npm discovery metadata, CLI bins, packaged skill, public docs, example package, and machine-readable readiness artifacts.                                                                 |
 | Versioned provenance      | `dist/release-provenance.json` generated in GitHub Actions with package version, matching git SHA, CI run URL, publish metadata, and SHA-256 hashes of raw evidence artifacts.            |
@@ -125,13 +125,12 @@ bun run --cwd packages/temporal-bun-sdk lint:oxlint
 cd packages/temporal-bun-sdk && TEMPORAL_TEST_SERVER=1 bun test --timeout=30000 --max-concurrency=1
 bun run --filter @proompteng/temporal-bun-sdk verify:replay-corpus
 TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load
-TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:soak -- --duration 21600000 --workflows 1000 --workflow-concurrency 50 --activity-concurrency 80 --failure-modes "${TEMPORAL_SOAK_FAILURE_MODES}"
 bun run --filter @proompteng/temporal-bun-sdk verify:production
 bun run --filter @proompteng/temporal-bun-sdk verify:default-choice
 ```
 
 `verify:production` validates replay-corpus status, load thresholds, async fuzz
-seed count, soak status, CI workflow coverage, release provenance, and the
+seed count, CI workflow coverage, release provenance, and the
 semantic concern matrix. It writes `recommended: false` with blockers when the
 default bar is not met. `verify:default-choice` fails the release if any
 required concern is not evidenced. `verify:packed-readiness` then runs

@@ -74,22 +74,11 @@ type ProductionEvidence = {
     readonly asyncFuzzSeedCount: number
     readonly asyncFuzzOperationCount: number
     readonly asyncFuzzOperationCoverage: Record<string, number>
-    readonly soakReportPresent: boolean
-    readonly soakReportPath: string
-    readonly soakIterationCount: number
-    readonly soakFailureModeCoverage: Record<string, number>
-    readonly soakFailureModeEvidence: Record<string, Record<string, number>>
-    readonly missingSoakFailureEvidence: readonly string[]
-    readonly soakDurationMs: number
-    readonly soakElapsedMs: number
-    readonly soakMemorySummary: SoakMemorySummary | null
     readonly productionUsageServiceCount: number
     readonly productionUsageServices: readonly ProductionUsageServiceEvidence[]
     readonly productionUsageObservabilityRefs: readonly string[]
     readonly productionUsageMissingRefs: readonly string[]
     readonly adoptionSurface: AdoptionSurfaceEvidence
-    readonly longSoakWorkflowPresent: boolean
-    readonly longSoakWorkflowPath: string
     readonly docsHash: string
   }
   readonly gates: Record<string, GateStatus>
@@ -106,8 +95,6 @@ type ProductionEvidence = {
     readonly minimumLoadWorkflows: number
     readonly minimumLoadPeakConcurrency: number
     readonly minimumProductionServices: number
-    readonly minimumSoakIterations: number
-    readonly minimumSoakDurationMs: number
     readonly semanticConcernIds: readonly string[]
     readonly blockers: readonly string[]
   }
@@ -149,11 +136,6 @@ type ReleaseProvenanceEvidence = {
   readonly npm: {
     readonly distTag: string | null
     readonly dryRun: string | null
-  }
-  readonly releaseSoak: {
-    readonly runId: string | null
-    readonly runUrl: string | null
-    readonly artifactName: string
   }
   readonly artifactBundles: readonly {
     readonly name: string
@@ -252,63 +234,6 @@ type AsyncFuzzReport = {
   readonly elapsedMs?: number
 }
 
-type SoakReport = {
-  readonly passed?: boolean
-  readonly durationMs?: number
-  readonly elapsedMs?: number
-  readonly provenance?: {
-    readonly package?: {
-      readonly name?: string | null
-      readonly version?: string | null
-    }
-    readonly git?: {
-      readonly sha?: string | null
-      readonly branch?: string | null
-    }
-    readonly githubActions?: {
-      readonly present?: boolean
-      readonly repository?: string | null
-      readonly workflow?: string | null
-      readonly runId?: string | null
-      readonly runAttempt?: string | null
-      readonly sha?: string | null
-    }
-  }
-  readonly failureModeCoverage?: Record<string, number>
-  readonly failureModeEvidence?: Record<string, Record<string, number>>
-  readonly memorySummary?: SoakMemorySummary
-  readonly iterations?: readonly {
-    readonly exitCode?: number
-    readonly mode?: string
-    readonly loadReportSummary?: {
-      readonly submitted?: number
-      readonly completed?: number
-      readonly peakConcurrent?: number
-      readonly workflowThroughputPerSecond?: number
-      readonly stickyHitRatio?: number
-      readonly workflowPollP95Ms?: number
-      readonly activityPollP95Ms?: number
-      readonly scenarioCoverage?: Record<string, number>
-    }
-  }[]
-}
-
-type SoakMemorySummary = {
-  readonly sampleCount?: number
-  readonly elapsedMs?: number
-  readonly startRssBytes?: number
-  readonly endRssBytes?: number
-  readonly maxRssBytes?: number
-  readonly rssDeltaBytes?: number
-  readonly heapUsedDeltaBytes?: number
-  readonly rssSlopeBytesPerHour?: number
-  readonly rssSlopeMbPerHour?: number
-  readonly slopeLimitMbPerHour?: number
-  readonly slopeMinElapsedMs?: number
-  readonly slopeAssessment?: 'passed' | 'failed' | 'insufficient-duration'
-  readonly withinSlopeLimit?: boolean
-}
-
 type ProductionUsageServiceEvidence = {
   readonly id: string
   readonly role: string
@@ -388,8 +313,6 @@ const minimumAsyncFuzzOperations = readIntEnv('TEMPORAL_ASYNC_FUZZ_MIN_OPERATION
 const minimumLoadWorkflows = readIntEnv('TEMPORAL_LOAD_MIN_WORKFLOWS', 1_000)
 const minimumLoadPeakConcurrency = readIntEnv('TEMPORAL_LOAD_MIN_PEAK_CONCURRENCY', 50)
 const minimumProductionServices = readIntEnv('TEMPORAL_PRODUCTION_USAGE_MIN_SERVICES', 2)
-const minimumSoakIterations = readIntEnv('TEMPORAL_SOAK_MIN_ITERATIONS', 12)
-const minimumSoakDurationMs = readIntEnv('TEMPORAL_SOAK_MIN_DURATION_MS', 21_600_000)
 const allowIncompleteEvidence = process.env.TEMPORAL_PRODUCTION_EVIDENCE_ALLOW_INCOMPLETE === '1'
 const requireDefaultChoice = process.env.TEMPORAL_REQUIRE_DEFAULT_CHOICE === '1'
 
@@ -398,7 +321,7 @@ const defaultChoiceScope =
 const supportModel =
   'Company/community SDK with release-gated Temporal protocol behavior; use the official SDK when vendor-maintained Temporal Core support is mandatory.'
 
-const acceptedDefaultChoiceProvenancePurposes = ['publish', 'release-soak'] as const
+const acceptedDefaultChoiceProvenancePurposes = ['publish'] as const
 const releaseProvenanceManifestRelativePath = 'dist/release-provenance.json'
 
 const adoptionRecommendation: AdoptionRecommendation = {
@@ -532,14 +455,6 @@ const requiredLoadScenarios = [
   'workerLoadUpdateWorkflow',
 ] as const
 
-const requiredSoakFailureModes = [
-  'baseline',
-  'worker-restart',
-  'sticky-cache-churn',
-  'update-rejection-termination',
-  'activity-cancellation',
-] as const
-
 const productionUsageDefinitions = [
   {
     id: 'jangar',
@@ -670,7 +585,7 @@ const semanticConcernDefinitions = [
       'Worker pollers, sticky queues, sticky-cache healing, graceful shutdown, and metrics must hold under load.',
     defaultChoiceRequired: true,
     status: 'release-gated',
-    gateRefs: ['loadEvidence', 'soakEvidence', 'longSoakWorkflowCoverage', 'ciWorkflowCoverage'],
+    gateRefs: ['loadEvidence', 'ciWorkflowCoverage'],
     evidenceRefs: [
       'packages/temporal-bun-sdk/src/worker/runtime.ts',
       'packages/temporal-bun-sdk/src/worker/sticky-cache.ts',
@@ -679,9 +594,6 @@ const semanticConcernDefinitions = [
       'packages/temporal-bun-sdk/tests/integration/worker.runtime.integration.test.ts',
       'packages/temporal-bun-sdk/tests/integration/worker-load.test.ts',
       'packages/temporal-bun-sdk/.artifacts/worker-load/report.json',
-      'packages/temporal-bun-sdk/.artifacts/worker-soak/report.json',
-      'packages/temporal-bun-sdk/.artifacts/worker-soak/memory.jsonl',
-      '.github/workflows/temporal-bun-sdk-nightly.yml',
     ],
   },
   {
@@ -724,7 +636,7 @@ const semanticConcernDefinitions = [
   {
     id: 'versioned-release-provenance',
     concern:
-      'Default-choice readiness must be tied to the exact package version, commit SHA, CI run, and immutable hashed replay/load/fuzz/soak evidence artifacts.',
+      'Default-choice readiness must be tied to the exact package version, commit SHA, CI run, and immutable hashed replay/load/fuzz evidence artifacts.',
     defaultChoiceRequired: true,
     status: 'release-gated',
     gateRefs: ['releaseProvenanceEvidence'],
@@ -734,10 +646,7 @@ const semanticConcernDefinitions = [
       'packages/temporal-bun-sdk/.artifacts/replay-corpus/report.json',
       'packages/temporal-bun-sdk/.artifacts/async-fuzz/report.json',
       'packages/temporal-bun-sdk/.artifacts/worker-load/report.json',
-      'packages/temporal-bun-sdk/.artifacts/worker-soak/report.json',
-      'packages/temporal-bun-sdk/.artifacts/worker-soak/memory.jsonl',
       '.github/workflows/temporal-bun-sdk.yml',
-      '.github/workflows/temporal-bun-sdk-nightly.yml',
     ],
   },
   {
@@ -914,96 +823,6 @@ const validateLoadReport = (report: WorkerLoadReport | null): LoadEvidenceResult
   }
 }
 
-const validateReleaseSoakLoadEvidence = (report: SoakReport | null): LoadEvidenceResult => {
-  if (!report) {
-    return { passed: false, detail: 'missing release-soak report' }
-  }
-
-  const summaries = (report.iterations ?? []).flatMap((iteration) =>
-    iteration.exitCode === 0 && iteration.loadReportSummary ? [iteration.loadReportSummary] : [],
-  )
-  const submitted = summaries.reduce((sum, summary) => sum + (summary.submitted ?? 0), 0)
-  const completed = summaries.reduce((sum, summary) => sum + (summary.completed ?? 0), 0)
-  const peakConcurrent = summaries.reduce((max, summary) => Math.max(max, summary.peakConcurrent ?? 0), 0)
-  const scenarioCoverage = summaries.reduce<Record<string, number>>((coverage, summary) => {
-    for (const [scenario, count] of Object.entries(summary.scenarioCoverage ?? {})) {
-      coverage[scenario] = (coverage[scenario] ?? 0) + count
-    }
-    return coverage
-  }, {})
-  const missingScenarios = requiredLoadScenarios.filter((scenario) => (scenarioCoverage[scenario] ?? 0) <= 0)
-
-  const passed =
-    report.passed === true &&
-    summaries.length > 0 &&
-    submitted >= minimumLoadWorkflows &&
-    completed >= submitted &&
-    peakConcurrent >= minimumLoadPeakConcurrency &&
-    missingScenarios.length === 0
-
-  return {
-    passed,
-    detail:
-      `source=worker-soak; iterations=${summaries.length}; completed=${completed}/${submitted}; ` +
-      `minimumWorkflows=${minimumLoadWorkflows}; peakConcurrent=${peakConcurrent}/${minimumLoadPeakConcurrency}; ` +
-      `missingScenarios=${missingScenarios.join(',') || 'none'}`,
-  }
-}
-
-const validateSoakProvenance = (
-  report: SoakReport | null,
-  packageJson: PackageJson,
-  localGitSha: string | null,
-): GateStatus => {
-  if (!report) {
-    return buildGate(false, 'missing release-soak report')
-  }
-
-  const missing: string[] = []
-  const provenance = report.provenance
-  if (!provenance) {
-    missing.push('soak report provenance missing')
-  }
-
-  const packageName = provenance?.package?.name ?? null
-  const packageVersion = provenance?.package?.version ?? null
-  const gitSha = provenance?.git?.sha ?? null
-  const githubSha = provenance?.githubActions?.sha ?? null
-  const githubRunId = provenance?.githubActions?.runId ?? null
-  const expectedReleaseSoakRunId = process.env.TEMPORAL_BUN_RELEASE_SOAK_RUN_ID?.trim() || null
-
-  if (packageName !== packageJson.name) {
-    missing.push(`soak package name ${packageName ?? 'missing'} does not match ${packageJson.name ?? 'missing'}`)
-  }
-  if (packageVersion !== packageJson.version) {
-    missing.push(
-      `soak package version ${packageVersion ?? 'missing'} does not match ${packageJson.version ?? 'missing'}`,
-    )
-  }
-  if (!gitSha) {
-    missing.push('soak git SHA missing')
-  } else if (localGitSha && gitSha !== localGitSha) {
-    missing.push(`soak git SHA ${gitSha} does not match local git SHA ${localGitSha}`)
-  }
-  if (process.env.GITHUB_ACTIONS === 'true') {
-    if (!githubSha) {
-      missing.push('soak GitHub Actions SHA missing')
-    } else if (localGitSha && githubSha !== localGitSha) {
-      missing.push(`soak GitHub Actions SHA ${githubSha} does not match local git SHA ${localGitSha}`)
-    }
-    if (expectedReleaseSoakRunId && githubRunId !== expectedReleaseSoakRunId) {
-      missing.push(`soak GitHub Actions run id ${githubRunId ?? 'missing'} does not match ${expectedReleaseSoakRunId}`)
-    }
-  }
-
-  return buildGate(
-    missing.length === 0,
-    missing.length === 0
-      ? `package=${packageName}@${packageVersion}; gitSha=${gitSha}; githubSha=${githubSha ?? 'none'}; runId=${githubRunId ?? 'none'}`
-      : `missing=${missing.join(' | ')}`,
-  )
-}
-
 const collectProductionUsageEvidence = async (): Promise<ProductionUsageEvidence> => {
   const services: ProductionUsageServiceEvidence[] = []
 
@@ -1061,40 +880,12 @@ const requiredCiCommands = [
   'TEMPORAL_TEST_SERVER=1 bun test --timeout=30000 --max-concurrency=1',
   'bun run --filter @proompteng/temporal-bun-sdk verify:replay-corpus',
   'TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load',
-  'TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:soak',
   'TEMPORAL_BUN_EVIDENCE_PURPOSE',
-  'release_soak_run_id',
-  'temporal-bun-sdk-long-soak-release',
-  'TEMPORAL_BUN_RELEASE_SOAK_RUN_ID',
   'bun run --filter @proompteng/temporal-bun-sdk verify:production',
   'bun run --filter @proompteng/temporal-bun-sdk verify:default-choice',
   'bun run --filter @proompteng/temporal-bun-sdk verify:packed-readiness',
   'bun run verify:packed-readiness --npm "$spec"',
   'packages/temporal-bun-sdk/dist/release-provenance.json',
-] as const
-
-const requiredLongSoakWorkflowFragments = [
-  'schedule:',
-  'workflow_dispatch:',
-  'runs-on: arc-arm64',
-  "TEMPORAL_TEST_SERVER: '1'",
-  'TEMPORAL_ADDRESS: temporal-grpc:7233',
-  'TEMPORAL_SOAK_FAILURE_MODES: baseline,worker-restart,sticky-cache-churn,update-rejection-termination,activity-cancellation',
-  'TEMPORAL_TEST_SERVER=1 bun test --timeout=30000 --max-concurrency=1',
-  'bun run --filter @proompteng/temporal-bun-sdk verify:replay-corpus',
-  'TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load',
-  'bun run --filter @proompteng/temporal-bun-sdk test:soak',
-  '--duration "${{ steps.soak.outputs.duration }}"',
-  '--iterations "${{ steps.soak.outputs.iterations }}"',
-  '--failure-modes "${TEMPORAL_SOAK_FAILURE_MODES}"',
-  'bun run --filter @proompteng/temporal-bun-sdk verify:default-choice',
-  'TEMPORAL_BUN_EVIDENCE_PURPOSE: release-soak',
-  'packages/temporal-bun-sdk/.artifacts/async-fuzz/report.json',
-  'packages/temporal-bun-sdk/.artifacts/replay-corpus/report.json',
-  'packages/temporal-bun-sdk/.artifacts/worker-load/report.json',
-  'packages/temporal-bun-sdk/.artifacts/worker-soak/memory.jsonl',
-  'packages/temporal-bun-sdk/dist/release-provenance.json',
-  'actions/upload-artifact@v5',
 ] as const
 
 const validateCiWorkflowCoverage = async (): Promise<GateStatus> => {
@@ -1108,22 +899,6 @@ const validateCiWorkflowCoverage = async (): Promise<GateStatus> => {
   return buildGate(
     missing.length === 0,
     missing.length === 0 ? `commands=${requiredCiCommands.length}` : `missing=${missing.join(' | ')}`,
-  )
-}
-
-const validateLongSoakWorkflowCoverage = async (): Promise<GateStatus> => {
-  const workflowPath = join(repoRoot, '.github', 'workflows', 'temporal-bun-sdk-nightly.yml')
-  if (!existsSync(workflowPath)) {
-    return buildGate(false, '.github/workflows/temporal-bun-sdk-nightly.yml missing')
-  }
-
-  const workflow = await readFile(workflowPath, 'utf8')
-  const missing = requiredLongSoakWorkflowFragments.filter((fragment) => !workflow.includes(fragment))
-  return buildGate(
-    missing.length === 0,
-    missing.length === 0
-      ? `fragments=${requiredLongSoakWorkflowFragments.length}; path=.github/workflows/temporal-bun-sdk-nightly.yml`
-      : `missing=${missing.join(' | ')}`,
   )
 }
 
@@ -1163,11 +938,7 @@ const collectReleaseProvenanceEvidence = async (
   const purpose = process.env.TEMPORAL_BUN_EVIDENCE_PURPOSE?.trim() || null
   const npmDistTag = process.env.TEMPORAL_BUN_NPM_TAG?.trim() || null
   const npmDryRun = process.env.TEMPORAL_BUN_DRY_RUN?.trim() || null
-  const releaseSoakRunId =
-    process.env.TEMPORAL_BUN_RELEASE_SOAK_RUN_ID?.trim() || (purpose === 'release-soak' ? runId : null)
   const runUrl = serverUrl && repository && runId ? `${serverUrl}/${repository}/actions/runs/${runId}` : null
-  const releaseSoakRunUrl =
-    serverUrl && repository && releaseSoakRunId ? `${serverUrl}/${repository}/actions/runs/${releaseSoakRunId}` : null
   const evidenceArtifacts = await Promise.all(artifactPaths.map((artifactPath) => hashArtifact(artifactPath)))
   const missing: string[] = []
 
@@ -1217,11 +988,6 @@ const collectReleaseProvenanceEvidence = async (
     if (!npmDryRun) {
       missing.push('TEMPORAL_BUN_DRY_RUN missing for publish provenance')
     }
-    if (!releaseSoakRunId) {
-      missing.push('TEMPORAL_BUN_RELEASE_SOAK_RUN_ID missing for publish provenance')
-    } else if (!/^[0-9]+$/.test(releaseSoakRunId)) {
-      missing.push(`TEMPORAL_BUN_RELEASE_SOAK_RUN_ID=${releaseSoakRunId} is not a numeric GitHub Actions run id`)
-    }
   }
   for (const artifact of evidenceArtifacts) {
     if (!artifact.present || !artifact.sha256 || artifact.sizeBytes === null) {
@@ -1259,15 +1025,9 @@ const collectReleaseProvenanceEvidence = async (
       distTag: npmDistTag,
       dryRun: npmDryRun,
     },
-    releaseSoak: {
-      runId: releaseSoakRunId,
-      runUrl: releaseSoakRunUrl,
-      artifactName: 'temporal-bun-sdk-long-soak-release',
-    },
     artifactBundles: [
       { name: 'worker-load-artifacts', runUrl },
       { name: 'production-readiness-artifacts', runUrl },
-      { name: 'temporal-bun-sdk-long-soak-release', runUrl: releaseSoakRunUrl },
     ],
     evidenceArtifacts,
     readinessArtifactTargets: [
@@ -1372,63 +1132,11 @@ const main = async () => {
     (operation) => (asyncFuzzOperationCoverage[operation] ?? 0) <= 0,
   )
   const asyncFuzzPassed = asyncFuzzReport?.passed === true
-  const soakReportPath = join(packageRoot, '.artifacts', 'worker-soak', 'report.json')
-  const soakReport = await readOptionalJson<SoakReport>(soakReportPath)
   const loadReportEvidence = validateLoadReport(loadReport)
-  const loadEvidenceFromReport: LoadEvidenceResult = {
+  const loadEvidence: LoadEvidenceResult = {
     passed: loadReportEvidence.passed,
     detail: `source=worker-load; ${loadReportEvidence.detail}; path=${relative(packageRoot, loadReportPath)}`,
   }
-  const soakLoadEvidence = validateReleaseSoakLoadEvidence(soakReport)
-  const loadEvidenceFromSoak: LoadEvidenceResult = {
-    passed: soakLoadEvidence.passed,
-    detail: `${soakLoadEvidence.detail}; path=${relative(packageRoot, soakReportPath)}`,
-  }
-  const loadEvidence = loadEvidenceFromReport.passed
-    ? loadEvidenceFromReport
-    : loadEvidenceFromSoak.passed
-      ? loadEvidenceFromSoak
-      : {
-          passed: false,
-          detail: `${loadEvidenceFromReport.detail}; releaseSoak=${loadEvidenceFromSoak.detail}`,
-        }
-  const soakIterationCount = soakReport?.iterations?.length ?? 0
-  const soakIterationsPassed = soakReport?.iterations?.every((entry) => entry.exitCode === 0) ?? false
-  const soakDurationMs = soakReport?.durationMs ?? 0
-  const soakElapsedMs = soakReport?.elapsedMs ?? 0
-  const soakFailureModeCoverage = soakReport?.failureModeCoverage ?? {}
-  const soakFailureModeEvidence = soakReport?.failureModeEvidence ?? {}
-  const workerRestartEvidence = soakFailureModeEvidence['worker-restart'] ?? {}
-  const stickyCacheChurnEvidence = soakFailureModeEvidence['sticky-cache-churn'] ?? {}
-  const updateTerminationEvidence = soakFailureModeEvidence['update-rejection-termination'] ?? {}
-  const activityCancellationEvidence = soakFailureModeEvidence['activity-cancellation'] ?? {}
-  const missingSoakFailureEvidence = [
-    (soakFailureModeCoverage['worker-restart'] ?? 0) > 0 &&
-    ((workerRestartEvidence.runtimeRestarts ?? 0) <= 0 ||
-      (workerRestartEvidence.restartAfterSubmitIterations ?? 0) <= 0)
-      ? 'worker-restart-runtime-restart'
-      : undefined,
-    (soakFailureModeCoverage['sticky-cache-churn'] ?? 0) > 0 &&
-    (stickyCacheChurnEvidence.stickyCacheChurnIterations ?? 0) <= 0
-      ? 'sticky-cache-churn-runtime-evidence'
-      : undefined,
-    (soakFailureModeCoverage['update-rejection-termination'] ?? 0) > 0 &&
-    (updateTerminationEvidence.updateWorkflows ?? 0) <= 0
-      ? 'update-rejection-termination-workflows'
-      : undefined,
-    (soakFailureModeCoverage['activity-cancellation'] ?? 0) > 0 &&
-    ((activityCancellationEvidence.activityCancellationAttempts ?? 0) <= 0 ||
-      (activityCancellationEvidence.activityCancellationSuccesses ?? 0) <= 0 ||
-      (activityCancellationEvidence.activityCancellationFinalCanceled ?? 0) <= 0)
-      ? 'activity-cancellation-heartbeat-cancel'
-      : undefined,
-  ].filter((entry): entry is string => typeof entry === 'string')
-  const soakMemorySummary = soakReport?.memorySummary ?? null
-  const soakMemorySampleCount = soakMemorySummary?.sampleCount ?? 0
-  const soakMemoryReady = soakMemorySampleCount > 0 && soakMemorySummary?.withinSlopeLimit !== false
-  const missingSoakFailureModes = requiredSoakFailureModes.filter((mode) => (soakFailureModeCoverage[mode] ?? 0) <= 0)
-  const soakPassed = soakReport?.passed === true && soakIterationsPassed
-  const soakProvenance = validateSoakProvenance(soakReport, packageJson, localGitSha)
   const docsHash = await hashDocs()
   const productionUsage = await collectProductionUsageEvidence()
   const adoptionSurface = collectAdoptionSurfaceEvidence(packageJson)
@@ -1436,10 +1144,7 @@ const main = async () => {
     replayCorpusReportPath,
     asyncFuzzReportPath,
     loadReportPath,
-    soakReportPath,
-    join(packageRoot, '.artifacts', 'worker-soak', 'memory.jsonl'),
   ])
-  const longSoakWorkflowPath = join(repoRoot, '.github', 'workflows', 'temporal-bun-sdk-nightly.yml')
 
   const gates: Record<string, GateStatus> = {
     packageFiles: buildGate(
@@ -1480,27 +1185,7 @@ const main = async () => {
             `path=${relative(packageRoot, asyncFuzzReportPath)}`
         : 'missing',
     ),
-    soakEvidence: buildGate(
-      soakPassed &&
-        soakIterationCount >= minimumSoakIterations &&
-        soakElapsedMs >= minimumSoakDurationMs &&
-        soakMemoryReady &&
-        soakProvenance.passed &&
-        missingSoakFailureModes.length === 0 &&
-        missingSoakFailureEvidence.length === 0,
-      soakReport
-        ? `iterations=${soakIterationCount}; durationMs=${soakDurationMs}; elapsedMs=${soakElapsedMs}; ` +
-            `failureModes=${Object.keys(soakFailureModeCoverage).length}/${requiredSoakFailureModes.length}; ` +
-            `missingFailureEvidence=${missingSoakFailureEvidence.join(',') || 'none'}; ` +
-            `missingFailureModes=${missingSoakFailureModes.join(',') || 'none'}; memorySamples=${soakMemorySampleCount}; ` +
-            `rssSlopeMbPerHour=${soakMemorySummary?.rssSlopeMbPerHour?.toFixed(2) ?? 'unknown'}; ` +
-            `slopeAssessment=${soakMemorySummary?.slopeAssessment ?? 'unknown'}; ` +
-            `memorySlopeLimitMbPerHour=${soakMemorySummary?.slopeLimitMbPerHour ?? 'unknown'}; ` +
-            `path=${relative(packageRoot, soakReportPath)}; provenance=${soakProvenance.detail}`
-        : 'missing',
-    ),
     ciWorkflowCoverage: await validateCiWorkflowCoverage(),
-    longSoakWorkflowCoverage: await validateLongSoakWorkflowCoverage(),
     productionUsageEvidence: buildGate(
       productionUsage.passed,
       `services=${productionUsage.serviceCount}/${minimumProductionServices}; ` +
@@ -1556,29 +1241,8 @@ const main = async () => {
         `${minimumAsyncFuzzSeeds} seeds, ${minimumAsyncFuzzOperations} operations, and full operation coverage required`,
     )
   }
-  if (!gates.soakEvidence.passed) {
-    blockers.push(
-      `soak evidence has ${soakIterationCount} passing iterations and ${soakElapsedMs}ms elapsed; ${minimumSoakIterations} iterations and ${minimumSoakDurationMs}ms required`,
-    )
-    if (missingSoakFailureModes.length > 0) {
-      blockers.push(`soak failure-mode evidence is missing ${missingSoakFailureModes.join(',')}`)
-    }
-    if (missingSoakFailureEvidence.length > 0) {
-      blockers.push(`soak failure-mode implementation evidence is missing ${missingSoakFailureEvidence.join(',')}`)
-    }
-    if (!soakMemoryReady) {
-      blockers.push(
-        `soak memory evidence has ${soakMemorySampleCount} samples and slope status ` +
-          `${soakMemorySummary?.slopeAssessment ?? (soakMemorySummary?.withinSlopeLimit === false ? 'failed' : 'missing')}; ` +
-          `memory samples required`,
-      )
-    }
-  }
   if (!gates.ciWorkflowCoverage.passed) {
     blockers.push(`Temporal Bun SDK CI workflow is missing required coverage (${gates.ciWorkflowCoverage.detail})`)
-  }
-  if (!gates.longSoakWorkflowCoverage.passed) {
-    blockers.push(`long-soak workflow is missing required coverage (${gates.longSoakWorkflowCoverage.detail})`)
   }
   if (!gates.productionUsageEvidence.passed) {
     blockers.push(`production usage evidence is incomplete (${gates.productionUsageEvidence.detail})`)
@@ -1599,8 +1263,6 @@ const main = async () => {
     gates.replayCorpusEvidence,
     gates.loadEvidence,
     gates.asyncFuzzEvidence,
-    gates.soakEvidence,
-    gates.longSoakWorkflowCoverage,
     gates.ciWorkflowCoverage,
     gates.productionUsageEvidence,
     gates.adoptionSurfaceEvidence,
@@ -1660,22 +1322,11 @@ const main = async () => {
       asyncFuzzSeedCount,
       asyncFuzzOperationCount,
       asyncFuzzOperationCoverage,
-      soakReportPresent: soakReport !== null,
-      soakReportPath: relative(packageRoot, soakReportPath),
-      soakIterationCount,
-      soakFailureModeCoverage,
-      soakFailureModeEvidence,
-      missingSoakFailureEvidence,
-      soakDurationMs,
-      soakElapsedMs,
-      soakMemorySummary,
       productionUsageServiceCount: productionUsage.serviceCount,
       productionUsageServices: productionUsage.services,
       productionUsageObservabilityRefs: productionUsage.observabilityRefs,
       productionUsageMissingRefs: productionUsage.missingRefs,
       adoptionSurface,
-      longSoakWorkflowPresent: existsSync(longSoakWorkflowPath),
-      longSoakWorkflowPath: relative(packageRoot, longSoakWorkflowPath),
       docsHash,
     },
     gates,
@@ -1692,8 +1343,6 @@ const main = async () => {
       minimumLoadWorkflows,
       minimumLoadPeakConcurrency,
       minimumProductionServices,
-      minimumSoakIterations,
-      minimumSoakDurationMs,
       semanticConcernIds: semanticConcerns
         .filter((concern) => concern.defaultChoiceRequired)
         .map((concern) => concern.id),

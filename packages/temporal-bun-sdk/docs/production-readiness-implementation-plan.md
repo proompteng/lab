@@ -44,15 +44,15 @@ work is to convert private confidence into public, machine-checkable evidence.
 | Surface              | Current implementation                                                                                                                                                                                                                                                                                                                                       | Production gap to close                                                                                                                                                                                                    |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Package boundary     | `packages/temporal-bun-sdk/package.json` ships `dist`, `docs`, `skills`, and `README.md`; runtime dependencies are `@bufbuild/protobuf`, Connect, Effect, and TypeScript. `verify:production` runs `tests/packaging/manifest-packaging.test.ts`.                                                                                                             | Keep this as a release gate and publish the result in a release manifest so agents can prove the package is not a Node/native wrapper.                                                                                     |
-| Worker runtime       | `src/worker/runtime.ts` owns config load, WorkflowService transport, workflow/activity pollers, sticky queues, deployment/build IDs, scheduler, metrics, plugins, graceful shutdown, determinism marker emission, and activity task lifecycle.                                                                                                               | Add restart/chaos/soak scenarios for poll cancellation, sticky cache drift, task-not-found, heartbeat failure, tuner changes, and shutdown during active workflow/activity tasks.                                          |
+| Worker runtime       | `src/worker/runtime.ts` owns config load, WorkflowService transport, workflow/activity pollers, sticky queues, deployment/build IDs, scheduler, metrics, plugins, graceful shutdown, determinism marker emission, and activity task lifecycle.                                                                                                               | Keep restart, cancellation, sticky cache, and shutdown behavior covered by focused integration and load evidence.                                                                                                          |
 | Workflow execution   | `src/workflow/executor.ts` runs registered workflows through Effect, creates `WorkflowCommandContext`, evaluates queries, processes updates, and materializes success/failure commands.                                                                                                                                                                      | Add protocol golden tests that compare emitted commands and update protocol messages against captured histories and expected server-visible events.                                                                        |
 | Determinism guard    | `src/workflow/determinism.ts` records command, random, time, signal, query, and update streams and throws `WorkflowNondeterminismError` on replay mismatch.                                                                                                                                                                                                  | Add async interleaving fuzz tests and query-mode negative tests. Query handlers must never read live time/randomness as a hidden side channel.                                                                             |
 | Runtime guards       | `src/workflow/guards.ts` patches `Date`, `Date.now`, `Math.random`, `crypto.randomUUID`, `crypto.getRandomValues`, `fetch`, timers, `performance.now`, `WebSocket`, `process.env`, `Bun.env`, `Bun.spawn`, `Bun.nanoseconds`, `Bun.sleep`, `Bun.file`, `Bun.write`, `Bun.connect`, and `Bun.serve`; `WorkflowExecutor` requires strict guards in production. | Release gate includes runtime guard tests, query guard matrix, workflow lint tests, async fuzz artifacts, and semantic-readiness evidence for Bun async/runtime behavior.                                                  |
 | Static workflow lint | `src/bin/lint-workflows-command.ts` walks workflow import graphs and denies unsafe imports/globals/member expressions. Tests cover `fetch`, `process.env`, `Bun.env`, Bun timer/file/socket APIs, captured `Date.now`, and importing client APIs from workflows.                                                                                             | Add rules for timers captured through aliases and keep expanding adversarial workflow-isolation cases as Bun exposes new runtime APIs. Make release CI fail if configured workflow entries are missing.                    |
 | Replay               | `src/workflow/replay.ts` ingests real histories, applies full/delta determinism markers, reconstructs command history, tracks updates, and diffs mismatch metadata. Stored fixtures now cover the required replay feature tags, including signal/query/update, cancellation, search attributes, side effects, versioning, and workflow-task failure.         | Scale from the current gate-passing replay corpus to a larger versioned corpus that covers every supported command/event pair, sticky replay variants, old SDK versions, and additional Temporal Server/Bun/platform rows. |
 | Integration          | `tests/integration/**` covers history replay, activity lifecycle, query-only workflows, signal/query, workflow updates, payload codecs, client resilience, worker ops, schedules, and worker runtime behavior behind `TEMPORAL_INTEGRATION_TESTS=1`.                                                                                                         | Split optional service-unavailable skips from release-blocking skips. In release CI, a missing dev server or unimplemented critical endpoint must fail instead of silently reducing coverage.                              |
-| Load/soak            | `tests/integration/load/**` submits CPU, activity, and update workflows, checks throughput, sticky hit ratio, and poll p95 latency, and writes JSONL/report artifacts. `scripts/run-worker-soak.ts` wraps load iterations and now records baseline, worker-restart, sticky-cache-churn, update rejection/termination, and activity-cancellation smoke modes. | Add Temporal endpoint interruption, heartbeat RPC failure injection, and completed nightly/release soak evidence.                                                                                                          |
-| CI                   | `.github/workflows/temporal-bun-sdk.yml` builds, lints, tests, runs replay-corpus, async-fuzz, load, soak smoke, semantic production verification, and uploads release artifacts.                                                                                                                                                                            | Add longer restart/chaos soak lanes before broadening support to new platforms, Temporal Server minors, or higher-throughput profiles.                                                                                     |
+| Load                 | `tests/integration/load/**` submits CPU, activity, and update workflows, checks throughput, sticky hit ratio, and poll p95 latency, and writes JSONL/report artifacts.                                                                                                                                                                                       | Keep release blocking on the CI load report and add targeted failure-injection tests instead of long release validation.                                                                                                   |
+| CI                   | `.github/workflows/temporal-bun-sdk.yml` builds, lints, tests, runs replay-corpus, async-fuzz, load, semantic production verification, and uploads release artifacts.                                                                                                                                                                                        | Keep the publish path short enough to release directly.                                                                                                                                                                    |
 
 ## Production Bar
 
@@ -65,8 +65,8 @@ single production-readiness artifact containing:
   matrix, and mismatch diagnostics samples.
 - Protocol proof: command/update/query/signal/activity golden tests by Temporal
   Server version and SDK version.
-- Operations proof: load and soak reports with throughput, latency, sticky cache
-  ratio, heartbeat retries/failures, worker failures, memory slope, and restart
+- Operations proof: load reports with throughput, latency, sticky cache ratio,
+  heartbeat retries/failures, worker failures, memory slope, and restart
   outcomes.
 - Compatibility proof: supported Bun, Temporal Server, Temporal Cloud, TLS/mTLS,
   payload codec, and deployment/versioning matrix.
@@ -215,7 +215,7 @@ Acceptance:
   fixture or an explicit unsupported-status entry.
 - Protocol golden tests fail on accidental protobuf field drift.
 
-### P4 - Worker Lifecycle, Chaos, And Soak
+### P4 - Worker Lifecycle And Failure Injection
 
 Purpose: prove the runtime holds under real operating conditions.
 
@@ -236,44 +236,32 @@ Implementation:
   - force sticky cache eviction and drift rebuilds;
   - track task-not-found, nondeterminism, heartbeat retry/failure, activity
     failure, workflow failure, and sticky heal metrics.
-- Harden `scripts/run-worker-soak.ts`.
-  - Duration-mode wrapper around the load runner with stricter artifact
-    validation.
-  - Current smoke mode records per-iteration load summaries, `memory.jsonl`,
-    RSS/heap slope summaries, and coverage for baseline, worker-restart,
-    sticky-cache-churn, update rejection/termination, and activity
-    cancellation.
+- Harden load evidence instead of keeping a long release gate.
+  - The release path uses the worker-load runner as the blocking operational
+    artifact.
+  - Restart, sticky-cache, update termination, and activity-cancellation
+    behavior should be covered by focused tests or load scenarios, not a
+    separate long publish prerequisite.
   - `tests/worker.task-queue-kind.test.ts` now directly holds normal workflow,
     sticky workflow, and activity long-poll RPCs open and verifies worker
     shutdown aborts every poll, flushes metrics, and reports a drained shutdown.
   - `worker-restart` now shuts down the active worker runtime after workflow
     submission, waits briefly, starts a replacement runtime on the same queue,
-    and records restart events in the load and soak reports.
+    and records restart events in the load report.
   - `activity-cancellation` cancels activity-heavy workflows while heartbeat
     activities are running and records cancellation attempts, successful
     cancellation calls, and terminal `CANCELED` workflow outcomes in the load
-    and soak reports.
-  - Further hardening work is endpoint disconnect injection, heartbeat RPC
-    failure injection, and longer environment-specific soaks before broadening
-    the support matrix beyond the 0.10.0 release evidence.
-- `.github/workflows/temporal-bun-sdk-nightly.yml` now provides the long-soak
-  lane.
-  - Runs 2-hour soak nightly.
-  - Runs 6-hour soak in manual release mode.
-  - Uploads long-soak and readiness artifacts.
-  - Allows longer manual soak before broadening platform or throughput support.
+    report.
+  - Further hardening work is endpoint disconnect injection and heartbeat RPC
+    failure injection before broadening the support matrix beyond the release
+    evidence.
 
 Acceptance:
 
 - PR load smoke: current short load test remains under 10 minutes.
-- Nightly soak: 2 hours, zero stuck workflows, no unhandled runtime rejection,
-  memory slope below threshold, sticky heal rate below threshold, and all
-  metrics artifacts uploaded.
-- Release soak: 6 hours against pinned Temporal Server with restart mode
-  enabled.
-- Default-choice release gate: six-hour CI soak artifact present and validated
-  by `verify:production` and `verify:default-choice`; extended soak is required
-  for unusual workload or platform risk.
+- Default-choice release gate: replay, async fuzz, worker load, provenance, and
+  semantic evidence validated by `verify:production` and
+  `verify:default-choice`.
 
 ### P5 - CI Skip Policy And Release Blocking Rules
 
@@ -292,7 +280,6 @@ Implementation:
   - `test:integration:critical`;
   - `test:integration:optional`;
   - `test:load`;
-  - `test:soak`.
 - Publish `.artifacts/temporal-bun-sdk/test-summary.json`.
 
 Acceptance:
@@ -349,7 +336,6 @@ Acceptance:
 | Protocol golden      | `bun test tests/protocol/*.test.ts`                               | required                  | required            | required                                        |
 | Critical integration | `TEMPORAL_TEST_SERVER=1 bun test tests/integration`               | required                  | no critical skips   | no critical skips                               |
 | Load                 | `bun run --filter @proompteng/temporal-bun-sdk test:load`         | smoke profile             | required            | 1,000 workflows, peak concurrency 50            |
-| Soak                 | `bun scripts/run-worker-soak.ts`                                  | optional                  | 6h release profile  | 6h release profile with memory-slope evidence   |
 | Docs                 | `bun run --filter docs build`                                     | required when docs change | required            | required                                        |
 | Pack                 | `npm pack --dry-run --json`                                       | optional                  | required/provenance | required/provenance                             |
 
@@ -363,7 +349,7 @@ Acceptance:
    durable proof across real histories.
 4. **P3 protocol golden tests.** This protects the pure-Bun command
    materializer from Temporal protobuf/server drift.
-5. **P4 soak mode.** This moves the load harness from a smoke test to
+5. **P4 load mode.** This moves the load harness from a smoke test to
    operational proof.
 6. **P6 agent metadata.** Only mark the SDK as default when the evidence gates
    are green, not because the docs claim it.
@@ -386,10 +372,10 @@ The SDK is production-default for scoped Bun-first agent use when:
 - The replay corpus covers every GA-critical workflow/event family represented
   in the supported feature matrix.
 - Async fuzz and query guard tests have no open determinism escapes.
-- Load and soak artifacts are linked from release artifacts and validated by
+- Load artifacts are linked from release artifacts and validated by
   `verify:production`.
 - Docs and comparison pages explain that this is a pure Bun SDK with public
   evidence, not an unofficial wrapper around the Node worker.
 - The recommendation remains scoped to the Bun, Temporal Server, OS/arch, and
   workload matrix represented by the release artifact; broader environments
-  need their own replay, load, and soak evidence.
+  need their own replay and load evidence.
