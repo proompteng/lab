@@ -1137,6 +1137,66 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "exploitation",
         )
 
+    def test_candidate_selection_blocks_capital_infeasible_replay_candidates(
+        self,
+    ) -> None:
+        base_unsafe_spec = self._candidate_spec("spec-unsafe-capital")
+        unsafe_spec = replace(
+            base_unsafe_spec,
+            strategy_overrides={
+                **base_unsafe_spec.strategy_overrides,
+                "max_notional_per_trade": "157950",
+                "max_position_pct_equity": "8.0",
+            },
+            promotion_contract={
+                "profit_target_oracle_policy": {"max_gross_exposure_pct_equity": "1.0"}
+            },
+        )
+        safe_spec = self._candidate_spec("spec-safe-capital")
+        proposal_rows = [
+            {
+                "candidate_spec_id": unsafe_spec.candidate_spec_id,
+                "proposal_score": 1000,
+                "rank": 1,
+                "selection_reason": "pre_replay_mlx_rank",
+                "training_source": "synthetic_prior",
+            },
+            {
+                "candidate_spec_id": safe_spec.candidate_spec_id,
+                "proposal_score": 10,
+                "rank": 2,
+                "selection_reason": "pre_replay_mlx_rank",
+                "training_source": "synthetic_prior",
+            },
+        ]
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(unsafe_spec, safe_spec),
+            proposal_rows=proposal_rows,
+            top_k=1,
+            exploration_slots=0,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [safe_spec])
+        row_by_spec = {row["candidate_spec_id"]: row for row in selection["rows"]}
+        self.assertEqual(
+            row_by_spec[unsafe_spec.candidate_spec_id]["selection_reason"],
+            "pre_replay_capital_budget_blocked",
+        )
+        self.assertFalse(
+            row_by_spec[unsafe_spec.candidate_spec_id]["selected_for_replay"]
+        )
+        self.assertEqual(
+            selection["budget"]["pre_replay_capital_blocked_candidate_count"], 1
+        )
+        self.assertTrue(
+            row_by_spec[safe_spec.candidate_spec_id]["capital_budget"][
+                "capital_feasible"
+            ]
+        )
+
     def test_candidate_selection_keeps_positive_signature_feedback_repair_candidates(
         self,
     ) -> None:
