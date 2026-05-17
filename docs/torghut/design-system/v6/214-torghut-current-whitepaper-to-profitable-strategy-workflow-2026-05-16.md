@@ -16,31 +16,31 @@ single sleeve that prints `$500` daily.
 ```mermaid
 flowchart TD
   Paper["Whitepaper or research note"] --> Ingest["Whitepaper ingest and versioning"]
-  Ingest --> Claims["Claim compiler<br/>mechanism, signal, data,<br/>risk, validation"]
-  Claims --> Cards["Hypothesis cards<br/>bounded, falsifiable,<br/>feature-linked"]
-  Cards --> Factory["Candidate compiler<br/>checked runtime family ids only"]
-  Factory --> Specs["CandidateSpec ledger<br/>family, universe, features,<br/>risk, execution"]
+  Ingest --> Claims["Claim compiler: mechanism, signal, data, risk, validation"]
+  Claims --> Cards["Hypothesis cards: bounded, falsifiable, feature-linked"]
+  Cards --> Factory["Candidate compiler: checked runtime family ids only"]
+  Factory --> Specs["CandidateSpec ledger: family, universe, features, risk, execution"]
 
-  Specs --> Snapshot["Immutable epoch snapshot<br/>specs, evidence,<br/>feature contracts"]
-  Snapshot --> MLX["MLX proposal ranker<br/>ranking only,<br/>no promotion authority"]
-  MLX --> Budget["Replay budget selector<br/>top-K, exploration,<br/>backfill"]
+  Specs --> Snapshot["Immutable epoch snapshot: specs, evidence, feature contracts"]
+  Snapshot --> MLX["MLX proposal ranker: ranking only, no promotion authority"]
+  MLX --> Budget["Replay budget selector: top-K, exploration, backfill"]
   Specs --> Budget
 
-  Budget --> Replay["Runtime replay<br/>scheduler-v3 real replay mode"]
-  Replay --> Evidence["CandidateEvidenceBundle<br/>PnL, notional, cash,<br/>drawdown, blockers"]
-  Evidence --> Optimizer["Portfolio optimizer<br/>weights, correlation,<br/>exposure, concentration"]
-  Optimizer --> Portfolio["PortfolioCandidateSpec<br/>portfolio objective scorecard"]
+  Budget --> Replay["Runtime replay: scheduler-v3 real replay mode"]
+  Replay --> Evidence["CandidateEvidenceBundle: PnL, notional, cash, drawdown, blockers"]
+  Evidence --> Optimizer["Portfolio optimizer: weights, correlation, exposure, concentration"]
+  Optimizer --> Portfolio["PortfolioCandidateSpec: portfolio objective scorecard"]
 
   Portfolio --> Oracle{"Profit target oracle"}
-  Oracle -->|"fail"| LedgerFail["Persist failure table<br/>false positives, blockers,<br/>next plan"]
-  LedgerFail --> Train["Train next proposal model<br/>rank-bucket lift and<br/>replay feedback"]
+  Oracle -->|"fail"| LedgerFail["Persist failure table: false positives, blockers, next plan"]
+  LedgerFail --> Train["Train next proposal model: rank-bucket lift and replay feedback"]
   Train --> MLX
 
-  Oracle -->|"pass"| Closure["Runtime closure<br/>config, replay plan,<br/>parity plan, approvals"]
+  Oracle -->|"pass"| Closure["Runtime closure: config, replay plan, parity plan, approvals"]
   Closure --> Shadow{"Paper/shadow gate"}
   Shadow -->|"fail"| LedgerFail
-  Shadow -->|"pass"| Promotion["Promotion readiness receipt<br/>no MLX-only promotion"]
-  Promotion --> LiveSleeve["Live strategy / sleeve candidate<br/>controlled rollout eligible"]
+  Shadow -->|"pass"| Promotion["Promotion readiness receipt: no MLX-only promotion"]
+  Promotion --> LiveSleeve["Live strategy / sleeve candidate: controlled rollout eligible"]
 ```
 
 ## Promotion State Machine

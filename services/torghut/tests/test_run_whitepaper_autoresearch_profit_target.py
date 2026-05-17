@@ -2473,6 +2473,55 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             {"pre_replay_mlx_rank"},
         )
 
+    def test_best_false_negative_table_excludes_pre_replay_blocked_specs(self) -> None:
+        table = runner._best_false_negative_table(
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": "spec-feedback-blocked",
+                        "rank": 1,
+                        "selected_for_replay": False,
+                        "selection_reason": "pre_replay_mlx_feedback_blocked",
+                    },
+                    {
+                        "candidate_spec_id": "spec-capital-blocked",
+                        "rank": 2,
+                        "selected_for_replay": False,
+                        "selection_reason": "pre_replay_capital_budget_blocked",
+                    },
+                    {
+                        "candidate_spec_id": "spec-negative-prior",
+                        "rank": 3,
+                        "selected_for_replay": False,
+                        "selection_reason": "pre_replay_mlx_synthetic_nonpositive_expected_value",
+                    },
+                    {
+                        "candidate_spec_id": "spec-duplicate",
+                        "rank": 4,
+                        "selected_for_replay": False,
+                        "selection_reason": "duplicate_execution_signature",
+                    },
+                    {
+                        "candidate_spec_id": "spec-clean-budget-miss",
+                        "rank": 5,
+                        "selected_for_replay": False,
+                        "selection_reason": "not_selected_budget",
+                    },
+                ]
+            },
+            pre_replay_proposal_rows=[
+                {
+                    "candidate_spec_id": "spec-clean-budget-miss",
+                    "proposal_score": 25,
+                }
+            ],
+            evidence_bundles=(),
+        )
+
+        self.assertEqual(len(table), 1)
+        self.assertEqual(table[0]["candidate_spec_id"], "spec-clean-budget-miss")
+        self.assertEqual(table[0]["reason"], "not_replayed_budget")
+
     def test_seed_recent_whitepapers_diversifies_exploitation_slots(self) -> None:
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
@@ -3116,6 +3165,71 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ],
         )
         self.assertNotIn("recommended_flags", surface_action)
+        self.assertFalse(
+            [
+                action
+                for action in remediation["next_actions"]
+                if action["action"] == "increase_breadth_and_portfolio_diversity"
+            ]
+        )
+
+    def test_remediation_recommends_surface_mutation_when_only_eligible_specs_replayed(
+        self,
+    ) -> None:
+        selected_rows = [
+            {
+                "candidate_spec_id": "spec-eligible",
+                "family_template_id": "end_of_day_reversal_v1",
+                "selected_for_replay": True,
+            }
+        ]
+        remediation = runner._candidate_search_remediation(
+            failure_reason="portfolio_optimizer_produced_no_candidate",
+            candidate_selection={
+                "budget": {
+                    "compiled_candidate_count": 2250,
+                    "unique_execution_signature_count": 375,
+                    "eligible_candidate_count": 1,
+                    "selected_count": 1,
+                    "pre_replay_feedback_blocked_candidate_count": 179,
+                    "pre_replay_nonpositive_synthetic_candidate_count": 185,
+                    "pre_replay_blocked_candidate_count": 364,
+                    "max_candidates": 264,
+                    "top_k": 136,
+                    "exploration_slots_effective": 128,
+                },
+                "rows": selected_rows,
+            },
+            evidence_bundles=(),
+            false_positive_table=(
+                {
+                    "candidate_spec_id": "spec-eligible",
+                    "evidence_status": "replayed",
+                    "failure_reasons": [
+                        "active_day_ratio_below_oracle",
+                        "positive_day_ratio_below_oracle",
+                        "non_positive_net_pnl_per_day",
+                    ],
+                },
+            ),
+            best_false_negative_table=(),
+            replay_timeout_seconds=7200,
+            max_frontier_candidates_per_spec=2,
+            current_top_k=136,
+            current_exploration_slots=128,
+            current_portfolio_size_min=3,
+            current_max_candidates=264,
+            current_max_total_frontier_candidates=128,
+        )
+
+        self.assertFalse(remediation["candidate_surface_exhausted"])
+        self.assertTrue(remediation["replayable_candidate_surface_exhausted"])
+        surface_action = remediation["next_actions"][0]
+        self.assertEqual(surface_action["action"], "expand_execution_profile_surface")
+        self.assertIn("currently eligible", surface_action["reason"])
+        self.assertEqual(
+            surface_action["target_family_template_ids"], ["end_of_day_reversal_v1"]
+        )
         self.assertFalse(
             [
                 action

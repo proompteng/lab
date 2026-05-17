@@ -1457,6 +1457,9 @@ def _best_false_negative_table(
             or candidate_spec_id in evidence_by_spec
             or _string(selection.get("selection_reason"))
             == "duplicate_execution_signature"
+            or _selection_reason_blocks_replay(
+                _string(selection.get("selection_reason"))
+            )
         ):
             continue
         pre_replay = pre_replay_by_spec.get(candidate_spec_id, {})
@@ -1563,6 +1566,16 @@ def _candidate_search_remediation(
         + observed_selection_budget["exploration_slots"]
         >= unique_execution_signature_count
     )
+    replayable_candidate_surface_exhausted = (
+        observed_selection_budget["eligible_candidate_count"] > 0
+        and observed_selection_budget["selected_count"]
+        >= observed_selection_budget["eligible_candidate_count"]
+        and observed_selection_budget["max_candidates"]
+        >= observed_selection_budget["eligible_candidate_count"]
+        and observed_selection_budget["top_k"]
+        + observed_selection_budget["exploration_slots"]
+        >= observed_selection_budget["eligible_candidate_count"]
+    )
     next_actions: list[dict[str, Any]] = []
     if (
         observed_selection_budget["selected_count"] <= 0
@@ -1616,6 +1629,7 @@ def _candidate_search_remediation(
             "failure_reason_counts": dict(sorted(failure_counts.items())),
             "partial_scorecards": partial_scorecards,
             "candidate_surface_exhausted": candidate_surface_exhausted,
+            "replayable_candidate_surface_exhausted": replayable_candidate_surface_exhausted,
             "observed_selection_budget": observed_selection_budget,
             "next_actions": next_actions,
         }
@@ -1705,7 +1719,7 @@ def _candidate_search_remediation(
             "positive_day_ratio_below_oracle",
         )
     ):
-        if candidate_surface_exhausted:
+        if candidate_surface_exhausted or replayable_candidate_surface_exhausted:
             selected_families = sorted(
                 {
                     _string(row.get("family_template_id"))
@@ -1718,8 +1732,16 @@ def _candidate_search_remediation(
                     "priority": 4,
                     "action": "expand_execution_profile_surface",
                     "reason": (
-                        "candidate selection replayed every unique execution signature; "
-                        "max-candidates, top-k, and exploration-slots are no longer binding"
+                        (
+                            "candidate selection replayed every currently eligible execution signature; "
+                            "pre-replay feedback, capital, or expected-value gates blocked the rest"
+                        )
+                        if replayable_candidate_surface_exhausted
+                        and not candidate_surface_exhausted
+                        else (
+                            "candidate selection replayed every unique execution signature; "
+                            "max-candidates, top-k, and exploration-slots are no longer binding"
+                        )
                     ),
                     "observed_selection_budget": observed_selection_budget,
                     "target_family_template_ids": selected_families,
@@ -1817,6 +1839,7 @@ def _candidate_search_remediation(
         "failure_reason_counts": dict(sorted(failure_counts.items())),
         "partial_scorecards": partial_scorecards,
         "candidate_surface_exhausted": candidate_surface_exhausted,
+        "replayable_candidate_surface_exhausted": replayable_candidate_surface_exhausted,
         "observed_selection_budget": observed_selection_budget,
         "next_actions": next_actions,
     }
@@ -3138,6 +3161,28 @@ def _candidate_spec_execution_signature(spec: CandidateSpec) -> str:
     )
 
 
+_PRE_REPLAY_FEEDBACK_BLOCK_REASONS = frozenset(
+    {
+        "pre_replay_mlx_feedback_blocked",
+        "pre_replay_mlx_signature_feedback_blocked",
+        "pre_replay_mlx_shape_feedback_blocked",
+        "pre_replay_mlx_risk_profile_feedback_blocked",
+        "pre_replay_mlx_family_feedback_blocked",
+    }
+)
+_PRE_REPLAY_SELECTION_BLOCK_REASONS = frozenset(
+    {
+        *_PRE_REPLAY_FEEDBACK_BLOCK_REASONS,
+        "pre_replay_capital_budget_blocked",
+        "pre_replay_mlx_synthetic_nonpositive_expected_value",
+    }
+)
+
+
+def _selection_reason_blocks_replay(reason: str) -> bool:
+    return reason in _PRE_REPLAY_SELECTION_BLOCK_REASONS
+
+
 def _select_candidate_specs_for_replay(
     *,
     specs: Sequence[CandidateSpec],
@@ -3166,13 +3211,6 @@ def _select_candidate_specs_for_replay(
         _string(row.get("candidate_spec_id")): row
         for row in _list_of_mappings(list(proposal_rows))
         if _string(row.get("candidate_spec_id"))
-    }
-    feedback_block_reasons = {
-        "pre_replay_mlx_feedback_blocked",
-        "pre_replay_mlx_signature_feedback_blocked",
-        "pre_replay_mlx_shape_feedback_blocked",
-        "pre_replay_mlx_risk_profile_feedback_blocked",
-        "pre_replay_mlx_family_feedback_blocked",
     }
     capital_block_reason = "pre_replay_capital_budget_blocked"
 
@@ -3216,7 +3254,7 @@ def _select_candidate_specs_for_replay(
     def pre_replay_block_reason(spec: CandidateSpec) -> str:
         proposal = proposal_by_spec.get(spec.candidate_spec_id, {})
         selection_reason = _string(proposal.get("selection_reason"))
-        if selection_reason in feedback_block_reasons:
+        if selection_reason in _PRE_REPLAY_FEEDBACK_BLOCK_REASONS:
             return selection_reason
         if capital_blocked(spec):
             return capital_block_reason
@@ -3234,7 +3272,7 @@ def _select_candidate_specs_for_replay(
 
     def is_feedback_block_reason(reason: str) -> bool:
         return (
-            reason in feedback_block_reasons
+            reason in _PRE_REPLAY_FEEDBACK_BLOCK_REASONS
             or reason == "pre_replay_mlx_feedback_blocked"
         )
 
