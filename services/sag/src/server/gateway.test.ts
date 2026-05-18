@@ -7,6 +7,7 @@ import {
   createTaskFromText,
   evaluateAgentRun,
   exportAuditEvents,
+  requestDatabaseAccessApproval,
 } from './gateway'
 
 describe('secure action gateway engine', () => {
@@ -99,5 +100,49 @@ describe('secure action gateway engine', () => {
     expect(buildSnapshot(state).agentRuns[0]?.manifest).not.toContain(sensitiveSecret)
     expect(buildSnapshot(state).agentRuns[0]?.requestedSecrets[0]).toMatch(/^secret:/)
     expect(exportAuditEvents(state)).not.toContain(sensitiveSecret)
+  })
+
+  test('records database inspection requests as approval-gated audit events', () => {
+    const state = createGatewayState()
+    const agentRun = evaluateAgentRun(state, {
+      actorId: 'greg',
+      name: 'sag-mp582cjf',
+      namespace: 'agents',
+      requestedConnectors: ['kubernetes'],
+      requestedTools: ['create AgentRun', 'follow logs'],
+    })
+
+    const approval = requestDatabaseAccessApproval(state, {
+      actorId: 'greg',
+      namespace: agentRun.namespace,
+      runName: agentRun.name,
+    })
+    const duplicate = requestDatabaseAccessApproval(state, {
+      actorId: 'greg',
+      namespace: agentRun.namespace,
+      runName: agentRun.name,
+    })
+    const snapshot = buildSnapshot(state)
+    const event = snapshot.events.find((item) => item.operation === 'database:list_tables')
+
+    expect(duplicate.id).toBe(approval.id)
+    expect(approval).toMatchObject({
+      action: 'database.list_tables',
+      status: 'pending',
+      target: 'agents/sag-mp582cjf:sag.database.tables',
+      runId: agentRun.id,
+    })
+    expect(snapshot.approvals.filter((item) => item.action === 'database.list_tables')).toHaveLength(1)
+    expect(event).toMatchObject({
+      connector: 'sql',
+      status: 'approval_required',
+      policy: 'database-access-approval',
+    })
+    expect(event?.evidence).toMatchObject({
+      database: 'sag',
+      namespace: 'agents',
+      operation: 'list_tables',
+      runName: 'sag-mp582cjf',
+    })
   })
 })
