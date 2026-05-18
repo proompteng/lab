@@ -204,18 +204,22 @@ spec:
     freezeDuration: 60m
   execution:
     discover:
+      enabled: false
       targetRef:
         kind: AgentRun
         name: torghut-swarm-discover-template
     plan:
+      enabled: false
       targetRef:
         kind: AgentRun
         name: torghut-swarm-plan-template
     implement:
+      enabled: false
       targetRef:
         kind: AgentRun
         name: torghut-swarm-implement-template
     verify:
+      enabled: false
       targetRef:
         kind: AgentRun
         name: torghut-swarm-verify-template
