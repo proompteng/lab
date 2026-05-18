@@ -145,8 +145,14 @@ type BuildHelmArgsInput = {
   controlPlaneImageRepository?: string
   controllersImageRepository?: string
   imageTag?: string
+  controlPlaneImageTag?: string
+  controllersImageTag?: string
   imageDigestSet: boolean
   imageDigest: string
+  controlPlaneImageDigestSet?: boolean
+  controlPlaneImageDigest?: string
+  controllersImageDigestSet?: boolean
+  controllersImageDigest?: string
 }
 
 export const buildHelmArgs = ({
@@ -159,8 +165,14 @@ export const buildHelmArgs = ({
   controlPlaneImageRepository,
   controllersImageRepository,
   imageTag,
+  controlPlaneImageTag,
+  controllersImageTag,
   imageDigestSet,
   imageDigest,
+  controlPlaneImageDigestSet,
+  controlPlaneImageDigest = '',
+  controllersImageDigestSet,
+  controllersImageDigest = '',
 }: BuildHelmArgsInput) => {
   const helmArgs = [
     'upgrade',
@@ -195,13 +207,27 @@ export const buildHelmArgs = ({
   }
   if (imageTag) {
     helmArgs.push('--set', `image.tag=${imageTag}`)
-    helmArgs.push('--set', `controlPlane.image.tag=${imageTag}`)
-    helmArgs.push('--set', `controllers.image.tag=${imageTag}`)
+    helmArgs.push('--set', `controlPlane.image.tag=${controlPlaneImageTag ?? imageTag}`)
+    helmArgs.push('--set', `controllers.image.tag=${controllersImageTag ?? imageTag}`)
+  } else {
+    if (controlPlaneImageTag) {
+      helmArgs.push('--set', `controlPlane.image.tag=${controlPlaneImageTag}`)
+    }
+    if (controllersImageTag) {
+      helmArgs.push('--set', `controllers.image.tag=${controllersImageTag}`)
+    }
   }
   if (imageDigestSet) {
     helmArgs.push('--set', `image.digest=${imageDigest}`)
-    helmArgs.push('--set', `controlPlane.image.digest=${imageDigest}`)
-    helmArgs.push('--set', `controllers.image.digest=${imageDigest}`)
+    helmArgs.push('--set', `controlPlane.image.digest=${controlPlaneImageDigest ?? imageDigest}`)
+    helmArgs.push('--set', `controllers.image.digest=${controllersImageDigest ?? imageDigest}`)
+  } else {
+    if (controlPlaneImageDigestSet) {
+      helmArgs.push('--set', `controlPlane.image.digest=${controlPlaneImageDigest}`)
+    }
+    if (controllersImageDigestSet) {
+      helmArgs.push('--set', `controllers.image.digest=${controllersImageDigest}`)
+    }
   }
 
   return helmArgs
@@ -640,8 +666,17 @@ const main = async () => {
   const controlPlaneImageRepository = process.env.AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY
   const controllersImageRepository = process.env.AGENTS_CONTROLLER_IMAGE_REPOSITORY
   const imageTag = process.env.AGENTS_IMAGE_TAG
+  const controlPlaneImageTag = process.env.AGENTS_CONTROL_PLANE_IMAGE_TAG
+  const controllersImageTag = process.env.AGENTS_CONTROLLER_IMAGE_TAG
   const imageDigestSet = Object.prototype.hasOwnProperty.call(process.env, 'AGENTS_IMAGE_DIGEST')
   const imageDigest = process.env.AGENTS_IMAGE_DIGEST ?? ''
+  const controlPlaneImageDigestSet = Object.prototype.hasOwnProperty.call(
+    process.env,
+    'AGENTS_CONTROL_PLANE_IMAGE_DIGEST',
+  )
+  const controlPlaneImageDigest = process.env.AGENTS_CONTROL_PLANE_IMAGE_DIGEST ?? ''
+  const controllersImageDigestSet = Object.prototype.hasOwnProperty.call(process.env, 'AGENTS_CONTROLLER_IMAGE_DIGEST')
+  const controllersImageDigest = process.env.AGENTS_CONTROLLER_IMAGE_DIGEST ?? ''
 
   const agentctlCommand = agentctlBin.endsWith('.js') ? ['node', agentctlBin] : [agentctlBin]
   const agentctlExecutable = agentctlCommand[0]
@@ -687,7 +722,7 @@ const main = async () => {
 
     await waitForDeploymentRollout(namespace, dbHost, timeoutFlag)
 
-    log('Ensuring required Postgres extensions for Jangar...')
+    log('Ensuring required Postgres extensions for Agents...')
     const podResult = await execCapture([
       'kubectl',
       '-n',
@@ -704,7 +739,7 @@ const main = async () => {
       fatal(`Failed to resolve Postgres pod name for ${dbHost}.`, podResult.stderr)
     }
 
-    // Jangar requires both pgvector (vector) and pgcrypto extensions.
+    // Agents runtime storage requires both pgvector (vector) and pgcrypto extensions.
     // Even after the pod is Ready, Postgres may still be finalizing startup; retry briefly.
     const extensionDeadlineMs = 60_000
     const extensionStart = Date.now()
@@ -730,8 +765,14 @@ const main = async () => {
     controlPlaneImageRepository,
     controllersImageRepository,
     imageTag,
+    controlPlaneImageTag,
+    controllersImageTag,
     imageDigestSet,
     imageDigest,
+    controlPlaneImageDigestSet,
+    controlPlaneImageDigest,
+    controllersImageDigestSet,
+    controllersImageDigest,
   })
 
   log('Applying Agents chart CRDs...')
