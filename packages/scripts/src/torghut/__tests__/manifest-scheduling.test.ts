@@ -99,8 +99,8 @@ describe('Torghut manifest scheduling', () => {
     const requests = getAtPath(resources, ['requests'])
     const limits = getAtPath(resources, ['limits'])
 
-    expect(requests.memory).toBe('32Gi')
-    expect(limits.memory).toBe('160Gi')
+    expect(requests.memory).toBe('12Gi')
+    expect(limits.memory).toBe('32Gi')
     expect(container.volumeMounts).toContainEqual(
       expect.objectContaining({
         mountPath: '/etc/torghut',
@@ -119,10 +119,10 @@ describe('Torghut manifest scheduling', () => {
     expect(JSON.stringify(template)).toContain('--real-replay-shard-timeout-seconds')
     expect(JSON.stringify(template)).toContain('--real-replay-shard-workers')
     expect(JSON.stringify(template)).toContain('--feedback-block-reaudit-slots')
-    expect(parameterValue(manifest, 'maxCandidates')).toBe('640')
-    expect(parameterValue(manifest, 'topK')).toBe('256')
-    expect(parameterValue(manifest, 'explorationSlots')).toBe('256')
-    expect(parameterValue(manifest, 'feedbackBlockReauditSlots')).toBe('128')
+    expect(parameterValue(manifest, 'maxCandidates')).toBe('128')
+    expect(parameterValue(manifest, 'topK')).toBe('64')
+    expect(parameterValue(manifest, 'explorationSlots')).toBe('48')
+    expect(parameterValue(manifest, 'feedbackBlockReauditSlots')).toBe('32')
     expect(parameterValue(manifest, 'portfolioSizeMin')).toBe('3')
   })
 
@@ -130,11 +130,11 @@ describe('Torghut manifest scheduling', () => {
     const manifest = parseManifest('argocd/applications/torghut/whitepaper-autoresearch-workflowtemplate.yaml')
     const template = getAtPath(manifest, ['spec', 'templates', 0])
 
-    expect(parameterValue(manifest, 'maxFrontierCandidatesPerSpec')).toBe('4')
-    expect(parameterValue(manifest, 'maxTotalFrontierCandidates')).toBe('640')
-    expect(parameterValue(manifest, 'realReplayTimeoutSeconds')).toBe('14400')
+    expect(parameterValue(manifest, 'maxFrontierCandidatesPerSpec')).toBe('2')
+    expect(parameterValue(manifest, 'maxTotalFrontierCandidates')).toBe('128')
+    expect(parameterValue(manifest, 'realReplayTimeoutSeconds')).toBe('7200')
     expect(parameterValue(manifest, 'realReplayShardSize')).toBe('1')
-    expect(parameterValue(manifest, 'realReplayShardWorkers')).toBe('64')
-    expect(template.activeDeadlineSeconds).toBe(21600)
+    expect(parameterValue(manifest, 'realReplayShardWorkers')).toBe('4')
+    expect(template.activeDeadlineSeconds).toBe(9000)
   })
 })
