@@ -840,6 +840,105 @@ describe('control-plane Torghut consumer evidence', () => {
     })
   })
 
+  it('carries revenue-repair source-of-truth topline when consumer evidence is unavailable', async () => {
+    process.env = {
+      ...originalEnv,
+      JANGAR_TORGHUT_STATUS_URL: 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(buildJsonResponse({ detail: 'consumer evidence timeout' }, 503))
+      .mockResolvedValueOnce(
+        buildJsonResponse({
+          schema_version: 'torghut.revenue-repair-digest.v1',
+          business_state: 'repair_only',
+          revenue_ready: false,
+          repair_queue: [
+            {
+              code: 'repair_alpha_readiness',
+              reason: 'alpha_readiness_not_promotion_eligible',
+              dimension: 'alpha_readiness',
+              action: 'clear_hypothesis_blockers_before_capital',
+              priority: 70,
+              expected_unblock_value: 2,
+              source: 'proof_floor.repair_ladder',
+              value_gate: 'routeable_candidate_count',
+              required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+              required_receipts: ['alpha_readiness_receipt', 'hypothesis_promotion_receipt'],
+              max_notional: '0',
+              capital_rule: 'zero_notional_repair_only',
+              observed_count: 1,
+            },
+          ],
+          alpha_readiness_settlement_conveyor: {
+            schema_version: 'torghut.alpha-readiness-settlement-conveyor.v1',
+            conveyor_id: 'alpha-readiness-settlement-conveyor:fallback',
+            generated_at: '2026-05-15T01:30:00.000Z',
+            fresh_until: '2026-05-15T01:45:00.000Z',
+            status: 'no_delta',
+            settlement_state: 'no_delta',
+            reason_codes: ['active_no_delta_lease'],
+            selected_lane: {
+              hypothesis_id: 'H-MICRO-01',
+              no_delta_release_key: 'alpha-readiness-no-delta:H-MICRO-01:window-a',
+              repeat_launch_decision: 'deny',
+            },
+            selected_value_gate: 'routeable_candidate_count',
+            routeable_candidate_count_before: 0,
+            routeable_candidate_count_after: 0,
+            measured_routeable_candidate_delta: 0,
+            active_no_delta_leases: [{ lease_id: 'alpha-readiness-no-delta-lease:fallback' }],
+            required_output_receipt: 'torghut.alpha-readiness-settlement-receipt.v1',
+            validation_commands: [
+              'uv run --frozen pytest services/torghut/tests/test_alpha_readiness_settlement_conveyor.py',
+            ],
+            max_notional: '0',
+            capital_rule: 'zero_notional_repair_only',
+            rollback_target: 'stop emitting alpha_readiness_settlement_conveyor and keep Torghut max_notional=0',
+          },
+        }),
+      )
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await resolveTorghutConsumerEvidence(new Date('2026-05-15T01:32:00.000Z'))
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence?view=summary',
+    )
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe('http://torghut.torghut.svc.cluster.local/trading/revenue-repair')
+    expect(result.status).toMatchObject({
+      status: 'unavailable',
+      receipt_id: null,
+      revenue_repair_business_state: 'repair_only',
+      revenue_repair_ready: false,
+      max_notional: '0',
+      revenue_repair_queue: [
+        expect.objectContaining({
+          code: 'repair_alpha_readiness',
+          value_gate: 'routeable_candidate_count',
+          required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+        }),
+      ],
+      observed_contracts: expect.arrayContaining(['alpha_readiness_settlement_conveyor']),
+      alpha_readiness_settlement_conveyor: expect.objectContaining({
+        conveyor_id: 'alpha-readiness-settlement-conveyor:fallback',
+        selected_hypothesis_id: 'H-MICRO-01',
+        selected_value_gate: 'routeable_candidate_count',
+        active_no_delta_lease_count: 1,
+        repeat_launch_decision: 'deny',
+        max_notional: '0',
+      }),
+      reason_codes: ['torghut_consumer_evidence_unavailable'],
+    })
+    expect(result.status.message).toContain('revenue-repair source-of-truth fallback carried business topline')
+    expect(result.negativeEvidence).toMatchObject({
+      consumer_evidence_status: 'unavailable',
+      consumer_evidence_reason_codes: ['torghut_consumer_evidence_unavailable'],
+      paper_settlement_clean: false,
+    })
+  })
+
   it('attaches a local Torghut stage-clearance packet as typed custody evidence', () => {
     const packet: StageClearancePacket = {
       schema_version: 'jangar.stage-clearance-packet.v1',
