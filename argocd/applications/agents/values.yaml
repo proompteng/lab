@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/agents-controller
-  tag: fdceeaac
-  digest: sha256:7b33d7ac135c3760f95c56bef82753baf5f45dea4c84333f252313fa7a5ccb29
+  tag: 26ef7e7f
+  digest: sha256:4c2fc2a0682ba0005739df08303510e087de353f8dc1f563acc08729d2a0724d
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,18 +11,18 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-control-plane
-    tag: fdceeaac
-    digest: sha256:ed6b8f7d948981983966c8e3ab037ab43d9dcbfaf455e11e3cbbd733bae77e1f
+    tag: 26ef7e7f
+    digest: sha256:94077860dd0d44ac9d08d7dec08fdd114133b148023c8783c9b9626c3a59681e
   env:
     vars:
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
-      AGENTS_SOURCE_HEAD_SHA: fdceeaac3c94e7d102f1b4b3f84c6884b3b1f60d
-      AGENTS_GITOPS_REVISION: fdceeaac3c94e7d102f1b4b3f84c6884b3b1f60d
-      AGENTS_SOURCE_CI_RUN_ID: "26005264540"
+      AGENTS_SOURCE_HEAD_SHA: 26ef7e7f12776af1ba93a2a451458b0689dd238f
+      AGENTS_GITOPS_REVISION: 26ef7e7f12776af1ba93a2a451458b0689dd238f
+      AGENTS_SOURCE_CI_RUN_ID: "26021259440"
       AGENTS_SOURCE_CI_CONCLUSION: success
-      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:ed6b8f7d948981983966c8e3ab037ab43d9dcbfaf455e11e3cbbd733bae77e1f
-      AGENTS_SERVING_BUILD_COMMIT: fdceeaac3c94e7d102f1b4b3f84c6884b3b1f60d
-      AGENTS_SERVING_IMAGE_DIGEST: sha256:ed6b8f7d948981983966c8e3ab037ab43d9dcbfaf455e11e3cbbd733bae77e1f
+      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:94077860dd0d44ac9d08d7dec08fdd114133b148023c8783c9b9626c3a59681e
+      AGENTS_SERVING_BUILD_COMMIT: 26ef7e7f12776af1ba93a2a451458b0689dd238f
+      AGENTS_SERVING_IMAGE_DIGEST: sha256:94077860dd0d44ac9d08d7dec08fdd114133b148023c8783c9b9626c3a59681e
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
@@ -82,8 +82,8 @@ controllers:
   replicaCount: 2
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-    tag: fdceeaac
-    digest: sha256:7b33d7ac135c3760f95c56bef82753baf5f45dea4c84333f252313fa7a5ccb29
+    tag: 26ef7e7f
+    digest: sha256:4c2fc2a0682ba0005739df08303510e087de353f8dc1f563acc08729d2a0724d
   autoscaling:
     enabled: false
   env:
