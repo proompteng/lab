@@ -48,14 +48,15 @@ def _parse_args() -> argparse.Namespace:
         "--run-id-prefix", default="sim-2026-05-05-chip-4c330ce9-r1-renew"
     )
     parser.add_argument("--runtime-window-import", action="store_true")
-    parser.add_argument("--runtime-window-hypothesis-id", default="H-PAIRS-01")
+    parser.add_argument("--runtime-window-hypothesis-id", default="H-TSMOM-01")
+    parser.add_argument("--runtime-window-candidate-id", default="")
     parser.add_argument(
         "--runtime-window-strategy-family",
-        default="microbar_cross_sectional_pairs",
+        default="intraday_tsmom_consistent",
     )
     parser.add_argument(
         "--runtime-window-strategy-name",
-        default="microbar-cross-sectional-pairs-v1",
+        default="intraday-tsmom-profit-v3",
     )
     parser.add_argument("--runtime-window-account-label", default="TORGHUT_SIM")
     parser.add_argument(
@@ -66,11 +67,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--runtime-window-source-dsn-env", default="DB_DSN")
     parser.add_argument("--runtime-window-start", default="")
     parser.add_argument("--runtime-window-end", default="")
+    parser.add_argument("--runtime-window-dataset-snapshot-ref", default="")
     parser.add_argument("--runtime-window-bucket-minutes", type=int, default=30)
     parser.add_argument("--runtime-window-sample-minutes", type=int, default=5)
     parser.add_argument(
         "--runtime-window-source-manifest-ref",
-        default="config/trading/hypotheses/h-pairs-01.json",
+        default="config/trading/hypotheses/h-tsmom-01.json",
     )
     parser.add_argument(
         "--runtime-window-source-kind", default="paper_runtime_observed"
@@ -112,6 +114,20 @@ def _parse_dt(value: str) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _read_runtime_window_manifest(ref: str) -> dict[str, Any]:
+    path_text = ref.strip()
+    if not path_text:
+        return {}
+    path = Path(path_text)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return _as_dict(payload)
 
 
 def _latest_completed_regular_session(now: datetime) -> tuple[datetime, datetime]:
@@ -270,7 +286,14 @@ def _run_runtime_window_import(
 ) -> dict[str, Any] | None:
     if not bool(getattr(args, "runtime_window_import", False)):
         return None
-    candidate_id = _as_text(manifest.get("candidate_id"))
+    runtime_manifest = _read_runtime_window_manifest(
+        str(getattr(args, "runtime_window_source_manifest_ref", "") or "")
+    )
+    candidate_id = (
+        _as_text(getattr(args, "runtime_window_candidate_id", ""))
+        or _as_text(runtime_manifest.get("candidate_id"))
+        or _as_text(manifest.get("candidate_id"))
+    )
     if candidate_id is None:
         raise RuntimeError("runtime_window_candidate_id_missing")
     window_start, window_end = _runtime_window_bounds(args, now)
@@ -315,7 +338,11 @@ def _run_runtime_window_import(
         "true",
         "--json",
     ]
-    dataset_snapshot_ref = _as_text(manifest.get("dataset_snapshot_ref"))
+    dataset_snapshot_ref = (
+        _as_text(getattr(args, "runtime_window_dataset_snapshot_ref", ""))
+        or _as_text(runtime_manifest.get("dataset_snapshot_ref"))
+        or _as_text(manifest.get("dataset_snapshot_ref"))
+    )
     if dataset_snapshot_ref is not None:
         command.extend(["--dataset-snapshot-ref", dataset_snapshot_ref])
     result = subprocess.run(command, check=True, capture_output=True, text=True)
