@@ -24,6 +24,8 @@ const defaultAnalysisActivityManifestPath = 'argocd/applications/torghut/analysi
 const defaultAnalysisTeardownManifestPath = 'argocd/applications/torghut/analysis-template-teardown-clean.yaml'
 const defaultAnalysisArtifactManifestPath = 'argocd/applications/torghut/analysis-template-artifact-bundle.yaml'
 const defaultEmpiricalBackfillManifestPath = 'argocd/applications/torghut/empirical-jobs-backfill-job.yaml'
+const defaultEmpiricalPromotionRenewalManifestPath =
+  'argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml'
 const defaultExecutionTcaRefreshManifestPath = 'argocd/applications/torghut/execution-tca-refresh-cronjob.yaml'
 const defaultWhitepaperSemanticBackfillManifestPath =
   'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'
@@ -49,6 +51,7 @@ type UpdateManifestsOptions = {
   analysisTeardownManifestPath?: string
   analysisArtifactManifestPath?: string
   empiricalBackfillManifestPath?: string
+  empiricalPromotionRenewalManifestPath?: string
   executionTcaRefreshManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
   optionsCatalogManifestPath?: string
@@ -74,6 +77,7 @@ type CliOptions = {
   analysisTeardownManifestPath?: string
   analysisArtifactManifestPath?: string
   empiricalBackfillManifestPath?: string
+  empiricalPromotionRenewalManifestPath?: string
   executionTcaRefreshManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
   optionsCatalogManifestPath?: string
@@ -194,7 +198,12 @@ const updateImageOnlyManifest = (options: UpdateManifestsOptions, manifestPathVa
   const source = readFileSync(manifestPath, 'utf8')
   const imageRef = `${options.imageName}@${options.digest}`
 
-  const updated = replaceSingle(source, /(\n\s*image:\s*)([^\n]+)/, `$1${imageRef}`, label)
+  let updated = replaceSingle(source, /(\n\s*image:\s*)([^\n]+)/, `$1${imageRef}`, label)
+  updated = replaceIfPresent(
+    updated,
+    /(- name:\s*TORGHUT_IMAGE_DIGEST\s*\n\s*value:\s*)([^\n]+)/,
+    `$1${options.digest}`,
+  )
 
   if (updated !== source) {
     writeFileSync(manifestPath, updated, 'utf8')
@@ -296,6 +305,11 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.empiricalBackfillManifestPath ?? defaultEmpiricalBackfillManifestPath,
     'torghut-empirical-jobs-backfill image reference',
   )
+  const empiricalPromotionRenewal = updateImageOnlyManifest(
+    options,
+    options.empiricalPromotionRenewalManifestPath ?? defaultEmpiricalPromotionRenewalManifestPath,
+    'torghut-empirical-promotion-renewal image reference',
+  )
   const executionTcaRefresh = updateImageOnlyManifest(
     options,
     options.executionTcaRefreshManifestPath ?? defaultExecutionTcaRefreshManifestPath,
@@ -334,6 +348,7 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     analysisTeardown,
     analysisArtifact,
     empiricalBackfill,
+    empiricalPromotionRenewal,
     executionTcaRefresh,
     whitepaperSemanticBackfill,
     optionsCatalog,
@@ -375,6 +390,7 @@ Options:
   --analysis-teardown-manifest-path <path>
   --analysis-artifact-manifest-path <path>
   --empirical-backfill-manifest-path <path>
+  --empirical-promotion-renewal-manifest-path <path>
   --execution-tca-refresh-manifest-path <path>
   --whitepaper-semantic-backfill-manifest-path <path>
   --options-catalog-manifest-path <path>
@@ -450,6 +466,9 @@ Options:
       case '--empirical-backfill-manifest-path':
         options.empiricalBackfillManifestPath = value
         break
+      case '--empirical-promotion-renewal-manifest-path':
+        options.empiricalPromotionRenewalManifestPath = value
+        break
       case '--execution-tca-refresh-manifest-path':
         options.executionTcaRefreshManifestPath = value
         break
@@ -513,6 +532,8 @@ const main = (cliOptions?: CliOptions) => {
       parsed.analysisArtifactManifestPath ?? process.env.TORGHUT_ANALYSIS_ARTIFACT_MANIFEST_PATH,
     empiricalBackfillManifestPath:
       parsed.empiricalBackfillManifestPath ?? process.env.TORGHUT_EMPIRICAL_BACKFILL_MANIFEST_PATH,
+    empiricalPromotionRenewalManifestPath:
+      parsed.empiricalPromotionRenewalManifestPath ?? process.env.TORGHUT_EMPIRICAL_PROMOTION_RENEWAL_MANIFEST_PATH,
     executionTcaRefreshManifestPath:
       parsed.executionTcaRefreshManifestPath ?? process.env.TORGHUT_EXECUTION_TCA_REFRESH_MANIFEST_PATH,
     whitepaperSemanticBackfillManifestPath:

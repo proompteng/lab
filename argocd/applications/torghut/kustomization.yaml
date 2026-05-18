@@ -32,6 +32,7 @@ resources:
   - whitepaper-semantic-backfill-job.yaml
   - empirical-artifacts-objectbucketclaim.yaml
   - empirical-jobs-backfill-job.yaml
+  - empirical-promotion-renewal-cronjob.yaml
   - empirical-artifacts-retention-cronjob.yaml
   - execution-tca-refresh-cronjob.yaml
   - whitepaper-autoresearch-workflowtemplate.yaml
