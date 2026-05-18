@@ -1,13 +1,13 @@
 import { installAgentsEnvCompatibility } from '@proompteng/agents/server/env-compat'
 
 import { bootRuntimeProfile } from './runtime-boot'
-import { JANGAR_RUNTIME_PROFILES } from './runtime-profile'
+import { resolveJangarRuntimeProfile } from './runtime-profile'
 import { resolveHttpServerListenConfig } from './runtime-entry-config'
 
 installAgentsEnvCompatibility()
 
 const { port, hostname, idleTimeoutSeconds } = resolveHttpServerListenConfig()
-const runtimeProfile = JANGAR_RUNTIME_PROFILES.httpServer
+const runtimeProfile = resolveJangarRuntimeProfile()
 
 bootRuntimeProfile(runtimeProfile)
 
@@ -32,4 +32,4 @@ const server = Bun.serve({
   },
 })
 
-console.log(`[jangar] listening on http://${server.hostname}:${server.port}`)
+console.log(`[jangar] ${runtimeProfile.name} listening on http://${server.hostname}:${server.port}`)

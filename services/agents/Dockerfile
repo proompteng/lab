@@ -240,3 +240,10 @@ ENV AGENTS_VERSION=${AGENTS_VERSION} \
   AGENTS_COMMIT=${AGENTS_COMMIT}
 
 CMD ["bun", "run", ".output/server/index.mjs"]
+
+FROM control-plane AS controller
+
+ENV AGENTS_SERVER_PROFILE=agents-controllers \
+  AGENTS_CONTROL_PLANE_CACHE_ENABLED=0 \
+  AGENTS_GRPC_ENABLED=0 \
+  AGENTS_RUNTIME_SERVICE=agents

@@ -49,6 +49,19 @@ describe('ensureRuntimeStartup', () => {
     expect(mocks.startAgentctlGrpcServer).toHaveBeenCalledTimes(1)
   })
 
+  it('boots only the Agents controller runtime for the controllers profile', async () => {
+    const { JANGAR_RUNTIME_PROFILES } = await import('../runtime-profile')
+    const { ensureRuntimeStartup } = await import('../runtime-startup')
+
+    ensureRuntimeStartup(JANGAR_RUNTIME_PROFILES.agentsControllers.startup)
+    ensureRuntimeStartup(JANGAR_RUNTIME_PROFILES.agentsControllers.startup)
+
+    expect(mocks.ensureAgentCommsRuntime).toHaveBeenCalledTimes(1)
+    expect(mocks.startControlPlaneCache).not.toHaveBeenCalled()
+    expect(mocks.startTorghutQuantRuntime).not.toHaveBeenCalled()
+    expect(mocks.startAgentctlGrpcServer).not.toHaveBeenCalled()
+  })
+
   it('skips all startup side effects for the test profile', async () => {
     const { JANGAR_RUNTIME_PROFILES } = await import('../runtime-profile')
     const { ensureRuntimeStartup } = await import('../runtime-startup')
