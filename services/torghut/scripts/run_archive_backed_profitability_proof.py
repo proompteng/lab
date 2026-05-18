@@ -18,27 +18,39 @@ from app.trading.profitability_archive import (
     load_archived_trading_day_bundles,
     summarize_data_sufficiency,
 )
-from scripts.build_historical_profitability_proof import build_historical_profitability_bundle
+from scripts.build_historical_profitability_proof import (
+    build_historical_profitability_bundle,
+)
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--archive-root', required=True, help='Root directory containing archived replay bundles.')
-    parser.add_argument('--output-dir', required=True, help='Directory where proof artifacts should be written.')
-    parser.add_argument('--selected-candidate-id', default='', help='Optional candidate override.')
-    parser.add_argument('--profit-target-daily-net-usd', default='250')
-    parser.add_argument('--median-target-daily-net-usd', default='125')
-    parser.add_argument('--profitable-day-ratio-target', default='0.60')
-    parser.add_argument('--min-research-days', type=int, default=20)
-    parser.add_argument('--min-historical-days', type=int, default=60)
-    parser.add_argument('--min-execution-days', type=int, default=20)
-    parser.add_argument('--train-days', type=int, default=40)
-    parser.add_argument('--validation-days', type=int, default=10)
-    parser.add_argument('--test-days', type=int, default=10)
-    parser.add_argument('--step-days', type=int, default=10)
-    parser.add_argument('--embargo-days', type=int, default=1)
-    parser.add_argument('--reality-check-bootstrap-replicates', type=int, default=500)
-    parser.add_argument('--json', action='store_true')
+    parser.add_argument(
+        "--archive-root",
+        required=True,
+        help="Root directory containing archived replay bundles.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Directory where proof artifacts should be written.",
+    )
+    parser.add_argument(
+        "--selected-candidate-id", default="", help="Optional candidate override."
+    )
+    parser.add_argument("--profit-target-daily-net-usd", default="250")
+    parser.add_argument("--median-target-daily-net-usd", default="125")
+    parser.add_argument("--profitable-day-ratio-target", default="0.60")
+    parser.add_argument("--min-research-days", type=int, default=20)
+    parser.add_argument("--min-historical-days", type=int, default=60)
+    parser.add_argument("--min-execution-days", type=int, default=20)
+    parser.add_argument("--train-days", type=int, default=40)
+    parser.add_argument("--validation-days", type=int, default=10)
+    parser.add_argument("--test-days", type=int, default=10)
+    parser.add_argument("--step-days", type=int, default=10)
+    parser.add_argument("--embargo-days", type=int, default=1)
+    parser.add_argument("--reality-check-bootstrap-replicates", type=int, default=500)
+    parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 
 
@@ -46,7 +58,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=True, default=str),
-        encoding='utf-8',
+        encoding="utf-8",
     )
 
 
@@ -69,9 +81,9 @@ def run_archive_backed_profitability_proof(
     archive_root: Path,
     output_dir: Path,
     selected_candidate_id: str | None = None,
-    profit_target_daily_net_usd: Decimal = Decimal('250'),
-    median_target_daily_net_usd: Decimal = Decimal('125'),
-    profitable_day_ratio_target: Decimal = Decimal('0.60'),
+    profit_target_daily_net_usd: Decimal = Decimal("250"),
+    median_target_daily_net_usd: Decimal = Decimal("125"),
+    profitable_day_ratio_target: Decimal = Decimal("0.60"),
     min_research_days: int = 20,
     min_historical_days: int = 60,
     min_execution_days: int = 20,
@@ -100,7 +112,11 @@ def run_archive_backed_profitability_proof(
         generated_at=generated_at,
     )
 
-    selected_candidate = selected_candidate_id or str(trial_ledger.get('selected_candidate_id') or '').strip() or None
+    selected_candidate = (
+        selected_candidate_id
+        or str(trial_ledger.get("selected_candidate_id") or "").strip()
+        or None
+    )
     proof_eligible_days = sorted(
         {
             bundle.trading_day
@@ -129,12 +145,16 @@ def run_archive_backed_profitability_proof(
         if selected_run_dirs:
             baseline_candidate_id = next(
                 (
-                    str(bundle.replay_day_manifest.get('baseline_candidate_id') or '').strip()
+                    str(
+                        bundle.replay_day_manifest.get("baseline_candidate_id") or ""
+                    ).strip()
                     for bundle in bundles
                     if bundle.candidate_id == selected_candidate
-                    and str(bundle.replay_day_manifest.get('baseline_candidate_id') or '').strip()
+                    and str(
+                        bundle.replay_day_manifest.get("baseline_candidate_id") or ""
+                    ).strip()
                 ),
-                '',
+                "",
             )
             baseline_run_dirs = (
                 _candidate_run_dirs_for_test_days(
@@ -148,23 +168,26 @@ def run_archive_backed_profitability_proof(
             historical_bundle_summary = build_historical_profitability_bundle(
                 run_dirs=selected_run_dirs,
                 baseline_run_dirs=baseline_run_dirs or None,
-                output_dir=output_dir / 'historical-proof',
+                output_dir=output_dir / "historical-proof",
                 hypothesis=(
-                    f'{selected_candidate} satisfies the archive-backed profitability gate '
-                    f'at ${format(profit_target_daily_net_usd, "f")} average daily net P&L'
+                    f"{selected_candidate} satisfies the archive-backed profitability gate "
+                    f"at ${format(profit_target_daily_net_usd, 'f')} average daily net P&L"
                 ),
                 generated_at=generated_at,
+                target_net_pnl_per_day=profit_target_daily_net_usd,
+                min_sample_size=min_execution_days,
+                min_positive_day_ratio=profitable_day_ratio_target,
             )
             artifact_refs.extend(
                 [
                     str(path)
                     for key, path in historical_bundle_summary.items()
-                    if key.endswith('_path') and str(path).strip()
+                    if key.endswith("_path") and str(path).strip()
                 ]
             )
 
-    data_sufficiency_path = output_dir / 'data-sufficiency.json'
-    trial_ledger_path = output_dir / 'trial-ledger.json'
+    data_sufficiency_path = output_dir / "data-sufficiency.json"
+    trial_ledger_path = output_dir / "trial-ledger.json"
     _write_json(data_sufficiency_path, data_sufficiency)
     _write_json(trial_ledger_path, trial_ledger)
     artifact_refs.extend([str(data_sufficiency_path), str(trial_ledger_path)])
@@ -181,7 +204,7 @@ def run_archive_backed_profitability_proof(
         reality_check_bootstrap_replicates=reality_check_bootstrap_replicates,
         generated_at=generated_at,
     )
-    statistical_validity_report_path = output_dir / 'statistical-validity-report.json'
+    statistical_validity_report_path = output_dir / "statistical-validity-report.json"
     _write_json(statistical_validity_report_path, statistical_validity_report)
     artifact_refs.append(str(statistical_validity_report_path))
 
@@ -194,20 +217,20 @@ def run_archive_backed_profitability_proof(
         profit_target_daily_net_usd=profit_target_daily_net_usd,
         generated_at=generated_at,
     )
-    profitability_certificate_path = output_dir / 'profitability-certificate.json'
+    profitability_certificate_path = output_dir / "profitability-certificate.json"
     _write_json(profitability_certificate_path, profitability_certificate)
     artifact_refs.append(str(profitability_certificate_path))
 
     return {
-        'archive_root': str(archive_root),
-        'output_dir': str(output_dir),
-        'selected_candidate_id': selected_candidate,
-        'data_sufficiency_path': str(data_sufficiency_path),
-        'trial_ledger_path': str(trial_ledger_path),
-        'statistical_validity_report_path': str(statistical_validity_report_path),
-        'profitability_certificate_path': str(profitability_certificate_path),
-        'certificate_status': profitability_certificate['status'],
-        'historical_bundle_summary': historical_bundle_summary,
+        "archive_root": str(archive_root),
+        "output_dir": str(output_dir),
+        "selected_candidate_id": selected_candidate,
+        "data_sufficiency_path": str(data_sufficiency_path),
+        "trial_ledger_path": str(trial_ledger_path),
+        "statistical_validity_report_path": str(statistical_validity_report_path),
+        "profitability_certificate_path": str(profitability_certificate_path),
+        "certificate_status": profitability_certificate["status"],
+        "historical_bundle_summary": historical_bundle_summary,
     }
 
 
@@ -237,5 +260,5 @@ def main() -> int:
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     raise SystemExit(main())
