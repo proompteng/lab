@@ -212,13 +212,22 @@ class TestWhitepaperClaimCompiler(TestCase):
         sources = sources_from_jsonl(path)
         cards = compile_sources_to_hypothesis_cards(sources)
 
-        self.assertGreaterEqual(len(sources), 5)
+        self.assertGreaterEqual(len(sources), 36)
         self.assertTrue(
             all(source.published_at.startswith(("2025", "2026")) for source in sources)
         )
         self.assertGreaterEqual(len(cards), len(sources))
         self.assertTrue(all(card.required_features for card in cards))
         self.assertTrue(all(card.risk_controls for card in cards))
+        source_by_id = {source.run_id: source for source in sources}
+        self.assertEqual(
+            source_by_id["paper-ssrn-6440898"].published_at,
+            "2026-05-15",
+        )
+        self.assertEqual(
+            source_by_id["paper-ssrn-5170318"].published_at,
+            "2026-05-12",
+        )
 
     def test_sources_from_jsonl_rejects_invalid_rows(self) -> None:
         with TemporaryDirectory() as tmpdir:

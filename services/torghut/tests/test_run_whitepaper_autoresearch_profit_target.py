@@ -2238,6 +2238,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("realistic_market_impact_rl_envs_2026", source_ids)
         self.assertIn("vwap_regime_classification_intraday_2026", source_ids)
         self.assertIn("structural_limits_ohlcv_intraday_2026", source_ids)
+        self.assertIn("latent_microstructure_regime_detection_2026", source_ids)
+        self.assertIn("unified_order_flow_impact_volatility_2026", source_ids)
+        self.assertIn("algorithmic_retail_options_intraday_2026", source_ids)
+        self.assertIn("learning_from_book_short_run_efficiency_2026", source_ids)
+        self.assertIn("idiosyncratic_trade_imbalance_2026", source_ids)
+        self.assertIn("intraday_price_asymmetry_sp500_2026", source_ids)
 
         weighted_microprice = next(
             source
@@ -2261,6 +2267,26 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         }
         self.assertIn("validation_requirement", impact_claim_types)
         self.assertFalse(runner.compile_sources_to_hypothesis_cards([impact_source]))
+
+        latent_regime_source = next(
+            source
+            for source in sources
+            if source.run_id == "latent_microstructure_regime_detection_2026"
+        )
+        latent_claim_types = {
+            str(claim["claim_type"]) for claim in latent_regime_source.claims
+        }
+        self.assertIn("feature_recipe", latent_claim_types)
+        self.assertIn("validation_requirement", latent_claim_types)
+
+        book_source = next(
+            source
+            for source in sources
+            if source.run_id == "learning_from_book_short_run_efficiency_2026"
+        )
+        book_claim_types = {str(claim["claim_type"]) for claim in book_source.claims}
+        self.assertIn("feature_recipe", book_claim_types)
+        self.assertIn("validation_requirement", book_claim_types)
 
     def test_runtime_closure_replay_is_disabled_when_candidate_already_failed_oracle(
         self,

@@ -498,6 +498,14 @@ class TestStrategyAutoresearch(TestCase):
                 "vwap_regime_classification_intraday_2026",
                 "intramonth_momentum_cycle_2026",
                 "structural_limits_ohlcv_intraday_2026",
+                "latent_microstructure_regime_detection_2026",
+                "explainable_crypto_microstructure_patterns_2026",
+                "unified_order_flow_impact_volatility_2026",
+                "closing_auction_market_making_2026",
+                "algorithmic_retail_options_intraday_2026",
+                "learning_from_book_short_run_efficiency_2026",
+                "idiosyncratic_trade_imbalance_2026",
+                "intraday_price_asymmetry_sp500_2026",
             }.issubset(source_ids)
         )
 

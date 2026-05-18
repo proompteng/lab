@@ -300,6 +300,138 @@ research_sources:
       - claim_id: walk_forward_cost_constraints_required
         summary: Walk-forward validation and market-microstructure cost constraints are necessary to falsify overfit intraday signals.
         implication: Keep the no-cheating promotion path anchored to held-out replay, live-paper, and post-cost ledger proof.
+  - source_id: latent_microstructure_regime_detection_2026
+    title: 'Early Detection of Latent Microstructure Regimes in Limit Order Books'
+    url: https://arxiv.org/abs/2604.20949
+    published_at: '2026-04-22'
+    claims:
+      - claim_id: latent_build_up_early_warning
+        summary: Latent limit-order-book build-up states can appear before reactive OFI or volatility signals fire.
+        implication: Add early-warning regime channels as feature inputs around continuation entries, not as standalone promotion evidence.
+      - claim_id: low_snr_regime_detector_failure
+        summary: Early-detection performance degrades in low signal-to-noise and short build-up regimes.
+        implication: Require regime-count coverage, stress-window replay, and live quote-quality validation before using latent-regime gates.
+  - source_id: explainable_crypto_microstructure_patterns_2026
+    title: 'Explainable Patterns in Cryptocurrency Microstructure'
+    url: https://arxiv.org/abs/2602.00776
+    published_at: '2026-01-31'
+    claims:
+      - claim_id: portable_lob_feature_library
+        summary: Engineered order-book and trade features can show stable predictive importance across assets with different liquidity and volatility.
+        implication: Reuse portable LOB feature recipes only after equity-specific replay confirms spread, adverse-selection, and liquidity behavior.
+      - claim_id: maker_taker_adverse_selection_stress
+        summary: Divergent taker and maker performance during flash-crash stress highlights adverse-selection risk.
+        implication: Split maker-style and taker-style route/TCA evidence and reject candidates that win only under one optimistic fill assumption.
+  - source_id: unified_order_flow_impact_volatility_2026
+    title: 'A unified theory of order flow, market impact, and volatility'
+    url: https://arxiv.org/abs/2601.23172
+    published_at: '2026-02-02'
+    claims:
+      - claim_id: persistent_core_flow_impact_scaling
+        summary: Persistent core order flow can jointly explain rough volume, rough volatility, and power-law market impact.
+        implication: Treat persistent-flow continuation as a cost-and-volatility-coupled hypothesis rather than a raw imbalance threshold.
+      - claim_id: square_root_impact_cost_stress
+        summary: Estimated order-flow persistence is consistent with square-root-like market-impact scaling.
+        implication: Stress high-turnover candidates with nonlinear impact curves before portfolio ranking or shadow promotion.
+  - source_id: closing_auction_market_making_2026
+    title: 'Learning Market Making with Closing Auctions'
+    url: https://arxiv.org/abs/2601.17247
+    published_at: '2026-01-24'
+    claims:
+      - claim_id: closing_auction_inventory_path
+        summary: Closing auctions create material end-of-session liquidity events that can change optimal inventory management.
+        implication: Keep close-flatten and late-day sleeve exits separate from generic terminal inventory penalties.
+      - claim_id: generative_market_making_benchmark
+        summary: Generative market-making benchmarks are useful for stress design but require historical-data comparison.
+        implication: Treat synthetic close-auction stress as validation input only; promotion still requires historical replay and live-paper proof.
+  - source_id: algorithmic_retail_options_intraday_2026
+    title: 'The Rise of Algorithmic Retail Option Traders'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6480379
+    published_at: '2026-04-17'
+    claims:
+      - claim_id: options_hour_half_hour_flow_spikes
+        summary: SPX 0DTE option volume can spike sharply at hour and half-hour marks and dissipate within seconds.
+        implication: Add clock-time option-flow controls so equity momentum sleeves do not confuse mechanical option-flow bursts with persistent alpha.
+      - claim_id: complex_leg_intraday_microstructure
+        summary: Intraday retail option automation is concentrated in complex multi-leg trades.
+        implication: Require option-flow-aware stress slices before using index or megacap continuation candidates around clock-time bursts.
+  - source_id: learning_from_book_short_run_efficiency_2026
+    title: 'Learning from the Book: AI Evidence on Short-Run Market Efficiency'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6608199
+    published_at: '2026-05-01'
+    claims:
+      - claim_id: orderbook_imbalance_slope_predictability
+        summary: Full-depth order-book imbalance and slope features can contain short-horizon predictive information.
+        implication: Add order-book imbalance and slope inputs where quote depth and route data are available.
+      - claim_id: algorithmic_activity_decay_stress
+        summary: Higher algorithmic activity, tighter spreads, and heavier trading can reduce short-horizon predictability.
+        implication: Stress microstructure candidates by algo-intensity, tight-spread, and high-volume regimes before portfolio ranking.
+  - source_id: idiosyncratic_trade_imbalance_2026
+    title: 'Decomposing High-Frequency Order Flow: Commonality and Idiosyncratic Trade Imbalance'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6535019
+    published_at: '2026-04-20'
+    claims:
+      - claim_id: idiosyncratic_trade_imbalance_filter
+        summary: Common market-wide trade imbalance can obscure asset-specific directional pressure in high-frequency order flow.
+        implication: Add common-factor-adjusted imbalance features so candidates do not confuse market-wide flow with symbol alpha.
+      - claim_id: common_factor_neutral_ofi_validation
+        summary: Order-flow imbalance evidence needs commonality and idiosyncratic components separated before inference.
+        implication: Require market-factor-neutral OFI validation slices for continuation and reversal sleeves.
+  - source_id: intraday_price_asymmetry_sp500_2026
+    title: 'Intraday Price Asymmetry and Next-Day Intraday Returns in the S&P 500'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6074846
+    published_at: '2026-02-02'
+    claims:
+      - claim_id: range_based_intraday_asymmetry_reversal
+        summary: Open-high-low range asymmetry can capture temporary intraday price pressure linked to next-day intraday reversal.
+        implication: Add price-path asymmetry as a reversal-risk feature around continuation candidates rather than as standalone alpha.
+      - claim_id: volatility_stress_short_leg_asymmetry
+        summary: Conditional short-side effects can concentrate during elevated volatility and market stress.
+        implication: Split long and short evidence under volatility stress before promoting any asymmetry-derived sleeve.
+  - source_id: market_depth_execution_delays_2026
+    title: 'Market Depth and Execution Delays'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6440898
+    published_at: '2026-05-15'
+    claims:
+      - claim_id: execution_delay_depth_state
+        summary: Market-depth state and execution delay jointly determine whether apparent liquidity is practically fillable.
+        implication: Add delay-adjusted depth and route latency stress to fillability scoring instead of using spread alone.
+      - claim_id: delay_adjusted_liquidity_cost
+        summary: Apparent liquidity can decay before an order reaches the venue.
+        implication: Reject candidates whose live-paper fills depend on optimistic no-delay execution assumptions.
+  - source_id: orderbook_hawkes_random_environment_2026
+    title: 'Assessing the Impact of the Order Book with a Hawkes Process in a Random Environment'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5170318
+    published_at: '2026-05-12'
+    claims:
+      - claim_id: orderbook_hawkes_impact
+        summary: Order-book variables can enter Hawkes trade-arrival intensity through exogenous and endogenous components.
+        implication: Add order-arrival clustering and depth-state features to execution-aware entry timing.
+      - claim_id: session_specific_endogenous_intensity
+        summary: Opening, main-session, and closing-period order-book impact should be estimated separately.
+        implication: Keep session-segment validation mandatory before promoting continuation or reversal candidates.
+  - source_id: payment_for_order_flow_execution_quality_2026
+    title: 'Payment for Order Flow, Demystified: How Your Free Trade Actually Works'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6704839
+    published_at: '2026-05-04'
+    claims:
+      - claim_id: broker_routing_quality_feature
+        summary: Broker routing, internalization, and payment-for-order-flow incentives can affect retail execution quality.
+        implication: Add broker-route quality, price improvement, and shortfall features to route/TCA evidence before live promotion.
+      - claim_id: pfof_routing_conflict_risk
+        summary: Free-trade routing economics create adverse-selection and execution-quality risk.
+        implication: Treat route economics as a validation blocker, not a source of alpha.
+  - source_id: additive_multiplicative_ofi_2026
+    title: 'Modelling Crypto Asset Order-Flow Imbalance as an Additive and Multiplicative Process'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6688399
+    published_at: '2026-05-01'
+    claims:
+      - claim_id: additive_multiplicative_ofi_decomposition
+        summary: OFI can be decomposed into additive and multiplicative channels for state-dependent pressure modeling.
+        implication: Route concentrated OFI pressure into regime features instead of raw imbalance thresholds.
+      - claim_id: self_amplifying_ofi_regime_risk
+        summary: Leveraged and trend-following flow can create self-amplifying pressure states.
+        implication: Tighten exposure caps and drawdown validation when OFI regimes show concentrated pressure.
 families:
   - family_template_id: microstructure_continuation_matched_filter_v1
     seed_sweep_config: ../profitability-frontier-strict-daily-microstructure.yaml
