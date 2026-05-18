@@ -87,6 +87,25 @@ def _decimal_or_none(value: Any) -> Decimal | None:
         return None
 
 
+def _strategy_name_candidates(*values: str | None) -> list[str]:
+    candidates: list[str] = []
+    for value in values:
+        raw = str(value or "").strip()
+        if not raw:
+            continue
+        variants = [
+            raw,
+            raw.split("@", 1)[0],
+            raw.replace("_", "-"),
+            raw.split("@", 1)[0].replace("_", "-"),
+        ]
+        for variant in variants:
+            normalized = variant.strip()
+            if normalized and normalized not in candidates:
+                candidates.append(normalized)
+    return candidates
+
+
 def _load_report_post_cost_expectancy_bps(artifact_refs: list[str]) -> Decimal | None:
     for ref in artifact_refs:
         path = Path(ref)
@@ -119,11 +138,13 @@ def _load_report_post_cost_expectancy_bps(artifact_refs: list[str]) -> Decimal |
 def _query_timestamps(
     *,
     dsn: str,
-    strategy_name: str,
+    strategy_names: list[str],
     account_label: str,
     window_start: datetime,
     window_end: datetime,
 ) -> tuple[list[datetime], list[datetime], list[dict[str, object]]]:
+    if not strategy_names:
+        raise RuntimeError("strategy_name_not_configured")
     decisions: list[datetime] = []
     executions: list[datetime] = []
     tca_rows: list[dict[str, object]] = []
@@ -134,7 +155,7 @@ def _query_timestamps(
                 select d.created_at
                 from trade_decisions d
                 join strategies s on s.id = d.strategy_id
-                where s.name = %s
+                where s.name = any(%s)
                   and d.alpaca_account_label = %s
                   and d.status = any(%s)
                   and d.created_at >= %s
@@ -142,7 +163,7 @@ def _query_timestamps(
                 order by d.created_at
                 """,
                 (
-                    strategy_name,
+                    strategy_names,
                     account_label,
                     list(EXECUTION_ELIGIBLE_DECISION_STATUSES),
                     window_start,
@@ -156,13 +177,13 @@ def _query_timestamps(
                 from executions e
                 join trade_decisions d on d.id = e.trade_decision_id
                 join strategies s on s.id = d.strategy_id
-                where s.name = %s
+                where s.name = any(%s)
                   and d.alpaca_account_label = %s
                   and d.created_at >= %s
                   and d.created_at < %s
                 order by d.created_at
                 """,
-                (strategy_name, account_label, window_start, window_end),
+                (strategy_names, account_label, window_start, window_end),
             )
             executions = [row[0] for row in cur.fetchall() if row[0] is not None]
             cur.execute(
@@ -175,13 +196,13 @@ def _query_timestamps(
                 join executions e on e.id = t.execution_id
                 join trade_decisions d on d.id = e.trade_decision_id
                 join strategies s on s.id = d.strategy_id
-                where s.name = %s
+                where s.name = any(%s)
                   and d.alpaca_account_label = %s
                   and d.created_at >= %s
                   and d.created_at < %s
                 order by d.created_at
                 """,
-                (strategy_name, account_label, window_start, window_end),
+                (strategy_names, account_label, window_start, window_end),
             )
             tca_rows = [
                 {
@@ -206,9 +227,13 @@ def main() -> int:
         hypothesis_id=args.hypothesis_id,
         strategy_family=args.strategy_family.strip() or None,
     )
+    strategy_names = _strategy_name_candidates(
+        args.strategy_name,
+        getattr(manifest, "strategy_id", None),
+    )
     decisions, executions, tca_rows = _query_timestamps(
         dsn=source_dsn,
-        strategy_name=args.strategy_name,
+        strategy_names=strategy_names,
         account_label=args.account_label,
         window_start=window_start,
         window_end=window_end,
@@ -263,6 +288,7 @@ def main() -> int:
         "source_kind": source_kind,
         "source_manifest_ref": args.source_manifest_ref.strip() or None,
         "strategy_name": args.strategy_name,
+        "strategy_name_candidates": strategy_names,
         "account_label": args.account_label,
         "window_start": window_start.isoformat(),
         "window_end": window_end.isoformat(),
