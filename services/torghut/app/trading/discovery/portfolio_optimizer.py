@@ -685,10 +685,12 @@ def _portfolio_selection_key(
     selected: Sequence[CandidateEvidenceBundle],
     scorecard: Mapping[str, Any],
 ) -> tuple[Decimal, ...]:
+    # Once no portfolio fully passes the oracle, the next best promotion target is
+    # the one with the smallest repair surface, not the one with the largest raw PnL.
     return (
         Decimal(1 if bool(scorecard.get("oracle_passed")) else 0),
-        Decimal(1 if bool(scorecard.get("target_met")) else 0),
         -_oracle_blocker_count(scorecard),
+        Decimal(1 if bool(scorecard.get("target_met")) else 0),
         _scorecard_decimal(scorecard, "active_day_ratio"),
         _scorecard_decimal(scorecard, "positive_day_ratio"),
         _scorecard_decimal(scorecard, "min_daily_net_pnl"),
@@ -1010,7 +1012,8 @@ def optimize_portfolio_candidate(
         "max_single_symbol_contribution_share": objective_scorecard.get(
             "max_single_symbol_contribution_share"
         ),
-        "method": "deterministic_beam_oracle_search_v1",
+        "method": "deterministic_beam_promotion_ready_search_v2",
+        "selection_priority": "oracle_passed_then_blocker_minimized_then_target_met",
         **search_report,
         "target_met": bool(objective_scorecard["target_met"]),
         "oracle_passed": bool(objective_scorecard["oracle_passed"]),
