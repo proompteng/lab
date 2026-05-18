@@ -56,6 +56,8 @@ vi.mock('@proompteng/otel/api', () => ({
   },
 }))
 
+const originalAgentsRuntimeService = process.env.AGENTS_RUNTIME_SERVICE
+
 const stopLeaderElectionRuntime = () => {
   const state = globalThis as typeof globalThis & {
     __jangarLeaderElection?: { stop?: () => void }
@@ -64,51 +66,65 @@ const stopLeaderElectionRuntime = () => {
   Reflect.deleteProperty(state, '__jangarLeaderElection')
 }
 
+const restoreAgentsRuntimeService = () => {
+  if (originalAgentsRuntimeService === undefined) {
+    delete process.env.AGENTS_RUNTIME_SERVICE
+    return
+  }
+  process.env.AGENTS_RUNTIME_SERVICE = originalAgentsRuntimeService
+}
+
+const mockInitialLeaseAcquire = () => {
+  mocks.getLease.mockResolvedValueOnce(null)
+  mocks.createLease.mockResolvedValueOnce({
+    apiVersion: 'coordination.k8s.io/v1',
+    kind: 'Lease',
+    metadata: {
+      name: 'jangar-controller-leader',
+      namespace: 'agents',
+      resourceVersion: '1',
+    },
+    spec: {
+      holderIdentity: 'jangar-0_pod-uid',
+      leaseDurationSeconds: 30,
+      leaseTransitions: 0,
+      renewTime: new Date().toISOString(),
+    },
+  })
+  mocks.replaceLease.mockResolvedValueOnce({
+    apiVersion: 'coordination.k8s.io/v1',
+    kind: 'Lease',
+    metadata: {
+      name: 'jangar-controller-leader',
+      namespace: 'agents',
+      resourceVersion: '2',
+    },
+    spec: {
+      holderIdentity: 'jangar-0_pod-uid',
+      leaseDurationSeconds: 30,
+      leaseTransitions: 0,
+      renewTime: new Date().toISOString(),
+    },
+  })
+}
+
 describe('leader election', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
     vi.useFakeTimers()
+    restoreAgentsRuntimeService()
     stopLeaderElectionRuntime()
   })
 
   afterEach(() => {
     stopLeaderElectionRuntime()
     vi.useRealTimers()
+    restoreAgentsRuntimeService()
   })
 
   it('creates the lease when the initial read returns null and then promotes to leader', async () => {
-    mocks.getLease.mockResolvedValueOnce(null)
-    mocks.createLease.mockResolvedValueOnce({
-      apiVersion: 'coordination.k8s.io/v1',
-      kind: 'Lease',
-      metadata: {
-        name: 'jangar-controller-leader',
-        namespace: 'agents',
-        resourceVersion: '1',
-      },
-      spec: {
-        holderIdentity: 'jangar-0_pod-uid',
-        leaseDurationSeconds: 30,
-        leaseTransitions: 0,
-        renewTime: new Date().toISOString(),
-      },
-    })
-    mocks.replaceLease.mockResolvedValueOnce({
-      apiVersion: 'coordination.k8s.io/v1',
-      kind: 'Lease',
-      metadata: {
-        name: 'jangar-controller-leader',
-        namespace: 'agents',
-        resourceVersion: '2',
-      },
-      spec: {
-        holderIdentity: 'jangar-0_pod-uid',
-        leaseDurationSeconds: 30,
-        leaseTransitions: 0,
-        renewTime: new Date().toISOString(),
-      },
-    })
+    mockInitialLeaseAcquire()
 
     const onLeader = vi.fn()
     const onFollower = vi.fn()
@@ -126,5 +142,30 @@ describe('leader election', () => {
     expect(status.isLeader).toBe(true)
     expect(status.lastSuccessAt).not.toBeNull()
     expect(onFollower).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['agents', '[agents]'],
+    [undefined, '[jangar]'],
+  ])('labels transition logs for runtime service %s', async (runtimeService, expectedPrefix) => {
+    if (runtimeService === undefined) {
+      delete process.env.AGENTS_RUNTIME_SERVICE
+    } else {
+      process.env.AGENTS_RUNTIME_SERVICE = runtimeService
+    }
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    mockInitialLeaseAcquire()
+
+    const onLeader = vi.fn()
+    const onFollower = vi.fn()
+    const { ensureLeaderElectionRuntime } = await import('../leader-election')
+
+    ensureLeaderElectionRuntime({ onLeader, onFollower })
+
+    await vi.waitFor(() => {
+      expect(infoSpy).toHaveBeenCalledWith(
+        expect.stringContaining(`${expectedPrefix} leader election transition: leader`),
+      )
+    })
   })
 })
