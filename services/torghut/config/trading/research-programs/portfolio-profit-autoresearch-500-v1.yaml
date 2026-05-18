@@ -432,6 +432,61 @@ research_sources:
       - claim_id: self_amplifying_ofi_regime_risk
         summary: Leveraged and trend-following flow can create self-amplifying pressure states.
         implication: Tighten exposure caps and drawdown validation when OFI regimes show concentrated pressure.
+  - source_id: rejected_trading_events_outcomes_2026
+    title: 'RED-2400: A Public Benchmark of Algorithmically-Rejected Trading Events with Outcome Labels'
+    url: https://arxiv.org/abs/2605.12151
+    published_at: '2026-05-12'
+    claims:
+      - claim_id: rejection_event_outcome_labels
+        summary: Algorithmically rejected trading events with realized outcome labels can turn skipped signals into counterfactual learning examples.
+        implication: Mine skipped-signal logs for outcome labels so vetoes can be calibrated against post-cost opportunity loss, not just pass/fail counts.
+      - claim_id: counterfactual_reject_outcome_learning
+        summary: Rejected-event benchmarks measure whether vetoes discard profitable executable opportunities or correctly block bad fills.
+        implication: Use rejected-event outcome slices to repair missing executable quote and routeability blockers before widening paper capital.
+  - source_id: noisy_orderflow_privacy_kyle_lambda_2026
+    title: "The Privacy Subsidy: Kyle's Lambda under Noise-Perturbed Order-Flow Observation"
+    url: https://arxiv.org/abs/2605.15746
+    published_at: '2026-05-15'
+    claims:
+      - claim_id: orderflow_observation_noise_model
+        summary: Order-flow observation noise changes inferred adverse-selection and impact estimates.
+        implication: Add source-quality and attribution-noise state to OFI features before treating flow as symbol-specific executable alpha.
+      - claim_id: noise_perturbed_orderflow_adverse_selection
+        summary: Noisy or partially private order-flow observations can understate Kyle-lambda style impact.
+        implication: Stress route/TCA and impact estimates by attribution quality so paper fills cannot rely on clean-flow assumptions.
+  - source_id: state_dependent_lob_hawkes_2026
+    title: 'Extended State-dependent Hawkes Process for Limit Order Books: Mathematical Foundation and the Reproduction of Volatility Signature Plots'
+    url: https://arxiv.org/abs/2604.23961
+    published_at: '2026-04-27'
+    claims:
+      - claim_id: state_dependent_lob_hawkes_intensity
+        summary: State-dependent Hawkes intensities for LOB events can encode volatility-signature dynamics missed by fixed-window OFI.
+        implication: Add state-dependent order-arrival clustering as a validation feature for execution-aware entry timing.
+      - claim_id: volatility_signature_hawkes_calibration
+        summary: State-dependent Hawkes features require replay calibration against volatility-signature behavior.
+        implication: Keep Hawkes-derived entry timing in research until quote quality, volatility signature, and walk-forward replay agree.
+  - source_id: mpc_trade_execution_2026
+    title: 'Model Predictive Control For Trade Execution'
+    url: https://arxiv.org/abs/2603.28898
+    published_at: '2026-03-30'
+    claims:
+      - claim_id: dynamic_execution_schedule_control
+        summary: Model-predictive execution control can adapt participation and urgency to evolving liquidity, inventory, and cost forecasts.
+        implication: Add dynamic schedule controls as execution validation inputs after static route/TCA passes.
+      - claim_id: mpc_execution_stress_required
+        summary: Dynamic schedules need replay evidence under latency, spread, and impact stress before capital gates can use them.
+        implication: Reject execution improvements that only reduce simulated shortfall under no-delay or no-impact assumptions.
+  - source_id: lob_simulation_reality_gap_2026
+    title: 'Bridging the Reality Gap in Limit Order Book Simulation'
+    url: https://arxiv.org/abs/2603.24137
+    published_at: '2026-03-25'
+    claims:
+      - claim_id: lob_simulation_benchmark_parity
+        summary: LOB simulation needs calibration against real event streams and fill outcomes before simulated fillability can be trusted.
+        implication: Treat simulated LOB fills as hypothesis evidence only until live-paper and event-stream parity metrics pass.
+      - claim_id: sim_to_live_reality_gap_validation
+        summary: LOB simulation reality gaps require explicit parity metrics before adverse-selection estimates can affect capital gates.
+        implication: Keep synthetic replay out of promotion proof unless it is bound to live-paper parity and route/TCA receipts.
 families:
   - family_template_id: microstructure_continuation_matched_filter_v1
     seed_sweep_config: ../profitability-frontier-strict-daily-microstructure.yaml
