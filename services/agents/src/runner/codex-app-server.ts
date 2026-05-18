@@ -1,5 +1,7 @@
+import { spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 
 import {
   CodexAppServerClient,
@@ -56,7 +58,24 @@ export type CodexAppServerRunnerClient = {
 
 export type RunCodexAppServerAdapterOptions = {
   createClient?: (options: CodexAppServerOptions) => CodexAppServerRunnerClient
+  runCommand?: CommandRunner
   now?: () => Date
+}
+
+type CommandResult = {
+  exitCode: number
+  stdout: string
+  stderr: string
+}
+
+type CommandRunner = (command: string, args: string[], options?: { cwd?: string }) => Promise<CommandResult>
+
+type VcsWorkspaceContext = {
+  repository: string
+  cloneBaseUrl: string
+  baseBranch: string
+  headBranch: string | null
+  writeEnabled: boolean
 }
 
 const timestampUtc = (now: () => Date): string =>
@@ -92,9 +111,209 @@ const loadRunPayload = async (spec: AgentRunnerSpec): Promise<AgentRunPayload> =
   return readJsonFile(payloadPath)
 }
 
+const pathExists = async (path: string): Promise<boolean> => {
+  try {
+    await stat(path)
+    return true
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return false
+    }
+    throw error
+  }
+}
+
+const isDirectory = async (path: string): Promise<boolean> => {
+  try {
+    return (await stat(path)).isDirectory()
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return false
+    }
+    throw error
+  }
+}
+
+const runCommand: CommandRunner = (command, args, options = {}) =>
+  new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    const stdout: Buffer[] = []
+    const stderr: Buffer[] = []
+    child.stdout?.on('data', (chunk) => stdout.push(Buffer.from(chunk)))
+    child.stderr?.on('data', (chunk) => stderr.push(Buffer.from(chunk)))
+    child.on('error', reject)
+    child.on('exit', (code) => {
+      resolve({
+        exitCode: code ?? 1,
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+      })
+    })
+  })
+
+const assertCommandSuccess = (result: CommandResult, description: string) => {
+  if (result.exitCode === 0) return
+  const output = [result.stderr, result.stdout].filter(Boolean).join('\n').trim()
+  throw new Error(`${description} failed with exit ${result.exitCode}${output ? `: ${output}` : ''}`)
+}
+
 const nonEmptyString = (value: unknown): string | null => {
   const text = asString(value)?.trim()
   return text ? text : null
+}
+
+const isSafeRepositorySlug = (repository: string) => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)
+
+const isSafeGitRef = (ref: string) =>
+  /^[A-Za-z0-9._/-]+$/.test(ref) &&
+  !ref.includes('..') &&
+  !ref.includes('@{') &&
+  !ref.startsWith('/') &&
+  !ref.endsWith('/') &&
+  !ref.endsWith('.lock')
+
+const requireSafeGitRef = (ref: string, label: string) => {
+  if (!isSafeGitRef(ref)) {
+    throw new Error(`Unsafe ${label} git ref "${ref}"`)
+  }
+}
+
+const readVcsWorkspaceContext = (runPayload: AgentRunPayload): VcsWorkspaceContext | null => {
+  const vcs = isRecord(runPayload.vcs) ? runPayload.vcs : {}
+  const parameters = isRecord(runPayload.parameters) ? runPayload.parameters : {}
+  const repository =
+    nonEmptyString(vcs.repository) ?? nonEmptyString(parameters.repository) ?? nonEmptyString(runPayload.repository)
+  if (!repository) return null
+  if (!isSafeRepositorySlug(repository)) {
+    throw new Error(`Unsupported VCS repository "${repository}"; expected owner/repo`)
+  }
+
+  const baseBranch =
+    nonEmptyString(vcs.baseBranch) ?? nonEmptyString(parameters.base) ?? nonEmptyString(runPayload.base) ?? 'main'
+  const headBranch =
+    nonEmptyString(vcs.headBranch) ?? nonEmptyString(parameters.head) ?? nonEmptyString(runPayload.head) ?? null
+  requireSafeGitRef(baseBranch, 'base')
+  if (headBranch) requireSafeGitRef(headBranch, 'head')
+
+  const cloneBaseUrl =
+    nonEmptyString(vcs.cloneBaseUrl) ?? nonEmptyString(process.env.VCS_CLONE_BASE_URL) ?? 'https://github.com'
+  const writeEnabled = vcs.writeEnabled === true || nonEmptyString(vcs.mode) === 'read-write'
+
+  return {
+    repository,
+    cloneBaseUrl,
+    baseBranch,
+    headBranch,
+    writeEnabled,
+  }
+}
+
+const resolveCloneUrl = (vcs: VcsWorkspaceContext): string =>
+  `${vcs.cloneBaseUrl.replace(/\/+$/, '')}/${vcs.repository}.git`
+
+const ensureGitAskpass = async () => {
+  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || process.env.VCS_TOKEN
+  if (!token) return
+
+  if (!process.env.GITHUB_TOKEN) process.env.GITHUB_TOKEN = token
+  if (!process.env.GH_TOKEN) process.env.GH_TOKEN = token
+  if (!process.env.GIT_ASKPASS_USERNAME) process.env.GIT_ASKPASS_USERNAME = 'x-access-token'
+  process.env.GIT_ASKPASS_TOKEN = token
+  process.env.GIT_TERMINAL_PROMPT ??= '0'
+
+  if (process.env.GIT_ASKPASS) return
+  const askpassPath = '/tmp/agents-git-askpass.sh'
+  const script = `#!/bin/sh
+case "$1" in
+  *Username*) printf '%s\\n' "$GIT_ASKPASS_USERNAME" ;;
+  *Password*) printf '%s\\n' "$GIT_ASKPASS_TOKEN" ;;
+  *) printf '%s\\n' "$GIT_ASKPASS_TOKEN" ;;
+esac
+`
+  await writeFile(askpassPath, script, 'utf8')
+  await chmod(askpassPath, 0o700)
+  process.env.GIT_ASKPASS = askpassPath
+}
+
+const fetchBranch = async (
+  runner: CommandRunner,
+  cwd: string,
+  branch: string,
+  options: { required: boolean },
+): Promise<boolean> => {
+  const result = await runner(
+    'git',
+    ['fetch', '--prune', '--depth=1', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`],
+    { cwd },
+  )
+  if (result.exitCode === 0) return true
+  if (!options.required) return false
+  assertCommandSuccess(result, `git fetch origin ${branch}`)
+  return false
+}
+
+const ensureVcsCheckout = async (cwd: string, vcs: VcsWorkspaceContext, runner: CommandRunner) => {
+  await ensureGitAskpass()
+  const cloneUrl = resolveCloneUrl(vcs)
+  const gitDir = join(cwd, '.git')
+
+  if (await pathExists(gitDir)) {
+    assertCommandSuccess(await runner('git', ['remote', 'set-url', 'origin', cloneUrl], { cwd }), 'git remote set-url')
+  } else {
+    await mkdir(dirname(cwd), { recursive: true })
+    if (await pathExists(cwd)) {
+      if (!(await isDirectory(cwd))) {
+        throw new Error(`Codex cwd ${cwd} exists but is not a directory`)
+      }
+      const entries = await readdir(cwd)
+      if (entries.length > 0) {
+        throw new Error(`Codex cwd ${cwd} exists but is not a git checkout`)
+      }
+    }
+    assertCommandSuccess(
+      await runner('git', ['clone', '--filter=blob:none', '--no-checkout', cloneUrl, cwd]),
+      `git clone ${vcs.repository}`,
+    )
+  }
+
+  await fetchBranch(runner, cwd, vcs.baseBranch, { required: true })
+  const headBranch = vcs.headBranch ?? vcs.baseBranch
+  const fetchedHead =
+    headBranch === vcs.baseBranch ? true : await fetchBranch(runner, cwd, headBranch, { required: false })
+  const checkoutRef = fetchedHead ? `refs/remotes/origin/${headBranch}` : `refs/remotes/origin/${vcs.baseBranch}`
+
+  if (vcs.writeEnabled) {
+    assertCommandSuccess(
+      await runner('git', ['checkout', '-B', headBranch, checkoutRef], { cwd }),
+      `git checkout ${headBranch}`,
+    )
+  } else {
+    assertCommandSuccess(
+      await runner('git', ['checkout', '--detach', checkoutRef], { cwd }),
+      `git checkout ${checkoutRef}`,
+    )
+  }
+}
+
+const prepareCodexCwd = async (
+  adapter: CodexAppServerAdapterConfig,
+  runPayload: AgentRunPayload,
+  runner: CommandRunner,
+): Promise<void> => {
+  const cwd = nonEmptyString(adapter.cwd)
+  if (!cwd) return
+
+  const vcs = readVcsWorkspaceContext(runPayload)
+  if (vcs) {
+    await ensureVcsCheckout(cwd, vcs, runner)
+    return
+  }
+
+  await mkdir(cwd, { recursive: true })
 }
 
 export const resolveCodexBinaryPath = (
@@ -247,6 +466,7 @@ export const runCodexAppServerAdapter = async (
     persistExtendedHistory: adapter.persistExtendedHistory,
     bootstrapTimeoutMs: adapter.bootstrapTimeoutMs,
   }
+  await prepareCodexCwd(adapter, runPayload, options.runCommand ?? runCommand)
   const client = options.createClient?.(clientOptions) ?? new CodexAppServerClient(clientOptions)
   const logStream = await openLog(logPath)
 
