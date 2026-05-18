@@ -561,7 +561,24 @@ class TestCandidateSpecs(TestCase):
                 "consistency_guard_feedback_escape",
                 "turnover_coverage_feedback_escape",
                 "notional_throughput_feedback_escape",
+                "symbol_diversification_feedback_escape",
             ],
+        )
+        diversified = expanded[-1]
+        self.assertEqual(diversified["params"]["top_n"], "3")
+        self.assertGreaterEqual(
+            int(diversified["params"]["max_concurrent_positions"]), 3
+        )
+        self.assertEqual(
+            diversified["params"]["symbol_concentration_feedback_guard"],
+            "max_single_symbol_contribution",
+        )
+        self.assertGreater(
+            len(diversified["universe_symbols"]), len(profile["universe_symbols"])
+        )
+        self.assertEqual(
+            sorted(set(diversified["universe_symbols"]) - _CHIP_UNIVERSE_SYMBOLS),
+            [],
         )
         self.assertEqual(
             candidate_specs_module._decimal_profile_param(

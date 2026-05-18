@@ -44,6 +44,37 @@ class TestProfitTargetOracle(TestCase):
         self.assertTrue(result["passed"])
         self.assertEqual(result["blockers"], [])
 
+    def test_profit_target_oracle_accepts_controlled_down_days(self) -> None:
+        result = evaluate_profit_target_oracle(
+            {
+                "net_pnl_per_day": "640",
+                "active_day_ratio": "1",
+                "positive_day_ratio": "0.75",
+                "daily_net": {
+                    "2026-04-01": "900",
+                    "2026-04-02": "-200",
+                    "2026-04-03": "760",
+                    "2026-04-06": "1100",
+                },
+                "trading_day_count": 4,
+                "best_day_share": "0.24",
+                "max_single_day_contribution_share": "0.24",
+                "max_cluster_contribution_share": "0.34",
+                "max_single_symbol_contribution_share": "0.25",
+                "worst_day_loss": "200",
+                "max_drawdown": "200",
+                "avg_filled_notional_per_day": "700000",
+                "regime_slice_pass_rate": "0.55",
+                "posterior_edge_lower": "0.01",
+                "shadow_parity_status": "within_budget",
+                **_executable_scorecard_fields(),
+            },
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["policy"]["min_daily_net_pnl"], "-350")
+
     def test_profit_target_oracle_can_require_every_day_to_clear_target(self) -> None:
         result = evaluate_profit_target_oracle(
             {
