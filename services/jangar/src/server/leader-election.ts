@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { type V1Lease, V1MicroTime } from '@kubernetes/client-node'
+import { resolveRuntimeServiceName } from '@proompteng/agents/server/runtime-identity'
 import { type Counter, metrics as otelMetrics } from '@proompteng/otel/api'
 import { isRuntimeTestEnv, resolveLeaderElectionSettings } from '~/server/control-plane-config'
 import { createKubeGateway } from '~/server/kube-gateway'
@@ -194,8 +195,9 @@ const setLeaderStatus = (isLeader: boolean, error?: string | null) => {
     const leaseNamespace = state.status.leaseNamespace
     const identity = state.status.identity
     const suffix = error ? ` (${error})` : ''
+    const serviceName = resolveRuntimeServiceName()
     console.info(
-      `[jangar] leader election transition: ${isLeader ? 'leader' : 'follower'} lease=${leaseNamespace}/${leaseName} identity=${identity}${suffix}`,
+      `[${serviceName}] leader election transition: ${isLeader ? 'leader' : 'follower'} lease=${leaseNamespace}/${leaseName} identity=${identity}${suffix}`,
     )
     try {
       state.metrics?.changesCounter.add(1, { to: isLeader ? 'leader' : 'follower' })
