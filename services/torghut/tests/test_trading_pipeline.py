@@ -2465,12 +2465,22 @@ class TestTradingPipeline(TestCase):
 
         config.settings.trading_simple_submit_enabled = True
         sell_decision = decision.model_copy(update={"action": "sell"})
+        config.settings.trading_allow_shorts = False
         self.assertIsNone(
             pipeline._paper_route_probe_context(
                 proof_floor=proof_floor,
                 decision=sell_decision,
             )
         )
+        config.settings.trading_allow_shorts = True
+        sell_probe_context = pipeline._paper_route_probe_context(
+            proof_floor=proof_floor,
+            decision=sell_decision,
+        )
+        self.assertIsNotNone(sell_probe_context)
+        assert sell_probe_context is not None
+        self.assertEqual(sell_probe_context.get("side"), "sell")
+        self.assertEqual(sell_probe_context.get("mode"), "paper_route_acquisition")
 
         config.settings.trading_simple_paper_route_probe_max_notional = 0.0
         self.assertIsNone(

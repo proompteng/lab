@@ -596,7 +596,9 @@ class SimpleTradingPipeline(TradingPipeline):
             return None
         if not settings.trading_simple_submit_enabled:
             return None
-        if decision.action != "buy":
+        if decision.action == "sell" and not settings.trading_allow_shorts:
+            return None
+        if decision.action not in {"buy", "sell"}:
             return None
         cap = _optional_decimal(settings.trading_simple_paper_route_probe_max_notional)
         if cap is None or cap <= 0:
@@ -622,6 +624,7 @@ class SimpleTradingPipeline(TradingPipeline):
             "mode": "paper_route_acquisition",
             "max_notional": str(cap),
             "symbol": symbol,
+            "side": decision.action,
             "blocking_reasons": sorted(blocking_reasons),
             "route_repair_symbols": sorted(repair_symbols),
         }
