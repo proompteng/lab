@@ -1,7 +1,12 @@
 import { asRecord, asString, readNested } from '../primitives'
 
 import { normalizeConditions, upsertCondition } from './conditions'
-import { PROVIDER_AUTH_UNAVAILABLE_REASON, resolveProviderAuthFailureFromText } from './provider-capacity'
+import {
+  PROVIDER_AUTH_UNAVAILABLE_REASON,
+  PROVIDER_CAPACITY_EXHAUSTED_REASON,
+  resolveProviderAuthFailureFromText,
+  resolveProviderCapacityFailureFromText,
+} from './provider-capacity'
 
 type KubeClient = {
   get: (kind: string, name: string, namespace: string) => Promise<Record<string, unknown> | null>
@@ -20,6 +25,7 @@ type VcsAuthValidation = {
 }
 
 const PROVIDER_AUTH_FAILURE_LOOKBACK_MS = 2 * 60 * 60 * 1000
+const PROVIDER_CAPACITY_FAILURE_LOOKBACK_MS = 2 * 60 * 60 * 1000
 
 const parseTimestamp = (value: unknown) => {
   const text = asString(value)
@@ -78,13 +84,26 @@ const hasProviderAuthFailure = (run: Record<string, unknown>) => {
   return resolveProviderAuthFailureFromText(runTextForProviderAuthDetection(run)) !== null
 }
 
+const runTextForProviderCapacityDetection = runTextForProviderAuthDetection
+
+const hasProviderCapacityFailure = (run: Record<string, unknown>) => {
+  const reason = asString(readNested(run, ['status', 'reason']))
+  if (reason === PROVIDER_CAPACITY_EXHAUSTED_REASON) return true
+  return resolveProviderCapacityFailureFromText(runTextForProviderCapacityDetection(run)) !== null
+}
+
 const phaseOf = (run: Record<string, unknown>) => asString(readNested(run, ['status', 'phase']))?.toLowerCase()
 
-const resolveRecentProviderAuthFailure = (
+const resolveRecentProviderFailure = (
   provider: Record<string, unknown>,
   agents: Record<string, unknown>[],
   runs: Record<string, unknown>[],
   nowMs: number,
+  options: {
+    lookbackMs: number
+    hasFailure: (run: Record<string, unknown>) => boolean
+    resolveMessage: (run: Record<string, unknown>, name: string) => string
+  },
 ) => {
   const providerName = asString(readNested(provider, ['metadata', 'name']))
   if (!providerName) return null
@@ -108,11 +127,9 @@ const resolveRecentProviderAuthFailure = (
       latestSuccessAt = Math.max(latestSuccessAt ?? 0, observedAt)
       continue
     }
-    if (phase !== 'failed' || !hasProviderAuthFailure(run)) continue
+    if (phase !== 'failed' || !options.hasFailure(run)) continue
     const name = asString(readNested(run, ['metadata', 'name'])) ?? 'unknown'
-    const message =
-      resolveProviderAuthFailureFromText(runTextForProviderAuthDetection(run))?.message ??
-      `provider auth unavailable: ${name}`
+    const message = options.resolveMessage(run, name)
     if (!latestFailure || observedAt > latestFailure.at) {
       latestFailure = { at: observedAt, name, message }
     }
@@ -120,9 +137,37 @@ const resolveRecentProviderAuthFailure = (
 
   if (!latestFailure) return null
   if (latestSuccessAt !== null && latestSuccessAt > latestFailure.at) return null
-  if (nowMs - latestFailure.at > PROVIDER_AUTH_FAILURE_LOOKBACK_MS) return null
+  if (nowMs - latestFailure.at > options.lookbackMs) return null
   return latestFailure
 }
+
+const resolveRecentProviderAuthFailure = (
+  provider: Record<string, unknown>,
+  agents: Record<string, unknown>[],
+  runs: Record<string, unknown>[],
+  nowMs: number,
+) =>
+  resolveRecentProviderFailure(provider, agents, runs, nowMs, {
+    lookbackMs: PROVIDER_AUTH_FAILURE_LOOKBACK_MS,
+    hasFailure: hasProviderAuthFailure,
+    resolveMessage: (run, name) =>
+      resolveProviderAuthFailureFromText(runTextForProviderAuthDetection(run))?.message ??
+      `provider auth unavailable: ${name}`,
+  })
+
+const resolveRecentProviderCapacityFailure = (
+  provider: Record<string, unknown>,
+  agents: Record<string, unknown>[],
+  runs: Record<string, unknown>[],
+  nowMs: number,
+) =>
+  resolveRecentProviderFailure(provider, agents, runs, nowMs, {
+    lookbackMs: PROVIDER_CAPACITY_FAILURE_LOOKBACK_MS,
+    hasFailure: hasProviderCapacityFailure,
+    resolveMessage: (run, name) =>
+      resolveProviderCapacityFailureFromText(runTextForProviderCapacityDetection(run))?.message ??
+      `provider capacity exhausted: latest failed AgentRun ${name}`,
+  })
 
 export const createResourceReconcilers = (deps: {
   setStatus: (kube: unknown, resource: Record<string, unknown>, status: Record<string, unknown>) => Promise<void>
@@ -250,6 +295,7 @@ export const createResourceReconcilers = (deps: {
         })
       } else {
         const recentAuthFailure = resolveRecentProviderAuthFailure(provider, agents, runs, nowMs)
+        const recentCapacityFailure = resolveRecentProviderCapacityFailure(provider, agents, runs, nowMs)
         updated = upsertCondition(updated, { type: 'InvalidSpec', status: 'False', reason: 'ValidSpec', message: '' })
         if (recentAuthFailure) {
           const message = `${recentAuthFailure.message}; latest failed AgentRun ${recentAuthFailure.name}`
@@ -265,8 +311,24 @@ export const createResourceReconcilers = (deps: {
             reason: PROVIDER_AUTH_UNAVAILABLE_REASON,
             message,
           })
+        } else if (recentCapacityFailure) {
+          const message = `${recentCapacityFailure.message}; latest failed AgentRun ${recentCapacityFailure.name}`
+          updated = upsertCondition(updated, { type: 'Unreachable', status: 'False', reason: 'Reachable', message: '' })
+          updated = upsertCondition(updated, {
+            type: 'Degraded',
+            status: 'True',
+            reason: PROVIDER_CAPACITY_EXHAUSTED_REASON,
+            message,
+          })
+          updated = upsertCondition(updated, {
+            type: 'Ready',
+            status: 'False',
+            reason: PROVIDER_CAPACITY_EXHAUSTED_REASON,
+            message,
+          })
         } else {
           updated = upsertCondition(updated, { type: 'Unreachable', status: 'False', reason: 'Reachable', message: '' })
+          updated = upsertCondition(updated, { type: 'Degraded', status: 'False', reason: 'Healthy', message: '' })
           updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'ValidSpec' })
         }
       }
