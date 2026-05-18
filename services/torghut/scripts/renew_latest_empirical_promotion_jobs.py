@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -48,6 +49,17 @@ def _parse_args() -> argparse.Namespace:
         "--run-id-prefix", default="sim-2026-05-05-chip-4c330ce9-r1-renew"
     )
     parser.add_argument("--runtime-window-import", action="store_true")
+    parser.add_argument(
+        "--runtime-window-target",
+        action="append",
+        default=[],
+        help=(
+            "Repeatable comma-separated key=value runtime import target. "
+            "Supported keys: hypothesis_id,candidate_id,strategy_family,"
+            "strategy_name,account_label,observed_stage,source_dsn_env,"
+            "dataset_snapshot_ref,source_manifest_ref,source_kind."
+        ),
+    )
     parser.add_argument("--runtime-window-hypothesis-id", default="H-TSMOM-01")
     parser.add_argument("--runtime-window-candidate-id", default="")
     parser.add_argument(
@@ -128,6 +140,98 @@ def _read_runtime_window_manifest(ref: str) -> dict[str, Any]:
     except Exception:
         return {}
     return _as_dict(payload)
+
+
+@dataclass(frozen=True)
+class RuntimeWindowImportTarget:
+    hypothesis_id: str
+    candidate_id: str
+    observed_stage: str
+    strategy_family: str
+    source_dsn_env: str
+    strategy_name: str
+    account_label: str
+    dataset_snapshot_ref: str
+    source_manifest_ref: str
+    source_kind: str
+
+
+def _parse_runtime_window_target_spec(spec: str) -> dict[str, str]:
+    text = spec.strip()
+    if not text:
+        return {}
+    if text.startswith("{"):
+        payload = json.loads(text)
+        if not isinstance(payload, Mapping):
+            raise RuntimeError("runtime_window_target_json_not_mapping")
+        return {
+            str(key).replace("-", "_"): str(value)
+            for key, value in payload.items()
+            if value is not None
+        }
+    parsed: dict[str, str] = {}
+    for part in text.split(","):
+        item = part.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise RuntimeError(f"runtime_window_target_invalid:{item}")
+        key, value = item.split("=", 1)
+        normalized_key = key.strip().replace("-", "_")
+        normalized_value = value.strip()
+        if not normalized_key or not normalized_value:
+            raise RuntimeError(f"runtime_window_target_invalid:{item}")
+        parsed[normalized_key] = normalized_value
+    return parsed
+
+
+def _runtime_window_targets(
+    args: argparse.Namespace,
+) -> list[RuntimeWindowImportTarget]:
+    specs = [str(item) for item in getattr(args, "runtime_window_target", []) or []]
+    if not specs:
+        specs = [""]
+    targets: list[RuntimeWindowImportTarget] = []
+    for spec in specs:
+        payload = _parse_runtime_window_target_spec(spec)
+
+        def value(key: str, legacy_name: str) -> str:
+            return str(payload.get(key) or getattr(args, legacy_name, "") or "").strip()
+
+        hypothesis_id = value("hypothesis_id", "runtime_window_hypothesis_id")
+        strategy_family = value("strategy_family", "runtime_window_strategy_family")
+        strategy_name = value("strategy_name", "runtime_window_strategy_name")
+        if not hypothesis_id:
+            raise RuntimeError("runtime_window_target_hypothesis_id_missing")
+        if not strategy_family:
+            raise RuntimeError("runtime_window_target_strategy_family_missing")
+        if not strategy_name:
+            raise RuntimeError("runtime_window_target_strategy_name_missing")
+        targets.append(
+            RuntimeWindowImportTarget(
+                hypothesis_id=hypothesis_id,
+                candidate_id=value("candidate_id", "runtime_window_candidate_id"),
+                observed_stage=value("observed_stage", "runtime_window_observed_stage")
+                or "paper",
+                strategy_family=strategy_family,
+                source_dsn_env=value("source_dsn_env", "runtime_window_source_dsn_env")
+                or "DB_DSN",
+                strategy_name=strategy_name,
+                account_label=value("account_label", "runtime_window_account_label")
+                or "TORGHUT_SIM",
+                dataset_snapshot_ref=value(
+                    "dataset_snapshot_ref",
+                    "runtime_window_dataset_snapshot_ref",
+                ),
+                source_manifest_ref=value(
+                    "source_manifest_ref",
+                    "runtime_window_source_manifest_ref",
+                ),
+                source_kind=value("source_kind", "runtime_window_source_kind")
+                or "paper_runtime_observed",
+            )
+        )
+    return targets
 
 
 def _latest_completed_regular_session(now: datetime) -> tuple[datetime, datetime]:
@@ -286,17 +390,47 @@ def _run_runtime_window_import(
 ) -> dict[str, Any] | None:
     if not bool(getattr(args, "runtime_window_import", False)):
         return None
-    runtime_manifest = _read_runtime_window_manifest(
-        str(getattr(args, "runtime_window_source_manifest_ref", "") or "")
-    )
+    window_start, window_end = _runtime_window_bounds(args, now)
+    imports: list[dict[str, Any]] = []
+    for target in _runtime_window_targets(args):
+        imports.append(
+            _run_runtime_window_import_target(
+                args=args,
+                target=target,
+                manifest=manifest,
+                run_id=run_id,
+                manifest_path=manifest_path,
+                window_start=window_start,
+                window_end=window_end,
+            )
+        )
+    if len(imports) == 1:
+        return imports[0]
+    return {
+        "status": "ok",
+        "target_count": len(imports),
+        "imports": imports,
+    }
+
+
+def _run_runtime_window_import_target(
+    *,
+    args: argparse.Namespace,
+    target: RuntimeWindowImportTarget,
+    manifest: Mapping[str, Any],
+    run_id: str,
+    manifest_path: Path,
+    window_start: datetime,
+    window_end: datetime,
+) -> dict[str, Any]:
+    runtime_manifest = _read_runtime_window_manifest(target.source_manifest_ref)
     candidate_id = (
-        _as_text(getattr(args, "runtime_window_candidate_id", ""))
+        _as_text(target.candidate_id)
         or _as_text(runtime_manifest.get("candidate_id"))
         or _as_text(manifest.get("candidate_id"))
     )
     if candidate_id is None:
         raise RuntimeError("runtime_window_candidate_id_missing")
-    window_start, window_end = _runtime_window_bounds(args, now)
     command = [
         sys.executable,
         "scripts/import_hypothesis_runtime_windows.py",
@@ -305,17 +439,17 @@ def _run_runtime_window_import(
         "--candidate-id",
         candidate_id,
         "--hypothesis-id",
-        args.runtime_window_hypothesis_id,
+        target.hypothesis_id,
         "--observed-stage",
-        args.runtime_window_observed_stage,
+        target.observed_stage,
         "--strategy-family",
-        args.runtime_window_strategy_family,
+        target.strategy_family,
         "--source-dsn-env",
-        args.runtime_window_source_dsn_env,
+        target.source_dsn_env,
         "--strategy-name",
-        args.runtime_window_strategy_name,
+        target.strategy_name,
         "--account-label",
-        args.runtime_window_account_label,
+        target.account_label,
         "--window-start",
         _utc_iso(window_start),
         "--window-end",
@@ -325,9 +459,9 @@ def _run_runtime_window_import(
         "--sample-minutes",
         str(args.runtime_window_sample_minutes),
         "--source-manifest-ref",
-        args.runtime_window_source_manifest_ref,
+        target.source_manifest_ref,
         "--source-kind",
-        args.runtime_window_source_kind,
+        target.source_kind,
         "--artifact-ref",
         str(manifest_path),
         "--dependency-quorum-decision",
@@ -339,7 +473,7 @@ def _run_runtime_window_import(
         "--json",
     ]
     dataset_snapshot_ref = (
-        _as_text(getattr(args, "runtime_window_dataset_snapshot_ref", ""))
+        _as_text(target.dataset_snapshot_ref)
         or _as_text(runtime_manifest.get("dataset_snapshot_ref"))
         or _as_text(manifest.get("dataset_snapshot_ref"))
     )
@@ -352,9 +486,9 @@ def _run_runtime_window_import(
         "command": " ".join(command[:2] + ["..."]),
         "window_start": _utc_iso(window_start),
         "window_end": _utc_iso(window_end),
-        "hypothesis_id": args.runtime_window_hypothesis_id,
-        "strategy_name": args.runtime_window_strategy_name,
-        "account_label": args.runtime_window_account_label,
+        "hypothesis_id": target.hypothesis_id,
+        "strategy_name": target.strategy_name,
+        "account_label": target.account_label,
         "summary": payload,
     }
 
