@@ -1192,11 +1192,15 @@ class TestPortfolioOptimizer(TestCase):
         )
         self.assertEqual(
             portfolio.optimizer_report["method"],
-            "deterministic_beam_oracle_search_v1",
+            "deterministic_beam_promotion_ready_search_v2",
+        )
+        self.assertEqual(
+            portfolio.optimizer_report["selection_priority"],
+            "oracle_passed_then_blocker_minimized_then_target_met",
         )
         self.assertGreater(portfolio.optimizer_report["finalist_state_count"], 1)
 
-    def test_optimizer_prefers_target_met_before_fewer_oracle_blockers(
+    def test_optimizer_prefers_nearest_promotion_candidate_over_raw_target_met(
         self,
     ) -> None:
         def bundle(
@@ -1288,24 +1292,25 @@ class TestPortfolioOptimizer(TestCase):
 
         self.assertIsNotNone(portfolio)
         assert portfolio is not None
-        self.assertIn("cand-sparse-intc", portfolio.source_candidate_ids)
-        self.assertEqual(len(portfolio.source_candidate_ids), 3)
+        self.assertNotIn("cand-sparse-intc", portfolio.source_candidate_ids)
+        self.assertCountEqual(
+            portfolio.source_candidate_ids,
+            ("cand-steady-aapl", "cand-steady-amzn", "cand-steady-googl"),
+        )
         self.assertFalse(portfolio.objective_scorecard["oracle_passed"])
-        self.assertTrue(portfolio.objective_scorecard["target_met"])
+        self.assertFalse(portfolio.objective_scorecard["target_met"])
         self.assertEqual(
             portfolio.objective_scorecard["min_daily_net_pnl"],
-            "320.0000000000000000000000000",
+            "480.0000000000000000000000000",
         )
-        self.assertGreater(
+        self.assertLessEqual(
             Decimal(portfolio.objective_scorecard["max_single_day_contribution_share"]),
             Decimal("0.25"),
         )
         self.assertEqual(
             portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
             [
-                "best_day_share_failed",
-                "max_single_day_contribution_share_failed",
-                "max_single_symbol_contribution_share_failed",
+                "portfolio_post_cost_net_pnl_per_day_failed",
             ],
         )
 
