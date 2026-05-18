@@ -426,6 +426,7 @@ class TestTradingApi(TestCase):
             route_symbols=[" aapl ", "MSFT", "AAPL", ""],
         )
 
+        self.assertEqual(payload["scope"], "route_symbols")
         self.assertEqual(payload["route_symbols"], ["AAPL", "MSFT"])
         self.assertEqual(payload["active_contracts"], 6)
         route_scope = payload["route_symbol_freshness"]
@@ -435,8 +436,38 @@ class TestTradingApi(TestCase):
         self.assertFalse(route_scope["MSFT"]["provider_updated_ts_present"])
         self.assertEqual(route_scope["MSFT"]["missing_close_price_count"], 1)
         self.assertEqual(
-            fake_session.calls[2][1],
+            fake_session.calls[1][1],
             {"route_symbols": ("AAPL", "MSFT")},
+        )
+        self.assertIn("WHERE underlying_symbol IN", fake_session.calls[1][0])
+        self.assertIn("AND status = 'active'", fake_session.calls[1][0])
+        self.assertEqual(
+            sum(
+                "FROM torghut_options_contract_catalog" in sql
+                for sql, _params in fake_session.calls
+            ),
+            1,
+        )
+
+    def test_options_catalog_freshness_summary_uses_global_scan_without_route_scope(
+        self,
+    ) -> None:
+        fake_session = _OptionsFreshnessSession()
+
+        payload = _load_options_catalog_freshness_summary(
+            fake_session,  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(payload["scope"], "global")
+        self.assertEqual(payload["active_contracts"], 6)
+        self.assertEqual(payload["route_symbols"], [])
+        self.assertIn("WHERE status = 'active'", fake_session.calls[1][0])
+        self.assertEqual(
+            sum(
+                "FROM torghut_options_contract_catalog" in sql
+                for sql, _params in fake_session.calls
+            ),
+            1,
         )
 
     def test_route_image_proof_summary_preserves_route_workload_status(self) -> None:
