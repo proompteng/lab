@@ -1,0 +1,114 @@
+import { describe, expect, it } from 'vitest'
+
+import {
+  isControllerClusterScoped,
+  resolveControlPlaneCacheConfig,
+  resolveOrchestrationControllerConfig,
+  resolvePrimitivesReconcilerConfig,
+  resolveSupportingControllerConfig,
+} from '../controller-runtime-config'
+
+describe('controller runtime config', () => {
+  it('prefers canonical AGENTS control-plane cache env over JANGAR aliases', () => {
+    const config = resolveControlPlaneCacheConfig({
+      AGENTS_CONTROL_PLANE_CACHE_ENABLED: 'true',
+      AGENTS_CONTROL_PLANE_CACHE_NAMESPACES: 'agents,agents-system',
+      AGENTS_CONTROL_PLANE_CACHE_CLUSTER: 'prod-agents',
+      JANGAR_CONTROL_PLANE_CACHE_ENABLED: 'false',
+      JANGAR_CONTROL_PLANE_CACHE_NAMESPACES: 'jangar',
+      JANGAR_CONTROL_PLANE_CACHE_CLUSTER: 'prod-jangar',
+    })
+
+    expect(config).toEqual({
+      enabled: true,
+      namespaces: ['agents', 'agents-system'],
+      clusterId: 'prod-agents',
+    })
+  })
+
+  it('keeps JANGAR control-plane cache env as a compatibility alias', () => {
+    expect(
+      resolveControlPlaneCacheConfig({
+        JANGAR_CONTROL_PLANE_CACHE_ENABLED: 'on',
+        JANGAR_CONTROL_PLANE_CACHE_NAMESPACES: 'agents',
+        JANGAR_CONTROL_PLANE_CACHE_CLUSTER: 'compat',
+      }),
+    ).toEqual({
+      enabled: true,
+      namespaces: ['agents'],
+      clusterId: 'compat',
+    })
+  })
+
+  it('uses canonical AGENTS cluster-scoped env for wildcard namespace admission', () => {
+    expect(isControllerClusterScoped({ AGENTS_RBAC_CLUSTER_SCOPED: '1' })).toBe(true)
+    expect(
+      resolveControlPlaneCacheConfig({
+        AGENTS_RBAC_CLUSTER_SCOPED: '1',
+        AGENTS_CONTROL_PLANE_CACHE_NAMESPACES: '*',
+      }).namespaces,
+    ).toEqual(['*'])
+  })
+
+  it('reads canonical AGENTS controller env names for generic controller toggles', () => {
+    expect(
+      resolveOrchestrationControllerConfig({
+        AGENTS_ORCHESTRATION_CONTROLLER_ENABLED: 'false',
+        AGENTS_ORCHESTRATION_CONTROLLER_NAMESPACES: 'agents',
+        AGENTS_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY: 'agents.orchestration.enabled',
+      }),
+    ).toEqual({
+      enabled: false,
+      namespaces: ['agents'],
+      enabledFlagKey: 'agents.orchestration.enabled',
+    })
+
+    expect(
+      resolvePrimitivesReconcilerConfig({
+        AGENTS_PRIMITIVES_RECONCILER: 'false',
+        AGENTS_PRIMITIVES_NAMESPACES: 'agents',
+        AGENTS_PRIMITIVES_RECONCILER_FLAG_KEY: 'agents.primitives.enabled',
+      }),
+    ).toEqual({
+      enabled: false,
+      namespaces: ['agents'],
+      enabledFlagKey: 'agents.primitives.enabled',
+    })
+
+    expect(
+      resolveSupportingControllerConfig({
+        AGENTS_SUPPORTING_CONTROLLER_ENABLED: 'false',
+        AGENTS_SUPPORTING_CONTROLLER_NAMESPACES: 'agents',
+        AGENTS_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY: 'agents.supporting.enabled',
+      }),
+    ).toEqual({
+      enabled: false,
+      namespaces: ['agents'],
+      enabledFlagKey: 'agents.supporting.enabled',
+    })
+  })
+
+  it('uses Agents feature flag defaults only for the Agents runtime image', () => {
+    expect(
+      resolveOrchestrationControllerConfig({
+        AGENTS_RUNTIME_SERVICE: 'agents',
+      }).enabledFlagKey,
+    ).toBe('agents.orchestration_controller.enabled')
+    expect(
+      resolvePrimitivesReconcilerConfig({
+        AGENTS_RUNTIME_SERVICE: 'agents',
+      }).enabledFlagKey,
+    ).toBe('agents.primitives_reconciler.enabled')
+    expect(
+      resolveSupportingControllerConfig({
+        AGENTS_RUNTIME_SERVICE: 'agents',
+      }).enabledFlagKey,
+    ).toBe('agents.supporting_controller.enabled')
+  })
+
+  it('keeps Jangar feature flag defaults for legacy Jangar runtime callers', () => {
+    expect(resolveOrchestrationControllerConfig({}).enabledFlagKey).toBe('jangar.orchestration_controller.enabled')
+    expect(resolvePrimitivesReconcilerConfig({}).enabledFlagKey).toBe('jangar.primitives_reconciler.enabled')
+    expect(resolveSupportingControllerConfig({}).enabledFlagKey).toBe('jangar.supporting_controller.enabled')
+  })
+})

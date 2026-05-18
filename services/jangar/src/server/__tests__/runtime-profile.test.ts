@@ -18,7 +18,13 @@ describe('runtime profile resolution', () => {
 
     expect(profile).toBe(JANGAR_RUNTIME_PROFILES.agentsControlPlane)
     expect(profile.serveClient).toBe(false)
-    expect(profile.startup).toBe(JANGAR_RUNTIME_PROFILES.httpServer.startup)
+    expect(profile.startup).toEqual({
+      agentComms: false,
+      controllerRuntimes: true,
+      controlPlaneCache: true,
+      torghutQuantRuntime: false,
+      agentctlGrpc: true,
+    })
   })
 
   it('accepts concise control-plane aliases for the transitional Agents image', () => {

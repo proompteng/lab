@@ -1,4 +1,4 @@
-import { ensureAgentCommsRuntime } from './agent-comms-runtime'
+import { ensureAgentCommsRuntime, ensureControllerRuntimes } from './agent-comms-runtime'
 import { startAgentctlGrpcServer } from './agentctl-grpc'
 import { startControlPlaneCache } from './control-plane-cache'
 import type { JangarRuntimeStartup } from './runtime-profile'
@@ -6,6 +6,7 @@ import { startTorghutQuantRuntime } from './torghut-quant-runtime'
 
 type StartupState = {
   agentCommsStarted: boolean
+  controllerRuntimesStarted: boolean
   controlPlaneCacheStarted: boolean
   torghutQuantRuntimeStarted: boolean
   grpcBootAttempted: boolean
@@ -20,6 +21,7 @@ const getState = (): StartupState => {
   if (!globalState.__jangarRuntimeStartup) {
     globalState.__jangarRuntimeStartup = {
       agentCommsStarted: false,
+      controllerRuntimesStarted: false,
       controlPlaneCacheStarted: false,
       torghutQuantRuntimeStarted: false,
       grpcBootAttempted: false,
@@ -36,6 +38,11 @@ export const ensureRuntimeStartup = (startup: JangarRuntimeStartup) => {
   if (startup.agentComms && !state.agentCommsStarted) {
     state.agentCommsStarted = true
     ensureAgentCommsRuntime()
+  }
+
+  if (startup.controllerRuntimes && !state.controllerRuntimesStarted) {
+    state.controllerRuntimesStarted = true
+    ensureControllerRuntimes()
   }
 
   if (startup.controlPlaneCache && !state.controlPlaneCacheStarted) {
