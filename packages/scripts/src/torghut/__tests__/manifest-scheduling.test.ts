@@ -19,6 +19,10 @@ const torghutArm64ImageChecks: ManifestCheck[] = [
   { path: 'argocd/applications/torghut/db-migrations-job.yaml', selectorPath: ['spec', 'template', 'spec'] },
   { path: 'argocd/applications/torghut/empirical-jobs-backfill-job.yaml', selectorPath: ['spec', 'template', 'spec'] },
   {
+    path: 'argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml',
+    selectorPath: ['spec', 'jobTemplate', 'spec', 'template', 'spec'],
+  },
+  {
     path: 'argocd/applications/torghut/analysis-template-runtime-ready.yaml',
     selectorPath: ['spec', 'metrics', 0, 'provider', 'job', 'spec', 'template', 'spec'],
   },

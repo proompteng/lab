@@ -1,0 +1,68 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-empirical-promotion-renewal
+  namespace: torghut
+spec:
+  schedule: "23 8,20 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 900
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: torghut-runtime
+          nodeSelector:
+            kubernetes.io/arch: arm64
+          containers:
+            - name: renew
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:a1401e1fcedfef12e3e2bc503d007b4457857009b2072d70cfbc8147ddbf2bc4
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/bash
+                - -lc
+              args:
+                - |
+                  set -euo pipefail
+                  cd /app
+                  /opt/venv/bin/python scripts/renew_latest_empirical_promotion_jobs.py \
+                    --output-dir /tmp/torghut-empirical-renewal \
+                    --json
+              env:
+                - name: DB_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: uri
+                - name: TORGHUT_IMAGE_DIGEST
+                  value: sha256:a1401e1fcedfef12e3e2bc503d007b4457857009b2072d70cfbc8147ddbf2bc4
+                - name: TORGHUT_EMPIRICAL_CEPH_BUCKET
+                  valueFrom:
+                    configMapKeyRef:
+                      name: torghut-empirical-artifacts
+                      key: BUCKET_NAME
+                - name: TORGHUT_EMPIRICAL_CEPH_BUCKET_HOST
+                  valueFrom:
+                    configMapKeyRef:
+                      name: torghut-empirical-artifacts
+                      key: BUCKET_HOST
+                - name: TORGHUT_EMPIRICAL_CEPH_BUCKET_PORT
+                  valueFrom:
+                    configMapKeyRef:
+                      name: torghut-empirical-artifacts
+                      key: BUCKET_PORT
+                - name: TORGHUT_EMPIRICAL_CEPH_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-empirical-artifacts
+                      key: AWS_ACCESS_KEY_ID
+                - name: TORGHUT_EMPIRICAL_CEPH_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-empirical-artifacts
+                      key: AWS_SECRET_ACCESS_KEY
