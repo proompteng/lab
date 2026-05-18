@@ -9,9 +9,13 @@ afterEach(() => {
   __private.setSpawnSync()
   Bun.spawn = originalSpawn
   Bun.which = originalWhich
+  delete process.env.DOCKER_COMMAND_RETRY_ATTEMPTS
+  delete process.env.DOCKER_COMMAND_RETRY_DELAY_SECONDS
   delete process.env.DOCKER_BUILD_PROVENANCE
   delete process.env.DOCKER_BUILD_SBOM
 })
+
+const streamFromText = (text: string) => new Response(text).body!
 
 describe('inspectImageDigest', () => {
   it('prefers the locally cached repo digest when available', () => {
@@ -110,5 +114,49 @@ describe('resolveBuildAttestations', () => {
     expect(commands[0].slice(0, 4)).toEqual(['docker', 'buildx', 'build', '--push'])
     expect(commands[0]).toContain('--attest')
     expect(commands[0]).toContain('type=provenance,mode=max')
+  })
+
+  it('retries transient registry upload failures from buildx push', async () => {
+    const commands: string[][] = []
+
+    process.env.DOCKER_COMMAND_RETRY_ATTEMPTS = '2'
+    process.env.DOCKER_COMMAND_RETRY_DELAY_SECONDS = '1'
+    Bun.which = ((binary: string) => (binary === 'docker' ? '/usr/bin/docker' : null)) as typeof Bun.which
+    Bun.spawn = ((command: Parameters<typeof Bun.spawn>[0], _options: Parameters<typeof Bun.spawn>[1]) => {
+      commands.push(typeof command === 'string' ? [command] : [...command])
+      const failedAttempt = commands.length === 1
+      return {
+        exited: Promise.resolve(failedAttempt ? 1 : 0),
+        stdout: streamFromText(''),
+        stderr: streamFromText(failedAttempt ? 'unknown: invalid content range' : ''),
+      } as ReturnType<typeof Bun.spawn>
+    }) as typeof Bun.spawn
+    __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
+      const joined = typeof command === 'string' ? command : command.join(' ')
+      if (joined === 'docker buildx version') {
+        return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() } as ReturnType<typeof Bun.spawnSync>
+      }
+      if (joined === 'docker buildx inspect') {
+        return {
+          exitCode: 0,
+          stdout: Buffer.from('Driver: docker-container\n'),
+          stderr: new Uint8Array(),
+        } as ReturnType<typeof Bun.spawnSync>
+      }
+      return { exitCode: 1, stdout: new Uint8Array(), stderr: new Uint8Array() } as ReturnType<typeof Bun.spawnSync>
+    }) as typeof Bun.spawnSync)
+
+    await buildAndPushDockerImage({
+      registry: 'registry.example',
+      repository: 'lab/agents-control-plane',
+      tag: 'test',
+      context: '.',
+      dockerfile: 'Dockerfile',
+      cacheRef: 'registry.example/lab/agents-control-plane:buildcache',
+    })
+
+    expect(commands).toHaveLength(2)
+    expect(commands[0].slice(0, 4)).toEqual(['docker', 'buildx', 'build', '--push'])
+    expect(commands[1].slice(0, 4)).toEqual(['docker', 'buildx', 'build', '--push'])
   })
 })
