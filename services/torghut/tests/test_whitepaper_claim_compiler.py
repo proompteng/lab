@@ -19,7 +19,18 @@ class TestWhitepaperClaimCompiler(TestCase):
     def test_recent_seed_sources_compile_to_hypothesis_cards(self) -> None:
         cards = compile_sources_to_hypothesis_cards(RECENT_WHITEPAPER_SEEDS)
 
-        self.assertEqual(len(cards), 4)
+        self.assertEqual(len(cards), len(RECENT_WHITEPAPER_SEEDS))
+        self.assertGreaterEqual(len(cards), 10)
+        self.assertTrue(
+            {
+                "seed-arxiv-2605-04004",
+                "seed-arxiv-2604-10402",
+                "seed-arxiv-2604-09060",
+                "seed-arxiv-2603-29086",
+                "seed-arxiv-2603-16365",
+                "seed-arxiv-2602-07085",
+            }.issubset({source.run_id for source in RECENT_WHITEPAPER_SEEDS})
+        )
         self.assertTrue(
             all(card.source_run_id.startswith("seed-arxiv-") for card in cards)
         )
@@ -212,13 +223,22 @@ class TestWhitepaperClaimCompiler(TestCase):
         sources = sources_from_jsonl(path)
         cards = compile_sources_to_hypothesis_cards(sources)
 
-        self.assertGreaterEqual(len(sources), 5)
+        self.assertGreaterEqual(len(sources), 36)
         self.assertTrue(
             all(source.published_at.startswith(("2025", "2026")) for source in sources)
         )
         self.assertGreaterEqual(len(cards), len(sources))
         self.assertTrue(all(card.required_features for card in cards))
         self.assertTrue(all(card.risk_controls for card in cards))
+        source_by_id = {source.run_id: source for source in sources}
+        self.assertEqual(
+            source_by_id["paper-ssrn-6440898"].published_at,
+            "2026-05-15",
+        )
+        self.assertEqual(
+            source_by_id["paper-ssrn-5170318"].published_at,
+            "2026-05-12",
+        )
 
     def test_sources_from_jsonl_rejects_invalid_rows(self) -> None:
         with TemporaryDirectory() as tmpdir:

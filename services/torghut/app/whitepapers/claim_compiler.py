@@ -231,6 +231,398 @@ RECENT_WHITEPAPER_SEEDS: tuple[WhitepaperResearchSource, ...] = (
             },
         ),
     ),
+    WhitepaperResearchSource(
+        run_id="seed-arxiv-2605-04004",
+        title=(
+            "Structural Limits of OHLCV-Based Intraday Signals in MNQ Futures: "
+            "A Systematic Falsification Study"
+        ),
+        source_url="https://arxiv.org/abs/2605.04004",
+        published_at="2026-05-05",
+        claims=(
+            {
+                "claim_id": "ohlcv-only-intraday-falsification",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "OHLCV-only intraday momentum signals can fail strict walk-forward, sample-count, "
+                    "post-cost, and multi-year stability gates even when naive gross edges look positive."
+                ),
+                "asset_scope": "intraday_momentum",
+                "horizon_scope": "intraday",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "walk_forward_replay",
+                    "transaction_cost_stress",
+                    "live_paper_parity",
+                ],
+                "expected_failure_modes": [
+                    "insufficient_trade_count",
+                    "fails_transaction_cost_stress",
+                    "unstable_multi_year_edge",
+                ],
+                "confidence": "0.76",
+            },
+            {
+                "claim_id": "gap-continuation-positive-control",
+                "claim_type": "signal_mechanism",
+                "claim_text": (
+                    "Gap-continuation signals should remain positive-control hypotheses until they clear "
+                    "minimum trade-count and post-cost live-paper proof."
+                ),
+                "asset_scope": "intraday_momentum",
+                "horizon_scope": "intraday",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "gap_velocity",
+                    "executable_quote",
+                    "walk_forward_replay",
+                ],
+                "confidence": "0.70",
+            },
+            {
+                "claim_id": "walk-forward-cost-constraints-required",
+                "claim_type": "risk_constraint",
+                "claim_text": (
+                    "Candidate promotion should require out-of-sample walk-forward validation, realistic "
+                    "execution costs, enough trades, and multi-year stability before capital is routed."
+                ),
+                "asset_scope": "intraday_momentum",
+                "horizon_scope": "intraday",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "walk_forward_replay",
+                    "transaction_cost_stress",
+                    "live_paper_parity",
+                ],
+                "confidence": "0.75",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "ohlcv-falsification-requires-live-paper-proof",
+                "relation_type": "invalidates",
+                "source_claim_id": "walk-forward-cost-constraints-required",
+                "target_claim_id": "ohlcv-only-intraday-falsification",
+                "rationale": (
+                    "Naive OHLCV intraday signals should not be promoted without routeable post-cost "
+                    "proof and live-paper parity."
+                ),
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-arxiv-2604-10402",
+        title="Risk-Sensitive Specialist Routing for Volatility Forecasting",
+        source_url="https://arxiv.org/abs/2604.10402",
+        published_at="2026-04-16",
+        claims=(
+            {
+                "claim_id": "risk-routing-state-dependent-specialists",
+                "claim_type": "signal_mechanism",
+                "claim_text": (
+                    "Risk-sensitive specialist routing can select different volatility forecasters across "
+                    "calm and stressed states instead of using one globally best model."
+                ),
+                "asset_scope": "etf_panel_volatility",
+                "horizon_scope": "risk_management",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "state_variable",
+                    "realized_volatility",
+                    "walk_forward_validation",
+                ],
+                "confidence": "0.74",
+            },
+            {
+                "claim_id": "underprediction-loss-routing-gate",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "Underprediction loss and high-volatility loss should be used as routing features "
+                    "when choosing risk specialists for sleeve sizing."
+                ),
+                "asset_scope": "etf_panel_volatility",
+                "horizon_scope": "risk_management",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "underprediction_loss",
+                    "high_volatility_loss",
+                    "realized_volatility",
+                ],
+                "confidence": "0.74",
+            },
+            {
+                "claim_id": "state-dependent-risk-routing-validation",
+                "claim_type": "market_regime",
+                "claim_text": (
+                    "Volatility specialists should be validated by market state, because the strongest "
+                    "forecaster is regime-dependent rather than stable across all states."
+                ),
+                "asset_scope": "etf_panel_volatility",
+                "horizon_scope": "risk_management",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "state_variable",
+                    "realized_volatility",
+                    "walk_forward_validation",
+                ],
+                "confidence": "0.74",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "risk-routing-controls-sleeve-sizing",
+                "relation_type": "requires_regime",
+                "source_claim_id": "state-dependent-risk-routing-validation",
+                "target_claim_id": "risk-routing-state-dependent-specialists",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-arxiv-2604-09060",
+        title=(
+            "Taming the Black Swan: A Momentum-Gated Hierarchical Optimisation "
+            "Framework for Asymmetric Alpha Generation"
+        ),
+        source_url="https://arxiv.org/abs/2604.09060",
+        published_at="2026-04-10",
+        claims=(
+            {
+                "claim_id": "momentum-gated-diversification-alpha",
+                "claim_type": "signal_mechanism",
+                "claim_text": (
+                    "Volatility-adjusted momentum filters combined with structural diversification can "
+                    "preserve upside participation while reducing momentum crash intensity."
+                ),
+                "asset_scope": "equity_momentum",
+                "horizon_scope": "risk_management",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "momentum_filter",
+                    "correlation_or_breadth_gate",
+                    "drawdown_validation",
+                ],
+                "confidence": "0.70",
+            },
+            {
+                "claim_id": "momentum-crash-regime-filter",
+                "claim_type": "risk_constraint",
+                "claim_text": (
+                    "Momentum sleeves need state-aware gating and diversification controls to reduce "
+                    "crash intensity without removing upside participation."
+                ),
+                "asset_scope": "equity_momentum",
+                "horizon_scope": "risk_management",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "momentum_filter",
+                    "correlation_or_breadth_gate",
+                    "drawdown_validation",
+                ],
+                "confidence": "0.70",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "momentum-crash-gating-validates-alpha",
+                "relation_type": "supports",
+                "source_claim_id": "momentum-crash-regime-filter",
+                "target_claim_id": "momentum-gated-diversification-alpha",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-arxiv-2603-29086",
+        title="Realistic Market Impact Modeling for Reinforcement Learning Trading Environments",
+        source_url="https://arxiv.org/abs/2603.29086",
+        published_at="2026-04-04",
+        claims=(
+            {
+                "claim_id": "nonlinear-market-impact-changes-strategy-ranking",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Nonlinear market-impact assumptions can materially change absolute performance, "
+                    "trading behavior, turnover, and relative strategy rankings versus fixed-cost baselines."
+                ),
+                "asset_scope": "us_equities_portfolio",
+                "horizon_scope": "portfolio_execution",
+                "expected_direction": "neutral",
+                "data_requirements": ["route_tca", "turnover", "market_impact_stress"],
+                "confidence": "0.78",
+            },
+            {
+                "claim_id": "impact-stress-feature-recipe",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "Market-impact stress curves, route TCA, and turnover should be first-class "
+                    "portfolio execution features for ranking candidate sleeves."
+                ),
+                "asset_scope": "us_equities_portfolio",
+                "horizon_scope": "portfolio_execution",
+                "expected_direction": "neutral",
+                "data_requirements": ["route_tca", "turnover", "market_impact_stress"],
+                "confidence": "0.76",
+            },
+            {
+                "claim_id": "turnover-penalty-prevents-pathological-trading",
+                "claim_type": "risk_constraint",
+                "claim_text": (
+                    "Cost-model-aware optimization is required to prevent pathological high-turnover "
+                    "candidates from passing naive replay."
+                ),
+                "asset_scope": "us_equities_portfolio",
+                "horizon_scope": "portfolio_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "turnover",
+                    "execution_shortfall",
+                    "post_cost_net_pnl",
+                ],
+                "confidence": "0.77",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "impact-aware-ranking-requires-turnover-stress",
+                "relation_type": "requires_validation",
+                "source_claim_id": "turnover-penalty-prevents-pathological-trading",
+                "target_claim_id": "nonlinear-market-impact-changes-strategy-ranking",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-arxiv-2603-16365",
+        title="FactorEngine: A Program-level Knowledge-Infused Factor Mining Framework for Quantitative Investment",
+        source_url="https://arxiv.org/abs/2603.16365",
+        published_at="2026-04-09",
+        claims=(
+            {
+                "claim_id": "program-level-factor-discovery",
+                "claim_type": "signal_mechanism",
+                "claim_text": (
+                    "Program-level factor discovery can generate executable and auditable factors while "
+                    "separating logic revision from parameter optimization."
+                ),
+                "asset_scope": "equities_factor_mining",
+                "horizon_scope": "short_term_cross_section",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "factor_program",
+                    "walk_forward_replay",
+                    "cross_sectional_ranks",
+                ],
+                "confidence": "0.74",
+            },
+            {
+                "claim_id": "factor-engine-code-recipe",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "LLM-guided directional search should emit executable factor programs and let local "
+                    "Bayesian search tune parameters under replay constraints."
+                ),
+                "asset_scope": "equities_factor_mining",
+                "horizon_scope": "short_term_cross_section",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "factor_program",
+                    "walk_forward_replay",
+                    "cross_sectional_ranks",
+                ],
+                "confidence": "0.74",
+            },
+            {
+                "claim_id": "factor-engine-auditability-validation",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Generated factors must be directly executable, auditable, and tested for stability "
+                    "against regime shifts and overfitting."
+                ),
+                "asset_scope": "equities_factor_mining",
+                "horizon_scope": "short_term_cross_section",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "factor_program",
+                    "walk_forward_replay",
+                    "regime_shift_validation",
+                ],
+                "confidence": "0.73",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "factor-engine-validation-supports-program-factors",
+                "relation_type": "supports",
+                "source_claim_id": "factor-engine-auditability-validation",
+                "target_claim_id": "program-level-factor-discovery",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-arxiv-2602-07085",
+        title="QuantaAlpha: An Evolutionary Framework for LLM-Driven Alpha Mining",
+        source_url="https://arxiv.org/abs/2602.07085",
+        published_at="2026-04-22",
+        claims=(
+            {
+                "claim_id": "trajectory-level-alpha-evolution",
+                "claim_type": "signal_mechanism",
+                "claim_text": (
+                    "Trajectory-level mutation and crossover can refine alpha factors by localizing "
+                    "suboptimal mining steps and reusing complementary validated patterns."
+                ),
+                "asset_scope": "equities_factor_mining",
+                "horizon_scope": "short_term_cross_section",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "alpha_search_trajectory",
+                    "factor_program",
+                    "walk_forward_replay",
+                ],
+                "confidence": "0.75",
+            },
+            {
+                "claim_id": "semantic-consistency-factor-code",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "Generated factors should maintain semantic consistency across hypothesis, factor "
+                    "expression, and executable code while constraining redundancy and complexity."
+                ),
+                "asset_scope": "equities_factor_mining",
+                "horizon_scope": "short_term_cross_section",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "alpha_search_trajectory",
+                    "factor_program",
+                    "factor_redundancy_score",
+                ],
+                "confidence": "0.75",
+            },
+            {
+                "claim_id": "trajectory-transfer-validation",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "LLM-mined factors should prove transfer across market distributions before being "
+                    "treated as robust candidate sleeves."
+                ),
+                "asset_scope": "equities_factor_mining",
+                "horizon_scope": "short_term_cross_section",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "cross_market_holdout",
+                    "factor_program",
+                    "drawdown_validation",
+                ],
+                "confidence": "0.74",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "trajectory-validation-supports-alpha-evolution",
+                "relation_type": "supports",
+                "source_claim_id": "trajectory-transfer-validation",
+                "target_claim_id": "trajectory-level-alpha-evolution",
+            },
+        ),
+    ),
 )
 
 
@@ -384,7 +776,9 @@ def source_from_payload(payload: Mapping[str, Any]) -> WhitepaperResearchSource:
 
 def sources_from_jsonl(path: Path) -> list[WhitepaperResearchSource]:
     sources: list[WhitepaperResearchSource] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
         if not line.strip():
             continue
         try:
@@ -394,6 +788,8 @@ def sources_from_jsonl(path: Path) -> list[WhitepaperResearchSource]:
                 f"whitepaper_source_jsonl_invalid_json:{path}:{line_number}"
             ) from exc
         if not isinstance(payload, Mapping):
-            raise ValueError(f"whitepaper_source_jsonl_row_not_mapping:{path}:{line_number}")
+            raise ValueError(
+                f"whitepaper_source_jsonl_row_not_mapping:{path}:{line_number}"
+            )
         sources.append(source_from_payload(cast(Mapping[str, Any], payload)))
     return sources
