@@ -79,21 +79,29 @@ jobs:
             exit 0
           fi
 
-          has_opt_out_label="$(
+          if ! has_opt_out_label="$(
             gh pr view "${PR_NUMBER}" \
               -R "${GH_REPO}" \
               --json labels \
               --jq 'any(.labels[]?; .name == "do-not-automerge")'
-          )"
+          )"; then
+            echo "reason=labels-api-error" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           if [ "${has_opt_out_label}" = 'true' ]; then
             echo "reason=opt-out-label-present" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          mapfile -t changed_files < <(
-            gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename'
-          )
+          changed_files_output="$(mktemp)"
+          if ! gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" \
+            --paginate \
+            --jq '.[].filename' > "${changed_files_output}"; then
+            echo "reason=changed-files-api-error" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mapfile -t changed_files < "${changed_files_output}"
 
           if [ "${#changed_files[@]}" -eq 0 ]; then
             echo "reason=no-files-changed" >> "$GITHUB_OUTPUT"
@@ -112,10 +120,13 @@ jobs:
 
       - name: Eligibility summary
         shell: bash
+        env:
+          ELIGIBLE: ${{ steps.gates.outputs.eligible }}
+          REASON: ${{ steps.gates.outputs.reason }}
         run: |
           set -euo pipefail
-          echo "eligible=${{ steps.gates.outputs.eligible }}"
-          echo "reason=${{ steps.gates.outputs.reason }}"
+          printf 'eligible=%s\n' "${ELIGIBLE}"
+          printf 'reason=%s\n' "${REASON}"
 
       - name: Wait for source commit Torghut CI
         if: steps.gates.outputs.eligible == 'true'
