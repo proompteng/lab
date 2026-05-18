@@ -7,6 +7,7 @@ import {
   createTaskFromText,
   evaluateAgentRun,
   exportAuditEvents,
+  type GatewayEvent,
 } from './gateway'
 
 describe('secure action gateway engine', () => {
@@ -80,6 +81,47 @@ describe('secure action gateway engine', () => {
     const approved = approveAction(state, { actorId: 'ops', approvalId: approval.id })
     expect(approved.ok).toBe(true)
     expect(buildSnapshot(state).tasks.find((item) => item.id === task.id)?.decision).toBe('approved')
+  })
+
+  test('exports replayable audit events in lifecycle order', () => {
+    const state = createGatewayState()
+    const task = createTaskFromText(state, {
+      actorId: 'greg',
+      text: 'Inspect AgentRuns and execute a guarded restart if policy allows it',
+    })
+    const approval = buildSnapshot(state).approvals[0]
+    expect(approval).toBeDefined()
+
+    approveAction(state, { actorId: 'ops', approvalId: approval.id })
+
+    const exportedEvents = exportAuditEvents(state)
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as GatewayEvent)
+      .filter((event) => event.taskId === task.id)
+
+    expect(exportedEvents.map((event) => event.operation)).toEqual([
+      'task:intake',
+      'task:plan',
+      'policy_context.read',
+      'agentruns.list',
+      'audit_graph.query',
+      'legacy_status.parse',
+      'approval:request',
+      'approval:approve',
+    ])
+    expect(exportedEvents.map((event) => event.status)).toEqual([
+      'received',
+      'planned',
+      'succeeded',
+      'succeeded',
+      'succeeded',
+      'succeeded',
+      'approval_required',
+      'approved',
+    ])
+    expect(exportedEvents.every((event) => event.requestHash.length > 0)).toBe(true)
+    expect(exportedEvents.every((event) => event.correlationId.startsWith(`${task.id}:`))).toBe(true)
   })
 
   test('blocks sensitive AgentRun secret requests and redacts secret names', () => {
