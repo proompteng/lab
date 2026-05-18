@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -32,6 +33,7 @@ describe('codex app-server runner adapter', () => {
     const runPath = join(dir, 'run.json')
     const statusPath = join(dir, 'status.json')
     const logPath = join(dir, 'runner.log')
+    const cwd = join(dir, 'lab')
     await writeFile(
       runPath,
       `${JSON.stringify({
@@ -72,7 +74,7 @@ describe('codex app-server runner adapter', () => {
         effort: 'high',
         sandbox: 'danger-full-access',
         approval: 'never',
-        cwd: '/workspace/lab',
+        cwd,
         threadConfig: { web_search: 'live', mcp_servers: {} },
       },
       {
@@ -90,13 +92,13 @@ describe('codex app-server runner adapter', () => {
       defaultEffort: 'high',
       sandbox: 'danger-full-access',
       approval: 'never',
-      cwd: '/workspace/lab',
+      cwd,
       threadConfig: { web_search: 'live', mcp_servers: {} },
     })
     expect(turnOptions[0]).toMatchObject({
       model: 'gpt-5.5',
       effort: 'high',
-      cwd: '/workspace/lab',
+      cwd,
       baseInstructions: 'system instructions',
       goal: {
         objective: 'ship the feature',
@@ -114,5 +116,100 @@ describe('codex app-server runner adapter', () => {
       turnId: 'turn-1',
     })
     expect(await readFile(logPath, 'utf8')).toContain('"delta":"done"')
+  })
+
+  it('creates a non-VCS cwd before starting Codex app-server', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const cwd = join(dir, 'workspace')
+    await writeFile(runPath, `${JSON.stringify({ implementation: { text: 'check startup' } })}\n`, 'utf8')
+
+    let cwdExistedWhenClientStarted = false
+
+    await runCodexAppServerAdapter(
+      {
+        provider: 'codex-runner',
+        payloads: {
+          eventFilePath: runPath,
+        },
+      },
+      {
+        cwd,
+      },
+      {
+        createClient: () => {
+          cwdExistedWhenClientStarted = existsSync(cwd)
+          return {
+            runTurnStream: async () => ({
+              stream: makeStream(),
+              turnId: 'turn-1',
+              threadId: 'thread-1',
+            }),
+          }
+        },
+      },
+    )
+
+    expect(cwdExistedWhenClientStarted).toBe(true)
+    expect((await stat(cwd)).isDirectory()).toBe(true)
+  })
+
+  it('checks out VCS-backed runs into the adapter cwd before starting Codex app-server', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const cwd = join(dir, 'lab')
+    await writeFile(
+      runPath,
+      `${JSON.stringify({
+        implementation: { text: 'check startup' },
+        vcs: {
+          repository: 'proompteng/lab',
+          cloneBaseUrl: 'https://github.com',
+          baseBranch: 'main',
+          headBranch: 'codex/test',
+          mode: 'read-write',
+          writeEnabled: true,
+        },
+      })}\n`,
+      'utf8',
+    )
+
+    const commands: string[] = []
+    await runCodexAppServerAdapter(
+      {
+        provider: 'codex-runner',
+        payloads: {
+          eventFilePath: runPath,
+        },
+      },
+      {
+        cwd,
+      },
+      {
+        runCommand: async (command, args) => {
+          commands.push([command, ...args].join(' '))
+          if (command === 'git' && args[0] === 'clone') {
+            await mkdir(join(cwd, '.git'), { recursive: true })
+          }
+          return { exitCode: 0, stdout: '', stderr: '' }
+        },
+        createClient: () => ({
+          runTurnStream: async () => ({
+            stream: makeStream(),
+            turnId: 'turn-1',
+            threadId: 'thread-1',
+          }),
+        }),
+      },
+    )
+
+    expect(commands).toContain(
+      'git clone --filter=blob:none --no-checkout https://github.com/proompteng/lab.git ' + cwd,
+    )
+    expect(commands).toContain('git fetch --prune --depth=1 origin +refs/heads/main:refs/remotes/origin/main')
+    expect(commands).toContain(
+      'git fetch --prune --depth=1 origin +refs/heads/codex/test:refs/remotes/origin/codex/test',
+    )
+    expect(commands).toContain('git checkout -B codex/test refs/remotes/origin/codex/test')
   })
 })
