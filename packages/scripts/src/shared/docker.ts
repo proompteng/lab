@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, relative, resolve } from 'node:path'
 
-import { ensureCli, repoRoot, run } from './cli'
+import { ensureCli, repoRoot } from './cli'
 
 export type DockerCacheMode = 'max' | 'min'
 
@@ -45,6 +45,17 @@ type SpawnSync = typeof Bun.spawnSync
 
 let spawnSyncImpl: SpawnSync = Bun.spawnSync
 
+class DockerCommandError extends Error {
+  constructor(
+    message: string,
+    readonly exitCode: number,
+    readonly output: string,
+  ) {
+    super(message)
+    this.name = 'DockerCommandError'
+  }
+}
+
 const isTruthyEnv = (value: string | undefined): boolean => {
   if (!value) return false
   const normalized = value.trim().toLowerCase()
@@ -57,6 +68,92 @@ const normalizeCacheMode = (value: string | undefined): DockerCacheMode => {
   if (!value) return 'max'
   const normalized = value.trim().toLowerCase()
   return normalized === 'min' ? 'min' : 'max'
+}
+
+const parsePositiveInteger = (value: string | undefined, fallback: number): number => {
+  if (!value) return fallback
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const trimTail = (value: string, maxLength = 12_000): string =>
+  value.length > maxLength ? value.slice(value.length - maxLength) : value
+
+const pipeCommandOutput = async (
+  stream: ReadableStream<Uint8Array> | null | undefined,
+  writer: NodeJS.WriteStream,
+): Promise<string> => {
+  if (!stream) return ''
+
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  let tail = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    writer.write(value)
+    tail = trimTail(tail + decoder.decode(value, { stream: true }))
+  }
+  tail = trimTail(tail + decoder.decode())
+  return tail
+}
+
+const isRetryableDockerCommandError = (error: unknown): error is DockerCommandError => {
+  if (!(error instanceof DockerCommandError)) return false
+  return /invalid content range|unexpected eof|connection reset by peer|use of closed network connection|i\/o timeout|context deadline exceeded|tls handshake timeout|502 bad gateway|503 service unavailable|504 gateway timeout|blob upload unknown/i.test(
+    error.output,
+  )
+}
+
+const runDockerCommand = async (
+  args: string[],
+  options: { cwd: string; env: Record<string, string> },
+): Promise<void> => {
+  console.log(`$ docker ${args.join(' ')}`.trim())
+  const subprocess = Bun.spawn(['docker', ...args], {
+    cwd: options.cwd,
+    env: options.env,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+
+  const [exitCode, stdoutTail, stderrTail] = await Promise.all([
+    subprocess.exited,
+    pipeCommandOutput(subprocess.stdout, process.stdout),
+    pipeCommandOutput(subprocess.stderr, process.stderr),
+  ])
+  if (exitCode !== 0) {
+    const output = trimTail(`${stdoutTail}\n${stderrTail}`.trim())
+    throw new DockerCommandError(`Command failed (${exitCode}): docker ${args.join(' ')}`, exitCode, output)
+  }
+}
+
+const runDockerCommandWithRetry = async (
+  args: string[],
+  options: { cwd: string; env: Record<string, string> },
+): Promise<void> => {
+  const attempts = parsePositiveInteger(process.env.DOCKER_COMMAND_RETRY_ATTEMPTS, 3)
+  const baseDelaySeconds = parsePositiveInteger(process.env.DOCKER_COMMAND_RETRY_DELAY_SECONDS, 15)
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await runDockerCommand(args, options)
+      return
+    } catch (error) {
+      if (attempt >= attempts || !isRetryableDockerCommandError(error)) {
+        throw error
+      }
+      const delaySeconds = baseDelaySeconds * attempt
+      console.warn(
+        `Docker command failed with a retryable registry/upload error; retrying attempt ${
+          attempt + 1
+        }/${attempts} in ${delaySeconds}s.`,
+      )
+      await sleep(delaySeconds * 1000)
+    }
+  }
 }
 
 const normalizeAttestation = (kind: 'provenance' | 'sbom', value: string | undefined): string | undefined => {
@@ -181,7 +278,7 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
       args.push('--build-arg', `${key}=${value}`)
     }
     args.push(options.context)
-    await run('docker', args, { cwd, env: dockerEnv })
+    await runDockerCommandWithRetry(args, { cwd, env: dockerEnv })
   } else {
     const args = ['build', '-f', options.dockerfile, '-t', image]
     if (options.target) args.push('--target', options.target)
@@ -199,8 +296,8 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
       args.push('--build-arg', `${key}=${value}`)
     }
     args.push(options.context)
-    await run('docker', args, { cwd, env: dockerEnv })
-    await run('docker', ['push', image], { cwd, env: dockerEnv })
+    await runDockerCommandWithRetry(args, { cwd, env: dockerEnv })
+    await runDockerCommandWithRetry(['push', image], { cwd, env: dockerEnv })
   }
 
   return { ...options, image }
@@ -325,7 +422,7 @@ export const buildAndPushDockerImages = async (options: DockerBakeOptions): Prom
     }
     bakeArgs.push('--push', '--file', bakeFile, ...targets.map((target) => target.name))
 
-    await run('docker', bakeArgs, {
+    await runDockerCommandWithRetry(bakeArgs, {
       cwd,
       env: dockerEnv,
     })
@@ -504,5 +601,6 @@ export const __private = {
   inspectLocalImageDigest,
   inspectRemoteImageDigest,
   getRepositoryFromReference,
+  isRetryableDockerCommandError,
   setSpawnSync,
 }

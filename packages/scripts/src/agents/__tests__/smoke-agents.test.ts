@@ -312,7 +312,7 @@ describe('scheduled AgentRun templates', () => {
     expect(timeoutMs).toBeGreaterThanOrEqual(10_000)
   })
 
-  it('disable retention so schedules can always resolve their template targets', () => {
+  it('keeps scheduled template retention aligned with the swarm brownout window', () => {
     const manifestPaths = [
       'argocd/applications/agents/swarm-agentrun-templates.yaml',
       'argocd/applications/agents/swarm-instances.yaml',
@@ -346,7 +346,7 @@ describe('scheduled AgentRun templates', () => {
     expect([...scheduledTemplateNames].sort()).toEqual([...agentRunTemplates.keys()].sort())
     for (const name of scheduledTemplateNames) {
       const template = agentRunTemplates.get(name)
-      expect(objectAt(objectAt(template, 'spec'), 'ttlSecondsAfterFinished')).toBe(0)
+      expect(objectAt(objectAt(template, 'spec'), 'ttlSecondsAfterFinished')).toBe(21_600)
       expect(objectAt(objectAt(objectAt(template, 'metadata'), 'annotations'), 'agents.proompteng.ai/template')).toBe(
         'true',
       )
