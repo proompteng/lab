@@ -5,14 +5,12 @@ import { resolveOrchestrationControllerConfig } from '~/server/controller-runtim
 import { resolveRepositoryFromParameters } from '~/server/audit-logging'
 import { isRuntimeTestEnv } from '~/server/control-plane-config'
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
-import { createKubeGateway } from '~/server/kube-gateway'
+import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
 import { startResourceWatch } from '~/server/kube-watch'
-import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { shouldApplyStatus } from '~/server/status-utils'
 
-const DEFAULT_NAMESPACES = ['agents']
 const DEFAULT_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY = 'jangar.orchestration_controller.enabled'
 
 const REQUIRED_CRDS = [
@@ -106,10 +104,7 @@ const isJobComplete = (job: Record<string, unknown>) => hasJobCondition(job, 'Co
 
 const isJobFailed = (job: Record<string, unknown>) => hasJobCondition(job, 'Failed')
 
-const shouldStart = () => {
-  if (isRuntimeTestEnv()) return false
-  return resolveOrchestrationControllerConfig().enabled
-}
+const shouldStart = () => !isRuntimeTestEnv() && resolveOrchestrationControllerConfig().enabled
 
 const shouldStartWithFeatureFlag = async () => {
   if (isRuntimeTestEnv()) return false
@@ -123,12 +118,6 @@ const shouldStartWithFeatureFlag = async () => {
 
 const parseNamespaces = () => resolveOrchestrationControllerConfig().namespaces
 
-const resolveCrdCheckNamespace = () => {
-  const namespaces = parseNamespaces()
-  if (namespaces.includes('*')) return 'default'
-  return namespaces[0] ?? 'default'
-}
-
 const resolveConfiguredNamespaces = () => {
   try {
     return parseNamespaces()
@@ -137,17 +126,29 @@ const resolveConfiguredNamespaces = () => {
   }
 }
 
-const checkCrds = async (): Promise<CrdCheckState> => {
-  const namespace = resolveCrdCheckNamespace()
-  const kubeGateway = createKubeGateway()
+const checkCrds = async (
+  kubeGateway: Pick<KubeGateway, 'listCustomResourceDefinitions'> = createKubeGateway(),
+): Promise<CrdCheckState> => {
   const missing: string[] = []
   const forbidden: string[] = []
-  for (const name of REQUIRED_CRDS) {
-    const access = await kubeGateway.probeNamespacedResource(name, namespace)
-    if (access === 'forbidden') {
-      forbidden.push(name)
-    } else if (access === 'missing') {
-      missing.push(name)
+  let availableCrds = new Set<string>()
+  let crdListAvailable = true
+  try {
+    availableCrds = new Set(await kubeGateway.listCustomResourceDefinitions())
+  } catch (error) {
+    crdListAvailable = false
+    const details = (error instanceof Error ? error.message : String(error)).toLowerCase()
+    if (details.includes('forbidden') || details.includes('unauthorized')) {
+      forbidden.push(...REQUIRED_CRDS)
+    } else {
+      missing.push(...REQUIRED_CRDS)
+    }
+  }
+  if (crdListAvailable) {
+    for (const name of REQUIRED_CRDS) {
+      if (!availableCrds.has(name)) {
+        missing.push(name)
+      }
     }
   }
   const state = {
@@ -162,9 +163,7 @@ const checkCrds = async (): Promise<CrdCheckState> => {
       console.error('[jangar] missing required Orchestration CRDs:', missing.join(', '))
     }
     if (forbidden.length > 0) {
-      console.error(
-        `[jangar] insufficient RBAC to read Orchestration CRDs in namespace ${namespace}: ${forbidden.join(', ')}`,
-      )
+      console.error(`[jangar] insufficient RBAC to list Orchestration CRDs: ${forbidden.join(', ')}`)
     }
   }
   return state
@@ -930,9 +929,7 @@ const submitAgentRunStep = async (
       ...(runtimeType === 'workflow'
         ? {
             workflow:
-              workflow && Object.hasOwn(workflow, 'steps')
-                ? workflow
-                : { ...(workflow ?? {}), steps: [{ name: 'main' }] },
+              workflow && Object.hasOwn(workflow, 'steps') ? workflow : { ...workflow, steps: [{ name: 'main' }] },
           }
         : {}),
       ...(workload ? { workload } : {}),
@@ -2136,4 +2133,5 @@ export const __test__ = {
   reconcileOrchestrationRun,
   emitRunEvent,
   shouldStartWithFeatureFlag,
+  checkCrds,
 }

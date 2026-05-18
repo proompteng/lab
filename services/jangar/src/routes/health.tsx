@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { resolveRuntimeServiceName } from '@proompteng/agents/server/runtime-identity'
 import { getAgentsControllerHealth } from '~/server/agents-controller'
 
 export const Route = createFileRoute('/health')({
@@ -9,7 +10,7 @@ export const Route = createFileRoute('/health')({
         const ready = agentsController.enabled ? agentsController.crdsReady !== false : true
         const body = JSON.stringify({
           status: ready ? 'ok' : 'degraded',
-          service: 'jangar' as const,
+          service: resolveRuntimeServiceName(),
           agentsController,
         })
         return new Response(body, {

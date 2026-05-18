@@ -10,6 +10,7 @@
     "./server/kube-types": "./src/server/kube-types.ts",
     "./server/kubernetes-bun-transport": "./src/server/kubernetes-bun-transport.ts",
     "./server/primitives": "./src/server/primitives.ts",
+    "./server/runtime-identity": "./src/server/runtime-identity.ts",
     "./server/agents-controller/*": "./src/server/agents-controller/*.ts",
     "./runner/*": "./src/runner/*.ts"
   },
