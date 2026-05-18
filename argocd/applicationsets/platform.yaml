@@ -380,7 +380,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: airbyte
                 path: argocd/applications/airbyte
                 namespace: airbyte
