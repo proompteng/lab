@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Optional, Sequence, cast
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ...alpaca_client import TorghutAlpacaClient
@@ -23,6 +24,7 @@ from ...db import SessionLocal
 from ...models import (
     Execution,
     LLMDecisionReview,
+    RejectedSignalOutcomeEvent,
     Strategy,
     TradeDecision,
     coerce_json_payload,
@@ -813,7 +815,7 @@ class TradingPipeline:
     ) -> None:
         reason = quote_status.reason or "unknown"
         self.state.metrics.record_rejected_signal_event(reason)
-        self.state.last_rejected_signal_outcome_event = {
+        event_payload = {
             "schema_version": "torghut.rejected-signal-outcome-event.v1",
             "source": "quote_quality_gate",
             "paper_source": "paper-arxiv-2605.12151",
@@ -843,6 +845,109 @@ class TradingPipeline:
                 "executable_quote",
             ],
         }
+        event_payload["event_id"] = self._rejected_signal_outcome_event_id(
+            event_payload
+        )
+        self.state.last_rejected_signal_outcome_event = event_payload
+        self._persist_rejected_signal_outcome_event(event_payload)
+
+    @staticmethod
+    def _rejected_signal_outcome_event_id(payload: Mapping[str, Any]) -> str:
+        identity = {
+            "account_label": payload.get("account_label"),
+            "symbol": payload.get("symbol"),
+            "event_ts": payload.get("event_ts"),
+            "timeframe": payload.get("timeframe"),
+            "seq": payload.get("seq"),
+            "reject_reason": payload.get("reject_reason"),
+            "paper_claim_id": payload.get("paper_claim_id"),
+        }
+        return hashlib.sha256(
+            json.dumps(identity, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+
+    def _persist_rejected_signal_outcome_event(
+        self,
+        event_payload: Mapping[str, Any],
+    ) -> None:
+        event_id = str(event_payload.get("event_id") or "").strip()
+        if not event_id:
+            return
+        event_ts = event_payload.get("event_ts")
+        parsed_event_ts = (
+            datetime.fromisoformat(str(event_ts))
+            if isinstance(event_ts, str) and event_ts
+            else None
+        )
+        if parsed_event_ts is None:
+            return
+        try:
+            with self.session_factory() as session:
+                existing = session.execute(
+                    select(RejectedSignalOutcomeEvent).where(
+                        RejectedSignalOutcomeEvent.event_id == event_id
+                    )
+                ).scalar_one_or_none()
+                if existing is None:
+                    session.add(
+                        RejectedSignalOutcomeEvent(
+                            event_id=event_id,
+                            source=str(event_payload.get("source") or "unknown"),
+                            paper_source=str(
+                                event_payload.get("paper_source") or "unknown"
+                            ),
+                            paper_claim_id=str(
+                                event_payload.get("paper_claim_id") or "unknown"
+                            ),
+                            account_label=str(
+                                event_payload.get("account_label") or self.account_label
+                            ),
+                            symbol=str(event_payload.get("symbol") or "").upper(),
+                            event_ts=parsed_event_ts,
+                            timeframe=str(event_payload.get("timeframe") or ""),
+                            seq=(
+                                str(event_payload.get("seq"))
+                                if event_payload.get("seq") is not None
+                                else None
+                            ),
+                            reject_reason=str(
+                                event_payload.get("reject_reason") or "unknown"
+                            ),
+                            spread_bps=_optional_decimal(
+                                event_payload.get("spread_bps")
+                            ),
+                            jump_bps=_optional_decimal(event_payload.get("jump_bps")),
+                            outcome_label_status=str(
+                                event_payload.get("outcome_label_status") or "pending"
+                            ),
+                            counterfactual_required=bool(
+                                event_payload.get("counterfactual_required", True)
+                            ),
+                            required_outcome_fields_json=event_payload.get(
+                                "required_outcome_fields"
+                            )
+                            or [],
+                            event_payload_json=dict(event_payload),
+                            outcome_payload_json=None,
+                        )
+                    )
+                else:
+                    existing.updated_at = datetime.now(timezone.utc)
+                    existing.reject_reason = str(
+                        event_payload.get("reject_reason") or existing.reject_reason
+                    )
+                    existing.spread_bps = _optional_decimal(
+                        event_payload.get("spread_bps")
+                    )
+                    existing.jump_bps = _optional_decimal(event_payload.get("jump_bps"))
+                    existing.event_payload_json = dict(event_payload)
+                session.commit()
+        except (SQLAlchemyError, ValueError):
+            logger.exception(
+                "Failed to persist rejected signal outcome event event_id=%s symbol=%s",
+                event_id,
+                event_payload.get("symbol"),
+            )
 
     def _ensure_signal_executable_price(self, signal: SignalEnvelope) -> SignalEnvelope:
         price = extract_executable_price(signal.payload)

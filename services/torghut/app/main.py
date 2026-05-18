@@ -31,6 +31,7 @@ from .metrics import render_trading_metrics
 from .models import (
     Execution,
     ExecutionTCAMetric,
+    RejectedSignalOutcomeEvent,
     Strategy,
     TradeDecision,
     VNextDatasetSnapshot,
@@ -2637,6 +2638,10 @@ def trading_status() -> dict[str, object]:
     with SessionLocal() as session:
         last_decision_at = _load_last_decision_at(session)
     with SessionLocal() as session:
+        persisted_rejected_signal_outcome_learning = (
+            _load_rejected_signal_outcome_learning_summary(session)
+        )
+    with SessionLocal() as session:
         live_submission_gate = _build_live_submission_gate_payload(
             state,
             session=session,
@@ -2883,7 +2888,8 @@ def trading_status() -> dict[str, object]:
         live_submission_gate=live_submission_gate,
     )
     rejected_signal_outcome_learning = _build_rejected_signal_outcome_learning_payload(
-        state
+        state,
+        persisted_summary=persisted_rejected_signal_outcome_learning,
     )
     return {
         "enabled": settings.trading_enabled,
@@ -6389,6 +6395,8 @@ def _simple_lane_reject_reason_totals(state: object) -> dict[str, int]:
 
 def _build_rejected_signal_outcome_learning_payload(
     state: object,
+    *,
+    persisted_summary: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     metrics = getattr(state, "metrics", None)
     total = max(0, int(getattr(metrics, "rejected_signal_events_total", 0) or 0))
@@ -6410,6 +6418,28 @@ def _build_rejected_signal_outcome_learning_payload(
             str(key): value
             for key, value in cast(Mapping[object, object], latest_event).items()
         }
+    persistence_state = "not_configured"
+    if persisted_summary is not None:
+        persistence_state = str(persisted_summary.get("persistence_state") or "ok")
+        persisted_total = cast(Any, persisted_summary.get("events_total"))
+        total = max(total, int(persisted_total or 0))
+        persisted_pending = cast(
+            Any, persisted_summary.get("outcome_label_pending_total")
+        )
+        pending = max(
+            pending,
+            int(persisted_pending or 0),
+        )
+        persisted_reasons = persisted_summary.get("reason_total")
+        if isinstance(persisted_reasons, Mapping):
+            for key, value in cast(Mapping[object, Any], persisted_reasons).items():
+                reasons[str(key)] = max(reasons.get(str(key), 0), int(value))
+        persisted_latest = persisted_summary.get("latest_event")
+        if isinstance(persisted_latest, Mapping):
+            latest_payload = {
+                str(key): value
+                for key, value in cast(Mapping[object, object], persisted_latest).items()
+            }
     blockers = ["counterfactual_outcome_labels_pending"] if pending > 0 else []
     return {
         "schema_version": "torghut.rejected-signal-outcome-learning.v1",
@@ -6421,6 +6451,7 @@ def _build_rejected_signal_outcome_learning_payload(
         "outcome_label_pending_total": pending,
         "reason_total": reasons,
         "latest_event": latest_payload,
+        "persistence_state": persistence_state,
         "required_outcome_fields": [
             "counterfactual_return",
             "route_tca",
@@ -6430,6 +6461,76 @@ def _build_rejected_signal_outcome_learning_payload(
         "promotion_impact": "repair_only_until_labeled",
         "blocking_reasons": blockers,
     }
+
+
+def _load_rejected_signal_outcome_learning_summary(
+    session: Session,
+) -> dict[str, object] | None:
+    try:
+        total = int(
+            session.execute(
+                select(func.count(RejectedSignalOutcomeEvent.id))
+            ).scalar_one()
+            or 0
+        )
+        pending = int(
+            session.execute(
+                select(func.count(RejectedSignalOutcomeEvent.id)).where(
+                    RejectedSignalOutcomeEvent.outcome_label_status == "pending"
+                )
+            ).scalar_one()
+            or 0
+        )
+        reason_rows = session.execute(
+            select(
+                RejectedSignalOutcomeEvent.reject_reason,
+                func.count(RejectedSignalOutcomeEvent.id),
+            ).group_by(RejectedSignalOutcomeEvent.reject_reason)
+        ).all()
+        reason_total = {
+            str(reason or "unknown"): int(count or 0)
+            for reason, count in reason_rows
+        }
+        latest = session.execute(
+            select(RejectedSignalOutcomeEvent).order_by(
+                RejectedSignalOutcomeEvent.event_ts.desc(),
+                RejectedSignalOutcomeEvent.created_at.desc(),
+            ).limit(1)
+        ).scalar_one_or_none()
+        latest_payload: dict[str, object] | None = None
+        if latest is not None:
+            latest_payload = {
+                "event_id": latest.event_id,
+                "schema_version": "torghut.rejected-signal-outcome-event.v1",
+                "source": latest.source,
+                "paper_source": latest.paper_source,
+                "paper_claim_id": latest.paper_claim_id,
+                "account_label": latest.account_label,
+                "symbol": latest.symbol,
+                "event_ts": latest.event_ts.isoformat(),
+                "timeframe": latest.timeframe,
+                "seq": latest.seq,
+                "reject_reason": latest.reject_reason,
+                "spread_bps": str(latest.spread_bps)
+                if latest.spread_bps is not None
+                else None,
+                "jump_bps": str(latest.jump_bps)
+                if latest.jump_bps is not None
+                else None,
+                "outcome_label_status": latest.outcome_label_status,
+                "counterfactual_required": latest.counterfactual_required,
+                "required_outcome_fields": latest.required_outcome_fields_json,
+            }
+        return {
+            "persistence_state": "ok",
+            "events_total": total,
+            "outcome_label_pending_total": pending,
+            "reason_total": reason_total,
+            "latest_event": latest_payload,
+        }
+    except SQLAlchemyError:
+        logger.exception("Failed to load rejected signal outcome learning summary")
+        return {"persistence_state": "unavailable"}
 
 
 def _load_route_provenance_summary(session: Session) -> dict[str, object]:
