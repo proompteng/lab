@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/agents-controller
-  tag: 8a270644
-  digest: sha256:aff4b48b70679fcb82ee00fb6689d03a9341a8311a7b8f35313b4966b05c9638
+  tag: a63995fa
+  digest: sha256:e2e25a0ef8e320cbe7c6999fbf167757f215a26787570c6004489a95da03b4c7
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,18 +11,18 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-control-plane
-    tag: 8a270644
-    digest: sha256:25985e9c5f556944230f3a15dc247d51c5ab5e706cd89c45b4e945268bf6740f
+    tag: a63995fa
+    digest: sha256:6842aaff9c52b448939579893ca0b55357f7ef3d17863b83a45677c6de71aa81
   env:
     vars:
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
-      AGENTS_SOURCE_HEAD_SHA: 8a2706441f5ebecc7b7d25740e147eeed98d94b1
-      AGENTS_GITOPS_REVISION: 8a2706441f5ebecc7b7d25740e147eeed98d94b1
-      AGENTS_SOURCE_CI_RUN_ID: "26029536712"
+      AGENTS_SOURCE_HEAD_SHA: a63995fa363221a036c6ba966d02c4cdc4107140
+      AGENTS_GITOPS_REVISION: a63995fa363221a036c6ba966d02c4cdc4107140
+      AGENTS_SOURCE_CI_RUN_ID: "26033489603"
       AGENTS_SOURCE_CI_CONCLUSION: success
-      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:25985e9c5f556944230f3a15dc247d51c5ab5e706cd89c45b4e945268bf6740f
-      AGENTS_SERVING_BUILD_COMMIT: 8a2706441f5ebecc7b7d25740e147eeed98d94b1
-      AGENTS_SERVING_IMAGE_DIGEST: sha256:25985e9c5f556944230f3a15dc247d51c5ab5e706cd89c45b4e945268bf6740f
+      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:6842aaff9c52b448939579893ca0b55357f7ef3d17863b83a45677c6de71aa81
+      AGENTS_SERVING_BUILD_COMMIT: a63995fa363221a036c6ba966d02c4cdc4107140
+      AGENTS_SERVING_IMAGE_DIGEST: sha256:6842aaff9c52b448939579893ca0b55357f7ef3d17863b83a45677c6de71aa81
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
@@ -82,8 +82,8 @@ controllers:
   replicaCount: 2
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-    tag: 8a270644
-    digest: sha256:aff4b48b70679fcb82ee00fb6689d03a9341a8311a7b8f35313b4966b05c9638
+    tag: a63995fa
+    digest: sha256:e2e25a0ef8e320cbe7c6999fbf167757f215a26787570c6004489a95da03b4c7
   autoscaling:
     enabled: false
   env:
