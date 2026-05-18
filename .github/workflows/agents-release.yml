@@ -1,0 +1,106 @@
+name: agents-release
+
+on:
+  workflow_run:
+    workflows:
+      - agents-build-push
+    types:
+      - completed
+
+concurrency:
+  group: agents-release-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  promote:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'
+      }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolve promotion metadata
+        id: meta
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          CURRENT_MAIN="$(git rev-parse origin/main)"
+          TAG="${SOURCE_SHA:0:8}"
+          if [ "${SOURCE_SHA}" = "${CURRENT_MAIN}" ]; then
+            PROMOTE=true
+          else
+            PROMOTE=false
+          fi
+          {
+            echo "promote=${PROMOTE}"
+            echo "source_sha=${SOURCE_SHA}"
+            echo "tag=${TAG}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Download Agents values artifact
+        if: steps.meta.outputs.promote == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          name: agents-values
+          path: .artifacts/agents
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stage Agents values
+        if: steps.meta.outputs.promote == 'true'
+        shell: bash
+        run: cp .artifacts/agents/values.yaml argocd/applications/agents/values.yaml
+
+      - name: Check for manifest changes
+        if: steps.meta.outputs.promote == 'true'
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- argocd/applications/agents/values.yaml; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Create deploy pull request
+        if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: codex/agents-release-${{ steps.meta.outputs.tag }}
+          base: main
+          title: 'chore(agents): promote images ${{ steps.meta.outputs.tag }}'
+          commit-message: 'chore(agents): promote images ${{ steps.meta.outputs.tag }}'
+          delete-branch: true
+          add-paths: argocd/applications/agents/values.yaml
+          body: |
+            ## Summary
+            Promote Agents controller and control-plane images into GitOps manifests.
+
+            - Source commit: `${{ steps.meta.outputs.source_sha }}`
+            - Image tag: `${{ steps.meta.outputs.tag }}`
+            - Source CI run: `${{ github.event.workflow_run.id }}`
+            - Runner image pin preserved
+
+      - name: No manifest changes detected
+        if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'
+        run: echo 'No Agents manifest changes detected.'
+
+      - name: Promotion skipped
+        if: steps.meta.outputs.promote != 'true'
+        run: echo 'Skipping stale agents-build-push workflow_run promotion because source SHA is not current main.'

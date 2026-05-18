@@ -42,7 +42,24 @@ type Options = {
   codexAuthPath: string
   tag: string
   platforms: string[]
+  buildRunner: boolean
   apply: boolean
+}
+
+type ImagePin = {
+  repository: string
+  tag: string
+  digest: string
+}
+
+type ReleaseMetadata = {
+  sourceHeadSha?: string
+  gitopsRevision?: string
+  sourceCiRunId?: string
+  sourceCiConclusion?: string
+  manifestImageDigest?: string
+  servingBuildCommit?: string
+  servingImageDigest?: string
 }
 
 type DatabaseSecretRequirement = {
@@ -154,6 +171,10 @@ const parseArgs = (argv: string[]): Partial<Options> => {
     }
     if (arg === '--no-apply') {
       options.apply = false
+      continue
+    }
+    if (arg === '--skip-runner') {
+      options.buildRunner = false
     }
   }
   return options
@@ -211,6 +232,7 @@ const resolveOptions = (): Options => {
     codexAuthPath,
     tag,
     platforms,
+    buildRunner: args.buildRunner ?? parseBoolean(process.env.AGENTS_BUILD_RUNNER, true),
     apply: args.apply ?? parseBoolean(process.env.AGENTS_APPLY, true),
   }
 }
@@ -350,6 +372,7 @@ const updateValuesFile = (
   runnerImageRepository: string,
   runnerTag: string,
   runnerDigest: string,
+  releaseMetadata?: ReleaseMetadata,
 ) => {
   const raw = readFileSync(valuesPath, 'utf8')
   const doc = YAML.parse(raw) ?? {}
@@ -377,10 +400,37 @@ const updateValuesFile = (
   doc.runner.image.tag = runnerTag
   doc.runner.image.digest = runnerDigest
 
+  if (releaseMetadata) {
+    doc.controlPlane.env ??= {}
+    doc.controlPlane.env.vars ??= {}
+    const vars = doc.controlPlane.env.vars as Record<string, string>
+    if (releaseMetadata.sourceHeadSha) vars.AGENTS_SOURCE_HEAD_SHA = releaseMetadata.sourceHeadSha
+    if (releaseMetadata.gitopsRevision) vars.AGENTS_GITOPS_REVISION = releaseMetadata.gitopsRevision
+    if (releaseMetadata.sourceCiRunId) vars.AGENTS_SOURCE_CI_RUN_ID = releaseMetadata.sourceCiRunId
+    if (releaseMetadata.sourceCiConclusion) vars.AGENTS_SOURCE_CI_CONCLUSION = releaseMetadata.sourceCiConclusion
+    if (releaseMetadata.manifestImageDigest) vars.AGENTS_MANIFEST_IMAGE_DIGEST = releaseMetadata.manifestImageDigest
+    if (releaseMetadata.servingBuildCommit) vars.AGENTS_SERVING_BUILD_COMMIT = releaseMetadata.servingBuildCommit
+    if (releaseMetadata.servingImageDigest) vars.AGENTS_SERVING_IMAGE_DIGEST = releaseMetadata.servingImageDigest
+  }
+
   writeFileSync(valuesPath, YAML.stringify(doc, { lineWidth: 120 }))
   console.log(
     `Updated ${valuesPath} with ${imageRepository}:${tag}@${digest}, ${controlPlaneImageRepository}:${controlPlaneTag}@${controlPlaneDigest}, and ${runnerImageRepository}:${runnerTag}@${runnerDigest}`,
   )
+}
+
+const readRunnerImagePin = (valuesPath: string): ImagePin => {
+  const values = YAML.parse(readFileSync(valuesPath, 'utf8')) ?? {}
+  const runnerImage = values.runner?.image
+  const repository = typeof runnerImage?.repository === 'string' ? runnerImage.repository : ''
+  const tag = typeof runnerImage?.tag === 'string' ? runnerImage.tag : ''
+  const digest = typeof runnerImage?.digest === 'string' ? runnerImage.digest : ''
+  if (!repository || !tag || !digest) {
+    fatal(
+      `Runner image pin missing from ${valuesPath}; cannot preserve runner image without repository, tag, and digest.`,
+    )
+  }
+  return { repository, tag, digest }
 }
 
 const resolveDatabaseSecretRequirement = (
@@ -548,19 +598,23 @@ const main = async () => {
     target: 'control-plane',
     platforms: options.platforms,
   })
-  if (!existsSync(options.codexAuthPath)) {
-    fatal(`Codex auth not found at ${options.codexAuthPath}; cannot build agents-codex-runner image.`)
+  const runnerPin = options.buildRunner ? undefined : readRunnerImagePin(options.valuesPath)
+  if (options.buildRunner) {
+    if (!existsSync(options.codexAuthPath)) {
+      fatal(`Codex auth not found at ${options.codexAuthPath}; cannot build agents-codex-runner image.`)
+    }
+    await buildAndPushDockerImage({
+      registry: options.registry,
+      repository: options.runnerRepository,
+      tag: options.tag,
+      context: repoRoot,
+      dockerfile: options.runnerDockerfile,
+      codexAuthPath: options.codexAuthPath,
+      cacheRef:
+        process.env.AGENTS_RUNNER_BUILD_CACHE_REF ?? `${options.registry}/${options.runnerRepository}:buildcache`,
+      platforms: options.platforms,
+    })
   }
-  await buildAndPushDockerImage({
-    registry: options.registry,
-    repository: options.runnerRepository,
-    tag: options.tag,
-    context: repoRoot,
-    dockerfile: options.runnerDockerfile,
-    codexAuthPath: options.codexAuthPath,
-    cacheRef: process.env.AGENTS_RUNNER_BUILD_CACHE_REF ?? `${options.registry}/${options.runnerRepository}:buildcache`,
-    platforms: options.platforms,
-  })
 
   const repoDigest = inspectImageDigest(image)
   const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
@@ -569,8 +623,11 @@ const main = async () => {
   const controlPlaneDigest = controlPlaneRepoDigest.includes('@')
     ? controlPlaneRepoDigest.split('@')[1]
     : controlPlaneRepoDigest
-  const runnerRepoDigest = inspectImageDigest(runnerImage)
-  const runnerDigest = runnerRepoDigest.includes('@') ? runnerRepoDigest.split('@')[1] : runnerRepoDigest
+  const runnerRepoDigest = options.buildRunner ? inspectImageDigest(runnerImage) : runnerPin?.digest
+  const runnerDigest = runnerRepoDigest?.includes('@') ? runnerRepoDigest.split('@')[1] : runnerRepoDigest
+  if (!runnerDigest) {
+    fatal('Agents runner digest is empty.')
+  }
 
   updateValuesFile(
     options.valuesPath,
@@ -580,9 +637,18 @@ const main = async () => {
     controlPlaneImageName,
     options.tag,
     controlPlaneDigest,
-    runnerImageName,
-    options.tag,
+    runnerPin?.repository ?? runnerImageName,
+    runnerPin?.tag ?? options.tag,
     runnerDigest,
+    {
+      sourceHeadSha: execGit(['rev-parse', 'HEAD']),
+      gitopsRevision: execGit(['rev-parse', 'HEAD']),
+      sourceCiRunId: process.env.GITHUB_RUN_ID,
+      sourceCiConclusion: process.env.AGENTS_SOURCE_CI_CONCLUSION ?? 'success',
+      manifestImageDigest: controlPlaneDigest,
+      servingBuildCommit: execGit(['rev-parse', 'HEAD']),
+      servingImageDigest: controlPlaneDigest,
+    },
   )
 
   if (options.apply) {
@@ -604,6 +670,7 @@ export const __private = {
   isArgoHookManifest,
   renderAndApply,
   updateValuesFile,
+  readRunnerImagePin,
   resolveDatabaseSecretRequirement,
   buildDatabaseSecretAliasManifest,
 }

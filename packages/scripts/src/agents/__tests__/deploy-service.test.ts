@@ -6,6 +6,13 @@ import { join } from 'node:path'
 import { __private } from '../deploy-service'
 
 describe('agents deploy-service helpers', () => {
+  it('parses runner and apply rollout flags', () => {
+    expect(__private.parseArgs(['--skip-runner', '--no-apply'])).toMatchObject({
+      buildRunner: false,
+      apply: false,
+    })
+  })
+
   it('drops Argo CD hook resources from direct kubectl apply manifests', () => {
     const rendered = `apiVersion: v1
 kind: ConfigMap
@@ -108,6 +115,15 @@ runner:
       'registry.example/lab/agents-codex-runner',
       'abc123',
       'sha256:runner',
+      {
+        sourceHeadSha: 'abcdef1234567890',
+        gitopsRevision: 'abcdef1234567890',
+        sourceCiRunId: '12345',
+        sourceCiConclusion: 'success',
+        manifestImageDigest: 'sha256:control-plane',
+        servingBuildCommit: 'abcdef1234567890',
+        servingImageDigest: 'sha256:control-plane',
+      },
     )
 
     const updated = readFileSync(valuesPath, 'utf8')
@@ -117,6 +133,9 @@ runner:
     expect(updated).toContain('repository: registry.example/lab/agents-codex-runner')
     expect(updated).toContain('digest: sha256:controller')
     expect(updated).toContain('digest: sha256:runner')
+    expect(updated).toContain('AGENTS_SOURCE_HEAD_SHA: abcdef1234567890')
+    expect(updated).toContain('AGENTS_SOURCE_CI_RUN_ID: "12345"')
+    expect(updated).toContain('AGENTS_SERVING_IMAGE_DIGEST: sha256:control-plane')
 
     rmSync(dir, { recursive: true, force: true })
   })
