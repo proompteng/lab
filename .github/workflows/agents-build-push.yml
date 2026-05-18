@@ -13,7 +13,6 @@ on:
       - 'packages/cx-tools/**'
       - 'packages/otel/**'
       - 'packages/scripts/src/agents/**'
-      - 'packages/scripts/src/jangar/**'
       - 'packages/scripts/src/shared/**'
       - 'packages/temporal-bun-sdk/**'
       - 'services/agents/**'
@@ -52,19 +51,20 @@ jobs:
         run: echo "tag=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts --filter @proompteng/jangar
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts --filter @proompteng/agents
 
       - name: Build and push Agents images
         env:
           AGENTS_APPLY: 'false'
           AGENTS_BUILD_RUNNER: 'false'
+          AGENTS_DOCKERFILE: services/agents/Dockerfile
           AGENTS_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           AGENTS_IMAGE_PLATFORMS: linux/arm64
-          JANGAR_BUILD_CACHE_MODE: max
-          JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
-          JANGAR_BUILD_SOURCEMAP: '0'
-          JANGAR_BUILD_CI: 'true'
-          JANGAR_BUILD_LOG_LEVEL: warn
+          AGENTS_BUILD_CACHE_MODE: max
+          AGENTS_BUILD_NODE_OPTIONS: --max-old-space-size=4096
+          AGENTS_BUILD_SOURCEMAP: '0'
+          AGENTS_BUILD_CI: 'true'
+          AGENTS_BUILD_LOG_LEVEL: warn
           DOCKER_BUILD_PROVENANCE: max
           DOCKER_BUILD_SBOM: 'true'
         run: bun run agents:deploy -- --no-apply --skip-runner
