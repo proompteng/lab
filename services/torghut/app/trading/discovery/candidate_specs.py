@@ -2306,6 +2306,12 @@ def _mapping(value: Any) -> dict[str, Any]:
     return {str(key): item for key, item in cast(Mapping[Any, Any], value).items()}
 
 
+def _string_sequence(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, str):
+        return ()
+    return tuple(str(item) for item in cast(Sequence[Any], value))
+
+
 def _format_profile_budget(value: Decimal) -> str:
     text = format(value.normalize(), "f")
     if "." in text:
@@ -2780,6 +2786,65 @@ def _hypothesis_haystack(card: HypothesisCard) -> str:
             " ".join(card.source_claim_ids),
         ]
     ).lower()
+
+
+def _normalization_candidates_for_card(card: HypothesisCard) -> tuple[str, ...]:
+    haystack = _hypothesis_haystack(card)
+    candidates = ["price_scaled", "trading_value_scaled"]
+    if any(
+        token in haystack
+        for token in (
+            "market cap",
+            "market-cap",
+            "market_cap",
+            "matched filter",
+            "matched-filter",
+            "matched_filter",
+            "scale-invariant",
+            "scale invariant",
+        )
+    ):
+        candidates.append("market_cap_scaled")
+    if any(
+        token in haystack
+        for token in (
+            "opening",
+            "session segment",
+            "session_segment",
+            "timezone",
+            "time-of-day",
+            "time of day",
+        )
+    ):
+        candidates.append("opening_window_scaled")
+    return tuple(dict.fromkeys(candidates))
+
+
+def _requires_synthetic_validation_only_policy(card: HypothesisCard) -> bool:
+    validation_requirements = _list_of_mappings(
+        card.implementation_constraints.get("validation_requirements")
+    )
+    haystack = " ".join(
+        " ".join(
+            (
+                str(item.get("claim_type") or ""),
+                str(item.get("claim_text") or ""),
+                " ".join(_string_sequence(item.get("data_requirements"))),
+            )
+        ).lower()
+        for item in validation_requirements
+    )
+    return any(
+        token in haystack
+        for token in (
+            "synthetic",
+            "generated",
+            "simulation",
+            "simulated",
+            "stress",
+            "live_paper_parity",
+        )
+    )
 
 
 def _family_scores_for_hypothesis(
@@ -3290,10 +3355,9 @@ def compile_candidate_specs(
                     "entry_motifs": list(card.entry_motifs),
                     "exit_motifs": list(card.exit_motifs),
                     "expected_regimes": list(card.expected_regimes),
-                    "normalization_candidates": [
-                        "price_scaled",
-                        "trading_value_scaled",
-                    ],
+                    "normalization_candidates": list(
+                        _normalization_candidates_for_card(card)
+                    ),
                     "family_selection": {
                         "rank": family_rank,
                         "score": family_score,
@@ -3310,6 +3374,13 @@ def compile_candidate_specs(
                 if claim_relation_blockers:
                     feature_contract["claim_relation_blockers"] = [
                         dict(item) for item in claim_relation_blockers
+                    ]
+                validation_requirements = _list_of_mappings(
+                    card.implementation_constraints.get("validation_requirements")
+                )
+                if validation_requirements:
+                    feature_contract["validation_requirements"] = [
+                        dict(item) for item in validation_requirements
                     ]
                 objective = {
                     "target_net_pnl_per_day": str(target_net_pnl_per_day),
@@ -3334,7 +3405,7 @@ def compile_candidate_specs(
                         for key in _mapping(strategy_overrides.get("params")).keys()
                     ),
                 }
-                promotion_contract = {
+                promotion_contract: dict[str, Any] = {
                     "source": "whitepaper_autoresearch_profit_target",
                     "target_net_pnl_per_day": str(target_net_pnl_per_day),
                     "requires_scheduler_v3_parity_replay": True,
@@ -3342,6 +3413,22 @@ def compile_candidate_specs(
                     "requires_shadow_validation": True,
                     "promotion_policy": "research_only",
                 }
+                if validation_requirements:
+                    promotion_contract["validation_requirement_claim_ids"] = [
+                        str(item.get("claim_id"))
+                        for item in validation_requirements
+                        if str(item.get("claim_id") or "").strip()
+                    ]
+                if _requires_synthetic_validation_only_policy(card):
+                    promotion_contract.update(
+                        {
+                            "requires_historical_replay": True,
+                            "requires_live_paper_parity": True,
+                            "synthetic_evidence_policy": (
+                                "validation_only_not_promotion_proof"
+                            ),
+                        }
+                    )
                 base_payload = {
                     "hypothesis_id": card.hypothesis_id,
                     "family_template_id": family_template_id,

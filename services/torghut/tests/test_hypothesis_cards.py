@@ -48,3 +48,48 @@ class TestHypothesisCards(TestCase):
         self.assertEqual(low_confidence, [])
         with self.assertRaisesRegex(ValueError, "hypothesis_card_schema_invalid"):
             hypothesis_card_from_payload({"schema_version": "invalid"})
+
+    def test_validation_claim_data_requirements_do_not_become_signal_features(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-validation-contract",
+            claims=[
+                {
+                    "claim_id": "flow-alpha",
+                    "claim_type": "feature_recipe",
+                    "claim_text": "Scale-invariant trade-flow features transfer across equities.",
+                    "data_requirements": ["trade_flow", "relative_volume"],
+                    "confidence": "0.78",
+                },
+                {
+                    "claim_id": "synthetic-stress",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Generated trade-flow rollouts are useful for stress testing "
+                        "but cannot be promotion proof."
+                    ),
+                    "data_requirements": [
+                        "historical_replay",
+                        "live_paper_parity",
+                        "market_impact_stress",
+                    ],
+                    "confidence": "0.72",
+                },
+            ],
+        )
+
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0].required_features, ("trade_flow", "relative_volume"))
+        self.assertEqual(
+            cards[0].implementation_constraints["validation_requirements"][0][
+                "claim_id"
+            ],
+            "synthetic-stress",
+        )
+        self.assertIn(
+            "live_paper_parity",
+            cards[0].implementation_constraints["validation_requirements"][0][
+                "data_requirements"
+            ],
+        )
