@@ -16,8 +16,6 @@ controlPlane:
   env:
     vars:
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
-      AGENTS_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence
-      AGENTS_TORGHUT_STATUS_TIMEOUT_MS: "12000"
       AGENTS_SOURCE_HEAD_SHA: fdceeaac3c94e7d102f1b4b3f84c6884b3b1f60d
       AGENTS_GITOPS_REVISION: fdceeaac3c94e7d102f1b4b3f84c6884b3b1f60d
       AGENTS_SOURCE_CI_RUN_ID: "26005264540"
@@ -93,9 +91,6 @@ controllers:
       AGENTS_AGENT_RUNNER_NATS_AUTH_SECRET_NAME: nats-agents-credentials
       AGENTS_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY: username
       AGENTS_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY: password
-      AGENTS_WHITEPAPER_FINALIZE_ENABLED: "true"
-      AGENTS_WHITEPAPER_FINALIZE_BASE_URL: http://torghut.torghut.svc.cluster.local
-      AGENTS_WHITEPAPER_FINALIZE_USE_SERVICE_ACCOUNT_TOKEN: "true"
       AGENTS_MATERIAL_REENTRY_REQUIREMENT_SIGNALS: "false"
       AGENTS_SCHEDULE_RUNNER_ADMISSION_STATUS_URL: http://agents.agents.svc.cluster.local/api/agents/control-plane/status?view=schedule-runner
       AGENTS_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS: "30000"
