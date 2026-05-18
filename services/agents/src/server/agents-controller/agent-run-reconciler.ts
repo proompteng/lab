@@ -8,7 +8,7 @@ import type { AgentsPrimitivesStoreRef } from './mutable-state'
 import { resolveMemory } from './namespace-state'
 import { isAgentRunTemplate, reconcileAgentRunDeletion, reconcileAgentRunTemplate } from './agent-run-template'
 import { normalizeLabelMap, validateAuthSecretPolicy, validateImagePolicy, validateLabelPolicy } from './policy'
-import { extractProviderAwareJobFailure } from './provider-capacity'
+import { extractProviderAwareJobFailure, isNonRetryableProviderFailure } from './provider-capacity'
 import {
   buildQueueCounts,
   type ControllerState,
@@ -138,6 +138,19 @@ type AgentRunReconcilerDependencies = {
       | { scope: 'repo'; repository: string; namespace: string },
   ) => void
   recordAgentRateLimitRejection?: (scope: 'cluster' | 'namespace' | 'repo', attributes: Record<string, string>) => void
+}
+
+export const resolveProviderReadinessBlock = (provider: Record<string, unknown>) => {
+  const conditions = readNested(provider, ['status', 'conditions'])
+  if (!Array.isArray(conditions)) return null
+  const ready = conditions
+    .map((condition) => asRecord(condition))
+    .find((condition) => condition?.type === 'Ready' && condition.status === 'False')
+  const reason = asString(ready?.reason)
+  if (!reason || !isNonRetryableProviderFailure(reason)) return null
+  const providerName = asString(readNested(provider, ['metadata', 'name'])) ?? 'unknown'
+  const message = asString(ready?.message) ?? `agent provider ${providerName} is not ready`
+  return { reason, message: `agent provider ${providerName} is not ready: ${message}` }
 }
 
 export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) => {
@@ -743,6 +756,46 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         })
         logInvalidSpec('MissingProvider', message)
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+      const providerBlock = resolveProviderReadinessBlock(provider)
+      if (providerBlock) {
+        const updated = upsertCondition(
+          upsertCondition(
+            upsertCondition(conditions, {
+              type: 'Blocked',
+              status: 'True',
+              reason: providerBlock.reason,
+              message: providerBlock.message,
+            }),
+            {
+              type: 'Ready',
+              status: 'False',
+              reason: 'ProviderNotReady',
+              message: providerBlock.message,
+            },
+          ),
+          {
+            type: 'Progressing',
+            status: 'False',
+            reason: providerBlock.reason,
+            message: providerBlock.message,
+          },
+        )
+        await setStatus(kube, agentRun, {
+          observedGeneration,
+          conditions: updated,
+          phase: 'Pending',
+          reason: providerBlock.reason,
+          message: providerBlock.message,
+        })
+        logAgentsControllerWarn('provider_not_ready', {
+          namespace,
+          agentRun: name,
+          provider: providerName,
+          reason: providerBlock.reason,
+          message: providerBlock.message,
+        })
         return
       }
 
