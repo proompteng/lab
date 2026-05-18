@@ -35,6 +35,7 @@ from .hypotheses import (
     resolve_hypothesis_dependency_quorum,
     summarize_hypothesis_runtime_statuses,
 )
+from .discovery.profit_target_oracle import evaluate_profit_target_oracle
 from .profit_windows import build_profit_window_contract
 from .profit_leases import build_profit_lease_projection
 from .tca import build_tca_gate_inputs
@@ -75,6 +76,19 @@ _AUTORESEARCH_PORTFOLIO_READY_STATUSES = (
     "accepted",
     "promoted",
 )
+
+
+def _autoresearch_portfolio_current_oracle_passed(
+    row: AutoresearchPortfolioCandidate,
+) -> bool:
+    scorecard = row.objective_scorecard_json
+    if not isinstance(scorecard, Mapping):
+        return False
+    oracle = evaluate_profit_target_oracle(
+        cast(Mapping[str, Any], scorecard),
+        target_net_pnl_per_day=row.target_net_pnl_per_day,
+    )
+    return bool(oracle.get("passed"))
 
 
 def _safe_int(value: object) -> int:
@@ -932,6 +946,21 @@ def _attach_lineage_refs(
 
 
 def _load_profit_promotion_table_counts(session: Session) -> dict[str, int]:
+    portfolio_rows = list(
+        session.execute(select(AutoresearchPortfolioCandidate)).scalars()
+    )
+    current_oracle_ready = 0
+    current_policy_blocked = 0
+    for row in portfolio_rows:
+        current_oracle_passed = _autoresearch_portfolio_current_oracle_passed(row)
+        if (
+            row.status in _AUTORESEARCH_PORTFOLIO_READY_STATUSES
+            and current_oracle_passed
+        ):
+            current_oracle_ready += 1
+        if row.status == "blocked" or not current_oracle_passed:
+            current_policy_blocked += 1
+
     return {
         "research_candidates": int(
             session.execute(select(func.count(ResearchCandidate.id))).scalar_one()
@@ -965,22 +994,8 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, int]:
                 select(func.count(AutoresearchPortfolioCandidate.id))
             ).scalar_one()
         ),
-        "autoresearch_portfolio_ready": int(
-            session.execute(
-                select(func.count(AutoresearchPortfolioCandidate.id)).where(
-                    AutoresearchPortfolioCandidate.status.in_(
-                        _AUTORESEARCH_PORTFOLIO_READY_STATUSES
-                    )
-                )
-            ).scalar_one()
-        ),
-        "autoresearch_portfolio_blocked": int(
-            session.execute(
-                select(func.count(AutoresearchPortfolioCandidate.id)).where(
-                    AutoresearchPortfolioCandidate.status == "blocked"
-                )
-            ).scalar_one()
-        ),
+        "autoresearch_portfolio_ready": current_oracle_ready,
+        "autoresearch_portfolio_blocked": current_policy_blocked,
     }
 
 

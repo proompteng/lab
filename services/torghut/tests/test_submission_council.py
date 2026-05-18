@@ -219,6 +219,59 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(counts["autoresearch_portfolio_blocked"], 1)
         self.assertEqual(counts["autoresearch_portfolio_ready"], 0)
 
+    def test_load_profit_promotion_counts_rejudges_ready_autoresearch_portfolios(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        with session_local() as session:
+            session.add(
+                AutoresearchPortfolioCandidate(
+                    portfolio_candidate_id="portfolio-stale-ready",
+                    epoch_id="epoch-stale",
+                    source_candidate_ids_json=["spec-1"],
+                    target_net_pnl_per_day=Decimal("500"),
+                    objective_scorecard_json={
+                        "oracle_passed": True,
+                        "net_pnl_per_day": "9373",
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "0.50",
+                        "best_day_share": "1.0",
+                        "max_cluster_contribution_share": "1.0",
+                        "max_single_symbol_contribution_share": "0.90",
+                        "worst_day_loss": "2978",
+                        "max_drawdown": "2978",
+                        "max_gross_exposure_pct_equity": "0.5",
+                        "min_cash": "1000",
+                        "negative_cash_observation_count": 0,
+                        "avg_filled_notional_per_day": "300000",
+                        "regime_slice_pass_rate": "0.5",
+                        "posterior_edge_lower": "1",
+                        "shadow_parity_status": "within_budget",
+                        "executable_replay_passed": True,
+                        "executable_replay_order_count": 1,
+                        "executable_replay_account_buying_power": "31590",
+                        "executable_replay_max_notional_per_trade": "5000",
+                    },
+                    optimizer_report_json={"method": "old_optimizer"},
+                    payload_json={"portfolio_candidate_id": "portfolio-stale-ready"},
+                    status="target_met",
+                )
+            )
+            session.commit()
+
+            counts = _load_profit_promotion_table_counts(session)
+
+        self.assertEqual(counts["autoresearch_portfolio_candidates"], 1)
+        self.assertEqual(counts["autoresearch_portfolio_ready"], 0)
+        self.assertEqual(counts["autoresearch_portfolio_blocked"], 1)
+
     def test_profit_lease_projection_uses_runtime_feature_and_persisted_decision_evidence(
         self,
     ) -> None:
