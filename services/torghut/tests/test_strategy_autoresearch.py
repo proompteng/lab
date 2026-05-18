@@ -493,6 +493,11 @@ class TestStrategyAutoresearch(TestCase):
                 "intraday_cross_section_patterns_2010",
                 "asymmetric_ofi_hmm_regime_2025",
                 "opening_range_breakout_stocks_in_play_2024",
+                "realistic_market_impact_rl_envs_2026",
+                "overreaction_intraday_momentum_aapl_2026",
+                "vwap_regime_classification_intraday_2026",
+                "intramonth_momentum_cycle_2026",
+                "structural_limits_ohlcv_intraday_2026",
             }.issubset(source_ids)
         )
 

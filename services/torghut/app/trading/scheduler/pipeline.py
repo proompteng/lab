@@ -828,12 +828,24 @@ class TradingPipeline:
             price is None or snapshot_has_executable_quote
         ):
             payload["price"] = snapshot.price
-        if payload.get("spread") is None and snapshot.spread is not None:
+        if snapshot.spread is not None and (
+            payload.get("spread") is None or snapshot_has_executable_quote
+        ):
             payload["spread"] = snapshot.spread
+            if snapshot.price is not None and snapshot.price > 0:
+                payload["spread_bps"] = (
+                    abs(snapshot.spread) / snapshot.price
+                ) * Decimal("10000")
         if bid is None and snapshot.bid is not None:
             payload["imbalance_bid_px"] = snapshot.bid
         if ask is None and snapshot.ask is not None:
             payload["imbalance_ask_px"] = snapshot.ask
+        if (
+            snapshot_has_executable_quote
+            and snapshot.spread is not None
+            and payload.get("imbalance_spread") is None
+        ):
+            payload["imbalance_spread"] = snapshot.spread
         if payload == signal.payload:
             return signal
         return signal.model_copy(update={"payload": payload})
