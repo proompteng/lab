@@ -320,9 +320,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn(
             "name: maxTotalFrontierCandidates\n        value: '128'", template
         )
-        self.assertIn(
-            "name: realReplayTimeoutSeconds\n        value: '7200'", template
-        )
+        self.assertIn("name: realReplayTimeoutSeconds\n        value: '7200'", template)
         self.assertIn(
             "name: realReplayShardTimeoutSeconds\n        value: '900'", template
         )
@@ -1258,7 +1256,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             row_by_spec[synthetic_probe_spec.candidate_spec_id]["selection_reason"],
             "synthetic_prior_exploration",
         )
-        self.assertEqual(row_by_spec[feedback_spec.candidate_spec_id]["replay_order"], 1)
+        self.assertEqual(
+            row_by_spec[feedback_spec.candidate_spec_id]["replay_order"], 1
+        )
         self.assertEqual(
             row_by_spec[synthetic_probe_spec.candidate_spec_id]["replay_order"], 2
         )
@@ -2235,6 +2235,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         source_ids = {source.run_id for source in sources}
         self.assertIn("weighted_microprice_momentum_2026", source_ids)
         self.assertIn("macro_announcement_intraday_momentum_2025", source_ids)
+        self.assertIn("realistic_market_impact_rl_envs_2026", source_ids)
+        self.assertIn("vwap_regime_classification_intraday_2026", source_ids)
+        self.assertIn("structural_limits_ohlcv_intraday_2026", source_ids)
 
         weighted_microprice = next(
             source
@@ -2247,6 +2250,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(
             runner.compile_sources_to_hypothesis_cards([weighted_microprice])
         )
+
+        impact_source = next(
+            source
+            for source in sources
+            if source.run_id == "realistic_market_impact_rl_envs_2026"
+        )
+        impact_claim_types = {
+            str(claim["claim_type"]) for claim in impact_source.claims
+        }
+        self.assertIn("validation_requirement", impact_claim_types)
+        self.assertFalse(runner.compile_sources_to_hypothesis_cards([impact_source]))
 
     def test_runtime_closure_replay_is_disabled_when_candidate_already_failed_oracle(
         self,

@@ -245,6 +245,61 @@ research_sources:
       - claim_id: asymmetric_liquidity_transition
         summary: Directional asymmetry and regime persistence matter for intraday liquidity state transitions.
         implication: Keep continuation and reversal candidates separated by regime and require held-out shadow parity before promotion.
+  - source_id: realistic_market_impact_rl_envs_2026
+    title: 'Realistic Market Impact Modeling for Reinforcement Learning Trading Environments'
+    url: https://arxiv.org/abs/2603.29086
+    published_at: '2026-03-30'
+    claims:
+      - claim_id: nonlinear_market_impact_changes_strategy_ranking
+        summary: Nonlinear market-impact models materially change trading behavior and strategy ranking versus fixed-cost assumptions.
+        implication: Rank candidate sleeves on realized route/TCA and stressed impact curves, not only fixed-bps replay costs.
+      - claim_id: turnover_penalty_prevents_pathological_trading
+        summary: Cost-model-aware optimization sharply reduces pathological turnover and total daily costs.
+        implication: Add turnover and impact stress as first-class promotion blockers for high-activity candidates.
+  - source_id: overreaction_intraday_momentum_aapl_2026
+    title: 'Overreaction as an Indicator for Momentum in Algorithmic Trading: A Case of AAPL Stocks'
+    url: https://arxiv.org/abs/2602.18912
+    published_at: '2026-02-21'
+    claims:
+      - claim_id: volatility_cost_normalized_overreaction
+        summary: Intraday overreactions can be defined relative to contemporaneous volatility and transaction costs before modeling momentum.
+        implication: Prefer volatility-and-cost-normalized overreaction features over raw return thresholds.
+      - claim_id: sentiment_conditioned_momentum_requires_live_validation
+        summary: Sentiment/emotion features may improve intraday momentum classification but are source- and symbol-dependent.
+        implication: Treat sentiment-conditioned momentum as a research sleeve requiring strict out-of-sample and live-paper validation.
+  - source_id: vwap_regime_classification_intraday_2026
+    title: 'VWAP-Based Regime Classification Model for Intraday Price Dynamics'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6438039
+    published_at: '2026-04-20'
+    claims:
+      - claim_id: volatility_adjusted_vwap_regime
+        summary: Volatility-adjusted VWAP deviation can separate trend-dominated and mean-reverting intraday regimes.
+        implication: Gate continuation versus reversal sleeves with VWAP-regime state instead of pooling all intraday minutes.
+      - claim_id: vwap_distance_controls_execution_timing
+        summary: VWAP distance provides a mathematically grounded proxy for directional bias and market structure.
+        implication: Add VWAP-distance thresholds to candidate sweeps and validate them after route/TCA costs.
+  - source_id: intramonth_momentum_cycle_2026
+    title: 'The Intramonth Momentum Cycle'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6426026
+    published_at: '2026-03-23'
+    claims:
+      - claim_id: calendar_window_momentum_concentration
+        summary: Equity momentum returns may concentrate in a small pre-turn-of-month window tied to settlement and cash demand.
+        implication: Add calendar-window slicing to portfolio evidence so monthly concentration cannot masquerade as all-regime robustness.
+      - claim_id: loser_side_asymmetric_pre_tom_pressure
+        summary: The documented momentum cycle is asymmetric and concentrated in loser underperformance.
+        implication: Test long and short legs separately and reject candidates whose profit is a one-sided calendar artifact.
+  - source_id: structural_limits_ohlcv_intraday_2026
+    title: 'Structural Limits of OHLCV-Based Intraday Signals in MNQ Futures: A Systematic Falsification Study'
+    url: https://arxiv.org/abs/2605.04004
+    published_at: '2026-05-05'
+    claims:
+      - claim_id: ohlcv_only_intraday_falsification
+        summary: OHLCV-only intraday momentum signals can fail under realistic execution constraints despite attractive naive backtests.
+        implication: Require executable quote, route/TCA, and walk-forward evidence before any OHLCV-derived sleeve enters promotion review.
+      - claim_id: walk_forward_cost_constraints_required
+        summary: Walk-forward validation and market-microstructure cost constraints are necessary to falsify overfit intraday signals.
+        implication: Keep the no-cheating promotion path anchored to held-out replay, live-paper, and post-cost ledger proof.
 families:
   - family_template_id: microstructure_continuation_matched_filter_v1
     seed_sweep_config: ../profitability-frontier-strict-daily-microstructure.yaml
