@@ -359,6 +359,12 @@ const updateValuesFile = (
   doc.image.tag = tag
   doc.image.digest = digest
 
+  doc.controllers ??= {}
+  doc.controllers.image ??= {}
+  doc.controllers.image.repository = imageRepository
+  doc.controllers.image.tag = tag
+  doc.controllers.image.digest = digest
+
   doc.controlPlane ??= {}
   doc.controlPlane.image ??= {}
   doc.controlPlane.image.repository = controlPlaneImageRepository

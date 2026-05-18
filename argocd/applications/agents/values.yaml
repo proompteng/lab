@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
-  repository: registry.ide-newton.ts.net/lab/jangar
-  tag: e69f6e09
-  digest: sha256:ca638ebb92ee2cfb6eb21c03af4cc27437f56d9cd4f73379abd3ba5027e895e1
+  repository: registry.ide-newton.ts.net/lab/agents-controller
+  tag: fdceeaac
+  digest: sha256:7b33d7ac135c3760f95c56bef82753baf5f45dea4c84333f252313fa7a5ccb29
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -10,33 +10,26 @@ nodeSelector:
   kubernetes.io/arch: arm64
 controlPlane:
   image:
-    repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: e69f6e09
-    digest: sha256:316d16751a7a8bd75c428c36ab01585603da11546050f497de91891b4e55bbc6
+    repository: registry.ide-newton.ts.net/lab/agents-control-plane
+    tag: fdceeaac
+    digest: sha256:ed6b8f7d948981983966c8e3ab037ab43d9dcbfaf455e11e3cbbd733bae77e1f
   env:
     vars:
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
       AGENTS_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence
       AGENTS_TORGHUT_STATUS_TIMEOUT_MS: "12000"
-      AGENTS_SOURCE_HEAD_SHA: ea0f7a1d3d41adacf18185a26a3bafc72f7ba355
-      AGENTS_GITOPS_REVISION: ea0f7a1d3d41adacf18185a26a3bafc72f7ba355
-      AGENTS_SOURCE_CI_RUN_ID: "25981198000"
+      AGENTS_SOURCE_HEAD_SHA: fdceeaac3c94e7d102f1b4b3f84c6884b3b1f60d
+      AGENTS_GITOPS_REVISION: fdceeaac3c94e7d102f1b4b3f84c6884b3b1f60d
+      AGENTS_SOURCE_CI_RUN_ID: "26005264540"
       AGENTS_SOURCE_CI_CONCLUSION: success
-      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:6d372f58f7115b395ec40f7dba35b8c1bddb41875c6be9bd0cf7350eb6744f6d
-      AGENTS_SERVING_BUILD_COMMIT: ea0f7a1d3d41adacf18185a26a3bafc72f7ba355
-      AGENTS_SERVING_IMAGE_DIGEST: sha256:6d372f58f7115b395ec40f7dba35b8c1bddb41875c6be9bd0cf7350eb6744f6d
-      JANGAR_SOURCE_HEAD_SHA: e69f6e096ae349e8be465c4f975db1a748898208
-      JANGAR_GITOPS_REVISION: e69f6e096ae349e8be465c4f975db1a748898208
-      JANGAR_SOURCE_CI_RUN_ID: "26005025998"
-      JANGAR_SOURCE_CI_CONCLUSION: success
-      JANGAR_MANIFEST_IMAGE_DIGEST: sha256:316d16751a7a8bd75c428c36ab01585603da11546050f497de91891b4e55bbc6
-      JANGAR_SERVING_BUILD_COMMIT: e69f6e096ae349e8be465c4f975db1a748898208
-      JANGAR_SERVING_IMAGE_DIGEST: sha256:316d16751a7a8bd75c428c36ab01585603da11546050f497de91891b4e55bbc6
+      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:ed6b8f7d948981983966c8e3ab037ab43d9dcbfaf455e11e3cbbd733bae77e1f
+      AGENTS_SERVING_BUILD_COMMIT: fdceeaac3c94e7d102f1b4b3f84c6884b3b1f60d
+      AGENTS_SERVING_IMAGE_DIGEST: sha256:ed6b8f7d948981983966c8e3ab037ab43d9dcbfaf455e11e3cbbd733bae77e1f
 runner:
   image:
-    repository: registry.ide-newton.ts.net/lab/jangar
-    tag: e69f6e09
-    digest: sha256:ca638ebb92ee2cfb6eb21c03af4cc27437f56d9cd4f73379abd3ba5027e895e1
+    repository: registry.ide-newton.ts.net/lab/agents-codex-runner
+    tag: fdceeaac
+    digest: sha256:94dd5154dd73494e6eafef6fda6d7d04bb2e666e1784875265dea4d800f56b8f
 argocdHooks:
   enabled: true
   image:
@@ -91,8 +84,8 @@ controllers:
   replicaCount: 2
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-    tag: ea0f7a1d
-    digest: sha256:6d372f58f7115b395ec40f7dba35b8c1bddb41875c6be9bd0cf7350eb6744f6d
+    tag: fdceeaac
+    digest: sha256:7b33d7ac135c3760f95c56bef82753baf5f45dea4c84333f252313fa7a5ccb29
   autoscaling:
     enabled: false
   env:
