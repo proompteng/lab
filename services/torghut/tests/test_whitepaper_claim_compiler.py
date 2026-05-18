@@ -24,6 +24,11 @@ class TestWhitepaperClaimCompiler(TestCase):
         self.assertTrue(
             {
                 "seed-ssrn-6440898",
+                "seed-ssrn-6754305",
+                "seed-ssrn-6703098",
+                "seed-ssrn-6700018",
+                "seed-ssrn-6687441",
+                "seed-ssrn-6658364",
                 "seed-arxiv-2605-15746",
                 "seed-arxiv-2605-12151",
                 "seed-arxiv-2605-11640",

@@ -727,6 +727,260 @@ RECENT_WHITEPAPER_SEEDS: tuple[WhitepaperResearchSource, ...] = (
         ),
     ),
     WhitepaperResearchSource(
+        run_id="seed-ssrn-6754305",
+        title="Measuring Bubbles via Put-Call Disparity: A Model-Free Approach",
+        source_url="https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6754305",
+        published_at="2026-05-16",
+        claims=(
+            {
+                "claim_id": "put-call-disparity-bubble-state",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "Regularized put-call disparity can identify option-implied bubble states while "
+                    "reducing sensitivity to thin out-of-the-money option quotes."
+                ),
+                "asset_scope": "index_options_risk",
+                "horizon_scope": "risk_management",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "put_call_disparity",
+                    "option_flow",
+                    "quote_quality",
+                ],
+                "confidence": "0.72",
+            },
+            {
+                "claim_id": "put-call-disparity-thin-quote-validation",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Option-disparity risk states should be bootstrap-stressed against microstructure "
+                    "noise and thin OTM quote availability before affecting sleeve sizing."
+                ),
+                "asset_scope": "index_options_risk",
+                "horizon_scope": "risk_management",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "quote_quality",
+                    "transaction_cost_stress",
+                    "drawdown_validation",
+                ],
+                "confidence": "0.72",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "put-call-disparity-requires-thin-quote-stress",
+                "relation_type": "requires_validation",
+                "source_claim_id": "put-call-disparity-thin-quote-validation",
+                "target_claim_id": "put-call-disparity-bubble-state",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-ssrn-6658364",
+        title="The Anatomy of a Decentralized Prediction Market: Microstructure Evidence from the Polymarket Order Book",
+        source_url="https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6658364",
+        published_at="2026-05-14",
+        claims=(
+            {
+                "claim_id": "prediction-market-book-quality-state",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "Continuous order-book archives can expose effective spread, ingestion delay, "
+                    "depth shape, and self-counterparty activity as market-quality state variables."
+                ),
+                "asset_scope": "event_linked_microstructure",
+                "horizon_scope": "intraday_microstructure",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "spread_bps",
+                    "ingestion_delay",
+                    "wash_trade_share",
+                ],
+                "confidence": "0.71",
+            },
+            {
+                "claim_id": "book-archive-quality-validation",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Event-linked microstructure claims should fail closed when archive delay, wash "
+                    "activity, or depth-profile quality would make paper fills non-representative."
+                ),
+                "asset_scope": "event_linked_microstructure",
+                "horizon_scope": "intraday_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "ingestion_delay",
+                    "route_tca",
+                    "live_paper_parity",
+                ],
+                "confidence": "0.71",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "book-quality-state-requires-archive-validation",
+                "relation_type": "requires_validation",
+                "source_claim_id": "book-archive-quality-validation",
+                "target_claim_id": "prediction-market-book-quality-state",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-ssrn-6703098",
+        title="Levering Up! Short-Horizon Option Availability and the Gamification of the Stock Market",
+        source_url="https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6703098",
+        published_at="2026-05-03",
+        claims=(
+            {
+                "claim_id": "weekly-option-gamma-flow-state",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "Short-horizon option availability can create gamma-sensitive underlying flow, "
+                    "volume, and volatility states around speculative weekly-option trading."
+                ),
+                "asset_scope": "us_equities_options_linked",
+                "horizon_scope": "intraday_risk_management",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "weekly_option_availability",
+                    "gamma_exposure",
+                    "option_flow",
+                    "realized_volatility",
+                ],
+                "confidence": "0.70",
+            },
+            {
+                "claim_id": "weekly-option-gamma-risk-validation",
+                "claim_type": "risk_constraint",
+                "claim_text": (
+                    "Equity sleeves should stress weekly-option gamma windows separately because "
+                    "higher maker hedging demand can amplify underlying volatility and turnover."
+                ),
+                "asset_scope": "us_equities_options_linked",
+                "horizon_scope": "intraday_risk_management",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "gamma_exposure",
+                    "turnover",
+                    "drawdown_validation",
+                ],
+                "confidence": "0.70",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "weekly-options-require-gamma-risk-stress",
+                "relation_type": "requires_regime",
+                "source_claim_id": "weekly-option-gamma-risk-validation",
+                "target_claim_id": "weekly-option-gamma-flow-state",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-ssrn-6687441",
+        title="ForesightFlow: Real-Time Detection of Informed Trading in Decentralized Prediction Markets",
+        source_url="https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6687441",
+        published_at="2026-05-01",
+        claims=(
+            {
+                "claim_id": "informed-flow-toxicity-score",
+                "claim_type": "signal_mechanism",
+                "claim_text": (
+                    "Real-time informed-flow detection can combine VPIN, Kyle lambda, and hazard-rate "
+                    "state to identify toxic order-flow windows before post-hoc PnL attribution."
+                ),
+                "asset_scope": "event_linked_microstructure",
+                "horizon_scope": "intraday_microstructure",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "vpin",
+                    "kyle_lambda",
+                    "hazard_rate",
+                    "informed_flow_score",
+                ],
+                "confidence": "0.71",
+            },
+            {
+                "claim_id": "informed-flow-execution-veto",
+                "claim_type": "risk_constraint",
+                "claim_text": (
+                    "Candidate entries should shrink or veto exposure during toxic informed-flow "
+                    "windows unless route/TCA and live-paper parity prove fillability after costs."
+                ),
+                "asset_scope": "event_linked_microstructure",
+                "horizon_scope": "intraday_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "vpin",
+                    "route_tca",
+                    "live_paper_parity",
+                    "transaction_cost_stress",
+                ],
+                "confidence": "0.71",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "informed-flow-score-requires-route-veto-validation",
+                "relation_type": "requires_validation",
+                "source_claim_id": "informed-flow-execution-veto",
+                "target_claim_id": "informed-flow-toxicity-score",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-ssrn-6700018",
+        title="Bridging Microstructure and Macro: Dynamic Regime Trading with VPIN, Hawkes, and Hurst on the S&P 500",
+        source_url="https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6700018",
+        published_at="2026-05-03",
+        claims=(
+            {
+                "claim_id": "vpin-hawkes-hurst-regime-router",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "A macro-regime filter can gate microstructure execution features so VPIN and "
+                    "Hawkes-style toxicity signals are only used in compatible Hurst regimes."
+                ),
+                "asset_scope": "index_intraday_execution",
+                "horizon_scope": "intraday_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "vpin",
+                    "order_arrival_clustering",
+                    "hurst_regime",
+                    "realized_volatility",
+                ],
+                "confidence": "0.66",
+            },
+            {
+                "claim_id": "micro-macro-routing-validation",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Microstructure features should be validated inside macro regime slices instead of "
+                    "pooled across hostile and favorable execution contexts."
+                ),
+                "asset_scope": "index_intraday_execution",
+                "horizon_scope": "intraday_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "regime_shift_validation",
+                    "route_tca",
+                    "walk_forward_replay",
+                ],
+                "confidence": "0.66",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "micro-macro-router-requires-regime-validation",
+                "relation_type": "requires_regime",
+                "source_claim_id": "micro-macro-routing-validation",
+                "target_claim_id": "vpin-hawkes-hurst-regime-router",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
         run_id="seed-arxiv-2605-12151",
         title="RED-2400: A Public Benchmark of Algorithmically-Rejected Trading Events with Outcome Labels",
         source_url="https://arxiv.org/abs/2605.12151",
