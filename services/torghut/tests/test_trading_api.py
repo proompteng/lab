@@ -5763,10 +5763,10 @@ class TestTradingApi(TestCase):
             "torghut.quant-producer.v1",
         )
         self.assertEqual(
-            payload["control_plane_contract"]["alpha_readiness_hypotheses_total"], 3
+            payload["control_plane_contract"]["alpha_readiness_hypotheses_total"], 4
         )
         self.assertEqual(
-            payload["control_plane_contract"]["alpha_readiness_blocked_total"], 1
+            payload["control_plane_contract"]["alpha_readiness_blocked_total"], 2
         )
         self.assertEqual(
             payload["control_plane_contract"]["alpha_readiness_shadow_total"], 2
@@ -5810,7 +5810,7 @@ class TestTradingApi(TestCase):
                 metrics_payload,
             )
             self.assertIn(
-                'torghut_trading_hypothesis_state_total{state="blocked"} 1',
+                'torghut_trading_hypothesis_state_total{state="blocked"} 2',
                 metrics_payload,
             )
             self.assertIn(
@@ -5818,11 +5818,11 @@ class TestTradingApi(TestCase):
                 metrics_payload,
             )
             self.assertIn(
-                'torghut_trading_hypothesis_capital_stage_total{stage="shadow"} 3',
+                'torghut_trading_hypothesis_capital_stage_total{stage="shadow"} 4',
                 metrics_payload,
             )
             self.assertIn(
-                "torghut_trading_alpha_readiness_hypotheses_total 3",
+                "torghut_trading_alpha_readiness_hypotheses_total 4",
                 metrics_payload,
             )
             self.assertIn("torghut_trading_llm_runtime_fallback_ratio", metrics_payload)

@@ -32,6 +32,13 @@ spec:
                   cd /app
                   /opt/venv/bin/python scripts/renew_latest_empirical_promotion_jobs.py \
                     --output-dir /tmp/torghut-empirical-renewal \
+                    --strategy-spec-ref microbar_cross_sectional_pairs_v1@research \
+                    --runtime-window-import \
+                    --runtime-window-hypothesis-id H-PAIRS-01 \
+                    --runtime-window-strategy-family microbar_cross_sectional_pairs \
+                    --runtime-window-strategy-name microbar-cross-sectional-pairs-v1 \
+                    --runtime-window-account-label TORGHUT_SIM \
+                    --runtime-window-observed-stage paper \
                     --json
               env:
                 - name: DB_DSN

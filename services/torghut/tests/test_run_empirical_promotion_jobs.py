@@ -323,6 +323,13 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                 "strategy@paper",
                 "--run-id-prefix",
                 "renew-prefix",
+                "--runtime-window-import",
+                "--runtime-window-hypothesis-id",
+                "H-PAIRS-01",
+                "--runtime-window-strategy-family",
+                "microbar_cross_sectional_pairs",
+                "--runtime-window-strategy-name",
+                "microbar-cross-sectional-pairs-v1",
                 "--json",
             ],
         ):
@@ -331,7 +338,81 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(args.output_dir, "/tmp/out")
         self.assertEqual(args.strategy_spec_ref, "strategy@paper")
         self.assertEqual(args.run_id_prefix, "renew-prefix")
+        self.assertTrue(args.runtime_window_import)
+        self.assertEqual(args.runtime_window_hypothesis_id, "H-PAIRS-01")
+        self.assertEqual(
+            args.runtime_window_strategy_family, "microbar_cross_sectional_pairs"
+        )
+        self.assertEqual(
+            args.runtime_window_strategy_name, "microbar-cross-sectional-pairs-v1"
+        )
         self.assertTrue(args.json)
+
+    def test_latest_completed_regular_session_uses_prior_session_before_close(
+        self,
+    ) -> None:
+        start, end = renewal._latest_completed_regular_session(
+            datetime(2026, 5, 18, 12, 23, tzinfo=timezone.utc)
+        )
+
+        self.assertEqual(start.isoformat(), "2026-05-15T13:30:00+00:00")
+        self.assertEqual(end.isoformat(), "2026-05-15T20:00:00+00:00")
+
+    def test_latest_completed_regular_session_uses_today_after_close(self) -> None:
+        start, end = renewal._latest_completed_regular_session(
+            datetime(2026, 5, 18, 21, 23, tzinfo=timezone.utc)
+        )
+
+        self.assertEqual(start.isoformat(), "2026-05-18T13:30:00+00:00")
+        self.assertEqual(end.isoformat(), "2026-05-18T20:00:00+00:00")
+
+    def test_runtime_window_import_runs_observed_paper_import(self) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        completed = SimpleNamespace(
+            stdout=json.dumps({"inserted_windows": 1, "promotion_decision": "blocked"})
+        )
+        args = SimpleNamespace(
+            runtime_window_import=True,
+            runtime_window_hypothesis_id="H-PAIRS-01",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="microbar_cross_sectional_pairs",
+            runtime_window_source_dsn_env="DB_DSN",
+            runtime_window_strategy_name="microbar-cross-sectional-pairs-v1",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_start="2026-05-18T13:30:00Z",
+            runtime_window_end="2026-05-18T20:00:00Z",
+            runtime_window_bucket_minutes=30,
+            runtime_window_sample_minutes=5,
+            runtime_window_source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        with patch.object(
+            renewal.subprocess, "run", return_value=completed
+        ) as run_mock:
+            payload = renewal._run_runtime_window_import(
+                args=args,
+                manifest={
+                    "candidate_id": "spec-d74b07b2aaab8d0cfa8a4c38",
+                    "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                },
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                now=datetime(2026, 5, 18, 21, 23, tzinfo=timezone.utc),
+            )
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload["hypothesis_id"], "H-PAIRS-01")
+        self.assertEqual(payload["window_start"], "2026-05-18T13:30:00Z")
+        self.assertEqual(payload["window_end"], "2026-05-18T20:00:00Z")
+        command = run_mock.call_args.args[0]
+        self.assertIn("scripts/import_hypothesis_runtime_windows.py", command)
+        self.assertIn("--candidate-id", command)
+        self.assertIn("spec-d74b07b2aaab8d0cfa8a4c38", command)
+        self.assertIn("--dataset-snapshot-ref", command)
+        self.assertIn("portfolio-profit-autoresearch-500-v1", command)
 
     def test_main_writes_manifest_and_runs_empirical_promotion_job(self) -> None:
         created_at = datetime(2026, 5, 18, 8, 13, tzinfo=timezone.utc)

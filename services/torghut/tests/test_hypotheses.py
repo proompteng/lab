@@ -571,9 +571,9 @@ class TestHypothesisReadiness(TestCase):
                 message="ok",
             ),
         )
-        self.assertEqual(summary["reason_totals"]["slippage_budget_exceeded"], 3)
+        self.assertEqual(summary["reason_totals"]["slippage_budget_exceeded"], 4)
         self.assertEqual(
-            summary["informational_reason_totals"]["closed_session_signal_hold"], 3
+            summary["informational_reason_totals"]["closed_session_signal_hold"], 4
         )
 
     def test_compile_hypothesis_runtime_statuses_isolates_dependency_capabilities_between_hypotheses(
@@ -754,9 +754,9 @@ class TestHypothesisReadiness(TestCase):
             ),
         )
 
-        self.assertEqual(summary["hypotheses_total"], 3)
-        self.assertEqual(summary["state_totals"], {"blocked": 1, "shadow": 2})
-        self.assertEqual(summary["capital_stage_totals"], {"shadow": 3})
+        self.assertEqual(summary["hypotheses_total"], 4)
+        self.assertEqual(summary["state_totals"], {"blocked": 2, "shadow": 2})
+        self.assertEqual(summary["capital_stage_totals"], {"shadow": 4})
         self.assertEqual(summary["promotion_eligible_total"], 0)
         self.assertEqual(summary["rollback_required_total"], 0)
         self.assertEqual(

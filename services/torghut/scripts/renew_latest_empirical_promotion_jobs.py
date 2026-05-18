@@ -8,9 +8,10 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from zoneinfo import ZoneInfo
 
 import yaml
 from sqlalchemy import select
@@ -25,6 +26,10 @@ from app.trading.empirical_manifest import (
     normalize_empirical_promotion_manifest,
     validate_empirical_promotion_manifest,
 )
+
+US_EQUITIES_TIMEZONE = "America/New_York"
+US_EQUITIES_OPEN = time(9, 30)
+US_EQUITIES_CLOSE = time(16, 0)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -41,6 +46,34 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--run-id-prefix", default="sim-2026-05-05-chip-4c330ce9-r1-renew"
+    )
+    parser.add_argument("--runtime-window-import", action="store_true")
+    parser.add_argument("--runtime-window-hypothesis-id", default="H-PAIRS-01")
+    parser.add_argument(
+        "--runtime-window-strategy-family",
+        default="microbar_cross_sectional_pairs",
+    )
+    parser.add_argument(
+        "--runtime-window-strategy-name",
+        default="microbar-cross-sectional-pairs-v1",
+    )
+    parser.add_argument("--runtime-window-account-label", default="TORGHUT_SIM")
+    parser.add_argument(
+        "--runtime-window-observed-stage",
+        default="paper",
+        choices=("paper", "live"),
+    )
+    parser.add_argument("--runtime-window-source-dsn-env", default="DB_DSN")
+    parser.add_argument("--runtime-window-start", default="")
+    parser.add_argument("--runtime-window-end", default="")
+    parser.add_argument("--runtime-window-bucket-minutes", type=int, default=30)
+    parser.add_argument("--runtime-window-sample-minutes", type=int, default=5)
+    parser.add_argument(
+        "--runtime-window-source-manifest-ref",
+        default="config/trading/hypotheses/h-pairs-01.json",
+    )
+    parser.add_argument(
+        "--runtime-window-source-kind", default="paper_runtime_observed"
     )
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
@@ -68,6 +101,49 @@ def _runtime_version_ref() -> str:
     if digest and digest.startswith("sha256:"):
         return f"services/torghut@{digest}"
     return digest or "services/torghut@unknown"
+
+
+def _utc_iso(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _parse_dt(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _latest_completed_regular_session(now: datetime) -> tuple[datetime, datetime]:
+    zone = ZoneInfo(US_EQUITIES_TIMEZONE)
+    local_now = now.astimezone(zone)
+    session_date = local_now.date()
+    if (
+        local_now.weekday() >= 5
+        or local_now.timetz().replace(tzinfo=None) < US_EQUITIES_CLOSE
+    ):
+        session_date -= timedelta(days=1)
+    while session_date.weekday() >= 5:
+        session_date -= timedelta(days=1)
+    start = datetime.combine(session_date, US_EQUITIES_OPEN, tzinfo=zone)
+    end = datetime.combine(session_date, US_EQUITIES_CLOSE, tzinfo=zone)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def _runtime_window_bounds(
+    args: argparse.Namespace, now: datetime
+) -> tuple[datetime, datetime]:
+    start_arg = str(getattr(args, "runtime_window_start", "") or "").strip()
+    end_arg = str(getattr(args, "runtime_window_end", "") or "").strip()
+    if bool(start_arg) != bool(end_arg):
+        raise RuntimeError("runtime_window_bounds_require_start_and_end")
+    if start_arg and end_arg:
+        start = _parse_dt(start_arg)
+        end = _parse_dt(end_arg)
+        if end <= start:
+            raise RuntimeError("runtime_window_end_must_be_after_start")
+        return start, end
+    return _latest_completed_regular_session(now)
 
 
 def _latest_authoritative_rows(
@@ -184,6 +260,78 @@ def build_renewal_manifest(
     return manifest
 
 
+def _run_runtime_window_import(
+    *,
+    args: argparse.Namespace,
+    manifest: Mapping[str, Any],
+    run_id: str,
+    manifest_path: Path,
+    now: datetime,
+) -> dict[str, Any] | None:
+    if not bool(getattr(args, "runtime_window_import", False)):
+        return None
+    candidate_id = _as_text(manifest.get("candidate_id"))
+    if candidate_id is None:
+        raise RuntimeError("runtime_window_candidate_id_missing")
+    window_start, window_end = _runtime_window_bounds(args, now)
+    command = [
+        sys.executable,
+        "scripts/import_hypothesis_runtime_windows.py",
+        "--run-id",
+        run_id,
+        "--candidate-id",
+        candidate_id,
+        "--hypothesis-id",
+        args.runtime_window_hypothesis_id,
+        "--observed-stage",
+        args.runtime_window_observed_stage,
+        "--strategy-family",
+        args.runtime_window_strategy_family,
+        "--source-dsn-env",
+        args.runtime_window_source_dsn_env,
+        "--strategy-name",
+        args.runtime_window_strategy_name,
+        "--account-label",
+        args.runtime_window_account_label,
+        "--window-start",
+        _utc_iso(window_start),
+        "--window-end",
+        _utc_iso(window_end),
+        "--bucket-minutes",
+        str(args.runtime_window_bucket_minutes),
+        "--sample-minutes",
+        str(args.runtime_window_sample_minutes),
+        "--source-manifest-ref",
+        args.runtime_window_source_manifest_ref,
+        "--source-kind",
+        args.runtime_window_source_kind,
+        "--artifact-ref",
+        str(manifest_path),
+        "--dependency-quorum-decision",
+        "allow",
+        "--continuity-ok",
+        "true",
+        "--drift-ok",
+        "true",
+        "--json",
+    ]
+    dataset_snapshot_ref = _as_text(manifest.get("dataset_snapshot_ref"))
+    if dataset_snapshot_ref is not None:
+        command.extend(["--dataset-snapshot-ref", dataset_snapshot_ref])
+    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    payload = json.loads(result.stdout)
+    return {
+        "status": "ok",
+        "command": " ".join(command[:2] + ["..."]),
+        "window_start": _utc_iso(window_start),
+        "window_end": _utc_iso(window_end),
+        "hypothesis_id": args.runtime_window_hypothesis_id,
+        "strategy_name": args.runtime_window_strategy_name,
+        "account_label": args.runtime_window_account_label,
+        "summary": payload,
+    }
+
+
 def main() -> int:
     args = _parse_args()
     now = datetime.now(tz=timezone.utc)
@@ -222,12 +370,20 @@ def main() -> int:
         "--json",
     ]
     result = subprocess.run(command, check=True, capture_output=True, text=True)
+    runtime_window_import = _run_runtime_window_import(
+        args=args,
+        manifest=manifest,
+        run_id=run_id,
+        manifest_path=manifest_path,
+        now=now,
+    )
     payload = {
         "status": "ok",
         "run_id": run_id,
         "manifest_path": str(manifest_path),
         "output_dir": str(output_dir),
         "empirical_promotion": json.loads(result.stdout),
+        "runtime_window_import": runtime_window_import,
     }
     print(
         json.dumps(payload, separators=(",", ":"))
