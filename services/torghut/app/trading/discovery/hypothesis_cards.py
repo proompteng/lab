@@ -10,6 +10,12 @@ from typing import Any, Literal, Mapping, Sequence, cast
 
 
 HYPOTHESIS_CARD_SCHEMA_VERSION = "torghut.hypothesis-card.v1"
+_VALIDATION_CLAIM_TYPES = {
+    "execution_assumption",
+    "market_regime",
+    "risk_constraint",
+    "validation_requirement",
+}
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
@@ -42,6 +48,14 @@ def _string_tuple(value: Any) -> tuple[str, ...]:
         if text and text not in resolved:
             resolved.append(text)
     return tuple(resolved)
+
+
+def _claim_type(claim: Mapping[str, Any]) -> str:
+    return _string(claim.get("claim_type")).lower()
+
+
+def _is_validation_claim(claim: Mapping[str, Any]) -> bool:
+    return _claim_type(claim) in _VALIDATION_CLAIM_TYPES
 
 
 def _decimal(value: Any, *, default: str = "0") -> Decimal:
@@ -79,10 +93,31 @@ def _metadata_terms(claim: Mapping[str, Any], *, kind: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(item for item in terms if item))
 
 
+def _validation_requirements(
+    claims: Sequence[Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], ...]:
+    requirements: list[dict[str, Any]] = []
+    for index, claim in enumerate(claims, start=1):
+        if not _is_validation_claim(claim):
+            continue
+        data_requirements = _metadata_terms(claim, kind="required_features")
+        requirements.append(
+            {
+                "claim_id": _claim_id(claim, index=index),
+                "claim_type": _claim_type(claim),
+                "claim_text": _claim_text(claim),
+                "data_requirements": list(data_requirements),
+            }
+        )
+    return tuple(requirements)
+
+
 def _infer_terms(*, claims: Sequence[Mapping[str, Any]], kind: str) -> tuple[str, ...]:
     terms: list[str] = []
     joined = " ".join(_claim_text(claim).lower() for claim in claims)
     for claim in claims:
+        if kind == "required_features" and _is_validation_claim(claim):
+            continue
         terms.extend(_metadata_terms(claim, kind=kind))
         terms.extend(_string_tuple(claim.get(f"{kind}_json")))
         terms.extend(_string_tuple(claim.get(kind)))
@@ -265,6 +300,11 @@ def build_hypothesis_cards(
     if claim_relation_blockers:
         implementation_constraints["claim_relation_blockers"] = [
             dict(item) for item in claim_relation_blockers
+        ]
+    validation_requirements = _validation_requirements(normalized_claims)
+    if validation_requirements:
+        implementation_constraints["validation_requirements"] = [
+            dict(item) for item in validation_requirements
         ]
     return [
         HypothesisCard(

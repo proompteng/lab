@@ -178,6 +178,141 @@ class TestWhitepaperCandidateCompiler(TestCase):
             )
         )
 
+    def test_tradefm_claims_preserve_scale_invariant_and_synthetic_stress_contract(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2602-23784",
+            claims=[
+                {
+                    "claim_id": "scale-invariant-flow",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Scale-invariant trade-flow representations can capture "
+                        "transferable market microstructure across equities."
+                    ),
+                    "data_requirements": [
+                        "trade_flow",
+                        "spread_bps",
+                        "relative_volume",
+                    ],
+                    "confidence": "0.78",
+                },
+                {
+                    "claim_id": "synthetic-rollout-stress",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Synthetic trade-flow rollouts should be used for stress "
+                        "testing and not direct promotion before replay and shadow gates pass."
+                    ),
+                    "data_requirements": [
+                        "historical_replay",
+                        "live_paper_parity",
+                        "market_impact_stress",
+                    ],
+                    "confidence": "0.72",
+                },
+            ],
+            target_net_pnl_per_day=Decimal("300"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        microstructure_specs = [
+            spec
+            for spec in compilation.executable_specs
+            if spec.family_template_id
+            == "microstructure_continuation_matched_filter_v1"
+        ]
+
+        self.assertTrue(microstructure_specs)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+        )
+        self.assertIn(
+            "market_cap_scaled",
+            microstructure_specs[0].feature_contract["normalization_candidates"],
+        )
+        self.assertEqual(
+            microstructure_specs[0].promotion_contract["synthetic_evidence_policy"],
+            "validation_only_not_promotion_proof",
+        )
+        self.assertEqual(
+            microstructure_specs[0].promotion_contract[
+                "validation_requirement_claim_ids"
+            ],
+            ["synthetic-rollout-stress"],
+        )
+
+    def test_may_2026_order_flow_noise_claim_compiles_with_validation_artifacts(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2605.15746",
+            claims=[
+                {
+                    "claim_id": "orderflow-observation-noise-model",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Order-flow observation noise changes inferred adverse-selection "
+                        "and impact estimates, so OFI features need explicit source-quality state."
+                    ),
+                    "data_requirements": [
+                        "order_flow_imbalance",
+                        "quote_attribution_quality",
+                        "market_impact_stress",
+                    ],
+                    "confidence": "0.72",
+                },
+                {
+                    "claim_id": "noise-perturbed-orderflow-adverse-selection",
+                    "claim_type": "risk_constraint",
+                    "claim_text": (
+                        "Noisy or partially private order-flow observations can understate "
+                        "impact, requiring attribution-quality stress before treating flow "
+                        "as executable alpha."
+                    ),
+                    "data_requirements": [
+                        "quote_attribution_quality",
+                        "route_tca",
+                        "impact_lambda_estimate",
+                        "live_paper_parity",
+                    ],
+                    "confidence": "0.72",
+                },
+            ],
+            target_net_pnl_per_day=Decimal("300"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+        )
+        self.assertTrue(
+            all(
+                spec.feature_contract["validation_requirements"][0]["claim_id"]
+                == "noise-perturbed-orderflow-adverse-selection"
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract["synthetic_evidence_policy"]
+                == "validation_only_not_promotion_proof"
+                for spec in compilation.executable_specs
+            )
+        )
+
     def test_missing_family_template_blocks_execution(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-run-2",
