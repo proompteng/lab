@@ -376,6 +376,63 @@ describe('getReadyHandler', () => {
     expect(body.serving_runtime_proof_cells_healthy).toBe(true)
   }, 30_000)
 
+  it('uses Agents readiness contract without Jangar domain gates in Agents runtime', async () => {
+    process.env.AGENTS_IMAGE = 'registry.example/lab/agents-controller:abc123'
+    controlPlaneStatusMocks.buildExecutionTrust.mockImplementation(async () => {
+      throw new Error('execution trust must not run for Agents runtime readiness')
+    })
+    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockImplementation(() => {
+      throw new Error('runtime admission must not run for Agents runtime readiness')
+    })
+
+    const { getReadyHandler } = await import('./ready')
+
+    const response = await getReadyHandler()
+
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body).toMatchObject({
+      schemaVersion: 'agents.proompteng.ai/ready/v1',
+      status: 'ok',
+      service: 'agents',
+      httpReady: true,
+      reason_codes: [],
+    })
+    expect(body.execution_trust).toBeUndefined()
+    expect(body.torghut_consumer_evidence).toBeUndefined()
+    expect(body.repair_bid_admission).toBeUndefined()
+    expect(controlPlaneStatusMocks.buildExecutionTrust).not.toHaveBeenCalled()
+    expect(runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('keeps Agents runtime readiness HTTP-ready while backlog adoption is still degraded', async () => {
+    process.env.AGENTS_IMAGE = 'registry.example/lab/agents-controller:abc123'
+    agentsControllerMocks.assessAgentRunIngestion.mockReturnValue({
+      namespace: 'agents',
+      status: 'degraded',
+      message: 'untouched AgentRuns detected for 180s',
+      dispatchPaused: true,
+      lastWatchEventAt: null,
+      lastResyncAt: '2026-03-08T21:00:00Z',
+      untouchedRunCount: 3,
+      oldestUntouchedAgeSeconds: 180,
+    })
+
+    const { getReadyHandler } = await import('./ready')
+
+    const response = await getReadyHandler()
+
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body).toMatchObject({
+      schemaVersion: 'agents.proompteng.ai/ready/v1',
+      status: 'degraded',
+      service: 'agents',
+      httpReady: true,
+      reason_codes: ['agentrun_ingestion_not_ready'],
+    })
+  })
+
   it('projects Torghut revenue-repair business evidence and material evidence settlement at the ready boundary', async () => {
     process.env.JANGAR_TORGHUT_STATUS_URL = 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence'
     globalThis.fetch = vi

@@ -1508,14 +1508,13 @@ describe('control-plane Torghut consumer evidence', () => {
     expect(result.negativeEvidence).toBeUndefined()
   })
 
-  it('configures Agents to read the non-recursive Torghut consumer evidence endpoint', () => {
-    const manifest = readFileSync(resolve(REPO_ROOT, 'argocd/applications/agents/values.yaml'), 'utf8')
+  it('keeps Torghut consumer evidence configured in Jangar and out of Agents runtime values', () => {
+    const jangarManifest = readFileSync(resolve(REPO_ROOT, 'argocd/applications/jangar/deployment.yaml'), 'utf8')
+    const agentsManifest = readFileSync(resolve(REPO_ROOT, 'argocd/applications/agents/values.yaml'), 'utf8')
 
-    expect(manifest).toContain(
-      'AGENTS_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence',
-    )
-    expect(manifest).not.toContain(
-      'AGENTS_TORGHUT_STATUS_URL: http://torghut.torghut.svc.cluster.local/trading/autonomy',
-    )
+    expect(jangarManifest).toContain('value: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence')
+    expect(jangarManifest).not.toContain('value: http://torghut.torghut.svc.cluster.local/trading/autonomy')
+    expect(agentsManifest).not.toContain('AGENTS_TORGHUT_STATUS_URL')
+    expect(agentsManifest).not.toContain('http://torghut.torghut.svc.cluster.local/trading/autonomy')
   })
 })

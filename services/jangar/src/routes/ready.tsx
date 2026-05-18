@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { isAgentsRuntimeService, resolveRuntimeServiceName } from '@proompteng/agents/server/runtime-identity'
 
 import type {
   ControlPlaneControllerWitnessQuorum,
@@ -55,6 +56,33 @@ const isAgentRunIngestionReady = (health: ReturnType<typeof getAgentsControllerH
 
 const isStandbyLeaderElectionReady = (leaderElection: ReturnType<typeof getLeaderElectionStatus>) =>
   leaderElection.lastAttemptAt !== null && leaderElection.lastError === null
+
+const buildReadinessReasonCodes = (input: {
+  controllersOk: boolean
+  leaderElectionReady: boolean
+  agentsControllerHealthy: boolean
+  memoryProviderReady?: boolean
+  servingPassportReady?: boolean
+  agentsController: ReturnType<typeof getAgentsControllerHealth>
+  orchestrationController: ReturnType<typeof getOrchestrationControllerHealth>
+  supportingController: ReturnType<typeof getSupportingControllerHealth>
+}) =>
+  uniqueStrings([
+    ...(input.controllersOk ? [] : ['controller_crd_check_failed']),
+    ...(input.leaderElectionReady ? [] : ['leader_election_not_ready']),
+    ...(input.agentsControllerHealthy ? [] : ['agentrun_ingestion_not_ready']),
+    ...(input.memoryProviderReady === false ? ['memory_provider_blocked'] : []),
+    ...(input.servingPassportReady === false ? ['serving_passport_not_ready'] : []),
+    ...(input.agentsController.crdsReady === false
+      ? input.agentsController.missingCrds.map((name) => `missing_agents_controller_crd:${name}`)
+      : []),
+    ...(input.orchestrationController.crdsReady === false
+      ? input.orchestrationController.missingCrds.map((name) => `missing_orchestration_controller_crd:${name}`)
+      : []),
+    ...(input.supportingController.crdsReady === false
+      ? input.supportingController.missingCrds.map((name) => `missing_supporting_controller_crd:${name}`)
+      : []),
+  ])
 
 const uniqueStrings = (values: string[]) => [...new Set(values.filter((value) => value.length > 0))]
 
@@ -406,12 +434,69 @@ export const Route = createFileRoute('/ready')({
   },
 })
 
+const buildAgentsRuntimeReadyResponse = (input: {
+  leaderElection: ReturnType<typeof getLeaderElectionStatus>
+  agentsController: ReturnType<typeof getAgentsControllerHealth>
+  orchestrationController: ReturnType<typeof getOrchestrationControllerHealth>
+  supportingController: ReturnType<typeof getSupportingControllerHealth>
+}) => {
+  const namespaces = input.agentsController.namespaces?.length ? input.agentsController.namespaces : ['agents']
+  const controllersOk =
+    isControllerHealthReady(input.agentsController) &&
+    isControllerHealthReady(input.orchestrationController) &&
+    isControllerHealthReady(input.supportingController)
+  const activeControllerReplica = !input.leaderElection.required || input.leaderElection.isLeader
+  const leaderElectionReady = activeControllerReplica || isStandbyLeaderElectionReady(input.leaderElection)
+  const agentsControllerHealthy = activeControllerReplica
+    ? isAgentRunIngestionReady(input.agentsController)
+    : leaderElectionReady
+  const httpReady = controllersOk && leaderElectionReady
+  const status = httpReady && agentsControllerHealthy ? 'ok' : 'degraded'
+  const reasonCodes = buildReadinessReasonCodes({
+    controllersOk,
+    leaderElectionReady,
+    agentsControllerHealthy,
+    agentsController: input.agentsController,
+    orchestrationController: input.orchestrationController,
+    supportingController: input.supportingController,
+  })
+
+  const body = JSON.stringify({
+    schemaVersion: 'agents.proompteng.ai/ready/v1',
+    status,
+    service: 'agents' as const,
+    httpReady,
+    reason_codes: reasonCodes,
+    namespaces,
+    leaderElection: input.leaderElection,
+    agentsController: input.agentsController,
+    orchestrationController: input.orchestrationController,
+    supportingController: input.supportingController,
+  })
+
+  return new Response(body, {
+    status: httpReady ? 200 : 503,
+    headers: {
+      'content-type': 'application/json',
+      'content-length': Buffer.byteLength(body).toString(),
+    },
+  })
+}
+
 export const getReadyHandler = async () => {
   const now = new Date()
   const leaderElection = getLeaderElectionStatus()
   const agentsController = getAgentsControllerHealth()
   const orchestrationController = getOrchestrationControllerHealth()
   const supportingController = getSupportingControllerHealth()
+  if (isAgentsRuntimeService()) {
+    return buildAgentsRuntimeReadyResponse({
+      leaderElection,
+      agentsController,
+      orchestrationController,
+      supportingController,
+    })
+  }
   const namespaces = agentsController.namespaces?.length ? agentsController.namespaces : ['agents']
   const trust = await executionTrustStatus(namespaces)
   const torghutConsumerEvidence = await resolveTorghutConsumerEvidence(now)
@@ -574,7 +659,7 @@ export const getReadyHandler = async () => {
 
   const body = JSON.stringify({
     status,
-    service: 'jangar' as const,
+    service: resolveRuntimeServiceName(),
     leaderElection,
     agentsController,
     orchestrationController,

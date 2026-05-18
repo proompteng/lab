@@ -387,4 +387,27 @@ describe('orchestration controller', () => {
       }
     }
   })
+
+  it('checks required CRDs from cluster CRD inventory', async () => {
+    const listCustomResourceDefinitions = vi.fn(async () => [
+      'orchestrations.orchestration.proompteng.ai',
+      'orchestrationruns.orchestration.proompteng.ai',
+      'tools.tools.proompteng.ai',
+      'toolruns.tools.proompteng.ai',
+      'approvalpolicies.approvals.proompteng.ai',
+      'budgets.budgets.proompteng.ai',
+      'secretbindings.security.proompteng.ai',
+      'signals.signals.proompteng.ai',
+      'signaldeliveries.signals.proompteng.ai',
+    ])
+
+    const state = await __test__.checkCrds({ listCustomResourceDefinitions })
+
+    expect(state).toMatchObject({
+      ok: true,
+      missing: [],
+      checkedAt: '2026-01-20T00:00:00.000Z',
+    })
+    expect(listCustomResourceDefinitions).toHaveBeenCalledTimes(1)
+  })
 })
