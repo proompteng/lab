@@ -28,8 +28,8 @@ controlPlane:
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
-    tag: fdceeaac
-    digest: sha256:94dd5154dd73494e6eafef6fda6d7d04bb2e666e1784875265dea4d800f56b8f
+    tag: codex-slim-20260518032813
+    digest: sha256:0b00d3c035ebad47982fc5fcfd583f4a23445f5de3afa49940d27389f6199fec
 argocdHooks:
   enabled: true
   image:

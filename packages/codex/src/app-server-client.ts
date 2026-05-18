@@ -1,6 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 
-import type { ClientInfo, RequestId } from './app-server'
+import type { ClientInfo, InitializeCapabilities, RequestId } from './app-server'
 import type { ReasoningEffort } from './app-server/ReasoningEffort'
 import type { JsonValue } from './app-server/serde_json/JsonValue'
 import type {
@@ -57,6 +57,7 @@ type JsonRpcRequestMethod =
   | 'turn/interrupt'
 type JsonRpcRequest = { id: RequestId; method: JsonRpcRequestMethod; params: unknown }
 type JsonRpcNotification = { method: string; params?: unknown }
+type JsonRpcErrorObject = { code?: unknown; message?: unknown; data?: unknown }
 
 export type StreamDelta =
   | { type: 'message' | 'reasoning'; delta: string }
@@ -181,6 +182,7 @@ const resolveCliApprovalPolicy = (approval: AskForApproval): string | null =>
   typeof approval === 'string' ? approval : null
 
 const defaultClientInfo: ClientInfo = { name: 'lab', title: 'lab app-server client', version: '0.0.0' }
+const defaultInitializeCapabilities: InitializeCapabilities = { experimentalApi: true }
 const DEFAULT_EFFORT: ReasoningEffort = 'high'
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 10_000
 
@@ -208,8 +210,38 @@ const toSandboxPolicy = (mode: SandboxMode): SandboxPolicy => {
   return { type: 'dangerFullAccess' as const }
 }
 
+const jsonRpcErrorToError = (error: unknown): Error => {
+  if (error instanceof Error) return error
+  if (typeof error === 'string') return new Error(error)
+  if (typeof error === 'object' && error !== null) {
+    const rpcError = error as JsonRpcErrorObject
+    const message =
+      typeof rpcError.message === 'string' && rpcError.message.trim()
+        ? rpcError.message
+        : 'codex app-server request failed'
+    const code =
+      typeof rpcError.code === 'number' || typeof rpcError.code === 'string' ? ` (code ${rpcError.code})` : ''
+    const err = new Error(`${message}${code}`)
+    if (rpcError.data !== undefined) {
+      ;(err as Error & { data?: unknown }).data = rpcError.data
+    }
+    return err
+  }
+  return new Error(String(error))
+}
+
+const streamErrorToError = (payload: unknown): Error => {
+  if (payload instanceof Error) return payload
+  if (typeof payload === 'object' && payload !== null) {
+    const params = payload as { error?: unknown; message?: unknown }
+    if (params.error) return jsonRpcErrorToError(params.error)
+    if (typeof params.message === 'string') return new Error(params.message)
+  }
+  return jsonRpcErrorToError(payload)
+}
+
 const createTurnStream = (): TurnStream => {
-  const queue: Array<StreamDelta | { done: true; turn: Turn | null } | { error: unknown }> = []
+  const queue: Array<StreamDelta | { done: true; turn: Turn | null } | { failed: true; error: unknown }> = []
   let resolver: (() => void) | null = null
   let closed = false
   let stream: TurnStream
@@ -238,7 +270,7 @@ const createTurnStream = (): TurnStream => {
   const fail = (error: unknown) => {
     if (closed) return
     closed = true
-    queue.push({ error })
+    queue.push({ failed: true, error })
     wake()
   }
 
@@ -253,7 +285,7 @@ const createTurnStream = (): TurnStream => {
       const next = queue.shift()
       if (!next) continue
 
-      if ('error' in next) {
+      if ('failed' in next) {
         throw next.error
       }
 
@@ -672,7 +704,7 @@ export class CodexAppServerClient {
       for (const line of lines) this.handleLine(line)
     })
 
-    const initializeParams = { clientInfo }
+    const initializeParams = { clientInfo, capabilities: defaultInitializeCapabilities }
     await this.request('initialize', initializeParams)
     this.log('info', 'codex app-server initialized', { clientInfo })
   }
@@ -742,7 +774,7 @@ export class CodexAppServerClient {
     this.pending.delete(message.id)
 
     if (message.error !== undefined) {
-      entry.reject(message.error)
+      entry.reject(jsonRpcErrorToError(message.error))
       this.log('error', 'codex app-server request failed', {
         id: message.id,
         method: entry.method,
@@ -1171,10 +1203,11 @@ export class CodexAppServerClient {
       case 'turn/completed': {
         const params = notification.params as TurnCompletedNotification
         const turnId = this.findTurnId(params) ?? params.turn.id
+        this.reconcileActiveTurnId(turnId)
         const stream = this.turnStreams.get(turnId)
         if (stream) {
           if (params.turn.status === 'failed') {
-            stream.fail(new Error(JSON.stringify(params.turn)))
+            stream.fail(streamErrorToError(params.turn.error ?? params.turn))
           } else {
             stream.complete(params.turn)
           }
@@ -1188,6 +1221,7 @@ export class CodexAppServerClient {
       }
       case 'turn/started': {
         const params = notification.params as { turn: Turn }
+        this.reconcileActiveTurnId(params.turn.id)
         this.log('info', 'turn started', { turnId: params.turn.id })
         break
       }
@@ -1305,10 +1339,12 @@ export class CodexAppServerClient {
       }
       case 'error': {
         const errorPayload = (notification.params as ErrorNotification) ?? { message: 'unknown error' }
+        const notificationTurnId = this.findTurnId(notification.params)
+        if (notificationTurnId) this.reconcileActiveTurnId(notificationTurnId)
         const resolved = this.resolveTurnStream(notification.params)
         if (resolved) {
           resolved.stream.push({ type: 'error', error: errorPayload })
-          this.failTurnStream(resolved.turnId, new Error(JSON.stringify(errorPayload)))
+          this.failTurnStream(resolved.turnId, streamErrorToError(errorPayload))
         } else {
           this.log('info', 'stream error without matching active turn (dropped)', {
             method,
@@ -1388,6 +1424,35 @@ export class CodexAppServerClient {
     const stream = this.turnStreams.get(turnId)
     if (!stream) return null
     return { stream, turnId }
+  }
+
+  private reconcileActiveTurnId(turnId: string): void {
+    if (this.turnStreams.has(turnId)) return
+    const activeTurnIds = Array.from(this.turnStreams.keys())
+    if (activeTurnIds.length !== 1) return
+    const [previousTurnId] = activeTurnIds
+    if (!previousTurnId || previousTurnId === turnId) return
+
+    const stream = this.turnStreams.get(previousTurnId)
+    if (!stream) return
+
+    this.turnStreams.delete(previousTurnId)
+    this.turnStreams.set(turnId, stream)
+
+    const items = this.turnItems.get(previousTurnId)
+    this.turnItems.delete(previousTurnId)
+    if (items) {
+      this.turnItems.set(turnId, items)
+      for (const itemId of items) {
+        this.itemTurnMap.set(itemId, turnId)
+      }
+    }
+
+    if (this.lastActiveTurnId === previousTurnId) {
+      this.lastActiveTurnId = turnId
+    }
+
+    this.log('info', 'reconciled app-server turn id', { previousTurnId, turnId })
   }
 
   private trackItemFromParams(params: unknown): void {

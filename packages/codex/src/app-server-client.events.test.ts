@@ -52,9 +52,10 @@ const nextMessage = (child: FakeChildProcess) =>
 
 const nextRequest = async (child: FakeChildProcess) => (await nextMessage(child)) as JsonRpcRequest
 
-const respondToInitialize = async (child: FakeChildProcess) => {
+const respondToInitialize = async (child: FakeChildProcess, inspect?: (request: JsonRpcRequest) => void) => {
   const initReq = await nextRequest(child)
   expect(initReq.method).toBe('initialize')
+  inspect?.(initReq)
   writeLine(child, { id: initReq.id, result: {} })
 }
 
@@ -136,6 +137,103 @@ describe('CodexAppServerClient v2 notifications', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('opts into experimental app-server APIs during initialize', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child, (request) => {
+      expect(request.params).toMatchObject({
+        clientInfo: {
+          name: 'lab',
+          title: 'lab app-server client',
+          version: '0.0.0',
+        },
+        capabilities: {
+          experimentalApi: true,
+        },
+      })
+    })
+    await client.ensureReady()
+    client.stop()
+  })
+
+  it('rejects JSON-RPC error objects with their message instead of Object stringification', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello', {
+      goal: {
+        objective: 'ship AgentRun goals',
+      },
+    })
+    await respondToThreadStart(child, 'thread-1')
+    const request = await nextRequest(child)
+    expect(request.method).toBe('thread/goal/set')
+    writeLine(child, {
+      id: request.id,
+      error: {
+        code: -32600,
+        message: 'thread/goal/set requires experimentalApi capability',
+      },
+    })
+
+    await expect(runPromise).rejects.toThrow('thread/goal/set requires experimentalApi capability (code -32600)')
+    client.stop()
+  })
+
+  it('fails the active stream when error notifications use the canonical turn id from turn/started', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'response-turn-id')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'turn/started',
+      params: {
+        threadId: 'thread-1',
+        turn: {
+          id: 'canonical-turn-id',
+          status: 'inProgress',
+          items: [],
+          error: null,
+          startedAt: null,
+          completedAt: null,
+          durationMs: null,
+        },
+      },
+    })
+    writeLine(child, {
+      method: 'error',
+      params: {
+        error: {
+          message: 'Quota exceeded. Check your plan and billing details.',
+          codexErrorInfo: 'usageLimitExceeded',
+          additionalDetails: null,
+        },
+        willRetry: false,
+        threadId: 'thread-1',
+        turnId: 'canonical-turn-id',
+      },
+    })
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: {
+        type: 'error',
+        error: {
+          error: {
+            message: 'Quota exceeded. Check your plan and billing details.',
+          },
+        },
+      },
+      done: false,
+    })
+    await expect(stream.next()).rejects.toThrow('Quota exceeded. Check your plan and billing details.')
+    client.stop()
   })
 
   it('omits the CLI approval flag for structured rejection policies', async () => {
