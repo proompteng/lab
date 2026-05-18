@@ -92,27 +92,48 @@ render_path = sys.argv[1]
 with open(render_path, encoding="utf-8") as handle:
     docs = list(yaml.safe_load_all(handle))
 
-deployment = next(
-    (
-        doc
-        for doc in docs
-        if isinstance(doc, dict)
-        and doc.get("kind") == "Deployment"
-        and doc.get("metadata", {}).get("name") == "release-name-agents"
-    ),
-    None,
-)
+def find_deployment(name: str):
+    return next(
+        (
+            doc
+            for doc in docs
+            if isinstance(doc, dict)
+            and doc.get("kind") == "Deployment"
+            and doc.get("metadata", {}).get("name") == name
+        ),
+        None,
+    )
+
+
+def first_container_env(deployment: dict, label: str):
+    containers = deployment.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+    if not containers:
+        print(f"Rendered {label} Deployment has no containers.", file=sys.stderr)
+        sys.exit(1)
+
+    env = {}
+    names = []
+    for entry in containers[0].get("env", []):
+        if isinstance(entry, dict) and isinstance(entry.get("name"), str):
+            names.append(entry["name"])
+            env[entry["name"]] = entry.get("value")
+    return env, names
+
+
+deployment = find_deployment("release-name-agents")
 if deployment is None:
     print("Rendered agents control-plane Deployment was not found.", file=sys.stderr)
     sys.exit(1)
 
-containers = deployment.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
-if not containers:
-    print("Rendered agents control-plane Deployment has no containers.", file=sys.stderr)
+controllers_deployment = find_deployment("release-name-agents-controllers")
+if controllers_deployment is None:
+    print("Rendered agents controllers Deployment was not found.", file=sys.stderr)
     sys.exit(1)
 
-env_names = [entry.get("name") for entry in containers[0].get("env", []) if isinstance(entry, dict)]
-nats_url_count = env_names.count("NATS_URL")
+control_plane_env, control_plane_env_names = first_container_env(deployment, "agents control-plane")
+controllers_env, _controllers_env_names = first_container_env(controllers_deployment, "agents controllers")
+
+nats_url_count = control_plane_env_names.count("NATS_URL")
 if nats_url_count != 1:
     message = (
         "Expected exactly one NATS_URL env var on the control-plane Deployment "
@@ -124,6 +145,19 @@ if nats_url_count != 1:
         file=sys.stderr,
     )
     sys.exit(1)
+
+expected_profiles = {
+    "control-plane": (control_plane_env, "agents-control-plane"),
+    "controllers": (controllers_env, "agents-controllers"),
+}
+for label, (env, expected) in expected_profiles.items():
+    actual = env.get("AGENTS_SERVER_PROFILE")
+    if actual != expected:
+        print(
+            f"Expected {label} AGENTS_SERVER_PROFILE={expected}, found {actual!r}.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 PY
 
 if run_with_helm3 helm template "${CHART_DIR}" \

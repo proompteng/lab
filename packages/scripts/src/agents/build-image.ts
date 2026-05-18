@@ -68,6 +68,11 @@ const parseCacheMode = (value: string | undefined): DockerCacheMode | undefined 
 const readAgentsEnv = (agentsName: string, legacyJangarName?: string) =>
   process.env[agentsName]?.trim() || (legacyJangarName ? process.env[legacyJangarName]?.trim() : undefined)
 
+const copyPrebuiltServerOutput = (source: string, destination: string) => {
+  cpSync(source, destination, { recursive: true })
+  rmSync(resolve(destination, 'public'), { recursive: true, force: true })
+}
+
 const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void }> => {
   ensureCli('bunx')
 
@@ -113,7 +118,7 @@ const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void
       const outputEntry = resolve(outputSource, 'server/index.mjs')
       const outputProto = resolve(outputSource, 'server/proto/proompteng/jangar/v1/agentctl.proto')
       if (existsSync(outputEntry) && existsSync(outputProto)) {
-        cpSync(outputSource, resolve(dir, 'full/services/jangar/.output'), { recursive: true })
+        copyPrebuiltServerOutput(outputSource, resolve(dir, 'full/services/jangar/.output'))
       } else if (existsSync(outputSource)) {
         console.warn('Skipping prebuilt .output: missing services/jangar/.output/server/index.mjs or agentctl.proto')
       }
@@ -242,6 +247,7 @@ if (import.meta.main) {
 
 export const __private = {
   buildArgsFromEnv,
+  copyPrebuiltServerOutput,
   execGit,
   parsePlatforms,
   parsePruneScopes,

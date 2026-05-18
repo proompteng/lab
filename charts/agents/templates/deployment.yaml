@@ -179,6 +179,10 @@ spec:
             - name: AGENTS_AUDIT_SINK_HTTP_HEADERS_JSON
               value: {{ toJson .Values.audit.sink.http.headers | quote }}
             {{- end }}
+            {{- if not (hasKey $envVars "AGENTS_SERVER_PROFILE") }}
+            - name: AGENTS_SERVER_PROFILE
+              value: "agents-control-plane"
+            {{- end }}
             {{- range $name, $value := $envVars }}
             - name: {{ $name }}
               value: {{ $value | quote }}
