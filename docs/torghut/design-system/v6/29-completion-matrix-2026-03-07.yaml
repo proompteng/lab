@@ -170,7 +170,9 @@ gates:
   - gate_id: paper_gate_satisfied
     requirement_summary: Paper promotion must be backed by calibrated replay evidence and full benchmark coverage.
     source_design_doc_section: Promotion and Capital Stages
-    acceptance_rule: historical_market_replay plus calibrated maturity, at least 500 simulated decisions, 100 percent benchmark-family coverage, and a defined fill-price error budget are all required.
+    acceptance_rule: historical_market_replay plus calibrated maturity, policy-declared simulated-decision depth, 100 percent benchmark-family coverage, and a defined fill-price error budget are all required.
+    policy_parameters:
+      min_simulated_decisions: 500
     required_artifacts:
       - completion-trace.json
       - gates/benchmark-parity-report-v1.json
@@ -184,7 +186,7 @@ gates:
     required_cluster_resources:
       - torghut
     blocking_conditions:
-      - fewer than 500 simulated decisions are proven
+      - fewer than the policy-declared minimum simulated decisions are proven
       - benchmark-family coverage is incomplete
       - fill-price error budget is not explicitly recorded
     evidence_freshness_rule:
@@ -198,7 +200,10 @@ gates:
   - gate_id: live_canary_observed
     requirement_summary: Live canary needs observed paper-runtime evidence across enough sessions.
     source_design_doc_section: Promotion and Capital Stages
-    acceptance_rule: paper_runtime_observed, empirically_validated maturity, at least 40 market-session samples, shadow/live alignment >= 95 percent, and slippage within budget.
+    acceptance_rule: paper_runtime_observed, empirically_validated maturity, hypothesis-manifest live-canary sample depth, shadow/live alignment >= 95 percent, and slippage within budget.
+    policy_parameters:
+      threshold_source: hypothesis_manifest.min_sample_count_for_live_canary
+      fallback_min_market_session_samples: 40
     required_artifacts:
       - completion-trace.json
     required_db_queries:
@@ -221,7 +226,10 @@ gates:
   - gate_id: live_scale_observed
     requirement_summary: Scaled live requires sustained observed runtime proof across multiple sessions.
     source_design_doc_section: Promotion and Capital Stages
-    acceptance_rule: live_runtime_observed, empirically_validated maturity, at least 120 market-session samples across at least 10 sessions, positive rolling post-cost expectancy, stable slippage, and no continuity or drift failure.
+    acceptance_rule: live_runtime_observed, empirically_validated maturity, hypothesis-manifest scale-up sample depth across at least 10 sessions, positive rolling post-cost expectancy, stable slippage, and no continuity or drift failure.
+    policy_parameters:
+      threshold_source: hypothesis_manifest.min_sample_count_for_scale_up
+      fallback_min_market_session_samples: 120
     required_artifacts:
       - completion-trace.json
     required_db_queries:

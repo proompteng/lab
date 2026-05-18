@@ -18,6 +18,7 @@ from ..models import (
     VNextEmpiricalJobRun,
 )
 from .empirical_jobs import EMPIRICAL_JOB_TYPES, build_empirical_jobs_status
+from .hypotheses import HypothesisManifest, load_hypothesis_registry
 
 
 def _runtime_matrix_path() -> Path:
@@ -109,6 +110,69 @@ def _safe_float(value: Any, *, default: float = 0.0) -> float:
             except ValueError:
                 return default
     return default
+
+
+def _gate_policy_parameters(gate_definition: Mapping[str, Any] | None) -> dict[str, Any]:
+    if gate_definition is None:
+        return {}
+    return _as_dict(gate_definition.get('policy_parameters'))
+
+
+def _policy_int(
+    policy_parameters: Mapping[str, Any],
+    key: str,
+    *,
+    default: int,
+) -> int:
+    value = _safe_int(policy_parameters.get(key), default=default)
+    return value if value > 0 else default
+
+
+def _load_hypothesis_manifests_by_id() -> dict[str, HypothesisManifest]:
+    try:
+        registry = load_hypothesis_registry(raise_on_error=True)
+    except Exception:
+        return {}
+    return {item.hypothesis_id: item for item in registry.items}
+
+
+def _candidate_hypothesis_manifests(
+    *,
+    candidate_id: str | None,
+    rows: Sequence[StrategyHypothesisMetricWindow] = (),
+) -> list[HypothesisManifest]:
+    manifests_by_id = _load_hypothesis_manifests_by_id()
+    selected: dict[str, HypothesisManifest] = {}
+    for row in rows:
+        manifest = manifests_by_id.get(row.hypothesis_id)
+        if manifest is not None:
+            selected[manifest.hypothesis_id] = manifest
+    if candidate_id:
+        for manifest in manifests_by_id.values():
+            if manifest.candidate_id == candidate_id:
+                selected[manifest.hypothesis_id] = manifest
+    return list(selected.values())
+
+
+def _manifest_runtime_session_threshold(
+    *,
+    candidate_id: str | None,
+    rows: Sequence[StrategyHypothesisMetricWindow],
+    policy_parameters: Mapping[str, Any],
+    fallback_key: str,
+    default: int,
+    manifest_attr: str,
+) -> int:
+    threshold = _policy_int(policy_parameters, fallback_key, default=default)
+    manifests = _candidate_hypothesis_manifests(candidate_id=candidate_id, rows=rows)
+    manifest_thresholds = [
+        int(value)
+        for manifest in manifests
+        if (value := getattr(manifest, manifest_attr, None)) is not None
+    ]
+    if manifest_thresholds:
+        threshold = max(threshold, max(manifest_thresholds))
+    return threshold
 
 
 def _load_yaml_mapping(path: Path) -> dict[str, Any]:
@@ -517,6 +581,7 @@ def _evaluate_paper_gate(
     empirical_gate: Mapping[str, Any],
     full_day_row: VNextCompletionGateResult | None,
     empirical_rows: Mapping[str, VNextEmpiricalJobRun],
+    gate_definition: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     if empirical_gate.get('status') != TRACE_STATUS_SATISFIED:
         return {
@@ -560,7 +625,12 @@ def _evaluate_paper_gate(
     gate_result = _as_dict(full_day_details.get('gate_result'))
     acceptance = _as_dict(gate_result.get('acceptance_snapshot'))
     trade_decisions = _safe_int(acceptance.get('trade_decisions'))
-    if trade_decisions < 500:
+    min_simulated_decisions = _policy_int(
+        _gate_policy_parameters(gate_definition),
+        'min_simulated_decisions',
+        default=500,
+    )
+    if trade_decisions < min_simulated_decisions:
         return {
             'status': TRACE_STATUS_BLOCKED,
             'blocked_reason': 'insufficient_simulated_decisions',
@@ -632,6 +702,7 @@ def _evaluate_live_canary_gate(
     *,
     paper_gate: Mapping[str, Any],
     paper_rows: Sequence[StrategyHypothesisMetricWindow],
+    gate_definition: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     if paper_gate.get('status') != TRACE_STATUS_SATISFIED:
         return {
@@ -651,7 +722,15 @@ def _evaluate_live_canary_gate(
         and (_as_text(row.evidence_maturity) == 'empirically_validated')
     ]
     summary = _window_gate_summary(qualifying)
-    if summary['market_session_count'] < 40:
+    min_market_session_samples = _manifest_runtime_session_threshold(
+        candidate_id=candidate_id,
+        rows=qualifying,
+        policy_parameters=_gate_policy_parameters(gate_definition),
+        fallback_key='fallback_min_market_session_samples',
+        default=40,
+        manifest_attr='min_sample_count_for_live_canary',
+    )
+    if summary['market_session_count'] < min_market_session_samples:
         blocked_reason = 'insufficient_paper_runtime_sessions'
     elif summary['decision_alignment_ratio'] < 0.95:
         blocked_reason = 'shadow_live_alignment_below_threshold'
@@ -680,6 +759,7 @@ def _evaluate_live_scale_gate(
     *,
     canary_gate: Mapping[str, Any],
     live_rows: Sequence[StrategyHypothesisMetricWindow],
+    gate_definition: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     if canary_gate.get('status') != TRACE_STATUS_SATISFIED:
         return {
@@ -699,7 +779,15 @@ def _evaluate_live_scale_gate(
         and (_as_text(row.evidence_maturity) == 'empirically_validated')
     ]
     summary = _window_gate_summary(qualifying)
-    if summary['market_session_count'] < 120:
+    min_market_session_samples = _manifest_runtime_session_threshold(
+        candidate_id=candidate_id,
+        rows=qualifying,
+        policy_parameters=_gate_policy_parameters(gate_definition),
+        fallback_key='fallback_min_market_session_samples',
+        default=120,
+        manifest_attr='min_sample_count_for_scale_up',
+    )
+    if summary['market_session_count'] < min_market_session_samples:
         blocked_reason = 'insufficient_live_runtime_sessions'
     elif summary['window_count'] < 10:
         blocked_reason = 'insufficient_live_runtime_windows'
@@ -830,6 +918,7 @@ def build_doc29_completion_status(
                 empirical_gate=gate_status_map.get(DOC29_EMPIRICAL_JOBS_GATE) or derived_empirical,
                 full_day_row=lineage_rows.get(DOC29_SIMULATION_FULL_DAY_GATE),
                 empirical_rows=empirical_rows,
+                gate_definition=gate_definition,
             )
             freshness_state = 'fresh' if paper['status'] == TRACE_STATUS_SATISFIED else 'blocked'
             gate_status_map[gate_id] = {
@@ -857,10 +946,12 @@ def build_doc29_completion_status(
                 ),
                 full_day_row=lineage_rows.get(DOC29_SIMULATION_FULL_DAY_GATE),
                 empirical_rows=empirical_rows,
+                gate_definition=gate_definition_by_id.get(DOC29_PAPER_GATE),
             )
             canary = _evaluate_live_canary_gate(
                 paper_gate=derived_paper,
                 paper_rows=paper_windows,
+                gate_definition=gate_definition,
             )
             gate_status_map[gate_id] = {
                 **gate_definition,
@@ -889,12 +980,15 @@ def build_doc29_completion_status(
                     ),
                     full_day_row=lineage_rows.get(DOC29_SIMULATION_FULL_DAY_GATE),
                     empirical_rows=empirical_rows,
+                    gate_definition=gate_definition_by_id.get(DOC29_PAPER_GATE),
                 ),
                 paper_rows=paper_windows,
+                gate_definition=gate_definition_by_id.get(DOC29_LIVE_CANARY_GATE),
             )
             scale = _evaluate_live_scale_gate(
                 canary_gate=derived_canary,
                 live_rows=live_windows,
+                gate_definition=gate_definition,
             )
             gate_status_map[gate_id] = {
                 **gate_definition,
