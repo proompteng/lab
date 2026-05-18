@@ -2518,6 +2518,114 @@ def _turnover_coverage_feedback_escape_profile(
     )
 
 
+def _notional_throughput_feedback_escape_profile(
+    profile: Mapping[str, Any],
+) -> dict[str, Any]:
+    next_profile = json.loads(json.dumps(profile))
+    params = _mapping(next_profile.get("params"))
+    current_entries = _int_profile_param(params, "max_entries_per_session", default=4)
+    params["max_entries_per_session"] = str(max(8, min(12, current_entries + 6)))
+    params["max_concurrent_positions"] = str(
+        max(1, min(2, _profile_rank_count_floor(next_profile)))
+    )
+    if "max_pair_legs" in params:
+        params["max_pair_legs"] = str(
+            max(1, min(2, _int_profile_param(params, "max_pair_legs", default=2)))
+        )
+    if "top_n" in params:
+        params["top_n"] = str(
+            max(1, min(2, _int_profile_param(params, "top_n", default=2)))
+        )
+    current_cooldown = _int_profile_param(params, "entry_cooldown_seconds", default=300)
+    params["entry_cooldown_seconds"] = str(max(90, min(300, current_cooldown)))
+    current_hold_seconds = _int_profile_param(params, "max_hold_seconds", default=900)
+    params["max_hold_seconds"] = str(max(300, min(1200, current_hold_seconds)))
+    params["long_stop_loss_bps"] = str(
+        min(5, max(3, _int_profile_param(params, "long_stop_loss_bps", default=4)))
+    )
+    params["short_stop_loss_bps"] = str(
+        min(5, max(3, _int_profile_param(params, "short_stop_loss_bps", default=4)))
+    )
+    params["max_session_negative_exit_bps"] = str(
+        min(
+            4,
+            max(
+                2,
+                _int_profile_param(params, "max_session_negative_exit_bps", default=3),
+            ),
+        )
+    )
+    threshold_steps = (
+        (
+            "min_cross_section_continuation_rank",
+            Decimal("-0.08"),
+            Decimal("0.35"),
+            Decimal("0.90"),
+        ),
+        (
+            "min_cross_section_opening_window_return_rank",
+            Decimal("-0.08"),
+            Decimal("0.30"),
+            Decimal("0.90"),
+        ),
+        (
+            "min_cross_section_reversal_rank",
+            Decimal("-0.08"),
+            Decimal("0.50"),
+            Decimal("0.90"),
+        ),
+        (
+            "max_cross_section_continuation_rank",
+            Decimal("0.08"),
+            Decimal("0.25"),
+            Decimal("0.75"),
+        ),
+        (
+            "leader_reclaim_min_recent_imbalance_pressure",
+            Decimal("-0.03"),
+            Decimal("-0.05"),
+            Decimal("0.40"),
+        ),
+        (
+            "leader_reclaim_min_recent_microprice_bias_bps",
+            Decimal("-0.08"),
+            Decimal("-0.20"),
+            Decimal("0.60"),
+        ),
+        (
+            "min_recent_imbalance_pressure",
+            Decimal("-0.03"),
+            Decimal("-0.10"),
+            Decimal("0.40"),
+        ),
+        (
+            "min_recent_microprice_bias_bps",
+            Decimal("-0.08"),
+            Decimal("-0.30"),
+            Decimal("0.60"),
+        ),
+        ("min_imbalance_pressure", Decimal("-0.03"), Decimal("-0.12"), Decimal("0.40")),
+    )
+    for key, delta, lower, upper in threshold_steps:
+        if key not in params:
+            continue
+        params[key] = _clamped_profile_decimal(
+            params=params,
+            key=key,
+            default=Decimal(str(params[key])),
+            delta=delta,
+            lower=lower,
+            upper=upper,
+            places=Decimal("0.01"),
+        )
+    next_profile["params"] = params
+    return _cash_constrain_profile(
+        next_profile,
+        capital_profile="feedback_notional_throughput_cash_constrained_1x",
+        label="notional_throughput_feedback_escape",
+    )
+
+
 def _portfolio_feedback_escape_execution_profiles(
     profiles: Sequence[Mapping[str, Any]],
 ) -> tuple[dict[str, Any], ...]:
@@ -2528,6 +2636,7 @@ def _portfolio_feedback_escape_execution_profiles(
             _daily_coverage_feedback_escape_profile(profile),
             _consistency_guard_feedback_escape_profile(profile),
             _turnover_coverage_feedback_escape_profile(profile),
+            _notional_throughput_feedback_escape_profile(profile),
         ):
             key = _stable_hash(next_profile)
             if key in seen:

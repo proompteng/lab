@@ -560,6 +560,7 @@ class TestCandidateSpecs(TestCase):
                 "daily_coverage_feedback_escape",
                 "consistency_guard_feedback_escape",
                 "turnover_coverage_feedback_escape",
+                "notional_throughput_feedback_escape",
             ],
         )
         self.assertEqual(
