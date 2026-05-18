@@ -40,10 +40,10 @@ spec:
   mode: lights-out
   timezone: UTC
   cadence:
-    discoverEvery: 1h
-    planEvery: 4h
-    implementEvery: 30m
-    verifyEvery: 1h
+    discoverEvery: 6h
+    planEvery: 24h
+    implementEvery: 6h
+    verifyEvery: 6h
   integrations:
     nats:
       url: nats://nats.nats.svc.cluster.local:4222
@@ -151,10 +151,10 @@ spec:
   mode: lights-out
   timezone: UTC
   cadence:
-    discoverEvery: 1h
-    planEvery: 4h
-    implementEvery: 30m
-    verifyEvery: 1h
+    discoverEvery: 6h
+    planEvery: 24h
+    implementEvery: 6h
+    verifyEvery: 6h
   integrations:
     nats:
       url: nats://nats.nats.svc.cluster.local:4222
