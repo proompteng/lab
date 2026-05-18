@@ -14,12 +14,18 @@ PROFIT_TARGET_ORACLE_SCHEMA_VERSION = "torghut.profit-target-oracle.v1"
 class ProfitTargetOraclePolicy:
     min_active_day_ratio: Decimal = Decimal("0.90")
     min_positive_day_ratio: Decimal = Decimal("0.60")
-    min_daily_net_pnl: Decimal = Decimal("-350")
+    min_daily_net_pnl: Decimal = Decimal("-999999999")
     max_best_day_share: Decimal = Decimal("0.25")
     max_cluster_contribution_share: Decimal = Decimal("0.40")
     max_single_symbol_contribution_share: Decimal = Decimal("0.35")
-    max_worst_day_loss: Decimal = Decimal("350")
-    max_drawdown: Decimal = Decimal("900")
+    max_worst_day_loss: Decimal = Decimal("999999999")
+    max_drawdown: Decimal = Decimal("999999999")
+    default_start_equity: Decimal = Decimal("31590.02")
+    max_worst_day_loss_pct_equity: Decimal = Decimal("0.05")
+    max_drawdown_pct_equity: Decimal = Decimal("0.10")
+    extended_max_worst_day_loss_pct_equity: Decimal = Decimal("0.10")
+    extended_max_drawdown_pct_equity: Decimal = Decimal("0.20")
+    min_total_net_pnl_to_drawdown_ratio: Decimal = Decimal("1.50")
     max_gross_exposure_pct_equity: Decimal = Decimal("1.0")
     min_cash: Decimal = Decimal("0")
     max_negative_cash_observation_count: int = 0
@@ -44,6 +50,20 @@ class ProfitTargetOraclePolicy:
             ),
             "max_worst_day_loss": str(self.max_worst_day_loss),
             "max_drawdown": str(self.max_drawdown),
+            "default_start_equity": str(self.default_start_equity),
+            "max_worst_day_loss_pct_equity": str(
+                self.max_worst_day_loss_pct_equity
+            ),
+            "max_drawdown_pct_equity": str(self.max_drawdown_pct_equity),
+            "extended_max_worst_day_loss_pct_equity": str(
+                self.extended_max_worst_day_loss_pct_equity
+            ),
+            "extended_max_drawdown_pct_equity": str(
+                self.extended_max_drawdown_pct_equity
+            ),
+            "min_total_net_pnl_to_drawdown_ratio": str(
+                self.min_total_net_pnl_to_drawdown_ratio
+            ),
             "max_gross_exposure_pct_equity": str(self.max_gross_exposure_pct_equity),
             "min_cash": str(self.min_cash),
             "max_negative_cash_observation_count": self.max_negative_cash_observation_count,
@@ -110,6 +130,75 @@ def _numeric_check(
     }
 
 
+def _start_equity(scorecard: Mapping[str, Any], policy: ProfitTargetOraclePolicy) -> Decimal:
+    for key in (
+        "start_equity",
+        "account_start_equity",
+        "execution_start_equity",
+        "executable_replay_start_equity",
+        "runtime_start_equity",
+    ):
+        value = _decimal(scorecard.get(key))
+        if value > 0:
+            return value
+    return policy.default_start_equity
+
+
+def _total_net_pnl(
+    *,
+    daily_net: Mapping[str, Any] | None,
+    net_pnl_per_day: Decimal,
+    trading_day_count: int,
+) -> Decimal:
+    if daily_net:
+        return sum((_decimal(value) for value in daily_net.values()), Decimal("0"))
+    return net_pnl_per_day * Decimal(max(1, trading_day_count))
+
+
+def _risk_adjusted_drawdown_check(
+    *,
+    metric: str,
+    observed: Decimal,
+    start_equity: Decimal,
+    normal_pct: Decimal,
+    extended_pct: Decimal,
+    total_net_pnl: Decimal,
+    min_total_net_pnl_to_drawdown_ratio: Decimal,
+    absolute_cap: Decimal,
+) -> dict[str, Any]:
+    normal_limit = max(Decimal("0"), start_equity * normal_pct)
+    extended_limit = max(normal_limit, start_equity * extended_pct)
+    absolute_limit = (
+        extended_limit if absolute_cap <= 0 else min(absolute_cap, extended_limit)
+    )
+    ratio = Decimal("999999999") if observed <= 0 else total_net_pnl / observed
+    if observed <= normal_limit:
+        passed = True
+        mode = "normal_pct"
+    elif observed <= absolute_limit and observed > 0:
+        passed = ratio >= min_total_net_pnl_to_drawdown_ratio
+        mode = "return_adjusted"
+    else:
+        passed = observed <= absolute_limit
+        mode = "hard_cap"
+    return {
+        "metric": metric,
+        "observed": str(observed),
+        "operator": "risk_adjusted_lte",
+        "threshold": str(normal_limit),
+        "extended_threshold": str(absolute_limit),
+        "start_equity": str(start_equity),
+        "normal_pct_equity": str(normal_pct),
+        "extended_pct_equity": str(extended_pct),
+        "total_net_pnl_to_drawdown_ratio": str(ratio),
+        "min_total_net_pnl_to_drawdown_ratio": str(
+            min_total_net_pnl_to_drawdown_ratio
+        ),
+        "mode": mode,
+        "passed": passed,
+    }
+
+
 def evaluate_profit_target_oracle(
     scorecard: Mapping[str, Any],
     *,
@@ -129,6 +218,7 @@ def evaluate_profit_target_oracle(
         min_daily_net_pnl = min(_decimal(value) for value in daily_net.values())
         daily_net_observed_day_count = len(daily_net)
     else:
+        daily_net = None
         min_daily_net_pnl = Decimal("0")
         daily_net_observed_day_count = 0
     trading_day_count = _nonnegative_int(
@@ -142,6 +232,12 @@ def evaluate_profit_target_oracle(
         and daily_net_observed_day_count < trading_day_count
     ):
         min_daily_net_pnl = min(min_daily_net_pnl, Decimal("0"))
+    start_equity = _start_equity(scorecard, policy)
+    total_net_pnl = _total_net_pnl(
+        daily_net=daily_net,
+        net_pnl_per_day=net_pnl,
+        trading_day_count=trading_day_count,
+    )
     checks = [
         _numeric_check(
             metric="portfolio_post_cost_net_pnl_per_day",
@@ -212,17 +308,25 @@ def evaluate_profit_target_oracle(
             operator="lte",
             threshold=policy.max_single_symbol_contribution_share,
         ),
-        _numeric_check(
+        _risk_adjusted_drawdown_check(
             metric="worst_day_loss",
             observed=_decimal(scorecard.get("worst_day_loss")),
-            operator="lte",
-            threshold=policy.max_worst_day_loss,
+            start_equity=start_equity,
+            normal_pct=policy.max_worst_day_loss_pct_equity,
+            extended_pct=policy.extended_max_worst_day_loss_pct_equity,
+            total_net_pnl=total_net_pnl,
+            min_total_net_pnl_to_drawdown_ratio=policy.min_total_net_pnl_to_drawdown_ratio,
+            absolute_cap=policy.max_worst_day_loss,
         ),
-        _numeric_check(
+        _risk_adjusted_drawdown_check(
             metric="max_drawdown",
             observed=_decimal(scorecard.get("max_drawdown")),
-            operator="lte",
-            threshold=policy.max_drawdown,
+            start_equity=start_equity,
+            normal_pct=policy.max_drawdown_pct_equity,
+            extended_pct=policy.extended_max_drawdown_pct_equity,
+            total_net_pnl=total_net_pnl,
+            min_total_net_pnl_to_drawdown_ratio=policy.min_total_net_pnl_to_drawdown_ratio,
+            absolute_cap=policy.max_drawdown,
         ),
         _numeric_check(
             metric="max_gross_exposure_pct_equity",

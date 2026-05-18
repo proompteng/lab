@@ -445,11 +445,25 @@ class TestStrategyAutoresearch(TestCase):
 
         self.assertEqual(program.program_id, "portfolio_profit_autoresearch_500_v1")
         self.assertEqual(program.objective.target_net_pnl_per_day, Decimal("500"))
-        self.assertEqual(program.objective.min_daily_net_pnl, Decimal("-350"))
+        self.assertEqual(program.objective.min_daily_net_pnl, Decimal("-999999999"))
         self.assertEqual(program.objective.min_active_day_ratio, Decimal("0.90"))
         self.assertEqual(program.objective.min_positive_day_ratio, Decimal("0.60"))
-        self.assertEqual(program.objective.max_worst_day_loss, Decimal("350"))
-        self.assertEqual(program.objective.max_drawdown, Decimal("900"))
+        self.assertEqual(program.objective.max_worst_day_loss, Decimal("999999999"))
+        self.assertEqual(program.objective.max_drawdown, Decimal("999999999"))
+        self.assertEqual(
+            program.objective.max_worst_day_loss_pct_equity, Decimal("0.05")
+        )
+        self.assertEqual(program.objective.max_drawdown_pct_equity, Decimal("0.10"))
+        self.assertEqual(
+            program.objective.extended_max_worst_day_loss_pct_equity,
+            Decimal("0.10"),
+        )
+        self.assertEqual(
+            program.objective.extended_max_drawdown_pct_equity, Decimal("0.20")
+        )
+        self.assertEqual(
+            program.objective.min_total_net_pnl_to_drawdown_ratio, Decimal("1.50")
+        )
         self.assertFalse(program.objective.require_every_day_active)
         self.assertEqual(
             program.objective.max_gross_exposure_pct_equity, Decimal("1.0")
@@ -474,8 +488,11 @@ class TestStrategyAutoresearch(TestCase):
                 "intraday_residual_reversal_2024",
                 "intraday_return_autocorrelation_term_structure_2025",
                 "intraday_time_series_reversal_2025",
+                "end_of_day_reversal_2024",
                 "overnight_jump_intraday_reversal_2026",
                 "intraday_cross_section_patterns_2010",
+                "asymmetric_ofi_hmm_regime_2025",
+                "opening_range_breakout_stocks_in_play_2024",
             }.issubset(source_ids)
         )
 
@@ -872,6 +889,48 @@ class TestStrategyAutoresearch(TestCase):
         vetoed = dict(candidate)
         vetoed["hard_vetoes"] = ["best_day_share_above_max"]
         self.assertFalse(candidate_meets_objective(vetoed, objective=objective))
+
+    def test_candidate_meets_objective_allows_return_adjusted_drawdown(self) -> None:
+        objective = StrategyObjective(
+            target_net_pnl_per_day=Decimal("500"),
+            min_active_day_ratio=Decimal("0.80"),
+            min_positive_day_ratio=Decimal("0.60"),
+            min_daily_notional=Decimal("300000"),
+            max_best_day_share=Decimal("0.35"),
+            max_worst_day_loss=Decimal("999999999"),
+            max_drawdown=Decimal("999999999"),
+            require_every_day_active=False,
+            min_regime_slice_pass_rate=Decimal("0.40"),
+            stop_when_objective_met=False,
+            max_gross_exposure_pct_equity=Decimal("1.50"),
+            min_cash=Decimal("0"),
+        )
+        candidate = {
+            "hard_vetoes": [],
+            "objective_scorecard": {
+                "net_pnl_per_day": "9666.67",
+                "active_day_ratio": "1",
+                "positive_day_ratio": "0.67",
+                "avg_filled_notional_per_day": "700000",
+                "best_day_share": "0.30",
+                "worst_day_loss": "3000",
+                "max_drawdown": "3000",
+                "regime_slice_pass_rate": "0.45",
+                "max_gross_exposure_pct_equity": "1.25",
+                "min_cash": "2500",
+            },
+            "full_window": {
+                "trading_day_count": 3,
+                "active_days": 3,
+                "daily_net": {
+                    "2026-04-01": "-3000",
+                    "2026-04-02": "17000",
+                    "2026-04-03": "15000",
+                },
+            },
+        }
+
+        self.assertTrue(candidate_meets_objective(candidate, objective=objective))
 
     def test_candidate_meets_objective_requires_daily_minimum_when_configured(
         self,

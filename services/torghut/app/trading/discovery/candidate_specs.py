@@ -2872,10 +2872,26 @@ def _family_scores_for_hypothesis(
             3,
             "liquidity_response_or_execution_stress",
         )
-    if has_any(("volatility", "regime", "stress window", "nearly unstable")):
+    if has_any(
+        (
+            "volatility",
+            "regime",
+            "latent regime",
+            "regime persistence",
+            "stress window",
+            "nearly unstable",
+            "hidden markov",
+            "hmm",
+        )
+    ):
         bump("intraday_tsmom_v2", 4, "volatility_or_regime_state")
         bump("momentum_pullback_v1", 2, "volatility_or_regime_state")
         bump("opening_drive_leader_reclaim_v1", 2, "volatility_or_regime_state")
+        bump(
+            "microstructure_continuation_matched_filter_v1",
+            2,
+            "volatility_or_regime_state",
+        )
     if has_any(("momentum", "trend", "pullback", "trend persistence")):
         bump("momentum_pullback_v1", 5, "momentum_or_pullback")
         bump("intraday_tsmom_v2", 4, "momentum_or_pullback")
@@ -2902,6 +2918,9 @@ def _family_scores_for_hypothesis(
             "late-session",
             "late session",
             "final half-hour",
+            "end-of-day",
+            "end of day",
+            "eod",
             "closing",
             "into the close",
             "macro announcement",
@@ -2919,6 +2938,11 @@ def _family_scores_for_hypothesis(
         (
             "final 30",
             "final half-hour",
+            "end-of-day reversal",
+            "end of day reversal",
+            "eod reversal",
+            "intraday loser",
+            "intraday losers",
             "late-session loser",
             "late session loser",
             "closing-window",
@@ -2927,7 +2951,18 @@ def _family_scores_for_hypothesis(
         )
     ):
         bump("end_of_day_reversal_v1", 7, "closing_window_reversal")
-    if has_any(("breakout", "continuation", "reclaim", "leader")):
+    if has_any(
+        (
+            "breakout",
+            "continuation",
+            "reclaim",
+            "leader",
+            "opening range breakout",
+            "orb",
+            "stocks in play",
+            "overactive stocks",
+        )
+    ):
         bump("breakout_reclaim_v2", 5, "continuation_or_reclaim")
         bump(
             "microstructure_continuation_matched_filter_v1",
@@ -2942,9 +2977,14 @@ def _family_scores_for_hypothesis(
             "morning momentum",
             "opening drive",
             "opening-drive",
+            "opening range",
+            "opening-range",
+            "opening range breakout",
             "opening window",
             "open window",
             "leader reclaim",
+            "stocks in play",
+            "unusually high daily volume",
             "macro announcement",
             "announcement",
             "information discreteness",

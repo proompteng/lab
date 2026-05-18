@@ -2189,7 +2189,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             )
             self.assertEqual(
                 payload["profit_target_oracle_policy"]["min_daily_net_pnl"],
-                "-350",
+                "-999999999",
             )
             self.assertIn(
                 "executable_replay_passed_failed",
@@ -2656,7 +2656,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
 
         self.assertEqual(payload["status"], "no_profit_target_candidate")
         self.assertEqual(
-            payload["profit_target_oracle_policy"]["min_daily_net_pnl"], "-350"
+            payload["profit_target_oracle_policy"]["min_daily_net_pnl"], "-999999999"
         )
         self.assertEqual(selection["budget"]["exploration_slots_requested"], 1)
         self.assertGreaterEqual(selection["budget"]["exploration_slots_effective"], 1)
