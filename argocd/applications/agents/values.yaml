@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/agents-controller
-  tag: 26ef7e7f
-  digest: sha256:4c2fc2a0682ba0005739df08303510e087de353f8dc1f563acc08729d2a0724d
+  tag: cf19c4ff
+  digest: sha256:7c98abdc25148ae83dc47fc29411018c03a352f0f40253308dfb072c27ba0a4b
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,18 +11,18 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-control-plane
-    tag: 26ef7e7f
-    digest: sha256:94077860dd0d44ac9d08d7dec08fdd114133b148023c8783c9b9626c3a59681e
+    tag: cf19c4ff
+    digest: sha256:b3c229dfedcc04805c32bbb56c515ab423b1ff89acff772cc4a11f390e6aa5ef
   env:
     vars:
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
-      AGENTS_SOURCE_HEAD_SHA: 26ef7e7f12776af1ba93a2a451458b0689dd238f
-      AGENTS_GITOPS_REVISION: 26ef7e7f12776af1ba93a2a451458b0689dd238f
-      AGENTS_SOURCE_CI_RUN_ID: "26021259440"
+      AGENTS_SOURCE_HEAD_SHA: cf19c4ff6cf3ffd8c358811291bed0ee1dc2aad5
+      AGENTS_GITOPS_REVISION: cf19c4ff6cf3ffd8c358811291bed0ee1dc2aad5
+      AGENTS_SOURCE_CI_RUN_ID: "26021907881"
       AGENTS_SOURCE_CI_CONCLUSION: success
-      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:94077860dd0d44ac9d08d7dec08fdd114133b148023c8783c9b9626c3a59681e
-      AGENTS_SERVING_BUILD_COMMIT: 26ef7e7f12776af1ba93a2a451458b0689dd238f
-      AGENTS_SERVING_IMAGE_DIGEST: sha256:94077860dd0d44ac9d08d7dec08fdd114133b148023c8783c9b9626c3a59681e
+      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:b3c229dfedcc04805c32bbb56c515ab423b1ff89acff772cc4a11f390e6aa5ef
+      AGENTS_SERVING_BUILD_COMMIT: cf19c4ff6cf3ffd8c358811291bed0ee1dc2aad5
+      AGENTS_SERVING_IMAGE_DIGEST: sha256:b3c229dfedcc04805c32bbb56c515ab423b1ff89acff772cc4a11f390e6aa5ef
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
@@ -82,8 +82,8 @@ controllers:
   replicaCount: 2
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-    tag: 26ef7e7f
-    digest: sha256:4c2fc2a0682ba0005739df08303510e087de353f8dc1f563acc08729d2a0724d
+    tag: cf19c4ff
+    digest: sha256:7c98abdc25148ae83dc47fc29411018c03a352f0f40253308dfb072c27ba0a4b
   autoscaling:
     enabled: false
   env:
