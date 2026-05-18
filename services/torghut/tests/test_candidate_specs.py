@@ -167,6 +167,93 @@ class TestCandidateSpecs(TestCase):
             opening_specs[0].feature_contract["family_selection"]["reasons"],
         )
 
+    def test_orb_claim_selects_opening_drive_and_breakout_families(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-orb-stocks-in-play",
+            claims=[
+                {
+                    "claim_id": "claim-orb",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Stocks in Play with unusually high daily volume can produce "
+                        "opening range breakout continuation after the first five minutes."
+                    ),
+                    "confidence": "0.82",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+        families = {spec.family_template_id for spec in specs}
+
+        self.assertIn("opening_drive_leader_reclaim_v1", families)
+        self.assertIn("breakout_reclaim_v2", families)
+
+    def test_literal_eod_reversal_claim_selects_end_of_day_family(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-eod-reversal",
+            claims=[
+                {
+                    "claim_id": "claim-eod",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "End-of-day reversal in individual intraday losers appears "
+                        "during the final 30 minutes as closing pressure unwinds."
+                    ),
+                    "confidence": "0.80",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+        eod_specs = [
+            spec
+            for spec in specs
+            if spec.family_template_id == "end_of_day_reversal_v1"
+        ]
+
+        self.assertTrue(eod_specs)
+        self.assertIn(
+            "closing_window_reversal",
+            eod_specs[0].feature_contract["family_selection"]["reasons"],
+        )
+
+    def test_hmm_ofi_claim_selects_microstructure_family(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-ofi-hmm",
+            claims=[
+                {
+                    "claim_id": "claim-ofi-hmm",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "A hidden Markov model over order flow imbalance identifies "
+                        "latent regime persistence and liquidity dislocation states."
+                    ),
+                    "confidence": "0.78",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+        microstructure_specs = [
+            spec
+            for spec in specs
+            if spec.family_template_id
+            == "microstructure_continuation_matched_filter_v1"
+        ]
+
+        self.assertTrue(microstructure_specs)
+        self.assertIn(
+            "volatility_or_regime_state",
+            microstructure_specs[0].feature_contract["family_selection"]["reasons"],
+        )
+
     def test_unpinned_hypotheses_expand_all_family_execution_profiles(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-profile-breadth",

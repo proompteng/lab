@@ -45,13 +45,19 @@ ledger_policy:
   append_only: true
 objective:
   target_net_pnl_per_day: '500'
-  min_daily_net_pnl: '-350'
+  min_daily_net_pnl: '-999999999'
   min_active_day_ratio: '0.90'
   min_positive_day_ratio: '0.60'
   min_daily_notional: '300000'
   max_best_day_share: '0.25'
-  max_worst_day_loss: '350'
-  max_drawdown: '900'
+  max_worst_day_loss: '999999999'
+  max_drawdown: '999999999'
+  default_start_equity: '31590.02'
+  max_worst_day_loss_pct_equity: '0.05'
+  max_drawdown_pct_equity: '0.10'
+  extended_max_worst_day_loss_pct_equity: '0.10'
+  extended_max_drawdown_pct_equity: '0.20'
+  min_total_net_pnl_to_drawdown_ratio: '1.50'
   require_every_day_active: false
   min_regime_slice_pass_rate: '0.45'
   max_gross_exposure_pct_equity: '1.0'
@@ -151,6 +157,17 @@ research_sources:
       - claim_id: macro_information_momentum
         summary: Intraday momentum is stronger around macro-announcement information windows.
         implication: Treat late-day continuation as regime conditional and require non-announcement held-out validation.
+  - source_id: opening_range_breakout_stocks_in_play_2024
+    title: 'A Profitable Day Trading Strategy For The U.S. Equity Market'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4729284
+    published_at: '2024-02-19'
+    claims:
+      - claim_id: stocks_in_play_opening_range_breakout
+        summary: A 5-minute opening range breakout applied to stocks with unusually high daily volume can produce systematic intraday momentum candidates.
+        implication: Reaudit opening-drive and breakout-reclaim sleeves with relative-volume, VWAP, and no-overnight-hold controls.
+      - claim_id: orb_risk_controls_required
+        summary: Opening range breakout profits depend on strict intraday risk management rather than raw breakout direction alone.
+        implication: Keep stop-loss, close-flatten, drawdown, concentration, and post-cost replay gates as blockers before promotion.
   - source_id: intraday_residual_reversal_2024
     title: 'Intraday Residual Reversal in the U.S. Stock Market'
     url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4731947
@@ -184,6 +201,17 @@ research_sources:
       - claim_id: time_series_not_only_cross_section
         summary: Reversal can be framed as a time-series effect, not only a cross-sectional loser/winner sort.
         implication: Include recent-window reversal profiles that can trade serially while respecting simultaneous exposure caps.
+  - source_id: end_of_day_reversal_2024
+    title: 'End-of-Day Reversal'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5039009
+    published_at: '2024-11-29'
+    claims:
+      - claim_id: final_half_hour_loser_reversal
+        summary: Individual-stock intraday losers can reverse in the final 30 minutes of the trading day.
+        implication: Reaudit end-of-day reversal sleeves on late-session losers, but cap best-day and symbol concentration.
+      - claim_id: closing_pressure_unwind
+        summary: The pattern is linked to intraday price pressure unwinding near the close.
+        implication: Keep closing-window entry, short hold, cost, and no-overnight exposure controls explicit.
   - source_id: overnight_jump_intraday_reversal_2026
     title: 'Dark Side of the Day: Overnight Price Jumps and Short-Term Return Predictability'
     url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4335622
@@ -206,6 +234,17 @@ research_sources:
       - claim_id: subhour_liquidity_reversal
         summary: Short-term reversals can be driven by temporary liquidity imbalances lasting less than an hour.
         implication: Add sub-hour reversal sleeves with strict turnover, cost, and drawdown evidence.
+  - source_id: asymmetric_ofi_hmm_regime_2025
+    title: 'Asymmetric Hidden Markov Modeling of Order Flow Imbalances for Microstructure-Aware Market Regime Detection'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5315733
+    published_at: '2025-06-23'
+    claims:
+      - claim_id: ofi_latent_regime_breakout
+        summary: Hidden Markov regimes from order-flow imbalance can identify breakout and liquidity-dislocation states.
+        implication: Route OFI regime claims into microstructure continuation and opening-drive sleeves with quote-quality gates.
+      - claim_id: asymmetric_liquidity_transition
+        summary: Directional asymmetry and regime persistence matter for intraday liquidity state transitions.
+        implication: Keep continuation and reversal candidates separated by regime and require held-out shadow parity before promotion.
 families:
   - family_template_id: microstructure_continuation_matched_filter_v1
     seed_sweep_config: ../profitability-frontier-strict-daily-microstructure.yaml

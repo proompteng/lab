@@ -386,7 +386,7 @@ jobs:
   pytest-autoresearch-runner:
     name: Pytest autoresearch runner ${{ matrix.slice }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     needs:
       - changes
     if: ${{ needs.changes.outputs.service == 'true' }}

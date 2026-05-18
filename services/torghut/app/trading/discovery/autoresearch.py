@@ -122,6 +122,12 @@ class StrategyObjective:
     min_daily_net_pnl: Decimal = Decimal('0')
     max_gross_exposure_pct_equity: Decimal = Decimal('999999999')
     min_cash: Decimal = Decimal('-999999999')
+    default_start_equity: Decimal = Decimal('31590.02')
+    max_worst_day_loss_pct_equity: Decimal = Decimal('0.05')
+    max_drawdown_pct_equity: Decimal = Decimal('0.10')
+    extended_max_worst_day_loss_pct_equity: Decimal = Decimal('0.10')
+    extended_max_drawdown_pct_equity: Decimal = Decimal('0.20')
+    min_total_net_pnl_to_drawdown_ratio: Decimal = Decimal('1.50')
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -138,6 +144,12 @@ class StrategyObjective:
             'stop_when_objective_met': self.stop_when_objective_met,
             'max_gross_exposure_pct_equity': str(self.max_gross_exposure_pct_equity),
             'min_cash': str(self.min_cash),
+            'default_start_equity': str(self.default_start_equity),
+            'max_worst_day_loss_pct_equity': str(self.max_worst_day_loss_pct_equity),
+            'max_drawdown_pct_equity': str(self.max_drawdown_pct_equity),
+            'extended_max_worst_day_loss_pct_equity': str(self.extended_max_worst_day_loss_pct_equity),
+            'extended_max_drawdown_pct_equity': str(self.extended_max_drawdown_pct_equity),
+            'min_total_net_pnl_to_drawdown_ratio': str(self.min_total_net_pnl_to_drawdown_ratio),
         }
 
 
@@ -471,6 +483,30 @@ def load_strategy_autoresearch_program(
             objective_payload.get('min_cash'),
             default='-999999999',
         ),
+        default_start_equity=_coerce_decimal(
+            objective_payload.get('default_start_equity'),
+            default='31590.02',
+        ),
+        max_worst_day_loss_pct_equity=_coerce_decimal(
+            objective_payload.get('max_worst_day_loss_pct_equity'),
+            default='0.05',
+        ),
+        max_drawdown_pct_equity=_coerce_decimal(
+            objective_payload.get('max_drawdown_pct_equity'),
+            default='0.10',
+        ),
+        extended_max_worst_day_loss_pct_equity=_coerce_decimal(
+            objective_payload.get('extended_max_worst_day_loss_pct_equity'),
+            default='0.10',
+        ),
+        extended_max_drawdown_pct_equity=_coerce_decimal(
+            objective_payload.get('extended_max_drawdown_pct_equity'),
+            default='0.20',
+        ),
+        min_total_net_pnl_to_drawdown_ratio=_coerce_decimal(
+            objective_payload.get('min_total_net_pnl_to_drawdown_ratio'),
+            default='1.50',
+        ),
     )
     snapshot_policy_payload = _mapping(payload.get('snapshot_policy'))
     snapshot_policy = SnapshotPolicy(
@@ -662,6 +698,16 @@ def apply_program_objective(
     consistency['min_regime_slice_pass_rate'] = str(objective.min_regime_slice_pass_rate)
     consistency['max_gross_exposure_pct_equity'] = str(objective.max_gross_exposure_pct_equity)
     consistency['min_cash'] = str(objective.min_cash)
+    consistency['default_start_equity'] = str(objective.default_start_equity)
+    consistency['max_worst_day_loss_pct_equity'] = str(objective.max_worst_day_loss_pct_equity)
+    consistency['max_drawdown_pct_equity'] = str(objective.max_drawdown_pct_equity)
+    consistency['extended_max_worst_day_loss_pct_equity'] = str(
+        objective.extended_max_worst_day_loss_pct_equity
+    )
+    consistency['extended_max_drawdown_pct_equity'] = str(objective.extended_max_drawdown_pct_equity)
+    consistency['min_total_net_pnl_to_drawdown_ratio'] = str(
+        objective.min_total_net_pnl_to_drawdown_ratio
+    )
     payload['constraints'] = constraints
     payload['consistency_constraints'] = consistency
     return payload
@@ -798,6 +844,58 @@ def build_mutated_sweep_config(
     return payload, description
 
 
+def _objective_start_equity(
+    scorecard: Mapping[str, Any],
+    full_window: Mapping[str, Any],
+    objective: StrategyObjective,
+) -> Decimal:
+    for payload in (scorecard, full_window):
+        for key in (
+            'start_equity',
+            'account_start_equity',
+            'execution_start_equity',
+            'executable_replay_start_equity',
+            'runtime_start_equity',
+        ):
+            value = _coerce_decimal(payload.get(key), default='0')
+            if value > 0:
+                return value
+    return objective.default_start_equity
+
+
+def _objective_total_net_pnl(
+    *,
+    scorecard: Mapping[str, Any],
+    full_window: Mapping[str, Any],
+    net_pnl_per_day: Decimal,
+    trading_day_count: int,
+) -> Decimal:
+    daily_net_payload = _mapping(full_window.get('daily_net')) or _mapping(scorecard.get('daily_net'))
+    if daily_net_payload:
+        return sum((_coerce_decimal(value, default='0') for value in daily_net_payload.values()), Decimal('0'))
+    return net_pnl_per_day * Decimal(max(1, trading_day_count))
+
+
+def _objective_drawdown_passes(
+    *,
+    observed: Decimal,
+    start_equity: Decimal,
+    normal_pct: Decimal,
+    extended_pct: Decimal,
+    absolute_cap: Decimal,
+    total_net_pnl: Decimal,
+    min_total_net_pnl_to_drawdown_ratio: Decimal,
+) -> bool:
+    normal_limit = max(Decimal('0'), start_equity * normal_pct)
+    percent_limit = max(normal_limit, start_equity * extended_pct)
+    extended_limit = percent_limit if absolute_cap <= 0 else min(absolute_cap, percent_limit)
+    if observed <= normal_limit:
+        return True
+    if observed <= extended_limit and observed > 0:
+        return (total_net_pnl / observed) >= min_total_net_pnl_to_drawdown_ratio
+    return observed <= extended_limit
+
+
 def candidate_meets_objective(
     candidate_payload: Mapping[str, Any],
     *,
@@ -822,6 +920,31 @@ def candidate_meets_objective(
     min_cash = _coerce_decimal(scorecard.get('min_cash') or full_window.get('min_cash'), default='0')
     trading_day_count = int(full_window.get('trading_day_count') or 0)
     active_days = int(full_window.get('active_days') or 0)
+    start_equity = _objective_start_equity(scorecard, full_window, objective)
+    total_net_pnl = _objective_total_net_pnl(
+        scorecard=scorecard,
+        full_window=full_window,
+        net_pnl_per_day=net_pnl_per_day,
+        trading_day_count=trading_day_count,
+    )
+    worst_day_loss_ok = _objective_drawdown_passes(
+        observed=worst_day_loss,
+        start_equity=start_equity,
+        normal_pct=objective.max_worst_day_loss_pct_equity,
+        extended_pct=objective.extended_max_worst_day_loss_pct_equity,
+        absolute_cap=objective.max_worst_day_loss,
+        total_net_pnl=total_net_pnl,
+        min_total_net_pnl_to_drawdown_ratio=objective.min_total_net_pnl_to_drawdown_ratio,
+    )
+    max_drawdown_ok = _objective_drawdown_passes(
+        observed=max_drawdown,
+        start_equity=start_equity,
+        normal_pct=objective.max_drawdown_pct_equity,
+        extended_pct=objective.extended_max_drawdown_pct_equity,
+        absolute_cap=objective.max_drawdown,
+        total_net_pnl=total_net_pnl,
+        min_total_net_pnl_to_drawdown_ratio=objective.min_total_net_pnl_to_drawdown_ratio,
+    )
     if objective.require_every_day_active and trading_day_count > 0 and active_days != trading_day_count:
         return False
     if objective.min_daily_net_pnl > 0:
@@ -842,8 +965,8 @@ def candidate_meets_objective(
             positive_day_ratio >= objective.min_positive_day_ratio,
             avg_daily_notional >= objective.min_daily_notional,
             best_day_share <= objective.max_best_day_share,
-            worst_day_loss <= objective.max_worst_day_loss,
-            max_drawdown <= objective.max_drawdown,
+            worst_day_loss_ok,
+            max_drawdown_ok,
             regime_slice_pass_rate >= objective.min_regime_slice_pass_rate,
             max_gross_exposure_pct_equity <= objective.max_gross_exposure_pct_equity,
             min_cash >= objective.min_cash,
