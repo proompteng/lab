@@ -46,6 +46,13 @@ git -C "${ROOT_DIR}" diff --exit-code -- "${CHART_DIR}/crds" \
 
 run_with_helm3 helm lint --kube-version "${KUBE_VERSION_FOR_HELM}" "${CHART_DIR}"
 
+chart_version="$(awk -F': *' '$1 == "version" {print $2; exit}' "${CHART_DIR}/Chart.yaml" | sed "s/[\"']//g")"
+artifacthub_version="$(awk -F': *' '$1 == "version" {print $2; exit}' "${CHART_DIR}/artifacthub-pkg.yml" | sed "s/[\"']//g")"
+if [[ -z "${chart_version}" || -z "${artifacthub_version}" || "${chart_version}" != "${artifacthub_version}" ]]; then
+  echo "artifacthub-pkg.yml version (${artifacthub_version:-missing}) must match Chart.yaml (${chart_version:-missing})." >&2
+  exit 1
+fi
+
 render_and_check() {
   local values_file="$1"
   local output
