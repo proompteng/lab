@@ -31,6 +31,6 @@ trap cleanup EXIT
 helm template agents "${CHART_DIR}" --namespace agents > "${rendered_chart}"
 kubectl kustomize "${ARGO_DIR}" --enable-helm > "${rendered_argo}"
 
-rendered_forbidden='JANGAR_|jangar-db-app|/etc/jangar|lab/jangar|/app/services/jangar|services/jangar|codex-implement'
+rendered_forbidden='JANGAR_|jangar-db-app|/etc/jangar|lab/jangar|/app/services/jangar|services/jangar|codex-implement|AGENTS_TORGHUT_STATUS_|AGENTS_WHITEPAPER_FINALIZE_'
 fail_if_matches "rendered Helm chart must use Agents-owned images, env, DB secret, and runner paths" "${rendered_forbidden}" "${rendered_chart}"
 fail_if_matches "rendered Agents GitOps app must use Agents-owned images, env, DB secret, and runner paths" "${rendered_forbidden}" "${rendered_argo}"
