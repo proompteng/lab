@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import replace
 import json
 import sys
@@ -72,6 +73,44 @@ def _source_jsonl_payload() -> dict[str, object]:
             }
         ],
     }
+
+
+def _source_from_payload(payload: dict[str, object]) -> runner.WhitepaperResearchSource:
+    return runner.WhitepaperResearchSource(
+        run_id=str(payload["run_id"]),
+        title=str(payload["title"]),
+        source_url=str(payload["source_url"]),
+        published_at=str(payload["published_at"]),
+        claims=tuple(
+            cast(dict[str, object], claim)
+            for claim in cast(list[object], payload["claims"])
+        ),
+        claim_relations=tuple(
+            cast(dict[str, object], relation)
+            for relation in cast(list[object], payload["claim_relations"])
+        ),
+    )
+
+
+@contextmanager
+def _compact_recent_whitepaper_sources(
+    source_count: int = 4,
+) -> Any:
+    sources: list[runner.WhitepaperResearchSource] = []
+    for index in range(source_count):
+        payload = _source_jsonl_payload()
+        payload["run_id"] = f"compact-seed-2026-{index}"
+        payload["title"] = f"Compact 2026 Microstructure Seed {index}"
+        sources.append(_source_from_payload(payload))
+
+    midpoint = max(1, source_count // 2)
+    with (
+        patch.object(
+            runner, "_program_whitepaper_sources", return_value=sources[:midpoint]
+        ),
+        patch.object(runner, "RECENT_WHITEPAPER_SEEDS", tuple(sources[midpoint:])),
+    ):
+        yield
 
 
 class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
@@ -1986,10 +2025,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(args.strategy_configmap, Path("/etc/torghut/strategies.yaml"))
 
     def test_seed_recent_whitepapers_runs_end_to_end_and_writes_artifacts(self) -> None:
-        with TemporaryDirectory() as tmpdir:
+        with TemporaryDirectory() as tmpdir, _compact_recent_whitepaper_sources(4):
             output_dir = Path(tmpdir) / "epoch"
             args = self._args(output_dir)
             args.epoch_id = "whitepaper-autoresearch-test-epoch"
+            args.max_candidates = 4
+            args.max_frontier_candidates_per_spec = 2
+            args.max_total_frontier_candidates = 8
             payload = runner.run_whitepaper_autoresearch_profit_target(args)
 
             self.assertEqual(payload["epoch_id"], "whitepaper-autoresearch-test-epoch")
@@ -2667,11 +2709,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
     def test_seed_recent_whitepapers_honors_top_k_and_exploration_budget(
         self,
     ) -> None:
-        with TemporaryDirectory() as tmpdir:
+        with TemporaryDirectory() as tmpdir, _compact_recent_whitepaper_sources(4):
             output_dir = Path(tmpdir) / "epoch"
             args = self._args(output_dir)
             args.top_k = 1
             args.exploration_slots = 1
+            args.max_frontier_candidates_per_spec = 2
+            args.max_total_frontier_candidates = 6
             payload = runner.run_whitepaper_autoresearch_profit_target(args)
 
             selection = json.loads(
@@ -2784,11 +2828,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(table[0]["reason"], "not_replayed_budget")
 
     def test_seed_recent_whitepapers_diversifies_exploitation_slots(self) -> None:
-        with TemporaryDirectory() as tmpdir:
+        with TemporaryDirectory() as tmpdir, _compact_recent_whitepaper_sources(4):
             output_dir = Path(tmpdir) / "epoch"
             args = self._args(output_dir)
             args.top_k = 3
             args.exploration_slots = 0
+            args.max_frontier_candidates_per_spec = 2
+            args.max_total_frontier_candidates = 6
             payload = runner.run_whitepaper_autoresearch_profit_target(args)
 
             selection = json.loads(
@@ -2863,8 +2909,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "_parse_args",
                 return_value=Namespace(
                     **{
-                        **vars(self._args(Path(tmpdir) / "epoch")),
+                        **vars(self._source_jsonl_args(Path(tmpdir) / "epoch")),
                         "target_net_pnl_per_day": "999999",
+                        "exploration_slots": 0,
+                        "max_candidates": 1,
+                        "max_frontier_candidates_per_spec": 1,
+                        "max_total_frontier_candidates": 1,
+                        "portfolio_size_min": 1,
+                        "portfolio_size_max": 1,
+                        "top_k": 1,
                     }
                 ),
             ),
@@ -2912,12 +2965,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
     def test_seed_recent_whitepapers_persists_epoch_ledgers(self) -> None:
         with (
             TemporaryDirectory() as tmpdir,
+            _compact_recent_whitepaper_sources(4),
             patch(
                 "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
                 side_effect=lambda: Session(self.engine),
             ),
         ):
             args = self._args(Path(tmpdir) / "epoch")
+            args.max_frontier_candidates_per_spec = 2
+            args.max_total_frontier_candidates = 6
             args.persist_results = True
             payload = runner.run_whitepaper_autoresearch_profit_target(args)
 
@@ -3018,7 +3074,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ),
         ):
             output_dir = Path(tmpdir) / "epoch"
-            args = self._args(output_dir)
+            args = self._source_jsonl_args(output_dir)
+            args.max_candidates = 1
+            args.max_frontier_candidates_per_spec = 1
+            args.max_total_frontier_candidates = 1
+            args.portfolio_size_min = 1
+            args.portfolio_size_max = 1
+            args.top_k = 1
             args.persist_results = True
             payload = runner.run_whitepaper_autoresearch_profit_target(args)
             summary = json.loads(
@@ -4082,6 +4144,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             args = self._args(output_dir)
             args.seed_recent_whitepapers = False
             args.source_jsonl = [source_path]
+            args.exploration_slots = 0
+            args.max_candidates = 1
+            args.max_frontier_candidates_per_spec = 1
+            args.max_total_frontier_candidates = 1
+            args.portfolio_size_min = 1
+            args.portfolio_size_max = 1
+            args.top_k = 1
             args.persist_results = False
             payload = runner.run_whitepaper_autoresearch_profit_target(args)
 
@@ -4132,6 +4201,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             args.max_candidates = 2
             args.top_k = 1
             args.exploration_slots = 1
+            args.max_frontier_candidates_per_spec = 1
+            args.max_total_frontier_candidates = 4
             args.persist_results = False
 
             payload = runner.run_whitepaper_autoresearch_profit_target(args)
@@ -4949,6 +5020,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     }
                 ),
             ),
+            patch.object(runner, "_program_whitepaper_sources", return_value=()),
             patch("builtins.print") as mock_print,
         ):
             exit_code = runner.main()
