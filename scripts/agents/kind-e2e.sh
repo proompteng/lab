@@ -136,14 +136,15 @@ PY
     printf '{}' > "${CODEX_AUTH_PATH}"
   fi
 
-  JANGAR_VERSION="$(git -C "${REPO_ROOT}" rev-parse --short HEAD)"
-  JANGAR_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+  AGENTS_VERSION="$(git -C "${REPO_ROOT}" rev-parse --short HEAD)"
+  AGENTS_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
 
   DOCKER_BUILDKIT=1 docker build \
-    -f "${REPO_ROOT}/services/jangar/Dockerfile" \
+    -f "${REPO_ROOT}/services/agents/Dockerfile" \
+    --target control-plane \
     -t "${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
-    --build-arg "JANGAR_VERSION=${JANGAR_VERSION}" \
-    --build-arg "JANGAR_COMMIT=${JANGAR_COMMIT}" \
+    --build-arg "AGENTS_VERSION=${AGENTS_VERSION}" \
+    --build-arg "AGENTS_COMMIT=${AGENTS_COMMIT}" \
     --secret "id=codexauth,src=${CODEX_AUTH_PATH}" \
     "${PRUNE_DIR}"
 fi
