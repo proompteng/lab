@@ -112,6 +112,72 @@ class TestWhitepaperCandidateCompiler(TestCase):
             "microstructure_continuation_matched_filter_v1",
         )
 
+    def test_portfolio_target_includes_notional_throughput_feedback_escape(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-run-notional-throughput",
+            claims=[
+                {
+                    "claim_id": "claim-flow-throughput",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Scale-invariant order-flow and intraday transition regimes "
+                        "support diversified high-turnover microstructure sleeves."
+                    ),
+                    "required_features": [
+                        "order_flow_imbalance",
+                        "cross_section_rank",
+                        "quote_quality",
+                    ],
+                    "confidence": "0.78",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        throughput_specs = [
+            spec
+            for spec in compilation.executable_specs
+            if spec.strategy_overrides["params"].get("feedback_remediation_profile")
+            == "notional_throughput_feedback_escape"
+        ]
+
+        self.assertEqual(
+            {spec.family_template_id for spec in throughput_specs},
+            _PORTFOLIO_TARGET_FAMILIES,
+        )
+        self.assertTrue(
+            all(
+                spec.strategy_overrides["params"]["capital_profile"]
+                == "feedback_notional_throughput_cash_constrained_1x"
+                for spec in throughput_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                int(spec.strategy_overrides["params"]["max_entries_per_session"]) >= 8
+                for spec in throughput_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                Decimal(str(spec.strategy_overrides["max_notional_per_trade"]))
+                <= Decimal("30000")
+                for spec in throughput_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.hard_vetoes["required_min_daily_notional"] == "300000"
+                and spec.hard_vetoes["required_min_active_day_ratio"] == "0.90"
+                and spec.hard_vetoes["required_max_best_day_share"] == "0.25"
+                for spec in throughput_specs
+            )
+        )
+
     def test_missing_family_template_blocks_execution(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-run-2",
