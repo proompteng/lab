@@ -372,11 +372,13 @@ spec:
                 secretKeyRef:
                   name: inngest
                   key: INNGEST_EVENT_KEY
+                  optional: true
             - name: INNGEST_SIGNING_KEY
               valueFrom:
                 secretKeyRef:
                   name: inngest
                   key: INNGEST_SIGNING_KEY
+                  optional: true
             - name: WHITEPAPER_INNGEST_EVENT_NAME
               value: torghut/whitepaper.analysis.requested
             - name: WHITEPAPER_INNGEST_FUNCTION_ID
