@@ -2,8 +2,9 @@
 # Agents control-plane image.
 #
 # This is intentionally separate from services/jangar/Dockerfile so the Agents
-# release can own its build graph. The server bundle still comes from the
-# transitional Jangar app output until the remaining REST/gRPC routes are moved.
+# release can own its build graph. The transitional control-plane bundle still
+# comes from the Jangar server output until the remaining REST/gRPC routes are
+# moved; do not ship Jangar client assets in this image.
 ARG BUN_VERSION=1.3.13
 ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 ARG NODE24_VERSION=24.11.1
@@ -170,9 +171,11 @@ ENV JANGAR_BUILD_LOG_LEVEL=${AGENTS_BUILD_LOG_LEVEL}
 RUN if [ -f .output/server/index.mjs ] && [ -f .output/server/proto/proompteng/jangar/v1/agentctl.proto ]; then \
     echo "Using complete prebuilt .output from build context"; \
   else \
-    bun run build; \
+    rm -rf .output; \
+    bun run build:server; \
+    bun run copy:grpc-proto; \
   fi; \
-  rm -rf .output/server/node_modules/node-pty/prebuilds
+  rm -rf .output/public .output/server/node_modules/node-pty/prebuilds
 
 FROM agents-tools AS agents-deps-prod
 WORKDIR /app
@@ -209,7 +212,7 @@ COPY --from=agents-deps-prod /app/node_modules ./node_modules
 COPY --from=agents-node-pty /tmp/node-pty/build /app/node_modules/node-pty/build
 
 WORKDIR /app/services/jangar
-COPY --from=agents-build /app/services/jangar/.output ./.output
+COPY --from=agents-build /app/services/jangar/.output/server ./.output/server
 COPY --from=agents-build /app/services/jangar/package.json ./package.json
 COPY --from=agents-build /app/services/jangar/src/worker.ts ./src/worker.ts
 COPY --from=agents-build /app/services/jangar/src/server/runtime-entry-config.ts ./src/server/runtime-entry-config.ts
@@ -235,6 +238,7 @@ ENV AGENTS_AGENTS_CONTROLLER_ENABLED=0 \
   AGENTS_SUPPORTING_CONTROLLER_ENABLED=0 \
   AGENTS_AGENT_COMMS_SUBSCRIBER_DISABLED=true \
   AGENTS_PRIMITIVES_RECONCILER=0 \
+  AGENTS_SERVER_PROFILE=agents-control-plane \
   AGENTS_RUNTIME_SERVICE=agents
 ENV AGENTS_VERSION=${AGENTS_VERSION} \
   AGENTS_COMMIT=${AGENTS_COMMIT}

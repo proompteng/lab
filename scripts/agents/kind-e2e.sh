@@ -15,7 +15,7 @@ VALUES_FILE="${VALUES_FILE:-${CHART_PATH}/values-kind.yaml}"
 SECRET_NAME="${SECRET_NAME:-agents-db-app}"
 SECRET_KEY="${SECRET_KEY:-uri}"
 KUBECTL_CONTEXT="${KUBECTL_CONTEXT:-kind-${CLUSTER_NAME}}"
-IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-agents-control-plane-local}"
+IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-ghcr.io/proompteng/agents-control-plane}"
 IMAGE_TAG="${IMAGE_TAG:-kind}"
 BUILD_IMAGE="${BUILD_IMAGE:-1}"
 
@@ -120,12 +120,13 @@ PY
     cp -R "${PRUNE_DIR}/full/." "${BUILD_DIR}/"
     (cd "${BUILD_DIR}" && bun run --filter @proompteng/otel build)
     (cd "${BUILD_DIR}" && bun run --filter @proompteng/temporal-bun-sdk build)
-    (cd "${BUILD_DIR}/services/jangar" && bun run build)
+    (cd "${BUILD_DIR}/services/jangar" && bun run build:server && bun run copy:grpc-proto && rm -rf .output/public)
     mkdir -p "${PRUNE_DIR}/full/services/jangar"
     copy_output_directory "${BUILD_DIR}/services/jangar/.output" "${PRUNE_DIR}/full/services/jangar/.output"
   elif [ -f "${OUTPUT_ENTRY}" ] && [ -f "${OUTPUT_PROTO}" ]; then
     mkdir -p "${PRUNE_DIR}/full/services/jangar"
     copy_output_directory "${OUTPUT_SOURCE}" "${PRUNE_DIR}/full/services/jangar/.output"
+    rm -rf "${PRUNE_DIR}/full/services/jangar/.output/public"
   elif [ -d "${OUTPUT_SOURCE}" ]; then
     echo "Skipping prebuilt .output: missing ${OUTPUT_ENTRY} or ${OUTPUT_PROTO}"
   fi
