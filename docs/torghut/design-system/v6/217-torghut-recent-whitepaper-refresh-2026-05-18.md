@@ -67,9 +67,33 @@ shortcuts and toward explicit stress slices:
 - dynamic execution schedule controls that must beat static execution after latency, spread, and impact stress;
 - simulation-to-live LOB parity gates before synthetic fillability affects paper or live capital.
 
+## Runtime seed follow-up
+
+The checked-in JSONL source catalog was already broader than the runtime
+`--seed-recent-whitepapers` path. The follow-up runtime seed refresh adds
+directly compiled `RECENT_WHITEPAPER_SEEDS` for:
+
+- [Structural Limits of OHLCV-Based Intraday Signals in MNQ Futures](https://arxiv.org/abs/2605.04004)
+  - keeps OHLCV-only intraday candidates behind walk-forward, trade-count, post-cost, and multi-year stability gates.
+- [Risk-Sensitive Specialist Routing for Volatility Forecasting](https://arxiv.org/abs/2604.10402)
+  - adds state-dependent volatility specialist routing and underprediction-loss gates.
+- [Taming the Black Swan](https://arxiv.org/abs/2604.09060)
+  - adds momentum crash gating through volatility-adjusted momentum and structural diversification controls.
+- [Realistic Market Impact Modeling for Reinforcement Learning Trading Environments](https://arxiv.org/abs/2603.29086)
+  - makes nonlinear market impact, route TCA, and turnover stress first-class ranking inputs.
+- [FactorEngine](https://arxiv.org/abs/2603.16365)
+  - pushes factor mining toward executable, auditable programs with logic revision separated from parameter optimization.
+- [QuantaAlpha](https://arxiv.org/abs/2602.07085)
+  - treats alpha-search trajectories, semantic consistency, and cross-market transfer as replayable evidence.
+
+The follow-up compile smoke produced `10` seed sources, `27` claims, `6` claim
+relations, and `10` hypothesis cards from the runtime seed path.
+
 ## Files updated
 
 - `services/torghut/config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml`
 - `services/torghut/config/trading/research-sources/300-daily-profit-2025-2026.jsonl`
+- `services/torghut/app/whitepapers/claim_compiler.py`
+- `services/torghut/tests/test_whitepaper_claim_compiler.py`
 - `services/torghut/tests/test_run_whitepaper_autoresearch_profit_target.py`
 - `services/torghut/tests/test_strategy_autoresearch.py`

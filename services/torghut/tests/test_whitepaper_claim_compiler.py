@@ -19,7 +19,18 @@ class TestWhitepaperClaimCompiler(TestCase):
     def test_recent_seed_sources_compile_to_hypothesis_cards(self) -> None:
         cards = compile_sources_to_hypothesis_cards(RECENT_WHITEPAPER_SEEDS)
 
-        self.assertEqual(len(cards), 4)
+        self.assertEqual(len(cards), len(RECENT_WHITEPAPER_SEEDS))
+        self.assertGreaterEqual(len(cards), 10)
+        self.assertTrue(
+            {
+                "seed-arxiv-2605-04004",
+                "seed-arxiv-2604-10402",
+                "seed-arxiv-2604-09060",
+                "seed-arxiv-2603-29086",
+                "seed-arxiv-2603-16365",
+                "seed-arxiv-2602-07085",
+            }.issubset({source.run_id for source in RECENT_WHITEPAPER_SEEDS})
+        )
         self.assertTrue(
             all(card.source_run_id.startswith("seed-arxiv-") for card in cards)
         )
