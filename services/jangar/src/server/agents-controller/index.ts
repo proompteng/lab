@@ -8,6 +8,8 @@ import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
 import { startResourceWatch } from '~/server/kube-watch'
 import {
   recordAgentConcurrency,
+  recordAgentQueueDepth,
+  recordAgentRateLimitRejection,
   recordAgentRunOutcome,
   recordAgentRunResyncAdoptions,
   recordAgentRunUntouchedBacklog,
@@ -29,7 +31,7 @@ import {
 } from './agentrun-artifacts'
 import { deriveStandardConditionUpdates, normalizeConditions, upsertCondition } from './conditions'
 import { checkCrds, parseConcurrency, parseQueueLimits, parseRateLimits } from './controller-config'
-import { parseBooleanEnv, parseNumberEnv, parseOptionalNumber } from './env-config'
+import { parseOptionalNumber } from './env-config'
 import { createImplementationContractTools } from './implementation-contract'
 import {
   applyJobTtlAfterStatus,
@@ -91,17 +93,9 @@ const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
 const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
-const DEFAULT_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS = 30
 const DEFAULT_AGENTS_CONTROLLER_ENABLED_FLAG_KEY = 'jangar.agents_controller.enabled'
-const DEFAULT_AGENTRUN_RESYNC_INTERVAL_SECONDS = 60
-const DEFAULT_AGENTRUN_UNTOUCHED_WARN_AFTER_SECONDS = 120
 const WHITEPAPER_RUN_ID_PREFIX = 'wp-'
-const DEFAULT_WHITEPAPER_FINALIZE_BASE_URL = 'http://torghut.torghut.svc.cluster.local'
-const DEFAULT_SERVICE_ACCOUNT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
-const DEFAULT_GITHUB_API_BASE_URL = 'https://api.github.com'
 const WHITEPAPER_FINALIZE_TIMEOUT_MS = 15_000
-const DEFAULT_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS = 12
-const DEFAULT_WHITEPAPER_OUTPUT_FETCH_DELAY_MS = 5_000
 
 const BASE_REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -1280,6 +1274,8 @@ const { reconcileAgentRun } = createAgentRunReconciler({
   applyJobTtlAfterStatus,
   isJobComplete,
   isJobFailed,
+  recordAgentQueueDepth,
+  recordAgentRateLimitRejection,
 })
 
 const reconcileAgentRunWithMetrics = async (

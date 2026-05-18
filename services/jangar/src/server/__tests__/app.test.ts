@@ -30,6 +30,8 @@ const crosswsMock = vi.hoisted(() => {
 vi.mock('../metrics', () => ({
   getPrometheusMetricsPath: () => '/metrics',
   isPrometheusMetricsEnabled: () => false,
+  recordAgentQueueDepth: vi.fn(),
+  recordAgentRateLimitRejection: vi.fn(),
   renderPrometheusMetrics: vi.fn(),
 }))
 
