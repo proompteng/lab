@@ -170,6 +170,208 @@ RECENT_WHITEPAPER_SEEDS: tuple[WhitepaperResearchSource, ...] = (
         ),
     ),
     WhitepaperResearchSource(
+        run_id="seed-arxiv-2601-17247",
+        title="Learning Market Making with Closing Auctions",
+        source_url="https://arxiv.org/abs/2601.17247",
+        published_at="2026-01-24",
+        claims=(
+            {
+                "claim_id": "closing-auction-inventory-control",
+                "claim_type": "signal_mechanism",
+                "claim_text": (
+                    "Explicitly modeling the closing auction can change optimal end-of-session "
+                    "inventory paths versus generic terminal inventory penalties."
+                ),
+                "asset_scope": "us_equities_intraday",
+                "horizon_scope": "late_session_execution",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "closing_auction_projection",
+                    "terminal_inventory_path",
+                    "closing_auction_clearing_price",
+                ],
+                "confidence": "0.73",
+            },
+            {
+                "claim_id": "close-auction-exit-feature-recipe",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "Late-day sleeves should separate close-auction projected clearing price, "
+                    "inventory path, and close-flatten urgency from normal intraday exit features."
+                ),
+                "asset_scope": "us_equities_intraday",
+                "horizon_scope": "late_session_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "closing_auction_projection",
+                    "terminal_inventory_path",
+                    "quote_quality",
+                ],
+                "confidence": "0.72",
+            },
+            {
+                "claim_id": "generative-close-auction-validation",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Generative closing-auction simulations are validation stress only; "
+                    "promotion still needs historical replay, route TCA, and live-paper parity."
+                ),
+                "asset_scope": "us_equities_intraday",
+                "horizon_scope": "late_session_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "simulation_parity",
+                    "historical_replay",
+                    "live_paper_parity",
+                ],
+                "confidence": "0.73",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "close-auction-simulation-requires-live-paper",
+                "relation_type": "requires_validation",
+                "source_claim_id": "generative-close-auction-validation",
+                "target_claim_id": "closing-auction-inventory-control",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-arxiv-2507-06345",
+        title="Reinforcement Learning for Trade Execution with Market and Limit Orders",
+        source_url="https://arxiv.org/abs/2507.06345",
+        published_at="2026-01-26",
+        claims=(
+            {
+                "claim_id": "mixed-market-limit-execution-policy",
+                "claim_type": "signal_mechanism",
+                "claim_text": (
+                    "Dynamic allocation between market and limit orders can improve execution "
+                    "revenue versus fixed execution benchmarks in LOB settings."
+                ),
+                "asset_scope": "us_equities_execution",
+                "horizon_scope": "intraday_execution",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "market_limit_order_mix",
+                    "limit_fill_probability",
+                    "execution_shortfall",
+                ],
+                "confidence": "0.74",
+            },
+            {
+                "claim_id": "logistic-normal-order-mix-recipe",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "Execution sweeps should expose market-versus-limit order mix, fill probability, "
+                    "and shortfall as first-class features instead of one static order type."
+                ),
+                "asset_scope": "us_equities_execution",
+                "horizon_scope": "intraday_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "logistic_normal_execution_policy",
+                    "market_limit_order_mix",
+                    "limit_fill_probability",
+                ],
+                "confidence": "0.73",
+            },
+            {
+                "claim_id": "mixed-order-execution-risk-gate",
+                "claim_type": "risk_constraint",
+                "claim_text": (
+                    "Market/limit allocation must be stress-tested against tactical imbalance, "
+                    "fill uncertainty, latency, and route TCA before any capital promotion."
+                ),
+                "asset_scope": "us_equities_execution",
+                "horizon_scope": "intraday_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "route_tca",
+                    "fill_model",
+                    "latency_stress",
+                    "transaction_cost_stress",
+                ],
+                "confidence": "0.74",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "mixed-order-policy-requires-route-tca",
+                "relation_type": "requires_validation",
+                "source_claim_id": "mixed-order-execution-risk-gate",
+                "target_claim_id": "mixed-market-limit-execution-policy",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-springer-lobdif-2026",
+        title="Limit Order Book Event Stream Prediction with Diffusion Model",
+        source_url="https://link.springer.com/article/10.1007/s41019-025-00328-4",
+        published_at="2026-02-04",
+        claims=(
+            {
+                "claim_id": "lobdiff-time-event-prediction",
+                "claim_type": "signal_mechanism",
+                "claim_text": (
+                    "Diffusion modeling of LOB event streams can learn joint event-time and event-type "
+                    "structure that simpler point-process assumptions may miss."
+                ),
+                "asset_scope": "limit_order_book_event_stream",
+                "horizon_scope": "intraday_microstructure",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "lob_diffusion_event_stream",
+                    "time_event_joint_distribution",
+                    "lob_event_stream",
+                ],
+                "confidence": "0.72",
+            },
+            {
+                "claim_id": "skip-step-event-sampling-recipe",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "LOB event-stream inference should track event-time distribution, event-type "
+                    "distribution, and sampling latency so predictive state can be used in real time."
+                ),
+                "asset_scope": "limit_order_book_event_stream",
+                "horizon_scope": "intraday_microstructure",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "time_event_joint_distribution",
+                    "skip_step_sampling",
+                    "latency_stress",
+                ],
+                "confidence": "0.71",
+            },
+            {
+                "claim_id": "lobdiff-realtime-parity-validation",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Diffusion-derived LOB state must prove event-stream parity, latency tolerance, "
+                    "and post-cost replay usefulness before influencing candidate ranking."
+                ),
+                "asset_scope": "limit_order_book_event_stream",
+                "horizon_scope": "intraday_microstructure",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "simulation_parity",
+                    "latency_stress",
+                    "walk_forward_replay",
+                ],
+                "confidence": "0.71",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "lobdiff-state-requires-realtime-parity",
+                "relation_type": "requires_validation",
+                "source_claim_id": "lobdiff-realtime-parity-validation",
+                "target_claim_id": "lobdiff-time-event-prediction",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
         run_id="seed-arxiv-2505-17388",
         title="Stochastic Price Dynamics in Response to Order Flow Imbalance: Evidence from CSI 300 Index Futures",
         source_url="https://arxiv.org/abs/2505.17388",
@@ -385,6 +587,73 @@ RECENT_WHITEPAPER_SEEDS: tuple[WhitepaperResearchSource, ...] = (
                 "horizon_scope": "intraday_microstructure",
                 "expected_direction": "neutral",
                 "confidence": "0.70",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-arxiv-2502-17417",
+        title="Event-Based Limit Order Book Simulation under a Neural Hawkes Process: Application in Market-Making",
+        source_url="https://arxiv.org/abs/2502.17417",
+        published_at="2025-02-24",
+        claims=(
+            {
+                "claim_id": "neural-hawkes-lob-fill-parity",
+                "claim_type": "signal_mechanism",
+                "claim_text": (
+                    "Neural Hawkes event simulation can model LOB event interactions and fill "
+                    "distributions closer to real market-making fill behavior."
+                ),
+                "asset_scope": "limit_order_book_event_stream",
+                "horizon_scope": "intraday_execution",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "neural_hawkes_event_stream",
+                    "lob_event_stream",
+                    "synthetic_lob_fill_parity",
+                ],
+                "confidence": "0.72",
+            },
+            {
+                "claim_id": "event-based-fill-model-recipe",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "Fill models should represent add, cancel, and trade event interactions rather "
+                    "than relying only on fixed spread or top-of-book assumptions."
+                ),
+                "asset_scope": "limit_order_book_event_stream",
+                "horizon_scope": "intraday_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "neural_hawkes_event_stream",
+                    "fill_model",
+                    "limit_fill_probability",
+                ],
+                "confidence": "0.72",
+            },
+            {
+                "claim_id": "neural-hawkes-sim-validation-only",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Neural-Hawkes LOB simulation is useful for stress and pretraining, but simulated "
+                    "fill parity cannot replace historical replay, route TCA, and live-paper evidence."
+                ),
+                "asset_scope": "limit_order_book_event_stream",
+                "horizon_scope": "intraday_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "simulation_parity",
+                    "route_tca",
+                    "live_paper_parity",
+                ],
+                "confidence": "0.73",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "neural-hawkes-sim-requires-fill-parity",
+                "relation_type": "requires_validation",
+                "source_claim_id": "neural-hawkes-sim-validation-only",
+                "target_claim_id": "neural-hawkes-lob-fill-parity",
             },
         ),
     ),
