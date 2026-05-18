@@ -5,7 +5,7 @@ export type JangarRuntimeStartup = {
   agentctlGrpc: boolean
 }
 
-export type JangarRuntimeProfileName = 'http-server' | 'vite-dev-api' | 'test'
+export type JangarRuntimeProfileName = 'http-server' | 'agents-controllers' | 'vite-dev-api' | 'test'
 
 export type JangarRuntimeProfile = {
   name: JangarRuntimeProfileName
@@ -20,11 +20,23 @@ const fullStartup: JangarRuntimeStartup = {
   agentctlGrpc: true,
 }
 
+const controllersStartup: JangarRuntimeStartup = {
+  agentComms: true,
+  controlPlaneCache: false,
+  torghutQuantRuntime: false,
+  agentctlGrpc: false,
+}
+
 export const JANGAR_RUNTIME_PROFILES = {
   httpServer: {
     name: 'http-server',
     serveClient: true,
     startup: fullStartup,
+  },
+  agentsControllers: {
+    name: 'agents-controllers',
+    serveClient: false,
+    startup: controllersStartup,
   },
   viteDevApi: {
     name: 'vite-dev-api',
@@ -42,3 +54,20 @@ export const JANGAR_RUNTIME_PROFILES = {
     },
   },
 } as const satisfies Record<string, JangarRuntimeProfile>
+
+const normalizeProfileName = (value: string | undefined | null) => {
+  const normalized = value?.trim().toLowerCase().replace(/_/g, '-')
+  return normalized && normalized.length > 0 ? normalized : undefined
+}
+
+export const resolveJangarRuntimeProfile = (
+  env: Record<string, string | undefined> = process.env,
+): JangarRuntimeProfile => {
+  const requested = normalizeProfileName(env.AGENTS_SERVER_PROFILE) ?? normalizeProfileName(env.JANGAR_SERVER_PROFILE)
+
+  if (requested === 'agents-controllers' || requested === 'controller' || requested === 'controllers') {
+    return JANGAR_RUNTIME_PROFILES.agentsControllers
+  }
+
+  return JANGAR_RUNTIME_PROFILES.httpServer
+}

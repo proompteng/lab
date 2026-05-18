@@ -67,6 +67,7 @@ type DatabaseSecretRequirement = {
   name: string
 }
 
+const CONTROLLER_DOCKER_TARGET = 'controller'
 const CONTROL_PLANE_DOCKER_TARGET = 'control-plane'
 
 const buildAgentsServiceImagePlans = (
@@ -76,7 +77,7 @@ const buildAgentsServiceImagePlans = (
     registry: options.registry,
     repository: options.repository,
     tag: options.tag,
-    target: CONTROL_PLANE_DOCKER_TARGET,
+    target: CONTROLLER_DOCKER_TARGET,
     platforms: options.platforms,
   },
   {

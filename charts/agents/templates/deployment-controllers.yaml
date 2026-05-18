@@ -283,6 +283,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.uid
+            {{- if not (hasKey $envVars "AGENTS_SERVER_PROFILE") }}
+            - name: AGENTS_SERVER_PROFILE
+              value: "agents-controllers"
+            {{- end }}
             - name: AGENTS_LEADER_ELECTION_ENABLED
               value: {{ .Values.controller.leaderElection.enabled | default true | quote }}
             - name: AGENTS_LEADER_ELECTION_LEASE_NAME

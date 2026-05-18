@@ -13,7 +13,7 @@ describe('agents deploy-service helpers', () => {
     })
   })
 
-  it('builds controller and control-plane images from the narrow control-plane Docker target', () => {
+  it('builds controller and control-plane images from distinct Docker targets', () => {
     expect(
       __private.buildAgentsServiceImagePlans({
         registry: 'registry.example',
@@ -27,7 +27,7 @@ describe('agents deploy-service helpers', () => {
         registry: 'registry.example',
         repository: 'lab/agents-controller',
         tag: 'abc1234',
-        target: 'control-plane',
+        target: 'controller',
         platforms: ['linux/arm64'],
       },
       {
