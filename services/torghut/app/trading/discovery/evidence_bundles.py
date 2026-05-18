@@ -27,6 +27,20 @@ def _string(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _is_synthetic_dataset_snapshot(dataset_snapshot_id: str) -> bool:
+    normalized = dataset_snapshot_id.strip().lower()
+    return any(
+        token in normalized
+        for token in (
+            "synthetic",
+            "simulated",
+            "pre-replay",
+            "proposal-prior",
+            "placeholder",
+        )
+    )
+
+
 def _decomposition_symbol_contribution_shares(
     candidate: Mapping[str, Any],
 ) -> dict[str, str]:
@@ -241,6 +255,16 @@ def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]
     ).lower()
     if freshness in {"stale", "expired", "not_fresh"}:
         blockers.append("stale_tape")
+    validation_contract = _mapping(
+        scorecard.get("validation_contract")
+        or bundle.promotion_readiness.get("validation_contract")
+    )
+    if _string(
+        validation_contract.get("synthetic_evidence_policy")
+    ) == "validation_only_not_promotion_proof" and _is_synthetic_dataset_snapshot(
+        bundle.dataset_snapshot_id
+    ):
+        blockers.append("synthetic_evidence_not_promotion_proof")
     return tuple(dict.fromkeys(blockers))
 
 

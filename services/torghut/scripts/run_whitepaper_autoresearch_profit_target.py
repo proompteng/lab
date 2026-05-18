@@ -962,7 +962,9 @@ def _risk_adjusted_drawdown_passes(
 ) -> bool:
     normal_limit = max(Decimal("0"), start_equity * normal_pct)
     percent_limit = max(normal_limit, start_equity * extended_pct)
-    extended_limit = percent_limit if absolute_cap <= 0 else min(absolute_cap, percent_limit)
+    extended_limit = (
+        percent_limit if absolute_cap <= 0 else min(absolute_cap, percent_limit)
+    )
     if observed <= normal_limit:
         return True
     if observed <= extended_limit and observed > 0:
@@ -2650,6 +2652,52 @@ def _candidate_payload_with_feedback_metadata(
         **metadata,
         **scorecard,
     }
+    validation_requirements = _list_of_mappings(
+        spec.feature_contract.get("validation_requirements")
+    )
+    validation_requirement_claim_ids = [
+        _string(item.get("claim_id"))
+        for item in validation_requirements
+        if _string(item.get("claim_id"))
+    ]
+    if validation_requirements or spec.promotion_contract.get(
+        "synthetic_evidence_policy"
+    ):
+        validation_contract = {
+            "schema_version": "torghut.candidate-validation-contract.v1",
+            "source": "candidate_spec",
+            "validation_requirements": validation_requirements,
+            "validation_requirement_claim_ids": validation_requirement_claim_ids,
+            "requires_historical_replay": bool(
+                spec.promotion_contract.get("requires_historical_replay")
+            ),
+            "requires_live_paper_parity": bool(
+                spec.promotion_contract.get("requires_live_paper_parity")
+            ),
+            "synthetic_evidence_policy": _string(
+                spec.promotion_contract.get("synthetic_evidence_policy")
+            ),
+        }
+        next_candidate["objective_scorecard"] = {
+            **_mapping(next_candidate.get("objective_scorecard")),
+            "validation_contract": validation_contract,
+        }
+        readiness = _mapping(next_candidate.get("promotion_readiness"))
+        blockers = _string_list_from_value(readiness.get("blockers"))
+        blockers.append("validation_contract_pending")
+        if validation_contract["requires_live_paper_parity"]:
+            blockers.append("validation_live_paper_parity_pending")
+        if validation_contract["synthetic_evidence_policy"]:
+            blockers.append("synthetic_evidence_not_promotion_proof")
+        next_candidate["promotion_readiness"] = {
+            **readiness,
+            "stage": _string(readiness.get("stage")) or "research_candidate",
+            "status": _string(readiness.get("status"))
+            or "blocked_pending_validation_contract",
+            "promotable": False,
+            "blockers": list(dict.fromkeys(blockers)),
+            "validation_contract": validation_contract,
+        }
     return next_candidate
 
 
