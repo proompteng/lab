@@ -139,6 +139,21 @@ def _load_torghut_strategy_catalog() -> list[dict[str, object]]:
     ]
 
 
+def _load_cronjob_container(
+    relative_path: str,
+) -> tuple[Mapping[str, object], Mapping[str, object]]:
+    manifest = _load_yaml_mapping(relative_path)
+    spec = cast(Mapping[str, object], manifest.get("spec", {}))
+    job_template = cast(Mapping[str, object], spec.get("jobTemplate", {}))
+    job_spec = cast(Mapping[str, object], job_template.get("spec", {}))
+    template = cast(Mapping[str, object], job_spec.get("template", {}))
+    pod_spec = cast(Mapping[str, object], template.get("spec", {}))
+    containers = cast(list[Mapping[str, object]], pod_spec.get("containers", []))
+    if not containers:
+        raise AssertionError(f"{relative_path} missing job container")
+    return spec, containers[0]
+
+
 def _csv_symbols(value: object) -> list[str]:
     return [
         symbol.strip().upper()
@@ -705,6 +720,49 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--batch-size 250", args)
         self.assertIn("--max-batches 1", args)
         self.assertIn("--apply", args)
+
+    def test_empirical_promotion_renewal_imports_paper_windows_from_sim_db(
+        self,
+    ) -> None:
+        spec, container = _load_cronjob_container(
+            "argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml"
+        )
+
+        self.assertEqual(spec.get("schedule"), "23 8,20 * * *")
+        env = {
+            item.get("name"): item
+            for item in cast(list[Mapping[str, object]], container.get("env", []))
+        }
+        db_dsn = cast(Mapping[str, object], env["DB_DSN"])
+        db_value_from = cast(Mapping[str, object], db_dsn.get("valueFrom", {}))
+        self.assertEqual(
+            db_value_from.get("secretKeyRef"),
+            {"name": "torghut-db-app", "key": "uri"},
+        )
+        self.assertEqual(
+            env["SIM_DB_DSN"].get("value"),
+            "postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@"
+            "$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default",
+        )
+        for name, key in {
+            "TORGHUT_SIM_DB_HOST": "host",
+            "TORGHUT_SIM_DB_PORT": "port",
+            "TORGHUT_SIM_DB_USER": "username",
+            "TORGHUT_SIM_DB_PASSWORD": "password",
+        }.items():
+            value_from = cast(Mapping[str, object], env[name].get("valueFrom", {}))
+            self.assertEqual(
+                value_from.get("secretKeyRef"),
+                {"name": "torghut-db-app", "key": key},
+            )
+
+        args = "\n".join(str(item) for item in container.get("args", []))
+        self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
+        self.assertIn("--runtime-window-hypothesis-id H-TSMOM-01", args)
+        self.assertIn("--runtime-window-account-label TORGHUT_SIM", args)
+        self.assertIn("--runtime-window-observed-stage paper", args)
+        self.assertIn("--runtime-window-source-dsn-env SIM_DB_DSN", args)
+        self.assertNotIn("--runtime-window-source-dsn-env DB_DSN", args)
 
     def test_migration_job_prepares_sim_database_before_sim_upgrade(self) -> None:
         manifest = _load_yaml_mapping(

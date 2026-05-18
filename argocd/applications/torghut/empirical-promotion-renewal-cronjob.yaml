@@ -40,6 +40,7 @@ spec:
                     --runtime-window-strategy-name intraday-tsmom-profit-v3 \
                     --runtime-window-account-label TORGHUT_SIM \
                     --runtime-window-observed-stage paper \
+                    --runtime-window-source-dsn-env SIM_DB_DSN \
                     --runtime-window-dataset-snapshot-ref portfolio-profit-autoresearch-500-v1 \
                     --runtime-window-source-manifest-ref config/trading/hypotheses/h-tsmom-01.json \
                     --json
@@ -49,6 +50,28 @@ spec:
                     secretKeyRef:
                       name: torghut-db-app
                       key: uri
+                - name: TORGHUT_SIM_DB_HOST
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: host
+                - name: TORGHUT_SIM_DB_PORT
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: port
+                - name: TORGHUT_SIM_DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: username
+                - name: TORGHUT_SIM_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: password
+                - name: SIM_DB_DSN
+                  value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
                 - name: TORGHUT_IMAGE_DIGEST
                   value: sha256:7b416d274f66c879b72f550c43d8d5a905e2a6d0c8bdbc76fd124507533b1dcd
                 - name: TORGHUT_EMPIRICAL_CEPH_BUCKET
