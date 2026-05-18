@@ -6,6 +6,7 @@
   "exports": {
     "./server/controller-startup-retry": "./src/server/controller-startup-retry.ts",
     "./server/env-compat": "./src/server/env-compat.ts",
+    "./server/health": "./src/server/health.ts",
     "./server/http": "./src/server/http.ts",
     "./server/http-runtime": "./src/server/http-runtime.ts",
     "./server/kube-gateway": "./src/server/kube-gateway.ts",
@@ -13,6 +14,7 @@
     "./server/kubernetes-bun-transport": "./src/server/kubernetes-bun-transport.ts",
     "./server/primitives": "./src/server/primitives.ts",
     "./server/primitives-policy": "./src/server/primitives-policy.ts",
+    "./server/ready": "./src/server/ready.ts",
     "./server/runtime-identity": "./src/server/runtime-identity.ts",
     "./server/agents-controller/agent-run-reconciler": "./src/server/agents-controller/agent-run-reconciler.ts",
     "./server/agents-controller/mutable-state": "./src/server/agents-controller/mutable-state.ts",
