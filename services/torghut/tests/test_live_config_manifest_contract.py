@@ -759,6 +759,22 @@ class TestLiveConfigManifestContract(TestCase):
         args = "\n".join(str(item) for item in container.get("args", []))
         self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
         self.assertIn("--runtime-window-hypothesis-id H-TSMOM-01", args)
+        self.assertIn(
+            "--runtime-window-target hypothesis_id=H-TSMOM-01,"
+            "candidate_id=spec-83161ae16d17828eabcc58cc,"
+            "strategy_family=intraday_tsmom_consistent,"
+            "strategy_name=intraday-tsmom-profit-v3,"
+            "source_manifest_ref=config/trading/hypotheses/h-tsmom-01.json",
+            args,
+        )
+        self.assertIn(
+            "--runtime-window-target hypothesis_id=H-PAIRS-01,"
+            "candidate_id=spec-d74b07b2aaab8d0cfa8a4c38,"
+            "strategy_family=microbar_cross_sectional_pairs,"
+            "strategy_name=microbar-cross-sectional-pairs-v1,"
+            "source_manifest_ref=config/trading/hypotheses/h-pairs-01.json",
+            args,
+        )
         self.assertIn("--runtime-window-account-label TORGHUT_SIM", args)
         self.assertIn("--runtime-window-observed-stage paper", args)
         self.assertIn("--runtime-window-source-dsn-env SIM_DB_DSN", args)

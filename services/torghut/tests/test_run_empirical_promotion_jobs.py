@@ -334,6 +334,13 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                 "intraday-tsmom-profit-v3",
                 "--runtime-window-dataset-snapshot-ref",
                 "portfolio-profit-autoresearch-500-v1",
+                "--runtime-window-target",
+                (
+                    "hypothesis_id=H-PAIRS-01,candidate_id=spec-d74b07b2aaab8d0cfa8a4c38,"
+                    "strategy_family=microbar_cross_sectional_pairs,"
+                    "strategy_name=microbar-cross-sectional-pairs-v1,"
+                    "source_manifest_ref=config/trading/hypotheses/h-pairs-01.json"
+                ),
                 "--json",
             ],
         ):
@@ -355,7 +362,74 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             args.runtime_window_dataset_snapshot_ref,
             "portfolio-profit-autoresearch-500-v1",
         )
+        self.assertEqual(len(args.runtime_window_target), 1)
+        self.assertIn("H-PAIRS-01", args.runtime_window_target[0])
         self.assertTrue(args.json)
+
+    def test_runtime_window_target_accepts_json_payload(self) -> None:
+        args = SimpleNamespace(
+            runtime_window_target=[
+                json.dumps(
+                    {
+                        "hypothesis-id": "H-PAIRS-01",
+                        "candidate_id": "spec-d74b07b2aaab8d0cfa8a4c38",
+                        "strategy_family": "microbar_cross_sectional_pairs",
+                        "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                        "optional_null": None,
+                    }
+                )
+            ],
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="portfolio-profit-autoresearch-500-v1",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        targets = renewal._runtime_window_targets(args)
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0].hypothesis_id, "H-PAIRS-01")
+        self.assertEqual(targets[0].strategy_family, "microbar_cross_sectional_pairs")
+        self.assertEqual(
+            targets[0].source_manifest_ref,
+            "config/trading/hypotheses/h-pairs-01.json",
+        )
+
+    def test_runtime_window_target_rejects_invalid_specs(self) -> None:
+        invalid_specs = [
+            "{}",
+            "hypothesis_id=H-PAIRS-01,strategy_name=pairs",
+            "hypothesis_id=H-PAIRS-01,strategy_family=pairs",
+            "hypothesis_id=H-PAIRS-01,bad-token",
+            "hypothesis_id=H-PAIRS-01,strategy_family=,strategy_name=pairs",
+            "[1, 2, 3]",
+        ]
+        args = SimpleNamespace(
+            runtime_window_target=[],
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="portfolio-profit-autoresearch-500-v1",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        for spec in invalid_specs:
+            with self.subTest(spec=spec):
+                args.runtime_window_target = [spec]
+                with self.assertRaises(RuntimeError):
+                    renewal._runtime_window_targets(args)
 
     def test_latest_completed_regular_session_uses_prior_session_before_close(
         self,
@@ -438,6 +512,91 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertIn("--dataset-snapshot-ref", command)
         self.assertIn("portfolio-profit-autoresearch-500-v1", command)
         self.assertNotIn("stale-empirical-dataset", command)
+
+    def test_runtime_window_import_runs_multiple_observed_paper_imports(self) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        tsmom_path = self.tmp_dir / "h-tsmom-01.json"
+        tsmom_path.write_text(
+            json.dumps(
+                {
+                    "candidate_id": "spec-83161ae16d17828eabcc58cc",
+                    "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                }
+            ),
+            encoding="utf-8",
+        )
+        pairs_path = self.tmp_dir / "h-pairs-01.json"
+        pairs_path.write_text(
+            json.dumps(
+                {
+                    "candidate_id": "spec-d74b07b2aaab8d0cfa8a4c38",
+                    "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                }
+            ),
+            encoding="utf-8",
+        )
+        completed = SimpleNamespace(
+            stdout=json.dumps({"inserted_windows": 1, "promotion_decision": "blocked"})
+        )
+        args = SimpleNamespace(
+            runtime_window_import=True,
+            runtime_window_target=[
+                (
+                    "hypothesis_id=H-TSMOM-01,candidate_id=spec-83161ae16d17828eabcc58cc,"
+                    f"strategy_family=intraday_tsmom_consistent,strategy_name=intraday-tsmom-profit-v3,"
+                    f"source_manifest_ref={tsmom_path}"
+                ),
+                (
+                    "hypothesis_id=H-PAIRS-01,candidate_id=spec-d74b07b2aaab8d0cfa8a4c38,"
+                    f"strategy_family=microbar_cross_sectional_pairs,"
+                    f"strategy_name=microbar-cross-sectional-pairs-v1,"
+                    f"source_manifest_ref={pairs_path}"
+                ),
+            ],
+            runtime_window_hypothesis_id="H-TSMOM-01",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="intraday_tsmom_consistent",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="intraday-tsmom-profit-v3",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_start="2026-05-18T13:30:00Z",
+            runtime_window_end="2026-05-18T20:00:00Z",
+            runtime_window_dataset_snapshot_ref="portfolio-profit-autoresearch-500-v1",
+            runtime_window_bucket_minutes=30,
+            runtime_window_sample_minutes=5,
+            runtime_window_source_manifest_ref=str(tsmom_path),
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        with patch.object(
+            renewal.subprocess, "run", return_value=completed
+        ) as run_mock:
+            payload = renewal._run_runtime_window_import(
+                args=args,
+                manifest={
+                    "candidate_id": "stale-empirical-candidate",
+                    "dataset_snapshot_ref": "stale-empirical-dataset",
+                },
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                now=datetime(2026, 5, 18, 21, 23, tzinfo=timezone.utc),
+            )
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload["target_count"], 2)
+        self.assertEqual(
+            [item["hypothesis_id"] for item in payload["imports"]],
+            ["H-TSMOM-01", "H-PAIRS-01"],
+        )
+        commands = [call.args[0] for call in run_mock.call_args_list]
+        self.assertEqual(len(commands), 2)
+        joined = "\n".join(" ".join(command) for command in commands)
+        self.assertIn("spec-83161ae16d17828eabcc58cc", joined)
+        self.assertIn("spec-d74b07b2aaab8d0cfa8a4c38", joined)
+        self.assertIn("microbar-cross-sectional-pairs-v1", joined)
 
     def test_main_writes_manifest_and_runs_empirical_promotion_job(self) -> None:
         created_at = datetime(2026, 5, 18, 8, 13, tzinfo=timezone.utc)
