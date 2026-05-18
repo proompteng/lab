@@ -1,6 +1,9 @@
 #!/usr/bin/env bun
 
 const LOCAL_IMAGE_PREFIXES = [
+  'services/agents/',
+  'packages/scripts/src/agents/deploy-service.ts',
+  'packages/scripts/src/agents/smoke-agents.ts',
   'services/jangar/',
   'packages/otel/',
   'packages/temporal-bun-sdk/',
@@ -17,17 +20,19 @@ const LOCAL_IMAGE_EXACT_PATHS = new Set([
   'package.json',
   'packages/scripts/src/jangar/build-control-plane-image.ts',
   'packages/scripts/src/jangar/build-image.ts',
+  'packages/scripts/src/agents/deploy-service.ts',
+  'packages/scripts/src/agents/smoke-agents.ts',
   'packages/scripts/src/shared/docker.ts',
   'tsconfig.base.json',
 ])
 
 const DOCUMENTATION_EXTENSIONS = ['.md', '.mdx']
 
-export type JangarImageMode = 'build-local-image' | 'reuse-published-image'
+export type AgentsImageMode = 'build-local-image' | 'reuse-published-image'
 
-export type JangarImageModeResult = {
-  mode: JangarImageMode
-  needsLocalJangarImage: boolean
+export type AgentsImageModeResult = {
+  mode: AgentsImageMode
+  needsLocalAgentsImage: boolean
   matchedPaths: string[]
 }
 
@@ -46,12 +51,12 @@ const needsLocalImageForPath = (path: string) => {
   return LOCAL_IMAGE_PREFIXES.some((prefix) => normalized.startsWith(prefix))
 }
 
-export const classifyJangarImageMode = (paths: string[]): JangarImageModeResult => {
+export const classifyAgentsImageMode = (paths: string[]): AgentsImageModeResult => {
   const normalizedPaths = paths.map((path) => normalizePath(path)).filter((path) => path.length > 0)
   const matchedPaths = normalizedPaths.filter((path) => needsLocalImageForPath(path))
   return {
     mode: matchedPaths.length > 0 ? 'build-local-image' : 'reuse-published-image',
-    needsLocalJangarImage: matchedPaths.length > 0,
+    needsLocalAgentsImage: matchedPaths.length > 0,
     matchedPaths,
   }
 }
@@ -67,10 +72,10 @@ const readStdin = async () => {
 const main = async () => {
   const args = process.argv.slice(2).filter((arg) => arg !== '--')
   const paths = args.length > 0 ? args : await readStdin()
-  const result = classifyJangarImageMode(paths)
+  const result = classifyAgentsImageMode(paths)
 
-  process.stdout.write(`NEEDS_LOCAL_JANGAR_IMAGE=${result.needsLocalJangarImage}\n`)
-  process.stdout.write(`JANGAR_IMAGE_MODE=${result.mode}\n`)
+  process.stdout.write(`NEEDS_LOCAL_AGENTS_IMAGE=${result.needsLocalAgentsImage}\n`)
+  process.stdout.write(`AGENTS_IMAGE_MODE=${result.mode}\n`)
   process.stdout.write(`matched_paths=${result.matchedPaths.join(',')}\n`)
 }
 

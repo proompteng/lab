@@ -89,6 +89,37 @@ describe('buildHelmArgs', () => {
     expect(args).toContain('controllers.image.tag=ci')
   })
 
+  it('allows separate immutable control-plane and controller image pins', () => {
+    const valuesFile = resolve(process.cwd(), 'scripts/agents/values-ci.yaml')
+    const args = buildHelmArgs({
+      releaseName: 'agents',
+      namespace: 'agents-ci',
+      valuesFile,
+      createNamespace: false,
+      controlPlaneImageRepository: 'registry.example/agents-control-plane',
+      controllersImageRepository: 'registry.example/agents-controller',
+      controlPlaneImageTag: 'control',
+      controllersImageTag: 'controller',
+      imageDigestSet: false,
+      imageDigest: '',
+      controlPlaneImageDigestSet: true,
+      controlPlaneImageDigest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
+      controllersImageDigestSet: true,
+      controllersImageDigest: 'sha256:2222222222222222222222222222222222222222222222222222222222222222',
+    })
+
+    expect(args).toContain('controlPlane.image.repository=registry.example/agents-control-plane')
+    expect(args).toContain('controllers.image.repository=registry.example/agents-controller')
+    expect(args).toContain('controlPlane.image.tag=control')
+    expect(args).toContain('controllers.image.tag=controller')
+    expect(args).toContain(
+      'controlPlane.image.digest=sha256:1111111111111111111111111111111111111111111111111111111111111111',
+    )
+    expect(args).toContain(
+      'controllers.image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222',
+    )
+  })
+
   it('omits image digest when the env key is unset', () => {
     const valuesFile = resolve(process.cwd(), 'charts/agents/values-local.yaml')
     const args = buildHelmArgs({
@@ -247,6 +278,11 @@ const readYamlObjects = (path: string) =>
 
 const objectAt = (value: unknown, key: string) =>
   value && typeof value === 'object' ? ((value as Record<string, unknown>)[key] as unknown) : undefined
+
+const stringAt = (value: unknown, key: string) => {
+  const item = objectAt(value, key)
+  return typeof item === 'string' ? item : ''
+}
 
 describe('scheduled AgentRun templates', () => {
   it('configures default runner resource requests for swarm jobs', () => {
@@ -429,7 +465,7 @@ describe('scheduled AgentRun templates', () => {
         manifest.kind === 'ImplementationSpec' &&
         objectAt(objectAt(manifest, 'metadata'), 'name') === 'swarm-deployer-v1',
     )
-    const text = String(objectAt(objectAt(deployerSpec, 'spec'), 'text') ?? '')
+    const text = stringAt(objectAt(deployerSpec, 'spec'), 'text')
 
     expect(text).toContain('Select at most one unblock-first/high-impact PR')
     expect(text).toContain('Ignore or close superseded release/promotion PRs')
@@ -446,7 +482,7 @@ describe('scheduled AgentRun templates', () => {
         manifest.kind === 'ImplementationSpec' &&
         objectAt(objectAt(manifest, 'metadata'), 'name') === 'swarm-autonomous-implementation-v1',
     )
-    const text = String(objectAt(objectAt(implementerSpec, 'spec'), 'text') ?? '')
+    const text = stringAt(objectAt(implementerSpec, 'spec'), 'text')
 
     expect(text).toContain('Read `${swarmBusinessEvidenceUrl}` when provided')
     expect(text).toContain('If the remote `${head}` branch is absent')
