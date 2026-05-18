@@ -456,13 +456,13 @@ class TestStrategyAutoresearch(TestCase):
         self.assertEqual(program.objective.max_drawdown_pct_equity, Decimal("0.10"))
         self.assertEqual(
             program.objective.extended_max_worst_day_loss_pct_equity,
-            Decimal("0.10"),
+            Decimal("0.08"),
         )
         self.assertEqual(
-            program.objective.extended_max_drawdown_pct_equity, Decimal("0.20")
+            program.objective.extended_max_drawdown_pct_equity, Decimal("0.15")
         )
         self.assertEqual(
-            program.objective.min_total_net_pnl_to_drawdown_ratio, Decimal("1.50")
+            program.objective.min_total_net_pnl_to_drawdown_ratio, Decimal("2.00")
         )
         self.assertFalse(program.objective.require_every_day_active)
         self.assertEqual(
@@ -913,7 +913,7 @@ class TestStrategyAutoresearch(TestCase):
                 "positive_day_ratio": "0.67",
                 "avg_filled_notional_per_day": "700000",
                 "best_day_share": "0.30",
-                "worst_day_loss": "3000",
+                "worst_day_loss": "2400",
                 "max_drawdown": "3000",
                 "regime_slice_pass_rate": "0.45",
                 "max_gross_exposure_pct_equity": "1.25",
@@ -923,7 +923,7 @@ class TestStrategyAutoresearch(TestCase):
                 "trading_day_count": 3,
                 "active_days": 3,
                 "daily_net": {
-                    "2026-04-01": "-3000",
+                    "2026-04-01": "-2400",
                     "2026-04-02": "17000",
                     "2026-04-03": "15000",
                 },
