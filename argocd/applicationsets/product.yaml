@@ -175,7 +175,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: galette
                 path: argocd/applications/galette
                 namespace: galette
