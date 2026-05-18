@@ -313,6 +313,76 @@ class TestWhitepaperCandidateCompiler(TestCase):
             )
         )
 
+    def test_recent_entropy_and_factor_claim_aliases_compile_to_runtime_families(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-recent-runtime-claims",
+            claims=[
+                {
+                    "claim_id": "order-flow-entropy-volatility-state",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Real-time order-flow entropy and trade-sign Markov state identify "
+                        "volatility windows without proving direction."
+                    ),
+                    "data_requirements": [
+                        "order_flow_entropy",
+                        "trade_sign_markov_state",
+                        "realized_volatility",
+                    ],
+                    "confidence": "0.75",
+                },
+                {
+                    "claim_id": "constrained-factor-dsl-search",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Constrained LLM hypothesis search emits point-in-time factor DSL "
+                        "programs with append-only traces and walk-forward replay."
+                    ),
+                    "data_requirements": [
+                        "factor_dsl",
+                        "append_only_experiment_trace",
+                        "walk_forward_replay",
+                    ],
+                    "confidence": "0.77",
+                },
+                {
+                    "claim_id": "recent-runtime-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Recent paper claims require deterministic splits, live-paper parity, "
+                        "transaction costs, and portfolio replay before promotion."
+                    ),
+                    "data_requirements": [
+                        "portfolio_replay",
+                        "transaction_cost_stress",
+                        "live_paper_parity",
+                    ],
+                    "confidence": "0.76",
+                },
+            ],
+            target_net_pnl_per_day=Decimal("300"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract["synthetic_evidence_policy"]
+                == "validation_only_not_promotion_proof"
+                for spec in compilation.executable_specs
+            )
+        )
+
     def test_missing_family_template_blocks_execution(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-run-2",
