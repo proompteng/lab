@@ -3459,6 +3459,17 @@ def _select_candidate_specs_for_replay(
             pool.remove(best)
         return picked
 
+    def interleave_replay_segments(
+        *segments: Sequence[CandidateSpec],
+    ) -> list[CandidateSpec]:
+        interleaved: list[CandidateSpec] = []
+        max_length = max((len(segment) for segment in segments), default=0)
+        for index in range(max_length):
+            for segment in segments:
+                if index < len(segment):
+                    interleaved.append(segment[index])
+        return interleaved
+
     exploitation = take_diverse(
         ordered_eligible,
         count=exploitation_count,
@@ -3561,8 +3572,10 @@ def _select_candidate_specs_for_replay(
     selected = [
         *exploitation,
         *exploration,
-        *synthetic_prior_probe_exploration,
-        *feedback_block_reaudit,
+        *interleave_replay_segments(
+            feedback_block_reaudit,
+            synthetic_prior_probe_exploration,
+        ),
         *backfill,
     ]
     selected_ids = {item.candidate_spec_id for item in selected}
