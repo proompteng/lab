@@ -1,4 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router'
+import {
+  buildAgentsRuntimeReadyResponse,
+  isAgentRunIngestionReady,
+  isControllerHealthReady,
+  isStandbyLeaderElectionReady,
+  uniqueStrings,
+} from '@proompteng/agents/server/ready'
 import { isAgentsRuntimeService, resolveRuntimeServiceName } from '@proompteng/agents/server/runtime-identity'
 
 import type {
@@ -43,48 +50,6 @@ import type {
   DatabaseStatus,
 } from '~/server/control-plane-status-types'
 import { getWatchReliabilitySummary } from '~/server/control-plane-watch-reliability'
-
-const isControllerHealthReady = (health: ReturnType<typeof getAgentsControllerHealth>) =>
-  !health.enabled || health.crdsReady !== false
-
-const isAgentRunIngestionReady = (health: ReturnType<typeof getAgentsControllerHealth>) => {
-  if (!health.enabled) return true
-  if (!health.started) return false
-  const namespaces = health.namespaces?.length ? health.namespaces : ['agents']
-  return namespaces.every((namespace) => assessAgentRunIngestion(namespace, health).status !== 'degraded')
-}
-
-const isStandbyLeaderElectionReady = (leaderElection: ReturnType<typeof getLeaderElectionStatus>) =>
-  leaderElection.lastAttemptAt !== null && leaderElection.lastError === null
-
-const buildReadinessReasonCodes = (input: {
-  controllersOk: boolean
-  leaderElectionReady: boolean
-  agentsControllerHealthy: boolean
-  memoryProviderReady?: boolean
-  servingPassportReady?: boolean
-  agentsController: ReturnType<typeof getAgentsControllerHealth>
-  orchestrationController: ReturnType<typeof getOrchestrationControllerHealth>
-  supportingController: ReturnType<typeof getSupportingControllerHealth>
-}) =>
-  uniqueStrings([
-    ...(input.controllersOk ? [] : ['controller_crd_check_failed']),
-    ...(input.leaderElectionReady ? [] : ['leader_election_not_ready']),
-    ...(input.agentsControllerHealthy ? [] : ['agentrun_ingestion_not_ready']),
-    ...(input.memoryProviderReady === false ? ['memory_provider_blocked'] : []),
-    ...(input.servingPassportReady === false ? ['serving_passport_not_ready'] : []),
-    ...(input.agentsController.crdsReady === false
-      ? input.agentsController.missingCrds.map((name) => `missing_agents_controller_crd:${name}`)
-      : []),
-    ...(input.orchestrationController.crdsReady === false
-      ? input.orchestrationController.missingCrds.map((name) => `missing_orchestration_controller_crd:${name}`)
-      : []),
-    ...(input.supportingController.crdsReady === false
-      ? input.supportingController.missingCrds.map((name) => `missing_supporting_controller_crd:${name}`)
-      : []),
-  ])
-
-const uniqueStrings = (values: string[]) => [...new Set(values.filter((value) => value.length > 0))]
 
 const buildReadyControllerReadiness = (
   name: string,
@@ -434,55 +399,6 @@ export const Route = createFileRoute('/ready')({
   },
 })
 
-const buildAgentsRuntimeReadyResponse = (input: {
-  leaderElection: ReturnType<typeof getLeaderElectionStatus>
-  agentsController: ReturnType<typeof getAgentsControllerHealth>
-  orchestrationController: ReturnType<typeof getOrchestrationControllerHealth>
-  supportingController: ReturnType<typeof getSupportingControllerHealth>
-}) => {
-  const namespaces = input.agentsController.namespaces?.length ? input.agentsController.namespaces : ['agents']
-  const controllersOk =
-    isControllerHealthReady(input.agentsController) &&
-    isControllerHealthReady(input.orchestrationController) &&
-    isControllerHealthReady(input.supportingController)
-  const activeControllerReplica = !input.leaderElection.required || input.leaderElection.isLeader
-  const leaderElectionReady = activeControllerReplica || isStandbyLeaderElectionReady(input.leaderElection)
-  const agentsControllerHealthy = activeControllerReplica
-    ? isAgentRunIngestionReady(input.agentsController)
-    : leaderElectionReady
-  const httpReady = controllersOk && leaderElectionReady
-  const status = httpReady && agentsControllerHealthy ? 'ok' : 'degraded'
-  const reasonCodes = buildReadinessReasonCodes({
-    controllersOk,
-    leaderElectionReady,
-    agentsControllerHealthy,
-    agentsController: input.agentsController,
-    orchestrationController: input.orchestrationController,
-    supportingController: input.supportingController,
-  })
-
-  const body = JSON.stringify({
-    schemaVersion: 'agents.proompteng.ai/ready/v1',
-    status,
-    service: 'agents' as const,
-    httpReady,
-    reason_codes: reasonCodes,
-    namespaces,
-    leaderElection: input.leaderElection,
-    agentsController: input.agentsController,
-    orchestrationController: input.orchestrationController,
-    supportingController: input.supportingController,
-  })
-
-  return new Response(body, {
-    status: httpReady ? 200 : 503,
-    headers: {
-      'content-type': 'application/json',
-      'content-length': Buffer.byteLength(body).toString(),
-    },
-  })
-}
-
 export const getReadyHandler = async () => {
   const now = new Date()
   const leaderElection = getLeaderElectionStatus()
@@ -495,6 +411,7 @@ export const getReadyHandler = async () => {
       agentsController,
       orchestrationController,
       supportingController,
+      assessAgentRunIngestion,
     })
   }
   const namespaces = agentsController.namespaces?.length ? agentsController.namespaces : ['agents']
@@ -557,7 +474,7 @@ export const getReadyHandler = async () => {
   const activeControllerReplica = !leaderRequired || leaderElection.isLeader
   const leaderElectionReady = activeControllerReplica || isStandbyLeaderElectionReady(leaderElection)
   const agentsControllerHealthy = activeControllerReplica
-    ? isAgentRunIngestionReady(agentsController)
+    ? isAgentRunIngestionReady(agentsController, assessAgentRunIngestion)
     : leaderElectionReady
   const servingPassportReady =
     servingPassport !== undefined && servingPassport.decision !== 'block' && servingPassport.decision !== 'hold'
