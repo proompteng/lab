@@ -111,7 +111,7 @@ spec:
           - name: allowStaleTape
           - name: persistResults
       container:
-        image: registry.ide-newton.ts.net/lab/torghut@sha256:93ffbdfc9e8b93b7f2b909b4fdb28d5da5dadffc75ae324b928cce0437a2a28f
+        image: registry.ide-newton.ts.net/lab/torghut@sha256:c63c78f1ca44924b3b76e062f315027a26e084c16058af7fa2128f1862d5832a
         imagePullPolicy: IfNotPresent
         command:
           - /bin/bash
