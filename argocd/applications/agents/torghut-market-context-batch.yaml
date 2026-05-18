@@ -187,7 +187,7 @@ spec:
     config:
       serviceAccountName: agents-sa
       priorityClassName: torghut-market-context-low
-  ttlSecondsAfterFinished: 0
+  ttlSecondsAfterFinished: 21600
   workload:
     resources:
       requests:
@@ -222,7 +222,7 @@ spec:
     config:
       serviceAccountName: agents-sa
       priorityClassName: torghut-market-context-low
-  ttlSecondsAfterFinished: 0
+  ttlSecondsAfterFinished: 21600
   workload:
     resources:
       requests:
@@ -257,7 +257,7 @@ spec:
     config:
       serviceAccountName: agents-sa
       priorityClassName: torghut-market-context-low
-  ttlSecondsAfterFinished: 0
+  ttlSecondsAfterFinished: 21600
   workload:
     resources:
       requests:
@@ -292,7 +292,7 @@ spec:
     config:
       serviceAccountName: agents-sa
       priorityClassName: torghut-market-context-low
-  ttlSecondsAfterFinished: 0
+  ttlSecondsAfterFinished: 21600
   workload:
     resources:
       requests:
