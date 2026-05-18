@@ -64,6 +64,163 @@ class WhitepaperResearchSource:
 
 RECENT_WHITEPAPER_SEEDS: tuple[WhitepaperResearchSource, ...] = (
     WhitepaperResearchSource(
+        run_id="seed-arxiv-2602-00776",
+        title="Explainable Patterns in Cryptocurrency Microstructure",
+        source_url="https://arxiv.org/abs/2602.00776",
+        published_at="2026-01-31",
+        claims=(
+            {
+                "claim_id": "portable-lob-feature-library",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "Stable order-book and trade-feature importance across heterogeneous assets "
+                    "supports portable LOB feature recipes after equity replay confirms spread and "
+                    "adverse-selection behavior."
+                ),
+                "asset_scope": "intraday_microstructure",
+                "horizon_scope": "intraday",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "portable_lob_feature_stability",
+                    "multi_level_order_book",
+                    "order_flow_imbalance",
+                    "spread_bps",
+                ],
+                "confidence": "0.73",
+            },
+            {
+                "claim_id": "maker-taker-adverse-selection-stress",
+                "claim_type": "risk_constraint",
+                "claim_text": (
+                    "Divergent taker and maker performance during flash-crash stress means route/TCA "
+                    "evidence must split maker-style and taker-style fill assumptions."
+                ),
+                "asset_scope": "intraday_microstructure",
+                "horizon_scope": "intraday_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "maker_taker_fill_assumption",
+                    "route_tca",
+                    "fill_model",
+                    "adverse_selection_stress",
+                ],
+                "confidence": "0.76",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "flash-crash-adverse-selection-validates-portable-lob",
+                "relation_type": "requires_validation",
+                "source_claim_id": "maker-taker-adverse-selection-stress",
+                "target_claim_id": "portable-lob-feature-library",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-arxiv-2601-23172",
+        title="A unified theory of order flow, market impact, and volatility",
+        source_url="https://arxiv.org/abs/2601.23172",
+        published_at="2026-02-02",
+        claims=(
+            {
+                "claim_id": "persistent-core-flow-impact-scaling",
+                "claim_type": "signal_mechanism",
+                "claim_text": (
+                    "Persistent core order flow can jointly explain rough volume, rough volatility, "
+                    "and power-law market impact, making persistent-flow continuation "
+                    "cost-and-volatility coupled."
+                ),
+                "asset_scope": "intraday_microstructure",
+                "horizon_scope": "intraday",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "core_flow_persistence",
+                    "signed_order_flow",
+                    "realized_volatility",
+                    "turnover",
+                ],
+                "confidence": "0.75",
+            },
+            {
+                "claim_id": "square-root-impact-cost-stress",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Order-flow persistence is consistent with square-root-like market-impact scaling, "
+                    "so high-turnover candidates need nonlinear impact stress before portfolio ranking."
+                ),
+                "asset_scope": "intraday_microstructure",
+                "horizon_scope": "portfolio_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "nonlinear_impact_curve",
+                    "market_impact_stress",
+                    "turnover",
+                    "post_cost_net_pnl",
+                ],
+                "confidence": "0.76",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "impact-stress-required-for-persistent-flow",
+                "relation_type": "requires_validation",
+                "source_claim_id": "square-root-impact-cost-stress",
+                "target_claim_id": "persistent-core-flow-impact-scaling",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-arxiv-2505-17388",
+        title="Stochastic Price Dynamics in Response to Order Flow Imbalance: Evidence from CSI 300 Index Futures",
+        source_url="https://arxiv.org/abs/2505.17388",
+        published_at="2025-05-23",
+        claims=(
+            {
+                "claim_id": "ofi-response-trigger",
+                "claim_type": "signal_mechanism",
+                "claim_text": (
+                    "Order-flow imbalance can act as a shock with memory and can be evaluated as a "
+                    "trigger through a response-ratio style cost-effectiveness measure."
+                ),
+                "asset_scope": "index_futures_intraday",
+                "horizon_scope": "intraday",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "order_flow_imbalance",
+                    "ofi_memory_state",
+                    "response_ratio",
+                    "transaction_cost_stress",
+                ],
+                "confidence": "0.76",
+            },
+            {
+                "claim_id": "ofi-regime-dependent-memory",
+                "claim_type": "market_regime",
+                "claim_text": (
+                    "Order-flow imbalance forecasting power is horizon-dependent and regime-dependent, "
+                    "so candidate sleeves need regime-sliced and forecast-horizon validation."
+                ),
+                "asset_scope": "index_futures_intraday",
+                "horizon_scope": "intraday",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "forecast_horizon",
+                    "order_flow_imbalance",
+                    "realized_volatility",
+                ],
+                "confidence": "0.74",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "ofi-regime-validates-response",
+                "relation_type": "requires_regime",
+                "source_claim_id": "ofi-regime-dependent-memory",
+                "target_claim_id": "ofi-response-trigger",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
         run_id="seed-arxiv-2602-23784",
         title="TradeFM: A Generative Foundation Model for Trade-flow and Market Microstructure",
         source_url="https://arxiv.org/abs/2602.23784",

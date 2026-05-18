@@ -449,6 +449,104 @@ class TestWhitepaperCandidateCompiler(TestCase):
             ]
         )
 
+    def test_recent_portable_lob_impact_and_ofi_response_claims_compile_to_runtime_families(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-recent-portable-impact-response",
+            claims=[
+                {
+                    "claim_id": "portable-lob-feature-library",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Stable SHAP feature importance across heterogeneous order books "
+                        "supports portable LOB feature recipes after equity replay confirms spread."
+                    ),
+                    "data_requirements": [
+                        "portable_lob_feature_stability",
+                        "multi_level_order_book",
+                        "order_flow_imbalance",
+                        "spread_bps",
+                    ],
+                    "confidence": "0.73",
+                },
+                {
+                    "claim_id": "persistent-core-flow-impact-scaling",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Persistent core signed order flow can explain rough volume, volatility, "
+                        "and power-law market impact for cost-coupled continuation."
+                    ),
+                    "data_requirements": [
+                        "core_flow_persistence",
+                        "signed_order_flow",
+                        "realized_volatility",
+                        "turnover",
+                    ],
+                    "confidence": "0.75",
+                },
+                {
+                    "claim_id": "ofi-response-trigger",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Order-flow imbalance shocks have memory and should be evaluated "
+                        "with response-ratio horizon selection."
+                    ),
+                    "data_requirements": [
+                        "order_flow_imbalance",
+                        "ofi_memory_state",
+                        "response_ratio",
+                        "forecast_horizon",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "recent-impact-and-route-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Recent microstructure sleeves need maker-taker route/TCA splits, "
+                        "nonlinear impact stress, walk-forward replay, and live-paper parity."
+                    ),
+                    "data_requirements": [
+                        "maker_taker_fill_assumption",
+                        "nonlinear_impact_curve",
+                        "route_tca",
+                        "walk_forward_replay",
+                        "live_paper_parity",
+                    ],
+                    "confidence": "0.76",
+                },
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        family_ids = {spec.family_template_id for spec in compilation.executable_specs}
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertTrue(
+            {
+                "microstructure_continuation_matched_filter_v1",
+                "microbar_cross_sectional_pairs_v1",
+                "intraday_tsmom_v2",
+            }.issubset(family_ids)
+        )
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract["synthetic_evidence_policy"]
+                == "validation_only_not_promotion_proof"
+                for spec in compilation.executable_specs
+            )
+        )
+
     def test_missing_family_template_blocks_execution(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-run-2",

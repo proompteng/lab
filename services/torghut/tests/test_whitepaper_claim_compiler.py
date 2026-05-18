@@ -23,6 +23,8 @@ class TestWhitepaperClaimCompiler(TestCase):
         self.assertGreaterEqual(len(cards), 10)
         self.assertTrue(
             {
+                "seed-arxiv-2602-00776",
+                "seed-arxiv-2601-23172",
                 "seed-ssrn-6440898",
                 "seed-ssrn-6754305",
                 "seed-ssrn-6703098",
@@ -42,6 +44,7 @@ class TestWhitepaperClaimCompiler(TestCase):
                 "seed-arxiv-2603-29086",
                 "seed-arxiv-2603-16365",
                 "seed-arxiv-2602-07085",
+                "seed-arxiv-2505-17388",
                 "seed-arxiv-2512-15720",
             }.issubset({source.run_id for source in RECENT_WHITEPAPER_SEEDS})
         )
