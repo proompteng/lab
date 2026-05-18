@@ -584,6 +584,36 @@ class SimpleTradingPipeline(TradingPipeline):
                 return price
         return None
 
+    @staticmethod
+    def _paper_route_probe_short_increasing_sell(decision: StrategyDecision) -> bool:
+        if decision.action != "sell":
+            return False
+        for key in ("simple_lane", "sizing"):
+            section = decision.params.get(key)
+            if not isinstance(section, Mapping):
+                continue
+            quantity_resolution = cast(Mapping[str, Any], section).get(
+                "quantity_resolution"
+            )
+            if not isinstance(quantity_resolution, Mapping):
+                continue
+            resolution = cast(Mapping[str, Any], quantity_resolution)
+            short_increasing = resolution.get("short_increasing")
+            if isinstance(short_increasing, bool):
+                return short_increasing
+            if isinstance(short_increasing, str):
+                normalized = short_increasing.strip().lower()
+                if normalized in {"true", "1", "yes", "on"}:
+                    return True
+                if normalized in {"false", "0", "no", "off"}:
+                    return False
+            reason = str(resolution.get("reason") or "").strip().lower()
+            if reason.startswith("sell_reducing_"):
+                return False
+            if "short_increasing" in reason:
+                return True
+        return True
+
     def _paper_route_probe_context(
         self,
         *,
@@ -596,7 +626,11 @@ class SimpleTradingPipeline(TradingPipeline):
             return None
         if not settings.trading_simple_submit_enabled:
             return None
-        if decision.action == "sell" and not settings.trading_allow_shorts:
+        if (
+            decision.action == "sell"
+            and not settings.trading_allow_shorts
+            and self._paper_route_probe_short_increasing_sell(decision)
+        ):
             return None
         if decision.action not in {"buy", "sell"}:
             return None

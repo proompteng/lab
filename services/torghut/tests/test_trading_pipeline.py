@@ -2472,6 +2472,31 @@ class TestTradingPipeline(TestCase):
                 decision=sell_decision,
             )
         )
+        reducing_sell_decision = decision.model_copy(
+            update={
+                "action": "sell",
+                "params": {
+                    "price": "100",
+                    "simple_lane": {
+                        "quantity_resolution": {
+                            "action": "sell",
+                            "reason": "sell_reducing_long_fractional_allowed",
+                            "short_increasing": False,
+                        }
+                    },
+                },
+            }
+        )
+        reducing_sell_probe_context = pipeline._paper_route_probe_context(
+            proof_floor=proof_floor,
+            decision=reducing_sell_decision,
+        )
+        self.assertIsNotNone(reducing_sell_probe_context)
+        assert reducing_sell_probe_context is not None
+        self.assertEqual(reducing_sell_probe_context.get("side"), "sell")
+        self.assertEqual(
+            reducing_sell_probe_context.get("mode"), "paper_route_acquisition"
+        )
         config.settings.trading_allow_shorts = True
         sell_probe_context = pipeline._paper_route_probe_context(
             proof_floor=proof_floor,
@@ -2520,6 +2545,102 @@ class TestTradingPipeline(TestCase):
             pipeline._paper_route_probe_context(
                 proof_floor=wrong_symbol_floor,
                 decision=decision,
+            )
+        )
+
+    def test_paper_route_probe_short_increasing_sell_classification(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="NVDA",
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="route-probe-short-classification",
+            params={"price": "100"},
+        )
+
+        self.assertFalse(
+            SimpleTradingPipeline._paper_route_probe_short_increasing_sell(decision)
+        )
+        self.assertTrue(
+            SimpleTradingPipeline._paper_route_probe_short_increasing_sell(
+                decision.model_copy(
+                    update={
+                        "action": "sell",
+                        "params": {"simple_lane": "missing-resolution"},
+                    }
+                )
+            )
+        )
+        self.assertTrue(
+            SimpleTradingPipeline._paper_route_probe_short_increasing_sell(
+                decision.model_copy(
+                    update={
+                        "action": "sell",
+                        "params": {"simple_lane": {"quantity_resolution": "missing"}},
+                    }
+                )
+            )
+        )
+        self.assertTrue(
+            SimpleTradingPipeline._paper_route_probe_short_increasing_sell(
+                decision.model_copy(
+                    update={
+                        "action": "sell",
+                        "params": {
+                            "simple_lane": {
+                                "quantity_resolution": {"short_increasing": "yes"}
+                            }
+                        },
+                    }
+                )
+            )
+        )
+        self.assertFalse(
+            SimpleTradingPipeline._paper_route_probe_short_increasing_sell(
+                decision.model_copy(
+                    update={
+                        "action": "sell",
+                        "params": {
+                            "simple_lane": {
+                                "quantity_resolution": {"short_increasing": "off"}
+                            }
+                        },
+                    }
+                )
+            )
+        )
+        self.assertFalse(
+            SimpleTradingPipeline._paper_route_probe_short_increasing_sell(
+                decision.model_copy(
+                    update={
+                        "action": "sell",
+                        "params": {
+                            "sizing": {
+                                "quantity_resolution": {
+                                    "reason": "sell_reducing_long_fractional_allowed"
+                                }
+                            }
+                        },
+                    }
+                )
+            )
+        )
+        self.assertTrue(
+            SimpleTradingPipeline._paper_route_probe_short_increasing_sell(
+                decision.model_copy(
+                    update={
+                        "action": "sell",
+                        "params": {
+                            "sizing": {
+                                "quantity_resolution": {
+                                    "reason": "sell_short_increasing_fractional_allowed"
+                                }
+                            }
+                        },
+                    }
+                )
             )
         )
 

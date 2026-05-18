@@ -4,6 +4,8 @@
 
 Start here:
 
+- `docs/torghut/rollouts/2026-05-18-post-promotion-strategy-selection.md`
+  (current best post-promotion strategy selection and promotion risk parameters)
 - `docs/agents/designs/207-jangar-consumer-evidence-transport-split-and-source-serving-contract-canary-2026-05-15.md`
   (current Jangar consumer-evidence transport split and source-serving contract canary contract)
 - `docs/torghut/design-system/v6/213-torghut-consumer-evidence-contract-canary-and-alpha-reentry-transport-2026-05-15.md`
