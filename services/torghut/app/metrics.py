@@ -73,6 +73,13 @@ _SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
         "reason",
         "int",
     ),
+    "rejected_signal_reason_total": (
+        "torghut_trading_rejected_signal_reason_total",
+        "Count of rejected signal events awaiting counterfactual outcome labels by reason.",
+        "counter",
+        "reason",
+        "int",
+    ),
     "submission_block_total": (
         "torghut_trading_submission_block_total",
         "Count of blocked submissions by reason.",

@@ -2882,6 +2882,9 @@ def trading_status() -> dict[str, object]:
         route_warrant_exchange=route_warrant_exchange,
         live_submission_gate=live_submission_gate,
     )
+    rejected_signal_outcome_learning = _build_rejected_signal_outcome_learning_payload(
+        state
+    )
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -2925,6 +2928,7 @@ def trading_status() -> dict[str, object]:
         "freshness_carry_ledger": freshness_carry_ledger,
         "repair_receipt_frontier": repair_receipt_frontier,
         "repair_outcome_dividend_ledger": repair_outcome_dividend_ledger,
+        "rejected_signal_outcome_learning": rejected_signal_outcome_learning,
         "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
         "route_reacquisition_board": route_reacquisition_board,
         "quant_evidence": quant_evidence,
@@ -2991,6 +2995,13 @@ def trading_status() -> dict[str, object]:
         "rejections": {
             "policy_veto_total": state.metrics.llm_policy_veto_total,
             "runtime_fallback_total": state.metrics.llm_runtime_fallback_total,
+            "rejected_signal_events_total": state.metrics.rejected_signal_events_total,
+            "rejected_signal_outcome_label_pending_total": (
+                state.metrics.rejected_signal_outcome_label_pending_total
+            ),
+            "rejected_signal_reason_total": dict(
+                state.metrics.rejected_signal_reason_total
+            ),
             "strategy_intent_suppression_total": dict(
                 state.metrics.strategy_intent_suppression_total
             ),
@@ -6374,6 +6385,51 @@ def _simple_lane_reject_reason_totals(state: object) -> dict[str, int]:
             continue
         payload[normalized] = int(value)
     return payload
+
+
+def _build_rejected_signal_outcome_learning_payload(
+    state: object,
+) -> dict[str, object]:
+    metrics = getattr(state, "metrics", None)
+    total = max(0, int(getattr(metrics, "rejected_signal_events_total", 0) or 0))
+    pending = max(
+        0,
+        int(
+            getattr(metrics, "rejected_signal_outcome_label_pending_total", 0) or 0
+        ),
+    )
+    raw_reasons = getattr(metrics, "rejected_signal_reason_total", {})
+    reasons: dict[str, int] = {}
+    if isinstance(raw_reasons, Mapping):
+        for key, value in cast(Mapping[object, Any], raw_reasons).items():
+            reasons[str(key)] = max(0, int(value))
+    latest_event = getattr(state, "last_rejected_signal_outcome_event", None)
+    latest_payload: dict[str, object] | None = None
+    if isinstance(latest_event, Mapping):
+        latest_payload = {
+            str(key): value
+            for key, value in cast(Mapping[object, object], latest_event).items()
+        }
+    blockers = ["counterfactual_outcome_labels_pending"] if pending > 0 else []
+    return {
+        "schema_version": "torghut.rejected-signal-outcome-learning.v1",
+        "source": "runtime_quote_quality_gate",
+        "paper_source": "paper-arxiv-2605.12151",
+        "paper_claim_id": "rejection-event-outcome-labels",
+        "state": "pending_outcome_labels" if pending > 0 else "empty",
+        "events_total": total,
+        "outcome_label_pending_total": pending,
+        "reason_total": reasons,
+        "latest_event": latest_payload,
+        "required_outcome_fields": [
+            "counterfactual_return",
+            "route_tca",
+            "post_cost_net_pnl",
+            "executable_quote",
+        ],
+        "promotion_impact": "repair_only_until_labeled",
+        "blocking_reasons": blockers,
+    }
 
 
 def _load_route_provenance_summary(session: Session) -> dict[str, object]:

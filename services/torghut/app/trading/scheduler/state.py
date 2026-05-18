@@ -391,6 +391,11 @@ class TradingMetrics:
     simulation_preflight_failure_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
+    rejected_signal_events_total: int = 0
+    rejected_signal_outcome_label_pending_total: int = 0
+    rejected_signal_reason_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
 
     def record_execution_request(self, adapter: str | None) -> None:
         adapter_name = coerce_route_text(adapter)
@@ -694,6 +699,14 @@ class TradingMetrics:
         normalized = _normalize_reason_metric(reason)
         self.simulation_preflight_failure_total[normalized] = (
             self.simulation_preflight_failure_total.get(normalized, 0) + 1
+        )
+
+    def record_rejected_signal_event(self, reason: str | None) -> None:
+        normalized = _normalize_reason_metric(reason)
+        self.rejected_signal_events_total += 1
+        self.rejected_signal_outcome_label_pending_total += 1
+        self.rejected_signal_reason_total[normalized] = (
+            self.rejected_signal_reason_total.get(normalized, 0) + 1
         )
 
     def record_llm_policy_resolution(self, classification: str | None) -> None:
@@ -1058,6 +1071,7 @@ class TradingState:
     last_runtime_regime_gate_action: str | None = None
     last_runtime_regime_gate_source: str | None = None
     last_runtime_regime_gate_reason: str | None = None
+    last_rejected_signal_outcome_event: Optional[dict[str, Any]] = None
     metrics: TradingMetrics = field(default_factory=TradingMetrics)
 
 

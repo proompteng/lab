@@ -1010,6 +1010,72 @@ class TestTradingPipeline(TestCase):
 
         self.assertIs(enriched, signal)
 
+    def test_quote_quality_rejection_records_outcome_learning_event(self) -> None:
+        alpaca_client = FakeAlpacaClient()
+        state = TradingState()
+        pipeline = TradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=state,
+            account_label="paper",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(Decimal("101.50")),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={
+                "price": Decimal("101.50"),
+                "macd": {"macd": Decimal("1.1"), "signal": Decimal("0.4")},
+            },
+            seq=42,
+            timeframe="1Min",
+        )
+
+        decisions = pipeline._evaluate_signal_decisions(
+            signal,
+            [],
+            equity=Decimal("100000"),
+            positions=[],
+        )
+
+        self.assertEqual(decisions, [])
+        self.assertEqual(state.metrics.rejected_signal_events_total, 1)
+        self.assertEqual(state.metrics.rejected_signal_outcome_label_pending_total, 1)
+        self.assertEqual(
+            state.metrics.rejected_signal_reason_total,
+            {"missing_executable_quote": 1},
+        )
+        assert state.last_rejected_signal_outcome_event is not None
+        self.assertEqual(
+            state.last_rejected_signal_outcome_event["schema_version"],
+            "torghut.rejected-signal-outcome-event.v1",
+        )
+        self.assertEqual(
+            state.last_rejected_signal_outcome_event["paper_claim_id"],
+            "rejection-event-outcome-labels",
+        )
+        self.assertEqual(
+            state.last_rejected_signal_outcome_event["reject_reason"],
+            "missing_executable_quote",
+        )
+        self.assertEqual(
+            state.last_rejected_signal_outcome_event["required_outcome_fields"],
+            [
+                "counterfactual_return",
+                "route_tca",
+                "post_cost_net_pnl",
+                "executable_quote",
+            ],
+        )
+
     def _seed_promotion_certificate_evidence(
         self,
         *,

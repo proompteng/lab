@@ -68,7 +68,11 @@ from ..portfolio import (
     sizer_from_settings,
 )
 from ..prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
-from ..quote_quality import QuoteQualityPolicy, SignalQuoteQualityTracker
+from ..quote_quality import (
+    QuoteQualityPolicy,
+    QuoteQualityStatus,
+    SignalQuoteQualityTracker,
+)
 from ..quantity_rules import (
     min_qty_for_symbol,
     quantize_qty_for_symbol,
@@ -760,6 +764,10 @@ class TradingPipeline:
             quote_status = self._signal_quote_quality.assess(signal)
             if not quote_status.valid:
                 self.decision_engine.observe_signal(signal)
+                self._record_rejected_signal_outcome_event(
+                    signal=signal,
+                    quote_status=quote_status,
+                )
                 logger.info(
                     "Skipping signal due to quote quality account=%s symbol=%s ts=%s reason=%s spread_bps=%s jump_bps=%s",
                     self.account_label,
@@ -796,6 +804,45 @@ class TradingPipeline:
                 signal.timeframe,
             )
             return []
+
+    def _record_rejected_signal_outcome_event(
+        self,
+        *,
+        signal: SignalEnvelope,
+        quote_status: QuoteQualityStatus,
+    ) -> None:
+        reason = quote_status.reason or "unknown"
+        self.state.metrics.record_rejected_signal_event(reason)
+        self.state.last_rejected_signal_outcome_event = {
+            "schema_version": "torghut.rejected-signal-outcome-event.v1",
+            "source": "quote_quality_gate",
+            "paper_source": "paper-arxiv-2605.12151",
+            "paper_claim_id": "rejection-event-outcome-labels",
+            "account_label": self.account_label,
+            "symbol": signal.symbol.strip().upper(),
+            "event_ts": signal.event_ts.isoformat(),
+            "timeframe": signal.timeframe,
+            "seq": signal.seq,
+            "reject_reason": reason,
+            "spread_bps": (
+                str(quote_status.spread_bps)
+                if quote_status.spread_bps is not None
+                else None
+            ),
+            "jump_bps": (
+                str(quote_status.jump_bps)
+                if quote_status.jump_bps is not None
+                else None
+            ),
+            "outcome_label_status": "pending",
+            "counterfactual_required": True,
+            "required_outcome_fields": [
+                "counterfactual_return",
+                "route_tca",
+                "post_cost_net_pnl",
+                "executable_quote",
+            ],
+        }
 
     def _ensure_signal_executable_price(self, signal: SignalEnvelope) -> SignalEnvelope:
         price = extract_executable_price(signal.payload)

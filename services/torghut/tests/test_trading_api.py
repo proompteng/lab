@@ -1874,6 +1874,19 @@ class TestTradingApi(TestCase):
             scheduler.state.metrics.strategy_intent_suppression_total = {
                 "strategy-1|exit_only_sell_without_long_position": 4,
             }
+            scheduler.state.metrics.rejected_signal_events_total = 3
+            scheduler.state.metrics.rejected_signal_outcome_label_pending_total = 3
+            scheduler.state.metrics.rejected_signal_reason_total = {
+                "missing_executable_quote": 3,
+            }
+            scheduler.state.last_rejected_signal_outcome_event = {
+                "schema_version": "torghut.rejected-signal-outcome-event.v1",
+                "source": "quote_quality_gate",
+                "paper_claim_id": "rejection-event-outcome-labels",
+                "symbol": "AAPL",
+                "reject_reason": "missing_executable_quote",
+                "outcome_label_status": "pending",
+            }
             app.state.trading_scheduler = scheduler
 
             response = self.client.get("/trading/status")
@@ -1902,6 +1915,26 @@ class TestTradingApi(TestCase):
             self.assertEqual(
                 payload["rejections"]["strategy_intent_suppression_total"],
                 {"strategy-1|exit_only_sell_without_long_position": 4},
+            )
+            self.assertEqual(payload["rejections"]["rejected_signal_events_total"], 3)
+            self.assertEqual(
+                payload["rejections"]["rejected_signal_reason_total"],
+                {"missing_executable_quote": 3},
+            )
+            outcome_learning = payload["rejected_signal_outcome_learning"]
+            self.assertEqual(
+                outcome_learning["schema_version"],
+                "torghut.rejected-signal-outcome-learning.v1",
+            )
+            self.assertEqual(outcome_learning["state"], "pending_outcome_labels")
+            self.assertEqual(outcome_learning["events_total"], 3)
+            self.assertEqual(
+                outcome_learning["blocking_reasons"],
+                ["counterfactual_outcome_labels_pending"],
+            )
+            self.assertEqual(
+                outcome_learning["latest_event"]["paper_claim_id"],
+                "rejection-event-outcome-labels",
             )
             self.assertTrue(payload["simple_lane_status"]["enabled"])
             self.assertTrue(
