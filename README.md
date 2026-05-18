@@ -173,3 +173,4 @@ Service deploy/build/reseal workflows use the typed scripts under `packages/scri
 - Use `mise` when a workflow requires a pinned tool major such as `helm@3`.
 - Generated artifacts and lockfiles are maintained through their owning generators and package managers.
 - For infra changes, default to GitOps under `argocd/` and let Argo CD apply the desired state.
+- Docs-only pull requests can be used to validate repository PR automation without changing runtime behavior.
