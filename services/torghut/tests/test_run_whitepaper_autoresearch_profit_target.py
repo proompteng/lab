@@ -306,20 +306,31 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             'if [ -n "{{inputs.parameters.expectedLastTradingDay}}" ]; then',
             template,
         )
-        self.assertIn("name: maxCandidates\n        value: '640'", template)
-        self.assertIn("name: topK\n        value: '256'", template)
-        self.assertIn("name: explorationSlots\n        value: '256'", template)
-        self.assertIn("name: feedbackBlockReauditSlots\n        value: '128'", template)
+        self.assertIn("parallelism: 1", template)
+        self.assertIn("name: torghut-whitepaper-autoresearch-profit-target", template)
+        self.assertIn("podGC:\n    strategy: OnPodCompletion", template)
+        self.assertIn("secondsAfterCompletion: 172800", template)
+        self.assertIn("name: maxCandidates\n        value: '128'", template)
+        self.assertIn("name: topK\n        value: '64'", template)
+        self.assertIn("name: explorationSlots\n        value: '48'", template)
+        self.assertIn("name: feedbackBlockReauditSlots\n        value: '32'", template)
         self.assertIn(
-            "name: maxTotalFrontierCandidates\n        value: '640'", template
+            "name: maxFrontierCandidatesPerSpec\n        value: '2'", template
         )
         self.assertIn(
-            "name: realReplayTimeoutSeconds\n        value: '14400'", template
+            "name: maxTotalFrontierCandidates\n        value: '128'", template
         )
         self.assertIn(
-            "name: realReplayShardTimeoutSeconds\n        value: '1800'", template
+            "name: realReplayTimeoutSeconds\n        value: '7200'", template
         )
-        self.assertIn("name: realReplayShardWorkers\n        value: '64'", template)
+        self.assertIn(
+            "name: realReplayShardTimeoutSeconds\n        value: '900'", template
+        )
+        self.assertIn("name: realReplayShardWorkers\n        value: '4'", template)
+        self.assertIn("cpu: 4", template)
+        self.assertIn("memory: 12Gi", template)
+        self.assertIn("cpu: 8", template)
+        self.assertIn("memory: 32Gi", template)
         self.assertIn("--feedback-block-reaudit-slots", template)
         self.assertIn(
             "--program config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml",
@@ -329,7 +340,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertNotIn(
             '--min-daily-net-pnl "{{inputs.parameters.targetNetPnlPerDay}}"', template
         )
-        self.assertIn("activeDeadlineSeconds: 21600", template)
+        self.assertIn("activeDeadlineSeconds: 9000", template)
         self.assertIn("name: allowStaleTape\n        value: 'false'", template)
         self.assertNotIn("value: '2026-04-24'", template)
         self.assertNotIn("value: '2026-05-01'", template)

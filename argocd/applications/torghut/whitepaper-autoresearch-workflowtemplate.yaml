@@ -9,6 +9,16 @@ metadata:
     app.kubernetes.io/part-of: lab
 spec:
   serviceAccountName: torghut-runtime
+  parallelism: 1
+  synchronization:
+    mutexes:
+      - name: torghut-whitepaper-autoresearch-profit-target
+  ttlStrategy:
+    secondsAfterSuccess: 86400
+    secondsAfterFailure: 172800
+    secondsAfterCompletion: 172800
+  podGC:
+    strategy: OnPodCompletion
   entrypoint: run
   arguments:
     parameters:
@@ -37,29 +47,29 @@ spec:
       - name: targetNetPnlPerDay
         value: '500'
       - name: maxCandidates
-        value: '640'
-      - name: topK
-        value: '256'
-      - name: explorationSlots
-        value: '256'
-      - name: feedbackBlockReauditSlots
         value: '128'
+      - name: topK
+        value: '64'
+      - name: explorationSlots
+        value: '48'
+      - name: feedbackBlockReauditSlots
+        value: '32'
       - name: portfolioSizeMin
         value: '3'
       - name: portfolioSizeMax
         value: '12'
       - name: maxFrontierCandidatesPerSpec
-        value: '4'
+        value: '2'
       - name: maxTotalFrontierCandidates
-        value: '640'
+        value: '128'
       - name: realReplayTimeoutSeconds
-        value: '14400'
+        value: '7200'
       - name: realReplayShardSize
         value: '1'
       - name: realReplayShardTimeoutSeconds
-        value: '1800'
+        value: '900'
       - name: realReplayShardWorkers
-        value: '64'
+        value: '4'
       - name: prefetchFullWindowRows
         value: 'true'
       - name: allowStaleTape
@@ -70,7 +80,7 @@ spec:
     - name: run
       nodeSelector:
         kubernetes.io/arch: arm64
-      activeDeadlineSeconds: 21600
+      activeDeadlineSeconds: 9000
       inputs:
         parameters:
           - name: runId
@@ -138,11 +148,11 @@ spec:
             readOnly: true
         resources:
           requests:
-            cpu: 16
-            memory: 32Gi
+            cpu: 4
+            memory: 12Gi
           limits:
-            cpu: 64
-            memory: 160Gi
+            cpu: 8
+            memory: 32Gi
         args:
           - |
             set -euo pipefail
