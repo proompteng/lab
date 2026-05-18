@@ -5,7 +5,12 @@ import { tmpdir } from 'node:os'
 import type { CodexAppServerOptions, CodexAppServerTurnOptions, StreamDelta, Turn } from '@proompteng/codex'
 import { describe, expect, it } from 'vitest'
 
-import { runCodexAppServerAdapter, type CodexAppServerRunnerClient } from './codex-app-server'
+import {
+  DEFAULT_CODEX_BINARY_PATH,
+  resolveCodexBinaryPath,
+  runCodexAppServerAdapter,
+  type CodexAppServerRunnerClient,
+} from './codex-app-server'
 
 const makeStream = async function* (): AsyncGenerator<StreamDelta, Turn | null, void> {
   yield { type: 'message', delta: 'done' }
@@ -13,6 +18,15 @@ const makeStream = async function* (): AsyncGenerator<StreamDelta, Turn | null, 
 }
 
 describe('codex app-server runner adapter', () => {
+  it('uses an absolute Codex binary path by default for Bun child-process spawning', () => {
+    expect(resolveCodexBinaryPath({}, {})).toBe(DEFAULT_CODEX_BINARY_PATH)
+    expect(resolveCodexBinaryPath({}, { AGENTS_CODEX_BINARY: '/custom/agents-codex' })).toBe('/custom/agents-codex')
+    expect(resolveCodexBinaryPath({}, { CODEX_BINARY: '/custom/codex' })).toBe('/custom/codex')
+    expect(resolveCodexBinaryPath({ binaryPath: '/adapter/codex' }, { AGENTS_CODEX_BINARY: '/env/codex' })).toBe(
+      '/adapter/codex',
+    )
+  })
+
   it('maps run.json and runner adapter config into a Codex app-server turn', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
     const runPath = join(dir, 'run.json')
@@ -71,6 +85,7 @@ describe('codex app-server runner adapter', () => {
 
     expect(exitCode).toBe(0)
     expect(createdClients[0]).toMatchObject({
+      binaryPath: DEFAULT_CODEX_BINARY_PATH,
       defaultModel: 'gpt-5.5',
       defaultEffort: 'high',
       sandbox: 'danger-full-access',

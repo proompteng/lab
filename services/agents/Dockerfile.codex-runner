@@ -14,6 +14,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     WORKSPACE=/workspace \
     WORKTREE=/workspace/lab \
     GIT_TERMINAL_PROMPT=0 \
+    AGENTS_CODEX_BINARY=/usr/local/bin/codex \
+    CODEX_BINARY=/usr/local/bin/codex \
     BUN_INSTALL=/usr/local \
     BUN_INSTALL_CACHE_DIR=/opt/bun/install/cache \
     BUN_INSTALL_CACHE_SEED_DIR=/opt/bun/install/cache
@@ -40,14 +42,16 @@ RUN set -eux; \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g "@openai/codex@${CODEX_VERSION}" node-gyp \
+    && ln -sf /usr/local/bin/codex /usr/bin/codex \
     && npm cache clean --force \
     && test -x /usr/local/bin/codex \
+    && test -x /usr/bin/codex \
     && test -x /usr/local/bin/node-gyp
 
 RUN mkdir -p "$WORKSPACE" /root/.codex "$BUN_INSTALL_CACHE_DIR"
 
 RUN --mount=type=secret,id=codexauth,target=/tmp/codex_auth.json \
-    cp /tmp/codex_auth.json /root/.codex/auth.json \
+    if [ -s /tmp/codex_auth.json ]; then cp /tmp/codex_auth.json /root/.codex/auth.json; else printf '{}\n' > /root/.codex/auth.json; fi \
     && printf '%s\n' "${CODEX_AUTH_CHECKSUM}" > /root/.codex/auth.checksum
 
 COPY services/agents/scripts/codex-config-container.toml /root/.codex/config.toml
