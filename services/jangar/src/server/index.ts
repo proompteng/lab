@@ -1,4 +1,5 @@
 import { installAgentsEnvCompatibility } from '@proompteng/agents/server/env-compat'
+import { resolveRuntimeServiceName } from '@proompteng/agents/server/runtime-identity'
 
 import { bootRuntimeProfile } from './runtime-boot'
 import { resolveJangarRuntimeProfile } from './runtime-profile'
@@ -32,4 +33,6 @@ const server = Bun.serve({
   },
 })
 
-console.log(`[jangar] ${runtimeProfile.name} listening on http://${server.hostname}:${server.port}`)
+console.log(
+  `[${resolveRuntimeServiceName()}] ${runtimeProfile.name} listening on http://${server.hostname}:${server.port}`,
+)
