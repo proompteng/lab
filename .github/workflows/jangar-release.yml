@@ -182,8 +182,7 @@ jobs:
             --manifest-image-digest "${JANGAR_MANIFEST_IMAGE_DIGEST}" \
             --serving-build-commit "${JANGAR_SERVING_BUILD_COMMIT}" \
             --serving-image-digest "${JANGAR_SERVING_IMAGE_DIGEST}" \
-            --rollout-timestamp "${TIMESTAMP}" \
-            --agents-values-path "argocd/applications/agents/values.yaml"
+            --rollout-timestamp "${TIMESTAMP}"
 
       - name: Check for manifest changes
         if: steps.meta.outputs.promote == 'true'
@@ -193,8 +192,7 @@ jobs:
           set -euo pipefail
           if git diff --quiet -- \
             argocd/applications/jangar/kustomization.yaml \
-            argocd/applications/jangar/deployment.yaml \
-            argocd/applications/agents/values.yaml; then
+            argocd/applications/jangar/deployment.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -213,10 +211,9 @@ jobs:
           add-paths: |
             argocd/applications/jangar/kustomization.yaml
             argocd/applications/jangar/deployment.yaml
-            argocd/applications/agents/values.yaml
           body: |
             ## Summary
-            Promote Jangar image into GitOps manifests, including the Agents namespace release.
+            Promote Jangar image into GitOps manifests.
 
             - Source commit: `${{ steps.meta.outputs.source_sha }}`
             - Image tag: `${{ steps.meta.outputs.tag }}`
@@ -224,7 +221,6 @@ jobs:
             - Source CI run: `${{ github.run_id }}`
             - Control-plane serving digest: `${{ steps.control_plane_digest.outputs.digest }}`
             - Updated API rollout annotation
-            - Updated `argocd/applications/agents/values.yaml` for automated sync to namespace `agents`
             - Published source-serving proof env for revenue repair custody gates
 
       - name: No manifest changes detected

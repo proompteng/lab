@@ -84,6 +84,11 @@ controlPlane:
     repository: old/control-plane
     tag: old
     digest: sha256:old-control-plane
+controllers:
+  image:
+    repository: old/controllers-override
+    tag: old
+    digest: sha256:old-controllers-override
 runner:
   image:
     repository: old/runner
@@ -107,8 +112,10 @@ runner:
 
     const updated = readFileSync(valuesPath, 'utf8')
     expect(updated).toContain('repository: registry.example/lab/agents-controller')
+    expect(updated).not.toContain('old/controllers-override')
     expect(updated).toContain('repository: registry.example/lab/agents-control-plane')
     expect(updated).toContain('repository: registry.example/lab/agents-codex-runner')
+    expect(updated).toContain('digest: sha256:controller')
     expect(updated).toContain('digest: sha256:runner')
 
     rmSync(dir, { recursive: true, force: true })
