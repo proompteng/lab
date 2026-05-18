@@ -13,6 +13,7 @@ from scripts.import_hypothesis_runtime_windows import (
     _load_report_post_cost_expectancy_bps,
     _parse_args,
     _query_timestamps,
+    _strategy_name_candidates,
     main,
 )
 
@@ -118,7 +119,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
 
         with (
-            patch("scripts.import_hypothesis_runtime_windows._parse_args", return_value=args),
+            patch(
+                "scripts.import_hypothesis_runtime_windows._parse_args",
+                return_value=args,
+            ),
             patch.dict("os.environ", {}, clear=True),
         ):
             with self.assertRaisesRegex(RuntimeError, "source_dsn_not_configured"):
@@ -136,6 +140,27 @@ class TestImportHypothesisRuntimeWindows(TestCase):
 
         self.assertEqual(value, Decimal("3.306984755680006238084907933"))
 
+    def test_strategy_name_candidates_include_catalog_aliases(self) -> None:
+        candidates = _strategy_name_candidates(
+            "microbar_volume_continuation_long_top2_chip_v1@paper",
+            "microbar-volume-continuation-long-top2-chip-v1",
+            "",
+            None,
+        )
+
+        self.assertEqual(
+            candidates,
+            [
+                "microbar_volume_continuation_long_top2_chip_v1@paper",
+                "microbar_volume_continuation_long_top2_chip_v1",
+                "microbar-volume-continuation-long-top2-chip-v1@paper",
+                "microbar-volume-continuation-long-top2-chip-v1",
+            ],
+        )
+
+    def test_strategy_name_candidates_drop_blank_values(self) -> None:
+        self.assertEqual(_strategy_name_candidates("", "   ", None), [])
+
     def test_query_timestamps_filters_to_execution_eligible_decisions(self) -> None:
         cursor = _FakeCursor()
         connection = _FakeConnection(cursor)
@@ -148,7 +173,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         ):
             decisions, executions, tca_rows = _query_timestamps(
                 dsn="postgresql://example",
-                strategy_name="intraday-tsmom-profit-v2",
+                strategy_names=["intraday_tsmom_v1@paper", "intraday-tsmom-profit-v2"],
                 account_label="TORGHUT_SIM",
                 window_start=window_start,
                 window_end=window_end,
@@ -163,7 +188,12 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(tca_rows[0]["post_cost_expectancy_bps"], Decimal("0.50"))
         self.assertEqual(len(cursor.executed), 3)
         decision_query, decision_params = cursor.executed[0]
+        self.assertIn("s.name = any(%s)", decision_query)
         self.assertIn("d.status = any(%s)", decision_query)
+        self.assertEqual(
+            decision_params[0],
+            ["intraday_tsmom_v1@paper", "intraday-tsmom-profit-v2"],
+        )
         self.assertEqual(
             decision_params[2],
             list(EXECUTION_ELIGIBLE_DECISION_STATUSES),
@@ -179,6 +209,19 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("d.created_at < %s", tca_query)
         self.assertNotIn("e.created_at >= %s", tca_query)
         self.assertNotIn("t.computed_at >= %s", tca_query)
+
+    def test_query_timestamps_requires_strategy_name_candidates(self) -> None:
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+
+        with self.assertRaisesRegex(RuntimeError, "strategy_name_not_configured"):
+            _query_timestamps(
+                dsn="postgresql://example",
+                strategy_names=[],
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+                window_end=window_end,
+            )
 
     def test_main_preserves_registry_manifest_fallback_when_source_manifest_ref_missing(
         self,
@@ -208,6 +251,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         fake_session = _FakeSession()
         manifest = SimpleNamespace(
             strategy_family="intraday_continuation",
+            strategy_id="intraday_tsmom_v1@paper",
             max_allowed_slippage_bps=Decimal("12"),
         )
 
@@ -254,3 +298,13 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             "runtime_observation_payload"
         ]
         self.assertEqual(runtime_payload["dataset_snapshot_ref"], None)
+        self.assertEqual(
+            runtime_payload["strategy_name_candidates"],
+            [
+                "intraday-tsmom-profit-v2",
+                "intraday_tsmom_v1@paper",
+                "intraday_tsmom_v1",
+                "intraday-tsmom-v1@paper",
+                "intraday-tsmom-v1",
+            ],
+        )

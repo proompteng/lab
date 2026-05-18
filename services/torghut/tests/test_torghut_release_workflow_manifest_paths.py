@@ -1,0 +1,23 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+RENEWAL_CRONJOB = "argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml"
+
+
+def test_release_workflow_tracks_empirical_promotion_renewal_cronjob() -> None:
+    workflow = (REPO_ROOT / ".github/workflows/torghut-release.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert workflow.count(RENEWAL_CRONJOB) == 3
+
+
+def test_deploy_automerge_allows_empirical_promotion_renewal_cronjob() -> None:
+    workflow = (REPO_ROOT / ".github/workflows/torghut-deploy-automerge.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert RENEWAL_CRONJOB in workflow

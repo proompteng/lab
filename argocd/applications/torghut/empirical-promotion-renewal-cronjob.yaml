@@ -32,6 +32,16 @@ spec:
                   cd /app
                   /opt/venv/bin/python scripts/renew_latest_empirical_promotion_jobs.py \
                     --output-dir /tmp/torghut-empirical-renewal \
+                    --strategy-spec-ref intraday_tsmom_v2@research \
+                    --runtime-window-import \
+                    --runtime-window-hypothesis-id H-TSMOM-01 \
+                    --runtime-window-candidate-id spec-83161ae16d17828eabcc58cc \
+                    --runtime-window-strategy-family intraday_tsmom_consistent \
+                    --runtime-window-strategy-name intraday-tsmom-profit-v3 \
+                    --runtime-window-account-label TORGHUT_SIM \
+                    --runtime-window-observed-stage paper \
+                    --runtime-window-dataset-snapshot-ref portfolio-profit-autoresearch-500-v1 \
+                    --runtime-window-source-manifest-ref config/trading/hypotheses/h-tsmom-01.json \
                     --json
               env:
                 - name: DB_DSN

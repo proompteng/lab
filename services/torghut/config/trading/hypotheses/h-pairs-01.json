@@ -1,0 +1,44 @@
+{
+  "schema_version": "torghut.hypothesis-manifest.v1",
+  "hypothesis_id": "H-PAIRS-01",
+  "lane_id": "microbar-cross-sectional-pairs",
+  "strategy_family": "microbar_cross_sectional_pairs",
+  "candidate_id": "spec-d74b07b2aaab8d0cfa8a4c38",
+  "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+  "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+  "initial_state": "blocked",
+  "market_regimes": ["R2", "R3", "R5"],
+  "required_feature_sets": ["microstructure", "cross_sectional_rank", "tca"],
+  "required_dependency_capabilities": ["drift_governance", "feature_coverage", "signal_continuity"],
+  "segment_dependencies": ["execution", "empirical", "ta-core"],
+  "expected_gross_edge_bps": "8",
+  "max_allowed_slippage_bps": "8",
+  "min_sample_count_for_live_canary": 60,
+  "min_sample_count_for_scale_up": 120,
+  "max_rolling_drawdown_bps": "1000",
+  "rollback_triggers": [
+    "required_feature_set_unavailable",
+    "drift_checks_missing",
+    "slippage_budget_exceeded",
+    "post_cost_expectancy_non_positive",
+    "runtime_window_evidence_missing"
+  ],
+  "promotion_gates": [
+    "microstructure_features_present",
+    "cross_sectional_features_present",
+    "fresh_signal_continuity",
+    "evidence_continuity_recent",
+    "drift_checks_recent",
+    "positive_post_cost_expectancy",
+    "executable_replay_present",
+    "shadow_parity_within_budget"
+  ],
+  "entry_requirements": {
+    "max_signal_lag_seconds": 90,
+    "max_evidence_age_minutes": 30,
+    "min_feature_batch_rows": 1,
+    "require_feature_rows": true,
+    "require_drift_checks": true,
+    "require_evidence_continuity": true
+  }
+}

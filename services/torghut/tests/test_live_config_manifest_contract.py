@@ -361,13 +361,21 @@ class TestLiveConfigManifestContract(TestCase):
             raw_symbols = strategy.get("universe_symbols")
 
             self.assertIn("paper-only", description)
-            self.assertIn("$300/day", description)
             self.assertIsInstance(raw_symbols, list)
-            _assert_exact_quote_covered_paper_strategy_universe(
-                self,
-                cast(list[object], raw_symbols),
-                context=f"{name} universe",
-            )
+            if name == "intraday-tsmom-profit-v3":
+                self.assertIn("$500/day", description)
+                _assert_exact_live_execution_chip_universe(
+                    self,
+                    cast(list[object], raw_symbols),
+                    context=f"{name} universe",
+                )
+            else:
+                self.assertIn("$300/day", description)
+                _assert_exact_quote_covered_paper_strategy_universe(
+                    self,
+                    cast(list[object], raw_symbols),
+                    context=f"{name} universe",
+                )
             if str(strategy.get("strategy_type")) == "microbar_cross_sectional_long_v1":
                 self.assertEqual(
                     _strategy_decimal(strategy, "max_notional_per_trade"),
@@ -382,13 +390,17 @@ class TestLiveConfigManifestContract(TestCase):
                 self.assertEqual(name, "intraday-tsmom-profit-v3")
                 self.assertEqual(
                     _strategy_decimal(strategy, "max_notional_per_trade"),
-                    Decimal("50000"),
+                    Decimal("3750"),
                 )
                 self.assertEqual(
                     _strategy_decimal(strategy, "max_position_pct_equity"),
-                    Decimal("3.0"),
+                    Decimal("0.125"),
                 )
                 self.assertEqual(params.get("max_spread_bps"), "20")
+                self.assertEqual(params.get("long_stop_loss_bps"), "6")
+                self.assertEqual(params.get("short_stop_loss_bps"), "6")
+                self.assertEqual(params.get("entry_cooldown_seconds"), "1200")
+                self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
             elif str(strategy.get("strategy_type")) == "breakout_continuation_long_v1":
                 self.assertEqual(name, "breakout-continuation-long-v1")
                 self.assertEqual(
