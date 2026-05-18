@@ -254,6 +254,98 @@ class TestCandidateSpecs(TestCase):
             microstructure_specs[0].feature_contract["family_selection"]["reasons"],
         )
 
+    def test_entropy_state_claim_routes_to_microstructure_regime_families(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-order-flow-entropy",
+            claims=[
+                {
+                    "claim_id": "claim-entropy",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Real-time order-flow entropy predicts absolute intraday move size as "
+                        "a volatility state, but not directional alpha."
+                    ),
+                    "data_requirements": [
+                        "order_flow_entropy",
+                        "trade_sign_markov_state",
+                        "realized_volatility",
+                    ],
+                    "confidence": "0.75",
+                },
+                {
+                    "claim_id": "claim-entropy-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Entropy states require walk-forward validation and should be used "
+                        "for sizing context unless separate direction clears placebo tests."
+                    ),
+                    "confidence": "0.75",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
+        )
+
+        family_reasons = {
+            spec.family_template_id: spec.feature_contract["family_selection"][
+                "reasons"
+            ]
+            for spec in specs
+        }
+        self.assertIn("microstructure_continuation_matched_filter_v1", family_reasons)
+        self.assertIn("intraday_tsmom_v2", family_reasons)
+        self.assertIn(
+            "volatility_or_regime_state",
+            family_reasons["microstructure_continuation_matched_filter_v1"],
+        )
+
+    def test_constrained_factor_claim_routes_to_executable_factor_families(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-constrained-factor-dsl",
+            claims=[
+                {
+                    "claim_id": "claim-factor-dsl",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Constrained LLM hypothesis search emits point-in-time factor DSL "
+                        "programs with fixed splits, transaction costs, and portfolio tests."
+                    ),
+                    "data_requirements": [
+                        "factor_dsl",
+                        "append_only_experiment_trace",
+                        "walk_forward_replay",
+                    ],
+                    "confidence": "0.77",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
+        )
+
+        factor_specs = [
+            spec
+            for spec in specs
+            if spec.family_template_id
+            in {
+                "microbar_cross_sectional_pairs_v1",
+                "microstructure_continuation_matched_filter_v1",
+            }
+        ]
+        self.assertTrue(factor_specs)
+        self.assertTrue(
+            all(
+                "constrained_factor_search"
+                in spec.feature_contract["family_selection"]["reasons"]
+                for spec in factor_specs
+            )
+        )
+
     def test_unpinned_hypotheses_expand_all_family_execution_profiles(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-profile-breadth",

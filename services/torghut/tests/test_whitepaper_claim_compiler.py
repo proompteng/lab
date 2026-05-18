@@ -26,13 +26,18 @@ class TestWhitepaperClaimCompiler(TestCase):
                 "seed-ssrn-6440898",
                 "seed-arxiv-2605-15746",
                 "seed-arxiv-2605-12151",
+                "seed-arxiv-2605-11640",
                 "seed-arxiv-2605-11423",
+                "seed-arxiv-2605-11180",
                 "seed-arxiv-2605-04004",
+                "seed-arxiv-2604-26747",
+                "seed-arxiv-2604-20949",
                 "seed-arxiv-2604-10402",
                 "seed-arxiv-2604-09060",
                 "seed-arxiv-2603-29086",
                 "seed-arxiv-2603-16365",
                 "seed-arxiv-2602-07085",
+                "seed-arxiv-2512-15720",
             }.issubset({source.run_id for source in RECENT_WHITEPAPER_SEEDS})
         )
         self.assertTrue(all(card.source_run_id.startswith("seed-") for card in cards))

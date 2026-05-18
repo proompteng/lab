@@ -2947,6 +2947,13 @@ def _family_scores_for_hypothesis(
             "nearly unstable",
             "hidden markov",
             "hmm",
+            "entropy",
+            "fragility",
+            "latent build-up",
+            "latent_build_up",
+            "rising-edge",
+            "rising edge",
+            "adaptive threshold",
         )
     ):
         bump("intraday_tsmom_v2", 4, "volatility_or_regime_state")
@@ -2957,6 +2964,63 @@ def _family_scores_for_hypothesis(
             2,
             "volatility_or_regime_state",
         )
+    if has_any(
+        (
+            "adverse selection",
+            "adverse-selection",
+            "toxicity",
+            "toxic",
+            "absorption",
+            "passive buy",
+            "passive-buy",
+            "fill-side",
+            "fill side",
+            "quote attribution",
+            "quote-attribution",
+            "information value",
+            "price-flow covariance",
+            "price flow covariance",
+            "kyle",
+            "lambda",
+        )
+    ):
+        bump(
+            "microstructure_continuation_matched_filter_v1",
+            5,
+            "adverse_selection_or_liquidity_toxicity",
+        )
+        bump("mean_reversion_rebound_v1", 3, "adverse_selection_or_liquidity_toxicity")
+        bump(
+            "mean_reversion_exhaustion_short_v1",
+            3,
+            "adverse_selection_or_liquidity_toxicity",
+        )
+        bump(
+            "microbar_cross_sectional_pairs_v1",
+            2,
+            "adverse_selection_or_liquidity_toxicity",
+        )
+    if has_any(
+        (
+            "factor dsl",
+            "factor_dsl",
+            "factor program",
+            "factor_program",
+            "append-only experiment trace",
+            "append_only_experiment_trace",
+            "hypothesis search",
+            "constrained llm",
+            "fixed splits",
+            "fixed-split",
+        )
+    ):
+        bump("microbar_cross_sectional_pairs_v1", 5, "constrained_factor_search")
+        bump(
+            "microstructure_continuation_matched_filter_v1",
+            4,
+            "constrained_factor_search",
+        )
+        bump("intraday_tsmom_v2", 3, "constrained_factor_search")
     if has_any(("momentum", "trend", "pullback", "trend persistence")):
         bump("momentum_pullback_v1", 5, "momentum_or_pullback")
         bump("intraday_tsmom_v2", 4, "momentum_or_pullback")
