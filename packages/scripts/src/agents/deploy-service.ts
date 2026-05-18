@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
 import YAML from 'yaml'
-import { buildImage } from '../jangar/build-image'
+import { buildImage, type BuildImageOptions } from '../jangar/build-image'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
 import { buildAndPushDockerImage, inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
@@ -66,6 +66,27 @@ type DatabaseSecretRequirement = {
   namespace: string
   name: string
 }
+
+const CONTROL_PLANE_DOCKER_TARGET = 'control-plane'
+
+const buildAgentsServiceImagePlans = (
+  options: Pick<Options, 'registry' | 'repository' | 'controlPlaneRepository' | 'tag' | 'platforms'>,
+): BuildImageOptions[] => [
+  {
+    registry: options.registry,
+    repository: options.repository,
+    tag: options.tag,
+    target: CONTROL_PLANE_DOCKER_TARGET,
+    platforms: options.platforms,
+  },
+  {
+    registry: options.registry,
+    repository: options.controlPlaneRepository,
+    tag: options.tag,
+    target: CONTROL_PLANE_DOCKER_TARGET,
+    platforms: options.platforms,
+  },
+]
 
 const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
   if (value === undefined) return fallback
@@ -550,10 +571,7 @@ const filterDirectApplyManifests = (rendered: string): string => {
 const renderAndApply = async (kustomizePath: string) => {
   ensureCli('kubectl')
   const { helmDir, helmBinary, cleanup } = writeHelmShim()
-  const kubectl = Bun.which('kubectl')
-  if (!kubectl) {
-    fatal('Missing kubectl: install kubectl to render kustomize manifests')
-  }
+  const kubectl = Bun.which('kubectl') ?? fatal('Missing kubectl: install kubectl to render kustomize manifests')
   const renderEnv = { PATH: `${helmDir}:${process.env.PATH ?? ''}`, HELM_BIN: helmBinary }
   const rendered = await capture([kubectl, 'kustomize', kustomizePath, '--enable-helm'], renderEnv)
   const tmpDir = mkdtempSync(`${tmpdir()}/agents-render-`)
@@ -585,19 +603,9 @@ const main = async () => {
   const runnerImageName = `${options.registry}/${options.runnerRepository}`
   const runnerImage = `${runnerImageName}:${options.tag}`
 
-  await buildImage({
-    registry: options.registry,
-    repository: options.repository,
-    tag: options.tag,
-    platforms: options.platforms,
-  })
-  await buildImage({
-    registry: options.registry,
-    repository: options.controlPlaneRepository,
-    tag: options.tag,
-    target: 'control-plane',
-    platforms: options.platforms,
-  })
+  for (const imagePlan of buildAgentsServiceImagePlans(options)) {
+    await buildImage(imagePlan)
+  }
   const runnerPin = options.buildRunner ? undefined : readRunnerImagePin(options.valuesPath)
   if (options.buildRunner) {
     if (!existsSync(options.codexAuthPath)) {
@@ -624,10 +632,9 @@ const main = async () => {
     ? controlPlaneRepoDigest.split('@')[1]
     : controlPlaneRepoDigest
   const runnerRepoDigest = options.buildRunner ? inspectImageDigest(runnerImage) : runnerPin?.digest
-  const runnerDigest = runnerRepoDigest?.includes('@') ? runnerRepoDigest.split('@')[1] : runnerRepoDigest
-  if (!runnerDigest) {
+  const runnerDigest =
+    (runnerRepoDigest?.includes('@') ? runnerRepoDigest.split('@')[1] : runnerRepoDigest) ??
     fatal('Agents runner digest is empty.')
-  }
 
   updateValuesFile(
     options.valuesPath,
@@ -663,6 +670,7 @@ if (import.meta.main) {
 }
 
 export const __private = {
+  buildAgentsServiceImagePlans,
   parseArgs,
   parseBoolean,
   resolveOptions,

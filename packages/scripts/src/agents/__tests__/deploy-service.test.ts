@@ -13,6 +13,33 @@ describe('agents deploy-service helpers', () => {
     })
   })
 
+  it('builds controller and control-plane images from the narrow control-plane Docker target', () => {
+    expect(
+      __private.buildAgentsServiceImagePlans({
+        registry: 'registry.example',
+        repository: 'lab/agents-controller',
+        controlPlaneRepository: 'lab/agents-control-plane',
+        tag: 'abc1234',
+        platforms: ['linux/arm64'],
+      }),
+    ).toEqual([
+      {
+        registry: 'registry.example',
+        repository: 'lab/agents-controller',
+        tag: 'abc1234',
+        target: 'control-plane',
+        platforms: ['linux/arm64'],
+      },
+      {
+        registry: 'registry.example',
+        repository: 'lab/agents-control-plane',
+        tag: 'abc1234',
+        target: 'control-plane',
+        platforms: ['linux/arm64'],
+      },
+    ])
+  })
+
   it('drops Argo CD hook resources from direct kubectl apply manifests', () => {
     const rendered = `apiVersion: v1
 kind: ConfigMap
