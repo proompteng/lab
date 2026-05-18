@@ -27,6 +27,7 @@ from app.main import (
     _build_route_image_proof_summary,
     _check_alpaca,
     _forecast_service_status,
+    _load_rejected_signal_outcome_learning_summary,
     healthz,
     _load_options_catalog_freshness_summary,
     _readiness_dependency_cache_key,
@@ -56,6 +57,7 @@ from app.models import (
     Execution,
     ExecutionTCAMetric,
     LLMDecisionReview,
+    RejectedSignalOutcomeEvent,
     Strategy,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
@@ -1874,6 +1876,19 @@ class TestTradingApi(TestCase):
             scheduler.state.metrics.strategy_intent_suppression_total = {
                 "strategy-1|exit_only_sell_without_long_position": 4,
             }
+            scheduler.state.metrics.rejected_signal_events_total = 3
+            scheduler.state.metrics.rejected_signal_outcome_label_pending_total = 3
+            scheduler.state.metrics.rejected_signal_reason_total = {
+                "missing_executable_quote": 3,
+            }
+            scheduler.state.last_rejected_signal_outcome_event = {
+                "schema_version": "torghut.rejected-signal-outcome-event.v1",
+                "source": "quote_quality_gate",
+                "paper_claim_id": "rejection-event-outcome-labels",
+                "symbol": "AAPL",
+                "reject_reason": "missing_executable_quote",
+                "outcome_label_status": "pending",
+            }
             app.state.trading_scheduler = scheduler
 
             response = self.client.get("/trading/status")
@@ -1903,6 +1918,26 @@ class TestTradingApi(TestCase):
                 payload["rejections"]["strategy_intent_suppression_total"],
                 {"strategy-1|exit_only_sell_without_long_position": 4},
             )
+            self.assertEqual(payload["rejections"]["rejected_signal_events_total"], 3)
+            self.assertEqual(
+                payload["rejections"]["rejected_signal_reason_total"],
+                {"missing_executable_quote": 3},
+            )
+            outcome_learning = payload["rejected_signal_outcome_learning"]
+            self.assertEqual(
+                outcome_learning["schema_version"],
+                "torghut.rejected-signal-outcome-learning.v1",
+            )
+            self.assertEqual(outcome_learning["state"], "pending_outcome_labels")
+            self.assertEqual(outcome_learning["events_total"], 3)
+            self.assertEqual(
+                outcome_learning["blocking_reasons"],
+                ["counterfactual_outcome_labels_pending"],
+            )
+            self.assertEqual(
+                outcome_learning["latest_event"]["paper_claim_id"],
+                "rejection-event-outcome-labels",
+            )
             self.assertTrue(payload["simple_lane_status"]["enabled"])
             self.assertTrue(
                 payload["simple_lane_status"]["route_symbol_filter_enabled"]
@@ -1917,6 +1952,72 @@ class TestTradingApi(TestCase):
             settings.trading_mode = original_trading_mode
             settings.trading_simple_submit_enabled = original_simple_submit_enabled
             settings.trading_kill_switch_enabled = original_kill_switch_enabled
+
+    def test_trading_status_summarizes_persisted_rejected_signal_outcomes(
+        self,
+    ) -> None:
+        with self.session_local() as session:
+            session.add(
+                RejectedSignalOutcomeEvent(
+                    event_id="reject-event-1",
+                    source="quote_quality_gate",
+                    paper_source="paper-arxiv-2605.12151",
+                    paper_claim_id="rejection-event-outcome-labels",
+                    account_label="paper",
+                    symbol="AAPL",
+                    event_ts=datetime(2026, 5, 18, 14, 31, tzinfo=timezone.utc),
+                    timeframe="1Min",
+                    seq="42",
+                    reject_reason="missing_executable_quote",
+                    spread_bps=Decimal("55.5"),
+                    jump_bps=None,
+                    outcome_label_status="pending",
+                    counterfactual_required=True,
+                    required_outcome_fields_json=[
+                        "counterfactual_return",
+                        "route_tca",
+                        "post_cost_net_pnl",
+                        "executable_quote",
+                    ],
+                    event_payload_json={"event_id": "reject-event-1"},
+                )
+            )
+            session.commit()
+
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
+        try:
+            response = self.client.get("/trading/status")
+            self.assertEqual(response.status_code, 200)
+            outcome_learning = response.json()["rejected_signal_outcome_learning"]
+        finally:
+            app.state.trading_scheduler = None
+
+        self.assertEqual(outcome_learning["persistence_state"], "ok")
+        self.assertEqual(outcome_learning["events_total"], 1)
+        self.assertEqual(outcome_learning["outcome_label_pending_total"], 1)
+        self.assertEqual(
+            outcome_learning["reason_total"],
+            {"missing_executable_quote": 1},
+        )
+        self.assertEqual(outcome_learning["latest_event"]["event_id"], "reject-event-1")
+        self.assertEqual(
+            outcome_learning["blocking_reasons"],
+            ["counterfactual_outcome_labels_pending"],
+        )
+
+    def test_rejected_signal_outcome_summary_reports_unavailable_on_db_error(
+        self,
+    ) -> None:
+        with self.session_local() as session:
+            with patch.object(
+                session,
+                "execute",
+                side_effect=SQLAlchemyError("db unavailable"),
+            ):
+                summary = _load_rejected_signal_outcome_learning_summary(session)
+
+        self.assertEqual(summary, {"persistence_state": "unavailable"})
 
     def test_simple_lane_shared_gate_applies_local_block_reason(self) -> None:
         original = {

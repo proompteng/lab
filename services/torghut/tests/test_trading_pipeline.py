@@ -11,12 +11,14 @@ from unittest.mock import Mock, patch
 from typing import Any, Callable, cast
 
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import (
     Base,
     Execution,
     LLMDecisionReview,
+    RejectedSignalOutcomeEvent,
     Strategy,
     StrategyHypothesis,
     StrategyHypothesisMetricWindow,
@@ -1009,6 +1011,189 @@ class TestTradingPipeline(TestCase):
         enriched = pipeline._ensure_signal_executable_price(signal)
 
         self.assertIs(enriched, signal)
+
+    def _build_rejected_outcome_pipeline(
+        self,
+        *,
+        state: TradingState | None = None,
+        session_factory: Callable[[], Session] | None = None,
+    ) -> TradingPipeline:
+        alpaca_client = FakeAlpacaClient()
+        return TradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=state or TradingState(),
+            account_label="paper",
+            session_factory=session_factory or self.session_local,
+            price_fetcher=FakePriceFetcher(Decimal("101.50")),
+        )
+
+    def test_quote_quality_rejection_records_outcome_learning_event(self) -> None:
+        state = TradingState()
+        pipeline = self._build_rejected_outcome_pipeline(state=state)
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={
+                "price": Decimal("101.50"),
+                "macd": {"macd": Decimal("1.1"), "signal": Decimal("0.4")},
+            },
+            seq=42,
+            timeframe="1Min",
+        )
+
+        decisions = pipeline._evaluate_signal_decisions(
+            signal,
+            [],
+            equity=Decimal("100000"),
+            positions=[],
+        )
+
+        self.assertEqual(decisions, [])
+        self.assertEqual(state.metrics.rejected_signal_events_total, 1)
+        self.assertEqual(state.metrics.rejected_signal_outcome_label_pending_total, 1)
+        self.assertEqual(
+            state.metrics.rejected_signal_reason_total,
+            {"missing_executable_quote": 1},
+        )
+        assert state.last_rejected_signal_outcome_event is not None
+        self.assertEqual(
+            state.last_rejected_signal_outcome_event["schema_version"],
+            "torghut.rejected-signal-outcome-event.v1",
+        )
+        self.assertEqual(
+            state.last_rejected_signal_outcome_event["paper_claim_id"],
+            "rejection-event-outcome-labels",
+        )
+        self.assertEqual(
+            state.last_rejected_signal_outcome_event["reject_reason"],
+            "missing_executable_quote",
+        )
+        self.assertEqual(
+            state.last_rejected_signal_outcome_event["required_outcome_fields"],
+            [
+                "counterfactual_return",
+                "route_tca",
+                "post_cost_net_pnl",
+                "executable_quote",
+            ],
+        )
+        with self.session_local() as session:
+            rows = list(session.execute(select(RejectedSignalOutcomeEvent)).scalars())
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].paper_claim_id, "rejection-event-outcome-labels")
+        self.assertEqual(rows[0].reject_reason, "missing_executable_quote")
+        self.assertEqual(rows[0].outcome_label_status, "pending")
+        self.assertEqual(
+            rows[0].required_outcome_fields_json,
+            [
+                "counterfactual_return",
+                "route_tca",
+                "post_cost_net_pnl",
+                "executable_quote",
+            ],
+        )
+
+    def test_rejected_signal_outcome_persistence_skips_unusable_payloads(self) -> None:
+        pipeline = self._build_rejected_outcome_pipeline()
+
+        pipeline._persist_rejected_signal_outcome_event(
+            {
+                "event_ts": "2026-01-01T14:31:00+00:00",
+                "symbol": "AAPL",
+            }
+        )
+        pipeline._persist_rejected_signal_outcome_event(
+            {
+                "event_id": "reject-event-invalid-ts",
+                "event_ts": None,
+                "symbol": "AAPL",
+            }
+        )
+
+        with self.session_local() as session:
+            rows = list(session.execute(select(RejectedSignalOutcomeEvent)).scalars())
+
+        self.assertEqual(rows, [])
+
+    def test_rejected_signal_outcome_persistence_updates_existing_event(self) -> None:
+        pipeline = self._build_rejected_outcome_pipeline()
+        event_ts = "2026-01-01T14:31:00+00:00"
+
+        pipeline._persist_rejected_signal_outcome_event(
+            {
+                "event_id": "reject-event-1",
+                "source": "quote_quality_gate",
+                "paper_source": "paper-arxiv-2605.12151",
+                "paper_claim_id": "rejection-event-outcome-labels",
+                "account_label": "paper",
+                "symbol": "aapl",
+                "event_ts": event_ts,
+                "timeframe": "1Min",
+                "seq": 42,
+                "reject_reason": "missing_executable_quote",
+                "spread_bps": "55.5",
+                "jump_bps": None,
+                "outcome_label_status": "pending",
+                "counterfactual_required": True,
+                "required_outcome_fields": ["counterfactual_return"],
+            }
+        )
+        pipeline._persist_rejected_signal_outcome_event(
+            {
+                "event_id": "reject-event-1",
+                "source": "quote_quality_gate",
+                "paper_source": "paper-arxiv-2605.12151",
+                "paper_claim_id": "rejection-event-outcome-labels",
+                "account_label": "paper",
+                "symbol": "AAPL",
+                "event_ts": event_ts,
+                "timeframe": "1Min",
+                "seq": 42,
+                "reject_reason": "wide_spread",
+                "spread_bps": "60.25",
+                "jump_bps": "4.5",
+                "outcome_label_status": "pending",
+                "counterfactual_required": True,
+                "required_outcome_fields": ["counterfactual_return"],
+            }
+        )
+
+        with self.session_local() as session:
+            rows = list(session.execute(select(RejectedSignalOutcomeEvent)).scalars())
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].reject_reason, "wide_spread")
+        self.assertEqual(rows[0].spread_bps, Decimal("60.25"))
+        self.assertEqual(rows[0].jump_bps, Decimal("4.5"))
+        self.assertEqual(rows[0].event_payload_json["reject_reason"], "wide_spread")
+
+    def test_rejected_signal_outcome_persistence_logs_and_continues_on_db_error(
+        self,
+    ) -> None:
+        def failing_session_factory() -> Session:
+            raise SQLAlchemyError("db unavailable")
+
+        pipeline = self._build_rejected_outcome_pipeline(
+            session_factory=failing_session_factory
+        )
+
+        with self.assertLogs("app.trading.scheduler.pipeline", level="ERROR"):
+            pipeline._persist_rejected_signal_outcome_event(
+                {
+                    "event_id": "reject-event-1",
+                    "event_ts": "2026-01-01T14:31:00+00:00",
+                    "symbol": "AAPL",
+                }
+            )
 
     def _seed_promotion_certificate_evidence(
         self,

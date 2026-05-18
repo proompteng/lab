@@ -1107,6 +1107,54 @@ class EvidenceEpochRecord(Base, CreatedAtMixin):
     )
 
 
+class RejectedSignalOutcomeEvent(Base, TimestampMixin):
+    """Durable counterfactual-learning event for rejected trading signals."""
+
+    __tablename__ = "rejected_signal_outcome_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    event_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    source: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    paper_source: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    paper_claim_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    account_label: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(length=16), nullable=False)
+    event_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    timeframe: Mapped[str] = mapped_column(String(length=16), nullable=False)
+    seq: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    reject_reason: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    spread_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    jump_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    outcome_label_status: Mapped[str] = mapped_column(
+        String(length=32), nullable=False, server_default=text("'pending'")
+    )
+    counterfactual_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    required_outcome_fields_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
+    event_payload_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
+    outcome_payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("uq_rejected_signal_outcome_events_event_id", "event_id", unique=True),
+        Index(
+            "ix_rejected_signal_outcome_events_status_ts",
+            "outcome_label_status",
+            "event_ts",
+        ),
+        Index(
+            "ix_rejected_signal_outcome_events_account_symbol_ts",
+            "account_label",
+            "symbol",
+            "event_ts",
+        ),
+        Index(
+            "ix_rejected_signal_outcome_events_reason",
+            "reject_reason",
+        ),
+    )
+
+
 class StrategyHypothesis(Base, TimestampMixin):
     """Persistent hypothesis registry rows used for live capital governance."""
 

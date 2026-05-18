@@ -204,6 +204,7 @@ class TestTradingMetrics(TestCase):
         metrics.record_decision_rejection_reasons(
             ["qty_below_min", "llm_unavailable_llm_circuit_open"]
         )
+        metrics.record_rejected_signal_event("missing_executable_quote")
 
         payload = render_trading_metrics(metrics.__dict__)
 
@@ -213,6 +214,15 @@ class TestTradingMetrics(TestCase):
         )
         self.assertIn(
             'torghut_trading_decision_reject_reason_total{reason="llm_unavailable_llm_circuit_open"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_rejected_signal_reason_total{reason="missing_executable_quote"} 1',
+            payload,
+        )
+        self.assertIn("torghut_trading_rejected_signal_events_total 1", payload)
+        self.assertIn(
+            "torghut_trading_rejected_signal_outcome_label_pending_total 1",
             payload,
         )
         self.assertIn("torghut_trading_execution_clean_ratio 0.8", payload)
