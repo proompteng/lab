@@ -2871,6 +2871,11 @@ def _family_scores_for_hypothesis(
             "matched-filter",
             "matched_filter",
             "representation",
+            "portable lob",
+            "portable_lob",
+            "feature stability",
+            "feature_stability",
+            "shap",
         )
     ):
         bump(
@@ -2890,6 +2895,10 @@ def _family_scores_for_hypothesis(
             "imbalance",
             "lob",
             "limit order book",
+            "signed order flow",
+            "signed_order_flow",
+            "core flow",
+            "core_flow",
         )
     ):
         bump("microbar_cross_sectional_pairs_v1", 5, "order_flow_or_lob_signal")
@@ -2923,6 +2932,16 @@ def _family_scores_for_hypothesis(
             "spread",
             "market-maker",
             "market maker",
+            "market impact",
+            "market-impact",
+            "power-law",
+            "power law",
+            "square-root",
+            "square root",
+            "nonlinear impact",
+            "nonlinear_impact",
+            "maker-taker",
+            "maker taker",
         )
     ):
         bump("mean_reversion_rebound_v1", 4, "liquidity_response_or_execution_stress")
@@ -2954,6 +2973,16 @@ def _family_scores_for_hypothesis(
             "rising-edge",
             "rising edge",
             "adaptive threshold",
+            "forecast horizon",
+            "forecast_horizon",
+            "horizon-dependent",
+            "horizon dependent",
+            "regime-dependent",
+            "regime dependent",
+            "ofi memory",
+            "ofi_memory",
+            "response-ratio",
+            "response ratio",
         )
     ):
         bump("intraday_tsmom_v2", 4, "volatility_or_regime_state")
