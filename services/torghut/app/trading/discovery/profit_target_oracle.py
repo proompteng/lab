@@ -23,9 +23,9 @@ class ProfitTargetOraclePolicy:
     default_start_equity: Decimal = Decimal("31590.02")
     max_worst_day_loss_pct_equity: Decimal = Decimal("0.05")
     max_drawdown_pct_equity: Decimal = Decimal("0.10")
-    extended_max_worst_day_loss_pct_equity: Decimal = Decimal("0.10")
-    extended_max_drawdown_pct_equity: Decimal = Decimal("0.20")
-    min_total_net_pnl_to_drawdown_ratio: Decimal = Decimal("1.50")
+    extended_max_worst_day_loss_pct_equity: Decimal = Decimal("0.08")
+    extended_max_drawdown_pct_equity: Decimal = Decimal("0.15")
+    min_total_net_pnl_to_drawdown_ratio: Decimal = Decimal("2.00")
     max_gross_exposure_pct_equity: Decimal = Decimal("1.0")
     min_cash: Decimal = Decimal("0")
     max_negative_cash_observation_count: int = 0
@@ -51,9 +51,7 @@ class ProfitTargetOraclePolicy:
             "max_worst_day_loss": str(self.max_worst_day_loss),
             "max_drawdown": str(self.max_drawdown),
             "default_start_equity": str(self.default_start_equity),
-            "max_worst_day_loss_pct_equity": str(
-                self.max_worst_day_loss_pct_equity
-            ),
+            "max_worst_day_loss_pct_equity": str(self.max_worst_day_loss_pct_equity),
             "max_drawdown_pct_equity": str(self.max_drawdown_pct_equity),
             "extended_max_worst_day_loss_pct_equity": str(
                 self.extended_max_worst_day_loss_pct_equity
@@ -130,7 +128,9 @@ def _numeric_check(
     }
 
 
-def _start_equity(scorecard: Mapping[str, Any], policy: ProfitTargetOraclePolicy) -> Decimal:
+def _start_equity(
+    scorecard: Mapping[str, Any], policy: ProfitTargetOraclePolicy
+) -> Decimal:
     for key in (
         "start_equity",
         "account_start_equity",
@@ -191,9 +191,7 @@ def _risk_adjusted_drawdown_check(
         "normal_pct_equity": str(normal_pct),
         "extended_pct_equity": str(extended_pct),
         "total_net_pnl_to_drawdown_ratio": str(ratio),
-        "min_total_net_pnl_to_drawdown_ratio": str(
-            min_total_net_pnl_to_drawdown_ratio
-        ),
+        "min_total_net_pnl_to_drawdown_ratio": str(min_total_net_pnl_to_drawdown_ratio),
         "mode": mode,
         "passed": passed,
     }
