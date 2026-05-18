@@ -11,6 +11,9 @@
     "./server/kubernetes-bun-transport": "./src/server/kubernetes-bun-transport.ts",
     "./server/primitives": "./src/server/primitives.ts",
     "./server/runtime-identity": "./src/server/runtime-identity.ts",
+    "./server/agents-controller/agent-run-reconciler": "./src/server/agents-controller/agent-run-reconciler.ts",
+    "./server/agents-controller/mutable-state": "./src/server/agents-controller/mutable-state.ts",
+    "./server/agents-controller/rate-limits": "./src/server/agents-controller/rate-limits.ts",
     "./server/agents-controller/*": "./src/server/agents-controller/*.ts",
     "./runner/*": "./src/runner/*.ts"
   },
