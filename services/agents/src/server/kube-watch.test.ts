@@ -1,0 +1,410 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { Effect } from 'effect'
+
+const watchMock = vi.hoisted(() => vi.fn())
+const buildWatchPathMock = vi.hoisted(() =>
+  vi.fn(async () => '/apis/agents.proompteng.ai/v1alpha1/namespaces/agents/agentruns'),
+)
+
+const recordWatchEventMock = vi.hoisted(() => vi.fn())
+const recordWatchErrorMock = vi.hoisted(() => vi.fn())
+const recordWatchRestartMock = vi.hoisted(() => vi.fn())
+const recordReliabilityEventMock = vi.hoisted(() => vi.fn())
+const recordReliabilityErrorMock = vi.hoisted(() => vi.fn())
+const recordReliabilityRestartMock = vi.hoisted(() => vi.fn())
+
+vi.mock('./kubernetes-watch-client', () => ({
+  startKubernetesWatch: (
+    _kubeConfig: unknown,
+    path: string,
+    query: Record<string, unknown>,
+    callback: unknown,
+    done: unknown,
+  ) => watchMock(path, query, callback, done),
+}))
+
+import {
+  createResourceWatchStarter,
+  makeResourceWatchService,
+  resetKubectlWatchCompatibilityCacheForTests,
+} from './kube-watch'
+
+type WatchCall = {
+  path: string
+  query: Record<string, unknown>
+  callback: (type: string, object: unknown) => void
+  done: (error: Error | null) => void
+}
+
+const flush = async () => {
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
+const rateLimitError = () => {
+  const error = new Error('Too Many Requests') as Error & { statusCode: number }
+  error.statusCode = 429
+  return error
+}
+
+describe('kube-watch', () => {
+  const startResourceWatch = createResourceWatchStarter({
+    buildWatchPath: buildWatchPathMock,
+    getKubeConfig: () => ({}) as never,
+    recordError: (labels) => {
+      recordWatchErrorMock(labels)
+      recordReliabilityErrorMock(labels)
+    },
+    recordEvent: (labels) => {
+      recordWatchEventMock(labels)
+      recordReliabilityEventMock({
+        resource: labels.resource,
+        namespace: labels.namespace,
+      })
+    },
+    recordRestart: (labels) => {
+      recordWatchRestartMock(labels)
+      recordReliabilityRestartMock(labels)
+    },
+  })
+  let watchHandle: ReturnType<typeof startResourceWatch> | null = null
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    watchMock.mockReset()
+    buildWatchPathMock.mockClear()
+    recordWatchEventMock.mockReset()
+    recordWatchErrorMock.mockReset()
+    recordWatchRestartMock.mockReset()
+    recordReliabilityEventMock.mockReset()
+    recordReliabilityErrorMock.mockReset()
+    recordReliabilityRestartMock.mockReset()
+    watchMock.mockImplementation(async () => ({ abort: vi.fn() }))
+    resetKubectlWatchCompatibilityCacheForTests()
+  })
+
+  afterEach(() => {
+    if (watchHandle) {
+      watchHandle.stop()
+      watchHandle = null
+    }
+    vi.useRealTimers()
+  })
+
+  const getWatchCall = (index = 0): WatchCall => {
+    const call = watchMock.mock.calls[index]
+    return {
+      path: call?.[0] as string,
+      query: (call?.[1] as Record<string, unknown>) ?? {},
+      callback: call?.[2] as (type: string, object: unknown) => void,
+      done: call?.[3] as (error: Error | null) => void,
+    }
+  }
+
+  it('records watch events and forwards payloads to the event handler', async () => {
+    const onEvent = vi.fn()
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      onEvent,
+    })
+
+    await flush()
+    const watchCall = getWatchCall()
+    watchCall.callback('ADDED', { kind: 'AgentRun' })
+    watchCall.callback('BOOKMARK', { kind: 'AgentRun' })
+
+    expect(onEvent).toHaveBeenCalledTimes(1)
+    expect(onEvent).toHaveBeenCalledWith({ type: 'ADDED', object: { kind: 'AgentRun' } })
+    expect(recordWatchEventMock).toHaveBeenCalledWith({
+      resource: 'agentruns',
+      namespace: 'agents',
+      type: 'ADDED',
+    })
+    expect(recordReliabilityEventMock).toHaveBeenCalledWith({
+      resource: 'agentruns',
+      namespace: 'agents',
+    })
+  })
+
+  it('records rejected event handlers without restarting the watch', async () => {
+    const onError = vi.fn()
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      onEvent: vi.fn(async () => {
+        throw new Error('database connection timeout')
+      }),
+      onError,
+      restartDelayMs: 2000,
+    })
+
+    await flush()
+    getWatchCall().callback('MODIFIED', { metadata: { resourceVersion: '12399' } })
+    await flush()
+
+    expect(recordWatchErrorMock).toHaveBeenCalledWith({
+      resource: 'agentruns',
+      namespace: 'agents',
+      reason: 'event_handler_error',
+    })
+    expect(recordReliabilityErrorMock).toHaveBeenCalledWith({
+      resource: 'agentruns',
+      namespace: 'agents',
+      reason: 'event_handler_error',
+    })
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('event handler failed: database connection timeout'),
+      }),
+    )
+
+    vi.advanceTimersByTime(2000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('records synchronous event handler failures without restarting the watch', async () => {
+    const onError = vi.fn()
+    const onEvent = vi.fn(() => {
+      throw new Error('sync store unavailable')
+    })
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      onEvent,
+      onError,
+      restartDelayMs: 2000,
+    })
+
+    await flush()
+    getWatchCall().callback('MODIFIED', { metadata: { resourceVersion: '12400' } })
+    await flush()
+
+    expect(onEvent).toHaveBeenCalledTimes(1)
+    expect(recordWatchErrorMock).toHaveBeenCalledWith({
+      resource: 'agentruns',
+      namespace: 'agents',
+      reason: 'event_handler_error',
+    })
+    expect(recordReliabilityErrorMock).toHaveBeenCalledWith({
+      resource: 'agentruns',
+      namespace: 'agents',
+      reason: 'event_handler_error',
+    })
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('event handler failed: sync store unavailable'),
+      }),
+    )
+    expect(recordWatchRestartMock).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(2000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('restarts watch and records restart metrics when the native watch errors', async () => {
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      onEvent: vi.fn(),
+      restartDelayMs: 2000,
+    })
+
+    await flush()
+    const first = getWatchCall()
+    first.done(new Error('boom'))
+
+    expect(recordWatchErrorMock).toHaveBeenCalledWith({
+      resource: 'agentruns',
+      namespace: 'agents',
+      reason: 'watch_error',
+    })
+    expect(recordWatchRestartMock).toHaveBeenCalledWith({
+      resource: 'agentruns',
+      namespace: 'agents',
+      reason: 'watch_error',
+    })
+
+    vi.advanceTimersByTime(2000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('backs off Kubernetes rate limit watch errors before restarting', async () => {
+    watchHandle = startResourceWatch({
+      resource: 'jobs',
+      namespace: 'agents',
+      onEvent: vi.fn(),
+      restartDelayMs: 2000,
+    })
+
+    await flush()
+    getWatchCall().done(rateLimitError())
+
+    expect(recordWatchErrorMock).toHaveBeenCalledWith({
+      resource: 'jobs',
+      namespace: 'agents',
+      reason: 'watch_rate_limited',
+    })
+    expect(recordWatchRestartMock).toHaveBeenCalledWith({
+      resource: 'jobs',
+      namespace: 'agents',
+      reason: 'watch_rate_limited',
+    })
+
+    vi.advanceTimersByTime(2000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(28_000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses exponential backoff for repeated watch failures', async () => {
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      onEvent: vi.fn(),
+      restartDelayMs: 1000,
+      maxRestartDelayMs: 5000,
+    })
+
+    await flush()
+    getWatchCall().done(new Error('boom'))
+    vi.advanceTimersByTime(1000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(2)
+
+    getWatchCall(1).done(new Error('boom again'))
+    vi.advanceTimersByTime(1000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(2)
+
+    vi.advanceTimersByTime(1000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('resets watch failure backoff after receiving an event', async () => {
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      onEvent: vi.fn(),
+      restartDelayMs: 1000,
+      maxRestartDelayMs: 5000,
+    })
+
+    await flush()
+    getWatchCall().done(new Error('boom'))
+    vi.advanceTimersByTime(1000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(2)
+
+    const restarted = getWatchCall(1)
+    restarted.callback('MODIFIED', { metadata: { resourceVersion: '12399' } })
+    restarted.done(new Error('boom after event'))
+
+    vi.advanceTimersByTime(1000)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('invokes onRestart with the restart reason when the watch errors', async () => {
+    const onRestart = vi.fn()
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      onEvent: vi.fn(),
+      onRestart,
+      restartDelayMs: 2000,
+    })
+
+    await flush()
+    getWatchCall().done(new Error('boom'))
+
+    expect(onRestart).toHaveBeenCalledWith('watch_error')
+  })
+
+  it('starts the watch with the requested resource version', async () => {
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      resourceVersion: '12345',
+      onEvent: vi.fn(),
+    })
+
+    await flush()
+    expect(getWatchCall().query).toMatchObject({
+      resourceVersion: '12345',
+    })
+  })
+
+  it('exposes watch startup as an Effect service operation', async () => {
+    const service = makeResourceWatchService({
+      buildWatchPath: buildWatchPathMock,
+      getKubeConfig: () => ({}) as never,
+      startKubernetesWatch: (_kubeConfig, path, query, callback, done) => watchMock(path, query, callback, done),
+    })
+
+    watchHandle = await Effect.runPromise(
+      service.start({
+        resource: 'agentruns',
+        namespace: 'agents',
+        onEvent: vi.fn(),
+      }),
+    )
+    await flush()
+
+    expect(watchMock).toHaveBeenCalledWith(
+      '/apis/agents.proompteng.ai/v1alpha1/namespaces/agents/agentruns',
+      { allowWatchBookmarks: true },
+      expect.any(Function),
+      expect.any(Function),
+    )
+  })
+
+  it('restarts from the latest observed resource version after a watch error', async () => {
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      resourceVersion: '12345',
+      onEvent: vi.fn(),
+      restartDelayMs: 2000,
+    })
+
+    await flush()
+    expect(getWatchCall().query.resourceVersion).toBe('12345')
+
+    const first = getWatchCall()
+    first.callback('MODIFIED', { metadata: { resourceVersion: '12399' } })
+    first.done(new Error('boom'))
+
+    vi.advanceTimersByTime(2000)
+    await flush()
+
+    expect(watchMock).toHaveBeenCalledTimes(2)
+    expect(getWatchCall(1).query.resourceVersion).toBe('12399')
+  })
+
+  it('drops the carried resource version when a restarted watch dies before any event', async () => {
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      resourceVersion: '12345',
+      onEvent: vi.fn(),
+      restartDelayMs: 2000,
+    })
+
+    await flush()
+    expect(getWatchCall().query.resourceVersion).toBe('12345')
+
+    getWatchCall().done(new Error('boom'))
+    vi.advanceTimersByTime(2000)
+    await flush()
+
+    expect(getWatchCall(1).query.resourceVersion).toBeUndefined()
+  })
+})
