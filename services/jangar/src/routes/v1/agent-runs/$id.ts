@@ -1,6 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { asRecord, asString, errorResponse, normalizeNamespace, okResponse, readNested } from '~/server/primitives-http'
-import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import {
+  getAgentRunHandler as getAgentsServiceAgentRunHandler,
+  type RunReadApiDependencies,
+  type RunReadApiStore,
+} from '@proompteng/agents/server/v1/run-read'
+import { createKubernetesClient } from '~/server/primitives-kube'
 import { createPrimitivesStore } from '~/server/primitives-store'
 
 export const Route = createFileRoute('/v1/agent-runs/$id')({
@@ -11,54 +15,16 @@ export const Route = createFileRoute('/v1/agent-runs/$id')({
   },
 })
 
-const extractStatusPhase = (resource: Record<string, unknown>) => {
-  const status = asRecord(resource.status)
-  return asString(status?.phase)
-}
+type JangarRunReadApiDependencies = Partial<RunReadApiDependencies>
 
-export const getAgentRunHandler = async (
-  id: string,
-  request: Request,
-  deps: {
-    storeFactory?: typeof createPrimitivesStore
-    kubeClient?: ReturnType<typeof createKubernetesClient>
-  } = {},
-) => {
-  const url = new URL(request.url)
-  const namespace = normalizeNamespace(url.searchParams.get('namespace'))
-  const store = (deps.storeFactory ?? createPrimitivesStore)()
-  try {
-    await store.ready
-    const record = await store.getAgentRunById(id)
-    if (!record) return errorResponse('AgentRun not found', 404)
+const createJangarPrimitivesStore = (): RunReadApiStore => createPrimitivesStore()
 
-    const resourceNamespace =
-      asString(readNested(record.payload, ['resource', 'metadata', 'namespace'])) ??
-      asString(readNested(record.payload, ['request', 'namespace'])) ??
-      namespace
+const buildRunReadApiDependencies = (deps: JangarRunReadApiDependencies = {}): RunReadApiDependencies => ({
+  storeFactory: deps.storeFactory ?? createJangarPrimitivesStore,
+  kubeClient: deps.kubeClient,
+  kubeClientFactory: deps.kubeClientFactory ?? createKubernetesClient,
+  defaultNamespace: deps.defaultNamespace,
+})
 
-    const kube = deps.kubeClient ?? createKubernetesClient()
-    const resource = record.externalRunId
-      ? await kube.get(RESOURCE_MAP.AgentRun, record.externalRunId, resourceNamespace)
-      : null
-    if (resource) {
-      const phase = extractStatusPhase(resource)
-      if (phase && phase !== record.status) {
-        await store.updateAgentRunDetails({
-          id: record.id,
-          status: phase,
-          externalRunId: record.externalRunId,
-          payload: { ...record.payload, resource },
-        })
-        record.status = phase
-      }
-    }
-
-    return okResponse({ ok: true, agentRun: record, resource })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 500)
-  } finally {
-    await store.close()
-  }
-}
+export const getAgentRunHandler = async (id: string, request: Request, deps: JangarRunReadApiDependencies = {}) =>
+  getAgentsServiceAgentRunHandler(id, request, buildRunReadApiDependencies(deps))
