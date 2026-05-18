@@ -1,5 +1,11 @@
 # syntax=docker/dockerfile:1.6
-FROM ghcr.io/openai/codex-universal@sha256:956c2e7dd1590fc12763f172579d777464312006b9fa1f6405f5f1b78b8ea2dc
+
+ARG BUN_VERSION=1.3.13
+ARG NODE_VERSION=24.11.1
+
+FROM node:${NODE_VERSION}-bookworm-slim AS node-runtime
+
+FROM oven/bun:${BUN_VERSION}-slim
 
 ARG CODEX_AUTH_CHECKSUM=unspecified
 ARG CODEX_VERSION=0.130.0
@@ -12,21 +18,31 @@ ENV DEBIAN_FRONTEND=noninteractive \
     BUN_INSTALL_CACHE_DIR=/opt/bun/install/cache \
     BUN_INSTALL_CACHE_SEED_DIR=/opt/bun/install/cache
 
-ENV CODEX_ENV_NODE_VERSION=24.11.1 \
-    BUN_VERSION=1.3.13
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
 
-RUN bash -lc 'source /root/.nvm/nvm.sh && nvm install ${CODEX_ENV_NODE_VERSION}'
+RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 RUN set -eux; \
     apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
-    && apt-get install -y -V --no-install-recommends ca-certificates curl git gh jq python3 build-essential pkg-config \
+    && apt-get install -y -V --no-install-recommends \
+      bash \
+      build-essential \
+      ca-certificates \
+      curl \
+      gh \
+      git \
+      jq \
+      openssh-client \
+      pkg-config \
+      python3 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mise use --global "bun@${BUN_VERSION}" \
-    && mise cache clear \
-    && rm -rf "$HOME/.cache/mise" "$HOME/.local/share/mise/downloads"
-
-RUN bash -lc 'source /root/.nvm/nvm.sh && npm install -g "@openai/codex@${CODEX_VERSION}" node-gyp && ln -sf "$(command -v codex)" /usr/local/bin/codex && ln -sf "$(command -v node)" /usr/local/bin/node && ln -sf "$(command -v npm)" /usr/local/bin/npm && ln -sf "$(command -v node-gyp)" /usr/local/bin/node-gyp'
+RUN npm install -g "@openai/codex@${CODEX_VERSION}" node-gyp \
+    && npm cache clean --force \
+    && test -x /usr/local/bin/codex \
+    && test -x /usr/local/bin/node-gyp
 
 RUN mkdir -p "$WORKSPACE" /root/.codex "$BUN_INSTALL_CACHE_DIR"
 
