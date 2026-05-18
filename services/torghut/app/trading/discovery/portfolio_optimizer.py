@@ -210,6 +210,8 @@ def _candidate_passes_minimums(bundle: CandidateEvidenceBundle) -> bool:
         "scheduler_v3_parity_missing",
         "scheduler_v3_approval_missing",
         "shadow_validation_missing",
+        "validation_contract_pending",
+        "validation_live_paper_parity_pending",
     }
     if blocking - allowed_blockers:
         return False

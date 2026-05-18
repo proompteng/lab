@@ -623,6 +623,212 @@ RECENT_WHITEPAPER_SEEDS: tuple[WhitepaperResearchSource, ...] = (
             },
         ),
     ),
+    WhitepaperResearchSource(
+        run_id="seed-ssrn-6440898",
+        title="Market Depth and Execution Delays",
+        source_url="https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6440898",
+        published_at="2026-05-15",
+        claims=(
+            {
+                "claim_id": "delay-adjusted-depth-fillability",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "Market depth and execution delay jointly determine practical fillability, so "
+                    "route scoring should use delay-adjusted depth rather than spread alone."
+                ),
+                "asset_scope": "us_equities_execution",
+                "horizon_scope": "intraday_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "depth_proxy",
+                    "execution_delay",
+                    "route_tca",
+                    "spread_bps",
+                ],
+                "confidence": "0.74",
+            },
+            {
+                "claim_id": "delay-adjusted-liquidity-validation",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Execution-delay sensitivity should block promotion when paper fills depend on "
+                    "optimistic no-delay liquidity assumptions."
+                ),
+                "asset_scope": "us_equities_execution",
+                "horizon_scope": "intraday_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "execution_delay",
+                    "fill_model",
+                    "route_tca",
+                    "live_paper_parity",
+                ],
+                "confidence": "0.74",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "delay-depth-validates-fillability",
+                "relation_type": "requires_validation",
+                "source_claim_id": "delay-adjusted-liquidity-validation",
+                "target_claim_id": "delay-adjusted-depth-fillability",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-arxiv-2605-15746",
+        title="The Privacy Subsidy: Kyle's Lambda under Noise-Perturbed Order-Flow Observation",
+        source_url="https://arxiv.org/abs/2605.15746",
+        published_at="2026-05-15",
+        claims=(
+            {
+                "claim_id": "orderflow-attribution-noise-state",
+                "claim_type": "signal_mechanism",
+                "claim_text": (
+                    "Noise-perturbed order-flow observation changes inferred adverse selection and "
+                    "market-impact estimates, so OFI signals need source-quality state."
+                ),
+                "asset_scope": "us_equities_intraday",
+                "horizon_scope": "intraday_microstructure",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "order_flow_imbalance",
+                    "quote_attribution_quality",
+                    "impact_lambda_estimate",
+                ],
+                "confidence": "0.72",
+            },
+            {
+                "claim_id": "attribution-quality-impact-stress",
+                "claim_type": "risk_constraint",
+                "claim_text": (
+                    "Noisy or partially private flow observations can understate Kyle-lambda style "
+                    "impact, requiring attribution-quality stress before treating flow as alpha."
+                ),
+                "asset_scope": "us_equities_intraday",
+                "horizon_scope": "intraday_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "quote_attribution_quality",
+                    "route_tca",
+                    "market_impact_stress",
+                    "live_paper_parity",
+                ],
+                "confidence": "0.72",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "flow-noise-validates-attribution-quality",
+                "relation_type": "requires_validation",
+                "source_claim_id": "attribution-quality-impact-stress",
+                "target_claim_id": "orderflow-attribution-noise-state",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-arxiv-2605-12151",
+        title="RED-2400: A Public Benchmark of Algorithmically-Rejected Trading Events with Outcome Labels",
+        source_url="https://arxiv.org/abs/2605.12151",
+        published_at="2026-05-12",
+        claims=(
+            {
+                "claim_id": "rejected-event-outcome-learning",
+                "claim_type": "signal_mechanism",
+                "claim_text": (
+                    "Algorithmically rejected trading events with realized outcome labels can turn "
+                    "skipped-signal logs into counterfactual training examples for veto calibration."
+                ),
+                "asset_scope": "intraday_execution",
+                "horizon_scope": "rejected_event_learning",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "rejected_signal_log",
+                    "outcome_labels",
+                    "executable_quote",
+                ],
+                "confidence": "0.76",
+            },
+            {
+                "claim_id": "counterfactual-reject-validation",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Rejected-event benchmarks should measure whether current vetoes discard "
+                    "profitable executable opportunities or correctly block bad fills."
+                ),
+                "asset_scope": "intraday_execution",
+                "horizon_scope": "rejected_event_learning",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "rejected_signal_log",
+                    "counterfactual_return",
+                    "route_tca",
+                    "post_cost_net_pnl",
+                ],
+                "confidence": "0.76",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "rejected-outcomes-validate-vetoes",
+                "relation_type": "requires_validation",
+                "source_claim_id": "counterfactual-reject-validation",
+                "target_claim_id": "rejected-event-outcome-learning",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-arxiv-2605-11423",
+        title="A Validated Volatility-Volume-Gap Classifier for Regime Identification in MNQ Intraday Data",
+        source_url="https://arxiv.org/abs/2605.11423",
+        published_at="2026-05-12",
+        claims=(
+            {
+                "claim_id": "vvg-descriptive-regime-filter",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "Opening volatility, overnight gap, and abnormal volume can classify descriptive "
+                    "intraday regimes, but should be used as context filters rather than direct alpha."
+                ),
+                "asset_scope": "intraday_momentum",
+                "horizon_scope": "intraday",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "opening_window_return_bps",
+                    "opening_window_return_from_prev_close_bps",
+                    "volume_regime",
+                    "realized_volatility",
+                ],
+                "confidence": "0.71",
+            },
+            {
+                "claim_id": "vvg-directional-strategy-falsification",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Directional strategies derived from the classifier failed institutional "
+                    "post-cost and multi-year stability gates, so promotion requires replay proof."
+                ),
+                "asset_scope": "intraday_momentum",
+                "horizon_scope": "intraday",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "walk_forward_replay",
+                    "transaction_cost_stress",
+                    "drawdown_validation",
+                    "live_paper_parity",
+                ],
+                "confidence": "0.75",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "vvg-falsification-requires-replay-proof",
+                "relation_type": "invalidates",
+                "source_claim_id": "vvg-directional-strategy-falsification",
+                "target_claim_id": "vvg-descriptive-regime-filter",
+            },
+        ),
+    ),
 )
 
 

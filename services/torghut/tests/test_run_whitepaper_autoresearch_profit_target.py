@@ -31,6 +31,7 @@ from app.models import (
     WhitepaperDocument,
     WhitepaperDocumentVersion,
 )
+from app.trading.discovery.evidence_bundles import evidence_bundle_blockers
 
 _CHIP_UNIVERSE = list(runner.LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
 
@@ -282,6 +283,118 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "cross_section_positive_opening_window_return_from_prev_close_ratio",
         )
         self.assertEqual(scorecard["universe_symbols"], ["NVDA", "AVGO", "AMD"])
+
+    def test_candidate_feedback_metadata_preserves_validation_contract(
+        self,
+    ) -> None:
+        spec = replace(
+            self._candidate_spec("spec-validation-contract"),
+            feature_contract={
+                "mechanism": "scale-invariant trade-flow stress contract",
+                "required_features": ("trade_flow", "relative_volume"),
+                "source_run_id": "paper-arxiv-2602-23784",
+                "family_selection": {"rank": 1},
+                "validation_requirements": [
+                    {
+                        "claim_id": "synthetic-rollout-stress",
+                        "claim_type": "validation_requirement",
+                        "claim_text": (
+                            "Synthetic trade-flow rollouts are stress inputs, not "
+                            "promotion proof."
+                        ),
+                        "data_requirements": [
+                            "historical_replay",
+                            "live_paper_parity",
+                            "market_impact_stress",
+                        ],
+                    }
+                ],
+            },
+            promotion_contract={
+                "requires_historical_replay": True,
+                "requires_live_paper_parity": True,
+                "synthetic_evidence_policy": "validation_only_not_promotion_proof",
+            },
+        )
+
+        candidate = runner._candidate_payload_with_feedback_metadata(
+            spec=spec,
+            candidate={
+                "candidate_id": "candidate-validation-contract",
+                "objective_scorecard": {"net_pnl_per_day": "525"},
+                "promotion_readiness": {
+                    "stage": "research_candidate",
+                    "status": "blocked_pending_runtime_parity",
+                    "promotable": False,
+                    "blockers": ["scheduler_v3_parity_missing"],
+                },
+            },
+        )
+        bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=spec.candidate_spec_id,
+            candidate=candidate,
+            dataset_snapshot_id="historical-market-replay-2026-05-18",
+            result_path="/tmp/historical-replay.json",
+        )
+
+        validation_contract = bundle.objective_scorecard["validation_contract"]
+        self.assertEqual(
+            validation_contract["validation_requirement_claim_ids"],
+            ["synthetic-rollout-stress"],
+        )
+        self.assertEqual(
+            bundle.promotion_readiness["validation_contract"],
+            validation_contract,
+        )
+        self.assertIn(
+            "validation_live_paper_parity_pending",
+            bundle.promotion_readiness["blockers"],
+        )
+        self.assertNotIn(
+            "synthetic_evidence_not_promotion_proof",
+            evidence_bundle_blockers(bundle),
+        )
+
+    def test_validation_contract_rejects_synthetic_evidence_as_profit_proof(
+        self,
+    ) -> None:
+        spec = replace(
+            self._candidate_spec("spec-synthetic-contract"),
+            feature_contract={
+                **self._candidate_spec("spec-synthetic-contract").feature_contract,
+                "validation_requirements": [
+                    {
+                        "claim_id": "synthetic-stress",
+                        "claim_type": "validation_requirement",
+                        "claim_text": "Synthetic rollouts are stress-only evidence.",
+                        "data_requirements": ["historical_replay"],
+                    }
+                ],
+            },
+            promotion_contract={
+                "requires_historical_replay": True,
+                "synthetic_evidence_policy": "validation_only_not_promotion_proof",
+            },
+        )
+        candidate = runner._candidate_payload_with_feedback_metadata(
+            spec=spec,
+            candidate={
+                "candidate_id": "candidate-synthetic-contract",
+                "objective_scorecard": {"net_pnl_per_day": "800"},
+            },
+        )
+
+        bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=spec.candidate_spec_id,
+            candidate=candidate,
+            dataset_snapshot_id="synthetic-recent-whitepaper-2025-2026",
+            result_path="/tmp/synthetic-replay.json",
+        )
+
+        self.assertIn(
+            "synthetic_evidence_not_promotion_proof",
+            evidence_bundle_blockers(bundle),
+        )
 
     def test_parse_args_defaults_to_500_daily_profit_program(self) -> None:
         with TemporaryDirectory() as tmpdir:
