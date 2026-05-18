@@ -144,6 +144,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         candidates = _strategy_name_candidates(
             "microbar_volume_continuation_long_top2_chip_v1@paper",
             "microbar-volume-continuation-long-top2-chip-v1",
+            "",
+            None,
         )
 
         self.assertEqual(
@@ -155,6 +157,9 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "microbar-volume-continuation-long-top2-chip-v1",
             ],
         )
+
+    def test_strategy_name_candidates_drop_blank_values(self) -> None:
+        self.assertEqual(_strategy_name_candidates("", "   ", None), [])
 
     def test_query_timestamps_filters_to_execution_eligible_decisions(self) -> None:
         cursor = _FakeCursor()
@@ -204,6 +209,19 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("d.created_at < %s", tca_query)
         self.assertNotIn("e.created_at >= %s", tca_query)
         self.assertNotIn("t.computed_at >= %s", tca_query)
+
+    def test_query_timestamps_requires_strategy_name_candidates(self) -> None:
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+
+        with self.assertRaisesRegex(RuntimeError, "strategy_name_not_configured"):
+            _query_timestamps(
+                dsn="postgresql://example",
+                strategy_names=[],
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+                window_end=window_end,
+            )
 
     def test_main_preserves_registry_manifest_fallback_when_source_manifest_ref_missing(
         self,
