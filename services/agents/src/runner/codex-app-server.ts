@@ -24,6 +24,8 @@ import {
 
 type AgentRunPayload = Record<string, unknown>
 
+export const DEFAULT_CODEX_BINARY_PATH = '/usr/local/bin/codex'
+
 export type CodexAppServerRunnerStatus = {
   provider: string
   adapter: 'codex-app-server'
@@ -93,6 +95,18 @@ const loadRunPayload = async (spec: AgentRunnerSpec): Promise<AgentRunPayload> =
 const nonEmptyString = (value: unknown): string | null => {
   const text = asString(value)?.trim()
   return text ? text : null
+}
+
+export const resolveCodexBinaryPath = (
+  adapter: CodexAppServerAdapterConfig,
+  env: Record<string, string | undefined> = process.env,
+): string => {
+  return (
+    nonEmptyString(adapter.binaryPath) ??
+    nonEmptyString(env.AGENTS_CODEX_BINARY) ??
+    nonEmptyString(env.CODEX_BINARY) ??
+    DEFAULT_CODEX_BINARY_PATH
+  )
 }
 
 const renderOptionalTemplate = (
@@ -221,7 +235,7 @@ export const runCodexAppServerAdapter = async (
   let errorMessage: string | undefined
 
   const clientOptions: CodexAppServerOptions = {
-    binaryPath: adapter.binaryPath,
+    binaryPath: resolveCodexBinaryPath(adapter),
     cliConfigOverrides: adapter.cliConfigOverrides,
     cwd: adapter.cwd,
     sandbox: adapter.sandbox,

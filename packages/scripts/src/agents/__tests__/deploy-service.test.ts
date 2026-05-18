@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -38,6 +38,30 @@ describe('agents deploy-service helpers', () => {
         platforms: ['linux/arm64'],
       },
     ])
+  })
+
+  it('treats local Codex auth as optional for runner image builds', () => {
+    const previousHome = process.env.HOME
+    const dir = mkdtempSync(join(tmpdir(), 'agents-codex-auth-'))
+    try {
+      process.env.HOME = dir
+      expect(__private.resolveCodexAuthPath()).toBeUndefined()
+
+      const authDir = join(dir, '.codex')
+      const authPath = join(authDir, 'auth.json')
+      mkdirSync(authDir, { recursive: true })
+      writeFileSync(authPath, '{}\n')
+
+      expect(__private.resolveCodexAuthPath()).toBe(authPath)
+      expect(__private.resolveCodexAuthPath(authPath)).toBe(authPath)
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME
+      } else {
+        process.env.HOME = previousHome
+      }
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('drops Argo CD hook resources from direct kubectl apply manifests', () => {

@@ -39,7 +39,7 @@ type Options = {
   controlPlaneRepository: string
   runnerRepository: string
   runnerDockerfile: string
-  codexAuthPath: string
+  codexAuthPath?: string
   tag: string
   platforms: string[]
   buildRunner: boolean
@@ -103,6 +103,19 @@ const parsePlatforms = (value: string | undefined): string[] | undefined => {
     .map((platform) => platform.trim())
     .filter(Boolean)
   return platforms.length > 0 ? platforms : undefined
+}
+
+const resolveCodexAuthPath = (explicitPath?: string): string | undefined => {
+  if (explicitPath) {
+    const resolved = resolve(explicitPath)
+    if (!existsSync(resolved)) {
+      fatal(`Codex auth not found at explicit path ${resolved}.`)
+    }
+    return resolved
+  }
+
+  const defaultPath = resolve(process.env.HOME ?? '', '.codex/auth.json')
+  return existsSync(defaultPath) ? defaultPath : undefined
 }
 
 const parseArgs = (argv: string[]): Partial<Options> => {
@@ -226,8 +239,7 @@ const resolveOptions = (): Options => {
     'lab/agents-codex-runner'
   const runnerDockerfile =
     args.runnerDockerfile ?? process.env.AGENTS_RUNNER_DOCKERFILE ?? 'services/agents/Dockerfile.codex-runner'
-  const codexAuthPath =
-    args.codexAuthPath ?? process.env.CODEX_AUTH_PATH ?? resolve(process.env.HOME ?? '', '.codex/auth.json')
+  const codexAuthPath = resolveCodexAuthPath(args.codexAuthPath ?? process.env.CODEX_AUTH_PATH)
   const tag =
     args.tag ??
     process.env.AGENTS_IMAGE_TAG ??
@@ -608,8 +620,8 @@ const main = async () => {
   }
   const runnerPin = options.buildRunner ? undefined : readRunnerImagePin(options.valuesPath)
   if (options.buildRunner) {
-    if (!existsSync(options.codexAuthPath)) {
-      fatal(`Codex auth not found at ${options.codexAuthPath}; cannot build agents-codex-runner image.`)
+    if (!options.codexAuthPath) {
+      console.warn('Codex auth not found at ~/.codex/auth.json; runner image will rely on runtime codex-auth mount.')
     }
     await buildAndPushDockerImage({
       registry: options.registry,
@@ -674,6 +686,7 @@ export const __private = {
   parseArgs,
   parseBoolean,
   resolveOptions,
+  resolveCodexAuthPath,
   filterDirectApplyManifests,
   isArgoHookManifest,
   renderAndApply,
