@@ -56,11 +56,7 @@ const stopControllerRuntimes = () => {
   stopSupportingPrimitivesController()
 }
 
-export const ensureAgentCommsRuntime = () => {
-  void startAgentCommsSubscriber().catch((error) => {
-    console.warn('Agent comms subscriber failed to start', error)
-  })
-
+export const ensureControllerRuntimes = () => {
   if (!isLeaderElectionRequired()) {
     stopControlPlaneHeartbeatPublisher()
     startControllerRuntimes()
@@ -79,5 +75,11 @@ export const ensureAgentCommsRuntime = () => {
       stopControllerRuntimes()
       stopPrimitivesReconciler()
     },
+  })
+}
+
+export const ensureAgentCommsRuntime = () => {
+  void startAgentCommsSubscriber().catch((error) => {
+    console.warn('Agent comms subscriber failed to start', error)
   })
 }

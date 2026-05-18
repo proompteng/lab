@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   ensureAgentCommsRuntime: vi.fn(),
+  ensureControllerRuntimes: vi.fn(),
   startAgentctlGrpcServer: vi.fn(() => null),
   startControlPlaneCache: vi.fn(async () => {}),
   startTorghutQuantRuntime: vi.fn(),
@@ -9,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../agent-comms-runtime', () => ({
   ensureAgentCommsRuntime: mocks.ensureAgentCommsRuntime,
+  ensureControllerRuntimes: mocks.ensureControllerRuntimes,
 }))
 
 vi.mock('../agentctl-grpc', () => ({
@@ -44,6 +46,7 @@ describe('ensureRuntimeStartup', () => {
     ensureRuntimeStartup(JANGAR_RUNTIME_PROFILES.viteDevApi.startup)
 
     expect(mocks.ensureAgentCommsRuntime).toHaveBeenCalledTimes(1)
+    expect(mocks.ensureControllerRuntimes).toHaveBeenCalledTimes(1)
     expect(mocks.startControlPlaneCache).toHaveBeenCalledTimes(1)
     expect(mocks.startTorghutQuantRuntime).toHaveBeenCalledTimes(1)
     expect(mocks.startAgentctlGrpcServer).toHaveBeenCalledTimes(1)
@@ -57,9 +60,24 @@ describe('ensureRuntimeStartup', () => {
     ensureRuntimeStartup(JANGAR_RUNTIME_PROFILES.agentsControllers.startup)
 
     expect(mocks.ensureAgentCommsRuntime).toHaveBeenCalledTimes(1)
+    expect(mocks.ensureControllerRuntimes).toHaveBeenCalledTimes(1)
     expect(mocks.startControlPlaneCache).not.toHaveBeenCalled()
     expect(mocks.startTorghutQuantRuntime).not.toHaveBeenCalled()
     expect(mocks.startAgentctlGrpcServer).not.toHaveBeenCalled()
+  })
+
+  it('boots only Agents API support for the control-plane profile', async () => {
+    const { JANGAR_RUNTIME_PROFILES } = await import('../runtime-profile')
+    const { ensureRuntimeStartup } = await import('../runtime-startup')
+
+    ensureRuntimeStartup(JANGAR_RUNTIME_PROFILES.agentsControlPlane.startup)
+    ensureRuntimeStartup(JANGAR_RUNTIME_PROFILES.agentsControlPlane.startup)
+
+    expect(mocks.ensureAgentCommsRuntime).not.toHaveBeenCalled()
+    expect(mocks.ensureControllerRuntimes).toHaveBeenCalledTimes(1)
+    expect(mocks.startControlPlaneCache).toHaveBeenCalledTimes(1)
+    expect(mocks.startTorghutQuantRuntime).not.toHaveBeenCalled()
+    expect(mocks.startAgentctlGrpcServer).toHaveBeenCalledTimes(1)
   })
 
   it('skips all startup side effects for the test profile', async () => {
@@ -69,6 +87,7 @@ describe('ensureRuntimeStartup', () => {
     ensureRuntimeStartup(JANGAR_RUNTIME_PROFILES.test.startup)
 
     expect(mocks.ensureAgentCommsRuntime).not.toHaveBeenCalled()
+    expect(mocks.ensureControllerRuntimes).not.toHaveBeenCalled()
     expect(mocks.startControlPlaneCache).not.toHaveBeenCalled()
     expect(mocks.startTorghutQuantRuntime).not.toHaveBeenCalled()
     expect(mocks.startAgentctlGrpcServer).not.toHaveBeenCalled()

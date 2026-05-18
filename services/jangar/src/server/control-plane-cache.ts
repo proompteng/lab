@@ -1,7 +1,8 @@
+import { resolveRuntimeServiceName } from '@proompteng/agents/server/runtime-identity'
+
 import { startResourceWatch } from '~/server/kube-watch'
 import { isRuntimeTestEnv } from '~/server/control-plane-config'
 import { resolveControlPlaneCacheConfig } from '~/server/controller-runtime-config'
-import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { buildResourceFingerprint } from '~/server/status-utils'
@@ -18,7 +19,6 @@ type CacheKind =
 
 type CacheResource = { kind: CacheKind; resource: string }
 
-const DEFAULT_NAMESPACE = 'agents'
 const DEFAULT_CLUSTER_ID = 'default'
 
 const CACHE_RESOURCES: CacheResource[] = [
@@ -32,6 +32,8 @@ const CACHE_RESOURCES: CacheResource[] = [
 
 let started = false
 let watchHandles: Array<{ stop: () => void }> = []
+
+const getLogPrefix = () => `[${resolveRuntimeServiceName()}][control-plane-cache]`
 
 const shouldStart = () => {
   if (isRuntimeTestEnv()) return false
@@ -163,7 +165,7 @@ const listOnce = async (namespace: string, store: ReturnType<typeof createContro
         since: syncStartedAt,
       })
     } catch (error) {
-      console.warn('[jangar][control-plane-cache] list failed', { kind: entry.kind, namespace, error })
+      console.warn(`${getLogPrefix()} list failed`, { kind: entry.kind, namespace, error })
     }
   }
 }
@@ -174,7 +176,7 @@ const startNamespaceWatches = (namespace: string, store: ReturnType<typeof creat
       startResourceWatch({
         resource: entry.resource,
         namespace,
-        logPrefix: '[jangar][control-plane-cache]',
+        logPrefix: getLogPrefix(),
         onEvent: async (event) => {
           const payload = asRecord(event.object) ?? {}
           const summary = toSummary(payload)
@@ -214,7 +216,7 @@ const startNamespaceWatches = (namespace: string, store: ReturnType<typeof creat
           })
         },
         onError: (error) => {
-          console.warn('[jangar][control-plane-cache] watch failed', { kind: entry.kind, namespace, error })
+          console.warn(`${getLogPrefix()} watch failed`, { kind: entry.kind, namespace, error })
         },
       }),
     )
@@ -236,7 +238,7 @@ export const startControlPlaneCache = async () => {
       startNamespaceWatches(namespace, store)
     }
   } catch (error) {
-    console.warn('[jangar][control-plane-cache] failed to start', error)
+    console.warn(`${getLogPrefix()} failed to start`, error)
     try {
       stopControlPlaneCache()
     } catch {
