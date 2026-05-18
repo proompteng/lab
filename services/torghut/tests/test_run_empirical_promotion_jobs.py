@@ -397,7 +397,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             runtime_window_candidate_id="",
             runtime_window_observed_stage="paper",
             runtime_window_strategy_family="intraday_tsmom_consistent",
-            runtime_window_source_dsn_env="DB_DSN",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
             runtime_window_strategy_name="intraday-tsmom-profit-v3",
             runtime_window_account_label="TORGHUT_SIM",
             runtime_window_start="2026-05-18T13:30:00Z",
@@ -433,6 +433,8 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertIn("--candidate-id", command)
         self.assertIn("spec-83161ae16d17828eabcc58cc", command)
         self.assertNotIn("stale-empirical-candidate", command)
+        self.assertIn("--source-dsn-env", command)
+        self.assertIn("SIM_DB_DSN", command)
         self.assertIn("--dataset-snapshot-ref", command)
         self.assertIn("portfolio-profit-autoresearch-500-v1", command)
         self.assertNotIn("stale-empirical-dataset", command)
