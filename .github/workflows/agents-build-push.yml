@@ -1,0 +1,78 @@
+name: agents-build-push
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'charts/agents/**'
+      - 'packages/codex/**'
+      - 'packages/cx-tools/**'
+      - 'packages/otel/**'
+      - 'packages/scripts/src/agents/**'
+      - 'packages/scripts/src/jangar/**'
+      - 'packages/scripts/src/shared/**'
+      - 'packages/temporal-bun-sdk/**'
+      - 'services/agents/**'
+      - 'services/jangar/**'
+      - 'skills/**'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/workflows/agents-build-push.yml'
+      - '.github/workflows/agents-release.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: agents-build-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: arc-arm64
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          cache-binary: false
+
+      - name: Resolve image tag
+        id: meta
+        run: echo "tag=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts --filter @proompteng/jangar
+
+      - name: Build and push Agents images
+        env:
+          AGENTS_APPLY: 'false'
+          AGENTS_BUILD_RUNNER: 'false'
+          AGENTS_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+          AGENTS_IMAGE_PLATFORMS: linux/arm64
+          JANGAR_BUILD_CACHE_MODE: max
+          JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
+          JANGAR_BUILD_SOURCEMAP: '0'
+          JANGAR_BUILD_CI: 'true'
+          JANGAR_BUILD_LOG_LEVEL: warn
+          DOCKER_BUILD_PROVENANCE: max
+          DOCKER_BUILD_SBOM: 'true'
+        run: bun run agents:deploy -- --no-apply --skip-runner
+
+      - name: Upload rendered Agents values
+        uses: actions/upload-artifact@v6
+        with:
+          name: agents-values
+          path: argocd/applications/agents/values.yaml
+          if-no-files-found: error
+          retention-days: 3
