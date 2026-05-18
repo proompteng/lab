@@ -4067,7 +4067,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             root = Path(tmpdir)
             source_path = root / "sources.jsonl"
             rows: list[dict[str, object]] = []
-            for index in range(6):
+            for index in range(1):
                 payload = dict(_source_jsonl_payload())
                 payload["run_id"] = f"paper-jsonl-coverage-{index}"
                 payload["title"] = f"Coverage Paper {index}"

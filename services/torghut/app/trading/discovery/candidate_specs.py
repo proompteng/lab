@@ -2626,6 +2626,87 @@ def _notional_throughput_feedback_escape_profile(
     )
 
 
+def _symbol_diversification_feedback_escape_profile(
+    profile: Mapping[str, Any],
+) -> dict[str, Any]:
+    next_profile = json.loads(json.dumps(profile))
+    params = _mapping(next_profile.get("params"))
+    diversified_symbols: list[str] = []
+    seen_symbols: set[str] = set()
+    raw_symbols = next_profile.get("universe_symbols")
+    base_symbols = (
+        cast(Sequence[Any], raw_symbols)
+        if isinstance(raw_symbols, Sequence) and not isinstance(raw_symbols, str)
+        else ()
+    )
+    for symbol in (
+        *base_symbols,
+        *_PORTFOLIO_COVERAGE_UNIVERSE_PROFILE,
+    ):
+        normalized = str(symbol).strip().upper()
+        if not normalized or normalized in seen_symbols:
+            continue
+        diversified_symbols.append(normalized)
+        seen_symbols.add(normalized)
+        if len(diversified_symbols) >= len(_PORTFOLIO_COVERAGE_UNIVERSE_PROFILE):
+            break
+    if diversified_symbols:
+        next_profile["universe_symbols"] = diversified_symbols
+    params["max_entries_per_session"] = str(
+        max(
+            4,
+            min(
+                8,
+                _int_profile_param(params, "max_entries_per_session", default=3) + 2,
+            ),
+        )
+    )
+    params["max_concurrent_positions"] = str(
+        max(3, min(5, _profile_rank_count_floor(next_profile)))
+    )
+    if "max_pair_legs" in params:
+        params["max_pair_legs"] = str(
+            max(3, min(5, _int_profile_param(params, "max_pair_legs", default=3)))
+        )
+    if "top_n" in params:
+        params["top_n"] = str(
+            max(3, min(5, _int_profile_param(params, "top_n", default=3)))
+        )
+    params["long_stop_loss_bps"] = str(
+        min(6, max(3, _int_profile_param(params, "long_stop_loss_bps", default=4)))
+    )
+    params["short_stop_loss_bps"] = str(
+        min(6, max(3, _int_profile_param(params, "short_stop_loss_bps", default=4)))
+    )
+    params["long_trailing_stop_drawdown_bps"] = str(
+        min(
+            4,
+            max(
+                2,
+                _int_profile_param(
+                    params, "long_trailing_stop_drawdown_bps", default=3
+                ),
+            ),
+        )
+    )
+    params["max_session_negative_exit_bps"] = str(
+        min(
+            4,
+            max(
+                2,
+                _int_profile_param(params, "max_session_negative_exit_bps", default=3),
+            ),
+        )
+    )
+    params["symbol_concentration_feedback_guard"] = "max_single_symbol_contribution"
+    next_profile["params"] = params
+    return _cash_constrain_profile(
+        next_profile,
+        capital_profile="feedback_symbol_diversification_cash_constrained_1x",
+        label="symbol_diversification_feedback_escape",
+    )
+
+
 def _portfolio_feedback_escape_execution_profiles(
     profiles: Sequence[Mapping[str, Any]],
 ) -> tuple[dict[str, Any], ...]:
@@ -2637,6 +2718,7 @@ def _portfolio_feedback_escape_execution_profiles(
             _consistency_guard_feedback_escape_profile(profile),
             _turnover_coverage_feedback_escape_profile(profile),
             _notional_throughput_feedback_escape_profile(profile),
+            _symbol_diversification_feedback_escape_profile(profile),
         ):
             key = _stable_hash(next_profile)
             if key in seen:

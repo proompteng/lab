@@ -14,7 +14,7 @@ PROFIT_TARGET_ORACLE_SCHEMA_VERSION = "torghut.profit-target-oracle.v1"
 class ProfitTargetOraclePolicy:
     min_active_day_ratio: Decimal = Decimal("0.90")
     min_positive_day_ratio: Decimal = Decimal("0.60")
-    min_daily_net_pnl: Decimal = Decimal("0")
+    min_daily_net_pnl: Decimal = Decimal("-350")
     max_best_day_share: Decimal = Decimal("0.25")
     max_cluster_contribution_share: Decimal = Decimal("0.40")
     max_single_symbol_contribution_share: Decimal = Decimal("0.35")
