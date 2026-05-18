@@ -7,6 +7,7 @@ import * as grpc from '@grpc/grpc-js'
 import { status as GrpcStatus, ServerCredentials, type ServerUnaryCall, type ServerWritableStream } from '@grpc/grpc-js'
 import { loadSync } from '@grpc/proto-loader'
 import { KubeConfig, Log } from '@kubernetes/client-node'
+import { resolveRuntimeServiceName } from '@proompteng/agents/server/runtime-identity'
 import { postAgentRunsHandler } from '~/routes/v1/agent-runs'
 import { resolveAgentctlGrpcConfig } from '~/server/agentctl-grpc-config'
 import { buildControlPlaneStatus, type GrpcStatus as ControlPlaneGrpcStatus } from '~/server/control-plane-status'
@@ -18,7 +19,6 @@ import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '~/s
 const DEFAULT_NAMESPACE = 'agents'
 const DEFAULT_WORKFLOW_STEP = 'implement'
 const SERVICE_NAME = 'jangar'
-
 type AgentctlServer = {
   server: grpc.Server
   address: string
@@ -421,7 +421,7 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
   const component = resolveComponent()
   const config = resolveAgentctlGrpcConfig()
   if (!config.enabled) {
-    console.info(`[jangar] agentctl grpc not enabled for ${component}; set JANGAR_GRPC_ENABLED=true to start listener`)
+    console.info(`[${resolveRuntimeServiceName()}] agentctl grpc disabled for ${component}`)
     return null
   }
 
@@ -1160,10 +1160,10 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
 
   server.bindAsync(config.address, ServerCredentials.createInsecure(), (error) => {
     if (error) {
-      console.error('[jangar] agentctl grpc failed to bind', error)
+      console.error(`[${resolveRuntimeServiceName()}] agentctl grpc failed to bind`, error)
       return
     }
-    console.info(`[jangar] agentctl grpc listening on ${config.address} for ${component}`)
+    console.info(`[${resolveRuntimeServiceName()}] agentctl grpc listening on ${config.address} for ${component}`)
   })
 
   return { server, address: config.address }
