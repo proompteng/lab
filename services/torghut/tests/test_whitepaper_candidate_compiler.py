@@ -383,6 +383,72 @@ class TestWhitepaperCandidateCompiler(TestCase):
             )
         )
 
+    def test_may_2026_toxicity_and_options_aliases_compile_to_runtime_families(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-may-2026-toxicity-options",
+            claims=[
+                {
+                    "claim_id": "informed-flow-toxicity-score",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Real-time informed-flow detection combines VPIN, Kyle lambda, "
+                        "hazard rate, and informed flow score before entries."
+                    ),
+                    "data_requirements": [
+                        "vpin",
+                        "kyle_lambda",
+                        "hazard_rate",
+                        "informed_flow_score",
+                    ],
+                    "confidence": "0.71",
+                },
+                {
+                    "claim_id": "weekly-option-gamma-flow-state",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Weekly option availability and gamma exposure create volatility "
+                        "and option-flow state around short-horizon option trading."
+                    ),
+                    "data_requirements": [
+                        "weekly_option_availability",
+                        "gamma_exposure",
+                        "option_flow",
+                        "realized_volatility",
+                    ],
+                    "confidence": "0.70",
+                },
+                {
+                    "claim_id": "may-2026-route-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Recent toxicity and option-flow claims need route TCA, live-paper "
+                        "parity, walk-forward replay, and drawdown validation."
+                    ),
+                    "data_requirements": [
+                        "route_tca",
+                        "live_paper_parity",
+                        "walk_forward_replay",
+                        "drawdown_validation",
+                    ],
+                    "confidence": "0.72",
+                },
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+        )
+
     def test_missing_family_template_blocks_execution(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-run-2",
