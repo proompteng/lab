@@ -6,15 +6,18 @@
   "exports": {
     "./server/controller-startup-retry": "./src/server/controller-startup-retry.ts",
     "./server/env-compat": "./src/server/env-compat.ts",
+    "./server/http": "./src/server/http.ts",
     "./server/kube-gateway": "./src/server/kube-gateway.ts",
     "./server/kube-types": "./src/server/kube-types.ts",
     "./server/kubernetes-bun-transport": "./src/server/kubernetes-bun-transport.ts",
     "./server/primitives": "./src/server/primitives.ts",
+    "./server/primitives-policy": "./src/server/primitives-policy.ts",
     "./server/runtime-identity": "./src/server/runtime-identity.ts",
     "./server/agents-controller/agent-run-reconciler": "./src/server/agents-controller/agent-run-reconciler.ts",
     "./server/agents-controller/mutable-state": "./src/server/agents-controller/mutable-state.ts",
     "./server/agents-controller/rate-limits": "./src/server/agents-controller/rate-limits.ts",
     "./server/agents-controller/*": "./src/server/agents-controller/*.ts",
+    "./server/v1/*": "./src/server/v1/*.ts",
     "./runner/*": "./src/runner/*.ts"
   },
   "scripts": {
