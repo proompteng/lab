@@ -5005,38 +5005,20 @@ def _load_options_catalog_freshness_summary(
     )
     try:
         session.execute(text("SET LOCAL statement_timeout = 500"))
-        row = (
-            session.execute(
-                text(
-                    """
-SELECT
-  COUNT(*) FILTER (WHERE status = 'active') AS active_contracts,
-  MAX(last_seen_ts) FILTER (WHERE status = 'active') AS newest_last_seen_ts,
-  COUNT(*) FILTER (WHERE status = 'active' AND provider_updated_ts IS NULL) AS missing_provider_updated_ts_count,
-  MAX(provider_updated_ts) FILTER (WHERE status = 'active') AS newest_provider_updated_ts,
-  COUNT(*) FILTER (WHERE status = 'active' AND close_price IS NULL) AS missing_close_price_count,
-  COUNT(*) FILTER (WHERE status = 'active' AND COALESCE(open_interest, 0) <= 0) AS zero_open_interest_count
-FROM torghut_options_contract_catalog
-"""
-                )
-            )
-            .mappings()
-            .one()
-        )
-        scoped_rows = []
         if scoped_symbols:
             scoped_query = text(
                 """
 SELECT
   underlying_symbol,
-  COUNT(*) FILTER (WHERE status = 'active') AS active_contracts,
-  MAX(last_seen_ts) FILTER (WHERE status = 'active') AS newest_last_seen_ts,
-  COUNT(*) FILTER (WHERE status = 'active' AND provider_updated_ts IS NULL) AS missing_provider_updated_ts_count,
-  MAX(provider_updated_ts) FILTER (WHERE status = 'active') AS newest_provider_updated_ts,
-  COUNT(*) FILTER (WHERE status = 'active' AND close_price IS NULL) AS missing_close_price_count,
-  COUNT(*) FILTER (WHERE status = 'active' AND COALESCE(open_interest, 0) <= 0) AS zero_open_interest_count
+  COUNT(*) AS active_contracts,
+  MAX(last_seen_ts) AS newest_last_seen_ts,
+  COUNT(*) FILTER (WHERE provider_updated_ts IS NULL) AS missing_provider_updated_ts_count,
+  MAX(provider_updated_ts) AS newest_provider_updated_ts,
+  COUNT(*) FILTER (WHERE close_price IS NULL) AS missing_close_price_count,
+  COUNT(*) FILTER (WHERE COALESCE(open_interest, 0) <= 0) AS zero_open_interest_count
 FROM torghut_options_contract_catalog
 WHERE underlying_symbol IN :route_symbols
+  AND status = 'active'
 GROUP BY underlying_symbol
 """
             ).bindparams(bindparam("route_symbols", expanding=True))
@@ -5046,6 +5028,80 @@ GROUP BY underlying_symbol
                     {"route_symbols": scoped_symbols},
                 ).mappings()
             )
+            active_contracts = sum(
+                int(row["active_contracts"] or 0) for row in scoped_rows
+            )
+            newest_last_seen_values = [
+                value
+                for value in (
+                    _ensure_utc_datetime(
+                        cast(datetime | None, row["newest_last_seen_ts"])
+                    )
+                    for row in scoped_rows
+                )
+                if value is not None
+            ]
+            newest_last_seen_ts = (
+                max(newest_last_seen_values) if newest_last_seen_values else None
+            )
+            missing_provider_updated_ts_count = sum(
+                int(row["missing_provider_updated_ts_count"] or 0)
+                for row in scoped_rows
+            )
+            newest_provider_updated_values = [
+                value
+                for value in (
+                    _ensure_utc_datetime(
+                        cast(datetime | None, row["newest_provider_updated_ts"])
+                    )
+                    for row in scoped_rows
+                )
+                if value is not None
+            ]
+            newest_provider_updated_ts = (
+                max(newest_provider_updated_values)
+                if newest_provider_updated_values
+                else None
+            )
+            missing_close_price_count = sum(
+                int(row["missing_close_price_count"] or 0) for row in scoped_rows
+            )
+            zero_open_interest_count = sum(
+                int(row["zero_open_interest_count"] or 0) for row in scoped_rows
+            )
+        else:
+            row = (
+                session.execute(
+                    text(
+                        """
+SELECT
+  COUNT(*) AS active_contracts,
+  MAX(last_seen_ts) AS newest_last_seen_ts,
+  COUNT(*) FILTER (WHERE provider_updated_ts IS NULL) AS missing_provider_updated_ts_count,
+  MAX(provider_updated_ts) AS newest_provider_updated_ts,
+  COUNT(*) FILTER (WHERE close_price IS NULL) AS missing_close_price_count,
+  COUNT(*) FILTER (WHERE COALESCE(open_interest, 0) <= 0) AS zero_open_interest_count
+FROM torghut_options_contract_catalog
+WHERE status = 'active'
+"""
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            scoped_rows = []
+            active_contracts = int(row["active_contracts"] or 0)
+            newest_last_seen_ts = _ensure_utc_datetime(
+                cast(datetime | None, row["newest_last_seen_ts"])
+            )
+            missing_provider_updated_ts_count = int(
+                row["missing_provider_updated_ts_count"] or 0
+            )
+            newest_provider_updated_ts = _ensure_utc_datetime(
+                cast(datetime | None, row["newest_provider_updated_ts"])
+            )
+            missing_close_price_count = int(row["missing_close_price_count"] or 0)
+            zero_open_interest_count = int(row["zero_open_interest_count"] or 0)
     except SQLAlchemyError as exc:
         logger.warning("Options catalog freshness summary unavailable: %s", exc)
         return {
@@ -5053,10 +5109,6 @@ GROUP BY underlying_symbol
             "reason_codes": ["options_catalog_freshness_summary_unavailable"],
         }
 
-    active_contracts = int(row["active_contracts"] or 0)
-    missing_provider_updated_ts_count = int(
-        row["missing_provider_updated_ts_count"] or 0
-    )
     route_symbol_freshness = {
         str(scoped_row["underlying_symbol"]).strip().upper(): {
             "status": "current"
@@ -5088,18 +5140,15 @@ GROUP BY underlying_symbol
     }
     return {
         "status": "current" if active_contracts > 0 else "missing",
+        "scope": "route_symbols" if scoped_symbols else "global",
         "active_contracts": active_contracts,
-        "newest_last_seen_ts": _ensure_utc_datetime(
-            cast(datetime | None, row["newest_last_seen_ts"])
-        ),
+        "newest_last_seen_ts": newest_last_seen_ts,
         "missing_provider_updated_ts_count": missing_provider_updated_ts_count,
         "provider_updated_ts_present": missing_provider_updated_ts_count == 0
-        and row["newest_provider_updated_ts"] is not None,
-        "newest_provider_updated_ts": _ensure_utc_datetime(
-            cast(datetime | None, row["newest_provider_updated_ts"])
-        ),
-        "missing_close_price_count": int(row["missing_close_price_count"] or 0),
-        "zero_open_interest_count": int(row["zero_open_interest_count"] or 0),
+        and newest_provider_updated_ts is not None,
+        "newest_provider_updated_ts": newest_provider_updated_ts,
+        "missing_close_price_count": missing_close_price_count,
+        "zero_open_interest_count": zero_open_interest_count,
         "route_symbols": list(scoped_symbols),
         "route_symbol_freshness": route_symbol_freshness,
     }
