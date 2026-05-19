@@ -250,38 +250,15 @@ runner:
   })
 
   it('defaults database secret alias source to the Agents-owned target secret', () => {
-    const previousNamespace = process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE
-    const previousName = process.env.AGENTS_DB_SECRET_SOURCE_NAME
-    try {
-      delete process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE
-      delete process.env.AGENTS_DB_SECRET_SOURCE_NAME
-      expect(
-        __private.resolveDatabaseSecretSource({
-          namespace: 'agents',
-          name: 'agents-db-app',
-        }),
-      ).toEqual({
-        sourceNamespace: 'agents',
-        sourceName: 'agents-db-app',
-      })
-
-      process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE = 'jangar'
-      process.env.AGENTS_DB_SECRET_SOURCE_NAME = 'jangar-db-app'
-      expect(
-        __private.resolveDatabaseSecretSource({
-          namespace: 'agents',
-          name: 'agents-db-app',
-        }),
-      ).toEqual({
-        sourceNamespace: 'jangar',
-        sourceName: 'jangar-db-app',
-      })
-    } finally {
-      if (previousNamespace === undefined) delete process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE
-      else process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE = previousNamespace
-      if (previousName === undefined) delete process.env.AGENTS_DB_SECRET_SOURCE_NAME
-      else process.env.AGENTS_DB_SECRET_SOURCE_NAME = previousName
-    }
+    expect(
+      __private.resolveDatabaseSecretSource({
+        namespace: 'agents',
+        name: 'agents-db-app',
+      }),
+    ).toEqual({
+      sourceNamespace: 'agents',
+      sourceName: 'agents-db-app',
+    })
   })
 
   it('builds an Agents-owned compatibility database secret without source ownership metadata', () => {
@@ -294,19 +271,19 @@ runner:
           uri: 'cG9zdGdyZXNxbDovL2FnZW50cw==',
         },
         metadata: {
-          name: 'jangar-db-app',
+          name: 'agents-db-app',
           namespace: 'agents',
           uid: 'source-uid',
           resourceVersion: '123',
           ownerReferences: [{ name: 'source-owner' }],
           annotations: {
-            'reflector.v1.k8s.emberstack.com/reflects': 'jangar/jangar-db-app',
+            'reflector.v1.k8s.emberstack.com/reflects': 'agents/agents-db-app',
           },
         },
       },
       {
         sourceNamespace: 'agents',
-        sourceName: 'jangar-db-app',
+        sourceName: 'agents-db-app',
         targetNamespace: 'agents',
         targetName: 'agents-db-app',
       },
@@ -320,7 +297,7 @@ runner:
     expect(manifest.metadata).not.toHaveProperty('ownerReferences')
     expect(manifest.metadata?.annotations).toEqual({
       'agents.proompteng.ai/created-by': 'agents-deploy-service',
-      'agents.proompteng.ai/compat-source-secret': 'agents/jangar-db-app',
+      'agents.proompteng.ai/compat-source-secret': 'agents/agents-db-app',
     })
   })
 })

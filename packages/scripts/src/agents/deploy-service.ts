@@ -493,7 +493,7 @@ const buildDatabaseSecretAliasManifest = (
       'app.kubernetes.io/name': 'agents',
       'app.kubernetes.io/component': 'database',
       'agents.proompteng.ai/compat-source-secret': options.sourceName,
-      ...(source.metadata?.labels ?? {}),
+      ...source.metadata?.labels,
     },
     annotations: {
       'agents.proompteng.ai/created-by': 'agents-deploy-service',
@@ -503,8 +503,8 @@ const buildDatabaseSecretAliasManifest = (
 })
 
 const resolveDatabaseSecretSource = (requirement: DatabaseSecretRequirement) => ({
-  sourceNamespace: process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE ?? requirement.namespace,
-  sourceName: process.env.AGENTS_DB_SECRET_SOURCE_NAME ?? requirement.name,
+  sourceNamespace: requirement.namespace,
+  sourceName: requirement.name,
 })
 
 const ensureDatabaseSecretReady = async (requirement: DatabaseSecretRequirement | null) => {
@@ -528,7 +528,7 @@ const ensureDatabaseSecretReady = async (requirement: DatabaseSecretRequirement 
 
   if (!parseBoolean(process.env.AGENTS_CREATE_DB_SECRET_ALIAS, false)) {
     fatal(
-      `Database secret ${requirement.namespace}/${requirement.name} is missing. Create/migrate the Agents database secret before applying, or set AGENTS_CREATE_DB_SECRET_ALIAS=true with AGENTS_DB_SECRET_SOURCE_NAME set explicitly to copy a compatibility source secret for this rollout.`,
+      `Database secret ${requirement.namespace}/${requirement.name} is missing. Create/migrate the Agents database secret before applying, or set AGENTS_CREATE_DB_SECRET_ALIAS=true to re-apply the Agents-owned target secret for this rollout.`,
     )
   }
 
