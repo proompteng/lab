@@ -21,4 +21,12 @@ describe('Codex Argo manifests', () => {
     expect(kustomization).not.toContain('codex-autonomous-workflow-template.yaml')
     expect(kustomization).not.toContain('github-codex-post-deploy-workflow-template.yaml')
   })
+
+  it('does not own generic Argo workflow completion ingestion', async () => {
+    const kustomization = await readRepoFile('argocd/applications/froussard/kustomization.yaml')
+
+    expect(kustomization).not.toContain('event-bus.yaml')
+    expect(kustomization).not.toContain('workflow-completions')
+    expect(kustomization).not.toContain('argo-workflows-completions-topic.yaml')
+  })
 })

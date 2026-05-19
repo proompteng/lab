@@ -2,6 +2,10 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - rbac.yaml
+  - event-bus.yaml
+  - workflow-completions-eventsource.yaml
+  - workflow-completions-sensor.yaml
+  - argo-workflows-completions-topic.yaml
   - codex-workflow-serviceaccount.yaml
   - codex-workflow-rbac.yaml
   - codex-docker-policy.yaml

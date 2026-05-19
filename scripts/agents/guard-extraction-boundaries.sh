@@ -40,7 +40,7 @@ fail_if_matches \
 
 fail_if_matches \
   "Jangar GitOps must not own Codex run-complete ingestion" \
-  'uri: /api/codex/run-complete|name: jangar-codex-completions' \
+  'uri: /api/codex/run-complete|name: jangar-codex-completions|workflow-completions-rbac|workflow-completions-eventsource' \
   "${ROOT_DIR}/argocd/applications/jangar"
 
 fail_if_matches \
@@ -100,6 +100,11 @@ fail_if_matches \
 fail_if_matches \
   "Froussard GitOps must not ship legacy Codex implementation WorkflowTemplates" \
   'github-codex-implementation-workflow-template|codex-run-workflow-template-jangar|codex-autonomous-workflow-template|github-codex-post-deploy-workflow-template' \
+  "${ROOT_DIR}/argocd/applications/froussard"
+
+fail_if_matches \
+  "Froussard GitOps must not own generic Argo workflow completion ingestion" \
+  'event-bus\.yaml|kind: EventBus|workflow-completions|argo-workflows-completions-topic|argo\.workflows\.completions' \
   "${ROOT_DIR}/argocd/applications/froussard"
 
 fail_if_matches \
