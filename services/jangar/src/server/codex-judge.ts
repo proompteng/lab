@@ -103,8 +103,6 @@ const safeParseJson = (value: string) => {
   }
 }
 
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value)
 
@@ -2125,7 +2123,7 @@ const processRerunQueue = async () => {
         runId: run.id,
         decision: 'needs_human',
         reasons: { error: 'rerun_submission_failed', detail: result.error ?? null },
-        suggestedFixes: { fix: 'Check Facteur availability and requeue the rerun.' },
+        suggestedFixes: { fix: 'Check Agents rerun orchestration availability and requeue the rerun.' },
         nextPrompt: null,
         systemSuggestions: {},
       })
@@ -2231,98 +2229,18 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
   if (orchestrationResult?.status === 'submitted') {
     return orchestrationResult
   }
-  let lastError: string | undefined =
+  const lastError =
     orchestrationResult?.status === 'failed'
       ? `Native orchestration submission failed: ${orchestrationResult.error}`
       : 'Native orchestration is not configured for reruns'
 
-  const { CodexTaskSchema, CodexTaskStage, CodexIterationsPolicySchema } = await import('./proto/codex_task_pb')
-  const { create, toBinary } = await import('@bufbuild/protobuf')
-  const { timestampFromDate } = await import('@bufbuild/protobuf/wkt')
-
-  const iterationsPolicy = iterationsCount
-    ? create(CodexIterationsPolicySchema, { mode: 'fixed', count: iterationsCount })
-    : undefined
-
-  const message = create(CodexTaskSchema, {
-    stage: CodexTaskStage.IMPLEMENTATION,
-    prompt,
-    repository: run.repository,
-    base: typeof run.runCompletePayload?.base === 'string' ? String(run.runCompletePayload.base) : 'main',
-    head: run.branch,
-    issueNumber: BigInt(run.issueNumber),
-    issueUrl:
-      typeof run.runCompletePayload?.issueUrl === 'string'
-        ? String(run.runCompletePayload.issueUrl)
-        : `https://github.com/${run.repository}/issues/${run.issueNumber}`,
-    issueTitle:
-      typeof run.runCompletePayload?.issueTitle === 'string'
-        ? String(run.runCompletePayload.issueTitle)
-        : `Issue #${run.issueNumber}`,
-    issueBody:
-      typeof run.runCompletePayload?.issueBody === 'string' ? String(run.runCompletePayload.issueBody) : prompt,
-    sender: 'jangar',
-    issuedAt: timestampFromDate(new Date()),
-    deliveryId,
-    metadataVersion: 1,
-    iterations: iterationsPolicy,
-    iterationCycle,
+  await store.updateRerunSubmission({
+    id: claimed.submission.id,
+    status: 'failed',
+    responseStatus: null,
+    error: lastError,
   })
-
-  const payload = toBinary(CodexTaskSchema, message)
-
-  const maxAttempts = RERUN_SUBMISSION_BACKOFF_MS.length + 1
-  for (let index = 0; index < maxAttempts; index += 1) {
-    let responseStatus: number | null = null
-    try {
-      const response = await fetch(`${config.facteurBaseUrl}/codex/tasks`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-protobuf' },
-        body: payload,
-      })
-      responseStatus = response.status
-
-      const responseText = response.ok ? '' : await response.text().catch(() => '')
-      if (!response.ok) {
-        lastError = `Facteur rerun submission failed with status ${response.status}${responseText ? `: ${responseText}` : ''}`
-        if (index >= maxAttempts - 1) {
-          await store.updateRerunSubmission({
-            id: claimed.submission.id,
-            status: 'failed',
-            responseStatus,
-            error: lastError,
-          })
-          return { status: 'failed', error: lastError }
-        }
-        await wait(RERUN_SUBMISSION_BACKOFF_MS[index] ?? 0)
-        continue
-      }
-
-      await store.updateRerunSubmission({
-        id: claimed.submission.id,
-        status: 'submitted',
-        responseStatus,
-        error: null,
-        submittedAt: new Date().toISOString(),
-      })
-
-      return { status: 'submitted' }
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error)
-      if (index >= maxAttempts - 1) {
-        await store.updateRerunSubmission({
-          id: claimed.submission.id,
-          status: 'failed',
-          responseStatus,
-          error: lastError,
-        })
-        return { status: 'failed', error: lastError }
-      }
-      await wait(RERUN_SUBMISSION_BACKOFF_MS[index] ?? 0)
-    }
-  }
-
-  return { status: 'failed', error: lastError ?? 'rerun_submission_failed' }
+  return { status: 'failed', error: lastError }
 }
 
 const DISCORD_MESSAGE_LIMIT = 1900

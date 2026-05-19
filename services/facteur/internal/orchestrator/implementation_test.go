@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -10,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/proompteng/lab/services/facteur/internal/argo"
+	"github.com/proompteng/lab/services/facteur/internal/agents"
 	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 	"github.com/proompteng/lab/services/facteur/internal/knowledge"
 )
@@ -63,55 +62,56 @@ func (s *fakeStore) RecordTaskLifecycle(
 	return task, run, nil
 }
 
-type runnerResponse struct {
-	result argo.RunResult
+type submitterResponse struct {
+	result agents.SubmitAgentRunResult
 	err    error
 }
 
-type fakeRunner struct {
-	responses []runnerResponse
+type fakeSubmitter struct {
+	responses []submitterResponse
 	calls     int
-	inputs    []argo.RunInput
+	inputs    []agents.SubmitAgentRunInput
 	index     int
 }
 
-func (r *fakeRunner) Run(_ context.Context, input argo.RunInput) (argo.RunResult, error) {
-	r.calls++
-	r.inputs = append(r.inputs, input)
-	if r.index >= len(r.responses) {
-		return argo.RunResult{}, nil
+func (s *fakeSubmitter) SubmitAgentRun(_ context.Context, input agents.SubmitAgentRunInput) (agents.SubmitAgentRunResult, error) {
+	s.calls++
+	s.inputs = append(s.inputs, input)
+	if s.index >= len(s.responses) {
+		return agents.SubmitAgentRunResult{}, nil
 	}
-	resp := r.responses[r.index]
-	r.index++
+	resp := s.responses[s.index]
+	s.index++
 	return resp.result, resp.err
-}
-
-func (r *fakeRunner) TemplateStatus(
-	_ context.Context,
-	_ string,
-	_ string,
-) (argo.TemplateStatus, error) {
-	return argo.TemplateStatus{}, nil
 }
 
 func TestImplementer_Success(t *testing.T) {
 	store := &fakeStore{}
-	runner := &fakeRunner{
-		responses: []runnerResponse{
-			{result: argo.RunResult{Namespace: "jangar", WorkflowName: "codex-autonomous-123", SubmittedAt: time.Unix(1735601000, 0)}},
+	submitter := &fakeSubmitter{
+		responses: []submitterResponse{
+			{
+				result: agents.SubmitAgentRunResult{
+					Namespace:    "agents",
+					AgentRunName: "codex-agent-123",
+					SubmittedAt:  time.Unix(1735601000, 0),
+				},
+			},
 		},
 	}
 
-	implementerInstance, err := NewImplementer(store, runner, Config{
-		Namespace:                    "argo-workflows",
-		AutonomousNamespace:          "jangar",
-		WorkflowTemplate:             "codex-autonomous",
-		AutonomousWorkflowTemplate:   "codex-autonomous",
-		ServiceAccount:               "implementer-sa",
-		AutonomousServiceAccount:     "jangar-inspector",
-		Parameters:                   map[string]string{"environment": "staging"},
-		GenerateNamePrefix:           "codex-autonomous-",
-		AutonomousGenerateNamePrefix: "codex-autonomous-",
+	implementerInstance, err := NewImplementer(store, submitter, Config{
+		Namespace:               "agents",
+		AgentName:               "codex-agent",
+		RuntimeType:             "job",
+		RuntimeConfig:           map[string]any{"serviceAccount": "agents-runner"},
+		Parameters:              map[string]string{"environment": "staging"},
+		Secrets:                 []string{"github-token", "codex-auth"},
+		SecretBindingRef:        "codex-github-token",
+		VCSProvider:             "github",
+		VCSPolicyMode:           "read-write",
+		VCSRequired:             true,
+		GoalTokenBudget:         4096,
+		TTLSecondsAfterFinished: 86400,
 	})
 	require.NoError(t, err)
 
@@ -126,15 +126,18 @@ func TestImplementer_Success(t *testing.T) {
 		Head:        "codex/issue-1966-demo",
 		IssueNumber: 1966,
 		IssueTitle:  "Implement changes",
+		IssueUrl:    "https://github.com/proompteng/lab/issues/1966",
+		IssueBody:   "Detailed issue body.",
+		Sender:      "gregkonush",
 		DeliveryId:  "delivery-impl",
 	}
 
 	result, err := implementerInstance.Implement(context.Background(), task)
 	require.NoError(t, err)
 	require.False(t, result.Duplicate)
-	require.Equal(t, runner.responses[0].result.WorkflowName, result.WorkflowName)
-	require.Equal(t, runner.responses[0].result.Namespace, result.Namespace)
-	require.Equal(t, runner.responses[0].result.SubmittedAt, result.SubmittedAt)
+	require.Equal(t, "codex-agent-123", result.AgentRunName)
+	require.Equal(t, "agents", result.Namespace)
+	require.Equal(t, submitter.responses[0].result.SubmittedAt, result.SubmittedAt)
 
 	require.Equal(t, 1, store.ideaCalls)
 	require.Equal(t, 1, store.lifecycleCalls)
@@ -148,64 +151,57 @@ func TestImplementer_Success(t *testing.T) {
 	require.Equal(t, implementationStageLabel, taskMetadata["stage"])
 	require.Equal(t, "main", taskMetadata["base"])
 
-	require.Equal(t, 1, runner.calls)
-	require.Len(t, runner.inputs, 1)
-	input := runner.inputs[0]
-	require.Equal(t, "jangar", input.Namespace)
-	require.Equal(t, "codex-autonomous", input.WorkflowTemplate)
-	require.Equal(t, "jangar-inspector", input.ServiceAccount)
-	require.Equal(t, "codex-autonomous-", input.GenerateNamePrefix)
+	var runMetadata map[string]any
+	require.NoError(t, json.Unmarshal(store.lastRun.Metadata, &runMetadata))
+	require.Equal(t, "agentrun", runMetadata["target"])
+	require.Equal(t, "agents", runMetadata["namespace"])
+	require.Equal(t, "codex-agent", runMetadata["agentName"])
+
+	require.Equal(t, 1, submitter.calls)
+	require.Len(t, submitter.inputs, 1)
+	input := submitter.inputs[0]
+	require.Equal(t, "agents", input.Namespace)
+	require.Equal(t, "codex-agent", input.AgentName)
+	require.Equal(t, "delivery-impl", input.DeliveryID)
+	require.Equal(t, "job", input.RuntimeType)
+	require.Equal(t, "agents-runner", input.RuntimeConfig["serviceAccount"])
+	require.Equal(t, []string{"github-token", "codex-auth"}, input.Secrets)
+	require.Equal(t, "codex-github-token", input.SecretBindingRef)
+	require.Equal(t, "github", input.VCSProvider)
+	require.Equal(t, "read-write", input.VCSPolicyMode)
+	require.True(t, input.VCSRequired)
+	require.Equal(t, 4096, input.GoalTokenBudget)
+	require.Equal(t, 86400, input.TTLSecondsAfterFinished)
 	require.Equal(t, "staging", input.Parameters["environment"])
 	require.Equal(t, "proompteng/lab", input.Parameters["repository"])
-	require.Equal(t, "1966", input.Parameters["issue_number"])
+	require.Equal(t, "1966", input.Parameters["issueNumber"])
 	require.Equal(t, "codex/issue-1966-demo", input.Parameters["head"])
 	require.Equal(t, "main", input.Parameters["base"])
-	require.Equal(t, "Implement work", input.Parameters["prompt"])
+	require.Equal(t, "implementation", input.Parameters["stage"])
 	require.Equal(t, "1", input.Parameters["implementation_iterations"])
 	require.Equal(t, "1", input.Parameters["iteration_cycle"])
-	require.Equal(t, map[string]string{"codex.issue_number": "1966"}, input.Labels)
-	require.Equal(t, map[string]string{
-		"codex.repository":   "proompteng/lab",
-		"codex.issue_number": "1966",
-		"codex.head":         "codex/issue-1966-demo",
-		"codex.base":         "main",
-	}, input.Annotations)
+	require.NotContains(t, input.Parameters, "prompt")
+	require.Equal(t, "Implement changes", input.Implementation["summary"])
+	require.Equal(t, "Implement work", input.Implementation["text"])
+	require.Equal(t, "Implement work", input.GoalObjective)
+	require.Equal(t, "github", input.Implementation["source"].(map[string]any)["provider"])
+	require.Equal(t, "proompteng/lab#1966", input.Implementation["source"].(map[string]any)["externalId"])
 
-	eventBody := input.Parameters["eventBody"]
-	require.NotEmpty(t, eventBody)
-	decodedEventBody, err := base64.StdEncoding.DecodeString(eventBody)
-	require.NoError(t, err)
 	var eventPayload map[string]any
-	require.NoError(t, json.Unmarshal(decodedEventBody, &eventPayload))
+	require.NoError(t, json.Unmarshal(store.lastIdea.Payload, &eventPayload))
 	require.Equal(t, "implementation", eventPayload["stage"])
 	require.Equal(t, "1966", eventPayload["issueNumber"])
-
-	rawEvent := input.Parameters["rawEvent"]
-	require.NotEmpty(t, rawEvent)
-	decodedRawEvent, err := base64.StdEncoding.DecodeString(rawEvent)
-	require.NoError(t, err)
-	require.NotEqual(t, decodedEventBody, decodedRawEvent)
-	var rawPayload map[string]any
-	require.NoError(t, json.Unmarshal(decodedRawEvent, &rawPayload))
-	require.Equal(t, "CODEX_TASK_STAGE_IMPLEMENTATION", rawPayload["stage"])
 }
 
-func TestImplementer_UsesAutonomousConfig(t *testing.T) {
+func TestImplementer_UsesAgentRunDefaults(t *testing.T) {
 	store := &fakeStore{}
-	runner := &fakeRunner{
-		responses: []runnerResponse{
-			{result: argo.RunResult{Namespace: "jangar", WorkflowName: "codex-autonomous-123", SubmittedAt: time.Unix(1735602000, 0)}},
+	submitter := &fakeSubmitter{
+		responses: []submitterResponse{
+			{result: agents.SubmitAgentRunResult{Namespace: "agents", AgentRunName: "codex-agent-123", SubmittedAt: time.Unix(1735602000, 0)}},
 		},
 	}
 
-	implementerInstance, err := NewImplementer(store, runner, Config{
-		Namespace:                  "argo-workflows",
-		AutonomousNamespace:        "jangar",
-		WorkflowTemplate:           "codex-autonomous",
-		AutonomousWorkflowTemplate: "codex-autonomous",
-		ServiceAccount:             "codex-workflow",
-		AutonomousServiceAccount:   "jangar-inspector",
-	})
+	implementerInstance, err := NewImplementer(store, submitter, Config{})
 	require.NoError(t, err)
 
 	task := &froussardpb.CodexTask{
@@ -213,30 +209,31 @@ func TestImplementer_UsesAutonomousConfig(t *testing.T) {
 		Repository:  "proompteng/lab",
 		Head:        "codex/issue-2000-demo",
 		IssueNumber: 2000,
-		DeliveryId:  "delivery-autonomous",
+		DeliveryId:  "delivery-defaults",
 	}
 
 	result, err := implementerInstance.Implement(context.Background(), task)
 	require.NoError(t, err)
 	require.False(t, result.Duplicate)
 
-	require.Equal(t, 1, runner.calls)
-	require.Len(t, runner.inputs, 1)
-	input := runner.inputs[0]
-	require.Equal(t, "jangar", input.Namespace)
-	require.Equal(t, "codex-autonomous", input.WorkflowTemplate)
-	require.Equal(t, "jangar-inspector", input.ServiceAccount)
+	require.Equal(t, 1, submitter.calls)
+	require.Len(t, submitter.inputs, 1)
+	input := submitter.inputs[0]
+	require.Equal(t, "agents", input.Namespace)
+	require.Equal(t, "codex-agent", input.AgentName)
+	require.Equal(t, "job", input.RuntimeType)
+	require.Equal(t, "codex-agent-123", result.AgentRunName)
 }
 
 func TestImplementer_DuplicateDelivery(t *testing.T) {
 	store := &fakeStore{}
-	runner := &fakeRunner{
-		responses: []runnerResponse{
-			{result: argo.RunResult{Namespace: "jangar", WorkflowName: "codex-autonomous-456", SubmittedAt: time.Unix(1735601001, 0)}},
+	submitter := &fakeSubmitter{
+		responses: []submitterResponse{
+			{result: agents.SubmitAgentRunResult{Namespace: "agents", AgentRunName: "codex-agent-456", SubmittedAt: time.Unix(1735601001, 0)}},
 		},
 	}
 
-	implementerInstance, err := NewImplementer(store, runner, Config{})
+	implementerInstance, err := NewImplementer(store, submitter, Config{})
 	require.NoError(t, err)
 
 	i := implementerInstance.(*implementer)
@@ -257,20 +254,24 @@ func TestImplementer_DuplicateDelivery(t *testing.T) {
 	second, err := implementerInstance.Implement(context.Background(), task)
 	require.NoError(t, err)
 	require.True(t, second.Duplicate)
-	require.Equal(t, first.WorkflowName, second.WorkflowName)
+	require.Equal(t, first.AgentRunName, second.AgentRunName)
 	require.Equal(t, first.Namespace, second.Namespace)
 	require.Equal(t, first.SubmittedAt, second.SubmittedAt)
 
-	require.Equal(t, 1, runner.calls)
+	require.Equal(t, 1, submitter.calls)
 	require.Equal(t, 1, store.ideaCalls)
 	require.Equal(t, 1, store.lifecycleCalls)
 }
 
 func TestImplementer_StoreFailure(t *testing.T) {
 	store := &fakeStore{responses: []storeResponse{{upsertErr: errors.New("store fail")}}}
-	runner := &fakeRunner{responses: []runnerResponse{{result: argo.RunResult{Namespace: "codex", WorkflowName: "wf", SubmittedAt: time.Unix(1735601100, 0)}}}}
+	submitter := &fakeSubmitter{
+		responses: []submitterResponse{
+			{result: agents.SubmitAgentRunResult{Namespace: "agents", AgentRunName: "codex-agent-1", SubmittedAt: time.Unix(1735601100, 0)}},
+		},
+	}
 
-	implementerInstance, err := NewImplementer(store, runner, Config{})
+	implementerInstance, err := NewImplementer(store, submitter, Config{})
 	require.NoError(t, err)
 
 	i := implementerInstance.(*implementer)
@@ -286,25 +287,25 @@ func TestImplementer_StoreFailure(t *testing.T) {
 	_, err = implementerInstance.Implement(context.Background(), task)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "upsert idea")
-	require.Equal(t, 0, runner.calls)
+	require.Equal(t, 0, submitter.calls)
 
 	store.responses = []storeResponse{{}}
 	result, err := implementerInstance.Implement(context.Background(), task)
 	require.NoError(t, err)
 	require.False(t, result.Duplicate)
-	require.Equal(t, 1, runner.calls)
+	require.Equal(t, 1, submitter.calls)
 }
 
-func TestImplementer_RunnerFailure(t *testing.T) {
+func TestImplementer_SubmitterFailure(t *testing.T) {
 	store := &fakeStore{}
-	runner := &fakeRunner{
-		responses: []runnerResponse{
-			{err: errors.New("runner fail")},
-			{result: argo.RunResult{Namespace: "codex", WorkflowName: "wf", SubmittedAt: time.Unix(1735601200, 0)}},
+	submitter := &fakeSubmitter{
+		responses: []submitterResponse{
+			{err: errors.New("agents fail")},
+			{result: agents.SubmitAgentRunResult{Namespace: "agents", AgentRunName: "codex-agent-2", SubmittedAt: time.Unix(1735601200, 0)}},
 		},
 	}
 
-	implementerInstance, err := NewImplementer(store, runner, Config{})
+	implementerInstance, err := NewImplementer(store, submitter, Config{})
 	require.NoError(t, err)
 
 	i := implementerInstance.(*implementer)
@@ -314,25 +315,25 @@ func TestImplementer_RunnerFailure(t *testing.T) {
 		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
 		Repository:  "proompteng/lab",
 		IssueNumber: 1636,
-		DeliveryId:  "runner-failure",
+		DeliveryId:  "submitter-failure",
 	}
 
 	_, err = implementerInstance.Implement(context.Background(), task)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "submit workflow")
-	require.Equal(t, 1, runner.calls)
+	require.Contains(t, err.Error(), "submit AgentRun")
+	require.Equal(t, 1, submitter.calls)
 
 	result, err := implementerInstance.Implement(context.Background(), task)
 	require.NoError(t, err)
 	require.False(t, result.Duplicate)
-	require.Equal(t, 2, runner.calls)
+	require.Equal(t, 2, submitter.calls)
 }
 
 func TestImplementer_MissingDeliveryID(t *testing.T) {
 	store := &fakeStore{}
-	runner := &fakeRunner{}
+	submitter := &fakeSubmitter{}
 
-	implementerInstance, err := NewImplementer(store, runner, Config{})
+	implementerInstance, err := NewImplementer(store, submitter, Config{})
 	require.NoError(t, err)
 
 	_, err = implementerInstance.Implement(context.Background(), &froussardpb.CodexTask{
@@ -342,16 +343,16 @@ func TestImplementer_MissingDeliveryID(t *testing.T) {
 		DeliveryId:  " ",
 	})
 	require.ErrorIs(t, err, ErrImplementationMissingDeliveryID)
-	require.Equal(t, 0, runner.calls)
+	require.Equal(t, 0, submitter.calls)
 	require.Equal(t, 0, store.ideaCalls)
 	require.Equal(t, 0, store.lifecycleCalls)
 }
 
 func TestImplementer_UnsupportedStage(t *testing.T) {
 	store := &fakeStore{}
-	runner := &fakeRunner{}
+	submitter := &fakeSubmitter{}
 
-	implementerInstance, err := NewImplementer(store, runner, Config{})
+	implementerInstance, err := NewImplementer(store, submitter, Config{})
 	require.NoError(t, err)
 
 	_, err = implementerInstance.Implement(context.Background(), &froussardpb.CodexTask{
@@ -361,6 +362,6 @@ func TestImplementer_UnsupportedStage(t *testing.T) {
 		DeliveryId:  "invalid-stage",
 	})
 	require.ErrorIs(t, err, ErrImplementationUnsupportedStage)
-	require.Equal(t, 0, runner.calls)
+	require.Equal(t, 0, submitter.calls)
 	require.Equal(t, 0, store.ideaCalls)
 }

@@ -43,16 +43,20 @@ type ArgoConfig struct {
 
 // ImplementerConfig controls Facteur-led Codex implementation orchestration behaviour.
 type ImplementerConfig struct {
-	Enabled                      bool              `mapstructure:"enabled"`
-	Namespace                    string            `mapstructure:"namespace"`
-	AutonomousNamespace          string            `mapstructure:"autonomous_namespace"`
-	WorkflowTemplate             string            `mapstructure:"workflow_template"`
-	AutonomousWorkflowTemplate   string            `mapstructure:"autonomous_workflow_template"`
-	ServiceAccount               string            `mapstructure:"service_account"`
-	AutonomousServiceAccount     string            `mapstructure:"autonomous_service_account"`
-	Parameters                   map[string]string `mapstructure:"parameters"`
-	AutonomousGenerateNamePrefix string            `mapstructure:"autonomous_generate_name_prefix"`
-	JudgePrompt                  string            `mapstructure:"judge_prompt"`
+	Enabled                 bool              `mapstructure:"enabled"`
+	AgentsBaseURL           string            `mapstructure:"agents_base_url"`
+	Namespace               string            `mapstructure:"namespace"`
+	AgentName               string            `mapstructure:"agent_name"`
+	RuntimeType             string            `mapstructure:"runtime_type"`
+	RuntimeConfig           map[string]any    `mapstructure:"runtime_config"`
+	Parameters              map[string]string `mapstructure:"parameters"`
+	Secrets                 []string          `mapstructure:"secrets"`
+	SecretBindingRef        string            `mapstructure:"secret_binding_ref"`
+	VCSProvider             string            `mapstructure:"vcs_provider"`
+	VCSPolicyMode           string            `mapstructure:"vcs_policy_mode"`
+	VCSRequired             bool              `mapstructure:"vcs_required"`
+	GoalTokenBudget         int               `mapstructure:"goal_token_budget"`
+	TTLSecondsAfterFinished int               `mapstructure:"ttl_seconds_after_finished"`
 }
 
 // ServerConfig contains HTTP server runtime options.
@@ -140,15 +144,19 @@ func LoadWithOptions(opts Options) (*Config, error) {
 			key:  "codex_implementation_orchestrator.enabled",
 			envs: []string{"FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION"},
 		},
+		{key: "codex_implementation_orchestrator.agents_base_url"},
 		{key: "codex_implementation_orchestrator.namespace"},
-		{key: "codex_implementation_orchestrator.autonomous_namespace"},
-		{key: "codex_implementation_orchestrator.workflow_template"},
-		{key: "codex_implementation_orchestrator.autonomous_workflow_template"},
-		{key: "codex_implementation_orchestrator.service_account"},
-		{key: "codex_implementation_orchestrator.autonomous_service_account"},
+		{key: "codex_implementation_orchestrator.agent_name"},
+		{key: "codex_implementation_orchestrator.runtime_type"},
+		{key: "codex_implementation_orchestrator.runtime_config"},
 		{key: "codex_implementation_orchestrator.parameters"},
-		{key: "codex_implementation_orchestrator.autonomous_generate_name_prefix"},
-		{key: "codex_implementation_orchestrator.judge_prompt"},
+		{key: "codex_implementation_orchestrator.secrets"},
+		{key: "codex_implementation_orchestrator.secret_binding_ref"},
+		{key: "codex_implementation_orchestrator.vcs_provider"},
+		{key: "codex_implementation_orchestrator.vcs_policy_mode"},
+		{key: "codex_implementation_orchestrator.vcs_required"},
+		{key: "codex_implementation_orchestrator.goal_token_budget"},
+		{key: "codex_implementation_orchestrator.ttl_seconds_after_finished"},
 	} {
 		if len(binding.envs) == 0 {
 			if err := v.BindEnv(binding.key); err != nil {
@@ -192,6 +200,28 @@ func normaliseConfig(cfg *Config) {
 	}
 	if cfg.Implementer.Parameters == nil {
 		cfg.Implementer.Parameters = map[string]string{}
+	}
+	if cfg.Implementer.RuntimeConfig == nil {
+		cfg.Implementer.RuntimeConfig = map[string]any{}
+	}
+	cfg.Implementer.RuntimeConfig = normalizeAgentRuntimeConfig(cfg.Implementer.RuntimeConfig)
+	if cfg.Implementer.Secrets == nil {
+		cfg.Implementer.Secrets = []string{}
+	}
+	if cfg.Implementer.AgentsBaseURL == "" {
+		cfg.Implementer.AgentsBaseURL = "http://agents.agents.svc.cluster.local"
+	}
+	if cfg.Implementer.Namespace == "" {
+		cfg.Implementer.Namespace = "agents"
+	}
+	if cfg.Implementer.AgentName == "" {
+		cfg.Implementer.AgentName = "codex-agent"
+	}
+	if cfg.Implementer.RuntimeType == "" {
+		cfg.Implementer.RuntimeType = "job"
+	}
+	if cfg.Implementer.VCSPolicyMode == "" {
+		cfg.Implementer.VCSPolicyMode = "read-write"
 	}
 	if cfg.Server.ListenAddress == "" {
 		cfg.Server.ListenAddress = ":8080"
@@ -240,4 +270,26 @@ func validate(cfg Config) error {
 	}
 
 	return nil
+}
+
+func normalizeAgentRuntimeConfig(input map[string]any) map[string]any {
+	if len(input) == 0 {
+		return map[string]any{}
+	}
+	output := make(map[string]any, len(input))
+	for key, value := range input {
+		output[key] = value
+	}
+	for key, value := range input {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "serviceaccount", "serviceaccountname":
+			if _, ok := output["serviceAccountName"]; !ok {
+				output["serviceAccountName"] = value
+			}
+			if key != "serviceAccountName" {
+				delete(output, key)
+			}
+		}
+	}
+	return output
 }

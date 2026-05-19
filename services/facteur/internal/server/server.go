@@ -293,17 +293,17 @@ func registerRoutes(app *fiber.App, opts Options) {
 
 		span.SetAttributes(
 			attribute.String("facteur.codex.namespace", result.Namespace),
-			attribute.String("facteur.codex.workflow", result.WorkflowName),
+			attribute.String("facteur.codex.agentrun", result.AgentRunName),
 			attribute.Bool("facteur.codex.duplicate", result.Duplicate),
 		)
 		span.SetStatus(codes.Ok, "implementation orchestrator dispatched")
 
 		log.Printf(
-			"codex implementation orchestrated: repo=%s issue=%d delivery=%s workflow=%s namespace=%s duplicate=%t",
+			"codex implementation orchestrated: repo=%s issue=%d delivery=%s agentrun=%s namespace=%s duplicate=%t",
 			task.GetRepository(),
 			task.GetIssueNumber(),
 			task.GetDeliveryId(),
-			result.WorkflowName,
+			result.AgentRunName,
 			result.Namespace,
 			result.Duplicate,
 		)
@@ -311,7 +311,7 @@ func registerRoutes(app *fiber.App, opts Options) {
 		return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
 			"stage":        "implementation",
 			"namespace":    result.Namespace,
-			"workflowName": result.WorkflowName,
+			"agentRunName": result.AgentRunName,
 			"submittedAt":  result.SubmittedAt.UTC().Format(time.RFC3339),
 			"duplicate":    result.Duplicate,
 		})

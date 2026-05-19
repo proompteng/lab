@@ -48,6 +48,7 @@ const globalState = globalThis as typeof globalThis & {
     systemImprovementJudgePrompt: string
     defaultJudgePrompt: string
   }
+  __codexJudgeOrchestrationSubmitMock?: ReturnType<typeof vi.fn>
   __codexJudgeMemoryStoreMock?: { persist: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
   __codexJudgeClientMock?: CodexAppServerClient
   __codexJudgeReviewStoreMock?: {
@@ -512,6 +513,7 @@ const ORIGINAL_FETCH = global.fetch
 beforeEach(async () => {
   harness.reset()
   vi.clearAllMocks()
+  globalState.__codexJudgeOrchestrationSubmitMock = undefined
   setCodexClientFactory(() => globalState.__codexJudgeClientMock as CodexAppServerClient)
   await requirePrivate()
 })
@@ -586,62 +588,114 @@ describe('codex judge guardrails', () => {
     )
   })
 
-  it('marks runs needs_human when rerun submission fails', async () => {
-    const timeoutSpy = vi.spyOn(global, 'setTimeout').mockImplementation((fn) => {
-      fn()
-      return 0 as unknown as ReturnType<typeof setTimeout>
+  it('marks runs needs_human without falling back to Facteur when rerun orchestration is missing', async () => {
+    const staleTimestamp = new Date(Date.now() - 60_000).toISOString()
+    const fetchMock = vi.fn()
+    global.fetch = fetchMock as unknown as typeof global.fetch
+
+    harness.store.listRerunSubmissions.mockResolvedValue([
+      {
+        id: 'rerun-1',
+        parentRunId: 'run-1',
+        attempt: 2,
+        deliveryId: 'jangar-run-1-attempt-2',
+        status: 'queued',
+        submissionAttempt: 0,
+        responseStatus: null,
+        error: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: staleTimestamp,
+        submittedAt: null,
+      },
+    ])
+    harness.store.claimRerunSubmission.mockResolvedValue({
+      submission: {
+        id: 'rerun-1',
+        parentRunId: 'run-1',
+        attempt: 2,
+        deliveryId: 'jangar-run-1-attempt-2',
+        status: 'queued',
+        submissionAttempt: 0,
+        responseStatus: null,
+        error: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: staleTimestamp,
+        submittedAt: null,
+      },
+      shouldSubmit: true,
     })
-    try {
-      const staleTimestamp = new Date(Date.now() - 60_000).toISOString()
-      const fetchMock = vi.fn(async () => ({
-        ok: false,
-        status: 500,
-        text: async () => 'nope',
-        json: async () => ({}),
-      }))
-      global.fetch = fetchMock as unknown as typeof global.fetch
 
-      harness.store.listRerunSubmissions.mockResolvedValue([
-        {
-          id: 'rerun-1',
-          parentRunId: 'run-1',
-          attempt: 2,
-          deliveryId: 'jangar-run-1-attempt-2',
-          status: 'queued',
-          submissionAttempt: 0,
-          responseStatus: null,
-          error: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: staleTimestamp,
-          submittedAt: null,
-        },
-      ])
-      harness.store.claimRerunSubmission.mockResolvedValue({
-        submission: {
-          id: 'rerun-1',
-          parentRunId: 'run-1',
-          attempt: 2,
-          deliveryId: 'jangar-run-1-attempt-2',
-          status: 'queued',
-          submissionAttempt: 0,
-          responseStatus: null,
-          error: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: staleTimestamp,
-          submittedAt: null,
-        },
-        shouldSubmit: true,
-      })
+    const privateApi = await requirePrivate()
+    await privateApi.processRerunQueue()
 
-      const privateApi = await requirePrivate()
-      await privateApi.processRerunQueue()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(harness.store.updateRunStatus).toHaveBeenCalledWith('run-1', 'needs_human')
+    expect(harness.store.updateRerunSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'failed',
+        responseStatus: null,
+        error: 'Native orchestration is not configured for reruns',
+      }),
+    )
+  })
 
-      expect(fetchMock).toHaveBeenCalled()
-      expect(harness.store.updateRunStatus).toHaveBeenCalledWith('run-1', 'needs_human')
-      expect(harness.store.updateRerunSubmission).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed' }))
-    } finally {
-      timeoutSpy.mockRestore()
-    }
+  it('persists failed rerun state when native rerun orchestration submission fails', async () => {
+    const staleTimestamp = new Date(Date.now() - 60_000).toISOString()
+    const submitMock = vi.fn(async () => {
+      throw new Error('agents orchestration unavailable')
+    })
+    globalState.__codexJudgeOrchestrationSubmitMock = submitMock
+    harness.config.rerunOrchestrationName = 'codex-rerun'
+
+    harness.store.listRerunSubmissions.mockResolvedValue([
+      {
+        id: 'rerun-1',
+        parentRunId: 'run-1',
+        attempt: 2,
+        deliveryId: 'jangar-run-1-attempt-2',
+        status: 'queued',
+        submissionAttempt: 0,
+        responseStatus: null,
+        error: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: staleTimestamp,
+        submittedAt: null,
+      },
+    ])
+    harness.store.claimRerunSubmission.mockResolvedValue({
+      submission: {
+        id: 'rerun-1',
+        parentRunId: 'run-1',
+        attempt: 2,
+        deliveryId: 'jangar-run-1-attempt-2',
+        status: 'queued',
+        submissionAttempt: 0,
+        responseStatus: null,
+        error: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: staleTimestamp,
+        submittedAt: null,
+      },
+      shouldSubmit: true,
+    })
+
+    const privateApi = await requirePrivate()
+    await privateApi.processRerunQueue()
+
+    expect(submitMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryId: 'jangar-run-1-attempt-2',
+        orchestrationRef: { name: 'codex-rerun' },
+      }),
+    )
+    expect(harness.store.updateRunStatus).toHaveBeenCalledWith('run-1', 'needs_human')
+    expect(harness.store.updateRerunSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'failed',
+        responseStatus: null,
+        error: 'Native orchestration submission failed: agents orchestration unavailable',
+      }),
+    )
   })
 
   it('does not re-enter judging for completed runs', async () => {

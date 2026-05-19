@@ -7,17 +7,17 @@ import (
 )
 
 const (
-	ideaStatusReceived      = "received"
-	taskStateQueued         = "queued"
-	taskRunStatusQueued     = "queued"
-	attributeNamespace      = "facteur.codex.namespace"
-	attributeWorkflow       = "facteur.codex.workflow"
-	attributeDeliveryID     = "facteur.codex.delivery_id"
-	attributeRepository     = "facteur.codex.repository"
-	attributeIssueNumber    = "facteur.codex.issue_number"
-	attributeDuplicate      = "facteur.codex.duplicate"
-	attributePlanningStage  = "codex.stage"
-	attributeArgoParameters = "facteur.codex.parameters"
+	ideaStatusReceived     = "received"
+	taskStateQueued        = "queued"
+	taskRunStatusQueued    = "queued"
+	attributeNamespace     = "facteur.codex.namespace"
+	attributeAgentRun      = "facteur.codex.agentrun"
+	attributeDeliveryID    = "facteur.codex.delivery_id"
+	attributeRepository    = "facteur.codex.repository"
+	attributeIssueNumber   = "facteur.codex.issue_number"
+	attributeDuplicate     = "facteur.codex.duplicate"
+	attributePlanningStage = "codex.stage"
+	attributeRunParameters = "facteur.codex.parameters"
 )
 
 type completedEntry struct {

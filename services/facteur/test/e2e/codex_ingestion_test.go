@@ -94,7 +94,7 @@ func TestCodexIngestionEndToEnd(t *testing.T) {
 	require.True(t, second.Duplicate, "idempotent replay should be marked as duplicate")
 	require.Equal(t, first.Stage, second.Stage)
 	require.Equal(t, first.Namespace, second.Namespace)
-	require.Equal(t, first.WorkflowName, second.WorkflowName)
+	require.Equal(t, first.AgentRunName, second.AgentRunName)
 	require.Equal(t, first.SubmittedAt, second.SubmittedAt)
 
 	var runCount int
@@ -107,7 +107,7 @@ func TestCodexIngestionEndToEnd(t *testing.T) {
 type codexResponse struct {
 	Stage        string `json:"stage"`
 	Namespace    string `json:"namespace"`
-	WorkflowName string `json:"workflowName"`
+	AgentRunName string `json:"agentRunName"`
 	SubmittedAt  string `json:"submittedAt"`
 	Duplicate    bool   `json:"duplicate"`
 }
@@ -136,7 +136,7 @@ func postCodexTask(t *testing.T, client *http.Client, baseURL string, payload []
 				require.NoError(t, json.Unmarshal(bodyBytes, &body))
 				require.Equal(t, "implementation", body.Stage)
 				require.NotEmpty(t, body.Namespace)
-				require.NotEmpty(t, body.WorkflowName)
+				require.NotEmpty(t, body.AgentRunName)
 				require.NotEmpty(t, body.SubmittedAt)
 				parsedAt, parseErr := time.Parse(time.RFC3339, body.SubmittedAt)
 				require.NoError(t, parseErr)

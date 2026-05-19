@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,7 +16,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/proompteng/lab/services/facteur/internal/argo"
+	"github.com/proompteng/lab/services/facteur/internal/agents"
 	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 	"github.com/proompteng/lab/services/facteur/internal/knowledge"
 	"github.com/proompteng/lab/services/facteur/internal/telemetry"
@@ -25,7 +24,6 @@ import (
 
 const (
 	implementationStageLabel    = "implementation"
-	defaultImplementationName   = "codex-autonomous-"
 	maxImplementationIterations = 25
 )
 
@@ -43,7 +41,7 @@ type Implementer interface {
 
 type implementer struct {
 	store            knowledgeStore
-	runner           argo.Runner
+	submitter        agents.Submitter
 	cfg              Config
 	deliveries       sync.Map
 	completed        sync.Map
@@ -53,13 +51,13 @@ type implementer struct {
 	scheduleEviction func(deliveryID string, expiresAt time.Time, ttl time.Duration, deleteFn func())
 }
 
-// NewImplementer constructs an implementation orchestrator backed by the provided store and Argo runner.
-func NewImplementer(store knowledgeStore, runner argo.Runner, cfg Config) (Implementer, error) {
+// NewImplementer constructs an implementation orchestrator backed by the Agents service.
+func NewImplementer(store knowledgeStore, submitter agents.Submitter, cfg Config) (Implementer, error) {
 	if store == nil {
 		return nil, errors.New("implementer: knowledge store is required")
 	}
-	if runner == nil {
-		return nil, errors.New("implementer: argo runner is required")
+	if submitter == nil {
+		return nil, errors.New("implementer: agents submitter is required")
 	}
 
 	mergedParams := map[string]string{}
@@ -67,24 +65,22 @@ func NewImplementer(store knowledgeStore, runner argo.Runner, cfg Config) (Imple
 		mergedParams[k] = v
 	}
 
-	if cfg.GenerateNamePrefix == "" {
-		cfg.GenerateNamePrefix = defaultImplementationName
-	}
-
 	return &implementer{
-		store:  store,
-		runner: runner,
+		store:     store,
+		submitter: submitter,
 		cfg: Config{
-			Namespace:                    cfg.Namespace,
-			AutonomousNamespace:          cfg.AutonomousNamespace,
-			WorkflowTemplate:             cfg.WorkflowTemplate,
-			AutonomousWorkflowTemplate:   cfg.AutonomousWorkflowTemplate,
-			ServiceAccount:               cfg.ServiceAccount,
-			AutonomousServiceAccount:     cfg.AutonomousServiceAccount,
-			Parameters:                   mergedParams,
-			GenerateNamePrefix:           cfg.GenerateNamePrefix,
-			AutonomousGenerateNamePrefix: cfg.AutonomousGenerateNamePrefix,
-			JudgePrompt:                  cfg.JudgePrompt,
+			Namespace:               cfg.Namespace,
+			AgentName:               cfg.AgentName,
+			RuntimeType:             cfg.RuntimeType,
+			RuntimeConfig:           cloneAnyMap(cfg.RuntimeConfig),
+			Parameters:              mergedParams,
+			Secrets:                 cloneStringSlice(cfg.Secrets),
+			SecretBindingRef:        cfg.SecretBindingRef,
+			VCSProvider:             cfg.VCSProvider,
+			VCSPolicyMode:           cfg.VCSPolicyMode,
+			VCSRequired:             cfg.VCSRequired,
+			GoalTokenBudget:         cfg.GoalTokenBudget,
+			TTLSecondsAfterFinished: cfg.TTLSecondsAfterFinished,
 		},
 		tracer:        telemetry.Tracer(),
 		now:           func() time.Time { return time.Now().UTC() },
@@ -191,7 +187,7 @@ func (i *implementer) Implement(ctx context.Context, task *froussardpb.CodexTask
 		span.SetAttributes(
 			attribute.Bool(attributeDuplicate, true),
 			attribute.String(attributeNamespace, duplicate.Namespace),
-			attribute.String(attributeWorkflow, duplicate.WorkflowName),
+			attribute.String(attributeAgentRun, duplicate.AgentRunName),
 		)
 		span.SetStatus(codes.Ok, "duplicate delivery")
 		return duplicate, nil
@@ -209,9 +205,9 @@ func (i *implementer) Implement(ctx context.Context, task *froussardpb.CodexTask
 	span.SetAttributes(
 		attribute.Bool(attributeDuplicate, false),
 		attribute.String(attributeNamespace, result.Namespace),
-		attribute.String(attributeWorkflow, result.WorkflowName),
+		attribute.String(attributeAgentRun, result.AgentRunName),
 	)
-	span.SetStatus(codes.Ok, "implementation workflow dispatched")
+	span.SetStatus(codes.Ok, "implementation AgentRun dispatched")
 
 	state.result = result
 	expiresAt := i.now().Add(i.evictionAfter)
@@ -242,8 +238,6 @@ func (i *implementer) execute(ctx context.Context, span trace.Span, deliveryID s
 		span.SetStatus(codes.Error, "marshal event body")
 		return Result{}, fmt.Errorf("implementation orchestrator: marshal event body: %w", err)
 	}
-
-	rawEvent := append([]byte(nil), eventBody...)
 
 	eventBody, err = overrideStage(eventBody, implementationStageLabel)
 	if err != nil {
@@ -293,32 +287,11 @@ func (i *implementer) execute(ctx context.Context, span trace.Span, deliveryID s
 		UpdatedAt: now,
 	}
 
-	namespace := strings.TrimSpace(i.cfg.AutonomousNamespace)
-	if namespace == "" {
-		namespace = strings.TrimSpace(i.cfg.Namespace)
-	}
-	if namespace == "" {
-		namespace = "jangar"
-	}
-
-	workflowTemplate := strings.TrimSpace(i.cfg.AutonomousWorkflowTemplate)
-	if workflowTemplate == "" {
-		workflowTemplate = "codex-autonomous"
-	}
-
-	generateNamePrefix := strings.TrimSpace(i.cfg.AutonomousGenerateNamePrefix)
-	if generateNamePrefix == "" {
-		generateNamePrefix = "codex-autonomous-"
-	}
-
-	serviceAccount := strings.TrimSpace(i.cfg.AutonomousServiceAccount)
-	if serviceAccount == "" {
-		serviceAccount = strings.TrimSpace(i.cfg.ServiceAccount)
-	}
-
 	runMetadata, err := json.Marshal(map[string]any{
-		"deliveryId":       deliveryID,
-		"workflowTemplate": workflowTemplate,
+		"deliveryId": deliveryID,
+		"target":     "agentrun",
+		"namespace":  resolveNamespace(i.cfg.Namespace),
+		"agentName":  resolveAgentName(i.cfg.AgentName),
 	})
 	if err != nil {
 		span.RecordError(err)
@@ -355,87 +328,174 @@ func (i *implementer) execute(ctx context.Context, span trace.Span, deliveryID s
 	}
 
 	parameters := cloneParameters(i.cfg.Parameters)
-	parameters["rawEvent"] = base64.StdEncoding.EncodeToString(rawEvent)
-	parameters["eventBody"] = base64.StdEncoding.EncodeToString(eventBody)
+	parameters["deliveryId"] = deliveryID
+	parameters["stage"] = implementationStageLabel
 	if repository := strings.TrimSpace(task.GetRepository()); repository != "" {
 		parameters["repository"] = repository
 	}
 	if issueNumber := task.GetIssueNumber(); issueNumber > 0 {
+		parameters["issueNumber"] = strconv.FormatInt(issueNumber, 10)
 		parameters["issue_number"] = strconv.FormatInt(issueNumber, 10)
 	}
 	parameters["head"] = task.GetHead()
 	parameters["base"] = base
-	parameters["prompt"] = task.GetPrompt()
+	if title := strings.TrimSpace(task.GetIssueTitle()); title != "" {
+		parameters["issueTitle"] = title
+	}
+	if body := strings.TrimSpace(task.GetIssueBody()); body != "" {
+		parameters["issueBody"] = body
+	}
+	if issueURL := strings.TrimSpace(task.GetIssueUrl()); issueURL != "" {
+		parameters["issueUrl"] = issueURL
+	}
+	if sender := strings.TrimSpace(task.GetSender()); sender != "" {
+		parameters["sender"] = sender
+	}
+	if issuedAt := task.GetIssuedAt(); issuedAt != nil {
+		parameters["issuedAt"] = issuedAt.AsTime().UTC().Format(time.RFC3339)
+	}
+	if metadataVersion := task.GetMetadataVersion(); metadataVersion > 0 {
+		parameters["metadataVersion"] = strconv.FormatInt(int64(metadataVersion), 10)
+	}
 	iterationsCount := resolveIterationsCount(task)
 	parameters["implementation_iterations"] = strconv.Itoa(iterationsCount)
 	parameters["iteration_cycle"] = strconv.Itoa(resolveIterationCycle(task))
-	if i.cfg.JudgePrompt != "" {
-		parameters["judge_prompt"] = i.cfg.JudgePrompt
-	}
 
-	span.SetAttributes(attribute.String(attributeArgoParameters, strings.Join(sortedKeys(parameters), ",")))
+	span.SetAttributes(attribute.String(attributeRunParameters, strings.Join(sortedKeys(parameters), ",")))
 
-	labels, annotations := buildCodexWorkflowMetadata(task, base)
-
-	result, err := i.runner.Run(ctx, argo.RunInput{
-		Namespace:          namespace,
-		WorkflowTemplate:   workflowTemplate,
-		ServiceAccount:     serviceAccount,
-		Parameters:         parameters,
-		Labels:             labels,
-		Annotations:        annotations,
-		GenerateNamePrefix: generateNamePrefix,
+	implementation := buildAgentRunImplementation(task, base)
+	result, err := i.submitter.SubmitAgentRun(ctx, agents.SubmitAgentRunInput{
+		Namespace:               resolveNamespace(i.cfg.Namespace),
+		AgentName:               resolveAgentName(i.cfg.AgentName),
+		DeliveryID:              deliveryID,
+		Implementation:          implementation,
+		GoalObjective:           resolveGoalObjective(task),
+		GoalTokenBudget:         i.cfg.GoalTokenBudget,
+		RuntimeType:             resolveRuntimeType(i.cfg.RuntimeType),
+		RuntimeConfig:           cloneAnyMap(i.cfg.RuntimeConfig),
+		Parameters:              parameters,
+		Secrets:                 cloneStringSlice(i.cfg.Secrets),
+		SecretBindingRef:        i.cfg.SecretBindingRef,
+		VCSProvider:             i.cfg.VCSProvider,
+		VCSPolicyMode:           i.cfg.VCSPolicyMode,
+		VCSRequired:             i.cfg.VCSRequired,
+		TTLSecondsAfterFinished: i.cfg.TTLSecondsAfterFinished,
 	})
 	if err != nil {
 		span.RecordError(err)
-		span.SetStatus(codes.Error, "argo submission failed")
-		return Result{}, fmt.Errorf("implementation orchestrator: submit workflow: %w", err)
+		span.SetStatus(codes.Error, "agentrun submission failed")
+		return Result{}, fmt.Errorf("implementation orchestrator: submit AgentRun: %w", err)
 	}
 
 	return Result{
 		Namespace:    result.Namespace,
-		WorkflowName: result.WorkflowName,
+		AgentRunName: result.AgentRunName,
 		SubmittedAt:  result.SubmittedAt,
 		Duplicate:    false,
 	}, nil
 }
 
-func buildCodexWorkflowMetadata(task *froussardpb.CodexTask, base string) (map[string]string, map[string]string) {
+func resolveNamespace(value string) string {
+	if strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	return "agents"
+}
+
+func resolveAgentName(value string) string {
+	if strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	return "codex-agent"
+}
+
+func resolveRuntimeType(value string) string {
+	if strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	return "job"
+}
+
+func resolveGoalObjective(task *froussardpb.CodexTask) string {
 	if task == nil {
-		return nil, nil
+		return "Run Codex implementation task"
+	}
+	if prompt := strings.TrimSpace(task.GetPrompt()); prompt != "" {
+		return prompt
+	}
+	if repository := strings.TrimSpace(task.GetRepository()); repository != "" && task.GetIssueNumber() > 0 {
+		return fmt.Sprintf("Implement %s#%d", repository, task.GetIssueNumber())
+	}
+	return "Run Codex implementation task"
+}
+
+func buildAgentRunImplementation(task *froussardpb.CodexTask, base string) map[string]any {
+	summary := strings.TrimSpace(task.GetIssueTitle())
+	if summary == "" && strings.TrimSpace(task.GetRepository()) != "" && task.GetIssueNumber() > 0 {
+		summary = fmt.Sprintf("Implement %s#%d", task.GetRepository(), task.GetIssueNumber())
+	}
+	if summary == "" {
+		summary = "Codex implementation task"
+	}
+	text := strings.TrimSpace(task.GetPrompt())
+	if text == "" {
+		text = summary
 	}
 
-	labels := map[string]string{}
-	annotations := map[string]string{}
-
-	repository := strings.TrimSpace(task.GetRepository())
-	if repository != "" {
-		annotations["codex.repository"] = repository
+	implementation := map[string]any{
+		"summary": summary,
+		"text":    text,
+		"contract": map[string]any{
+			"requiredKeys": []string{"repository", "issueNumber", "base", "head", "stage"},
+		},
 	}
 
-	issueNumber := task.GetIssueNumber()
-	if issueNumber > 0 {
-		value := strconv.FormatInt(issueNumber, 10)
-		labels["codex.issue_number"] = value
-		annotations["codex.issue_number"] = value
+	source := map[string]any{"provider": "github"}
+	if repository := strings.TrimSpace(task.GetRepository()); repository != "" && task.GetIssueNumber() > 0 {
+		source["externalId"] = fmt.Sprintf("%s#%d", repository, task.GetIssueNumber())
 	}
+	if issueURL := strings.TrimSpace(task.GetIssueUrl()); issueURL != "" {
+		source["url"] = issueURL
+	}
+	implementation["source"] = source
 
-	head := strings.TrimSpace(task.GetHead())
-	if head != "" {
-		annotations["codex.head"] = head
+	metadata := map[string]any{
+		"stage": implementationStageLabel,
+		"base":  strings.TrimSpace(base),
 	}
+	if repository := strings.TrimSpace(task.GetRepository()); repository != "" {
+		metadata["repository"] = repository
+	}
+	if issueNumber := task.GetIssueNumber(); issueNumber > 0 {
+		metadata["issueNumber"] = strconv.FormatInt(issueNumber, 10)
+	}
+	if head := strings.TrimSpace(task.GetHead()); head != "" {
+		metadata["head"] = head
+	}
+	if issueURL := strings.TrimSpace(task.GetIssueUrl()); issueURL != "" {
+		metadata["issueUrl"] = issueURL
+	}
+	implementation["metadata"] = metadata
 
-	base = strings.TrimSpace(base)
-	if base != "" {
-		annotations["codex.base"] = base
-	}
+	return implementation
+}
 
-	if len(labels) == 0 {
-		labels = nil
+func cloneAnyMap(input map[string]any) map[string]any {
+	if len(input) == 0 {
+		return map[string]any{}
 	}
-	if len(annotations) == 0 {
-		annotations = nil
+	output := make(map[string]any, len(input))
+	for key, value := range input {
+		output[key] = value
 	}
+	return output
+}
 
-	return labels, annotations
+func cloneStringSlice(input []string) []string {
+	if len(input) == 0 {
+		return []string{}
+	}
+	output := make([]string, len(input))
+	copy(output, input)
+	return output
 }

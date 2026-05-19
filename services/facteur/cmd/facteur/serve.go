@@ -15,6 +15,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/proompteng/lab/services/facteur/internal/agents"
 	"github.com/proompteng/lab/services/facteur/internal/config"
 	"github.com/proompteng/lab/services/facteur/internal/knowledge"
 	"github.com/proompteng/lab/services/facteur/internal/orchestrator"
@@ -55,16 +56,15 @@ func NewServeCommand() *cobra.Command {
 			}
 			cfg.Postgres.DSN = dsn
 
-			implementerNamespace := firstNonEmpty(cfg.Implementer.AutonomousNamespace, cfg.Implementer.Namespace, cfg.Argo.Namespace, "jangar")
-			implementerTemplate := firstNonEmpty(cfg.Implementer.AutonomousWorkflowTemplate, "codex-autonomous")
 			cmd.Printf(
-				"config: argo ns=%s template=%s sa=%s implementer_enabled=%t implementer_ns=%s implementer_template=%s redis=%s postgres=%s listen=%s\n",
+				"config: argo ns=%s template=%s sa=%s implementer_enabled=%t agents_url=%s implementer_ns=%s implementer_agent=%s redis=%s postgres=%s listen=%s\n",
 				cfg.Argo.Namespace,
 				cfg.Argo.WorkflowTemplate,
 				cfg.Argo.ServiceAccount,
 				cfg.Implementer.Enabled,
-				implementerNamespace,
-				implementerTemplate,
+				cfg.Implementer.AgentsBaseURL,
+				cfg.Implementer.Namespace,
+				cfg.Implementer.AgentName,
 				redactURL(cfg.Redis.URL),
 				redactURL(cfg.Postgres.DSN),
 				cfg.Server.ListenAddress,
@@ -107,7 +107,7 @@ func NewServeCommand() *cobra.Command {
 				}
 			}()
 
-			dispatcher, runner, err := buildDispatcher(cfg)
+			dispatcher, _, err := buildDispatcher(cfg)
 			if err != nil {
 				return err
 			}
@@ -116,16 +116,23 @@ func NewServeCommand() *cobra.Command {
 
 			implementerOpts := server.CodexImplementerOptions{}
 			if cfg.Implementer.Enabled {
+				agentsSubmitter, err := agents.NewHTTPSubmitter(cfg.Implementer.AgentsBaseURL, nil)
+				if err != nil {
+					return fmt.Errorf("init agents submitter: %w", err)
+				}
 				implementerCfg := orchestrator.Config{
-					Namespace:                    cfg.Implementer.Namespace,
-					AutonomousNamespace:          cfg.Implementer.AutonomousNamespace,
-					WorkflowTemplate:             cfg.Implementer.WorkflowTemplate,
-					AutonomousWorkflowTemplate:   cfg.Implementer.AutonomousWorkflowTemplate,
-					ServiceAccount:               cfg.Implementer.ServiceAccount,
-					AutonomousServiceAccount:     cfg.Implementer.AutonomousServiceAccount,
-					Parameters:                   map[string]string{},
-					AutonomousGenerateNamePrefix: cfg.Implementer.AutonomousGenerateNamePrefix,
-					JudgePrompt:                  cfg.Implementer.JudgePrompt,
+					Namespace:               cfg.Implementer.Namespace,
+					AgentName:               cfg.Implementer.AgentName,
+					RuntimeType:             cfg.Implementer.RuntimeType,
+					RuntimeConfig:           cfg.Implementer.RuntimeConfig,
+					Parameters:              map[string]string{},
+					Secrets:                 cfg.Implementer.Secrets,
+					SecretBindingRef:        cfg.Implementer.SecretBindingRef,
+					VCSProvider:             cfg.Implementer.VCSProvider,
+					VCSPolicyMode:           cfg.Implementer.VCSPolicyMode,
+					VCSRequired:             cfg.Implementer.VCSRequired,
+					GoalTokenBudget:         cfg.Implementer.GoalTokenBudget,
+					TTLSecondsAfterFinished: cfg.Implementer.TTLSecondsAfterFinished,
 				}
 
 				for k, v := range cfg.Argo.Parameters {
@@ -135,23 +142,7 @@ func NewServeCommand() *cobra.Command {
 					implementerCfg.Parameters[k] = v
 				}
 
-				if implementerCfg.Namespace == "" {
-					implementerCfg.Namespace = cfg.Argo.Namespace
-				}
-				if implementerCfg.WorkflowTemplate == "" {
-					implementerCfg.WorkflowTemplate = cfg.Argo.WorkflowTemplate
-				}
-				if implementerCfg.ServiceAccount == "" {
-					implementerCfg.ServiceAccount = cfg.Argo.ServiceAccount
-				}
-				if implementerCfg.AutonomousWorkflowTemplate == "" {
-					implementerCfg.AutonomousWorkflowTemplate = "codex-autonomous"
-				}
-				if implementerCfg.AutonomousGenerateNamePrefix == "" {
-					implementerCfg.AutonomousGenerateNamePrefix = "codex-autonomous-"
-				}
-
-				implementer, err := orchestrator.NewImplementer(knowledgeStore, runner, implementerCfg)
+				implementer, err := orchestrator.NewImplementer(knowledgeStore, agentsSubmitter, implementerCfg)
 				if err != nil {
 					return fmt.Errorf("init codex implementer: %w", err)
 				}
@@ -160,12 +151,12 @@ func NewServeCommand() *cobra.Command {
 					Enabled:     true,
 					Implementer: implementer,
 				}
-				effectiveNamespace := firstNonEmpty(implementerCfg.AutonomousNamespace, implementerCfg.Namespace, "jangar")
-				effectiveTemplate := firstNonEmpty(implementerCfg.AutonomousWorkflowTemplate, "codex-autonomous")
 				cmd.Printf(
-					"codex implementation orchestration enabled (namespace=%s template=%s)\n",
-					effectiveNamespace,
-					effectiveTemplate,
+					"codex implementation orchestration enabled (agents_url=%s namespace=%s agent=%s runtime=%s)\n",
+					cfg.Implementer.AgentsBaseURL,
+					implementerCfg.Namespace,
+					implementerCfg.AgentName,
+					implementerCfg.RuntimeType,
 				)
 			}
 
@@ -255,13 +246,4 @@ func redactURL(raw string) string {
 	}
 
 	return parsed.String()
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
 }

@@ -106,7 +106,7 @@ Cluster deployments rely on a namespace-scoped Grafana Alloy deployment (`argocd
 
 ### Codex implementation orchestration
 
-Implementation runs through the implementation orchestrator (`codex_implementation_orchestrator.enabled=true`, or the env alias `FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION`) and submits the `codex-autonomous` workflow template (configurable via `codex_implementation_orchestrator.autonomous_workflow_template`, defaulting to `codex-autonomous` in the `jangar` namespace).
+Implementation runs through the implementation orchestrator (`codex_implementation_orchestrator.enabled=true`, or the env alias `FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION`) and submits an `AgentRun` to the Agents service at `codex_implementation_orchestrator.agents_base_url`. The default production target is the `codex-agent` Agent in the `agents` namespace using the Agents-owned `agents-codex-runner` runtime.
 
 ## Container image
 

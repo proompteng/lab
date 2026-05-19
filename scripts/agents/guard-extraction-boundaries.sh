@@ -42,6 +42,18 @@ fail_if_matches \
   'uri: /api/codex/run-complete|name: jangar-codex-completions' \
   "${ROOT_DIR}/argocd/applications/jangar"
 
+fail_if_matches \
+  "Facteur, Froussard, and shared Argo GitOps must not use the legacy codex-universal runtime" \
+  'codex-universal|/usr/local/bin/codex-bootstrap|ghcr.io/openai/codex-universal' \
+  "${ROOT_DIR}/argocd/applications/facteur" \
+  "${ROOT_DIR}/argocd/applications/froussard" \
+  "${ROOT_DIR}/argocd/applications/argo-workflows"
+
+fail_if_matches \
+  "Froussard GitOps must not ship legacy Codex implementation WorkflowTemplates" \
+  'github-codex-implementation-workflow-template|codex-run-workflow-template-jangar|codex-autonomous-workflow-template|github-codex-post-deploy-workflow-template' \
+  "${ROOT_DIR}/argocd/applications/froussard"
+
 rendered_chart="$(mktemp)"
 rendered_argo="$(mktemp)"
 cleanup() {

@@ -33,8 +33,8 @@ spec:
           - name: artifactRegion
           - name: metadata
       container:
-        image: registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl
-        imagePullPolicy: Always
+        image: registry.ide-newton.ts.net/lab/agents-codex-runner@sha256:954cb108ece9df370aa441117723144948141ba02fd52c2e3fa1ff91847dda7a
+        imagePullPolicy: IfNotPresent
         env:
           - name: GITHUB_TOKEN
             valueFrom:
@@ -81,10 +81,10 @@ spec:
             value: research
           - name: AGENT_ROLE
             value: assistant
-        command: ["/usr/local/bin/codex-bootstrap"]
+        command:
+          - /bin/bash
         args:
-          - "/bin/bash"
-          - "-lc"
+          - -lc
           - |
             set -euo pipefail
 
@@ -114,6 +114,24 @@ spec:
             export AUTO_RESEARCH_AGENT_LOG="${AUTO_RESEARCH_AGENT_LOG:-/workspace/lab/.codex-research-agent.log}"
             export AUTO_RESEARCH_RUNTIME_LOG="${AUTO_RESEARCH_RUNTIME_LOG:-/workspace/lab/.codex-research-runtime.log}"
 
+            RUN_PAYLOAD=$(mktemp)
+            jq -n \
+              --rawfile prompt "$PROMPT_FILE" \
+              --slurpfile metadata "$METADATA_FILE" \
+              --arg stage "research" \
+              --arg artifactKey "{{inputs.parameters.artifactKey}}" \
+              --arg artifactBucket "{{inputs.parameters.artifactBucket}}" \
+              '{
+                prompt: $prompt,
+                goal: { objective: $prompt },
+                parameters: { stage: $stage },
+                metadata: (($metadata[0] // {}) + {
+                  stage: $stage,
+                  artifactKey: $artifactKey,
+                  artifactBucket: $artifactBucket
+                })
+              }' > "$RUN_PAYLOAD"
+
             AGENT_LOG_PATH="$AUTO_RESEARCH_AGENT_LOG"
             NATS_PUBLISHER="/usr/local/bin/codex-nats-publish"
             NATS_TAIL_PID=""
@@ -138,17 +156,25 @@ spec:
             AGENT_SPEC=$(mktemp)
             cat > "$AGENT_SPEC" <<JSON
             {
-              "provider": "codex-research",
+              "schemaVersion": "agents.proompteng.ai/runner/v1",
+              "provider": "codex",
               "inputs": {
                 "stage": "research"
               },
               "payloads": {
-                "promptPath": "$PROMPT_FILE",
-                "metadataPath": "$METADATA_FILE"
+                "eventFilePath": "$RUN_PAYLOAD"
               },
               "artifacts": {
                 "statusPath": "/workspace/lab/.agent-status.json",
                 "logPath": "/workspace/lab/.agent-runner.log"
+              },
+              "adapter": {
+                "type": "codex-app-server",
+                "codex": {
+                  "cwd": "/workspace/lab",
+                  "sandbox": "danger-full-access",
+                  "approval": "never"
+                }
               }
             }
             JSON

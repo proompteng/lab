@@ -21,8 +21,8 @@ spec:
         parameters:
           - name: payload
       container:
-        image: registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl
-        imagePullPolicy: Always
+        image: registry.ide-newton.ts.net/lab/agents-codex-runner@sha256:954cb108ece9df370aa441117723144948141ba02fd52c2e3fa1ff91847dda7a
+        imagePullPolicy: IfNotPresent
         env:
           - name: DISCORD_BOT_TOKEN
             valueFrom:
@@ -56,9 +56,8 @@ spec:
           - name: LGTM_LOKI_ENDPOINT
             value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
         command:
-          - /usr/local/bin/codex-bootstrap
-        args:
           - /bin/bash
+        args:
           - -lc
           - |
             set -euo pipefail
@@ -129,16 +128,25 @@ spec:
             AGENT_SPEC=$(mktemp)
             cat > "$AGENT_SPEC" <<JSON
             {
+              "schemaVersion": "agents.proompteng.ai/runner/v1",
               "provider": "codex",
               "inputs": {
                 "stage": "${CODEX_STAGE}"
               },
               "payloads": {
-                "eventBodyPath": "$PAYLOAD_FILE"
+                "eventFilePath": "$PAYLOAD_FILE"
               },
               "artifacts": {
                 "statusPath": "/workspace/lab/.agent-status.json",
                 "logPath": "/workspace/lab/.agent-runner.log"
+              },
+              "adapter": {
+                "type": "codex-app-server",
+                "codex": {
+                  "cwd": "/workspace/lab",
+                  "sandbox": "danger-full-access",
+                  "approval": "never"
+                }
               }
             }
             JSON
