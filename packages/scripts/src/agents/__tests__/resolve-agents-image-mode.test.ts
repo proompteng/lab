@@ -150,6 +150,18 @@ describe('agents-ci workflow local Agents image build', () => {
     expect(workflow).not.toContain('packages/scripts/src/jangar/__tests__/release-contract.test.ts')
   })
 
+  it('keeps Agents image publication detached from Jangar-only source changes', () => {
+    const workflow = readFileSync(
+      new URL('../../../../../.github/workflows/agents-build-push.yml', import.meta.url),
+      'utf8',
+    )
+
+    expect(workflow).not.toContain("      - 'services/jangar/**'")
+    expect(workflow).toContain('services/agents/**')
+    expect(workflow).toContain('group: agents-build-${{ github.ref }}')
+    expect(workflow).not.toContain('group: agents-build-${{ github.ref }}-${{ github.sha }}')
+  })
+
   it('builds local Agents smoke images from the Agents Dockerfile', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
