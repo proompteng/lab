@@ -36,6 +36,7 @@ resources:
   - agents-primitives-sub-orchestration.yaml
   - agents-primitives-orchestrationrun.yaml
   - agents-primitives-agentrun.yaml
+  - ingressroute-jangar-agents-api.yaml
   - tailscale-service.yaml
   - tailscale-networkpolicy.yaml
   - alloy-rbac.yaml

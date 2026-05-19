@@ -20,3 +20,10 @@ spec:
           port: http
         - protocol: TCP
           port: grpc
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - protocol: TCP
+          port: http
