@@ -25,7 +25,7 @@ import { buildRepairBidAdmissionState } from '~/server/control-plane-repair-bid-
 import { getGithubReviewIngestPressureSummary } from '~/server/github-review-ingest'
 import { getMemoryProviderHealth } from '~/server/memory-provider-health'
 import { getMetricsSinkPressureSummary } from '~/server/metrics'
-import { buildExecutionTrust } from '~/server/control-plane-status'
+import { buildExecutionTrust } from '~/server/control-plane-execution-trust'
 import {
   resolveTorghutConsumerEvidence,
   type TorghutConsumerEvidenceStatus,

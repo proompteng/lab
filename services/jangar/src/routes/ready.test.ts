@@ -53,8 +53,10 @@ vi.mock('~/server/memory-provider-health', () => memoryProviderHealthMocks)
 vi.mock('~/server/control-plane-watch-reliability', () => watchReliabilityMocks)
 vi.mock('~/server/metrics', () => metricsMocks)
 vi.mock('~/server/github-review-ingest', () => githubReviewIngestMocks)
-vi.mock('~/server/control-plane-status', async () => {
-  const actual = await vi.importActual<typeof import('~/server/control-plane-status')>('~/server/control-plane-status')
+vi.mock('~/server/control-plane-execution-trust', async () => {
+  const actual = await vi.importActual<typeof import('~/server/control-plane-execution-trust')>(
+    '~/server/control-plane-execution-trust',
+  )
   return {
     ...actual,
     buildExecutionTrust: controlPlaneStatusMocks.buildExecutionTrust,
