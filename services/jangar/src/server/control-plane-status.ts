@@ -1,4 +1,8 @@
-import { getAgentsControllerHealth } from '@proompteng/agents/server/agents-controller'
+import {
+  getAgentsReadySnapshot,
+  type AgentsControllerHealthSnapshot,
+  type AgentsReadySnapshot,
+} from '~/server/agents-control-plane-client'
 import { buildReconciledActionClocks } from '~/server/control-plane-action-clock'
 import { buildAuthorityProvenanceSettlement } from '~/server/control-plane-authority-provenance-settlement'
 import {
@@ -112,8 +116,6 @@ import {
   type ControlPlaneWatchReliabilitySummary,
 } from '~/server/control-plane-watch-reliability'
 import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
-import { getOrchestrationControllerHealth } from '@proompteng/agents/server/orchestration-controller'
-import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
 import { getGithubReviewIngestPressureSummary } from '~/server/github-review-ingest'
 import { getMetricsSinkPressureSummary } from '~/server/metrics'
 import type { ExecutionTrustStatus, WorkflowsReliabilityStatus } from '~/data/agents-control-plane'
@@ -122,7 +124,7 @@ export type { ControlPlaneStatus, DatabaseStatus, GrpcStatus } from './control-p
 export { projectControlPlaneStatus, type ControlPlaneStatusView } from './control-plane-status-projection'
 export { buildExecutionTrust } from './control-plane-execution-trust'
 
-type ControllerHealth = ReturnType<typeof getAgentsControllerHealth>
+type ControllerHealth = AgentsControllerHealthSnapshot
 
 export type ControlPlaneStatusOptions = {
   namespace: string
@@ -132,6 +134,7 @@ export type ControlPlaneStatusOptions = {
 
 export type ControlPlaneStatusDeps = {
   now?: () => Date
+  getAgentsReadySnapshot?: () => Promise<AgentsReadySnapshot>
   getAgentsControllerHealth?: () => ControllerHealth
   getSupportingControllerHealth?: () => ControllerHealth
   getOrchestrationControllerHealth?: () => ControllerHealth
@@ -204,9 +207,24 @@ export const buildControlPlaneStatus = async (
   const now = (deps.now ?? (() => new Date()))()
   const kubeGateway = deps.kubeGateway ?? createKubeGateway()
   const heartbeatResolver = deps.getHeartbeat ?? defaultGetHeartbeat
-  const agentsHealth = (deps.getAgentsControllerHealth ?? getAgentsControllerHealth)()
-  const supportingHealth = (deps.getSupportingControllerHealth ?? getSupportingControllerHealth)()
-  const orchestrationHealth = (deps.getOrchestrationControllerHealth ?? getOrchestrationControllerHealth)()
+  let agentsReadySnapshot: AgentsReadySnapshot | null = null
+  let agentsReadyReasonCodes: string[] = []
+  const resolveAgentsReadySnapshot = async (): Promise<AgentsReadySnapshot> => {
+    if (!agentsReadySnapshot) {
+      agentsReadySnapshot = await (deps.getAgentsReadySnapshot ?? getAgentsReadySnapshot)()
+      agentsReadyReasonCodes = agentsReadySnapshot.reasonCodes
+    }
+    return agentsReadySnapshot
+  }
+  const agentsHealth = deps.getAgentsControllerHealth
+    ? deps.getAgentsControllerHealth()
+    : (await resolveAgentsReadySnapshot()).agentsController
+  const supportingHealth = deps.getSupportingControllerHealth
+    ? deps.getSupportingControllerHealth()
+    : (await resolveAgentsReadySnapshot()).supportingController
+  const orchestrationHealth = deps.getOrchestrationControllerHealth
+    ? deps.getOrchestrationControllerHealth()
+    : (await resolveAgentsReadySnapshot()).orchestrationController
   const [agentsHeartbeat, supportingHeartbeat, orchestrationHeartbeat, workflowRuntimeHeartbeat] = await Promise.all([
     heartbeatResolver({ namespace: options.namespace, component: 'agents-controller', workloadRole: 'controllers' }),
     heartbeatResolver({
@@ -417,7 +435,7 @@ export const buildControlPlaneStatus = async (
   const isWorkflowsDataUnavailable = isWorkflowsDataUnknown || isWorkflowsDataDegraded
   const isWorkflowsWarning = workflows.backoff_limit_exceeded_jobs >= warningBackoffThreshold
   const isWorkflowsDegraded = workflows.backoff_limit_exceeded_jobs >= degradedBackoffThreshold
-  const agentRunIngestion = buildAgentRunIngestionStatus(options.namespace, agentsHealth)
+  const agentRunIngestion = buildAgentRunIngestionStatus(options.namespace, agentsHealth, agentsReadyReasonCodes)
   const servingProcessController = buildServingProcessControllerStatus(options.namespace, agentsHealth, now)
   const effectiveAgentsController =
     effectiveControllers.find((controller) => controller.name === 'agents-controller') ?? agentsController

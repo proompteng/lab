@@ -18,6 +18,7 @@ import { ROLLOUT_PROOF_PASSPORT_DESIGN_ARTIFACT } from '~/server/control-plane-r
 import { SOURCE_SERVING_CONTRACT_VERDICT_DESIGN_ARTIFACT } from '~/server/control-plane-source-serving-contract-verdict'
 import { STAGE_CREDIT_LEDGER_DESIGN_ARTIFACT } from '~/server/control-plane-stage-credit-ledger'
 import { TERMINAL_DEBT_COMPACTION_DESIGN_ARTIFACT } from '~/server/control-plane-terminal-debt-compaction'
+import { buildAgentsReadySnapshot } from '~/server/agents-control-plane-client'
 import * as kubeGatewayModule from '~/server/kube-gateway'
 import type {
   ControlPlaneHeartbeatRow,
@@ -2156,9 +2157,19 @@ describe('control-plane status', () => {
             },
           }),
         ),
-        getAgentsControllerHealth: () => degradedController,
-        getSupportingControllerHealth: () => healthyController,
-        getOrchestrationControllerHealth: () => healthyController,
+        getAgentsReadySnapshot: async () =>
+          buildAgentsReadySnapshot({
+            httpStatus: 503,
+            payload: {
+              status: 'degraded',
+              httpReady: false,
+              reason_codes: ['agentrun_ingestion_not_ready'],
+              namespaces: ['agents'],
+              agentsController: degradedController,
+              supportingController: healthyController,
+              orchestrationController: healthyController,
+            },
+          }),
         resolveTemporalAdapter: async () =>
           buildTemporalAdapter({
             available: false,
