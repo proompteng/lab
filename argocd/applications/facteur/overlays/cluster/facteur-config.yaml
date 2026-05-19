@@ -5,12 +5,6 @@ metadata:
   namespace: facteur
 data:
   config.yaml: |
-    argo:
-      namespace: argo-workflows
-      parameters:
-        payload: '{}'
-      service_account: facteur-workflow
-      workflow_template: facteur-dispatch
     codex_implementation_orchestrator:
       enabled: true
       agents_base_url: http://agents.agents.svc.cluster.local

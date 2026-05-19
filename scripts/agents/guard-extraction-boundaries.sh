@@ -73,6 +73,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/facteur/README.md"
 
 fail_if_matches \
+  "Facteur must dispatch Codex work through Agents AgentRuns, not direct runner WorkflowTemplates" \
+  'kind: WorkflowTemplate|agents-codex-runner|agent-runner --spec|facteur-workflow|FACTEUR_ARGO_|facteur-dispatch' \
+  "${ROOT_DIR}/argocd/applications/facteur"
+
+fail_if_matches \
   "Froussard GitOps must not ship legacy Codex implementation WorkflowTemplates" \
   'github-codex-implementation-workflow-template|codex-run-workflow-template-jangar|codex-autonomous-workflow-template|github-codex-post-deploy-workflow-template' \
   "${ROOT_DIR}/argocd/applications/froussard"

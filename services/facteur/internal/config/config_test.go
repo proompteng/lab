@@ -23,12 +23,6 @@ redis:
   url: redis://localhost:6379/0
 postgres:
   dsn: postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable
-argo:
-  namespace: argo-workflows
-  workflow_template: facteur-dispatch
-  service_account: facteur-workflow
-  parameters:
-    payload: '{}'
 codex_implementation_orchestrator:
   enabled: true
   agents_base_url: http://agents.agents.svc.cluster.local
@@ -74,10 +68,10 @@ codex_listener:
 		require.Equal(t, "guild-123", cfg.Discord.GuildID)
 		require.Equal(t, "redis://localhost:6379/0", cfg.Redis.URL)
 		require.Equal(t, "postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable", cfg.Postgres.DSN)
-		require.Equal(t, "argo-workflows", cfg.Argo.Namespace)
-		require.Equal(t, "facteur-dispatch", cfg.Argo.WorkflowTemplate)
-		require.Equal(t, "facteur-workflow", cfg.Argo.ServiceAccount)
-		require.Equal(t, map[string]string{"payload": "{}"}, cfg.Argo.Parameters)
+		require.Empty(t, cfg.Argo.Namespace)
+		require.Empty(t, cfg.Argo.WorkflowTemplate)
+		require.Empty(t, cfg.Argo.ServiceAccount)
+		require.Equal(t, map[string]string{}, cfg.Argo.Parameters)
 		require.True(t, cfg.Implementer.Enabled)
 		require.Equal(t, "http://agents.agents.svc.cluster.local", cfg.Implementer.AgentsBaseURL)
 		require.Equal(t, "implementation", cfg.Implementer.Namespace)
@@ -113,14 +107,10 @@ redis:
   url: redis://localhost:6379/0
 postgres:
   dsn: postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable
-argo:
-  namespace: argo
-  workflow_template: template
 `)
 		require.NoError(t, os.WriteFile(path, data, 0o600))
 
 		t.Setenv("FACTEUR_DISCORD_BOT_TOKEN", "env-token")
-		t.Setenv("FACTEUR_ARGO_WORKFLOW_TEMPLATE", "env-template")
 		t.Setenv("FACTEUR_POSTGRES_DSN", "postgres://override")
 		t.Setenv("FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION", "true")
 		t.Setenv("FACTEUR_CODEX_IMPLEMENTATION_ORCHESTRATOR_AGENT_NAME", "env-codex-agent")
@@ -128,7 +118,6 @@ argo:
 		cfg, err := config.LoadWithOptions(config.Options{Path: path, EnvPrefix: "FACTEUR"})
 		require.NoError(t, err)
 		require.Equal(t, "env-token", cfg.Discord.BotToken)
-		require.Equal(t, "env-template", cfg.Argo.WorkflowTemplate)
 		require.Equal(t, "postgres://override", cfg.Postgres.DSN)
 		require.Equal(t, ":8080", cfg.Server.ListenAddress)
 		require.False(t, cfg.Codex.Enabled)
@@ -149,7 +138,6 @@ redis:
 		_, err := config.LoadWithOptions(config.Options{Path: path, EnvPrefix: "FACTEUR"})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "discord.application_id is required")
-		require.Contains(t, err.Error(), "argo.namespace is required")
 		require.Contains(t, err.Error(), "postgres.dsn is required")
 	})
 
@@ -157,8 +145,6 @@ redis:
 		t.Setenv("FACTEUR_DISCORD_BOT_TOKEN", "token")
 		t.Setenv("FACTEUR_DISCORD_APPLICATION_ID", "app")
 		t.Setenv("FACTEUR_REDIS_URL", "redis://localhost:6379/1")
-		t.Setenv("FACTEUR_ARGO_NAMESPACE", "argo-workflows")
-		t.Setenv("FACTEUR_ARGO_WORKFLOW_TEMPLATE", "template")
 		t.Setenv("FACTEUR_POSTGRES_DSN", "postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable")
 		cfg, err := config.LoadWithOptions(config.Options{EnvPrefix: "FACTEUR"})
 		require.NoError(t, err)
@@ -191,9 +177,6 @@ redis:
   url: redis://localhost:6379/0
 postgres:
   dsn: postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable
-argo:
-  namespace: argo
-  workflow_template: template
 codex_listener:
   enabled: true
 `)
@@ -218,15 +201,11 @@ redis:
   url: redis://localhost:6379/0
 postgres:
   dsn: postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable
-argo:
-  namespace: argo
-  workflow_template: template
-  service_account: sa
 `)
 	require.NoError(t, os.WriteFile(path, data, 0o600))
 
 	cfg, err := config.Load(path)
 	require.NoError(t, err)
 	require.Equal(t, "token", cfg.Discord.BotToken)
-	require.Equal(t, "sa", cfg.Argo.ServiceAccount)
+	require.Equal(t, "http://agents.agents.svc.cluster.local", cfg.Implementer.AgentsBaseURL)
 }

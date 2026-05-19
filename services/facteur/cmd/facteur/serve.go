@@ -38,7 +38,7 @@ func NewServeCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start the facteur Discord ↔ Argo bridge server",
+		Short: "Start the facteur Discord to Agents bridge server",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			path := configPath
 			if path == "" {
@@ -57,10 +57,7 @@ func NewServeCommand() *cobra.Command {
 			cfg.Postgres.DSN = dsn
 
 			cmd.Printf(
-				"config: argo ns=%s template=%s sa=%s implementer_enabled=%t agents_url=%s implementer_ns=%s implementer_agent=%s redis=%s postgres=%s listen=%s\n",
-				cfg.Argo.Namespace,
-				cfg.Argo.WorkflowTemplate,
-				cfg.Argo.ServiceAccount,
+				"config: dispatch_target=agents implementer_enabled=%t agents_url=%s implementer_ns=%s implementer_agent=%s redis=%s postgres=%s listen=%s\n",
 				cfg.Implementer.Enabled,
 				cfg.Implementer.AgentsBaseURL,
 				cfg.Implementer.Namespace,

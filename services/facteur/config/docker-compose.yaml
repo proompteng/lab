@@ -9,12 +9,12 @@ redis:
   url: 'redis://redis:6379/0'
 postgres:
   dsn: 'postgres://facteur:facteur@postgres:5432/facteur_kb?sslmode=disable'
-argo:
-  namespace: 'argo'
-  workflow_template: 'facteur-dispatch'
-  service_account: 'facteur'
-  parameters:
-    environment: 'local'
+codex_implementation_orchestrator:
+  enabled: false
+  agents_base_url: http://agents.agents.svc.cluster.local
+  namespace: agents
+  agent_name: codex-agent
+  runtime_type: job
 role_map:
   plan: ['role']
   implement: ['role']

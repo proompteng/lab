@@ -48,6 +48,14 @@ type SubmitAgentRunResult struct {
 	SubmittedAt  time.Time
 }
 
+// ReadyStatus captures the Agents service readiness probe response.
+type ReadyStatus struct {
+	Ready      bool
+	StatusCode int
+	Status     string
+	Message    string
+}
+
 // HTTPSubmitter posts AgentRun creation requests to services/agents.
 type HTTPSubmitter struct {
 	baseURL string
@@ -71,6 +79,49 @@ func NewHTTPSubmitter(baseURL string, client HTTPDoer) (*HTTPSubmitter, error) {
 		baseURL: trimmed,
 		client:  client,
 		now:     func() time.Time { return time.Now().UTC() },
+	}, nil
+}
+
+// CheckReady checks the Agents service readiness endpoint without submitting work.
+func (s *HTTPSubmitter) CheckReady(ctx context.Context) (ReadyStatus, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+"/ready", nil)
+	if err != nil {
+		return ReadyStatus{}, fmt.Errorf("agents: build readiness request: %w", err)
+	}
+	req.Header.Set("accept", "application/json")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return ReadyStatus{}, fmt.Errorf("agents: readiness request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ReadyStatus{}, fmt.Errorf("agents: read readiness response: %w", err)
+	}
+
+	decoded := map[string]any{}
+	if len(responseBody) > 0 {
+		_ = json.Unmarshal(responseBody, &decoded)
+	}
+
+	message := readString(decoded, "message")
+	if message == "" {
+		message = extractErrorMessage(responseBody)
+	}
+	if message == "" {
+		message = strings.TrimSpace(string(responseBody))
+	}
+	if message == "" {
+		message = resp.Status
+	}
+
+	return ReadyStatus{
+		Ready:      resp.StatusCode >= 200 && resp.StatusCode < 300,
+		StatusCode: resp.StatusCode,
+		Status:     readString(decoded, "status"),
+		Message:    message,
 	}, nil
 }
 

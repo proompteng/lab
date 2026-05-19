@@ -112,7 +112,11 @@ func (h *Handler) handlePlan(ctx context.Context, interaction Interaction) (Resp
 
 	msg := result.Message
 	if msg == "" {
-		msg = fmt.Sprintf("Workflow `%s` submitted in namespace `%s`.", result.WorkflowName, result.Namespace)
+		name := result.AgentRunName
+		if name == "" {
+			name = result.WorkflowName
+		}
+		msg = fmt.Sprintf("AgentRun `%s` submitted in namespace `%s`.", name, result.Namespace)
 	}
 
 	return Response{Content: msg, Ephemeral: true}, nil
@@ -126,7 +130,11 @@ func (h *Handler) handleStatus(ctx context.Context, interaction Interaction) (Re
 
 	msg := report.Message
 	if msg == "" {
-		msg = fmt.Sprintf("Workflow template `%s` in namespace `%s` is %s.", report.WorkflowTemplate, report.Namespace, statusText(report.Ready))
+		name := report.AgentName
+		if name == "" {
+			name = report.WorkflowTemplate
+		}
+		msg = fmt.Sprintf("AgentRun dispatch target `%s` in namespace `%s` is %s.", name, report.Namespace, statusText(report.Ready))
 	}
 
 	if h.store != nil && interaction.UserID != "" {

@@ -33,7 +33,7 @@ type RedisConfig struct {
 	URL string `mapstructure:"url"`
 }
 
-// ArgoConfig contains the settings necessary to submit workflows.
+// ArgoConfig contains legacy workflow settings accepted only as compatibility aliases.
 type ArgoConfig struct {
 	Namespace        string            `mapstructure:"namespace"`
 	WorkflowTemplate string            `mapstructure:"workflow_template"`
@@ -246,12 +246,6 @@ func validate(cfg Config) error {
 	}
 	if cfg.Postgres.DSN == "" {
 		errs = append(errs, "postgres.dsn is required")
-	}
-	if cfg.Argo.Namespace == "" {
-		errs = append(errs, "argo.namespace is required")
-	}
-	if cfg.Argo.WorkflowTemplate == "" {
-		errs = append(errs, "argo.workflow_template is required")
 	}
 	if cfg.Codex.Enabled {
 		if len(cfg.Codex.Brokers) == 0 {

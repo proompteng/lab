@@ -42,10 +42,6 @@ spec:
                 secretKeyRef:
                   name: facteur-vector-cluster-app
                   key: uri
-            - name: FACTEUR_ARGO_NAMESPACE
-              value: argo-workflows
-            - name: FACTEUR_ARGO_WORKFLOW_TEMPLATE
-              value: facteur-dispatch
             - name: OTEL_SERVICE_NAME
               value: facteur
             - name: OTEL_SERVICE_NAMESPACE

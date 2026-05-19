@@ -4,8 +4,6 @@ resources:
   - ../../base
   - secrets.yaml
   - facteur-serviceaccount.yaml
-  - facteur-workflow-serviceaccount.yaml
-  - facteur-workflows-clusterrolebinding.yaml
   - facteur-config.yaml
   - facteur-kafka-sasl-secret.yaml
   - facteur-service.yaml
@@ -14,7 +12,6 @@ resources:
   - facteur-redis.yaml
   - facteur-codex-kafkasource.yaml
   - facteur-commands-kafkasource.yaml
-  - facteur-workflowtemplate.yaml
   - facteur-vector-cluster.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml

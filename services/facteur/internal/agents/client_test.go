@@ -120,3 +120,43 @@ func TestHTTPSubmitterAcceptsExistingAgentRunResponses(t *testing.T) {
 	require.Equal(t, "agents", result.Namespace)
 	require.Equal(t, "codex-agent-existing", result.AgentRunName)
 }
+
+func TestHTTPSubmitterCheckReady(t *testing.T) {
+	var capturedPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","message":"ready"}`))
+	}))
+	defer server.Close()
+
+	submitter, err := NewHTTPSubmitter(server.URL, server.Client())
+	require.NoError(t, err)
+
+	status, err := submitter.CheckReady(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, "/ready", capturedPath)
+	require.True(t, status.Ready)
+	require.Equal(t, http.StatusOK, status.StatusCode)
+	require.Equal(t, "ok", status.Status)
+	require.Equal(t, "ready", status.Message)
+}
+
+func TestHTTPSubmitterCheckReadyReportsDegradedStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":"degraded","message":"controller_crd_check_failed"}`))
+	}))
+	defer server.Close()
+
+	submitter, err := NewHTTPSubmitter(server.URL, server.Client())
+	require.NoError(t, err)
+
+	status, err := submitter.CheckReady(t.Context())
+	require.NoError(t, err)
+	require.False(t, status.Ready)
+	require.Equal(t, http.StatusServiceUnavailable, status.StatusCode)
+	require.Equal(t, "degraded", status.Status)
+	require.Equal(t, "controller_crd_check_failed", status.Message)
+}

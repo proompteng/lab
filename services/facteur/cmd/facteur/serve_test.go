@@ -25,9 +25,6 @@ redis:
   url: redis://localhost:6379/0
 postgres:
   dsn: "   "
-argo:
-  namespace: argo
-  workflow_template: template
 `)
 	require.NoError(t, os.WriteFile(configPath, data, 0o600))
 
@@ -55,10 +52,6 @@ redis:
   url: redis://localhost:6379/0
 postgres:
   dsn: postgres://user:pass@localhost:5432/db
-argo:
-  namespace: argo
-  workflow_template: template
-  service_account: sa
 server:
   listen_address: 127.0.0.1:0
 codex_listener:

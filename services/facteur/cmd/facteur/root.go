@@ -11,7 +11,7 @@ func Execute() error {
 func NewRootCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "facteur",
-		Short: "facteur bridges Discord bot commands to Argo workflows",
+		Short: "facteur bridges Discord bot commands to Agents AgentRuns",
 	}
 
 	cmd.AddCommand(NewServeCommand())

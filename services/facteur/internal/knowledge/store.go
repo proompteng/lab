@@ -45,7 +45,7 @@ type TaskRecord struct {
 	UpdatedAt   time.Time
 }
 
-// TaskRunRecord captures workflow execution telemetry.
+// TaskRunRecord captures AgentRun execution telemetry.
 type TaskRunRecord struct {
 	ID            string
 	TaskID        string

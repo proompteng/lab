@@ -7,7 +7,7 @@ import (
 	"github.com/proompteng/lab/services/facteur/internal/knowledge"
 )
 
-// Config holds the settings needed to dispatch implementation workflows.
+// Config holds the settings needed to dispatch implementation AgentRuns.
 type Config struct {
 	Namespace               string
 	AgentName               string

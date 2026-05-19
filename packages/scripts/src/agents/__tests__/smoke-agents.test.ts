@@ -309,6 +309,29 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(env, 'AGENTS_SWARM_REQUIREMENT_MAX_ACTIVE_PER_SWARM')).toBeUndefined()
   })
 
+  it('keeps Facteur Codex dispatch behind the Agents AgentRun API boundary', () => {
+    const kustomization = readFileSync(
+      resolve(process.cwd(), 'argocd/applications/facteur/overlays/cluster/kustomization.yaml'),
+      'utf8',
+    )
+    const service = readFileSync(
+      resolve(process.cwd(), 'argocd/applications/facteur/overlays/cluster/facteur-service.yaml'),
+      'utf8',
+    )
+    const config = readFileSync(
+      resolve(process.cwd(), 'argocd/applications/facteur/overlays/cluster/facteur-config.yaml'),
+      'utf8',
+    )
+
+    expect(kustomization).not.toContain('facteur-workflowtemplate.yaml')
+    expect(kustomization).not.toContain('facteur-workflow-serviceaccount.yaml')
+    expect(kustomization).not.toContain('facteur-workflows-clusterrolebinding.yaml')
+    expect(service).not.toContain('FACTEUR_ARGO_')
+    expect(config).not.toContain('workflow_template')
+    expect(`${kustomization}\n${service}\n${config}`).not.toContain('agents-codex-runner')
+    expect(config).toContain('agents_base_url: http://agents.agents.svc.cluster.local')
+  })
+
   it('renders Codex app-server adapter metadata instead of legacy provider wrapper scripts', () => {
     const manifests = readYamlObjects('argocd/applications/agents/codex-spark-agentprovider.yaml')
     const provider = manifests.find((manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'codex-spark')

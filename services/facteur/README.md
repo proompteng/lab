@@ -1,11 +1,11 @@
 # facteur
 
-`facteur` is a Go service that mediates Discord bot commands into Argo Workflow executions. It follows the [Discord interaction lifecycle](https://discord.com/developers/docs/interactions/receiving-and-responding) and the [Argo Workflows submission model](https://argo-workflows.readthedocs.io/en/stable/) to translate slash commands into WorkflowTemplate runs. See `docs/facteur-discord-argo.md` for the end-to-end architecture and configuration contract.
+`facteur` is a Go service that mediates Discord bot commands and structured Codex deliveries into Agents `AgentRun` submissions. It follows the [Discord interaction lifecycle](https://discord.com/developers/docs/interactions/receiving-and-responding), keeps domain intake state in its own Postgres schema, and delegates runtime execution to the Agents service.
 
 ## Layout
 
 - `cmd/facteur`: Cobra-based CLI entrypoints.
-- `internal`: Internal packages that will house configuration, Discord routing, Argo bridge logic, and session storage.
+- `internal`: Internal packages for configuration, Discord routing, Agents dispatch, Codex intake, and session storage.
 - `config`: Example configuration files and schema references (role map schema lives at `schemas/facteur-discord-role-map.schema.json`).
 - `Dockerfile`: Multi-stage build for containerizing the service.
 
@@ -20,7 +20,7 @@ go run . serve --config config/example.yaml
 
 The `--config` flag is optional if you provide the required `FACTEUR_*` environment variables. Press `Ctrl+C` to stop the server; it will shut down gracefully.
 
-Set `FACTEUR_POSTGRES_DSN` to point at a Postgres instance before starting locally. The server applies embedded migrations on boot so the schema stays in sync. When you do not have a Kubernetes cluster handy, export `FACTEUR_DISABLE_DISPATCHER=true` so the Argo dispatcher is stubbed out and the service boots without a kubeconfig. A simple local setup uses Postgres on `127.0.0.1:6543/postgres` with the `facteur` role:
+Set `FACTEUR_POSTGRES_DSN` to point at a Postgres instance before starting locally. The server applies embedded migrations on boot so the schema stays in sync. When you do not want local commands to submit AgentRuns, export `FACTEUR_DISABLE_DISPATCHER=true`. A simple local setup uses Postgres on `127.0.0.1:6543/postgres` with the `facteur` role:
 
 ```bash
 # Terminal 1 – Postgres
@@ -45,7 +45,7 @@ go run ./cmd/facteur migrate --config config/example.yaml
 
 ### Docker Compose sandbox
 
-A convenience Compose stack lives at `services/facteur/docker-compose.yml`; it starts Postgres 18 with pgvector, Redis 8, and the Facteur server with the correct environment wiring (including `FACTEUR_DISABLE_DISPATCHER=true` to skip Argo during local runs). From the repository root run:
+A convenience Compose stack lives at `services/facteur/docker-compose.yml`; it starts Postgres 18 with pgvector, Redis 8, and the Facteur server with the correct environment wiring (including `FACTEUR_DISABLE_DISPATCHER=true` to skip AgentRun submission during local runs). From the repository root run:
 
 ```bash
 docker compose -f services/facteur/docker-compose.yml up -d --build

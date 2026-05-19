@@ -22,10 +22,6 @@ redis:
   url: redis://localhost:6379/0
 postgres:
   dsn: postgres://user:pass@localhost:5432/db
-argo:
-  namespace: argo
-  workflow_template: template
-  service_account: sa
 codex_listener:
   enabled: false
 `)

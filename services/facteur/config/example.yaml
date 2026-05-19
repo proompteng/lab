@@ -1,4 +1,4 @@
-# Example configuration for the facteur Discord ↔ Argo bridge.
+# Example configuration for the facteur Discord to Agents bridge.
 server:
   listen_address: ':8080'
 discord:
@@ -35,12 +35,6 @@ codex_listener:
     insecure_skip_verify: false
   sasl:
     enabled: false
-argo:
-  namespace: argo
-  workflow_template: facteur-dispatch
-  service_account: facteur
-  parameters:
-    environment: staging
 codex_implementation_orchestrator:
   enabled: false
   agents_base_url: http://agents.agents.svc.cluster.local

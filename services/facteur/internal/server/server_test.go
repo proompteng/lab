@@ -22,7 +22,7 @@ import (
 )
 
 func TestEventsEndpointDispatches(t *testing.T) {
-	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "argo", WorkflowName: "wf-123", CorrelationID: "corr-1"}}
+	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "agents", AgentRunName: "codex-agent-123", WorkflowName: "codex-agent-123", CorrelationID: "corr-1"}}
 	store := &stubStore{}
 
 	srv, err := server.New(server.Options{Dispatcher: dispatcher, Store: store, SessionTTL: time.Minute})
@@ -44,10 +44,15 @@ func TestEventsEndpointDispatches(t *testing.T) {
 	require.Equal(t, 202, resp.StatusCode)
 	require.True(t, store.setCalled)
 	require.Equal(t, session.DispatchKey("user-1"), store.lastKey)
+
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	require.Equal(t, "codex-agent-123", body["agentRunName"])
+	require.Equal(t, "codex-agent-123", body["workflowName"])
 }
 
 func TestEventsEndpointLogsMetadata(t *testing.T) {
-	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "argo", WorkflowName: "wf-123", CorrelationID: "corr-1"}}
+	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "agents", AgentRunName: "codex-agent-123", WorkflowName: "codex-agent-123", CorrelationID: "corr-1"}}
 	store := &stubStore{}
 
 	srv, err := server.New(server.Options{Dispatcher: dispatcher, Store: store, SessionTTL: time.Minute})
@@ -70,6 +75,7 @@ func TestEventsEndpointLogsMetadata(t *testing.T) {
 
 	logs := buf.String()
 	require.Contains(t, logs, "event received: command=dispatch user=user-1 correlation=corr-1 trace=trace-1")
+	require.Contains(t, logs, "agentrun=codex-agent-123")
 }
 
 func TestEventsEndpointWithoutDispatcher(t *testing.T) {
