@@ -784,6 +784,18 @@ def _portfolio_oracle_policy(
         max_single_symbol_contribution_share=Decimal("0.35"),
         max_worst_day_loss=objective.max_worst_day_loss,
         max_drawdown=objective.max_drawdown,
+        default_start_equity=objective.default_start_equity,
+        max_worst_day_loss_pct_equity=objective.max_worst_day_loss_pct_equity,
+        max_drawdown_pct_equity=objective.max_drawdown_pct_equity,
+        extended_max_worst_day_loss_pct_equity=(
+            objective.extended_max_worst_day_loss_pct_equity
+        ),
+        extended_max_drawdown_pct_equity=objective.extended_max_drawdown_pct_equity,
+        min_total_net_pnl_to_drawdown_ratio=(
+            objective.min_total_net_pnl_to_drawdown_ratio
+        ),
+        max_gross_exposure_pct_equity=objective.max_gross_exposure_pct_equity,
+        min_cash=objective.min_cash,
         min_avg_filled_notional_per_day=objective.min_daily_notional,
         min_regime_slice_pass_rate=objective.min_regime_slice_pass_rate,
         require_shadow_parity_within_budget=True,
