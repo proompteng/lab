@@ -15,7 +15,6 @@
     "./server/control-plane-primitive-kinds": "./src/server/control-plane-primitive-kinds.ts",
     "./server/control-plane-status": "./src/server/control-plane-status.ts",
     "./server/db": "./src/server/db.ts",
-    "./server/env-compat": "./src/server/env-compat.ts",
     "./server/feature-flags": "./src/server/feature-flags.ts",
     "./server/health": "./src/server/health.ts",
     "./server/http": "./src/server/http.ts",
