@@ -1,10 +1,11 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 
+import { resolveImplementationSourceWebhookConfig } from '~/server/agents-controller/runtime-config'
 import { createKubeGateway } from '~/server/kube-gateway'
-import { resolveImplementationSourceWebhookConfig } from '~/server/implementation-source-webhook-config'
+import { createKubernetesClient, RESOURCE_MAP } from '~/server/kube-types'
 import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
-import { asRecord, asString, errorResponse, okResponse, readNested } from '~/server/primitives-http'
-import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import { errorResponse, okResponse } from '~/server/http'
+import { asRecord, asString, readNested } from '~/server/primitives'
 import { shouldApplyStatus } from '~/server/status-utils'
 
 const DEFAULT_NAMESPACES = ['agents']

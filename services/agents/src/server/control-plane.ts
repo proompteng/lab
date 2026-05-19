@@ -102,6 +102,11 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/api/agents/messages'),
   },
   {
+    file: 'src/routes/api/agents/implementation-sources/webhooks/$provider.ts',
+    sourceUrl: new URL('../routes/api/agents/implementation-sources/webhooks/$provider.ts', import.meta.url),
+    load: () => import('../routes/api/agents/implementation-sources/webhooks/$provider'),
+  },
+  {
     file: 'src/routes/api/agents/control-plane/events.ts',
     sourceUrl: new URL('../routes/api/agents/control-plane/events.ts', import.meta.url),
     load: () => import('../routes/api/agents/control-plane/events'),
