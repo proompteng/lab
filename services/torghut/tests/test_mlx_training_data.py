@@ -416,6 +416,95 @@ class TestMlxTrainingData(TestCase):
             row_by_spec[active.candidate_spec_id].target - 1000.0,
         )
 
+    def test_training_rows_penalize_negative_post_cost_efficiency(self) -> None:
+        base_kwargs = {
+            "schema_version": "torghut.candidate-spec.v1",
+            "hypothesis_id": "H-COST-EFFICIENCY",
+            "family_template_id": "microbar_cross_sectional_pairs_v1",
+            "candidate_kind": "configuration",
+            "runtime_family": "microbar_cross_sectional_pairs",
+            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "feature_contract": {},
+            "parameter_space": {},
+            "strategy_overrides": {
+                "max_notional_per_trade": "25000",
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "capital_profile": "feedback_daily_coverage_cash_constrained_1x",
+                    "max_entries_per_session": "2",
+                    "max_gross_exposure_pct_equity": "1.0",
+                },
+            },
+            "objective": {"target_net_pnl_per_day": "500"},
+            "hard_vetoes": {"required_min_daily_notional": "25000"},
+            "expected_failure_modes": (),
+            "promotion_contract": {},
+        }
+        cost_killed = CandidateSpec(candidate_spec_id="spec-cost-killed", **base_kwargs)
+        efficient = CandidateSpec(
+            candidate_spec_id="spec-efficient",
+            **{**base_kwargs, "hypothesis_id": "H-COST-EFFICIENT"},
+        )
+        bundles = [
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=cost_killed.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-cost-killed",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "-50",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "0",
+                        "negative_day_count": 2,
+                        "avg_filled_notional_per_day": "25000",
+                        "hard_vetoes": [],
+                    },
+                },
+                dataset_snapshot_id="snapshot-cost-killed",
+                result_path="/tmp/cand-cost-killed.json",
+            ),
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=efficient.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-efficient",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "50",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "1",
+                        "negative_day_count": 0,
+                        "avg_filled_notional_per_day": "25000",
+                        "hard_vetoes": [],
+                    },
+                },
+                dataset_snapshot_id="snapshot-efficient",
+                result_path="/tmp/cand-efficient.json",
+            ),
+        ]
+
+        rows = build_mlx_training_rows(
+            candidate_specs=[cost_killed, efficient],
+            evidence_bundles=bundles,
+        )
+        row_by_spec = {row.candidate_spec_id: row for row in rows}
+        cost_killed_features = row_by_spec[cost_killed.candidate_spec_id].to_payload()[
+            "features"
+        ]
+        efficient_features = row_by_spec[efficient.candidate_spec_id].to_payload()[
+            "features"
+        ]
+
+        self.assertEqual(
+            cost_killed_features["history_net_pnl_per_100k_filled_notional"],
+            -200.0,
+        )
+        self.assertGreater(
+            cost_killed_features["history_post_cost_efficiency_penalty"],
+            efficient_features["history_post_cost_efficiency_penalty"],
+        )
+        self.assertLess(
+            row_by_spec[cost_killed.candidate_spec_id].target,
+            row_by_spec[efficient.candidate_spec_id].target - 500.0,
+        )
+
     def test_training_rows_penalize_missing_execution_proof_feedback(self) -> None:
         base_kwargs = {
             "schema_version": "torghut.candidate-spec.v1",

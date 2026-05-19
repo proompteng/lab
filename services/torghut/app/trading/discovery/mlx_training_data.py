@@ -320,6 +320,30 @@ def _observed_replay_viability_penalty(
     )
 
 
+def _net_pnl_per_100k_filled_notional(scorecard: Mapping[str, Any]) -> float:
+    avg_filled_notional_per_day = _float(scorecard.get("avg_filled_notional_per_day"))
+    if avg_filled_notional_per_day <= 0.0:
+        return 0.0
+    return (
+        _float(scorecard.get("net_pnl_per_day"))
+        / avg_filled_notional_per_day
+        * 100_000.0
+    )
+
+
+def _post_cost_efficiency_penalty(scorecard: Mapping[str, Any]) -> float:
+    if not scorecard:
+        return 0.0
+    avg_filled_notional_per_day = _float(scorecard.get("avg_filled_notional_per_day"))
+    if avg_filled_notional_per_day <= 0.0:
+        return 0.0
+    net_pnl_per_day = _float(scorecard.get("net_pnl_per_day"))
+    net_pnl_per_100k = _net_pnl_per_100k_filled_notional(scorecard)
+    if net_pnl_per_day <= 0.0:
+        return min(5_000.0, 250.0 + abs(net_pnl_per_100k) * 2.0)
+    return max(0.0, 1.0 - net_pnl_per_100k) * 25.0
+
+
 def _proof_target_shortfall(
     scorecard: Mapping[str, Any],
     *,
@@ -504,6 +528,8 @@ def build_mlx_training_rows(
             "history_max_drawdown",
             "history_avg_filled_notional_per_day",
             "history_avg_filled_notional_required_ratio",
+            "history_net_pnl_per_100k_filled_notional",
+            "history_post_cost_efficiency_penalty",
             "history_hard_veto_count",
             "history_daily_target_shortfall",
             "history_observed_replay_viability_penalty",
@@ -569,6 +595,7 @@ def build_mlx_training_rows(
             scorecard,
             target_net_pnl_per_day=target_net_pnl_per_day,
         )
+        post_cost_efficiency_penalty = _post_cost_efficiency_penalty(scorecard)
         selection_mode = params.get("selection_mode")
         signal_motif = params.get("signal_motif")
         stop_loss_bps = _float(
@@ -628,6 +655,8 @@ def build_mlx_training_rows(
             _float(scorecard.get("max_drawdown")),
             avg_filled_notional_per_day,
             avg_filled_notional_required_ratio,
+            _net_pnl_per_100k_filled_notional(scorecard),
+            post_cost_efficiency_penalty,
             _hard_veto_count(scorecard),
             _daily_target_shortfall(
                 scorecard, target_net_pnl_per_day=target_net_pnl_per_day
@@ -681,6 +710,7 @@ def build_mlx_training_rows(
                 * 0.10
             )
             - observed_replay_penalty
+            - post_cost_efficiency_penalty
             - historical_proof_penalty
             - capital_budget_penalty(capital_features)
             - observed_capital_penalty(scorecard)

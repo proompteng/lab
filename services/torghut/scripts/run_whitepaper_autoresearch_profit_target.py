@@ -2872,6 +2872,30 @@ def _candidate_spec_signal_key(spec: CandidateSpec) -> str:
     )
 
 
+def _candidate_spec_is_false_negative_rescue(spec: CandidateSpec) -> bool:
+    params = _mapping(spec.strategy_overrides.get("params"))
+    overlays = spec.parameter_space.get("mechanism_overlay_ids", ())
+    overlay_ids = set(_string_list_from_value(overlays))
+    return (
+        "rejected_signal_outcome_calibration" in overlay_ids
+        and _string(params.get("veto_relaxation_scope"))
+        == "labeled_false_negative_only"
+        and _string(params.get("outcome_label_filter")) == "profitable_after_costs"
+    )
+
+
+def _scorecard_is_false_negative_rescue_feedback(
+    scorecard: Mapping[str, Any],
+) -> bool:
+    signal_key = _string(scorecard.get("signal_key"))
+    if signal_key.startswith("rejected_signal_false_negative"):
+        return True
+    runtime_params = _mapping(scorecard.get("runtime_params"))
+    return _string(runtime_params.get("signal_motif")).startswith(
+        "rejected_signal_false_negative"
+    )
+
+
 def _candidate_spec_execution_profile(spec: CandidateSpec) -> Mapping[str, Any]:
     return _mapping(spec.feature_contract.get("execution_profile"))
 
@@ -3324,6 +3348,7 @@ def _pre_replay_proposal_model_and_rows(
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> tuple[Mapping[str, Any], list[dict[str, Any]]]:
     policy = oracle_policy or ProfitTargetOraclePolicy()
+    spec_by_id = {spec.candidate_spec_id: spec for spec in specs}
     spec_ids = {spec.candidate_spec_id for spec in specs}
     execution_signature_by_spec = {
         spec.candidate_spec_id: _candidate_spec_execution_signature(spec)
@@ -3567,6 +3592,15 @@ def _pre_replay_proposal_model_and_rows(
             and bundle is not None
             and _feedback_has_nonpositive_expected_value(bundle.objective_scorecard)
         ):
+            spec = spec_by_id.get(candidate_spec_id)
+            if (
+                spec is not None
+                and _candidate_spec_is_false_negative_rescue(spec)
+                and _scorecard_is_false_negative_rescue_feedback(
+                    bundle.objective_scorecard
+                )
+            ):
+                return "pre_replay_mlx_false_negative_rescue_feedback_blocked"
             return "pre_replay_mlx_family_feedback_blocked"
         if source == "feedback_family_replay" and is_blocked:
             return "pre_replay_mlx_family_feedback_penalized"
@@ -3723,6 +3757,7 @@ _PRE_REPLAY_FEEDBACK_BLOCK_REASONS = frozenset(
         "pre_replay_mlx_shape_feedback_blocked",
         "pre_replay_mlx_risk_profile_feedback_blocked",
         "pre_replay_mlx_family_feedback_blocked",
+        "pre_replay_mlx_false_negative_rescue_feedback_blocked",
     }
 )
 _PRE_REPLAY_SELECTION_BLOCK_REASONS = frozenset(
@@ -3807,24 +3842,13 @@ def _select_candidate_specs_for_replay(
             > max_gross_exposure
         )
 
-    def false_negative_rescue_spec(spec: CandidateSpec) -> bool:
-        params = _mapping(spec.strategy_overrides.get("params"))
-        overlays = spec.parameter_space.get("mechanism_overlay_ids", ())
-        overlay_ids = set(_string_list_from_value(overlays))
-        return (
-            "rejected_signal_outcome_calibration" in overlay_ids
-            and _string(params.get("veto_relaxation_scope"))
-            == "labeled_false_negative_only"
-            and _string(params.get("outcome_label_filter")) == "profitable_after_costs"
-        )
-
     def pre_replay_block_reason(spec: CandidateSpec) -> str:
         proposal = proposal_by_spec.get(spec.candidate_spec_id, {})
         selection_reason = _string(proposal.get("selection_reason"))
         if selection_reason in _PRE_REPLAY_FEEDBACK_BLOCK_REASONS:
             if (
                 selection_reason == "pre_replay_mlx_family_feedback_blocked"
-                and false_negative_rescue_spec(spec)
+                and _candidate_spec_is_false_negative_rescue(spec)
             ):
                 return ""
             return selection_reason
@@ -4017,7 +4041,9 @@ def _select_candidate_specs_for_replay(
         return interleaved
 
     false_negative_rescue_candidates = [
-        spec for spec in ordered_eligible if false_negative_rescue_spec(spec)
+        spec
+        for spec in ordered_eligible
+        if _candidate_spec_is_false_negative_rescue(spec)
     ]
     false_negative_rescue_count = min(
         3,

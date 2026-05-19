@@ -1410,6 +1410,108 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "pre_replay_mlx_family_feedback_blocked",
         )
 
+    def test_candidate_selection_blocks_failed_false_negative_rescue_family(
+        self,
+    ) -> None:
+        source_spec_base = self._candidate_spec(
+            "spec-fn-rescue-negative-source",
+            selection_mode="continuation",
+        )
+        source_params = cast(
+            dict[str, Any], source_spec_base.strategy_overrides["params"]
+        )
+        source_spec = replace(
+            source_spec_base,
+            parameter_space={
+                "mechanism_overlay_ids": ["rejected_signal_outcome_calibration"]
+            },
+            strategy_overrides={
+                **source_spec_base.strategy_overrides,
+                "params": {
+                    **source_params,
+                    "signal_motif": "rejected_signal_false_negative_replay",
+                    "outcome_label_filter": "profitable_after_costs",
+                    "veto_relaxation_scope": "labeled_false_negative_only",
+                    "rank_feature": "rejected_signal_counterfactual_return_rank",
+                },
+            },
+        )
+        probe_spec_base = self._candidate_spec(
+            "spec-fn-rescue-negative-probe",
+            selection_mode="continuation",
+        )
+        probe_params = cast(
+            dict[str, Any], probe_spec_base.strategy_overrides["params"]
+        )
+        probe_spec = replace(
+            probe_spec_base,
+            parameter_space={
+                "mechanism_overlay_ids": ["rejected_signal_outcome_calibration"]
+            },
+            strategy_overrides={
+                **probe_spec_base.strategy_overrides,
+                "params": {
+                    **probe_params,
+                    "signal_motif": "rejected_signal_false_negative_replay",
+                    "outcome_label_filter": "profitable_after_costs",
+                    "veto_relaxation_scope": "labeled_false_negative_only",
+                    "rank_feature": "rejected_signal_opening_drive_rank",
+                },
+            },
+        )
+        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=source_spec.candidate_spec_id,
+            candidate=runner._candidate_payload_with_feedback_metadata(
+                spec=source_spec,
+                candidate={
+                    "candidate_id": "cand-fn-rescue-negative-source",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "-47.54",
+                        "active_day_ratio": "0.66",
+                        "positive_day_ratio": "0",
+                        "negative_day_count": 3,
+                        "daily_net": {
+                            "2026-05-06": "-77.11",
+                            "2026-05-07": "-65.51",
+                        },
+                    },
+                },
+            ),
+            dataset_snapshot_id="snap-fn-rescue-negative-feedback",
+            result_path="feedback://fn-rescue-negative",
+        )
+
+        _model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(probe_spec,),
+            feedback_evidence_bundles=(feedback_bundle,),
+        )
+
+        self.assertEqual(rows[0]["training_source"], "feedback_family_replay")
+        self.assertEqual(
+            rows[0]["selection_reason"],
+            "pre_replay_mlx_false_negative_rescue_feedback_blocked",
+        )
+        self.assertLessEqual(
+            Decimal(str(rows[0]["proposal_score"])), Decimal("-999999")
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(probe_spec,),
+            proposal_rows=rows,
+            top_k=1,
+            exploration_slots=1,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(selection["budget"]["selected_count"], 0)
+        self.assertEqual(selection["budget"]["eligible_candidate_count"], 0)
+        self.assertEqual(
+            selection["rows"][0]["selection_reason"],
+            "pre_replay_mlx_false_negative_rescue_feedback_blocked",
+        )
+
     def test_candidate_selection_can_reaudit_feedback_blocked_candidates(
         self,
     ) -> None:
