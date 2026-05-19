@@ -70,11 +70,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     BUN_INSTALL_CACHE_SEED_DIR=/opt/bun/install/cache
 
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
-COPY --from=codex-cli /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=codex-cli /usr/local/lib/node_modules/@openai/codex /usr/local/lib/node_modules/@openai/codex
 
-RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
-    && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
-    && ln -sf ../lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex \
+RUN ln -sf ../lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex \
     && ln -sf /usr/local/bin/codex /usr/bin/codex \
     && test -x /usr/local/bin/codex \
     && test -x /usr/bin/codex

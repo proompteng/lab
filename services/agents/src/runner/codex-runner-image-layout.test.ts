@@ -40,14 +40,27 @@ describe('Agents Codex runner image layout', () => {
     const content = finalStage()
 
     expect(content).toContain(
+      'COPY --from=codex-cli /usr/local/lib/node_modules/@openai/codex /usr/local/lib/node_modules/@openai/codex',
+    )
+    expect(content).toContain(
       'COPY --from=agents-runner-build /opt/agents-runner/agent-runner.js /app/services/agents/scripts/codex/agent-runner.js',
     )
     expect(content).toContain(
       'COPY --from=codex-package-build /opt/proompteng/packages/codex/dist /app/node_modules/@proompteng/codex/dist',
     )
+    expect(content).not.toContain('COPY --from=codex-cli /usr/local/lib/node_modules /usr/local/lib/node_modules')
     expect(content).not.toContain('COPY services/agents /app/services/agents')
     expect(content).not.toContain('COPY packages/codex /opt/proompteng/packages/codex')
     expect(content).not.toContain('cp -R /opt/proompteng/packages/codex')
+  })
+
+  it('does not ship npm or npx in the final runtime stage', () => {
+    const content = finalStage()
+
+    expect(content).not.toContain('/usr/local/bin/npm')
+    expect(content).not.toContain('/usr/local/bin/npx')
+    expect(content).not.toContain('npm/bin/npm-cli.js')
+    expect(content).not.toContain('npm/bin/npx-cli.js')
   })
 
   it('bundles the runner without runtime-resolving Effect or source TS modules', async () => {
