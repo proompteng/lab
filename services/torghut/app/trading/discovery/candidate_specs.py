@@ -3060,6 +3060,73 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "rejected trading event",
+            "rejected event",
+            "rejected-event",
+            "rejected signal",
+            "rejected_signal",
+            "skipped signal",
+            "skipped-signal",
+            "counterfactual training",
+            "counterfactual outcome",
+            "counterfactual return",
+            "outcome labels",
+            "outcome_labels",
+            "veto calibration",
+            "vetoes discard",
+            "discard profitable",
+        )
+    ):
+        overlay_ids.append("rejected_signal_outcome_calibration")
+        overlay_contracts.append(
+            {
+                "overlay_id": "rejected_signal_outcome_calibration",
+                "required_evidence": [
+                    "rejected_signal_log",
+                    "outcome_labels",
+                    "counterfactual_return",
+                    "route_tca",
+                    "post_cost_net_pnl",
+                    "executable_quote",
+                    "live_paper_parity",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_rejected_signal_replay",
+                "evidence_policy": (
+                    "rejected_events_require_labeled_counterfactual_outcomes"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_min_rejected_signal_outcome_label_count": "120",
+                "required_min_rejected_signal_reason_coverage": "0.80",
+                "required_max_rejected_signal_outcome_pending_ratio": "0.05",
+                "required_rejected_signal_counterfactual_fields": [
+                    "counterfactual_return",
+                    "route_tca",
+                    "post_cost_net_pnl",
+                    "executable_quote",
+                ],
+                "required_rejected_signal_outcome_persistence_state": "ok",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_rejected_signal_outcome_learning": True,
+                "requires_rejected_signal_outcome_labels": True,
+                "requires_rejected_signal_reason_coverage": True,
+                "requires_rejected_signal_counterfactual_replay": True,
+                "requires_counterfactual_executable_quote": True,
+                "requires_route_tca": True,
+                "requires_live_paper_parity": True,
+                "rejects_pending_rejected_signal_outcome_labels": True,
+                "rejects_unlabeled_reject_relaxation": True,
+                "promotion_impact": "repair_only_until_labeled",
+            }
+        )
+
+    if has_any(
+        (
             "delay-adjusted depth",
             "delay adjusted depth",
             "execution delay",
@@ -3234,6 +3301,40 @@ def _family_scores_for_hypothesis(
             "opening_drive_leader_reclaim_v1",
             3,
             "order_flow_or_lob_signal",
+        )
+    if has_any(
+        (
+            "rejected trading event",
+            "rejected event",
+            "rejected-event",
+            "rejected signal",
+            "rejected_signal",
+            "skipped signal",
+            "skipped-signal",
+            "counterfactual outcome",
+            "counterfactual return",
+            "outcome labels",
+            "outcome_labels",
+            "veto calibration",
+            "vetoes discard",
+            "discard profitable",
+        )
+    ):
+        bump(
+            "microstructure_continuation_matched_filter_v1",
+            6,
+            "rejected_signal_outcome_calibration",
+        )
+        bump(
+            "microbar_cross_sectional_pairs_v1",
+            4,
+            "rejected_signal_outcome_calibration",
+        )
+        bump("intraday_tsmom_v2", 3, "rejected_signal_outcome_calibration")
+        bump(
+            "opening_drive_leader_reclaim_v1",
+            2,
+            "rejected_signal_outcome_calibration",
         )
     if has_any(
         (

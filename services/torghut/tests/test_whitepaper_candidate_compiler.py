@@ -580,6 +580,115 @@ class TestWhitepaperCandidateCompiler(TestCase):
             )
         )
 
+    def test_red2400_rejected_outcome_claim_compiles_to_counterfactual_calibration_overlay(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2605.12151",
+            claims=[
+                {
+                    "claim_id": "rejection-event-outcome-labels",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Algorithmically rejected trading events with realized outcome "
+                        "labels can turn skipped-signal logs into counterfactual "
+                        "learning examples for veto calibration."
+                    ),
+                    "asset_scope": "intraday_execution",
+                    "horizon_scope": "rejected_event_learning",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "rejected_signal_log",
+                        "outcome_labels",
+                        "executable_quote",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "counterfactual-reject-outcome-learning",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Rejected-event benchmarks should measure whether current "
+                        "vetoes discard profitable, executable opportunities or "
+                        "correctly block bad fills."
+                    ),
+                    "asset_scope": "intraday_execution",
+                    "horizon_scope": "rejected_event_learning",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "rejected_signal_log",
+                        "counterfactual_return",
+                        "route_tca",
+                        "post_cost_net_pnl",
+                    ],
+                    "confidence": "0.76",
+                },
+            ],
+            relations=[
+                {
+                    "relation_id": "rejected-outcome-labels-calibrate-vetoes",
+                    "relation_type": "requires_validation",
+                    "source_claim_id": "counterfactual-reject-outcome-learning",
+                    "target_claim_id": "rejection-event-outcome-labels",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        family_ids = {spec.family_template_id for spec in compilation.executable_specs}
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertTrue(
+            {
+                "microstructure_continuation_matched_filter_v1",
+                "microbar_cross_sectional_pairs_v1",
+                "intraday_tsmom_v2",
+            }.issubset(family_ids)
+        )
+        self.assertTrue(
+            any(
+                "rejected_signal_outcome_calibration"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.hard_vetoes.get("required_min_rejected_signal_outcome_label_count")
+                == "120"
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("requires_rejected_signal_outcome_learning")
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get(
+                    "rejects_pending_rejected_signal_outcome_labels"
+                )
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("requires_live_paper_parity")
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("promotion_impact")
+                == "repair_only_until_labeled"
+                for spec in compilation.executable_specs
+            )
+        )
+
     def test_structural_ohlcv_falsification_claims_stay_executable_but_not_promotable(
         self,
     ) -> None:

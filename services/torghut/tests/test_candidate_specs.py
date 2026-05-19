@@ -348,6 +348,80 @@ class TestCandidateSpecs(TestCase):
             specs[0].promotion_contract["rejects_naive_gross_ohlcv_backtests"]
         )
 
+    def test_rejected_signal_claim_adds_counterfactual_outcome_contract(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-red-2400",
+            claims=[
+                {
+                    "claim_id": "rejection-event-outcome-labels",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Algorithmically rejected trading events with outcome labels "
+                        "turn rejected signal logs into counterfactual examples for "
+                        "veto calibration."
+                    ),
+                    "data_requirements": [
+                        "rejected_signal_log",
+                        "outcome_labels",
+                        "executable_quote",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "counterfactual-reject-outcome-learning",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Rejected events require counterfactual return, route/TCA, "
+                        "and post-cost net PnL labels before relaxing vetoes."
+                    ),
+                    "data_requirements": [
+                        "rejected_signal_log",
+                        "counterfactual_return",
+                        "route_tca",
+                        "post_cost_net_pnl",
+                    ],
+                    "confidence": "0.76",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
+        )
+
+        self.assertIn(
+            "rejected_signal_outcome_calibration",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_rejected_signal_outcome_label_count"],
+            "120",
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_rejected_signal_reason_coverage"],
+            "0.80",
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_rejected_signal_outcome_persistence_state"],
+            "ok",
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["requires_rejected_signal_outcome_learning"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "requires_rejected_signal_counterfactual_replay"
+            ]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "rejects_pending_rejected_signal_outcome_labels"
+            ]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_unlabeled_reject_relaxation"]
+        )
+
     def test_morning_momentum_claim_selects_opening_drive_family(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-morning-momentum",
