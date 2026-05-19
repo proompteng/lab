@@ -1,26 +1,24 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { resolveTorghutConsumerEvidenceForStatusRequest } from './status'
+const agentsProxyMocks = vi.hoisted(() => ({
+  proxyAgentsServiceRequest: vi.fn(async () => new Response('status', { status: 200 })),
+}))
+
+vi.mock('~/server/agents-service-proxy', () => agentsProxyMocks)
+
+import { getControlPlaneStatus } from './status'
 
 describe('control-plane status route', () => {
-  it('omits Torghut consumer evidence for non-recursive carry imports', async () => {
-    const resolver = resolveTorghutConsumerEvidenceForStatusRequest(
-      new Request('http://jangar.test/api/agents/control-plane/status', {
-        headers: {
-          'x-torghut-consumer-evidence-mode': 'omit',
-        },
-      }),
-    )
-
-    expect(resolver).toBeDefined()
-    const resolution = await resolver!()
-    expect(resolution.status.status).toBe('disabled')
-    expect(resolution.status.reason_codes).toContain('torghut_consumer_evidence_omitted_for_non_recursive_status')
+  afterEach(() => {
+    vi.clearAllMocks()
   })
 
-  it('keeps normal status requests on the full Torghut consumer-evidence path', () => {
-    expect(
-      resolveTorghutConsumerEvidenceForStatusRequest(new Request('http://jangar.test/api/agents/control-plane/status')),
-    ).toBeUndefined()
+  it('proxies status requests to the Agents service boundary', async () => {
+    const request = new Request('http://jangar.test/api/agents/control-plane/status?namespace=agents&view=runner')
+    const response = await getControlPlaneStatus(request)
+
+    expect(response.status).toBe(200)
+    await expect(response.text()).resolves.toBe('status')
+    expect(agentsProxyMocks.proxyAgentsServiceRequest).toHaveBeenCalledWith(request, '/api/agents/control-plane/status')
   })
 })

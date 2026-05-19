@@ -1,31 +1,42 @@
 import { createFileRoute, type AgentsServerRouteArgs } from '../../../../server/server-route'
 
-import { buildAgentsControlPlaneStatus } from '../../../../server/control-plane-status'
-import { resolveGrpcStatus } from '../../../../server/control-plane-grpc'
+import {
+  getAgentsControlPlaneStatus,
+  projectAgentsControlPlaneStatus,
+  type AgentsControlPlaneStatusDependencies,
+} from '../../../../server/control-plane-status'
 import { errorResponse, okResponse } from '../../../../server/http'
 import { normalizeNamespace } from '../../../../server/primitives'
 
 export const Route = createFileRoute('/api/agents/control-plane/status')({
   server: {
     handlers: {
-      GET: async ({ request }: AgentsServerRouteArgs) => getControlPlaneStatus(request),
+      GET: async ({ request }: AgentsServerRouteArgs) => buildControlPlaneStatusResponse(request),
     },
   },
 })
 
-export const getControlPlaneStatus = async (request: Request) => {
+export const buildControlPlaneStatusResponse = async (
+  request: Request,
+  deps: AgentsControlPlaneStatusDependencies = {},
+) => {
   const url = new URL(request.url)
   const namespace = normalizeNamespace(url.searchParams.get('namespace'), 'agents')
+  const view = url.searchParams.get('view') ?? url.searchParams.get('projection')
 
   try {
-    const status = buildAgentsControlPlaneStatus({
-      namespace,
-      service: 'agents',
-      grpc: await resolveGrpcStatus(),
-    })
-    return okResponse(status)
+    const status = await getAgentsControlPlaneStatus(
+      {
+        namespace,
+        service: 'agents',
+      },
+      deps,
+    )
+    return okResponse(projectAgentsControlPlaneStatus(status, view))
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return errorResponse(message, 500, { namespace })
   }
 }
+
+export const getControlPlaneStatus = buildControlPlaneStatusResponse
