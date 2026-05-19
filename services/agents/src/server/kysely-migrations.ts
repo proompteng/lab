@@ -24,6 +24,9 @@ const migrations: MigrationMap = {
   '20260208_agents_agentrun_idempotency': agentsAgentRunIdempotencyMigration,
 }
 
+const AGENTS_MIGRATION_TABLE = 'agents_kysely_migration'
+const AGENTS_MIGRATION_LOCK_TABLE = 'agents_kysely_migration_lock'
+
 export const getRegisteredMigrationNames = () => Object.keys(migrations).sort()
 
 const migrationProvider = new StaticMigrationProvider(migrations)
@@ -37,6 +40,8 @@ const runMigrations = async (db: Db) => {
   const migrator = new Migrator({
     db,
     provider: migrationProvider,
+    migrationTableName: AGENTS_MIGRATION_TABLE,
+    migrationLockTableName: AGENTS_MIGRATION_LOCK_TABLE,
     allowUnorderedMigrations: resolveAllowUnorderedMigrations(),
   })
 
@@ -72,6 +77,8 @@ export const ensureMigrations = async (db: Db) => {
 }
 
 export const __test__ = {
+  AGENTS_MIGRATION_LOCK_TABLE,
+  AGENTS_MIGRATION_TABLE,
   getRegisteredMigrations: getRegisteredMigrationNames,
   resolveAllowUnorderedMigrations,
 }
