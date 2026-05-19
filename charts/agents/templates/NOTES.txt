@@ -1,4 +1,4 @@
-Thank you for installing agents (Jangar control plane).
+Thank you for installing the Agents control plane.
 
 Next steps:
 1. Verify deployment:
@@ -9,7 +9,7 @@ Next steps:
    kubectl -n {{ .Release.Namespace }} apply -f charts/agents/examples/memory-sample.yaml
    kubectl -n {{ .Release.Namespace }} apply -f charts/agents/examples/implementationspec-sample.yaml
    kubectl -n {{ .Release.Namespace }} apply -f charts/agents/examples/agentrun-sample.yaml
-3. Port-forward to access Jangar:
+3. Port-forward to access the Agents HTTP API:
    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "agents.fullname" . }} 8080:{{ .Values.service.port }}
 4. Port-forward gRPC for agentctl (optional when gRPC is enabled):
    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "agents.fullname" . }}-grpc {{ .Values.grpc.servicePort }}:{{ .Values.grpc.servicePort }}

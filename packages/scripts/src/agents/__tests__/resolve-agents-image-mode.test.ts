@@ -141,6 +141,15 @@ describe('agents-ci workflow local Agents image build', () => {
     expect(workflow).not.toContain('jangar-release-contract')
   })
 
+  it('keeps Agents CI detached from Jangar source and package paths', () => {
+    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+
+    expect(workflow).not.toContain('services/jangar/**')
+    expect(workflow).not.toContain('packages/scripts/src/jangar/**')
+    expect(workflow).not.toContain('--filter @proompteng/jangar')
+    expect(workflow).not.toContain('packages/scripts/src/jangar/__tests__/release-contract.test.ts')
+  })
+
   it('builds local Agents smoke images from the Agents Dockerfile', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
