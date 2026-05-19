@@ -101,4 +101,21 @@ describe('whitepaper finalize consumer', () => {
     expect(finalize).not.toHaveBeenCalled()
     expect(patchAgentRunAnnotations).not.toHaveBeenCalled()
   })
+
+  it('ignores Agents namespace aliases when resolving Jangar finalization namespaces', async () => {
+    process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED = 'true'
+    process.env.JANGAR_WHITEPAPER_FINALIZE_CONSUMER_ENABLED = 'true'
+    process.env.AGENTS_NAMESPACE = 'wrong-agents-namespace'
+    process.env.JANGAR_WHITEPAPER_FINALIZE_SCAN_INTERVAL_MS = '300000'
+
+    const listAgentRuns = vi.fn(async (_namespace: string) => [])
+    const patchAgentRunAnnotations = vi.fn(async () => {})
+    const finalize = vi.fn(async (_input: WhitepaperFinalizeTerminalStatusInput) => {})
+
+    startWhitepaperFinalizeConsumer({ listAgentRuns, patchAgentRunAnnotations, finalize })
+
+    await vi.waitFor(() => expect(listAgentRuns).toHaveBeenCalledTimes(1))
+    expect(listAgentRuns).toHaveBeenCalledWith('agents')
+    expect(listAgentRuns).not.toHaveBeenCalledWith('wrong-agents-namespace')
+  })
 })

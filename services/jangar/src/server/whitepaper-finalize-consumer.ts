@@ -57,7 +57,7 @@ const parseBoolean = (value: string | undefined, fallback: boolean) => {
 }
 
 const resolveNamespaces = (env: Record<string, string | undefined> = process.env) => {
-  const raw = env.JANGAR_WHITEPAPER_FINALIZE_NAMESPACES ?? env.AGENTS_NAMESPACE ?? DEFAULT_NAMESPACE
+  const raw = env.JANGAR_WHITEPAPER_FINALIZE_NAMESPACES ?? DEFAULT_NAMESPACE
   const namespaces = raw
     .split(',')
     .map((entry) => entry.trim())

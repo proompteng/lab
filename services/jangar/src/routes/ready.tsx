@@ -2,7 +2,6 @@ import { createFileRoute } from '@tanstack/react-router'
 import {
   type AgentsControllerHealthSnapshot,
   isControllerHealthReady,
-  buildAgentsRuntimeReadyResponse,
   getAgentsReadySnapshot,
   uniqueStrings,
 } from '~/server/agents-control-plane-client'
@@ -13,7 +12,7 @@ import type {
   SourceServingContractVerdictExchange,
   TorghutRevenueRepairQueueItem,
 } from '~/data/agents-control-plane'
-import { isAgentsRuntimeService, resolveRuntimeServiceName } from '~/server/runtime-identity'
+import { resolveRuntimeServiceName } from '~/server/runtime-identity'
 import { buildControllerIngestionSettlement } from '~/server/control-plane-controller-ingestion-settlement'
 import { buildRuntimeAdmissionSnapshot, findAdmissionPassport } from '~/server/control-plane-runtime-admission'
 import {
@@ -402,9 +401,6 @@ export const getReadyHandler = async () => {
   const agentsController = agentsReady.agentsController
   const orchestrationController = agentsReady.orchestrationController
   const supportingController = agentsReady.supportingController
-  if (isAgentsRuntimeService()) {
-    return buildAgentsRuntimeReadyResponse(agentsReady)
-  }
   const namespaces = agentsReady.namespaces.length ? agentsReady.namespaces : ['agents']
   const trust = await executionTrustStatus(namespaces)
   const torghutConsumerEvidence = await resolveTorghutConsumerEvidence(now)

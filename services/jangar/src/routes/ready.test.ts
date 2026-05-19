@@ -390,14 +390,8 @@ describe('getReadyHandler', () => {
     expect(body.serving_runtime_proof_cells_healthy).toBe(true)
   }, 30_000)
 
-  it('uses Agents readiness contract without Jangar domain gates in Agents runtime', async () => {
+  it('keeps Jangar domain gates when Agents runtime env leaks into Jangar', async () => {
     process.env.AGENTS_IMAGE = 'registry.example/lab/agents-controller:abc123'
-    controlPlaneStatusMocks.buildExecutionTrust.mockImplementation(async () => {
-      throw new Error('execution trust must not run for Agents runtime readiness')
-    })
-    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockImplementation(() => {
-      throw new Error('runtime admission must not run for Agents runtime readiness')
-    })
 
     const { getReadyHandler } = await import('./ready')
 
@@ -406,41 +400,18 @@ describe('getReadyHandler', () => {
     expect(response.status).toBe(200)
     const body = await response.json()
     expect(body).toMatchObject({
-      schemaVersion: 'agents.proompteng.ai/ready/v1',
       status: 'ok',
-      service: 'agents',
-      httpReady: true,
-      reason_codes: [],
+      service: 'jangar',
+      execution_trust: {
+        status: 'healthy',
+      },
+      repair_bid_admission: {
+        schema_version: 'jangar.repair-bid-admission-state.v1',
+      },
     })
-    expect(body.execution_trust).toBeUndefined()
-    expect(body.torghut_consumer_evidence).toBeUndefined()
-    expect(body.repair_bid_admission).toBeUndefined()
-    expect(controlPlaneStatusMocks.buildExecutionTrust).not.toHaveBeenCalled()
-    expect(runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot).not.toHaveBeenCalled()
-  })
-
-  it('keeps Agents runtime readiness HTTP-ready while backlog adoption is still degraded', async () => {
-    process.env.AGENTS_IMAGE = 'registry.example/lab/agents-controller:abc123'
-    agentsControlPlaneClientMocks.getAgentsReadySnapshot.mockResolvedValue(
-      buildAgentsReadySnapshot({
-        status: 'degraded',
-        reasonCodes: ['agentrun_ingestion_not_ready'],
-      }),
-    )
-
-    const { getReadyHandler } = await import('./ready')
-
-    const response = await getReadyHandler()
-
-    expect(response.status).toBe(200)
-    const body = await response.json()
-    expect(body).toMatchObject({
-      schemaVersion: 'agents.proompteng.ai/ready/v1',
-      status: 'degraded',
-      service: 'agents',
-      httpReady: true,
-      reason_codes: ['agentrun_ingestion_not_ready'],
-    })
+    expect(body.schemaVersion).toBeUndefined()
+    expect(controlPlaneStatusMocks.buildExecutionTrust).toHaveBeenCalled()
+    expect(runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot).toHaveBeenCalled()
   })
 
   it('projects Torghut revenue-repair business evidence and material evidence settlement at the ready boundary', async () => {

@@ -193,14 +193,3 @@ export const resolveAgentsControllerHealthSnapshots = async (deps: AgentsControl
       : readySnapshot.orchestrationController,
   }
 }
-
-export const buildAgentsRuntimeReadyResponse = (snapshot: AgentsReadySnapshot) => {
-  const body = JSON.stringify(snapshot.raw)
-  return new Response(body, {
-    status: snapshot.httpReady ? 200 : 503,
-    headers: {
-      'content-type': 'application/json',
-      'content-length': Buffer.byteLength(body).toString(),
-    },
-  })
-}

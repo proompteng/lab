@@ -29,7 +29,7 @@ describe('health route', () => {
     globalThis.fetch = originalFetch
   })
 
-  it('reports Agents service identity under Agents runtime env', async () => {
+  it('keeps Jangar service identity when Agents runtime env leaks into Jangar', async () => {
     process.env.AGENTS_IMAGE = 'registry.example/lab/agents-controller:abc123'
 
     const { Route } = await import('./health')
@@ -38,7 +38,7 @@ describe('health route', () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toMatchObject({
       status: 'ok',
-      service: 'agents',
+      service: 'jangar',
       agentsService: {
         service: 'agents',
       },

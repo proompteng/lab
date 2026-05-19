@@ -612,7 +612,6 @@ COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-publish.ts /usr
 COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-soak.ts /usr/local/bin/codex-nats-soak
 RUN chmod +x /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak
 
-ENV JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED=true
 ENV JANGAR_VERSION=${JANGAR_VERSION} \
   JANGAR_COMMIT=${JANGAR_COMMIT}
 

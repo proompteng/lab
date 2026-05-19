@@ -289,6 +289,24 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/runtime-profile.ts"
 
 fail_if_matches \
+  "Jangar runtime identity must not be switchable by leaked Agents image or runtime env" \
+  'AGENTS_RUNTIME_SERVICE|AGENTS_GITOPS_REVISION|AGENTS_RUNTIME_IMAGE|AGENTS_IMAGE' \
+  "${ROOT_DIR}/services/jangar/src/server/runtime-identity.ts" \
+  "${ROOT_DIR}/services/jangar/src/routes/health.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/ready.tsx"
+
+fail_if_matches \
+  "Jangar whitepaper finalizer must not use AGENTS_NAMESPACE as a namespace alias after Agents owns its runtime env" \
+  'AGENTS_NAMESPACE' \
+  "${ROOT_DIR}/services/jangar/src/server/whitepaper-finalize-consumer.ts"
+
+fail_if_matches \
+  "Jangar runtime and GitOps must not ship the removed agent-comms subscriber toggle after Agents owns the comms runtime" \
+  'JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED' \
+  "${ROOT_DIR}/services/jangar" \
+  "${ROOT_DIR}/argocd/applications/jangar"
+
+fail_if_matches \
   "Jangar runtime must not expose removed Agents controller enablement flags" \
   'JANGAR_AGENTS_CONTROLLER_ENABLED|JANGAR_ORCHESTRATION_CONTROLLER_ENABLED|JANGAR_SUPPORTING_CONTROLLER_ENABLED|JANGAR_PRIMITIVES_RECONCILER' \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-config.ts" \

@@ -11,16 +11,16 @@ describe('Jangar runtime identity', () => {
     ).toBe('jangar')
   })
 
-  it('uses Agents identity when explicit Agents image metadata is present', () => {
+  it('ignores leaked Agents image metadata', () => {
     expect(
       resolveRuntimeServiceName({
         AGENTS_IMAGE: 'registry.example/lab/agents-control-plane:sha',
       }),
-    ).toBe('agents')
+    ).toBe('jangar')
   })
 
-  it('allows an explicit Agents runtime override for transitional callers', () => {
-    expect(isAgentsRuntimeService({ AGENTS_RUNTIME_SERVICE: 'agents' })).toBe(true)
-    expect(resolveRuntimeServiceName({ AGENTS_RUNTIME_SERVICE: '1' })).toBe('agents')
+  it('ignores transitional Agents runtime overrides', () => {
+    expect(isAgentsRuntimeService({ AGENTS_RUNTIME_SERVICE: 'agents' })).toBe(false)
+    expect(resolveRuntimeServiceName({ AGENTS_RUNTIME_SERVICE: '1' })).toBe('jangar')
   })
 })

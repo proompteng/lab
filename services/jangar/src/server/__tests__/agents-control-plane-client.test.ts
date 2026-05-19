@@ -1,10 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  buildAgentsReadySnapshot,
-  buildAgentsRuntimeReadyResponse,
-  getAgentsReadySnapshot,
-} from '../agents-control-plane-client'
+import { buildAgentsReadySnapshot, getAgentsReadySnapshot } from '../agents-control-plane-client'
 
 const originalFetch = globalThis.fetch
 
@@ -62,9 +58,7 @@ describe('agents-control-plane-client', () => {
       },
     })
 
-    const response = buildAgentsRuntimeReadyResponse(snapshot)
-    expect(response.status).toBe(503)
-    await expect(response.json()).resolves.toMatchObject({
+    expect(snapshot.raw).toMatchObject({
       status: 'degraded',
       reason_codes: ['leader_election_not_ready'],
     })

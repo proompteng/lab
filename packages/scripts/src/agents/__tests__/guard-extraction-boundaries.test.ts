@@ -72,6 +72,9 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain(
       '/api/control-plane/(agent-events|agent-runs|events|implementation-sources|logs|resource|resources|status|stream)',
     )
+    expect(content).toContain('AGENTS_RUNTIME_SERVICE|AGENTS_GITOPS_REVISION|AGENTS_RUNTIME_IMAGE|AGENTS_IMAGE')
+    expect(content).toContain('AGENTS_NAMESPACE')
+    expect(content).toContain('JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED')
     expect(content).toContain('agents-control-plane runtime profile')
     expect(content).toContain('agents-controllers runtime profile')
   })
