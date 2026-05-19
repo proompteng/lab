@@ -99,9 +99,9 @@ func TestEventsEndpointRejectsEmptyPayload(t *testing.T) {
 	require.Equal(t, 400, resp.StatusCode)
 }
 
-func TestCodexTasksImplementationDispatches(t *testing.T) {
+func TestGithubIssueAgentRunsImplementationDispatches(t *testing.T) {
 	implementer := &stubImplementer{result: orchestrator.Result{
-		Namespace:    "jangar",
+		Namespace:    "agents",
 		AgentRunName: "codex-agent-abc123",
 		SubmittedAt:  time.Unix(1735600400, 0).UTC(),
 	}}
@@ -123,7 +123,7 @@ func TestCodexTasksImplementationDispatches(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
+	req := httptest.NewRequest("POST", "/agent-runs/github-issues", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/x-protobuf")
 
 	resp, err := srv.App().Test(req)
@@ -134,14 +134,14 @@ func TestCodexTasksImplementationDispatches(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&data))
 	_ = resp.Body.Close()
 	require.Equal(t, "implementation", data["stage"])
-	require.Equal(t, "jangar", data["namespace"])
+	require.Equal(t, "agents", data["namespace"])
 	require.Equal(t, "codex-agent-abc123", data["agentRunName"])
 	require.Equal(t, implementer.result.SubmittedAt.Format(time.RFC3339), data["submittedAt"])
 	require.False(t, data["duplicate"].(bool))
 	require.Equal(t, 1, implementer.calls)
 }
 
-func TestCodexTasksImplementationImplementerError(t *testing.T) {
+func TestGithubIssueAgentRunsImplementationImplementerError(t *testing.T) {
 	implementer := &stubImplementer{err: errors.New("implementer boom")}
 	srv, err := server.New(server.Options{
 		Dispatcher: &stubDispatcher{},
@@ -161,7 +161,7 @@ func TestCodexTasksImplementationImplementerError(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
+	req := httptest.NewRequest("POST", "/agent-runs/github-issues", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/x-protobuf")
 
 	resp, err := srv.App().Test(req)
@@ -170,7 +170,7 @@ func TestCodexTasksImplementationImplementerError(t *testing.T) {
 	require.Equal(t, 1, implementer.calls)
 }
 
-func TestCodexTasksImplementationDisabled(t *testing.T) {
+func TestGithubIssueAgentRunsImplementationDisabled(t *testing.T) {
 	srv, err := server.New(server.Options{
 		Dispatcher: &stubDispatcher{},
 		Store:      &stubStore{},
@@ -185,7 +185,7 @@ func TestCodexTasksImplementationDisabled(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
+	req := httptest.NewRequest("POST", "/agent-runs/github-issues", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/x-protobuf")
 
 	resp, err := srv.App().Test(req)
@@ -193,11 +193,11 @@ func TestCodexTasksImplementationDisabled(t *testing.T) {
 	require.Equal(t, 503, resp.StatusCode)
 }
 
-func TestCodexTasksRejectsEmptyPayload(t *testing.T) {
+func TestGithubIssueAgentRunsRejectsEmptyPayload(t *testing.T) {
 	srv, err := server.New(server.Options{})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(nil))
+	req := httptest.NewRequest("POST", "/agent-runs/github-issues", bytes.NewReader(nil))
 	req.Header.Set("Content-Type", "application/x-protobuf")
 
 	resp, err := srv.App().Test(req)
@@ -205,11 +205,11 @@ func TestCodexTasksRejectsEmptyPayload(t *testing.T) {
 	require.Equal(t, 400, resp.StatusCode)
 }
 
-func TestCodexTasksRejectsInvalidPayload(t *testing.T) {
+func TestGithubIssueAgentRunsRejectsInvalidPayload(t *testing.T) {
 	srv, err := server.New(server.Options{})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader([]byte("not-proto")))
+	req := httptest.NewRequest("POST", "/agent-runs/github-issues", bytes.NewReader([]byte("not-proto")))
 	req.Header.Set("Content-Type", "application/x-protobuf")
 
 	resp, err := srv.App().Test(req)
@@ -217,7 +217,7 @@ func TestCodexTasksRejectsInvalidPayload(t *testing.T) {
 	require.Equal(t, 400, resp.StatusCode)
 }
 
-func TestCodexTasksUnsupportedStage(t *testing.T) {
+func TestGithubIssueAgentRunsUnsupportedStage(t *testing.T) {
 	srv, err := server.New(server.Options{
 		Dispatcher: &stubDispatcher{},
 		Store:      &stubStore{},
@@ -232,12 +232,24 @@ func TestCodexTasksUnsupportedStage(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
+	req := httptest.NewRequest("POST", "/agent-runs/github-issues", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/x-protobuf")
 
 	resp, err := srv.App().Test(req)
 	require.NoError(t, err)
 	require.Equal(t, 400, resp.StatusCode)
+}
+
+func TestLegacyCodexTaskIngressIsNotRegistered(t *testing.T) {
+	srv, err := server.New(server.Options{})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/codex"+"/tasks", bytes.NewReader([]byte("legacy")))
+	req.Header.Set("Content-Type", "application/x-protobuf")
+
+	resp, err := srv.App().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 404, resp.StatusCode)
 }
 
 type stubDispatcher struct {

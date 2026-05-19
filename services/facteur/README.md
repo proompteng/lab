@@ -63,7 +63,7 @@ go test -tags e2e ./services/facteur/test/e2e
 
 ### Codex knowledge base ingestion
 
-Facteur persists Codex deliveries under `/codex/tasks` by normalising the `proompteng.froussard.v1.CodexTask` payload into `codex_kb.ideas`, `codex_kb.tasks`, and `codex_kb.task_runs`. The handler requires `FACTEUR_POSTGRES_DSN` and `redis.url`; each delivery must include a unique `delivery_id` so retries remain idempotent.
+Facteur persists Codex deliveries under `/agent-runs/github-issues` by normalising the `proompteng.froussard.v1.CodexTask` payload into `codex_kb.ideas`, `codex_kb.tasks`, and `codex_kb.task_runs`. The handler requires `FACTEUR_POSTGRES_DSN` and `redis.url`; each delivery must include a unique `delivery_id` so retries remain idempotent.
 
 1. Ensure the service is running with Postgres and Redis reachable (see above).
 2. Encode the sample payload provided in `docs/examples/codex-task.json`:
@@ -80,7 +80,7 @@ Facteur persists Codex deliveries under `/codex/tasks` by normalising the `proom
    curl -v \
      -H 'Content-Type: application/x-protobuf' \
      --data-binary @/tmp/codex-task.bin \
-     http://127.0.0.1:8080/codex/tasks
+     http://127.0.0.1:8080/agent-runs/github-issues
    ```
 4. Inspect persisted rows:
    ```bash

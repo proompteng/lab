@@ -31,4 +31,4 @@ spec:
       kind: Service
       name: facteur-internal
       namespace: facteur
-    uri: /codex/tasks
+    uri: /agent-runs/github-issues

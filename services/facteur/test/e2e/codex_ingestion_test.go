@@ -51,7 +51,7 @@ func TestCodexIngestionEndToEnd(t *testing.T) {
 		Head:        "codex/e2e",
 		IssueNumber: 1635,
 		IssueUrl:    "https://github.com/proompteng/lab/issues/1635",
-		IssueTitle:  "Codex: persist codex_kb intake for /codex/tasks",
+		IssueTitle:  "Codex: persist codex_kb intake for /agent-runs/github-issues",
 		IssueBody:   "Check persistence path end-to-end.",
 		Sender:      "codex-e2e",
 		IssuedAt:    timestamppb.Now(),
@@ -121,7 +121,7 @@ func postCodexTask(t *testing.T, client *http.Client, baseURL string, payload []
 	var lastErr error
 
 	for {
-		req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/codex/tasks", bytes.NewReader(payload))
+		req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/agent-runs/github-issues", bytes.NewReader(payload))
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/x-protobuf")
 

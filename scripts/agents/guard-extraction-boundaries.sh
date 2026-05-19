@@ -61,6 +61,13 @@ fail_if_matches \
   "${ROOT_DIR}/argocd/applications/argo-workflows"
 
 fail_if_matches \
+  "Facteur GitOps and server runtime must not expose the legacy /codex/tasks AgentRun ingress" \
+  '/codex/tasks' \
+  "${ROOT_DIR}/argocd/applications/facteur" \
+  "${ROOT_DIR}/services/facteur/internal/server" \
+  "${ROOT_DIR}/services/facteur/README.md"
+
+fail_if_matches \
   "Froussard GitOps must not ship legacy Codex implementation WorkflowTemplates" \
   'github-codex-implementation-workflow-template|codex-run-workflow-template-jangar|codex-autonomous-workflow-template|github-codex-post-deploy-workflow-template' \
   "${ROOT_DIR}/argocd/applications/froussard"

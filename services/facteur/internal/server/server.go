@@ -229,7 +229,7 @@ func registerRoutes(app *fiber.App, opts Options) {
 		})
 	})
 
-	app.Post("/codex/tasks", func(c *fiber.Ctx) error {
+	app.Post("/agent-runs/github-issues", func(c *fiber.Ctx) error {
 		body := c.Body()
 		if len(body) == 0 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "empty payload"})
@@ -241,7 +241,7 @@ func registerRoutes(app *fiber.App, opts Options) {
 		}
 
 		log.Printf(
-			"codex task received: stage=%s repo=%s issue=%d head=%s delivery=%s",
+			"GitHub issue AgentRun received: stage=%s repo=%s issue=%d head=%s delivery=%s",
 			task.GetStage().String(),
 			task.GetRepository(),
 			task.GetIssueNumber(),
@@ -254,7 +254,11 @@ func registerRoutes(app *fiber.App, opts Options) {
 			ctx = context.Background()
 		}
 
-		ctx, span := telemetry.Tracer().Start(ctx, "facteur.server.codex_tasks", trace.WithSpanKind(trace.SpanKindServer))
+		ctx, span := telemetry.Tracer().Start(
+			ctx,
+			"facteur.server.github_issue_agent_runs",
+			trace.WithSpanKind(trace.SpanKindServer),
+		)
 		defer span.End()
 
 		span.SetAttributes(
