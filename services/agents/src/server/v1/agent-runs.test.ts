@@ -156,6 +156,51 @@ describe('AgentRun v1 API', () => {
     expect(kube.apply).toHaveBeenCalled()
   })
 
+  it('injects runtime config into admission queue limits instead of reading global process env', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+    ;(kube.list as unknown as { mockResolvedValue: (value: unknown) => void }).mockResolvedValue({
+      items: [
+        {
+          metadata: { name: 'queued-agent-run', namespace: 'agents' },
+          spec: { parameters: { repository: 'proompteng/lab' } },
+          status: { phase: 'Pending' },
+        },
+      ],
+    })
+
+    const response = await postAgentRunsHandler(
+      buildRequest({
+        agentRef: { name: 'demo-agent' },
+        namespace: 'agents',
+        implementation: { text: 'Implement the requested change.' },
+        runtime: { type: 'job', config: {} },
+        parameters: { repository: 'proompteng/lab' },
+      }),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies: vi.fn(async () => {}),
+        runtimeConfig: {
+          env: {
+            AGENTS_AGENTS_CONTROLLER_QUEUE_NAMESPACE: '1',
+          },
+        },
+      },
+    )
+
+    expect(response.status).toBe(429)
+    const body = (await response.json()) as {
+      error?: string
+      details?: { scope?: string; limit?: number; queued?: number }
+    }
+    expect(body.error).toBe('Namespace agents reached queue limit')
+    expect(body.details).toMatchObject({ scope: 'namespace', limit: 1, queued: 1 })
+    expect(kube.apply).not.toHaveBeenCalled()
+    expect(store.reserveAgentRunIdempotencyKey).not.toHaveBeenCalled()
+    expect(store.deleteAgentRunIdempotencyKey).not.toHaveBeenCalled()
+  })
+
   it('reclaims stale idempotency reservations using injected runtime config and clock', async () => {
     const store = createStoreMock()
     const kube = createKubeMock()

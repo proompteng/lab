@@ -55,6 +55,25 @@ export type AgentRunSubmissionConfig = {
   readonly idempotencyEnabled: boolean
   readonly idempotencyReservationTtlSeconds: number
   readonly vcsProvidersEnabled: boolean
+  readonly admissionNamespaces: {
+    readonly namespaces: string[]
+    readonly includeCluster: boolean
+  }
+  readonly concurrency: {
+    readonly perNamespace: number
+    readonly cluster: number
+  }
+  readonly queue: {
+    readonly perNamespace: number
+    readonly perRepo: number
+    readonly cluster: number
+  }
+  readonly rate: {
+    readonly windowSeconds: number
+    readonly perNamespace: number
+    readonly perRepo: number
+    readonly cluster: number
+  }
 }
 
 export type AgentRunRuntimeConfigOptions = {
@@ -68,6 +87,7 @@ type AgentRunRuntimeConfigServiceDefinition = {
     createdAt: unknown,
     config: Pick<AgentRunSubmissionConfig, 'idempotencyReservationTtlSeconds'>,
   ) => Effect.Effect<boolean>
+  readonly now: () => Effect.Effect<number>
 }
 
 export class AgentRunStoreService extends Context.Tag('agents/AgentRunStoreService')<
@@ -190,6 +210,10 @@ export const makeAgentRunRuntimeConfigService = (
           idempotencyEnabled: config.idempotencyEnabled,
           idempotencyReservationTtlSeconds: config.idempotencyReservationTtlSeconds,
           vcsProvidersEnabled: config.vcsProvidersEnabled,
+          admissionNamespaces: config.admissionNamespaces,
+          concurrency: config.concurrency,
+          queue: config.queue,
+          rate: config.rate,
         }
       }),
     isIdempotencyReservationStale: (createdAt, config) =>
@@ -200,18 +224,7 @@ export const makeAgentRunRuntimeConfigService = (
         if (createdAtMs == null) return false
         return now() - createdAtMs >= ttlSeconds * 1000
       }),
-  }
-}
-
-const parseAdmissionNamespaces = (namespace: string) =>
-  resolveAgentRunAdmissionConfig(namespace, process.env).admissionNamespaces
-
-const parseAdmissionLimits = () => {
-  const config = resolveAgentRunAdmissionConfig('agents', process.env)
-  return {
-    concurrency: config.concurrency,
-    queue: config.queue,
-    rate: config.rate,
+    now: () => Effect.sync(now),
   }
 }
 
@@ -450,10 +463,10 @@ const isTerminalPhase = (value: string) => {
 const checkAdmissionRateLimits = (
   namespace: string,
   repository: string | null,
-  limits: ReturnType<typeof parseAdmissionLimits>['rate'],
+  limits: AgentRunSubmissionConfig['rate'],
+  now: number,
 ): AdmissionDecision => {
   const windowMs = limits.windowSeconds * 1000
-  const now = Date.now()
 
   const clusterResult = checkRateLimit(admissionRateState.cluster, limits.cluster, windowMs, now)
   if (!clusterResult.ok) {
@@ -497,13 +510,14 @@ const evaluateAdmissionLimits = async (
   kube: KubernetesClient,
   namespace: string,
   repository: string | null,
+  config: Pick<AgentRunSubmissionConfig, 'admissionNamespaces' | 'concurrency' | 'queue' | 'rate'>,
+  now: number,
   recordQueueDepth: NonNullable<AgentRunsApiDependencies['recordAgentQueueDepth']>,
 ): Promise<AdmissionDecision> => {
-  const limits = parseAdmissionLimits()
-  const rateDecision = checkAdmissionRateLimits(namespace, repository, limits.rate)
+  const rateDecision = checkAdmissionRateLimits(namespace, repository, config.rate, now)
   if (!rateDecision.ok) return rateDecision
 
-  const { namespaces, includeCluster } = parseAdmissionNamespaces(namespace)
+  const { namespaces, includeCluster } = config.admissionNamespaces
   const normalizedRepo = repository ? normalizeRepository(repository) : ''
   const results = await Promise.all(
     namespaces.map(async (ns) => ({
@@ -551,48 +565,48 @@ const evaluateAdmissionLimits = async (
     recordQueueDepth(queuedRepo, { scope: 'repo', repository: normalizedRepo, namespace })
   }
 
-  if (limits.concurrency.perNamespace > 0 && runningNamespace >= limits.concurrency.perNamespace) {
+  if (config.concurrency.perNamespace > 0 && runningNamespace >= config.concurrency.perNamespace) {
     return {
       ok: false,
       status: 429,
       message: `Namespace ${namespace} reached concurrency limit`,
-      details: { scope: 'namespace', limit: limits.concurrency.perNamespace, running: runningNamespace },
+      details: { scope: 'namespace', limit: config.concurrency.perNamespace, running: runningNamespace },
     }
   }
 
-  if (includeCluster && limits.concurrency.cluster > 0 && runningCluster >= limits.concurrency.cluster) {
+  if (includeCluster && config.concurrency.cluster > 0 && runningCluster >= config.concurrency.cluster) {
     return {
       ok: false,
       status: 429,
       message: 'Cluster concurrency limit reached',
-      details: { scope: 'cluster', limit: limits.concurrency.cluster, running: runningCluster },
+      details: { scope: 'cluster', limit: config.concurrency.cluster, running: runningCluster },
     }
   }
 
-  if (limits.queue.perNamespace > 0 && queuedNamespace >= limits.queue.perNamespace) {
+  if (config.queue.perNamespace > 0 && queuedNamespace >= config.queue.perNamespace) {
     return {
       ok: false,
       status: 429,
       message: `Namespace ${namespace} reached queue limit`,
-      details: { scope: 'namespace', limit: limits.queue.perNamespace, queued: queuedNamespace },
+      details: { scope: 'namespace', limit: config.queue.perNamespace, queued: queuedNamespace },
     }
   }
 
-  if (includeCluster && limits.queue.cluster > 0 && queuedCluster >= limits.queue.cluster) {
+  if (includeCluster && config.queue.cluster > 0 && queuedCluster >= config.queue.cluster) {
     return {
       ok: false,
       status: 429,
       message: 'Cluster queue limit reached',
-      details: { scope: 'cluster', limit: limits.queue.cluster, queued: queuedCluster },
+      details: { scope: 'cluster', limit: config.queue.cluster, queued: queuedCluster },
     }
   }
 
-  if (normalizedRepo && limits.queue.perRepo > 0 && queuedRepo >= limits.queue.perRepo) {
+  if (normalizedRepo && config.queue.perRepo > 0 && queuedRepo >= config.queue.perRepo) {
     return {
       ok: false,
       status: 429,
       message: `Repository ${repository} reached queue limit`,
-      details: { scope: 'repo', limit: limits.queue.perRepo, queued: queuedRepo, repository },
+      details: { scope: 'repo', limit: config.queue.perRepo, queued: queuedRepo, repository },
     }
   }
 
@@ -912,10 +926,8 @@ export const submitAgentRunWithServicesEffect = (
     })
     const submissionConfig = yield* runtimeConfig.resolveSubmissionConfig(parsed.namespace)
 
-    const store = yield* stores.open
-
     return yield* Effect.acquireUseRelease(
-      Effect.succeed(store),
+      stores.open,
       (activeStore) =>
         Effect.gen(function* () {
           const runIdempotencyKey = parsed.idempotencyKey ?? deliveryId
@@ -1135,11 +1147,20 @@ export const submitAgentRunWithServicesEffect = (
           )
 
           const admissionRepository = resolveRepositoryFromParams(parsed.parameters) || null
+          const admissionNow = yield* runtimeConfig.now()
           const admission = yield* kubeEffect(
             'evaluate-admission-limits',
             RESOURCE_MAP.AgentRun,
             parsed.namespace,
-            () => evaluateAdmissionLimits(kube, parsed.namespace, admissionRepository, queueDepth.record),
+            () =>
+              evaluateAdmissionLimits(
+                kube,
+                parsed.namespace,
+                admissionRepository,
+                submissionConfig,
+                admissionNow,
+                queueDepth.record,
+              ),
           )
           if (!admission.ok) {
             return yield* Effect.fail(
