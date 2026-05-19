@@ -422,6 +422,78 @@ class TestCandidateSpecs(TestCase):
             specs[0].promotion_contract["rejects_unlabeled_reject_relaxation"]
         )
 
+    def test_rejected_signal_claim_adds_false_negative_rescue_profiles(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-red-2400",
+            claims=[
+                {
+                    "claim_id": "rejection-event-outcome-labels",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Algorithmically rejected trading events with outcome labels "
+                        "turn skipped signal logs into counterfactual false-negative "
+                        "rescue examples for veto calibration."
+                    ),
+                    "data_requirements": [
+                        "rejected_signal_log",
+                        "outcome_labels",
+                        "executable_quote",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "counterfactual-reject-outcome-learning",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Rejected events require counterfactual return, route/TCA, "
+                        "and post-cost net PnL labels before relaxing vetoes."
+                    ),
+                    "data_requirements": [
+                        "rejected_signal_log",
+                        "counterfactual_return",
+                        "route_tca",
+                        "post_cost_net_pnl",
+                    ],
+                    "confidence": "0.76",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+        family_ids = {spec.family_template_id for spec in specs}
+        rescue_specs = [
+            spec
+            for spec in specs
+            if spec.strategy_overrides.get("params", {}).get("veto_relaxation_scope")
+            == "labeled_false_negative_only"
+        ]
+
+        self.assertEqual(
+            family_ids,
+            {
+                "microstructure_continuation_matched_filter_v1",
+                "microbar_cross_sectional_pairs_v1",
+                "opening_drive_leader_reclaim_v1",
+            },
+        )
+        self.assertTrue(rescue_specs)
+        self.assertTrue(
+            all(
+                spec.strategy_overrides["params"]["outcome_label_filter"]
+                == "profitable_after_costs"
+                for spec in rescue_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                Decimal(str(spec.strategy_overrides["max_notional_per_trade"]))
+                <= Decimal("30000")
+                for spec in rescue_specs
+            )
+        )
+
     def test_morning_momentum_claim_selects_opening_drive_family(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-morning-momentum",

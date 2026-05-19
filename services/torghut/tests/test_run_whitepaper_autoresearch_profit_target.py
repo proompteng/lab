@@ -4368,6 +4368,47 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertIn("torghut.ta_signals", day_action["recommended_operator_probe"])
 
+    def test_remediation_surfaces_stale_tape_shortfall(self) -> None:
+        remediation = runner._candidate_search_remediation(
+            failure_reason=(
+                "ValueError:stale_tape:"
+                "expected_last_trading_day=2026-05-19:end_day=2026-05-18"
+            ),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": "spec-selected",
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            evidence_bundles=(),
+            false_positive_table=(
+                {
+                    "candidate_spec_id": "spec-selected",
+                    "evidence_status": "missing",
+                    "failure_reasons": ["replay_evidence_missing"],
+                },
+            ),
+            best_false_negative_table=(),
+            replay_timeout_seconds=600,
+            max_frontier_candidates_per_spec=1,
+        )
+
+        self.assertEqual(
+            remediation["stale_tape"],
+            {
+                "expected_last_trading_day": "2026-05-19",
+                "available_end_day": "2026-05-18",
+            },
+        )
+        stale_action = remediation["next_actions"][0]
+        self.assertEqual(
+            stale_action["action"], "inspect_or_backfill_latest_ta_signal_day"
+        )
+        self.assertIn("torghut.ta_signals", stale_action["recommended_operator_probe"])
+        self.assertIn("2026-05-18", stale_action["diagnostic_replay_note"])
+
     def test_remediation_prioritizes_missing_promotion_proof(self) -> None:
         remediation = runner._candidate_search_remediation(
             failure_reason="portfolio_optimizer_produced_no_candidate",

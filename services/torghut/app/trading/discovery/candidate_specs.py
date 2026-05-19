@@ -1167,6 +1167,129 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
 
 _BASE_FAMILY_EXECUTION_PROFILES = _FAMILY_EXECUTION_PROFILES
 
+# RED-2400-style rejected-signal labels are most useful when they produce a
+# distinct replay surface instead of only attaching stricter validation gates to
+# the same weak profiles. These profiles stay on existing runtime features so a
+# replay can execute today, while tagging the intent as labeled false-negative
+# rescue for downstream feedback/ranking.
+_REJECTED_SIGNAL_FALSE_NEGATIVE_RESCUE_EXECUTION_PROFILES: dict[
+    str, tuple[dict[str, Any], ...]
+] = {
+    "microstructure_continuation_matched_filter_v1": (
+        {
+            "universe_symbols": list(
+                _PORTFOLIO_AI_ACCELERATOR_COVERAGE_UNIVERSE_PROFILE
+            ),
+            "max_position_pct_equity": "0.8",
+            "max_notional_per_trade": "25000",
+            "params": {
+                "signal_motif": "rejected_signal_false_negative_replay",
+                "outcome_label_filter": "profitable_after_costs",
+                "veto_relaxation_scope": "labeled_false_negative_only",
+                "min_cross_section_continuation_rank": "0.62",
+                "min_cross_section_opening_window_return_rank": "0.58",
+                "max_gross_exposure_pct_equity": "1.0",
+                "entry_notional_max_multiplier": "0.35",
+                "max_entries_per_session": "2",
+                "entry_cooldown_seconds": "900",
+                "leader_reclaim_start_minutes_since_open": "35",
+                "leader_reclaim_min_recent_imbalance_pressure": "0.08",
+                "leader_reclaim_min_recent_microprice_bias_bps": "0.16",
+                "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.58",
+                "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.56",
+                "max_session_negative_exit_bps": "2",
+                "long_stop_loss_bps": "4",
+                "long_trailing_stop_activation_profit_bps": "5",
+                "long_trailing_stop_drawdown_bps": "2",
+            },
+        },
+        {
+            "universe_symbols": list(_PORTFOLIO_PLATFORM_COVERAGE_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "0.8",
+            "max_notional_per_trade": "25000",
+            "params": {
+                "signal_motif": "rejected_signal_false_negative_replay",
+                "outcome_label_filter": "profitable_after_costs",
+                "veto_relaxation_scope": "labeled_false_negative_only",
+                "min_cross_section_continuation_rank": "0.54",
+                "min_cross_section_opening_window_return_rank": "0.48",
+                "max_gross_exposure_pct_equity": "1.0",
+                "entry_notional_max_multiplier": "0.35",
+                "max_entries_per_session": "2",
+                "entry_cooldown_seconds": "900",
+                "leader_reclaim_start_minutes_since_open": "25",
+                "leader_reclaim_min_recent_imbalance_pressure": "0.05",
+                "leader_reclaim_min_recent_microprice_bias_bps": "0.10",
+                "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.52",
+                "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.50",
+                "max_session_negative_exit_bps": "2",
+                "long_stop_loss_bps": "4",
+                "long_trailing_stop_activation_profit_bps": "5",
+                "long_trailing_stop_drawdown_bps": "2",
+            },
+        },
+    ),
+    "opening_drive_leader_reclaim_v1": (
+        {
+            "universe_symbols": list(
+                _PORTFOLIO_AI_ACCELERATOR_COVERAGE_UNIVERSE_PROFILE
+            ),
+            "max_position_pct_equity": "0.8",
+            "max_notional_per_trade": "25000",
+            "params": {
+                "signal_motif": "rejected_signal_opening_drive_rescue",
+                "outcome_label_filter": "profitable_after_costs",
+                "veto_relaxation_scope": "labeled_false_negative_only",
+                "min_cross_section_continuation_rank": "0.60",
+                "min_cross_section_opening_window_return_rank": "0.56",
+                "max_gross_exposure_pct_equity": "1.0",
+                "entry_notional_max_multiplier": "0.35",
+                "max_entries_per_session": "2",
+                "entry_cooldown_seconds": "900",
+                "leader_reclaim_start_minutes_since_open": "20",
+                "leader_reclaim_min_recent_imbalance_pressure": "0.07",
+                "leader_reclaim_min_recent_microprice_bias_bps": "0.14",
+                "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.56",
+                "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.54",
+                "max_session_negative_exit_bps": "2",
+                "long_stop_loss_bps": "4",
+                "long_trailing_stop_activation_profit_bps": "5",
+                "long_trailing_stop_drawdown_bps": "2",
+            },
+        },
+    ),
+    "microbar_cross_sectional_pairs_v1": (
+        {
+            "universe_symbols": list(_PORTFOLIO_PLATFORM_COVERAGE_UNIVERSE_PROFILE),
+            "normalization_regime": "market_neutral_gross_scaled",
+            "max_position_pct_equity": "0.8",
+            "max_notional_per_trade": "25000",
+            "params": {
+                "entry_minute_after_open": "60",
+                "exit_minute_after_open": "150",
+                "signal_motif": "rejected_signal_false_negative_replay",
+                "outcome_label_filter": "profitable_after_costs",
+                "veto_relaxation_scope": "labeled_false_negative_only",
+                "rank_feature": "cross_section_session_open_rank",
+                "selection_mode": "continuation",
+                "top_n": "1",
+                "min_cross_section_continuation_rank": "0.62",
+                "max_pair_legs": "1",
+                "max_gross_exposure_pct_equity": "1.0",
+                "max_entries_per_session": "2",
+                "entry_cooldown_seconds": "900",
+                "long_stop_loss_bps": "4",
+                "long_trailing_stop_activation_profit_bps": "5",
+                "long_trailing_stop_drawdown_bps": "2",
+                "max_hold_seconds": "2700",
+                "max_session_negative_exit_bps": "2",
+                "max_stop_loss_exits_per_session": "1",
+                "stop_loss_lockout_seconds": "2400",
+            },
+        },
+    ),
+}
+
 # These profiles broaden the portfolio-oracle research surface. They keep
 # notional and stop/session-loss controls tight while lowering entry thresholds
 # enough to test whether diversified sleeves can cover more trading days.
@@ -2838,6 +2961,26 @@ def _hypothesis_haystack(card: HypothesisCard) -> str:
     ).lower()
 
 
+def _has_rejected_signal_outcome_calibration(card: HypothesisCard) -> bool:
+    haystack = _hypothesis_haystack(card)
+    return any(
+        token in haystack
+        for token in (
+            "rejected trading event",
+            "rejected event",
+            "rejected-event",
+            "rejected signal",
+            "rejected_signal",
+            "skipped signal",
+            "skipped-signal",
+            "counterfactual outcome",
+            "counterfactual return",
+            "outcome labels",
+            "outcome_labels",
+        )
+    )
+
+
 def _normalization_candidates_for_card(card: HypothesisCard) -> tuple[str, ...]:
     haystack = _hypothesis_haystack(card)
     candidates = ["price_scaled", "trading_value_scaled"]
@@ -3330,10 +3473,9 @@ def _family_scores_for_hypothesis(
             4,
             "rejected_signal_outcome_calibration",
         )
-        bump("intraday_tsmom_v2", 3, "rejected_signal_outcome_calibration")
         bump(
             "opening_drive_leader_reclaim_v1",
-            2,
+            4,
             "rejected_signal_outcome_calibration",
         )
     if has_any(
@@ -3665,11 +3807,15 @@ def _families_for_hypothesis(
     card: HypothesisCard, *, target_net_pnl_per_day: Decimal = Decimal("300")
 ) -> tuple[tuple[str, int, tuple[str, ...]], ...]:
     scored = _family_scores_for_hypothesis(card)
-    family_limit = (
-        _PORTFOLIO_SLEEVE_FAMILY_TARGET
-        if target_net_pnl_per_day >= _PORTFOLIO_TARGET_NET_PNL_PER_DAY
-        else _MAX_FAMILIES_PER_HYPOTHESIS
-    )
+    rejected_signal_rescue = _has_rejected_signal_outcome_calibration(card)
+    if rejected_signal_rescue:
+        family_limit = _MAX_FAMILIES_PER_HYPOTHESIS
+    else:
+        family_limit = (
+            _PORTFOLIO_SLEEVE_FAMILY_TARGET
+            if target_net_pnl_per_day >= _PORTFOLIO_TARGET_NET_PNL_PER_DAY
+            else _MAX_FAMILIES_PER_HYPOTHESIS
+        )
     selected = list(scored[:family_limit])
     if family_limit <= _MAX_FAMILIES_PER_HYPOTHESIS:
         return tuple(selected)
@@ -3697,10 +3843,12 @@ def _execution_profile_index(
     family_template_id: str,
     family_rank: int,
     target_net_pnl_per_day: Decimal = Decimal("300"),
+    include_false_negative_rescue: bool = False,
 ) -> int:
     profiles = _execution_profiles_for_target(
         family_template_id=family_template_id,
         target_net_pnl_per_day=target_net_pnl_per_day,
+        include_false_negative_rescue=include_false_negative_rescue,
     )
     profile_count = len(profiles) if profiles else _DEFAULT_PROFILE_COUNT
     explicit_profile = card.implementation_constraints.get("execution_profile_index")
@@ -3728,10 +3876,12 @@ def _execution_profile_indexes(
     family_template_id: str,
     family_rank: int,
     target_net_pnl_per_day: Decimal = Decimal("300"),
+    include_false_negative_rescue: bool = False,
 ) -> tuple[int, ...]:
     profiles = _execution_profiles_for_target(
         family_template_id=family_template_id,
         target_net_pnl_per_day=target_net_pnl_per_day,
+        include_false_negative_rescue=include_false_negative_rescue,
     )
     profile_count = len(profiles) if profiles else _DEFAULT_PROFILE_COUNT
     explicit_profile = card.implementation_constraints.get("execution_profile_index")
@@ -3742,6 +3892,7 @@ def _execution_profile_indexes(
                 family_template_id=family_template_id,
                 family_rank=family_rank,
                 target_net_pnl_per_day=target_net_pnl_per_day,
+                include_false_negative_rescue=include_false_negative_rescue,
             ),
         )
     return tuple(range(profile_count))
@@ -3755,6 +3906,7 @@ def _execution_profiles_for_target(
     *,
     family_template_id: str,
     target_net_pnl_per_day: Decimal = Decimal("300"),
+    include_false_negative_rescue: bool = False,
 ) -> tuple[dict[str, Any], ...]:
     base_profiles = _BASE_FAMILY_EXECUTION_PROFILES.get(family_template_id, ())
     if target_net_pnl_per_day < _PORTFOLIO_TARGET_NET_PNL_PER_DAY:
@@ -3762,7 +3914,18 @@ def _execution_profiles_for_target(
     portfolio_profiles = _PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES.get(
         family_template_id, ()
     )
-    exploratory_profiles = (*base_profiles, *portfolio_profiles)
+    rejected_signal_rescue_profiles = (
+        _REJECTED_SIGNAL_FALSE_NEGATIVE_RESCUE_EXECUTION_PROFILES.get(
+            family_template_id, ()
+        )
+        if include_false_negative_rescue
+        else ()
+    )
+    exploratory_profiles = (
+        *rejected_signal_rescue_profiles,
+        *base_profiles,
+        *portfolio_profiles,
+    )
     capital_constrained_profiles = _capital_constrained_execution_profiles(
         exploratory_profiles
     )
@@ -3781,10 +3944,12 @@ def _strategy_overrides_for_profile(
     family_template_id: str,
     profile_index: int,
     target_net_pnl_per_day: Decimal = Decimal("300"),
+    include_false_negative_rescue: bool = False,
 ) -> dict[str, Any]:
     profiles = _execution_profiles_for_target(
         family_template_id=family_template_id,
         target_net_pnl_per_day=target_net_pnl_per_day,
+        include_false_negative_rescue=include_false_negative_rescue,
     )
     if not profiles:
         return {
@@ -3879,6 +4044,7 @@ def compile_candidate_specs(
     specs: list[CandidateSpec] = []
     explicit_universe_symbols = _universe_symbol_override(universe_symbols)
     for card in hypothesis_cards:
+        include_false_negative_rescue = _has_rejected_signal_outcome_calibration(card)
         for family_rank, (
             family_template_id,
             family_score,
@@ -3895,6 +4061,7 @@ def compile_candidate_specs(
                 family_template_id=family_template_id,
                 family_rank=family_rank,
                 target_net_pnl_per_day=target_net_pnl_per_day,
+                include_false_negative_rescue=include_false_negative_rescue,
             ):
                 execution_profile_id = _execution_profile_id(
                     family_template_id=family_template_id,
@@ -3904,6 +4071,7 @@ def compile_candidate_specs(
                     family_template_id=family_template_id,
                     profile_index=execution_profile_index,
                     target_net_pnl_per_day=target_net_pnl_per_day,
+                    include_false_negative_rescue=include_false_negative_rescue,
                 )
                 if explicit_universe_symbols:
                     strategy_overrides = {

@@ -546,9 +546,28 @@ research_sources:
     published_at: '2026-05-12'
     claims:
       - claim_id: rejection_event_outcome_labels
+        claim_type: signal_mechanism
+        claim_text: Algorithmically rejected trading events with realized outcome labels can turn skipped signal logs into counterfactual false-negative rescue examples for executable veto calibration.
+        asset_scope: us_equities_intraday
+        horizon_scope: rejected_event_learning
+        expected_direction: positive
+        data_requirements:
+          - rejected_signal_log
+          - outcome_labels
+          - executable_quote
         summary: Algorithmically rejected trading events with realized outcome labels can turn skipped signals into counterfactual learning examples.
         implication: Mine skipped-signal logs for outcome labels so vetoes can be calibrated against post-cost opportunity loss, not just pass/fail counts.
       - claim_id: counterfactual_reject_outcome_learning
+        claim_type: validation_requirement
+        claim_text: Rejected-event benchmarks should measure whether current vetoes discard profitable executable opportunities or correctly block bad fills.
+        asset_scope: us_equities_intraday
+        horizon_scope: rejected_event_learning
+        expected_direction: neutral
+        data_requirements:
+          - rejected_signal_log
+          - counterfactual_return
+          - route_tca
+          - post_cost_net_pnl
         summary: Rejected-event benchmarks measure whether vetoes discard profitable executable opportunities or correctly block bad fills.
         implication: Use rejected-event outcome slices to repair missing executable quote and routeability blockers before widening paper capital.
   - source_id: noisy_orderflow_privacy_kyle_lambda_2026

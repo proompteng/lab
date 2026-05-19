@@ -1773,6 +1773,27 @@ def _recent_trading_days_shortfall(failure_reason: str) -> dict[str, int] | None
     }
 
 
+def _stale_tape_diagnostics(failure_reason: str) -> dict[str, str] | None:
+    marker = "stale_tape:"
+    marker_index = failure_reason.find(marker)
+    if marker_index < 0:
+        return None
+    remainder = failure_reason[marker_index + len(marker) :].splitlines()[0]
+    fields: dict[str, str] = {}
+    for token in remainder.split(":"):
+        key, separator, value = token.partition("=")
+        if separator == "=" and key and value:
+            fields[key] = value
+    expected = fields.get("expected_last_trading_day")
+    end_day = fields.get("end_day")
+    if not expected or not end_day:
+        return None
+    return {
+        "expected_last_trading_day": expected,
+        "available_end_day": end_day,
+    }
+
+
 def _candidate_search_remediation(
     *,
     failure_reason: str,
@@ -1901,6 +1922,30 @@ def _candidate_search_remediation(
                 ),
             }
         )
+    stale_tape = _stale_tape_diagnostics(failure_reason)
+    if stale_tape is not None:
+        next_actions.append(
+            {
+                "priority": 1,
+                "action": "inspect_or_backfill_latest_ta_signal_day",
+                "reason": (
+                    "real replay freshness gate rejected the tape because the latest "
+                    "available TA day is older than the expected last trading day"
+                ),
+                "stale_tape": stale_tape,
+                "recommended_operator_probe": (
+                    "SELECT source, window_size, countDistinct(toDate(event_ts)) AS days, "
+                    "min(toDate(event_ts)) AS first_day, max(toDate(event_ts)) AS last_day, "
+                    "count() AS rows FROM torghut.ta_signals GROUP BY source, window_size "
+                    "ORDER BY days DESC, rows DESC"
+                ),
+                "diagnostic_replay_note": (
+                    "For a read-only stale-tape diagnostic replay, pass "
+                    "--expected-last-trading-day "
+                    f"{stale_tape['available_end_day']} instead of using live freshness proof."
+                ),
+            }
+        )
     if (
         observed_selection_budget["selected_count"] <= 0
         and observed_selection_budget["pre_replay_feedback_blocked_candidate_count"] > 0
@@ -1956,6 +2001,7 @@ def _candidate_search_remediation(
             "replayable_candidate_surface_exhausted": replayable_candidate_surface_exhausted,
             "observed_selection_budget": observed_selection_budget,
             "recent_trading_days": recent_day_diagnostics,
+            "stale_tape": stale_tape,
             "next_actions": next_actions,
         }
     if "TimeoutError:real_replay_timeout_seconds" in failure_reason:
@@ -2197,6 +2243,7 @@ def _candidate_search_remediation(
         "replayable_candidate_surface_exhausted": replayable_candidate_surface_exhausted,
         "observed_selection_budget": observed_selection_budget,
         "recent_trading_days": recent_day_diagnostics,
+        "stale_tape": stale_tape,
         "next_actions": next_actions,
     }
 
@@ -3760,10 +3807,26 @@ def _select_candidate_specs_for_replay(
             > max_gross_exposure
         )
 
+    def false_negative_rescue_spec(spec: CandidateSpec) -> bool:
+        params = _mapping(spec.strategy_overrides.get("params"))
+        overlays = spec.parameter_space.get("mechanism_overlay_ids", ())
+        overlay_ids = set(_string_list_from_value(overlays))
+        return (
+            "rejected_signal_outcome_calibration" in overlay_ids
+            and _string(params.get("veto_relaxation_scope"))
+            == "labeled_false_negative_only"
+            and _string(params.get("outcome_label_filter")) == "profitable_after_costs"
+        )
+
     def pre_replay_block_reason(spec: CandidateSpec) -> str:
         proposal = proposal_by_spec.get(spec.candidate_spec_id, {})
         selection_reason = _string(proposal.get("selection_reason"))
         if selection_reason in _PRE_REPLAY_FEEDBACK_BLOCK_REASONS:
+            if (
+                selection_reason == "pre_replay_mlx_family_feedback_blocked"
+                and false_negative_rescue_spec(spec)
+            ):
+                return ""
             return selection_reason
         if capital_blocked(spec):
             return capital_block_reason
@@ -3874,7 +3937,6 @@ def _select_candidate_specs_for_replay(
         + synthetic_prior_probe_capacity
         + feedback_block_reaudit_capacity,
     )
-    exploitation_count = min(max(0, int(top_k)), replay_budget, len(ordered_eligible))
 
     def spec_source_run_id(spec: CandidateSpec) -> str:
         return _string(spec.feature_contract.get("source_run_id")) or spec.hypothesis_id
@@ -3954,42 +4016,83 @@ def _select_candidate_specs_for_replay(
                     interleaved.append(segment[index])
         return interleaved
 
-    exploitation = take_diverse(
-        ordered_eligible,
-        count=exploitation_count,
+    false_negative_rescue_candidates = [
+        spec for spec in ordered_eligible if false_negative_rescue_spec(spec)
+    ]
+    false_negative_rescue_count = min(
+        3,
+        max(0, requested_exploration_slots),
+        replay_budget,
+        len(false_negative_rescue_candidates),
+    )
+    false_negative_rescue_exploration = take_diverse(
+        false_negative_rescue_candidates,
+        count=false_negative_rescue_count,
         selected_so_far=(),
+    )
+    false_negative_rescue_ids = {
+        spec.candidate_spec_id for spec in false_negative_rescue_exploration
+    }
+    exploitation_candidates = [
+        spec
+        for spec in ordered_eligible
+        if spec.candidate_spec_id not in false_negative_rescue_ids
+    ]
+    exploitation_count = min(
+        max(0, int(top_k)),
+        replay_budget - len(false_negative_rescue_exploration),
+        len(exploitation_candidates),
+    )
+    exploitation = take_diverse(
+        exploitation_candidates,
+        count=exploitation_count,
+        selected_so_far=false_negative_rescue_exploration,
     )
     remaining = [
         item
         for item in sorted(
-            ordered_eligible, key=lambda spec: diversity_key(spec, exploitation)
+            ordered_eligible,
+            key=lambda spec: diversity_key(
+                spec, [*false_negative_rescue_exploration, *exploitation]
+            ),
         )
         if item.candidate_spec_id
-        not in {spec.candidate_spec_id for spec in exploitation}
+        not in {
+            spec.candidate_spec_id
+            for spec in (*false_negative_rescue_exploration, *exploitation)
+        }
     ]
     exploration_count = min(
         effective_exploration_slots,
-        replay_budget - len(exploitation),
+        replay_budget - len(false_negative_rescue_exploration) - len(exploitation),
         len(remaining),
     )
     exploration = take_diverse(
         remaining,
         count=exploration_count,
-        selected_so_far=exploitation,
+        selected_so_far=[*false_negative_rescue_exploration, *exploitation],
     )
     synthetic_prior_probe_exploration_count = min(
         max(0, requested_exploration_slots - len(exploration)),
-        replay_budget - len(exploitation) - len(exploration),
+        replay_budget
+        - len(false_negative_rescue_exploration)
+        - len(exploitation)
+        - len(exploration),
         len(synthetic_prior_probe_candidates),
     )
     synthetic_prior_probe_exploration = take_diverse(
         synthetic_prior_probe_candidates,
         count=synthetic_prior_probe_exploration_count,
-        selected_so_far=[*exploitation, *exploration],
+        selected_so_far=[
+            *false_negative_rescue_exploration,
+            *exploitation,
+            *exploration,
+        ],
     )
     feedback_block_reaudit_count = min(
         requested_feedback_block_reaudit_slots,
         replay_budget
+        - len(false_negative_rescue_exploration)
         - len(exploitation)
         - len(exploration)
         - len(synthetic_prior_probe_exploration),
@@ -3999,15 +4102,20 @@ def _select_candidate_specs_for_replay(
         feedback_block_reaudit_candidates,
         count=feedback_block_reaudit_count,
         selected_so_far=[
+            *false_negative_rescue_exploration,
             *exploitation,
             *exploration,
             *synthetic_prior_probe_exploration,
         ],
     )
-    if len(exploitation) + len(exploration) < replay_budget:
+    if (
+        len(false_negative_rescue_exploration) + len(exploitation) + len(exploration)
+        < replay_budget
+    ):
         selected_ids = {
             item.candidate_spec_id
             for item in (
+                *false_negative_rescue_exploration,
                 *exploitation,
                 *exploration,
                 *synthetic_prior_probe_exploration,
@@ -4022,11 +4130,13 @@ def _select_candidate_specs_for_replay(
         backfill = take_diverse(
             backfill_candidates,
             count=replay_budget
+            - len(false_negative_rescue_exploration)
             - len(exploitation)
             - len(exploration)
             - len(synthetic_prior_probe_exploration)
             - len(feedback_block_reaudit),
             selected_so_far=[
+                *false_negative_rescue_exploration,
                 *exploitation,
                 *exploration,
                 *synthetic_prior_probe_exploration,
@@ -4035,9 +4145,14 @@ def _select_candidate_specs_for_replay(
         )
     else:
         backfill = []
-    selected_reason = {
-        item.candidate_spec_id: "exploitation" for item in exploitation
-    } | {item.candidate_spec_id: "exploration" for item in exploration}
+    selected_reason = (
+        {
+            item.candidate_spec_id: "false_negative_rescue_exploration"
+            for item in false_negative_rescue_exploration
+        }
+        | {item.candidate_spec_id: "exploitation" for item in exploitation}
+        | {item.candidate_spec_id: "exploration" for item in exploration}
+    )
     selected_reason.update(
         {
             item.candidate_spec_id: "synthetic_prior_exploration"
@@ -4054,6 +4169,7 @@ def _select_candidate_specs_for_replay(
         {item.candidate_spec_id: "budget_backfill" for item in backfill}
     )
     selected = [
+        *false_negative_rescue_exploration,
         *exploitation,
         *exploration,
         *interleave_replay_segments(

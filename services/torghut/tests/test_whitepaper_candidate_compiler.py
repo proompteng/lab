@@ -644,8 +644,16 @@ class TestWhitepaperCandidateCompiler(TestCase):
             {
                 "microstructure_continuation_matched_filter_v1",
                 "microbar_cross_sectional_pairs_v1",
-                "intraday_tsmom_v2",
+                "opening_drive_leader_reclaim_v1",
             }.issubset(family_ids)
+        )
+        self.assertNotIn("intraday_tsmom_v2", family_ids)
+        self.assertTrue(
+            any(
+                spec.strategy_overrides.get("params", {}).get("veto_relaxation_scope")
+                == "labeled_false_negative_only"
+                for spec in compilation.executable_specs
+            )
         )
         self.assertTrue(
             any(
