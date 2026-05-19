@@ -142,10 +142,10 @@ describe('agents-ci workflow local Agents image build', () => {
     expect(workflow).not.toContain('jangar-release-contract')
   })
 
-  it('keeps Agents CI detached from Jangar source and package paths', () => {
+  it('keeps Agents CI detached from Jangar packages while running boundary guards on Jangar source changes', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
-    expect(workflow).not.toContain('services/jangar/**')
+    expect(workflow).toContain('services/jangar/**')
     expect(workflow).not.toContain('packages/scripts/src/jangar/**')
     expect(workflow).not.toContain('--filter @proompteng/jangar')
     expect(workflow).not.toContain('packages/scripts/src/jangar/__tests__/release-contract.test.ts')
@@ -168,6 +168,9 @@ describe('agents-ci workflow local Agents image build', () => {
 
     expect(workflow).toContain('-f "${WORKSPACE}/services/agents/Dockerfile"')
     expect(workflow).toContain('-f "${WORKSPACE}/services/agents/Dockerfile.codex-runner"')
+    expect(workflow).toContain('--scope=@proompteng/codex')
+    expect(workflow).toContain('cp -R "${PRUNE_DIR}/full/services/agents" "${PRUNE_DIR}/services/agents"')
+    expect(workflow).toContain('cp -R "${PRUNE_DIR}/full/packages/codex" "${PRUNE_DIR}/packages/codex"')
     expect(workflow).toContain('--target control-plane')
     expect(workflow).toContain('--target controller')
     expect(workflow).toContain('BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY')

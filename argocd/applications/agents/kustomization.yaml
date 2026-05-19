@@ -4,7 +4,6 @@ namespace: agents
 resources:
   - codex-auth-sealedsecret.yaml
   - hf-router-token-sealedsecret.yaml
-  - codex-run-complete-kafkasource.yaml
   - codex-secretbinding.yaml
   - codex-agent.yaml
   - graf-codex-agentprovider.yaml

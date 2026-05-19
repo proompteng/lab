@@ -96,6 +96,16 @@ fail_if_matches \
   "${ROOT_DIR}/argocd/applications/jangar"
 
 fail_if_matches \
+  "Agents GitOps must not consume legacy Argo workflow completion topics after AgentRun-native completion ingestion" \
+  'argo\.workflows\.completions|workflow-completions|argo-workflows-completions-topic' \
+  "${ROOT_DIR}/argocd/applications/agents"
+
+fail_if_matches \
+  "Jangar database manifests must not reflect Jangar DB credentials into the Agents namespace" \
+  'reflection-(allowed|auto)-namespaces:.*(^|[^a-z0-9-])agents([^a-z0-9-]|$)' \
+  "${ROOT_DIR}/argocd/applications/jangar/postgres-cluster.yaml"
+
+fail_if_matches \
   "Jangar GitOps must not point Codex execution back at Facteur or legacy Codex orchestrations" \
   'FACTEUR_INTERNAL_URL|codex-autonomous|github-codex-implementation' \
   "${ROOT_DIR}/argocd/applications/jangar"
@@ -210,6 +220,15 @@ fail_if_path_exists \
   "Jangar must not retain Agents controller runtime config after the controller extraction" \
   "${ROOT_DIR}/services/jangar/src/server/controller-runtime-config.ts"
 
+fail_if_path_exists \
+  "Jangar must not retain broad AGENTS/JANGAR env compatibility after Agents owns its runtime" \
+  "${ROOT_DIR}/services/jangar/src/server/env-compat.ts"
+
+fail_if_matches \
+  "Jangar runtime must not install broad AGENTS/JANGAR env compatibility after Agents owns its runtime" \
+  'installJangarEnvCompatibility|toAgentsEnvName|toJangarEnvName' \
+  "${ROOT_DIR}/services/jangar/src"
+
 fail_if_matches \
   "Jangar workflow status must not reuse Agents controller namespace envs" \
   'JANGAR_AGENTS_CONTROLLER_NAMESPACES|AGENTS_ORCHESTRATION_CONTROLLER|AGENTS_SUPPORTING_CONTROLLER|AGENTS_PRIMITIVES_RECONCILER|AGENTS_RBAC_CLUSTER_SCOPED' \
@@ -299,7 +318,7 @@ trap cleanup EXIT
 helm template agents "${CHART_DIR}" --namespace agents > "${rendered_chart}"
 kubectl kustomize "${ARGO_DIR}" --enable-helm > "${rendered_argo}"
 
-rendered_forbidden='JANGAR_|jangar-db-app|/etc/jangar|lab/jangar|/app/services/jangar|services/jangar|codex-implement|consumerGroup: jangar|AGENTS_TORGHUT_STATUS_|AGENTS_WHITEPAPER_FINALIZE_'
+rendered_forbidden='JANGAR_|jangar-db-app|jangar-db-ca|/etc/jangar|lab/jangar|/app/services/jangar|services/jangar|codex-implement|consumerGroup: jangar|AGENTS_TORGHUT_STATUS_|AGENTS_WHITEPAPER_FINALIZE_'
 agents_runtime_forbidden='codex-universal|ghcr.io/openai/codex-universal'
 fail_if_matches "rendered Helm chart must use Agents-owned images, env, DB secret, and runner paths" "${rendered_forbidden}" "${rendered_chart}"
 fail_if_matches "rendered Agents GitOps app must use Agents-owned images, env, DB secret, and runner paths" "${rendered_forbidden}" "${rendered_argo}"
@@ -307,6 +326,16 @@ fail_if_matches "rendered Agents GitOps app must use the chart-managed agents-co
 
 if ! matches_multiline 'name: AGENTS_SWARM_PRIMITIVE_ENABLED\n\s+value: "true"' "${rendered_argo}"; then
   echo "Agents extraction boundary violation: rendered Agents GitOps app must enable the Swarm primitive when it ships the supporting controller." >&2
+  exit 1
+fi
+
+if ! matches_multiline 'name: AGENTS_SERVER_PROFILE\n\s+value: agents-control-plane' "${rendered_argo}"; then
+  echo "Agents extraction boundary violation: rendered Agents control-plane deployment must use the agents-control-plane runtime profile." >&2
+  exit 1
+fi
+
+if ! matches_multiline 'name: AGENTS_SERVER_PROFILE\n\s+value: agents-controllers' "${rendered_argo}"; then
+  echo "Agents extraction boundary violation: rendered Agents controllers deployment must use the agents-controllers runtime profile." >&2
   exit 1
 fi
 

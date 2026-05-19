@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { Data, Effect } from 'effect'
+import { Context, Data, Effect, Layer } from 'effect'
 
 import { resolveAgentRunAdmissionConfig } from '../agents-controller/controller-config'
 import { errorResponse, okResponse, parseJsonBody, requireIdempotencyKey } from '../http'
@@ -107,6 +107,68 @@ export type AgentRunsApiDependencies = {
   resolveRepositoryFromParameters?: (params: Record<string, string> | undefined) => string | undefined
   validatePolicies?: (namespace: string, checks: PolicyChecks, kube: KubernetesClient) => Promise<void>
 }
+
+type AgentRunQueueDepthRecorder = NonNullable<AgentRunsApiDependencies['recordAgentQueueDepth']>
+type AgentRunAuditContextResolver = NonNullable<AgentRunsApiDependencies['resolveAuditContextFromRequest']>
+type AgentRunRepositoryResolver = NonNullable<AgentRunsApiDependencies['resolveRepositoryFromParameters']>
+
+type AgentRunStoreServiceDefinition = {
+  readonly open: Effect.Effect<AgentRunsApiStore, AgentRunStorageError>
+}
+
+type AgentRunKubernetesServiceDefinition = {
+  readonly client: (namespace: string) => Effect.Effect<KubernetesClient, AgentRunKubeError>
+}
+
+type AgentRunPolicyServiceDefinition = {
+  readonly validate: (
+    namespace: string,
+    checks: PolicyChecks,
+    kube: KubernetesClient,
+  ) => Effect.Effect<void, AgentRunPolicyDeniedError>
+}
+
+type AgentRunAuditContextServiceDefinition = {
+  readonly resolve: AgentRunAuditContextResolver
+}
+
+type AgentRunRepositoryServiceDefinition = {
+  readonly resolveFromParameters: AgentRunRepositoryResolver
+}
+
+type AgentRunQueueDepthServiceDefinition = {
+  readonly record: AgentRunQueueDepthRecorder
+}
+
+export class AgentRunStoreService extends Context.Tag('agents/AgentRunStoreService')<
+  AgentRunStoreService,
+  AgentRunStoreServiceDefinition
+>() {}
+
+export class AgentRunKubernetesService extends Context.Tag('agents/AgentRunKubernetesService')<
+  AgentRunKubernetesService,
+  AgentRunKubernetesServiceDefinition
+>() {}
+
+export class AgentRunPolicyService extends Context.Tag('agents/AgentRunPolicyService')<
+  AgentRunPolicyService,
+  AgentRunPolicyServiceDefinition
+>() {}
+
+export class AgentRunAuditContextService extends Context.Tag('agents/AgentRunAuditContextService')<
+  AgentRunAuditContextService,
+  AgentRunAuditContextServiceDefinition
+>() {}
+
+export class AgentRunRepositoryService extends Context.Tag('agents/AgentRunRepositoryService')<
+  AgentRunRepositoryService,
+  AgentRunRepositoryServiceDefinition
+>() {}
+
+export class AgentRunQueueDepthService extends Context.Tag('agents/AgentRunQueueDepthService')<
+  AgentRunQueueDepthService,
+  AgentRunQueueDepthServiceDefinition
+>() {}
 
 const normalizeParameterMap = (value: Record<string, unknown> | null): Record<string, string> | undefined => {
   if (!value) return undefined
@@ -754,6 +816,49 @@ const closeStoreEffect = (store: AgentRunsApiStore) =>
     ),
   )
 
+export const makeAgentRunSubmitLayer = (deps: AgentRunsApiDependencies) =>
+  Layer.mergeAll(
+    Layer.succeed(AgentRunStoreService, {
+      open: Effect.try({
+        try: () => deps.storeFactory(),
+        catch: (cause) => new AgentRunStorageError({ operation: 'open-store', cause }),
+      }),
+    }),
+    Layer.succeed(AgentRunKubernetesService, {
+      client: (namespace) =>
+        Effect.try({
+          try: () => getKubeClient(deps),
+          catch: (cause) =>
+            new AgentRunKubeError({
+              operation: 'create-client',
+              resource: 'kubernetes-client',
+              namespace,
+              cause,
+            }),
+        }),
+    }),
+    Layer.succeed(AgentRunPolicyService, {
+      validate: (namespace, checks, kube) =>
+        Effect.tryPromise({
+          try: () => (deps.validatePolicies ?? validatePolicies)(namespace, checks, kube),
+          catch: (cause) =>
+            new AgentRunPolicyDeniedError({
+              subject: checks.subject ?? { kind: 'AgentRun', name: 'unknown', namespace },
+              cause,
+            }),
+        }),
+    }),
+    Layer.succeed(AgentRunAuditContextService, {
+      resolve: deps.resolveAuditContextFromRequest ?? defaultResolveAuditContextFromRequest,
+    }),
+    Layer.succeed(AgentRunRepositoryService, {
+      resolveFromParameters: deps.resolveRepositoryFromParameters ?? defaultResolveRepositoryFromParameters,
+    }),
+    Layer.succeed(AgentRunQueueDepthService, {
+      record: deps.recordAgentQueueDepth ?? (() => undefined),
+    }),
+  )
+
 type IdempotencyReservationState = {
   created: boolean
   agentRunName: string | null
@@ -844,11 +949,30 @@ export const submitAgentRun = async (
   return result.right
 }
 
+type AgentRunSubmitServices =
+  | AgentRunStoreService
+  | AgentRunKubernetesService
+  | AgentRunPolicyService
+  | AgentRunAuditContextService
+  | AgentRunRepositoryService
+  | AgentRunQueueDepthService
+
 export const submitAgentRunEffect = (
   request: Request,
   deps: AgentRunsApiDependencies,
 ): Effect.Effect<AgentRunSubmitSuccess, AgentRunSubmitError> =>
+  submitAgentRunWithServicesEffect(request).pipe(Effect.provide(makeAgentRunSubmitLayer(deps)))
+
+export const submitAgentRunWithServicesEffect = (
+  request: Request,
+): Effect.Effect<AgentRunSubmitSuccess, AgentRunSubmitError, AgentRunSubmitServices> =>
   Effect.gen(function* () {
+    const stores = yield* AgentRunStoreService
+    const kubernetes = yield* AgentRunKubernetesService
+    const policies = yield* AgentRunPolicyService
+    const auditContexts = yield* AgentRunAuditContextService
+    const repositories = yield* AgentRunRepositoryService
+    const queueDepth = yield* AgentRunQueueDepthService
     const deliveryId = yield* Effect.try({
       try: () => requireIdempotencyKey(request),
       catch: (cause) =>
@@ -874,20 +998,15 @@ export const submitAgentRunEffect = (
         }),
     })
 
-    const store = yield* Effect.try({
-      try: () => deps.storeFactory(),
-      catch: (cause) => new AgentRunStorageError({ operation: 'open-store', cause }),
-    })
+    const store = yield* stores.open
 
     return yield* Effect.acquireUseRelease(
       Effect.succeed(store),
       (activeStore) =>
         Effect.gen(function* () {
           const runIdempotencyKey = parsed.idempotencyKey ?? deliveryId
-          const repository = (deps.resolveRepositoryFromParameters ?? defaultResolveRepositoryFromParameters)(
-            parsed.parameters,
-          )
-          const auditContext = (deps.resolveAuditContextFromRequest ?? defaultResolveAuditContextFromRequest)(request, {
+          const repository = repositories.resolveFromParameters(parsed.parameters)
+          const auditContext = auditContexts.resolve(request, {
             deliveryId,
             namespace: parsed.namespace,
             repository,
@@ -896,16 +1015,7 @@ export const submitAgentRunEffect = (
 
           yield* storeEffect('store-ready', () => Promise.resolve(activeStore.ready).then(() => undefined))
           const existing = yield* storeEffect('read-delivery-id', () => activeStore.getAgentRunByDeliveryId(deliveryId))
-          const kube = yield* Effect.try({
-            try: () => getKubeClient(deps),
-            catch: (cause) =>
-              new AgentRunKubeError({
-                operation: 'create-client',
-                resource: 'kubernetes-client',
-                namespace: parsed.namespace,
-                cause,
-              }),
-          })
+          const kube = yield* kubernetes.client(parsed.namespace)
 
           if (existing) {
             const resourceNamespace =
@@ -1081,10 +1191,7 @@ export const submitAgentRunEffect = (
             )
           }
 
-          const policyDecision = yield* Effect.tryPromise({
-            try: () => (deps.validatePolicies ?? validatePolicies)(parsed.namespace, policyChecks, kube),
-            catch: (cause) => new AgentRunPolicyDeniedError({ subject: policyChecks.subject, cause }),
-          }).pipe(Effect.either)
+          const policyDecision = yield* policies.validate(parsed.namespace, policyChecks, kube).pipe(Effect.either)
 
           if (policyDecision._tag === 'Left') {
             yield* storeEffect('create-audit-event', () =>
@@ -1118,13 +1225,7 @@ export const submitAgentRunEffect = (
             'evaluate-admission-limits',
             RESOURCE_MAP.AgentRun,
             parsed.namespace,
-            () =>
-              evaluateAdmissionLimits(
-                kube,
-                parsed.namespace,
-                admissionRepository,
-                deps.recordAgentQueueDepth ?? (() => undefined),
-              ),
+            () => evaluateAdmissionLimits(kube, parsed.namespace, admissionRepository, queueDepth.record),
           )
           if (!admission.ok) {
             return yield* Effect.fail(

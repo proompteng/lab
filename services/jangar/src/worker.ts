@@ -4,10 +4,7 @@ import workflows from '@proompteng/bumba/src/workflows/index'
 import { createTemporalClient, type TemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
 import { createWorker } from '@proompteng/temporal-bun-sdk/worker'
 import type { WorkflowDefinitions } from '@proompteng/temporal-bun-sdk/workflow'
-import { installJangarEnvCompatibility } from './server/env-compat'
 import { resolveWorkerRuntimeConfig } from './server/runtime-entry-config'
-
-installJangarEnvCompatibility()
 
 type ActivityHandler = (...args: unknown[]) => unknown | Promise<unknown>
 

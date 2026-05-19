@@ -9,6 +9,8 @@ on:
     paths:
       - 'bun.lock'
       - 'package.json'
+      - 'argocd/applications/agents/**'
+      - 'argocd/applications/jangar/**'
       - 'charts/agents/**'
       - 'packages/bumba/**'
       - 'packages/codex/**'
@@ -21,6 +23,7 @@ on:
       - 'packages/temporal-bun-sdk/**'
       - 'services/agents/**'
       - 'services/bumba/**'
+      - 'services/jangar/**'
       - 'scripts/agents/**'
       - 'scripts/download_crd_schema.py'
       - '.github/workflows/agents-build-push.yml'
@@ -33,6 +36,8 @@ on:
     paths:
       - 'bun.lock'
       - 'package.json'
+      - 'argocd/applications/agents/**'
+      - 'argocd/applications/jangar/**'
       - 'charts/agents/**'
       - 'packages/bumba/**'
       - 'packages/codex/**'
@@ -45,6 +50,7 @@ on:
       - 'packages/temporal-bun-sdk/**'
       - 'services/agents/**'
       - 'services/bumba/**'
+      - 'services/jangar/**'
       - 'scripts/agents/**'
       - 'scripts/download_crd_schema.py'
       - '.github/workflows/agents-build-push.yml'
@@ -410,11 +416,18 @@ jobs:
           echo "Pruning Agents image build context to ${PRUNE_DIR}"
           run_step "Prune turbo context" timeout "${PREP_TIMEOUT_MINUTES}m" bunx turbo prune \
             --scope=@proompteng/agents \
+            --scope=@proompteng/codex \
             --scope=@proompteng/otel \
             --scope=@proompteng/temporal-bun-sdk \
             --docker \
             --out-dir="${PRUNE_DIR}"
           cp "${WORKSPACE}/tsconfig.base.json" "${PRUNE_DIR}/tsconfig.base.json"
+          # The runner Dockerfile is intentionally usable from the full repo root for release builds.
+          # The kind integration job builds it from the pruned context, so materialize the same root
+          # paths from Turbo's full workspace output.
+          mkdir -p "${PRUNE_DIR}/services" "${PRUNE_DIR}/packages"
+          cp -R "${PRUNE_DIR}/full/services/agents" "${PRUNE_DIR}/services/agents"
+          cp -R "${PRUNE_DIR}/full/packages/codex" "${PRUNE_DIR}/packages/codex"
           if [ -d "${WORKSPACE}/skills" ]; then
             mkdir -p "${PRUNE_DIR}/skills"
             cp -R "${WORKSPACE}/skills/." "${PRUNE_DIR}/skills/"

@@ -227,4 +227,170 @@ describe('AgentRun v1 API', () => {
     expect(store.createAgentRun).not.toHaveBeenCalled()
     expect(store.close).toHaveBeenCalledTimes(1)
   })
+
+  it('categorizes store open failures as storage failures', async () => {
+    const response = await postAgentRunsHandler(
+      buildRequest({
+        agentRef: { name: 'demo-agent' },
+        namespace: 'agents',
+        implementation: { text: 'Implement the requested change.' },
+        runtime: { type: 'job', config: {} },
+      }),
+      {
+        storeFactory: () => {
+          throw new Error('database pool unavailable')
+        },
+        kubeClient: createKubeMock(),
+        validatePolicies: vi.fn(async () => {}),
+      },
+    )
+
+    expect(response.status).toBe(503)
+    const body = (await response.json()) as { error?: string }
+    expect(body.error).toContain('agent run storage open-store failed')
+    expect(body.error).toContain('database pool unavailable')
+  })
+
+  it('keeps policy denials as forbidden when denied-audit persistence fails', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+    ;(store.createAuditEvent as unknown as { mockRejectedValueOnce: (error: unknown) => void }).mockRejectedValueOnce(
+      new Error('audit store timeout'),
+    )
+
+    const response = await postAgentRunsHandler(
+      buildRequest({
+        agentRef: { name: 'demo-agent' },
+        namespace: 'agents',
+        implementation: { text: 'Implement the requested change.' },
+        runtime: { type: 'job', config: {} },
+      }),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies: vi.fn(async () => {
+          throw new Error('budget denied')
+        }),
+      },
+    )
+
+    expect(response.status).toBe(403)
+    const body = (await response.json()) as { error?: string }
+    expect(body.error).toContain('policy denied for Agent agents/demo-agent')
+    expect(body.error).toContain('budget denied')
+    expect(kube.apply).not.toHaveBeenCalled()
+  })
+
+  it('preserves the original Kubernetes apply failure when idempotency cleanup fails', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+    ;(kube.apply as unknown as { mockRejectedValueOnce: (error: unknown) => void }).mockRejectedValueOnce(
+      new Error('api server refused AgentRun apply'),
+    )
+    ;(
+      store.deleteAgentRunIdempotencyKey as unknown as { mockRejectedValueOnce: (error: unknown) => void }
+    ).mockRejectedValueOnce(new Error('cleanup failed'))
+
+    const response = await postAgentRunsHandler(
+      buildRequest({
+        agentRef: { name: 'demo-agent' },
+        namespace: 'agents',
+        implementation: { text: 'Implement the requested change.' },
+        runtime: { type: 'job', config: {} },
+      }),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies: vi.fn(async () => {}),
+      },
+    )
+
+    expect(response.status).toBe(502)
+    const body = (await response.json()) as { error?: string }
+    expect(body.error).toContain('kubernetes apply-agent-run failed')
+    expect(body.error).toContain('api server refused AgentRun apply')
+    expect(body.error).not.toContain('cleanup failed')
+  })
+
+  it('returns existing delivery-id submissions as idempotent successes', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+    ;(
+      store.getAgentRunByDeliveryId as unknown as { mockResolvedValueOnce: (value: unknown) => void }
+    ).mockResolvedValueOnce({
+      id: 'existing-record-1',
+      agentName: 'demo-agent',
+      deliveryId: 'agent-run-request-1',
+      provider: 'job',
+      status: 'Running',
+      externalRunId: 'existing-agent-run',
+      payload: { request: { namespace: 'agents' } },
+    })
+    ;(kube.get as unknown as { mockResolvedValueOnce: (value: unknown) => void }).mockResolvedValueOnce({
+      kind: 'AgentRun',
+      metadata: { name: 'existing-agent-run', namespace: 'agents' },
+      status: { phase: 'Running' },
+    })
+
+    const response = await postAgentRunsHandler(
+      buildRequest({
+        agentRef: { name: 'demo-agent' },
+        namespace: 'agents',
+        implementation: { text: 'Implement the requested change.' },
+        runtime: { type: 'job', config: {} },
+      }),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies: vi.fn(async () => {}),
+      },
+    )
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { idempotent?: boolean; agentRun?: Record<string, unknown> }
+    expect(body.idempotent).toBe(true)
+    expect(body.agentRun).toMatchObject({ id: 'existing-record-1', externalRunId: 'existing-agent-run' })
+    expect(kube.apply).not.toHaveBeenCalled()
+  })
+
+  it('rejects in-progress idempotency reservations with conflict details', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+    ;(
+      store.reserveAgentRunIdempotencyKey as unknown as { mockResolvedValueOnce: (value: unknown) => void }
+    ).mockResolvedValueOnce({
+      record: {
+        namespace: 'agents',
+        agentName: 'demo-agent',
+        idempotencyKey: 'agent-run-request-1',
+        agentRunName: null,
+        agentRunUid: null,
+        createdAt: new Date(),
+      },
+      created: false,
+    })
+
+    const response = await postAgentRunsHandler(
+      buildRequest({
+        agentRef: { name: 'demo-agent' },
+        namespace: 'agents',
+        implementation: { text: 'Implement the requested change.' },
+        runtime: { type: 'job', config: {} },
+      }),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies: vi.fn(async () => {}),
+      },
+    )
+
+    expect(response.status).toBe(409)
+    const body = (await response.json()) as {
+      error?: string
+      details?: { namespace?: string; agentName?: string }
+    }
+    expect(body.error).toBe('AgentRun creation already in progress for idempotency key')
+    expect(body.details).toMatchObject({ namespace: 'agents', agentName: 'demo-agent' })
+    expect(kube.apply).not.toHaveBeenCalled()
+  })
 })

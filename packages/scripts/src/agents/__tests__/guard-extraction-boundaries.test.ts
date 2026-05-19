@@ -12,4 +12,14 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain("--glob '!**/__tests__/**'")
     expect(content).toContain("--glob '!**/*.test.*'")
   })
+
+  it('guards legacy completion topics and reflected Jangar database secrets out of Agents runtime', () => {
+    const content = guardScript()
+
+    expect(content).toContain('argo\\.workflows\\.completions')
+    expect(content).toContain('reflection-(allowed|auto)-namespaces')
+    expect(content).toContain('jangar-db-ca')
+    expect(content).toContain('agents-control-plane runtime profile')
+    expect(content).toContain('agents-controllers runtime profile')
+  })
 })
