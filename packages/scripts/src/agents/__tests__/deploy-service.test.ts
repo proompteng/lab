@@ -217,6 +217,41 @@ runner:
     ).toBeNull()
   })
 
+  it('defaults database secret alias source to the Agents-owned target secret', () => {
+    const previousNamespace = process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE
+    const previousName = process.env.AGENTS_DB_SECRET_SOURCE_NAME
+    try {
+      delete process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE
+      delete process.env.AGENTS_DB_SECRET_SOURCE_NAME
+      expect(
+        __private.resolveDatabaseSecretSource({
+          namespace: 'agents',
+          name: 'agents-db-app',
+        }),
+      ).toEqual({
+        sourceNamespace: 'agents',
+        sourceName: 'agents-db-app',
+      })
+
+      process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE = 'jangar'
+      process.env.AGENTS_DB_SECRET_SOURCE_NAME = 'jangar-db-app'
+      expect(
+        __private.resolveDatabaseSecretSource({
+          namespace: 'agents',
+          name: 'agents-db-app',
+        }),
+      ).toEqual({
+        sourceNamespace: 'jangar',
+        sourceName: 'jangar-db-app',
+      })
+    } finally {
+      if (previousNamespace === undefined) delete process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE
+      else process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE = previousNamespace
+      if (previousName === undefined) delete process.env.AGENTS_DB_SECRET_SOURCE_NAME
+      else process.env.AGENTS_DB_SECRET_SOURCE_NAME = previousName
+    }
+  })
+
   it('builds an Agents-owned compatibility database secret without source ownership metadata', () => {
     const manifest = __private.buildDatabaseSecretAliasManifest(
       {
