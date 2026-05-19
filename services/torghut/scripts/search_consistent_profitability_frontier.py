@@ -240,6 +240,16 @@ def _parse_args() -> argparse.Namespace:
         default=0,
         help="Optional cap on evaluated candidates inside one frontier run. 0 means unbounded.",
     )
+    parser.add_argument(
+        "--candidate-record",
+        type=Path,
+        action="append",
+        default=[],
+        help=(
+            "Optional checked-in candidate record JSON to seed before the sweep grid. "
+            "This replays known candidate params exactly before exploring variants."
+        ),
+    )
     parser.add_argument("--json-output", type=Path)
     parser.add_argument(
         "--symbol-prune-iterations",
@@ -420,6 +430,54 @@ def _iter_strategy_override_candidates(
     return list(_iter_parameter_candidates(strategy_override_grid))
 
 
+def _candidate_record_seed(
+    *,
+    path: Path,
+    strategy_name: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"candidate_record_not_mapping:{path}")
+    raw_strategy = payload.get("candidate_strategy")
+    if not isinstance(raw_strategy, Mapping):
+        raise ValueError(f"candidate_record_missing_candidate_strategy:{path}")
+    record_strategy_name = str(raw_strategy.get("strategy_name") or "").strip()
+    if record_strategy_name and record_strategy_name != strategy_name:
+        raise ValueError(
+            f"candidate_record_strategy_mismatch:{path}:{record_strategy_name}!={strategy_name}"
+        )
+
+    params: dict[str, Any] = {}
+    raw_params = raw_strategy.get("params")
+    if isinstance(raw_params, Mapping):
+        params.update({str(key): value for key, value in raw_params.items()})
+
+    overrides: dict[str, Any] = {}
+    for key in (
+        "universe_symbols",
+        "max_notional_per_trade",
+        "max_position_pct_equity",
+    ):
+        value = raw_strategy.get(key)
+        if value is not None:
+            overrides[key] = value
+
+    if not params and not overrides:
+        raise ValueError(f"candidate_record_empty_candidate_strategy:{path}")
+    return params, overrides
+
+
+def _load_candidate_record_seeds(
+    *,
+    paths: Iterable[Path],
+    strategy_name: str,
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    return [
+        _candidate_record_seed(path=Path(path), strategy_name=strategy_name)
+        for path in paths
+    ]
+
+
 def _parameter_grid_items(
     parameter_grid: Mapping[str, Iterable[Any]],
 ) -> list[tuple[str, list[Any]]]:
@@ -534,7 +592,10 @@ def _iter_initial_worklist_candidates(
     *,
     parameter_grid: Mapping[str, Iterable[Any]],
     override_candidates: Iterable[Mapping[str, Any]],
+    seed_candidates: Iterable[tuple[Mapping[str, Any], Mapping[str, Any]]] = (),
 ) -> Iterator[tuple[dict[str, Any], dict[str, Any], int, str | None, str | None]]:
+    for params_candidate, override_candidate in seed_candidates:
+        yield (dict(params_candidate), dict(override_candidate), 0, None, None)
     for override_candidate in override_candidates:
         for params_candidate in _iter_parameter_candidates(parameter_grid):
             yield (dict(params_candidate), dict(override_candidate), 0, None, None)
@@ -1869,6 +1930,10 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
     override_candidates = _iter_strategy_override_candidates(
         cast(Mapping[str, Iterable[Any]] | None, strategy_override_grid)
     )
+    seed_candidates = _load_candidate_record_seeds(
+        paths=cast(Iterable[Path], getattr(args, "candidate_record", [])),
+        strategy_name=strategy_name,
+    )
     prefetch_symbols = _resolve_prefetch_symbols(
         cli_symbols=symbols,
         override_candidates=override_candidates,
@@ -1900,6 +1965,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         initial_candidates = _iter_initial_worklist_candidates(
             parameter_grid=parameter_grid,
             override_candidates=override_candidates,
+            seed_candidates=seed_candidates,
         )
         initial_candidates_exhausted = False
         worklist: deque[

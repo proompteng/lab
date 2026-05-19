@@ -764,6 +764,7 @@ def _build_artifacts(
         reject_reasons.update(_string_list(payload.get("risk_reasons")))
         if payload.get("submission_block_reason"):
             block_reasons.update([str(payload["submission_block_reason"])])
+    proof_floor_blocker_evidence = _proof_floor_blocker_evidence(decisions)
     governance_blockers = sorted(
         reason for reason in block_reasons if _is_governance_block_reason(reason)
     )
@@ -819,6 +820,8 @@ def _build_artifacts(
             key: value for key, value in submit_paths.items() if key
         },
     }
+    if proof_floor_blocker_evidence:
+        decision_activity["proof_floor_blocker_evidence"] = proof_floor_blocker_evidence
     execution_activity = {
         "pipeline_mode": "simple",
         "executions": len(executions),
@@ -869,6 +872,8 @@ def _build_artifacts(
             "run_summary_path": str(output_dir / "run-summary.json"),
         },
     }
+    if proof_floor_blocker_evidence:
+        run_summary["proof_floor_blocker_evidence"] = proof_floor_blocker_evidence
     return ReplayArtifacts(
         runtime_verify=runtime_verify,
         replay_report=replay_report,
@@ -900,6 +905,106 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if str(item).strip()]
+
+
+def _counter_to_dict(counter: Counter[str]) -> dict[str, int]:
+    return {key: int(value) for key, value in counter.items() if key}
+
+
+def _proof_floor_blocker_evidence(decisions: list[TradeDecision]) -> dict[str, Any]:
+    floor_count = 0
+    blocking_reasons: Counter[str] = Counter()
+    alpha_reason_totals: Counter[str] = Counter()
+    dimension_totals: dict[str, Counter[str]] = {}
+    repair_targets: dict[str, dict[str, Any]] = {}
+    repair_ladder: dict[str, dict[str, Any]] = {}
+    routeable_symbols: set[str] = set()
+    missing_symbols: set[str] = set()
+    blocked_symbols: set[str] = set()
+
+    for decision in decisions:
+        payload = _mapping(decision.decision_json)
+        proof_floor = _mapping(payload.get("profitability_proof_floor"))
+        if not proof_floor:
+            continue
+        floor_count += 1
+        blocking_reasons.update(_string_list(proof_floor.get("blocking_reasons")))
+
+        raw_dimensions = proof_floor.get("proof_dimensions")
+        if isinstance(raw_dimensions, list):
+            for raw_dimension in raw_dimensions:
+                dimension = _mapping(raw_dimension)
+                name = str(dimension.get("dimension") or "").strip()
+                if not name:
+                    continue
+                state = str(dimension.get("state") or "").strip() or "unknown"
+                reason = str(dimension.get("reason") or "").strip() or "unknown"
+                dimension_totals.setdefault(name, Counter()).update(
+                    [f"{state}:{reason}"]
+                )
+                source_ref = _mapping(dimension.get("source_ref"))
+                if name == "alpha_readiness":
+                    raw_reason_totals = _mapping(source_ref.get("reason_totals"))
+                    for reason_code, count in raw_reason_totals.items():
+                        alpha_reason_totals[str(reason_code)] += int(count or 0)
+                    raw_targets = source_ref.get("repair_targets")
+                    if isinstance(raw_targets, list):
+                        for raw_target in raw_targets:
+                            target = _mapping(raw_target)
+                            hypothesis_id = str(
+                                target.get("hypothesis_id") or ""
+                            ).strip()
+                            if hypothesis_id:
+                                repair_targets[hypothesis_id] = target
+                if name == "execution_tca":
+                    symbol_routes = _mapping(source_ref.get("symbol_routes"))
+                    for symbol in symbol_routes.get("routeable_symbols") or []:
+                        item = _mapping(symbol)
+                        raw_symbol = item.get("symbol") if item else symbol
+                        if raw_symbol:
+                            routeable_symbols.add(str(raw_symbol))
+                    for symbol in symbol_routes.get("missing_symbols") or []:
+                        if symbol:
+                            missing_symbols.add(str(symbol))
+                    for symbol in symbol_routes.get("blocked_symbols") or []:
+                        item = _mapping(symbol)
+                        raw_symbol = item.get("symbol") if item else symbol
+                        if raw_symbol:
+                            blocked_symbols.add(str(raw_symbol))
+
+        raw_ladder = proof_floor.get("repair_ladder")
+        if isinstance(raw_ladder, list):
+            for raw_item in raw_ladder:
+                item = _mapping(raw_item)
+                code = str(item.get("code") or "").strip()
+                if code and code not in repair_ladder:
+                    repair_ladder[code] = item
+
+    if floor_count == 0:
+        return {}
+    return {
+        "proof_floor_count": floor_count,
+        "blocking_reason_totals": _counter_to_dict(blocking_reasons),
+        "dimension_state_reason_totals": {
+            name: _counter_to_dict(counter)
+            for name, counter in sorted(dimension_totals.items())
+        },
+        "alpha_reason_totals": _counter_to_dict(alpha_reason_totals),
+        "alpha_repair_targets": [repair_targets[key] for key in sorted(repair_targets)],
+        "execution_tca": {
+            "routeable_symbols": sorted(routeable_symbols),
+            "missing_symbols": sorted(missing_symbols),
+            "blocked_symbols": sorted(blocked_symbols),
+        },
+        "repair_ladder": [
+            repair_ladder[key]
+            for key in sorted(
+                repair_ladder,
+                key=lambda code: int(repair_ladder[code].get("priority") or 0),
+                reverse=True,
+            )
+        ],
+    }
 
 
 def _optional_decimal(value: Any) -> Decimal | None:

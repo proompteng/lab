@@ -52,6 +52,8 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     str(family_dir),
                     "--max-candidates-to-evaluate",
                     "12",
+                    "--candidate-record",
+                    str(root / "candidate.json"),
                     "--no-train-screening",
                     "--min-train-screen-net-per-day",
                     "-50",
@@ -71,6 +73,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertTrue(args.allow_stale_tape)
         self.assertEqual(args.family_template_dir, family_dir)
         self.assertEqual(args.max_candidates_to_evaluate, 12)
+        self.assertEqual(args.candidate_record, [root / "candidate.json"])
         self.assertFalse(args.train_screening)
         self.assertEqual(args.min_train_screen_net_per_day, "-50")
         self.assertEqual(args.min_train_screen_active_ratio, "0.25")
@@ -140,6 +143,73 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             frontier._parameter_grid_items({"alpha": {"nested": "1"}})
         with self.assertRaisesRegex(ValueError, "parameter_values_not_iterable:alpha"):
             frontier._parameter_grid_items({"alpha": 1})
+
+    def test_candidate_record_seed_extracts_exact_strategy_candidate(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "candidate.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "candidate_id": "H-TSMOM-LIQ-01",
+                        "candidate_strategy": {
+                            "strategy_name": "intraday-tsmom-profit-v3",
+                            "universe_symbols": ["NVDA", "AAPL"],
+                            "max_notional_per_trade": "50000",
+                            "max_position_pct_equity": "3.0",
+                            "params": {
+                                "entry_start_minute_utc": "810",
+                                "entry_end_minute_utc": "930",
+                                "max_spread_bps": "20",
+                                "min_recent_imbalance_pressure": "0.02",
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            params, overrides = frontier._candidate_record_seed(
+                path=path,
+                strategy_name="intraday-tsmom-profit-v3",
+            )
+
+        self.assertEqual(
+            params,
+            {
+                "entry_start_minute_utc": "810",
+                "entry_end_minute_utc": "930",
+                "max_spread_bps": "20",
+                "min_recent_imbalance_pressure": "0.02",
+            },
+        )
+        self.assertEqual(
+            overrides,
+            {
+                "universe_symbols": ["NVDA", "AAPL"],
+                "max_notional_per_trade": "50000",
+                "max_position_pct_equity": "3.0",
+            },
+        )
+
+    def test_initial_worklist_yields_candidate_record_seeds_before_grid(self) -> None:
+        candidates = frontier._iter_initial_worklist_candidates(
+            parameter_grid={"long_stop_loss_bps": ["10"]},
+            override_candidates=[{"max_notional_per_trade": "63180"}],
+            seed_candidates=[
+                (
+                    {"entry_start_minute_utc": "810"},
+                    {"max_notional_per_trade": "50000"},
+                )
+            ],
+        )
+
+        first = next(candidates)
+        second = next(candidates)
+
+        self.assertEqual(first[0], {"entry_start_minute_utc": "810"})
+        self.assertEqual(first[1], {"max_notional_per_trade": "50000"})
+        self.assertEqual(second[0], {"long_stop_loss_bps": "10"})
+        self.assertEqual(second[1], {"max_notional_per_trade": "63180"})
 
     def test_candidate_symbols_prefers_cli_filter_then_universe_override(self) -> None:
         self.assertEqual(
