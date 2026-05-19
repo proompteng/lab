@@ -284,7 +284,7 @@ required_coordination_parameters = (
     "swarmAgentIdentity",
     "swarmHumanName",
 )
-required_collaboration_terms = ("nats collaboration", "codex-nats-publish", "jangar is the visibility surface")
+required_collaboration_terms = ("nats collaboration", "codex-nats-publish", "agents platform is the visibility surface")
 
 errors = []
 if not swarms:

@@ -362,7 +362,7 @@ describe('scheduled AgentRun templates', () => {
         .filter((entry): entry is [string, Record<string, unknown>] => typeof entry[0] === 'string'),
     )
 
-    for (const name of ['jangar-swarm-verify-template', 'torghut-swarm-verify-template']) {
+    for (const name of ['agents-platform-swarm-verify-template', 'torghut-swarm-verify-template']) {
       const template = agentRunTemplates.get(name)
       const workflow = objectAt(objectAt(template, 'spec'), 'workflow')
       const steps = objectAt(workflow, 'steps') as Record<string, unknown>[] | undefined
@@ -383,10 +383,10 @@ describe('scheduled AgentRun templates', () => {
     )
 
     for (const [name, expectedUrl] of [
-      ['jangar-swarm-discover-template', 'http://agents.agents.svc.cluster.local/ready'],
-      ['jangar-swarm-plan-template', 'http://agents.agents.svc.cluster.local/ready'],
-      ['jangar-swarm-implement-template', 'http://agents.agents.svc.cluster.local/ready'],
-      ['jangar-swarm-verify-template', 'http://agents.agents.svc.cluster.local/ready'],
+      ['agents-platform-swarm-discover-template', 'http://agents.agents.svc.cluster.local/ready'],
+      ['agents-platform-swarm-plan-template', 'http://agents.agents.svc.cluster.local/ready'],
+      ['agents-platform-swarm-implement-template', 'http://agents.agents.svc.cluster.local/ready'],
+      ['agents-platform-swarm-verify-template', 'http://agents.agents.svc.cluster.local/ready'],
       ['torghut-swarm-discover-template', 'http://torghut.torghut.svc.cluster.local/trading/revenue-repair'],
       ['torghut-swarm-plan-template', 'http://torghut.torghut.svc.cluster.local/trading/revenue-repair'],
       ['torghut-swarm-implement-template', 'http://torghut.torghut.svc.cluster.local/trading/revenue-repair'],

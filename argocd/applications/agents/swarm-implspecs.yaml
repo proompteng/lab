@@ -305,7 +305,7 @@ spec:
 
     NATS collaboration (required):
     1) Resolve active channel from natsChannel, then general.
-    2) Publish concise progress and final go/no-go updates through `codex-nats-publish`.
+    2) Publish concise progress and final go/no-go updates through `codex-nats-publish`; Agents Platform is the visibility surface.
     3) Keep updates human-readable and evidence-based; do not dump raw JSON unless needed for debugging.
 
     Done criteria (all required):
