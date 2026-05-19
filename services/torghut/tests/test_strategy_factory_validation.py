@@ -7,7 +7,10 @@ import pandas as pd
 
 from app.trading.alpha.metrics import PerformanceSummary
 from app.trading.alpha.search import CandidateConfig, CandidateResult
-from app.trading.discovery.validation import build_strategy_factory_evaluation
+from app.trading.discovery.validation import (
+    _temporal_embargo_bundle,
+    build_strategy_factory_evaluation,
+)
 
 
 class TestStrategyFactoryValidation(TestCase):
@@ -469,3 +472,16 @@ class TestStrategyFactoryValidation(TestCase):
             "train_test_timestamp_overlap",
             embargo_test.metric_bundle["reason_codes"],
         )
+
+    def test_temporal_embargo_bundle_fails_closed_when_windows_are_missing(
+        self,
+    ) -> None:
+        metric_bundle = _temporal_embargo_bundle(
+            train_debug=pd.DataFrame(index=pd.DatetimeIndex([], tz="UTC")),
+            test_debug=pd.DataFrame(index=pd.DatetimeIndex([], tz="UTC")),
+        )
+
+        self.assertFalse(metric_bundle["passed"])
+        self.assertIn("train_window_missing", metric_bundle["reason_codes"])
+        self.assertIn("test_window_missing", metric_bundle["reason_codes"])
+        self.assertIn("temporal_gap_unmeasured", metric_bundle["reason_codes"])
