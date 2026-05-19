@@ -3,6 +3,11 @@ import { asRecord, asString, normalizeNamespace } from '../primitives'
 import type { OrchestrationRunRecord } from '../primitives-store'
 
 import {
+  describeOrchestrationSubmitError,
+  OrchestrationSubmitKubeError,
+  OrchestrationSubmitNotFoundError,
+  OrchestrationSubmitPolicyDeniedError,
+  OrchestrationSubmitStorageError,
   type OrchestrationRunSubmitStore,
   type SubmitOrchestrationRunDeps,
   submitOrchestrationRun,
@@ -95,16 +100,17 @@ export const postOrchestrationRunsHandler = async (request: Request, deps: Orche
 
     return okResponse({ ok: true, orchestrationRun: result.orchestrationRun, resource: result.resource }, 201)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    if (message.includes('orchestration') && message.includes('not found')) {
+    const message = describeOrchestrationSubmitError(error)
+    if (error instanceof OrchestrationSubmitNotFoundError) {
       return errorResponse(message, 404)
     }
-    if (message.includes('DATABASE_URL')) {
+    if (error instanceof OrchestrationSubmitStorageError) {
       return errorResponse(message, 503)
     }
-    if (message.includes('policy') || message.includes('budget') || message.includes('approval')) {
+    if (error instanceof OrchestrationSubmitPolicyDeniedError) {
       return errorResponse(message, 403)
     }
+    if (error instanceof OrchestrationSubmitKubeError) return errorResponse(message, 502)
     return errorResponse(message, 400)
   }
 }
