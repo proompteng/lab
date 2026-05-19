@@ -367,7 +367,7 @@ For env and gRPC source-of-truth changes in this branch:
 
 ### Changing CRDs
 
-- Update Go types (Agents primitives): `services/jangar/api/agents/v1alpha1/**`
+- Update Go types (Agents primitives): `services/agents/api/agents/v1alpha1/**`
 - Regenerate CRDs: `charts/agents/crds/`
 - Validate: `scripts/agents/validate-agents.sh`
 - Update examples if needed: `charts/agents/examples/**`

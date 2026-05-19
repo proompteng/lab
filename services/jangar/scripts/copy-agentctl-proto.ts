@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(fileURLToPath(import.meta.url), '../../../..')
 const sourceCandidates = [
   resolve(root, 'proto/proompteng/jangar/v1/agentctl.proto'),
-  resolve(root, 'services/jangar/agentctl/proto/proompteng/jangar/v1/agentctl.proto'),
+  resolve(root, 'services/agents/agentctl/proto/proompteng/jangar/v1/agentctl.proto'),
 ]
 const source = sourceCandidates.find((candidate) => existsSync(candidate))
 if (!source) {

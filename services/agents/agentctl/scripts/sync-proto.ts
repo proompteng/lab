@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const root = resolve(scriptDir, '../../../..')
 const source = resolve(root, 'proto/proompteng/jangar/v1/agentctl.proto')
-const destination = resolve(root, 'services/jangar/agentctl/proto/proompteng/jangar/v1/agentctl.proto')
-const embeddedOutput = resolve(root, 'services/jangar/agentctl/src/embedded-proto.ts')
+const destination = resolve(root, 'services/agents/agentctl/proto/proompteng/jangar/v1/agentctl.proto')
+const embeddedOutput = resolve(root, 'services/agents/agentctl/src/embedded-proto.ts')
 
 await mkdir(dirname(destination), { recursive: true })
 await copyFile(source, destination)

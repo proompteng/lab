@@ -90,7 +90,7 @@ echo "[local-agents-ci] run smoke"
   AGENTS_DB_BOOTSTRAP="true" \
   AGENTS_DB_IMAGE="${AGENTS_DB_IMAGE:-mirror.gcr.io/pgvector/pgvector:pg16}" \
   AGENTS_TIMEOUT="${AGENTS_TIMEOUT:-10m}" \
-  AGENTCTL_BIN="${AGENTCTL_BIN:-services/jangar/agentctl/dist/agentctl}" \
+  AGENTCTL_BIN="${AGENTCTL_BIN:-services/agents/agentctl/dist/agentctl}" \
   bun run packages/scripts/src/agents/smoke-agents.ts)
 
 echo "[local-agents-ci] success"

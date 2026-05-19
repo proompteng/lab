@@ -929,6 +929,7 @@ const resolveExplicitAddress = (flags: GlobalFlags, config: Config) =>
   flags.address ||
   process.env.AGENTCTL_SERVER ||
   process.env.AGENTCTL_ADDRESS ||
+  process.env.AGENTS_GRPC_ADDRESS ||
   process.env.JANGAR_GRPC_ADDRESS ||
   config.address ||
   ''
@@ -951,7 +952,11 @@ const resolveAddress = (flags: GlobalFlags, config: Config, mode: TransportMode)
 }
 
 const resolveToken = (flags: GlobalFlags, config: Config) =>
-  flags.token || process.env.AGENTCTL_TOKEN || process.env.JANGAR_GRPC_TOKEN || config.token
+  flags.token ||
+  process.env.AGENTCTL_TOKEN ||
+  process.env.AGENTS_GRPC_TOKEN ||
+  process.env.JANGAR_GRPC_TOKEN ||
+  config.token
 
 const resolveTls = (flags: GlobalFlags, config: Config) => {
   if (flags.tls !== undefined) return flags.tls

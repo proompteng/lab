@@ -135,7 +135,7 @@ Adopt `google.rpc.Status` with details to allow CLI-friendly errors:
 
 ### Transport abstraction
 
-- Define a `TransportClient` interface in `services/jangar/agentctl`:
+- Define a `TransportClient` interface in `services/agents/agentctl`:
   - `list/get/apply/delete` for each primitive
   - `watch` for watchable primitives
   - `submit/cancel/streamLogs/streamStatus` for AgentRuns
@@ -182,7 +182,7 @@ Adopt `google.rpc.Status` with details to allow CLI-friendly errors:
 - **Proto contract tests**: ensure generated stubs compile and server implements the new watch APIs.
 - **CLI unit tests**: verify transport routing and output formatting for `--grpc` vs `--kube`.
 - **Integration tests**:
-  - Start Jangar with gRPC enabled and run `agentctl` commands against it.
+  - Start Agents with gRPC enabled and run `agentctl` commands against it.
   - Validate watch streams produce the same outputs as kube watch.
 - **Auth tests**: token required/optional flows, invalid token errors, TLS handshake failures.
 - **Regression tests**: ensure existing JSON outputs remain stable for automation workflows.
@@ -190,7 +190,7 @@ Adopt `google.rpc.Status` with details to allow CLI-friendly errors:
 ## Rollout Plan
 
 1. Extend proto with shared options + watch event shape.
-2. Implement watch RPCs in `services/jangar/src/server/agentctl-grpc.ts`.
+2. Implement watch RPCs in `services/agents/src/server/agentctl-grpc.ts`.
 3. Update CLI transport interface to cover watch + shared options.
 4. Add tests (unit + integration).
 5. Enable gRPC parity checks in CI (optional, if test infra is available).
@@ -208,5 +208,5 @@ flowchart LR
   User["Operator"] --> CLI["agentctl"]
   CLI -->|"kube mode (default)"| Kube["Kubernetes API"]
   CLI -->|"gRPC (optional)"| GRPC["Service/agents-grpc"]
-  GRPC --> CP["Jangar control plane"]
+  GRPC --> CP["Agents control plane"]
 ```

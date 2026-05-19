@@ -123,7 +123,7 @@ Implementation detail:
 - The manager should treat invalid values as “ignored” (do not crash controllers). If parsing fails at the “whole config” level (e.g. non-string `data`), keep last-known-good and surface error.
 - Parse/validate pipeline:
   - Read `object.data.settings` as a string.
-  - Parse YAML -> `unknown` (recommend `yaml` npm package, already used in `services/jangar/agentctl`).
+  - Parse YAML -> `unknown` (recommend `yaml` npm package, already used in `services/agents/agentctl`).
   - Validate -> typed settings object (recommend `@effect/schema` for a partial schema with defaults).
   - Apply -> swap the snapshot atomically if validation succeeds; otherwise retain last-known-good.
 

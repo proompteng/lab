@@ -534,6 +534,8 @@
       "version": "0.1.0",
       "dependencies": {
         "@bufbuild/cel": "^0.4.0",
+        "@grpc/grpc-js": "^1.14.3",
+        "@grpc/proto-loader": "^0.8.0",
         "@kubernetes/client-node": "^1.4.0",
         "@proompteng/codex": "workspace:*",
         "@proompteng/otel": "workspace:*",
@@ -551,6 +553,34 @@
         "bun-types": "1.3.13",
         "typescript": "^6.0.3",
         "vitest": "4.1.5",
+      },
+    },
+    "services/agents/agentctl": {
+      "name": "@proompteng/agentctl",
+      "version": "0.2.2",
+      "bin": {
+        "agentctl": "./dist/agentctl.js",
+      },
+      "dependencies": {
+        "@effect/cli": "^0.75.1",
+        "@effect/cluster": "^0.58.2",
+        "@effect/platform": "^0.96.1",
+        "@effect/platform-bun": "^0.89.0",
+        "@effect/platform-node": "^0.106.0",
+        "@effect/rpc": "^0.75.1",
+        "@effect/sql": "^0.51.1",
+        "@effect/workflow": "^0.18.1",
+        "@grpc/grpc-js": "^1.14.3",
+        "@grpc/proto-loader": "^0.8.0",
+        "@kubernetes/client-node": "^1.4.0",
+        "@proompteng/codex": "workspace:*",
+        "effect": "^3.21.2",
+        "protobufjs": "^8.0.3",
+        "yaml": "^2.8.4",
+      },
+      "devDependencies": {
+        "@types/node": "^25.6.0",
+        "bun-types": "1.3.13",
       },
     },
     "services/bonjour": {
@@ -735,34 +765,6 @@
         "vite": "8.0.10",
         "vitest": "4.1.5",
         "web-vitals": "5.2.0",
-      },
-    },
-    "services/jangar/agentctl": {
-      "name": "@proompteng/agentctl",
-      "version": "0.2.2",
-      "bin": {
-        "agentctl": "./dist/agentctl.js",
-      },
-      "dependencies": {
-        "@effect/cli": "^0.75.1",
-        "@effect/cluster": "^0.58.2",
-        "@effect/platform": "^0.96.1",
-        "@effect/platform-bun": "^0.89.0",
-        "@effect/platform-node": "^0.106.0",
-        "@effect/rpc": "^0.75.1",
-        "@effect/sql": "^0.51.1",
-        "@effect/workflow": "^0.18.1",
-        "@grpc/grpc-js": "^1.14.3",
-        "@grpc/proto-loader": "^0.8.0",
-        "@kubernetes/client-node": "^1.4.0",
-        "@proompteng/codex": "workspace:*",
-        "effect": "^3.21.2",
-        "protobufjs": "^8.0.3",
-        "yaml": "^2.8.4",
-      },
-      "devDependencies": {
-        "@types/node": "^25.6.0",
-        "bun-types": "1.3.13",
       },
     },
     "services/khoshut": {
@@ -2001,7 +2003,7 @@
 
     "@preact/signals-core": ["@preact/signals-core@1.14.1", "", {}, "sha512-vxPpfXqrwUe9lpjqfYNjAF/0RF/eFGeLgdJzdmIIZjpOnTmGmAB4BjWone562mJGMRP4frU6iZ6ei3PDsu52Ng=="],
 
-    "@proompteng/agentctl": ["@proompteng/agentctl@workspace:services/jangar/agentctl"],
+    "@proompteng/agentctl": ["@proompteng/agentctl@workspace:services/agents/agentctl"],
 
     "@proompteng/agents": ["@proompteng/agents@workspace:services/agents"],
 

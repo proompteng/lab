@@ -24,12 +24,12 @@ We want a minimal, provider-agnostic control plane chart that installs cleanly o
 
 ## Goals
 
-- Provide a minimal, installable Helm chart for the Jangar control plane plus CRDs.
+- Provide a minimal, installable Helm chart for the Agents control plane plus CRDs.
 - Keep the base chart portable across minikube, kind, and managed clusters.
 - Remove GitHub-only coupling from CRDs; support GitHub Issues and Linear via an abstract ImplementationSpec.
 - Add a first-class VersionControlProvider concept for repo operations (see `docs/agents/version-control-provider-design.md`).
 - Make memory provider-agnostic via a Memory CRD.
-- Move SQL migrations into the Jangar image (not shipped in the chart).
+- Move SQL migrations into the Agents control-plane image (not shipped in the chart).
 - Follow Helm and Artifact Hub best practices for a public chart.
 
 ## Non-goals
@@ -44,7 +44,7 @@ We want a minimal, provider-agnostic control plane chart that installs cleanly o
 - Installable on minikube, kind, and regular clusters.
 - No outdated features like ingress in the chart.
 - CRDs declared in the existing `charts/agents` chart.
-- SQL scripts must not be packaged in the chart; Jangar owns migrations.
+- SQL scripts must not be packaged in the chart; the Agents control plane owns generic Agents migrations.
 - AgentRun specifies what to execute and the workload required; Agent defines only agent-level defaults.
 - Implementation spec abstracts GitHub/Linear specifics away from Agent/AgentRun.
 - Memory provider must be abstracted via a Memory CRD.
@@ -55,7 +55,7 @@ We want a minimal, provider-agnostic control plane chart that installs cleanly o
 
 Resources to keep:
 
-- Deployment: Jangar control plane.
+- Deployment: Agents control plane.
 - Service: ClusterIP.
 - ServiceAccount + Role/RoleBinding (namespaced).
 - Secrets/ConfigMaps needed for configuration (no SQL payloads).
@@ -75,7 +75,7 @@ Mermaid: chart scope overview
 graph TD
   subgraph Helm Chart: agents
     CRDs[CRDs<br/>Agent, AgentRun, AgentProvider,<br/>ImplementationSpec, Memory,<br/>Orchestration, OrchestrationRun]
-    Deploy[Jangar Deployment]
+    Deploy[Agents Deployment]
     Svc[ClusterIP Service]
     SA[ServiceAccount + RBAC]
     Cfg[Config/Secret]
@@ -91,15 +91,15 @@ Local cluster usage (minikube/kind):
 - Keep `service.type=ClusterIP` and rely on `kubectl port-forward` for local access.
 - Provide a `values-local.yaml` example that does not assume LoadBalancer/Ingress.
 
-## Control Plane (Jangar)
+## Control Plane (Agents)
 
-- Jangar is packaged as the main deployment in this chart.
-- Database migrations run inside Jangar (or a Jangar-owned init path) using SQL shipped in the image.
+- Agents is packaged as the main deployment in this chart.
+- Database migrations run inside Agents (or an Agents-owned init path) using SQL shipped in the image.
 - Chart only passes database connection configuration and migration toggles (e.g., `JANGAR_MIGRATIONS=auto`).
 
-### Jangar as Controller + Control Plane
+### Agents as Controller + Control Plane
 
-Jangar is the reconciler for all Agents CRDs. No separate operator is required as long as Jangar runs.
+Agents is the reconciler for all Agents CRDs. No separate operator is required as long as Agents runs.
 It provides:
 
 - Controller manager (leader-elected) that owns reconciliation loops.
@@ -149,7 +149,7 @@ Default runtime stance:
 #### Lifecycle & safety
 
 - Use finalizers on `AgentRun` to ensure runtime teardown on delete.
-- Use ownerReferences when Jangar creates derived resources (if applicable).
+- Use ownerReferences when Agents creates derived resources (if applicable).
 - Leader election prevents duplicate runs in multi-replica deployments.
 - Emit Kubernetes Events for submit/start/finish/failure.
 
@@ -172,7 +172,7 @@ All CRDs remain under `charts/agents/crds` and are cluster-scoped definitions.
 - Add `additionalPrinterColumns` for run status and timestamps to improve `kubectl get` UX.
 - Use CEL validations sparingly for user-facing invariants; avoid heavy CEL on controller-managed specs.
 - Validate examples against CRDs in CI.
-- Prefer CRDs installed from Helm `crds/` (static, versioned); Jangar should only verify presence, not create CRDs at runtime.
+- Prefer CRDs installed from Helm `crds/` (static, versioned); Agents should only verify presence, not create CRDs at runtime.
 
 Mermaid: CRD relationships
 
@@ -271,7 +271,7 @@ sequenceDiagram
   participant AR as AgentRun
   participant AG as Agent
   participant PR as AgentProvider
-  participant J as Jangar
+  participant J as Agents
   participant RT as Runtime Adapter
   AR->>J: Submit run
   J->>AG: Resolve defaults
@@ -333,7 +333,7 @@ Status fields (required):
 
 ### Integration (GitHub + Linear)
 
-Add an `ImplementationSource` CRD that configures webhook-only sync from GitHub Issues and Linear into ImplementationSpec objects. GitHub + Linear are the first integrations to ship. This keeps Agent and AgentRun generic while still enabling provider integrations. Jangar (or a lightweight integrations sidecar) is responsible for:
+Add an `ImplementationSource` CRD that configures webhook-only sync from GitHub Issues and Linear into ImplementationSpec objects. GitHub + Linear are the first integrations to ship. This keeps Agent and AgentRun generic while still enabling provider integrations. Agents (or a lightweight integrations sidecar) is responsible for:
 
 - Webhook-driven ingestion from GitHub and Linear.
 - Normalizing external issues into ImplementationSpec fields.
@@ -367,7 +367,7 @@ sequenceDiagram
   participant GH as GitHub Issues
   participant LN as Linear
   participant IS as ImplementationSource
-  participant J as Jangar
+  participant J as Agents
   participant IM as ImplementationSpec
   GH->>IS: Webhook event
   LN->>IS: Webhook event
@@ -429,9 +429,9 @@ No values for embedded database, migrations jobs, backups, or ingress.
 ## Migration Plan (from current chart)
 
 1. Replace existing CRDs in-place (v1alpha1) since current version is unused.
-2. Update Jangar to expect the new v1alpha1 schema.
+2. Update Agents to expect the new v1alpha1 schema.
 3. Update examples to match the new schema.
-4. Remove SQL configmap and migrations job from the chart; move SQL into Jangar image.
+4. Remove SQL configmap and migrations job from the chart; move SQL into the Agents image.
 5. Remove embedded Postgres and backup resources; document external database requirement via Memory CRD.
 
 ## Artifact Hub Readiness

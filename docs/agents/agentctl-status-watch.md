@@ -7,7 +7,7 @@ Docs index: [README](README.md)
 ## Overview
 
 This document proposes a streaming status watch for the agent control plane, exposed via `agentctl` and backed by
-Jangar APIs. The goal is to let operators watch health changes (controllers, runtimes, CRDs, and dependencies)
+Agents APIs. The goal is to let operators watch health changes (controllers, runtimes, CRDs, and dependencies)
 in real time without repeated polling.
 
 The design adds:
@@ -21,7 +21,7 @@ The design adds:
 
 - Stream live control-plane health changes with minimal latency.
 - Provide a stable schema for programmatic consumers.
-- Support kube-mode (watch via Kubernetes) and gRPC-mode (watch via Jangar).
+- Support kube-mode (watch via Kubernetes) and gRPC-mode (watch via Agents).
 - Handle reconnects with resumable cursors where feasible.
 - Surface errors without dropping the terminal by default.
 
@@ -234,5 +234,5 @@ flowchart LR
   User["Operator"] --> CLI["agentctl"]
   CLI -->|"kube mode (default)"| Kube["Kubernetes API"]
   CLI -->|"gRPC (optional)"| GRPC["Service/agents-grpc"]
-  GRPC --> CP["Jangar control plane"]
+  GRPC --> CP["Agents control plane"]
 ```
