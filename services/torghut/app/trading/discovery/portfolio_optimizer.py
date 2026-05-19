@@ -442,6 +442,164 @@ def _delay_adjusted_depth_fillable_notional_per_day(
     )
 
 
+def _double_oos_fold_metrics(
+    bundle: CandidateEvidenceBundle,
+) -> tuple[Mapping[str, Any], ...]:
+    folds: list[Mapping[str, Any]] = []
+    for fold in bundle.fold_metrics:
+        source = _string(fold.get("source")).lower()
+        method = _string(
+            fold.get("validation_type")
+            or fold.get("method")
+            or fold.get("fold_type")
+            or fold.get("window_role")
+            or fold.get("split")
+        ).lower()
+        if (
+            source == "double_oos_walkforward_arxiv_2602_10785_2026"
+            or "double_oos" in method
+            or "double-out-of-sample" in method
+            or "out_of_sample" in method
+            or method == "holdout"
+            or bool(fold.get("out_of_sample"))
+        ):
+            folds.append(fold)
+    return tuple(folds)
+
+
+def _fold_passed(fold: Mapping[str, Any]) -> bool:
+    if "passed" in fold:
+        return _boolish(fold.get("passed"))
+    return _boolish(fold.get("status"))
+
+
+def _double_oos_independent_window_count(bundle: CandidateEvidenceBundle) -> int:
+    scorecard = _scorecard(bundle)
+    explicit = _decimal(
+        scorecard.get("double_oos_independent_window_count")
+        or scorecard.get("double_oos_fold_count")
+        or scorecard.get("oos_fold_count")
+    )
+    if explicit > 0:
+        return int(explicit)
+    folds = _double_oos_fold_metrics(bundle)
+    if not folds:
+        return 0
+    window_ids = {
+        _string(
+            fold.get("window_id")
+            or fold.get("fold_id")
+            or fold.get("period")
+            or fold.get("name")
+        )
+        for fold in folds
+    }
+    window_ids.discard("")
+    return len(window_ids) if window_ids else len(folds)
+
+
+def _double_oos_pass_rate(bundle: CandidateEvidenceBundle) -> Decimal:
+    scorecard = _scorecard(bundle)
+    explicit = _decimal(
+        scorecard.get("double_oos_pass_rate")
+        or scorecard.get("double_out_of_sample_pass_rate")
+        or scorecard.get("walk_forward_oos_pass_rate"),
+        default="-1",
+    )
+    if explicit >= 0:
+        return explicit
+    folds = _double_oos_fold_metrics(bundle)
+    if not folds:
+        return Decimal("0")
+    passed = sum(1 for fold in folds if _fold_passed(fold))
+    return Decimal(passed) / Decimal(len(folds))
+
+
+def _double_oos_passed(bundle: CandidateEvidenceBundle) -> bool:
+    scorecard = _scorecard(bundle)
+    if any(
+        key in scorecard
+        for key in (
+            "double_oos_passed",
+            "double_out_of_sample_passed",
+            "walk_forward_oos_passed",
+        )
+    ):
+        return _boolish(
+            scorecard.get("double_oos_passed")
+            or scorecard.get("double_out_of_sample_passed")
+            or scorecard.get("walk_forward_oos_passed")
+        )
+    folds = _double_oos_fold_metrics(bundle)
+    return bool(folds) and all(_fold_passed(fold) for fold in folds)
+
+
+def _double_oos_net_per_day(bundle: CandidateEvidenceBundle) -> Decimal:
+    scorecard = _scorecard(bundle)
+    explicit = _decimal(
+        scorecard.get("double_oos_net_pnl_per_day")
+        or scorecard.get("double_out_of_sample_net_pnl_per_day")
+        or scorecard.get("walk_forward_oos_net_pnl_per_day"),
+        default="-999999999",
+    )
+    if explicit != Decimal("-999999999"):
+        return explicit
+    folds = _double_oos_fold_metrics(bundle)
+    fold_net = [
+        _decimal(
+            fold.get("net_pnl_per_day")
+            or fold.get("post_cost_net_pnl_per_day")
+            or fold.get("portfolio_post_cost_net_pnl_per_day")
+        )
+        for fold in folds
+    ]
+    return min(fold_net, default=Decimal("0"))
+
+
+def _double_oos_cost_shock_net_per_day(bundle: CandidateEvidenceBundle) -> Decimal:
+    scorecard = _scorecard(bundle)
+    explicit = _decimal(
+        scorecard.get("double_oos_cost_shock_net_pnl_per_day")
+        or scorecard.get("double_oos_market_impact_stress_net_pnl_per_day")
+        or scorecard.get("double_oos_cost_sensitivity_net_pnl_per_day"),
+        default="-999999999",
+    )
+    if explicit != Decimal("-999999999"):
+        return explicit
+    folds = _double_oos_fold_metrics(bundle)
+    fold_net = [
+        _decimal(
+            fold.get("cost_shock_net_pnl_per_day")
+            or fold.get("market_impact_stress_net_pnl_per_day")
+            or fold.get("cost_sensitivity_net_pnl_per_day")
+        )
+        for fold in folds
+    ]
+    return min(fold_net, default=Decimal("0"))
+
+
+def _double_oos_artifact_ref(bundle: CandidateEvidenceBundle) -> str:
+    scorecard = _scorecard(bundle)
+    direct = _string(
+        scorecard.get("double_oos_artifact_ref")
+        or scorecard.get("double_oos_report_ref")
+        or scorecard.get("walk_forward_oos_artifact_ref")
+    )
+    if direct:
+        return direct
+    raw_refs = scorecard.get("double_oos_artifact_refs")
+    if isinstance(raw_refs, Sequence) and not isinstance(raw_refs, str):
+        for item in cast(Sequence[Any], raw_refs):
+            normalized = _string(item)
+            if normalized:
+                return normalized
+    for fold in _double_oos_fold_metrics(bundle):
+        normalized = _string(fold.get("artifact_ref") or fold.get("report_ref"))
+        if normalized:
+            return normalized
+    return ""
+
+
 def _positive_net_contribution(bundle: CandidateEvidenceBundle) -> Decimal:
     return max(_net_per_day(bundle), Decimal("0"))
 
@@ -749,6 +907,31 @@ def _portfolio_scorecard(
         ),
         Decimal("0"),
     )
+    double_oos_artifact_refs = [
+        ref for ref in (_double_oos_artifact_ref(bundle) for bundle in selected) if ref
+    ]
+    double_oos_independent_window_count = min(
+        (_double_oos_independent_window_count(bundle) for bundle in selected),
+        default=0,
+    )
+    double_oos_pass_rate = min(
+        (_double_oos_pass_rate(bundle) for bundle in selected),
+        default=Decimal("0"),
+    )
+    double_oos_net_pnl_per_day = sum(
+        (
+            _double_oos_net_per_day(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
+    double_oos_cost_shock_net_pnl_per_day = sum(
+        (
+            _double_oos_cost_shock_net_per_day(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
     scorecard = {
         "net_pnl_per_day": str(net_per_day),
         "portfolio_post_cost_net_pnl_per_day": str(net_per_day),
@@ -843,6 +1026,18 @@ def _portfolio_scorecard(
         "delay_adjusted_depth_stress_net_pnl_per_day": str(
             delay_depth_stress_net_pnl_per_day
         ),
+        "double_oos_passed": bool(selected)
+        and all(_double_oos_passed(bundle) for bundle in selected),
+        "double_oos_artifact_refs": double_oos_artifact_refs,
+        "double_oos_artifact_ref": double_oos_artifact_refs[0]
+        if double_oos_artifact_refs
+        else "",
+        "double_oos_independent_window_count": double_oos_independent_window_count,
+        "double_oos_pass_rate": str(double_oos_pass_rate),
+        "double_oos_net_pnl_per_day": str(double_oos_net_pnl_per_day),
+        "double_oos_cost_shock_net_pnl_per_day": str(
+            double_oos_cost_shock_net_pnl_per_day
+        ),
         "daily_net": {day: str(value) for day, value in sorted(daily_net.items())},
         "daily_filled_notional": {
             day: str(value) for day, value in sorted(daily_notional.items())
@@ -904,6 +1099,11 @@ def _portfolio_selection_key(
         _scorecard_decimal(scorecard, "delay_adjusted_depth_stress_net_pnl_per_day"),
         _scorecard_decimal(scorecard, "delay_adjusted_depth_fillable_notional_per_day"),
         -_scorecard_decimal(scorecard, "delay_adjusted_depth_stress_ms"),
+        Decimal(1 if bool(scorecard.get("double_oos_passed")) else 0),
+        _scorecard_decimal(scorecard, "double_oos_independent_window_count"),
+        _scorecard_decimal(scorecard, "double_oos_pass_rate"),
+        _scorecard_decimal(scorecard, "double_oos_net_pnl_per_day"),
+        _scorecard_decimal(scorecard, "double_oos_cost_shock_net_pnl_per_day"),
         _scorecard_decimal(scorecard, "net_pnl_per_day"),
         -_scorecard_decimal(scorecard, "missing_sleeve_daily_net_count"),
         _scorecard_decimal(scorecard, "avg_filled_notional_per_day"),
@@ -922,6 +1122,11 @@ def _portfolio_selection_key(
 
 def _empty_selection_key() -> tuple[Decimal, ...]:
     return (
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
         Decimal("0"),
         Decimal("0"),
         Decimal("0"),
@@ -1182,6 +1387,18 @@ def optimize_portfolio_candidate(
                 or bundle.candidate_spec_id,
                 "daily_net": {
                     day: str(value) for day, value in sorted(_daily_net(bundle).items())
+                },
+                "double_oos": {
+                    "passed": _double_oos_passed(bundle),
+                    "independent_window_count": _double_oos_independent_window_count(
+                        bundle
+                    ),
+                    "pass_rate": str(_double_oos_pass_rate(bundle)),
+                    "net_pnl_per_day": str(_double_oos_net_per_day(bundle)),
+                    "cost_shock_net_pnl_per_day": str(
+                        _double_oos_cost_shock_net_per_day(bundle)
+                    ),
+                    "artifact_ref": _double_oos_artifact_ref(bundle),
                 },
                 "promotion_status": bundle.promotion_readiness.get("status"),
             }

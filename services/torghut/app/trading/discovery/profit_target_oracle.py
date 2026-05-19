@@ -62,6 +62,9 @@ class ProfitTargetOraclePolicy:
     require_delay_adjusted_depth_stress: bool = True
     min_delay_adjusted_depth_stress_ms: Decimal = Decimal("50")
     min_delay_adjusted_depth_fillable_notional_per_day: Decimal = Decimal("300000")
+    require_double_oos: bool = True
+    min_double_oos_independent_window_count: int = 2
+    min_double_oos_pass_rate: Decimal = Decimal("1.00")
     max_missing_sleeve_daily_net_count: int = 0
 
     def to_payload(self) -> dict[str, Any]:
@@ -119,6 +122,9 @@ class ProfitTargetOraclePolicy:
             "accepted_delay_adjusted_depth_stress_models": sorted(
                 _ACCEPTED_DELAY_ADJUSTED_DEPTH_STRESS_MODELS
             ),
+            "require_double_oos": self.require_double_oos,
+            "min_double_oos_independent_window_count": self.min_double_oos_independent_window_count,
+            "min_double_oos_pass_rate": str(self.min_double_oos_pass_rate),
             "max_missing_sleeve_daily_net_count": self.max_missing_sleeve_daily_net_count,
         }
 
@@ -758,6 +764,107 @@ def evaluate_profit_target_oracle(
         {
             **delay_depth_net_check,
             "source_marker": "rl_market_limit_execution_arxiv_2507_06345_2026",
+        }
+    )
+    double_oos_artifact_refs = _artifact_refs(
+        scorecard,
+        "double_oos_artifact_ref",
+        "double_oos_artifact_refs",
+        "double_oos_report_ref",
+        "walk_forward_oos_artifact_ref",
+    )
+    double_oos_artifact_present = bool(double_oos_artifact_refs)
+    double_oos_passed = _boolish(
+        scorecard.get("double_oos_passed")
+        or scorecard.get("double_out_of_sample_passed")
+        or scorecard.get("walk_forward_oos_passed")
+    )
+    checks.append(
+        {
+            "metric": "double_oos_passed",
+            "observed": str(double_oos_passed).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "source_marker": "double_oos_walkforward_arxiv_2602_10785_2026",
+            "passed": double_oos_passed if policy.require_double_oos else True,
+        }
+    )
+    checks.append(
+        {
+            "metric": "double_oos_artifact_present",
+            "observed": str(double_oos_artifact_present).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "source_marker": "double_oos_walkforward_arxiv_2602_10785_2026",
+            "passed": double_oos_artifact_present
+            if policy.require_double_oos
+            else True,
+        }
+    )
+    checks.append(
+        _numeric_check(
+            metric="double_oos_independent_window_count",
+            observed=Decimal(
+                _nonnegative_int(
+                    scorecard.get("double_oos_independent_window_count")
+                    or scorecard.get("double_oos_fold_count")
+                    or scorecard.get("oos_fold_count")
+                )
+            ),
+            operator="gte",
+            threshold=Decimal(max(0, policy.min_double_oos_independent_window_count))
+            if policy.require_double_oos
+            else Decimal("0"),
+        )
+    )
+    checks.append(
+        _numeric_check(
+            metric="double_oos_pass_rate",
+            observed=_decimal(
+                scorecard.get("double_oos_pass_rate")
+                or scorecard.get("double_out_of_sample_pass_rate")
+                or scorecard.get("walk_forward_oos_pass_rate")
+            ),
+            operator="gte",
+            threshold=policy.min_double_oos_pass_rate
+            if policy.require_double_oos
+            else Decimal("0"),
+        )
+    )
+    double_oos_net_check = _numeric_check(
+        metric="double_oos_net_pnl_per_day",
+        observed=_decimal(
+            scorecard.get("double_oos_net_pnl_per_day")
+            or scorecard.get("double_out_of_sample_net_pnl_per_day")
+            or scorecard.get("walk_forward_oos_net_pnl_per_day")
+        ),
+        operator="gte",
+        threshold=target_net_pnl_per_day,
+    )
+    if not policy.require_double_oos:
+        double_oos_net_check["passed"] = True
+    checks.append(
+        {
+            **double_oos_net_check,
+            "source_marker": "double_oos_walkforward_arxiv_2602_10785_2026",
+        }
+    )
+    double_oos_cost_shock_net_check = _numeric_check(
+        metric="double_oos_cost_shock_net_pnl_per_day",
+        observed=_decimal(
+            scorecard.get("double_oos_cost_shock_net_pnl_per_day")
+            or scorecard.get("double_oos_market_impact_stress_net_pnl_per_day")
+            or scorecard.get("double_oos_cost_sensitivity_net_pnl_per_day")
+        ),
+        operator="gte",
+        threshold=target_net_pnl_per_day,
+    )
+    if not policy.require_double_oos:
+        double_oos_cost_shock_net_check["passed"] = True
+    checks.append(
+        {
+            **double_oos_cost_shock_net_check,
+            "source_marker": "double_oos_cost_sensitivity_arxiv_2602_10785_2026",
         }
     )
     blockers = [

@@ -35,6 +35,12 @@ def _executable_scorecard_fields(index: int | str = 0) -> dict[str, object]:
         "delay_adjusted_depth_stress_ms": "250",
         "delay_adjusted_depth_fillable_notional_per_day": "525000",
         "delay_adjusted_depth_stress_net_pnl_per_day": "520",
+        "double_oos_passed": True,
+        "double_oos_artifact_ref": f"/tmp/double-oos-{index}.json",
+        "double_oos_independent_window_count": 2,
+        "double_oos_pass_rate": "1",
+        "double_oos_net_pnl_per_day": "535",
+        "double_oos_cost_shock_net_pnl_per_day": "515",
     }
 
 
@@ -463,6 +469,191 @@ class TestPortfolioOptimizer(TestCase):
             "1050000",
         )
         self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
+
+    def test_portfolio_aggregates_double_oos_fold_metrics_into_oracle(
+        self,
+    ) -> None:
+        def bundle(candidate_id: str, symbol: str) -> CandidateEvidenceBundle:
+            executable_fields = {
+                key: value
+                for key, value in _executable_scorecard_fields(candidate_id).items()
+                if not key.startswith("double_oos")
+            }
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "300",
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "max_gross_exposure_pct_equity": "0.5",
+                        "min_cash": "5000",
+                        "negative_cash_observation_count": 0,
+                        "best_day_share": "0.2",
+                        "max_single_day_contribution_share": "0.2",
+                        "max_cluster_contribution_share": "0.34",
+                        "max_single_symbol_contribution_share": "0.25",
+                        "avg_filled_notional_per_day": "250000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "symbol_contribution_shares": {symbol: "1.0"},
+                        **executable_fields,
+                    },
+                    "fold_metrics": [
+                        {
+                            "source": "double_oos_walkforward_arxiv_2602_10785_2026",
+                            "fold_id": f"{candidate_id}-oos-a",
+                            "passed": True,
+                            "net_pnl_per_day": "265",
+                            "cost_shock_net_pnl_per_day": "255",
+                            "artifact_ref": f"/tmp/{candidate_id}-oos-a.json",
+                        },
+                        {
+                            "source": "double_oos_walkforward_arxiv_2602_10785_2026",
+                            "fold_id": f"{candidate_id}-oos-b",
+                            "passed": True,
+                            "net_pnl_per_day": "270",
+                            "cost_shock_net_pnl_per_day": "260",
+                            "artifact_ref": f"/tmp/{candidate_id}-oos-b.json",
+                        },
+                    ],
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": "300",
+                            "2026-02-24": "300",
+                            "2026-02-25": "300",
+                            "2026-02-26": "300",
+                        },
+                        "daily_filled_notional": {
+                            "2026-02-23": "250000",
+                            "2026-02-24": "250000",
+                            "2026-02-25": "250000",
+                            "2026-02-26": "250000",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-double-oos-folds",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[
+                bundle("double-oos-a", "AAPL"),
+                bundle("double-oos-b", "AMZN"),
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            oracle_policy=ProfitTargetOraclePolicy(
+                max_cluster_contribution_share=Decimal("0.50"),
+                max_single_symbol_contribution_share=Decimal("0.50"),
+                min_observed_trading_days=4,
+            ),
+            portfolio_size_min=2,
+            portfolio_size_max=2,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertTrue(portfolio.objective_scorecard["double_oos_passed"])
+        self.assertEqual(
+            portfolio.objective_scorecard["double_oos_independent_window_count"], 2
+        )
+        self.assertEqual(portfolio.objective_scorecard["double_oos_pass_rate"], "1")
+        self.assertEqual(
+            portfolio.objective_scorecard["double_oos_net_pnl_per_day"], "530"
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["double_oos_cost_shock_net_pnl_per_day"],
+            "510",
+        )
+        self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
+        self.assertTrue(
+            all(sleeve["double_oos"]["passed"] for sleeve in portfolio.sleeves)
+        )
+
+    def test_portfolio_oracle_blocks_failed_double_oos_fold_metrics(self) -> None:
+        executable_fields = {
+            key: value
+            for key, value in _executable_scorecard_fields("failed-oos").items()
+            if not key.startswith("double_oos")
+        }
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-failed-double-oos",
+            candidate={
+                "candidate_id": "failed-double-oos",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "600",
+                    "active_day_ratio": "1.0",
+                    "positive_day_ratio": "1.0",
+                    "worst_day_loss": "0",
+                    "max_drawdown": "0",
+                    "max_gross_exposure_pct_equity": "0.5",
+                    "min_cash": "5000",
+                    "negative_cash_observation_count": 0,
+                    "best_day_share": "0.2",
+                    "max_single_day_contribution_share": "0.2",
+                    "max_cluster_contribution_share": "0.34",
+                    "max_single_symbol_contribution_share": "0.25",
+                    "avg_filled_notional_per_day": "500000",
+                    "regime_slice_pass_rate": "0.55",
+                    "posterior_edge_lower": "0.01",
+                    "shadow_parity_status": "within_budget",
+                    **executable_fields,
+                },
+                "fold_metrics": [
+                    {
+                        "source": "double_oos_walkforward_arxiv_2602_10785_2026",
+                        "fold_id": "failed-oos-a",
+                        "passed": True,
+                        "net_pnl_per_day": "600",
+                        "cost_shock_net_pnl_per_day": "600",
+                        "artifact_ref": "/tmp/failed-oos-a.json",
+                    },
+                    {
+                        "source": "double_oos_walkforward_arxiv_2602_10785_2026",
+                        "fold_id": "failed-oos-b",
+                        "passed": False,
+                        "net_pnl_per_day": "480",
+                        "cost_shock_net_pnl_per_day": "460",
+                        "artifact_ref": "/tmp/failed-oos-b.json",
+                    },
+                ],
+                "full_window": {
+                    "daily_net": {
+                        "2026-02-23": "600",
+                        "2026-02-24": "600",
+                        "2026-02-25": "600",
+                    },
+                    "daily_filled_notional": {
+                        "2026-02-23": "500000",
+                        "2026-02-24": "500000",
+                        "2026-02-25": "500000",
+                    },
+                },
+            },
+            dataset_snapshot_id="snapshot-failed-double-oos",
+            result_path="/tmp/failed-double-oos.json",
+        )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[bundle],
+            target_net_pnl_per_day=Decimal("500"),
+            oracle_policy=ProfitTargetOraclePolicy(min_observed_trading_days=3),
+            portfolio_size_min=1,
+            portfolio_size_max=1,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertFalse(portfolio.objective_scorecard["oracle_passed"])
+        blockers = portfolio.objective_scorecard["profit_target_oracle"]["blockers"]
+        self.assertIn("double_oos_passed_failed", blockers)
+        self.assertIn("double_oos_pass_rate_failed", blockers)
+        self.assertIn("double_oos_net_pnl_per_day_failed", blockers)
+        self.assertIn("double_oos_cost_shock_net_pnl_per_day_failed", blockers)
 
     def test_portfolio_oracle_blocks_missing_stress_evidence(
         self,
