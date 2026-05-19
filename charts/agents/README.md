@@ -1,22 +1,22 @@
 # Agents Helm Chart
 
-Agents installs **Jangar**, a Kubernetes-native control plane for running agent and automation work as normal Kubernetes resources.
+Agents installs the **Agents Platform**, a Kubernetes-native control plane for running agent and automation work as normal Kubernetes resources.
 
 If you already understand Deployments and Jobs, this is the shortest mental model:
 
 - You create an `AgentRun` custom resource when you want work done.
-- Jangar watches that resource and launches Kubernetes Jobs/Pods to do the work.
+- The Agents controller watches that resource and launches Kubernetes Jobs/Pods to do the work.
 - The run status is written back to the `AgentRun`, so Kubernetes stays the source of truth.
 
 The chart is published on Artifact Hub:
 
 - Artifact Hub: <https://artifacthub.io/packages/helm/agents/agents>
 - OCI chart: `oci://ghcr.io/proompteng/charts/agents`
-- Current chart version: `0.9.15`
+- Current chart version: `0.9.19`
 
 ## Start Here
 
-Use the local end-to-end path first. It builds a Jangar image from this repository, creates a kind cluster, installs Postgres, deploys the chart, submits a smoke `AgentRun`, and waits for that run to succeed.
+Use the local end-to-end path first. It builds Agents control-plane, controller, and Codex runner images from this repository, creates a kind cluster, installs Postgres, deploys the chart, submits a smoke `AgentRun`, and waits for that run to succeed.
 
 ```bash
 git clone https://github.com/proompteng/lab.git
@@ -136,7 +136,7 @@ Install:
 
 ```bash
 helm upgrade --install agents oci://ghcr.io/proompteng/charts/agents \
-  --version 0.9.13 \
+  --version 0.9.19 \
   --namespace agents \
   --values agents-values.yaml \
   --wait
@@ -155,7 +155,7 @@ curl -sf http://127.0.0.1:8080/health
 Run the chart smoke examples from the published package:
 
 ```bash
-helm pull oci://ghcr.io/proompteng/charts/agents --version 0.9.13 --untar
+helm pull oci://ghcr.io/proompteng/charts/agents --version 0.9.19 --untar
 
 kubectl -n agents apply -f agents/examples/agentprovider-smoke.yaml
 kubectl -n agents apply -f agents/examples/agent-smoke.yaml
@@ -172,7 +172,7 @@ You do not need to understand every CRD before installing the chart. These are t
 
 | Concept                | What it means                                                                       | First example                                 |
 | ---------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------- |
-| Jangar                 | The control plane installed by this chart. It watches CRDs and coordinates work.    | `Deployment/agents`                           |
+| Agents Platform        | The control plane installed by this chart. It watches CRDs and coordinates work.    | `Deployment/agents`                           |
 | AgentRun               | One requested unit of work. This is what you create when you want something to run. | `examples/agentrun-workflow-smoke.yaml`       |
 | Agent                  | A reusable worker profile. It points at an AgentProvider and can define defaults.   | `examples/agent-smoke.yaml`                   |
 | AgentProvider          | How an agent is executed, such as a command, adapter, or runner entrypoint.         | `examples/agentprovider-smoke.yaml`           |
@@ -185,7 +185,7 @@ You do not need to understand every CRD before installing the chart. These are t
 
 The chart installs:
 
-- Jangar control-plane `Deployment` and HTTP `Service`
+- Agents control-plane `Deployment` and HTTP `Service`
 - Optional gRPC `Service`
 - Optional controllers deployment for reconciliation/runtime work
 - Optional metrics `Service`, `ServiceMonitor`, and Grafana dashboard ConfigMap
@@ -208,7 +208,7 @@ That is deliberate. The chart should be safe to install into a namespace and the
 
 ```bash
 helm template agents oci://ghcr.io/proompteng/charts/agents \
-  --version 0.9.13 \
+  --version 0.9.19 \
   --namespace agents \
   --values agents-values.yaml
 ```
@@ -219,7 +219,7 @@ The chart includes an opt-in test Pod that curls the in-cluster health endpoint 
 
 ```bash
 helm upgrade --install agents oci://ghcr.io/proompteng/charts/agents \
-  --version 0.9.13 \
+  --version 0.9.19 \
   --namespace agents \
   --values agents-values.yaml \
   --set tests.enabled=true \
@@ -254,7 +254,7 @@ image:
 
 runner:
   image:
-    repository: registry.example.com/platform/agent-runner
+    repository: registry.example.com/platform/agents-codex-runner
     tag: 2026-05-05
     digest: sha256:...
     pullSecrets:
@@ -523,7 +523,7 @@ Frequent render failures:
 
 | Value                                                                | Purpose                                                                   |
 | -------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `image.repository`, `image.tag`, `image.digest`                      | Default Jangar image used by the control-plane and controllers.           |
+| `image.repository`, `image.tag`, `image.digest`                      | Default Agents control-plane image used by the control-plane deployment.  |
 | `controlPlane.image.*`, `controllers.image.*`                        | Optional per-deployment overrides when those images differ.               |
 | `runner.image.repository`, `runner.image.tag`, `runner.image.digest` | Default image for AgentRun Jobs.                                          |
 | `imagePolicy.requireDigest`                                          | Require immutable image digests for chart-managed images.                 |

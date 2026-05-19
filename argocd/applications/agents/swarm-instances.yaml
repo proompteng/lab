@@ -1,7 +1,7 @@
 apiVersion: swarm.proompteng.ai/v1alpha1
 kind: Swarm
 metadata:
-  name: jangar-control-plane
+  name: agents-platform
   namespace: agents
 spec:
   owner:
@@ -11,13 +11,13 @@ spec:
     - platform-reliability
     - platform-evolution
   objectives:
-    - operate as the Jangar Engineering team through NATS-backed swarm communication
+    - operate as the Agents Platform Engineering team through NATS-backed swarm communication
     - continuously discover and implement control-plane improvements
     - deliver Torghut platform requirements safely to production
   mission:
-    ledgerRef: /workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md
+    ledgerRef: /workspace/.agentrun/swarm/agents-platform-mission-ledger.md
     sourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md
-    businessMetric: reduce failed AgentRuns and shorten green PR-to-healthy GitOps rollout time for the Jangar control plane
+    businessMetric: reduce failed AgentRuns and shorten green PR-to-healthy GitOps rollout time for the Agents Platform control plane
     validationContract:
       - every run must cite the governing design or runtime requirement before changing code
       - implement stages must produce production PRs with tests or report the exact blocker to code
@@ -52,13 +52,13 @@ spec:
       personas:
         architect:
           humanName: Victor Chen
-          workerIdentity: victor-chen-jangar-architect
+          workerIdentity: victor-chen-agents-architect
         engineer:
           humanName: Elise Novak
-          workerIdentity: elise-novak-jangar-engineer
+          workerIdentity: elise-novak-agents-engineer
         deployer:
           humanName: Marco Silva
-          workerIdentity: marco-silva-jangar-deployer
+          workerIdentity: marco-silva-agents-deployer
   discovery:
     minCitations: 2
     minConfidence: 0.75
@@ -95,19 +95,19 @@ spec:
     discover:
       targetRef:
         kind: AgentRun
-        name: jangar-swarm-discover-template
+        name: agents-platform-swarm-discover-template
     plan:
       targetRef:
         kind: AgentRun
-        name: jangar-swarm-plan-template
+        name: agents-platform-swarm-plan-template
     implement:
       targetRef:
         kind: AgentRun
-        name: jangar-swarm-implement-template
+        name: agents-platform-swarm-implement-template
     verify:
       targetRef:
         kind: AgentRun
-        name: jangar-swarm-verify-template
+        name: agents-platform-swarm-verify-template
 ---
 apiVersion: swarm.proompteng.ai/v1alpha1
 kind: Swarm
@@ -124,7 +124,7 @@ spec:
   objectives:
     - operate as the Torghut Traders team through NATS-backed swarm communication
     - continuously discover and implement quant alpha and risk-control improvements
-    - issue platform requirements to jangar-control-plane via NATS requirement channels
+    - issue platform requirements to agents-platform via NATS requirement channels
   mission:
     ledgerRef: /workspace/.agentrun/swarm/torghut-quant-mission-ledger.md
     sourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md

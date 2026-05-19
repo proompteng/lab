@@ -1,7 +1,7 @@
 apiVersion: swarm.proompteng.ai/v1alpha1
 kind: Swarm
 metadata:
-  name: jangar-control-plane
+  name: agents-platform
   namespace: agents
 spec:
   owner:
