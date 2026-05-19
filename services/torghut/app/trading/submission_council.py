@@ -451,6 +451,18 @@ def build_hypothesis_runtime_summary(
         ),
         route_symbol_filter_enabled=settings.trading_pipeline_mode == "simple",
     )
+    evidence = _load_latest_certificate_evidence(
+        session,
+        hypothesis_ids=[item.hypothesis_id for item in registry.items],
+    )
+    items = _merge_runtime_certificate_evidence(
+        items,
+        evidence=evidence,
+        now=datetime.now(timezone.utc),
+        max_age_seconds=max(
+            0, int(settings.trading_drift_live_promotion_max_evidence_age_seconds)
+        ),
+    )
     summary = summarize_hypothesis_runtime_statuses(
         items,
         registry=registry,
@@ -566,6 +578,163 @@ def _load_latest_certificate_evidence(
             }
         )
     return evidence
+
+
+def _window_evidence_issued_at(
+    metric_window: StrategyHypothesisMetricWindow,
+) -> datetime | None:
+    return _coerce_aware_datetime(
+        metric_window.window_ended_at or metric_window.created_at
+    )
+
+
+def _certificate_evidence_is_fresh(
+    metric_window: StrategyHypothesisMetricWindow,
+    *,
+    max_age_seconds: int,
+    now: datetime,
+) -> bool:
+    issued_at = _window_evidence_issued_at(metric_window)
+    if issued_at is None:
+        return False
+    return max_age_seconds <= 0 or issued_at >= now - timedelta(seconds=max_age_seconds)
+
+
+def _certificate_capital_stage(
+    metric_window: StrategyHypothesisMetricWindow,
+    promotion_decision: StrategyPromotionDecision,
+) -> str | None:
+    window_stage = _safe_text(metric_window.capital_stage)
+    decision_stage = _safe_text(promotion_decision.state)
+    ranked_stages = [
+        stage
+        for stage in (window_stage, decision_stage)
+        if stage is not None and _stage_rank(stage) >= 0
+    ]
+    if not ranked_stages:
+        return None
+    return min(ranked_stages, key=_stage_rank)
+
+
+def _merge_runtime_certificate_evidence(
+    items: Sequence[Mapping[str, Any]],
+    *,
+    evidence: Sequence[Mapping[str, object]],
+    now: datetime,
+    max_age_seconds: int,
+) -> list[dict[str, object]]:
+    evidence_by_hypothesis = {
+        str(row.get("hypothesis_id") or "").strip(): row
+        for row in evidence
+        if str(row.get("hypothesis_id") or "").strip()
+    }
+    merged: list[dict[str, object]] = []
+    for item in items:
+        updated: dict[str, object] = dict(item)
+        hypothesis_id = str(updated.get("hypothesis_id") or "").strip()
+        row = evidence_by_hypothesis.get(hypothesis_id)
+        if not row:
+            merged.append(updated)
+            continue
+
+        metric_window = cast(
+            StrategyHypothesisMetricWindow | None, row.get("metric_window")
+        )
+        promotion_decision = cast(
+            StrategyPromotionDecision | None, row.get("promotion_decision")
+        )
+        if metric_window is None or promotion_decision is None:
+            merged.append(updated)
+            continue
+        if _safe_bool(getattr(promotion_decision, "allowed", True)) is False:
+            merged.append(updated)
+            continue
+        if not _certificate_evidence_is_fresh(
+            metric_window,
+            max_age_seconds=max_age_seconds,
+            now=now,
+        ):
+            merged.append(updated)
+            continue
+        if not bool(metric_window.continuity_ok) or not bool(metric_window.drift_ok):
+            merged.append(updated)
+            continue
+        if _safe_text(metric_window.dependency_quorum_decision) != "allow":
+            merged.append(updated)
+            continue
+
+        capital_stage = _certificate_capital_stage(metric_window, promotion_decision)
+        if capital_stage is None or _stage_rank(capital_stage) <= _stage_rank("shadow"):
+            merged.append(updated)
+            continue
+
+        issued_at = _window_evidence_issued_at(metric_window)
+        candidate_id = (
+            _safe_text(metric_window.candidate_id)
+            or _safe_text(promotion_decision.candidate_id)
+            or _safe_text(updated.get("candidate_id"))
+        )
+        observed = (
+            dict(cast(Mapping[str, Any], updated.get("observed")))
+            if isinstance(updated.get("observed"), Mapping)
+            else {}
+        )
+        observed.update(
+            {
+                "runtime_window_certificate_applied": True,
+                "runtime_window_prior_reasons": list(
+                    cast(Sequence[object], updated.get("reasons") or [])
+                ),
+                "metric_window_id": str(metric_window.id),
+                "promotion_decision_id": str(promotion_decision.id),
+                "metric_window_issued_at": issued_at.isoformat()
+                if issued_at is not None
+                else None,
+                "metric_window_market_session_count": metric_window.market_session_count,
+                "metric_window_decision_count": metric_window.decision_count,
+                "metric_window_trade_count": metric_window.trade_count,
+                "metric_window_order_count": metric_window.order_count,
+                "metric_window_avg_abs_slippage_bps": metric_window.avg_abs_slippage_bps,
+                "metric_window_post_cost_expectancy_bps": metric_window.post_cost_expectancy_bps,
+            }
+        )
+        if candidate_id is not None:
+            updated["candidate_id"] = candidate_id
+        updated.update(
+            {
+                "state": "canary_live"
+                if _stage_rank(capital_stage) < _stage_rank("0.50x live")
+                else "scaled_live",
+                "capital_stage": capital_stage,
+                "capital_multiplier": {
+                    "0.10x canary": "0.10",
+                    "0.25x canary": "0.25",
+                    "0.50x live": "0.50",
+                    "1.00x live": "1.00",
+                }.get(capital_stage, str(updated.get("capital_multiplier") or "0")),
+                "promotion_eligible": True,
+                "rollback_required": False,
+                "reasons": [],
+                "informational_reasons": sorted(
+                    {
+                        *[
+                            str(reason)
+                            for reason in cast(
+                                Sequence[object],
+                                updated.get("informational_reasons") or [],
+                            )
+                            if str(reason).strip()
+                        ],
+                        "runtime_window_certificate_applied",
+                    }
+                ),
+                "promotion_decision_id": str(promotion_decision.id),
+                "metric_window_id": str(metric_window.id),
+                "observed": observed,
+            }
+        )
+        merged.append(updated)
+    return merged
 
 
 def _segment_summary(

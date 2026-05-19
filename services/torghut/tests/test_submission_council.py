@@ -19,12 +19,17 @@ from app.models import (
     AutoresearchProposalScore,
     Base,
     Strategy,
+    StrategyHypothesisMetricWindow,
+    StrategyPromotionDecision,
     TradeDecision,
 )
+from app.trading.hypotheses import JangarDependencyQuorumStatus
 from app.trading.submission_council import (
     _QUANT_HEALTH_CACHE,
     _coerce_aware_datetime,
     _load_profit_promotion_table_counts,
+    _merge_runtime_certificate_evidence,
+    build_hypothesis_runtime_summary,
     build_live_submission_gate_payload,
     load_quant_evidence_status,
     resolve_quant_health_url,
@@ -60,6 +65,7 @@ class TestSubmissionCouncil(TestCase):
             "trading_jangar_control_plane_cache_ttl_seconds": settings.trading_jangar_control_plane_cache_ttl_seconds,
             "trading_jangar_control_plane_status_url": settings.trading_jangar_control_plane_status_url,
             "trading_market_context_url": settings.trading_market_context_url,
+            "trading_drift_live_promotion_max_evidence_age_seconds": settings.trading_drift_live_promotion_max_evidence_age_seconds,
         }
         _QUANT_HEALTH_CACHE.clear()
         settings.trading_enabled = True
@@ -98,6 +104,11 @@ class TestSubmissionCouncil(TestCase):
         settings.trading_market_context_url = self._settings_snapshot[
             "trading_market_context_url"
         ]
+        settings.trading_drift_live_promotion_max_evidence_age_seconds = (
+            self._settings_snapshot[
+                "trading_drift_live_promotion_max_evidence_age_seconds"
+            ]
+        )
         _QUANT_HEALTH_CACHE.clear()
 
     def _metric_window(self, capital_stage: str = "0.10x canary") -> SimpleNamespace:
@@ -133,6 +144,329 @@ class TestSubmissionCouncil(TestCase):
             "status": "healthy",
             "source_url": "http://jangar.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
         }
+
+    def test_runtime_certificate_merge_keeps_invalid_evidence_shadow(self) -> None:
+        now = datetime.now(timezone.utc)
+        base_item = {
+            "hypothesis_id": "H-CONT-01",
+            "candidate_id": None,
+            "capital_stage": "shadow",
+            "capital_multiplier": "0",
+            "promotion_eligible": False,
+            "rollback_required": False,
+            "reasons": ["drift_checks_missing"],
+            "informational_reasons": [],
+            "observed": {},
+        }
+
+        def metric_window(**overrides: object) -> SimpleNamespace:
+            payload: dict[str, object] = {
+                "id": "window-invalid",
+                "candidate_id": "cand-runtime",
+                "capital_stage": "0.10x canary",
+                "window_ended_at": now,
+                "created_at": now,
+                "continuity_ok": True,
+                "drift_ok": True,
+                "dependency_quorum_decision": "allow",
+                "market_session_count": 3,
+                "decision_count": 42,
+                "trade_count": 42,
+                "order_count": 42,
+                "avg_abs_slippage_bps": "4.2",
+                "post_cost_expectancy_bps": "8.5",
+            }
+            payload.update(overrides)
+            return SimpleNamespace(**payload)
+
+        def promotion(**overrides: object) -> SimpleNamespace:
+            payload: dict[str, object] = {
+                "id": "promo-invalid",
+                "candidate_id": "cand-runtime",
+                "state": "0.10x canary",
+                "allowed": True,
+            }
+            payload.update(overrides)
+            return SimpleNamespace(**payload)
+
+        scenarios = [
+            [],
+            [
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": metric_window(
+                        window_ended_at=None,
+                        created_at=None,
+                    ),
+                    "promotion_decision": promotion(),
+                }
+            ],
+            [
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": metric_window(),
+                    "promotion_decision": promotion(allowed=False),
+                }
+            ],
+            [
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": metric_window(
+                        window_ended_at=now.replace(year=2020),
+                    ),
+                    "promotion_decision": promotion(),
+                }
+            ],
+            [
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": metric_window(
+                        dependency_quorum_decision="block",
+                    ),
+                    "promotion_decision": promotion(),
+                }
+            ],
+            [
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": metric_window(capital_stage="observe"),
+                    "promotion_decision": promotion(state="observe"),
+                }
+            ],
+        ]
+
+        for evidence in scenarios:
+            with self.subTest(evidence=evidence):
+                result = _merge_runtime_certificate_evidence(
+                    [base_item],
+                    evidence=evidence,
+                    now=now,
+                    max_age_seconds=3600,
+                )
+
+                self.assertFalse(result[0]["promotion_eligible"])
+                self.assertEqual(result[0]["capital_stage"], "shadow")
+                self.assertEqual(result[0]["reasons"], ["drift_checks_missing"])
+
+    def test_hypothesis_runtime_summary_uses_fresh_imported_runtime_proof(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        now = datetime.now(timezone.utc)
+        settings.trading_drift_live_promotion_max_evidence_age_seconds = 3600
+        registry = SimpleNamespace(
+            loaded=True,
+            path="test-registry",
+            errors=[],
+            items=[SimpleNamespace(hypothesis_id="H-CONT-01")],
+        )
+        runtime_items = [
+            {
+                "hypothesis_id": "H-CONT-01",
+                "candidate_id": None,
+                "strategy_id": "intraday_continuation",
+                "lane_id": "continuation",
+                "strategy_family": "intraday_continuation",
+                "state": "shadow",
+                "capital_stage": "shadow",
+                "capital_multiplier": "0",
+                "promotion_eligible": False,
+                "rollback_required": False,
+                "reasons": ["drift_checks_missing", "post_cost_expectancy_below_edge"],
+                "informational_reasons": [],
+                "observed": {},
+            }
+        ]
+
+        with session_local() as session:
+            session.add(
+                StrategyHypothesisMetricWindow(
+                    run_id="runtime-proof-1",
+                    candidate_id="cand-runtime",
+                    hypothesis_id="H-CONT-01",
+                    observed_stage="paper",
+                    window_started_at=now,
+                    window_ended_at=now,
+                    market_session_count=3,
+                    decision_count=42,
+                    trade_count=42,
+                    order_count=42,
+                    avg_abs_slippage_bps="4.2",
+                    slippage_budget_bps="12",
+                    post_cost_expectancy_bps="8.5",
+                    continuity_ok=True,
+                    drift_ok=True,
+                    dependency_quorum_decision="allow",
+                    capital_stage="0.10x canary",
+                )
+            )
+            session.add(
+                StrategyPromotionDecision(
+                    run_id="runtime-proof-1",
+                    candidate_id="cand-runtime",
+                    hypothesis_id="H-CONT-01",
+                    promotion_target="paper",
+                    state="0.10x canary",
+                    allowed=True,
+                    reason_summary="runtime_evidence_thresholds_satisfied",
+                )
+            )
+            session.commit()
+
+            with (
+                patch(
+                    "app.trading.submission_council.load_hypothesis_registry",
+                    return_value=registry,
+                ),
+                patch(
+                    "app.trading.submission_council.resolve_hypothesis_dependency_quorum",
+                    return_value=JangarDependencyQuorumStatus(
+                        decision="allow",
+                        reasons=[],
+                        message="ready",
+                    ),
+                ),
+                patch(
+                    "app.trading.submission_council.compile_hypothesis_runtime_statuses",
+                    return_value=runtime_items,
+                ),
+                patch(
+                    "app.trading.submission_council.build_tca_gate_inputs",
+                    return_value={},
+                ),
+            ):
+                result = build_hypothesis_runtime_summary(
+                    session,
+                    state=SimpleNamespace(market_session_open=True),
+                    market_context_status={"last_freshness_seconds": 10},
+                )
+
+        self.assertEqual(result["promotion_eligible_total"], 1)
+        item = result["items"][0]
+        self.assertTrue(item["promotion_eligible"])
+        self.assertEqual(item["candidate_id"], "cand-runtime")
+        self.assertEqual(item["capital_stage"], "0.10x canary")
+        self.assertEqual(item["reasons"], [])
+        self.assertEqual(item["observed"]["metric_window_decision_count"], 42)
+        self.assertEqual(
+            item["observed"]["runtime_window_prior_reasons"],
+            ["drift_checks_missing", "post_cost_expectancy_below_edge"],
+        )
+        self.assertEqual(
+            item["informational_reasons"],
+            ["runtime_window_certificate_applied"],
+        )
+
+    def test_hypothesis_runtime_summary_rejects_failed_runtime_proof(self) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        now = datetime.now(timezone.utc)
+        settings.trading_drift_live_promotion_max_evidence_age_seconds = 3600
+        registry = SimpleNamespace(
+            loaded=True,
+            path="test-registry",
+            errors=[],
+            items=[SimpleNamespace(hypothesis_id="H-CONT-01")],
+        )
+        runtime_items = [
+            {
+                "hypothesis_id": "H-CONT-01",
+                "candidate_id": None,
+                "strategy_id": "intraday_continuation",
+                "lane_id": "continuation",
+                "strategy_family": "intraday_continuation",
+                "state": "shadow",
+                "capital_stage": "shadow",
+                "capital_multiplier": "0",
+                "promotion_eligible": False,
+                "rollback_required": False,
+                "reasons": ["drift_checks_missing"],
+                "informational_reasons": [],
+                "observed": {},
+            }
+        ]
+
+        with session_local() as session:
+            session.add(
+                StrategyHypothesisMetricWindow(
+                    run_id="runtime-proof-2",
+                    candidate_id="cand-runtime",
+                    hypothesis_id="H-CONT-01",
+                    observed_stage="paper",
+                    window_started_at=now,
+                    window_ended_at=now,
+                    market_session_count=3,
+                    decision_count=42,
+                    trade_count=42,
+                    order_count=42,
+                    avg_abs_slippage_bps="4.2",
+                    slippage_budget_bps="12",
+                    post_cost_expectancy_bps="8.5",
+                    continuity_ok=True,
+                    drift_ok=False,
+                    dependency_quorum_decision="allow",
+                    capital_stage="0.10x canary",
+                )
+            )
+            session.add(
+                StrategyPromotionDecision(
+                    run_id="runtime-proof-2",
+                    candidate_id="cand-runtime",
+                    hypothesis_id="H-CONT-01",
+                    promotion_target="paper",
+                    state="0.10x canary",
+                    allowed=True,
+                    reason_summary="runtime_evidence_thresholds_satisfied",
+                )
+            )
+            session.commit()
+
+            with (
+                patch(
+                    "app.trading.submission_council.load_hypothesis_registry",
+                    return_value=registry,
+                ),
+                patch(
+                    "app.trading.submission_council.resolve_hypothesis_dependency_quorum",
+                    return_value=JangarDependencyQuorumStatus(
+                        decision="allow",
+                        reasons=[],
+                        message="ready",
+                    ),
+                ),
+                patch(
+                    "app.trading.submission_council.compile_hypothesis_runtime_statuses",
+                    return_value=runtime_items,
+                ),
+                patch(
+                    "app.trading.submission_council.build_tca_gate_inputs",
+                    return_value={},
+                ),
+            ):
+                result = build_hypothesis_runtime_summary(
+                    session,
+                    state=SimpleNamespace(market_session_open=True),
+                    market_context_status={"last_freshness_seconds": 10},
+                )
+
+        self.assertEqual(result["promotion_eligible_total"], 0)
+        item = result["items"][0]
+        self.assertFalse(item["promotion_eligible"])
+        self.assertEqual(item["capital_stage"], "shadow")
+        self.assertEqual(item["reasons"], ["drift_checks_missing"])
 
     def test_coerce_aware_datetime_normalizes_runtime_status_values(self) -> None:
         self.assertEqual(

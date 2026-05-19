@@ -950,9 +950,20 @@ def compile_hypothesis_runtime_statuses(
         or 0,
     )
     feature_batch_rows_total = max(feature_batch_rows_total, persisted_feature_rows)
+    persisted_drift_checks = max(
+        0,
+        _optional_int(
+            readiness.get("drift_detection_checks_total")
+            or readiness.get("drift_detection_checks")
+            or readiness.get("drift_checks")
+            or 0
+        )
+        or 0,
+    )
     drift_detection_checks_total = max(
         0,
         _optional_int(getattr(metrics, "drift_detection_checks_total", 0)) or 0,
+        persisted_drift_checks,
     )
     evidence_continuity_checks_total = max(
         0,
