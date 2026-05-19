@@ -147,6 +147,14 @@ fail_if_path_exists \
   "${ROOT_DIR}/services/jangar/src/server/primitives-watch.ts"
 
 fail_if_matches \
+  "Jangar must not create or write Agents-owned control-plane database tables" \
+  'agents_control_plane|agent_run_idempotency_keys|CREATE TABLE IF NOT EXISTS agent_runs|CREATE TABLE IF NOT EXISTS orchestration_runs|CREATE TABLE IF NOT EXISTS memory_resources' \
+  "${ROOT_DIR}/services/jangar/src/server/db.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-heartbeat-store.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-clearance-market.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations"
+
+fail_if_matches \
   "Agents GitOps must not ship the old sample Argo WorkflowTemplate schedule bridge" \
   'agents-primitives-echo|kind: WorkflowTemplate|codex-workflow' \
   "${ROOT_DIR}/argocd/applications/agents"
