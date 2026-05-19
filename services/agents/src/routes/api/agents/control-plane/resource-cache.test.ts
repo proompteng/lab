@@ -17,7 +17,7 @@ vi.mock('~/server/kube-types', async () => {
   }
 })
 
-import { getPrimitiveResource, patchPrimitiveResourceMetadata } from './resource'
+import { getPrimitiveResource, patchPrimitiveResourceMetadata, postPrimitiveResource } from './resource'
 
 const cacheResource = (name: string, lastSeenAt: string) => ({
   resource: {
@@ -253,6 +253,52 @@ describe('agents control-plane resource route', () => {
     await expect(response.json()).resolves.toMatchObject({
       ok: false,
       error: 'metadata.annotations or metadata.labels is required',
+    })
+  })
+
+  it('creates raw control-plane resources through the Agents-owned apply boundary', async () => {
+    const kube = {
+      apply: vi.fn(async (resource) => resource),
+    }
+
+    const response = await postPrimitiveResource(
+      new Request('http://localhost/api/agents/control-plane/resource', {
+        body: JSON.stringify({
+          apiVersion: 'agents.proompteng.ai/v1alpha1',
+          kind: 'AgentRun',
+          metadata: {
+            generateName: 'swarm-plan-',
+            namespace: 'agents',
+            labels: { 'swarm.proompteng.ai/stage': 'plan' },
+          },
+          spec: {
+            parameters: { runId: 'swarm-plan-1' },
+          },
+        }),
+        headers: { 'content-type': 'application/json', 'idempotency-key': 'delivery-1' },
+        method: 'POST',
+      }),
+      { kubeClient: kube as never },
+    )
+
+    expect(response.status).toBe(201)
+    expect(kube.apply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'AgentRun',
+        metadata: expect.objectContaining({
+          generateName: 'swarm-plan-',
+          namespace: 'agents',
+          labels: expect.objectContaining({
+            'agents.proompteng.ai/delivery-id': 'delivery-1',
+            'swarm.proompteng.ai/stage': 'plan',
+          }),
+        }),
+      }),
+    )
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      kind: 'AgentRun',
+      namespace: 'agents',
     })
   })
 })

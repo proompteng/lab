@@ -272,6 +272,42 @@ type ImplementationSpecPayload = {
   spec: Record<string, unknown>
 }
 
+const isRawControlPlaneResourcePayload = (payload: Record<string, unknown>) => {
+  const kind = asString(payload.kind)
+  const metadata = asRecord(payload.metadata)
+  return Boolean(kind && metadata)
+}
+
+const normalizeRawControlPlaneResource = (payload: Record<string, unknown>, deliveryId: string) => {
+  const kind = asString(payload.kind)
+  const resolved = resolvePrimitiveKind(kind)
+  if (!kind || !resolved) {
+    throw new Error('kind is required')
+  }
+
+  const metadataInput = asRecord(payload.metadata) ?? {}
+  const namespace = normalizeNamespace(asString(metadataInput.namespace), 'agents')
+  const labels = {
+    ...(asRecord(metadataInput.labels) ?? {}),
+    ...buildDeliveryIdLabels(deliveryId),
+  }
+
+  return {
+    resource: {
+      ...payload,
+      ...(asString(payload.apiVersion) ? { apiVersion: asString(payload.apiVersion) } : {}),
+      kind: resolved.kind,
+      metadata: {
+        ...metadataInput,
+        namespace,
+        labels,
+      },
+    },
+    kind: resolved.kind,
+    namespace,
+  }
+}
+
 const coerceStringList = (value: unknown, limit = 100) => {
   if (!Array.isArray(value)) return []
   const trimmed = value
@@ -355,50 +391,59 @@ export const postPrimitiveResource = async (
   request: Request,
   deps: { storeFactory?: typeof createPrimitivesStore; kubeClient?: KubernetesClient } = {},
 ) => {
-  const store = (deps.storeFactory ?? createPrimitivesStore)()
   try {
     const deliveryId = requireIdempotencyKey(request)
     const payload = await parseJsonBody(request)
+    if (isRawControlPlaneResourcePayload(payload)) {
+      const parsed = normalizeRawControlPlaneResource(payload, deliveryId)
+      const kube = deps.kubeClient ?? createKubernetesClient()
+      const applied = await kube.apply(parsed.resource)
+      return okResponse({ ok: true, kind: parsed.kind, namespace: parsed.namespace, resource: applied }, 201)
+    }
+
     const parsed = parseImplementationSpecPayload(payload)
-    const auditContext = resolveAuditContextFromRequest(request, {
-      deliveryId,
-      namespace: parsed.namespace,
-      repository: null,
-      source: 'control-plane.resource',
-    })
-
-    await store.ready
-    const kube = deps.kubeClient ?? createKubernetesClient()
-    const resource = {
-      apiVersion: 'agents.proompteng.ai/v1alpha1',
-      kind: 'ImplementationSpec',
-      metadata: {
-        name: parsed.name,
+    const store = (deps.storeFactory ?? createPrimitivesStore)()
+    try {
+      const auditContext = resolveAuditContextFromRequest(request, {
+        deliveryId,
         namespace: parsed.namespace,
-        labels: buildDeliveryIdLabels(deliveryId),
-      },
-      spec: parsed.spec,
-    }
-
-    const applied = await kube.apply(resource)
-    const metadata = asRecord(applied.metadata) ?? {}
-    const uid = asString(metadata.uid)
-
-    if (uid) {
-      await store.createAuditEvent({
-        entityType: 'ImplementationSpec',
-        entityId: uid,
-        eventType: 'implementation_spec.created',
-        context: auditContext,
-        details: { name: parsed.name, implementationSpecUid: uid },
+        repository: null,
+        source: 'control-plane.resource',
       })
-    }
 
-    return okResponse({ ok: true, resource: applied }, 201)
+      await store.ready
+      const kube = deps.kubeClient ?? createKubernetesClient()
+      const resource = {
+        apiVersion: 'agents.proompteng.ai/v1alpha1',
+        kind: 'ImplementationSpec',
+        metadata: {
+          name: parsed.name,
+          namespace: parsed.namespace,
+          labels: buildDeliveryIdLabels(deliveryId),
+        },
+        spec: parsed.spec,
+      }
+
+      const applied = await kube.apply(resource)
+      const metadata = asRecord(applied.metadata) ?? {}
+      const uid = asString(metadata.uid)
+
+      if (uid) {
+        await store.createAuditEvent({
+          entityType: 'ImplementationSpec',
+          entityId: uid,
+          eventType: 'implementation_spec.created',
+          context: auditContext,
+          details: { name: parsed.name, implementationSpecUid: uid },
+        })
+      }
+
+      return okResponse({ ok: true, resource: applied }, 201)
+    } finally {
+      await store.close()
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 400)
-  } finally {
-    await store.close()
   }
 }

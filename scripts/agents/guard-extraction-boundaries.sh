@@ -80,6 +80,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-analysis.ts"
 
 fail_if_matches \
+  "Jangar schedule runner must submit scheduled AgentRun and OrchestrationRun resources through the Agents service boundary" \
+  'KUBERNETES_SERVICE_HOST|KUBERNETES_SERVICE_PORT|/apis/\$\{target\.group\}|node:https|requestKubernetesJson|/var/run/secrets/kubernetes\.io/serviceaccount/token' \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-schedule-runner.ts"
+
+fail_if_matches \
   "Agents GitOps must not ship the old sample Argo WorkflowTemplate schedule bridge" \
   'agents-primitives-echo|kind: WorkflowTemplate|codex-workflow' \
   "${ROOT_DIR}/argocd/applications/agents"
