@@ -283,6 +283,12 @@ fail_if_matches \
   'ARGO_WORKFLOW_|workflowIdentifier|_Workflow:' \
   "${ROOT_DIR}/apps/froussard/src"
 
+fail_if_matches \
+  "Graf must consume Agents AgentRuns directly, not legacy Argo workflow compatibility names" \
+  'argoWorkflowName|argoPollTimeoutSeconds|SubmitArgoWorkflow|CompletedArgoWorkflow|submitArgoWorkflow|waitForArgoWorkflow|workflowNamePrefix|ARGO_WORKFLOW_|ARGO_SERVICE_ACCOUNT_TOKEN_PATH|autoResearch\.argoWorkflow' \
+  "${ROOT_DIR}/services/graf/src/main/kotlin" \
+  "${ROOT_DIR}/services/graf/src/test/kotlin"
+
 rendered_chart="$(mktemp)"
 rendered_argo="$(mktemp)"
 cleanup() {
